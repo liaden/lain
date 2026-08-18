@@ -91,6 +91,16 @@ module Lain
         @toolset = toolset
       end
 
+      # What every agent this seam spawns will ask, so a report can ATTRIBUTE
+      # itself ({Arm::Driver}'s header). The one thing exposed off the resolved
+      # Context, and deliberately not `@provider` or `@context` wholesale: the
+      # provider carries the credential and the base URL a report must never
+      # name, and a Context reader would be a second door onto the flag set this
+      # class exists to hold exactly one copy of.
+      #
+      # @return [String] the resolved model name
+      def model = @context.model
+
       # The widened `**` tail every arm speaks, mapped onto one Agent:
       # `timeline:`/`base_timeline:` to the agent's root ({Arm::DualLedger}
       # passes the first, {Arm::OrchestratorWorker} a fresh root over the lead's

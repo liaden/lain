@@ -115,7 +115,14 @@ module Lain
       # @param spawn_seam [#call] the agent/child factory threaded into every arm
       # @param grader [#grade] scores each run's Timeline
       # @param isolation [String, nil] the `--isolation` name; nil keeps the
-      #   Driver's own default
+      #   Driver's own default. Reaches the Driver TWICE and for two different
+      #   jobs: resolved into the backend every arm leases from, and verbatim as
+      #   the header's label
+      # @param fixture [String, nil] the suite's own path, for the report header;
+      #   the Driver is handed PROMPTS, so this is the only way it can name where
+      #   they came from
+      # @param model [String, nil] what the arms were configured to ask, for the
+      #   same header; {SpawnSeam#model} is what answers it on the assembled path
       # @param backend_options [Hash] forwarded verbatim to
       #   {Lain::CLI::IsolationBackend.resolve} (`root:`, `journal:`, `paths:`,
       #   `shell_out_factory:`); ITS signature owns those defaults, so restating
@@ -124,8 +131,14 @@ module Lain
       # @raise [Lain::CLI::IsolationBackend::Unknown] on a name outside the
       #   resolver's advertised set
       # @raise [ArgumentError] on backend options with no name to resolve
-      def arm_report(arms, tasks:, spawn_seam:, grader:, isolation: nil, **backend_options)
-        Arm::Driver.new(arms, tasks:, spawn_seam:, grader:, **arm_isolation(isolation, **backend_options)).report
+      def arm_report(arms, tasks:, spawn_seam:, grader:, isolation: nil, fixture: nil, model: nil, **backend_options)
+        # `isolation_name:` is the operator's own word, alongside the resolved
+        # object. Not a second authority on WHICH backend ran -- the object is
+        # that -- but the only thing that can NAME it: every name resolves to
+        # the same {Isolation::Journal} decorator once `--isolation` requires a
+        # journal, so a class name renders `none` and `worktree` identically.
+        Arm::Driver.new(arms, tasks:, spawn_seam:, grader:, fixture:, model:, isolation_name: isolation,
+                              **arm_isolation(isolation, **backend_options)).report
       end
 
       # The live arm comparison, ASSEMBLED: the entry point `bench arms` sits
@@ -171,8 +184,12 @@ module Lain
                       decompose: LiveArms::DEFAULT_DECOMPOSE,
                       price_book: PriceBook.default, **spawn_options)
         suite = ArmTasks.new(fixture_path:)
+        # Named rather than inlined into the call, because the header's `model:`
+        # has to be THE seam's own answer -- a second resolution off `backend`
+        # would be a second authority that can disagree with what actually ran.
+        spawn_seam = SpawnSeam.new(backend:, **spawn_options)
         arm_report(LiveArms.build(price_book:, decompose:),
-                   tasks: suite.map(&:prompt), spawn_seam: SpawnSeam.new(backend:, **spawn_options),
+                   tasks: suite.map(&:prompt), spawn_seam:, fixture: fixture_path, model: spawn_seam.model,
                    grader: SuiteGrader.new(suite), **lease_options(isolation:, journal:))
       end
 

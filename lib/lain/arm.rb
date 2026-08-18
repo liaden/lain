@@ -90,6 +90,36 @@ module Lain
       def usage = ledger.usage(timeline)
       def total_tokens = usage.total_tokens
 
+      # Dollar cost over the same unique reachable turns, each payment priced by
+      # ITS OWN recorded model. The sibling of {#usage}, and deliberately NOT as
+      # forgiving: {Ledger#cost_of} raises {PriceBook::UnknownModel} both for a
+      # payment that recorded no model AND for one naming a model the book has
+      # no row for, and this method lets that through.
+      #
+      # RAISING IS RIGHT HERE AND WRONG ONE FRAME OUT, which is the distinction
+      # worth keeping. Rescuing to zero here would report an unpriceable arm as
+      # FREE -- precisely the lie {PriceBook} and {Ledger#initialize} each refuse
+      # in writing ("on a bench whose headline metric is cost, silence is the
+      # failure mode") -- so this method has no business inventing a number.
+      # But a REPORT folding this metric must not die of it either: an
+      # unpriceable model would take score, tokens and wall-time down with it,
+      # after every run was already paid for. {Driver#fold} is where that is
+      # resolved, by degrading the cost SECTION to this error's own message.
+      #
+      # The escape is a {PriceBook} built with a `fallback:`, handed to this
+      # arm's {Instrument} -- injectable by a LIBRARY caller, and by nothing on
+      # the command line: `bench arms` has no `--price-book`, deliberately
+      # (exe/lain:494 -- "a lambda and a price table are injection seams for
+      # specs, not things an argv spells"). That is exactly why the Driver's
+      # degradation had to exist rather than pointing an operator at this one.
+      #
+      # {#usage}'s promise above is unchanged either way: tokens need no model.
+      #
+      # @return [BigDecimal]
+      # @raise [PriceBook::UnknownModel] on a payment whose model the book
+      #   cannot price and with no fallback configured
+      def cost = ledger.cost(timeline)
+
       # @return [Float] the grader's 0.0..1.0 score
       def score = grade.score
     end

@@ -94,9 +94,31 @@ RSpec.describe Lain::Bench::CLI do
     # over EVERY task the fixture declares. The Driver's header states both counts,
     # so a suite silently truncated to the two tasks Driver demands, or an arm
     # quietly dropped, fails here.
-    it "compares all three arms over the whole committed suite" do
-      expect(arms_report).to include("3 arms over 8 tasks")
+    #
+    # T12 widened the header, and the attribution is asserted in the SAME example
+    # because it is the same claim about the same four lines: what ran, over what,
+    # under what. `arms_report` is the only caller that can answer all three, so a
+    # header that keeps the counts and drops the fixture is still an unattributable
+    # record.
+    it "compares all three arms over the whole committed suite, and says what produced the report" do
+      report = arms_report
+
+      expect(report).to include("3 arms over 8 tasks")
         .and include("single-thread").and include("orchestrator-worker").and include("dual-ledger")
+      expect(report).to include(fixture_path)
+      # The model the arms were CONFIGURED with (the backend's resolved default),
+      # which in this spec is deliberately not the model the mock's responses
+      # report -- the header attributes what was asked for, the cost column
+      # prices what each payment recorded. In production they are the same string.
+      expect(report).to include(Lain::Provider::Anthropic::DEFAULT_MODEL)
+    end
+
+    # The header must attribute without leaking: a report is pasted into an
+    # issue, and `Lain::CLI::Backend` holds the key and base URL the provider
+    # was resolved from. spec/output_discipline_spec.rb cannot see inside a
+    # String, so the claim is made here.
+    it "names no API key and no provider base URL" do
+      expect(arms_report).not_to match(%r{sk-ant|api_key|https?://}i)
     end
 
     # ArmTasks carries a gold Grader::Fixture PER TASK while the Driver threads
@@ -105,6 +127,19 @@ RSpec.describe Lain::Bench::CLI do
     # would score every task alike and could not produce both numbers.
     it "grades each task against ITS OWN gold rather than one blanket grader" do
       expect(score_section(arms_report)).to include("1.000").and include("0.000")
+    end
+
+    # T12 / CE-6.2: the chunk's headline metric, end to end through the real
+    # assembly. Every arm asks the same mock once per task, so the whole suite
+    # is priced off one recorded model and the section must carry a real figure
+    # rather than the zero an unpriced fold would render.
+    it "prices every arm through the suite it actually ran" do
+      report = arms_report
+      section = report.split("\n\n").find { |block| block.start_with?("cost (USD)") }
+
+      expect(section).not_to be_nil
+      expect(section).to include("single-thread").and include("orchestrator-worker").and include("dual-ledger")
+      expect(section).not_to match(/\s0\.000000(\s|$)/)
     end
 
     # Without this the live path scores every arm near zero: the gold graders
@@ -161,6 +196,18 @@ RSpec.describe Lain::Bench::CLI do
       expect(driver_kwargs.last).to have_key(:isolation)
       expect(driver_isolation).not_to be(Lain::Arm::NoIsolation)
       expect(driver_isolation.acquire("single-thread").worker_env).to be_a(Lain::WorkerEnv)
+    end
+
+    # The header field, on the only path this command can take. `#lease_options`
+    # REQUIRES a journal whenever `--isolation` is set, so the resolver always
+    # returns a backend wrapped in `Isolation::Journal` -- which means every
+    # resolvable name renders as the same decorator class, and the field cannot
+    # answer the question it exists to answer. The operator's own word can.
+    it "names the isolation backend the operator asked for, not the decorator wrapping it" do
+      report = arms_report(isolation: "none", journal: Lain::Channel.new)
+
+      expect(report).to match(/isolation:\s+none\b/)
+      expect(report).not_to include(Lain::Isolation::Journal.name)
     end
 
     # A resolved backend with no journal emits no Telemetry::IsolationLease at
