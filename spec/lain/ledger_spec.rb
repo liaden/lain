@@ -107,8 +107,8 @@ RSpec.describe Lain::Ledger do
     it "prices each payment against its own recorded model" do
       timeline = commit(Lain::Timeline.empty(store:), "same answer")
       records << records.last.merge("model" => "claude-haiku-3-5")
-      # sonnet: $0.000105; haiku: 10 x $0.8/M + 5 x $4/M = $0.000028.
-      expect(ledger.cost(timeline)).to eq(BigDecimal("0.000105") + BigDecimal("0.000028"))
+      # sonnet: $0.000105; haiku: 10 x $1/M + 5 x $5/M = $0.000035.
+      expect(ledger.cost(timeline)).to eq(BigDecimal("0.000105") + BigDecimal("0.000035"))
     end
 
     # The two aggregations composed: content dedups across the fork while every
@@ -129,8 +129,8 @@ RSpec.describe Lain::Ledger do
       timeline = commit(timeline, "sonnet-turn")
       timeline = commit(timeline, "haiku-turn", model: "claude-haiku-3-5",
                                                 usage: turn_usage(input: 1_000_000, output: 0))
-      # sonnet: $0.000105; haiku: 1M input * $0.8/M = $0.80.
-      expect(ledger.cost(timeline)).to eq(BigDecimal("0.000105") + BigDecimal("0.8"))
+      # sonnet: $0.000105; haiku: 1M input * $1/M = $1.00.
+      expect(ledger.cost(timeline)).to eq(BigDecimal("0.000105") + BigDecimal("1.0"))
     end
   end
 

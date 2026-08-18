@@ -56,10 +56,27 @@ module Lain
     # oracle: prices change, and the point of keeping them here is that changing
     # them is a one-line edit under version control, not a vendored 1.4 MB table.
     # Cache-write is Anthropic's 1.25x input; cache-read is its 0.1x input.
+    #
+    # Reviewed 2026-08-18 against the published list rates for the Opus
+    # 5/4.8/4.7/4.6 family, Sonnet, and Haiku 4.5. Two callouts that a
+    # single-rate-per-model row cannot express, recorded here rather than
+    # silently left wrong: Sonnet is carrying an introductory rate of $2/$10
+    # per MTok through 2026-08-31 while this table holds the $3/$15 list rate
+    # that takes over after -- the two will diverge until then, and the
+    # freshness lint is what catches this table drifting further behind a later
+    # price change. `claude-fable-5` and `claude-mythos-5` have no row here and
+    # deliberately raise {UnknownModel} rather than matching a family token:
+    # no rate is recorded for them because none was verified when this line was
+    # written, and a guessed row is worse than a loud refusal. Opus 5's "fast
+    # mode" bills a different rate for the SAME model id under a request-level
+    # flag this table cannot see, which one-rate-per-model cannot express at
+    # all. Both are gaps to close with an exact-model key, not bugs in the
+    # family-token match; see `planning/specs/chunk-cost-axis-and-compaction-arm.md`
+    # Open decision 7.
     DEFAULTS = {
-      "opus" => Price.per_mtok(input: 15, output: 75, cache_creation: 18.75, cache_read: 1.5),
+      "opus" => Price.per_mtok(input: 5, output: 25, cache_creation: 6.25, cache_read: 0.5),
       "sonnet" => Price.per_mtok(input: 3, output: 15, cache_creation: 3.75, cache_read: 0.3),
-      "haiku" => Price.per_mtok(input: 0.8, output: 4, cache_creation: 1.0, cache_read: 0.08)
+      "haiku" => Price.per_mtok(input: 1, output: 5, cache_creation: 1.25, cache_read: 0.1)
     }.freeze
 
     # @return [PriceBook] the bench's default map

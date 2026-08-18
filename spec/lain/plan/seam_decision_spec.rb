@@ -20,10 +20,10 @@ RSpec.describe Lain::Plan::SeamDecision do
   subject(:decision) { described_class.new(model: "opus", journal:) }
 
   let(:profile) { Lain::CacheProfile::ANTHROPIC } # write 1.25x, read 0.1x
-  let(:prices)  { Lain::PriceBook.default }       # opus input = $15/Mtok
+  let(:prices)  { Lain::PriceBook.default }       # opus input = $5/Mtok (T1: corrected from $15/Mtok)
   let(:journal) { [] }
 
-  # Hand-computed against opus's $15/Mtok input rate (0.000015/token):
+  # Hand-computed against opus's $5/Mtok input rate (0.000005/token):
   #   rewrite_cost = tokens_after * input * write_multiplier(1.25)
   #   payback      = tokens_removed * input * read_multiplier(0.1) * turns
   describe "#call" do
@@ -39,10 +39,10 @@ RSpec.describe Lain::Plan::SeamDecision do
         expect(record.tokens_removed).to eq(8_000)
         expect(record.tokens_after).to eq(2_000)
         expect(record.estimated_turns).to eq(described_class::ANNOTATION_TURNS.fetch("L"))
-        # rewrite_cost = 2000 * 0.000015 * 1.25 = 0.0375
-        expect(BigDecimal(record.rewrite_cost)).to eq(BigDecimal("0.0375"))
-        # payback = 8000 * 0.000015 * 0.1 * 13 = 0.156
-        expect(BigDecimal(record.payback)).to eq(BigDecimal("0.156"))
+        # rewrite_cost = 2000 * 0.000005 * 1.25 = 0.0125
+        expect(BigDecimal(record.rewrite_cost)).to eq(BigDecimal("0.0125"))
+        # payback = 8000 * 0.000005 * 0.1 * 13 = 0.052
+        expect(BigDecimal(record.payback)).to eq(BigDecimal("0.052"))
       end
 
       it "journals exactly one seam_decision carrying the verdict and both costs" do
@@ -52,7 +52,7 @@ RSpec.describe Lain::Plan::SeamDecision do
         entry = record.to_journal
         expect(entry["type"]).to eq("seam_decision")
         expect(entry).to include("size" => "L", "verdict" => :rewrite_now,
-                                 "rewrite_cost" => "0.0375", "payback" => "0.156",
+                                 "rewrite_cost" => "0.0125", "payback" => "0.052",
                                  "tokens_removed" => 8_000, "tokens_after" => 2_000)
       end
     end
@@ -63,14 +63,14 @@ RSpec.describe Lain::Plan::SeamDecision do
 
       # HONEST EV, not a degenerate case: with no cache there is nothing to
       # PROTECT, but everything to SAVE -- compaction shortens every future
-      # turn's full-price input resend. payback = 8000 * 0.000015 * 1.0 * 13 =
-      # 1.56, dwarfing rewrite_cost = 2000 * 0.000015 * 1.0 = 0.03.
+      # turn's full-price input resend. payback = 8000 * 0.000005 * 1.0 * 13 =
+      # 0.52, dwarfing rewrite_cost = 2000 * 0.000005 * 1.0 = 0.01.
       it "still answers rewrite-now because it shortens every full-price resend" do
         record = decision.call(chunk:, profile:, prices:)
 
         expect(record).to be_rewrite
-        expect(BigDecimal(record.rewrite_cost)).to eq(BigDecimal("0.03"))
-        expect(BigDecimal(record.payback)).to eq(BigDecimal("1.56"))
+        expect(BigDecimal(record.rewrite_cost)).to eq(BigDecimal("0.01"))
+        expect(BigDecimal(record.payback)).to eq(BigDecimal("0.52"))
       end
     end
 
@@ -95,8 +95,8 @@ RSpec.describe Lain::Plan::SeamDecision do
 
         expect(record.estimated_turns).to eq(4)
         expect(record.calibrated).to be(true)
-        # payback = 8000 * 0.000015 * 0.1 * 4 = 0.048 > cost 0.0375 -> still rewrite
-        expect(BigDecimal(record.payback)).to eq(BigDecimal("0.048"))
+        # payback = 8000 * 0.000005 * 0.1 * 4 = 0.016 > cost 0.0125 -> still rewrite
+        expect(BigDecimal(record.payback)).to eq(BigDecimal("0.016"))
         expect(record).to be_rewrite
       end
 

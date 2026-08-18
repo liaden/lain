@@ -32,6 +32,31 @@ RSpec.describe Lain::PriceBook do
       expect(cost).to eq(BigDecimal("3"))
     end
 
+    # T1: the table was quoting 15/75 for Opus against the current published
+    # 5/25 -- a 3x overstatement that inflated every derived cost figure.
+    it "prices an Opus model at the current published rate" do
+      input_cost = book.cost("claude-opus-5", usage(input: 1_000_000))
+      output_cost = book.cost("claude-opus-5", usage(output: 1_000_000))
+      expect(input_cost).to eq(BigDecimal("5"))
+      expect(output_cost).to eq(BigDecimal("25"))
+    end
+
+    # T1: Haiku was quoting 0.8/4 against the current published 1/5.
+    it "prices a Haiku model at the current published rate" do
+      cost = book.cost("claude-haiku-4-5", usage(input: 1_000_000))
+      expect(cost).to eq(BigDecimal("1"))
+    end
+
+    # T1: the cache rows are DERIVED from the input rate (cache-write is
+    # Anthropic's 1.25x input, cache-read its 0.1x), so correcting input alone
+    # must correct them too -- this pins that the derivation still holds
+    # against the corrected Opus row.
+    it "derives the Opus cache rows from its corrected input rate" do
+      price = book.price("claude-opus-5")
+      expect(price.cache_read).to eq(price.input * BigDecimal("0.1"))
+      expect(price.cache_creation).to eq(price.input * BigDecimal("1.25"))
+    end
+
     it "matches a dated snapshot by its family token" do
       exact = book.cost("sonnet", usage(input: 1_000_000))
       dated = book.cost("claude-3-5-sonnet-20241022", usage(input: 1_000_000))
