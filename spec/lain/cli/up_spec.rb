@@ -218,15 +218,28 @@ RSpec.describe Lain::CLI::Up do
             # interpolation -- single-quoted so it reaches tmux byte-for-byte.
             # rubocop:disable Lint/InterpolationCheck
             panes = tmux("list-panes", "-t", "#{session}:chat", "-F",
-                         '#{pane_start_command}@@#{pane_current_path}').lines.map(&:strip)
+                         '#{pane_start_command}@@#{pane_current_path}@@#{pane_dead}').lines.map(&:strip)
             # rubocop:enable Lint/InterpolationCheck
             expect(panes.size).to eq(2)
-            commands = panes.map { |pane| pane.split("@@").first }
+            # The -1 limit is load-bearing: a dead pane reports an EMPTY
+            # pane_current_path, and a default String#split drops that trailing
+            # empty field -- which used to hand `.last` the pane's own command
+            # string and File.realpath an Errno::ENOENT that read like a defect
+            # in `up` rather than a pane that had simply exited.
+            fields = panes.map { |pane| pane.split("@@", -1) }
+            commands = fields.map(&:first)
             expect(commands.find { |cmd| cmd.include?("--listen") }).to include("nvim --listen #{expected_socket}")
             expect(commands.find { |cmd| cmd.include?("chat") })
               .to include("chat --nvim #{expected_socket} --no-journal")
-            cwds = panes.map { |pane| pane.split("@@").last }
-            expect(cwds.uniq.map { |dir| File.realpath(dir) }).to eq([File.realpath(project)])
+            # Still tmux's OWN pane_current_path, never what `up` was passed --
+            # but only a LIVE pane can answer it. The chat pane re-execs and
+            # dies, and tmux then reports it as either an empty path or the
+            # SERVER's cwd; both were observed flaking this example. Asserting
+            # over the live panes keeps the original check, and the emptiness
+            # guard is what stops it passing vacuously if every pane is dead.
+            live_cwds = fields.reject { |pane| pane.last == "1" }.map { |pane| pane[1] }
+            expect(live_cwds).not_to be_empty
+            expect(live_cwds.uniq.map { |dir| File.realpath(dir) }).to eq([File.realpath(project)])
           end
         end
       end
