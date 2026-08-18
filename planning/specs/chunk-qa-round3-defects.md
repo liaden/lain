@@ -38,6 +38,43 @@ and the two `content: ""` locks; `handover.rb:266-272`, `session.rb:355`/`:401-4
 `prompt_composer.rb:381-384`/`:399-410`/`:420-424`, `run_clock.rb:82`. Every line cited by a wave-1
 card is where the plan says it is; no card was invalidated.
 
+**Wave 1 progress (2026-08-18).**
+
+| card | implemented | review verdict | landed |
+|---|---|---|---|
+| T4 | yes | APPROVE | **`725efc36`** |
+| T5 | yes (+fix round) | APPROVE-WITH-FIXES, fixed | pending re-review |
+| T7 | yes (+fix round) | REQUEST-CHANGES, fixing | no |
+| T9 | yes | APPROVE-WITH-FIXES, fixing | no |
+| T10 | yes | REQUEST-CHANGES, fixing | no |
+| T1 | yes | in review (high depth) | no |
+| T3 | yes | in review | no |
+| T8 | yes | in review | no |
+
+Also landed: **`4c851d96`** `.rubocop.yml` excludes `planning/**/*.rb`. Not a card. The `ruby checks`
+hook lints the whole TREE when any Ruby file is staged, so one unlinted scratch script under
+`planning/` failed *every* commit in the repo. User chose the exclusion over editing the script.
+
+**Two corrections to this plan's own Grounding, for T11/T12/T14 to absorb:**
+
+1. The claim of "zero `xit`/`xdescribe`/`pending` anywhere" is **false**. Three genuine `pending`
+   declarations exist (`role_prelude_wiring_spec.rb:149`, `supervisor_reactor_spec.rb:179`, `:457`).
+   This weakens the argument that the mechanical audit categories are exhausted.
+2. `lib/lain.rb` was named a shared orchestrator-owned file needing per-card wiring lines. **Two
+   cards (T4, T5) found it needs no edit at all** -- a file with a sibling directory is that
+   subtree's index and requires its own children, per CLAUDE.md's Requires rule. Treat remaining
+   cards' `lib/lain.rb` claims as suspect rather than authoritative.
+
+**The suite baseline is 13690, not the ~10865 CLAUDE.md records** -- it has grown ~26%. The
+net-example-count justification in Integration checks must measure against 13690.
+
+**Known flake, recorded by NAME** (line numbers drift; CLAUDE.md says so and they drifted again --
+its recorded `:115`/`:175` are now `:141`/`:201`): `Lain::CLI::Up against a real tmux server`, the
+examples "threads -- chat args into the spawned window's command, each argument shell-escaped" and
+"--nvim cockpit splits the chat window into an nvim pane and a chat pane sharing one socket and one
+cwd". Load-induced, not a regression. Concurrent agents each running a full suite is enough to
+trigger it; example COUNT stays correct, which is how it is told apart from a dead worker.
+
 **One absorbed divergence, documentation only.** The "manual QA round 4" section says "T1 and T2
 both have to hold", and T1's first escalation trigger says "T2's shape changes too" -- but **there
 is no T2**: it was the contention-throttling card cut on panel review (see Open decisions). Read
