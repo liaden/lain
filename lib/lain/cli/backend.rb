@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "backend/ceiling"
+require_relative "backend/endpoint"
 require_relative "backend/summarizer"
 require_relative "backend/span_summarizer"
 require_relative "backend/window_book"
@@ -45,6 +46,11 @@ module Lain
       # for {MissingAPIKey}'s reason: a bad flag reaches the operator as a clean
       # Thor::Error only if the exe's `rescue Lain::Error` can see it.
       class InvalidCeiling < Error; end
+
+      # The fourth of this class's own errors, {InvalidEndpoint}, is defined
+      # in `backend/endpoint.rb` instead of here, beside {Endpoint} -- the
+      # thing that raises it -- moved there to keep this class under
+      # `Metrics/ClassLength` rather than loosen the limit.
 
       # The providers `--provider` selects between. The unknown-name guard names
       # this set, matching Capability::Policy.for's voice.
@@ -139,6 +145,7 @@ module Lain
         summarizer_name
         summarizer_max_tokens
         num_ctx
+        api_base
       end
 
       # Anthropic reads its key from the environment; Ollama is local and takes an
@@ -278,6 +285,23 @@ module Lain
       # reason: it is the one path every command takes, so the refusal cannot
       # depend on which collaborator a given run happens to build.
       def num_ctx = @options[:num_ctx] && Ceiling.new(flag: "--num-ctx", value: @options[:num_ctx]).tokens
+
+      # `--api-base`, through {Endpoint}, and OPTIONAL the same way `--num-ctx`
+      # is: unset means "ollama's own default", a real answer, not the
+      # omission {Ceiling} refuses for a ceiling every turn needs. What is NOT
+      # a real answer is a value with no http/https scheme and a host --
+      # `localhost:11434`, the ordinary way to leave the scheme off, PARSES as
+      # a URI (scheme `localhost`, opaque `11434`), so it used to sail past
+      # construction and die on the first turn with a bare `NoMethodError`
+      # from inside Faraday, naming an internal collaborator instead of the
+      # flag an operator actually got wrong.
+      #
+      # Refused at CONSTRUCTION, with `--num-ctx` and both summarizer flags
+      # and for their reason: it is the one path every command takes, so the
+      # refusal cannot depend on which collaborator a given run happens to
+      # build -- {#provider} is the only other reader of this flag, and it
+      # would not run at all for `bench record` on a non-ollama provider.
+      def api_base = @options[:api_base] && Endpoint.new(flag: "--api-base", value: @options[:api_base]).url
 
       # `--model` resolved once, so {#context}, {WindowBook} and the compaction
       # book agree about which model this run is. PUBLIC alongside

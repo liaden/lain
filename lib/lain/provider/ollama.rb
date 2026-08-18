@@ -184,16 +184,25 @@ module Lain
       #
       # `wrapping_errors` catches {Provider::HTTP::Error} and {Faraday::Error},
       # so `rescue APIError` alone was narrower than the "nil is the ORDINARY
-      # answer" contract above -- and it matters more since
-      # {CLI::Backend::WindowBook} began calling this on the LAUNCH path, where
-      # an escape is a backtrace instead of a chat. An `--api-base` with the
-      # SCHEME left off (`localhost:11434`, an ordinary typo) parses, so
-      # construction succeeds, and then Faraday's `build_exclusive_url` calls
-      # `end_with?` on the nil host -- a `NoMethodError` raised while BUILDING
-      # the request, above Faraday's own error middleware, so neither arm of
-      # `wrapping_errors` is reached. (An `--api-base` that is not a URI at all
-      # never gets here: it raises `URI::InvalidURIError` when the provider is
-      # CONSTRUCTED, which is {WindowBook}'s to absorb, not this method's.)
+      # answer" contract above. It mattered most while
+      # {CLI::Backend::WindowBook} could still reach a scheme-less
+      # `--api-base` (`localhost:11434`, an ordinary typo) at all: it PARSES,
+      # so construction succeeds, and Faraday's `build_exclusive_url` then
+      # calls `end_with?` on the nil host -- a `NoMethodError` raised while
+      # BUILDING the request, above Faraday's own error middleware, so
+      # neither arm of `wrapping_errors` is reached.
+      #
+      # T5 moved that refusal a layer up: on the {CLI::Backend}-mediated
+      # LAUNCH path, `--api-base` is now checked at {Backend}'s own
+      # construction ({Backend::Endpoint}), so neither this method nor
+      # {WindowBook} ever reaches a scheme-less or unparseable one anymore --
+      # the run refuses before a {Backend} exists at all. This method's own
+      # defence still earns its keep for a caller that constructs this class
+      # DIRECTLY, skipping {Backend} entirely, as the examples below do: a
+      # scheme-less base still parses and still needs the `NoMethodError`
+      # rescue here, and a value that is not a URI at all still raises
+      # `URI::InvalidURIError` straight out of `.new`, unabsorbed, for any
+      # such caller.
       #
       # A bare `NoMethodError` arm would also swallow the one failure that must
       # stay loud: a transport that cannot answer `#process_status` at all is a

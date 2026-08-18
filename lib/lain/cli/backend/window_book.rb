@@ -136,16 +136,16 @@ module Lain
         # never to a denominator lookup: raising one here would move a flag
         # refusal ahead of the chronicle open, which is the ordering
         # {CLI::ChatLaunch} keeps so a refusal never orphans a fresh journal. A
-        # run with a bad `--provider`, no key, or an unusable `--api-base` still
-        # refuses, loudly, at the wiring -- the three are DEFERRED here, not
-        # swallowed, and each has an example saying so.
+        # run with a bad `--provider` or no key still refuses, loudly, at the
+        # wiring -- both are DEFERRED here, not swallowed, and each has an
+        # example saying so.
         #
-        # {URI::Error} is the `--api-base` arm and it is a CONSTRUCTION failure,
-        # not a request one: `--api-base "not a url"` raises
-        # `URI::InvalidURIError` while {Provider::HTTP::Connection} builds its
-        # Faraday stack, so it escapes before any probe is sent.
-        # {Provider::Ollama#context_window_tokens} answers for the failures that
-        # happen once a provider exists.
+        # `--api-base` used to be a THIRD deferral, and is not one anymore: T5
+        # moved it to {Backend::Endpoint}, refused at CONSTRUCTION -- before a
+        # WindowBook can even exist, since {Backend#context_window} only runs
+        # on an already-constructed backend. `URI::Error` stays in the rescue
+        # set below purely as a backstop; nothing on this path is expected to
+        # raise it anymore.
         #
         # @return [Served, ContextWindow]
         def book

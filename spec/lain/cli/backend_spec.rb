@@ -360,6 +360,40 @@ RSpec.describe Lain::CLI::Backend do
       end
     end
 
+    # T5: unlike an unknown --provider or a missing key (both below), a bad
+    # `--api-base` is not a question #provider can defer -- Endpoint checks it
+    # at CONSTRUCTION, same as --num-ctx above, because `localhost:11434` (the
+    # scheme-less typo) is a VALID URI and used to sail past a URI.parse guard
+    # straight into a bare Faraday NoMethodError on the first turn.
+    describe "--api-base" do
+      it "refuses a scheme-less base at CONSTRUCTION, in the flag's own name" do
+        expect { ollama_backend(api_base: "localhost:11434") }
+          .to raise_error(Lain::CLI::Backend::InvalidEndpoint, /--api-base "localhost:11434"/)
+      end
+
+      it "refuses a value that does not parse as a URI at all" do
+        expect { ollama_backend(api_base: "not a url") }
+          .to raise_error(Lain::CLI::Backend::InvalidEndpoint, /--api-base "not a url"/)
+      end
+
+      it "refuses before anything asks for a window or a payload" do
+        expect { ollama_backend(api_base: "not a url") }.to raise_error(Lain::CLI::Backend::InvalidEndpoint)
+        expect(a_request(:get, %r{/api/ps})).not_to have_been_made
+      end
+
+      # UNSET is a real answer -- "ollama's own default" -- and must not trip
+      # the refusal a value with no usable scheme gets.
+      it "accepts being unset" do
+        serving(ps_entry(model, 32_768))
+
+        expect(ollama_backend.context_window.window_tokens(model)).to eq(32_768)
+      end
+
+      it "is a Lain::Error, so the exe presents it cleanly rather than as a backtrace" do
+        expect(Lain::CLI::Backend::InvalidEndpoint).to be < Lain::Error
+      end
+    end
+
     # A provider with no endpoint that reports a served window answers nil from
     # {Provider#context_window_tokens} without asking anything, so the book is
     # the shipped one and no probe is paid for.
@@ -396,17 +430,20 @@ RSpec.describe Lain::CLI::Backend do
       expect { backend.model }.to raise_error(Lain::CLI::UnknownProvider)
     end
 
-    # The third deferral, and the one that fails at provider CONSTRUCTION rather
-    # than on the request: `--api-base "not a url"` raises URI::InvalidURIError
-    # while the Faraday stack is built, so it escapes before any probe is sent
-    # and Provider::Ollama's own rescues never see it. A denominator lookup must
-    # not be where an operator's typo becomes a launch backtrace -- but the
-    # chat genuinely cannot run, so #provider still refuses.
-    it "does not turn an unusable --api-base into a refusal of its own" do
-      backend = backend_for(provider: "ollama", model:, max_tokens: 64, api_base: "not a url")
-
-      expect(backend.context_window.window_tokens(model)).to eq(Lain::ContextWindow::CONSERVATIVE_FALLBACK)
-      expect { backend.provider }.to raise_error(URI::InvalidURIError)
+    # T5 UPDATED this deliberately: `--api-base "not a url"` used to be a THIRD
+    # deferral -- a denominator lookup left `#provider` to raise
+    # URI::InvalidURIError on its own request -- but that meant construction
+    # SUCCEEDED for a base that could never serve a chat, and the same
+    # scheme-less typo (`localhost:11434`) parsed as a valid URI and reached a
+    # bare Faraday NoMethodError on the first real turn instead of ever
+    # raising here at all. Unlike the two deferrals above, a bad `--api-base`
+    # is now refused at CONSTRUCTION (see the "--api-base" examples above,
+    # which is where {Backend::Endpoint} is actually exercised) -- there is no
+    # backend left standing for #context_window or #provider to be asked
+    # about one.
+    it "refuses an unusable --api-base at construction, not as a deferred #provider failure" do
+      expect { backend_for(provider: "ollama", model:, max_tokens: 64, api_base: "not a url") }
+        .to raise_error(Lain::CLI::Backend::InvalidEndpoint, /--api-base "not a url"/)
     end
 
     it "does not turn a missing ANTHROPIC_API_KEY into a refusal of its own" do
