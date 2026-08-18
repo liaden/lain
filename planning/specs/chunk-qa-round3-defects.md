@@ -1,6 +1,6 @@
 # QA round-3 defects, a test-hygiene pass, and the next QA round
 
-status: in-progress
+status: landed-except-T13
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds · Jeremy Evans · Sandi Metz · Richard Schneeman · Aaron Patterson
@@ -19,6 +19,147 @@ the right machinery against the wrong subject (T14) -- the shape that once had `
 spec parsing lain's own planning documents. It ends by refreshing the QA plan and running round 4.
 
 Two of the nine are deliberately not fixed here — see **Open decisions**.
+
+## Close-out (2026-08-18)
+
+**Status: 12 of 13 cards landed. T13 is the only one outstanding** — deliberately deferred, see below.
+Every card was implemented in an isolated worktree, reviewed by the full panel, and landed on `main`
+with the suite green. All worktrees and branches are retired; `git worktree list` shows `main` alone.
+
+### Integration checks
+
+| check | result |
+|---|---|
+| `rake pspec` | **13895 examples, 0 failures, 15 pendings** |
+| serial dry-run cross-check | 13895 — agrees, so no worker died |
+| bare `rubocop` | 1310 files, no offenses |
+| `cargo test` / `cargo clippy -D warnings` | 9/9 pass; clippy clean |
+| `pre-commit run --all-files` | all pass except `shellcheck` (not installed on this box — expected) |
+| `:vcr` replay | 24 examples, 0 failures. `vcr_configuration.rb:216` sets `allow_http_connections_when_no_cassette = false`, so a cassette miss RAISES rather than reaching a live server — the check holds with ollama running, and **the next runner need not stop it** |
+| discipline report | 143→**144** flagged, 130→**131** `sole_raise_error`, 13→13 `nested_expect` |
+
+**Net example delta: 13690 → 13895, +205.** Decomposed and verified per card:
+T4 +7, T5 +14, T3 +11, T9 +18, T7 +9, T10 +24, T8 +21, T1 +14, T11 **−3**, T6 +65, T14 +5, T12 +20.
+
+Two caveats on that arithmetic, both learned the hard way and worth keeping:
+- **The count is not a pure function of spec files.** Six `lib/` constants mint examples — sharpest is
+  `Review::Surface::MESSAGES` × 3 includers, so one new port message adds 3 examples with no spec edit.
+  The dead-worker check ("count == baseline + deltas") is sound only while no such constant moves.
+  Verified none did outside T8's deliberate `settle` addition.
+- **Never reconcile `main` against a worktree's count.** A worktree measures `base + its own card`;
+  `main` measures `base + everything landed`. This was got wrong three times during the chunk.
+
+**Pendings 14 → 15 is explained and correct.** The 15th is `Surface::Null`'s "leaves evidence … that
+`#settle`'s verdict actually reached it". T8 added a sixth port message and `Surface::Null` renders
+nowhere by design, so the shared example pends once per message. It appeared *automatically* because
+T8 made `taken` a subtraction over `MESSAGES.keys` — the derived table proving itself.
+
+**The discipline `+1` is explained and must not be "fixed".** Diffed entry-by-entry against a
+regenerated baseline: **−3** (T11's three genuine deletions) **+4** (all T6's, in `backend_spec.rb`),
+plus four line-drift moves that are not changes. All four additions are *legitimate* — boundary and
+degrade guards for a refusal card ("accepts a value at the trained maximum", "does not block a launch
+when the server cannot answer"). `expect { }.not_to raise_error` is the correct spelling of "the refusal
+does not fire here". **The metric got worse while the suite got better**, because `sole_raise_error`
+cannot distinguish "asserts nothing" from "asserts a refusal is absent".
+
+### F8–F15: what should have caught each defect
+
+| defect | card | spec that catches it now | why it did not exist before |
+|---|---|---|---|
+| F8 window provenance | T6 | `middleware/resolve_window_spec.rb`, `seams/window_self_correction_spec.rb` | the old spec asserted the NUMBER, never GUESSED-vs-PROBED |
+| F9 stale idle line | T10 | `frontend/prompt_composer_spec.rb` | every example composed from a quiescent state, so mid-turn was never rendered |
+| F10 thread-scoped stall clock | T1 | `seams/stall_under_reactor_spec.rb`, `provider/http/stall_protection_spec.rb` | nothing ran two streams as SIBLING FIBERS on one reactor |
+| F11 uneven empty-result disclosure | T7 | `tools/{list_files,glob,grep}_spec.rb`, `middleware/withhold_secret_paths_spec.rb` | the empty case was pinned as `content: ""` — the defect WAS the assertion |
+| F12 constant requester | T9 | `approval/policy_switch_spec.rb`, `frontend/approval_policy_spec.rb` | a byte-exact lock pinned the literal `"agent"` |
+| F13 no verdict return leg | T8 | `spec/support/shared_examples/review_surface.rb` (`settle`) | the port had five messages; the sixth did not exist |
+| F14 defence in the wrong place | T5 | `cli/backend/endpoint_spec.rb` | the defence lived in `Provider::Ollama`, which the LAUNCH path reaches too late |
+| F15 one timeout, two jobs | T3, T4 | `provider/http/connect_budget_spec.rb`, `frontend/decorators/provider_retry_spec.rb` | connect and request shared one option; the retry was journaled but never rendered |
+
+**In six of eight cases the spec was not absent but MIS-AIMED** — an assertion existed and pinned the
+wrong thing. Only F10 and F13 needed a genuinely new capability. These were failures of *aim*, not of
+coverage, which is the same lesson as the vacuous assertions below, one level up.
+
+### What the panel caught that a green suite did not
+
+Every one of these was found by **mutation** — breaking something and watching a green stay green.
+**None was found by reading**, by any implementer or reviewer.
+
+- **T10** regressed its own AC: after a torn turn the agent parks in `:awaiting_model` and `idle` stays
+  suppressed for the session. `@agent.state` answers "what was the loop last doing", not "is a dispatch
+  in flight".
+- **T7** made the tool falsely claim withheld content existed for an empty directory — worse than the
+  bug it fixed, because it asserts a security boundary that is not there.
+- **T9** journalled `requester: ""` because the guard it relied on is swallowed by `record_evidence`'s
+  degrade; and a raw requester could forge a second tty approval line or desynchronise the Neovim
+  approval row so the cursor resolves to the **wrong pending**.
+- **T8** reported a landed verdict as *refused* when the surface raises.
+- **T12** would have shipped a bug if followed literally: making `Hunk#full_span_key` private breaks
+  production, because `Hunk.keys` reaches it on an explicit receiver.
+- **T14**'s first rule missed a live instance in the tree and flagged `hash["key"]` as a repository scan.
+
+**Six assertions that could not fail**, four of them created by cards *while fixing something else*.
+Three families, and the distinction matters for anyone extending the discipline specs:
+**(a)** subject derived, derivation unasserted — *nothing detects this*;
+**(b)** sole `not_to raise_error` over a non-raising call — *already detected*;
+**(c)** co-authored / reflexive — needs a **provenance** question, not a shape one.
+
+**Claims stated confidently and later disproved: seven.** Two implementer escalations, one reviewer
+mechanism, three orchestrator errors, one over-general synthesis. Every one fell to a measurement.
+Two cards' escalations were withdrawn by their own authors after probing. **A task card is not
+authoritative about coverage** — T11's fifth ordered deletion was struck after mutation showed the
+example it called redundant was the only one in the suite catching a class-level constant shadow.
+
+### Follow-up cards owed
+
+1. `ResendBridge#refusal` still gates on `@agent.state`, so after a torn turn it tells the operator to
+   "retry when the turn settles" for a turn that is already over. The blocker's twin, one namespace over.
+2. `Tools::WebFetch#default_connection` sets **no timeout at all** — 60/60 Net::HTTP defaults for a
+   MODEL-CHOSEN url. The only Faraday in `lib/` outside `MiddlewareStack`.
+3. The subagent toolset's provider is built with no `channel:` (`cli/wiring.rb:468`), so subagent
+   provider retries render nowhere.
+4. T3's connect cap is compensation in the wrong layer: `probe_config` states its impatience via
+   `request_timeout = 2` and says nothing about connect, so `Configuration#connect_timeout` reads 5
+   while the built probe uses 2 — two answers to one question.
+5. Bind the requester in `Subagent::ChildBuilder#gated` (panel-endorsed; the objection was checked and
+   `RoleSpawn` names come from the closed catalog, so it widens nothing).
+6. `mock_recording.rb#text_response` omits `model:` defaults — a double that lies. Defaulting it reds
+   **zero** examples suite-wide, which is precisely why it needs an audit rather than a one-liner.
+7. Decorator placement asymmetry: `ToolOutput` inline in `decorators.rb`, `ProviderRetry` extracted.
+8. A stray `Ractor::UnsafeError` stderr report from `spec/lain/rust/fuzzy_spec.rb:200` interleaves into
+   suite output — directly against the output-discipline rule whose point is that nothing interleaves
+   into NDJSON.
+9. Every healthy turn pays ~0.5s dead time: `StallClock#stop`'s join waits out the monitor's
+   `sleep(poll_interval)`. Measured 0.8s between last byte and return over three real-transport runs.
+10. From T14, left demonstrated but unfixed: `sensitivity/regions_spec.rb` reddens when `CLAUDE.md`
+    gains a documented sample key, and cannot tell "classifier widened" from "document changed";
+    `survey/chunker/code_spec.rb`'s repo-file examples caught **none** of 12 mutants that its synthetic
+    examples did not already catch. Its `DEFAULT_CEILING 60→30` survivor is a **shipped public default**,
+    not a fixture-quality issue, and should not be filed with the other three.
+
+### Owed to CLAUDE.md (orchestrator-owned, not yet written)
+
+- **Record flaky specs by NAME.** Its recorded `up_spec.rb:115`/`:175` drifted to `:141`/`:201` *inside
+  this chunk*. Two families now: (a) editor/terminal seams reading state before the editor applied it —
+  `CLI::Up against a real tmux server` ("threads -- chat args…", "--nvim cockpit splits…"),
+  `neovim/buffers_spec.rb` ("re-attach is idempotent…"), `thread_view_spec` ("...does not re-place the
+  diff…"); (b) a teardown race presenting as a non-zero exit with **no failing example** —
+  `isolation/worktree_handback_spec.rb`, `Errno::ENOTEMPTY` inside `Dir.mktmpdir` cleanup.
+- **`def m = expr unless cond` parses as `(def m) unless cond`** and takes the library down at load with
+  a `NoMethodError` on nil. Found by taking a review NIT literally.
+- **RSpec `let` memoization under fibers** — and note the mechanism was described wrongly *twice* before
+  it was measured. It is **not** a `ReentrantMutex` re-entrancy bypass: `Mutex` is fiber-owned here
+  (`owned?` false, `unlock` raises `ThreadError`) and the ≥3.0 branch gates on `@mutex.owned?`, never
+  reading `@owner`. The real cause is `ThreadsafeMemoized#fetch_or_store` holding the mutex **across the
+  let body**, serialising every other first-time `let`. It presents as a 30s watchdog hang whose
+  backtrace names the reactor and never names memoization.
+
+### Still owed
+
+- **T13** (rewrite the QA plan's expectations) is **not done**. Its two target files carry substantial
+  uncommitted working-tree edits from the 2026-08-18 QA run, which are newer than anything this plan
+  knows. Basing T13 on `HEAD` would fight that work. It needs those edits settled first.
+- **Manual QA round 4** — deliberately not a task card. It needs the real repo, tmux, an editor, and a
+  human at the approval gate.
 
 ## Execution log
 
