@@ -2,7 +2,10 @@
 
 **What it exercises:** `WindowBook`, `Middleware::ResolveWindow`, `Backend::NumCtx`,
 `Backend::Endpoint`, the `provenance` tag, `compaction_decision`, `.lain/state.json`, the HUD's
-`ctx N%`, and the `options` asymmetry on the ollama wire.
+`ctx N%`, the `options` asymmetry on the ollama wire — and, since 2026-08-18, the two other things a
+launch settles before a model is ever asked: **which prices the run will quote** (`PriceBook`, its
+freshness lint, and the deliberate zero fallback compaction uses) and **which collapse strategy it
+resolved** (`CLI::CompactionStrategy`).
 
 **Cost:** cheap. Most of it is launch-level and needs no model call at all. **Run it first** — it
 is the fastest way to tell whether the bench is honest before spending a session on a subject.
@@ -52,8 +55,19 @@ Expected: ~26s at the default 5s connect timeout, ~8s at 1s — **not** the ~20 
 (`request_timeout` 300s × 4 attempts) this used to take. Retries must render **live** on screen
 (`[retry] attempt N, retrying in Xs -- Faraday::ConnectionFailed`), not journal-only.
 
-Count the attempts with a counting TCP listener (see `method.md`) rather than trusting the rendered
-ordinals — round 4's F16 is exactly that gap.
+Count the attempts with a counting TCP listener (see `method.md`) — and then **check the rendered
+ordinals against that count**, which is the half T18 changed. The give-up line used to report the
+retry budget rather than the attempt that failed, so four real attempts rendered as `1, 2, 3, 3`
+(round 4's F16). The last line must now name a **higher** ordinal than the last retrying line:
+
+```
+[retry] attempt 3, retrying in 4s -- Faraday::ConnectionFailed
+[retry] attempt 4, giving up -- Faraday::ConnectionFailed
+```
+
+A repeated ordinal is the regression. Both providers must agree on what "attempt" means, so if the
+Anthropic path is exercised in the same round, read its taps too — one provider counting from 1 and
+the other from 0 is worse than the original bug.
 
 ## 3 — Cold start, then warm, in ONE session
 
@@ -111,9 +125,110 @@ env -u LAIN_NUM_BATCH lain chat ... --prompt hi    # -> extra={}   (NO options k
 Read it off both the `session` record and every `request_sent`. The `env -u` is required — the
 flag's default is `EnvDefaults.numeric("LAIN_NUM_BATCH")`, which `bench.md` exports.
 
+## 7 — `--compact-strategy` resolves, and refuses, at LAUNCH
+
+Four names ship and they compose with `+`. All of this is settled while the `Backend` is built, so
+**every check here is one non-interactive launch and no model call** — `< /dev/null` again, and the
+refusal fires before stdin is read.
+
+Reuse §1's `run` helper — `< /dev/null` and **no** `--prompt`, so a name that resolves reaches the
+REPL, reads EOF and exits without ever dispatching a turn:
+
+```bash
+run --compact-strategy nonesuch
+run --compact-strategy ''                                    # an unset shell variable, not a name
+run --compact-strategy 'elide-tools+'                        # a trailing separator
+run --compact-strategy '+elide'                              # a leading one
+run --compact-strategy 'elide-tools+summarize-conversation'  # the recommended pair: must LAUNCH
+run --compact-strategy 'elide+summarizing'                   # legal to spell, refuses later -- see below
+```
+
+Verified against the built binary 2026-08-18 (with `--prompt hi`, which the refusal precedes) — exit
+**1**, one line, **zero** backtrace frames:
+
+```
+unknown part "nonesuch" in --compact-strategy "nonesuch", expected one of ["summarizing", "elide", "summarize-conversation", "elide-tools"], or several joined by "+"
+unknown part "" in --compact-strategy "elide-tools+", expected one of [...], or several joined by "+"
+```
+
+Three things to read carefully, because each is a place a driver files the wrong finding:
+
+- **The empty and the trailing-separator cases name the PART and the whole value separately.** A
+  refusal reporting `--compact-strategy ""` for input `elide-tools+` would be true about the part and
+  false about what was typed; that wording was deliberate, so a report of `""` where `elide-tools+`
+  was typed is a regression, not a cosmetic difference.
+- **The refusal must list all four names.** The set grew this chunk; a refusal still naming only
+  `["summarizing", "elide"]` means the registry and the resolver have drifted apart.
+- **`elide+summarizing` is SUPPOSED to launch.** Both claim the whole span, so it raises `Overlap`
+  at the first compacting turn instead — refusing at resolve time is a design decision nobody has
+  taken. A launch-time refusal here would be the *unexpected* result. (Reaching the actual raise
+  needs volume: `rails-blog.md`.)
+
+## 8 — The price table, and the lint that keeps it honest
+
+**No model call, and no `lain ledger` — that command does not exist.** The corrected table (Opus was
+3× overstated until 2026-08-18) is reachable three ways: `/ruby` in a live session, `lain friction`
+over a recorded one, and `lain bench arms`' cost column. Read it here through `/ruby`, which asks the
+process under test rather than the source file:
+
+```bash
+# inside any live session -- the cockpit's, or a plain `lain chat --no-nvim`
+$QA/drive.sh '/ruby Lain::PriceBook.default.price("claude-opus-5").input * 1_000_000' 6 30 >/dev/null
+$QA/peek.sh 6
+```
+
+If no session is up yet, the same read off the checkout answers the same question one layer further
+from the process under test — say which one you used:
+
+```bash
+bundle exec ruby -Ilib -rlain -e 'p Lain::PriceBook.default.price("claude-opus-5")'
+```
+
+| model | input | output | cache write | cache read |
+|---|---|---|---|---|
+| `claude-opus-5` | **5** | **25** | 6.25 | 0.5 |
+| `claude-sonnet-5` | 3 | 15 | 3.75 | 0.3 |
+| `claude-haiku-4-5` | **1** | **5** | 1.25 | 0.1 |
+
+Per MTok, verified 2026-08-18 against the loaded `PriceBook.default`. **`15/75` on the opus row is
+the pre-chunk error returning.** Cache write must stay exactly 1.25× input and cache read exactly
+0.1× — a corrected input rate with a stale derived row is the half-fix to watch for.
+
+`claude-fable-5` and `claude-mythos-5` are deliberately **unpriced** and must raise by name:
+
+    no price for model "claude-fable-5"; configure a fallback to degrade
+
+A silent zero there would be the failure the whole object exists to prevent.
+
+**A local model reads as `0.0` on compaction records, and that is deliberate.** `--provider ollama`
+prices compaction through `CLI::Backend::COMPACTION_PRICES`, the same table degrading to a zero
+fallback, so `cost_saved`/`cost_spent` on a `compaction` record are honest zeros beside a local model
+id — not a free compaction and not a defect. The main `PriceBook` still **raises** for the same
+model; the two differ on purpose.
+
+The freshness lint is a repo lint (`pre-commit`), not a runtime check, and it runs from the checkout
+rather than the sandbox:
+
+```bash
+bin/lint-price-freshness; echo "exit=$?"     # exit 0, prints NOTHING, while the marker is < 90 days old
+ruby -rdate -e 'load "bin/lint-price-freshness"
+  src = File.read("lib/lain/price_book.rb")
+  puts PriceFreshnessLinter.check(source: src, path: "lib/lain/price_book.rb", today: Date.today + 200).message'
+```
+
+The injected clock is the whole design — a spec pinned to the system clock would pass today and fail
+unattended in 91 days — so drive the stale branch that way rather than by editing the marker:
+
+    lib/lain/price_book.rb: price table reviewed-on marker is 2026-08-18 (200 days old; horizon is 90 days) -- re-verify DEFAULTS against the published rates and update the marker
+
+`load`, not `require_relative`: the file has no `.rb` extension. **What wrong looks like:** the lint
+exiting 0 with a marker it never found — check that a *deleted* marker fails too, since a regex that
+stops matching silently turns the lint into a no-op that passes forever.
+
 ## What this scenario does not cover
 
 The **compaction path at scale** — filling the context until a compaction actually fires. Rounds 3
-and 4 both failed to reach it (round 3 died to F10, round 4 to F21's session ceiling), which makes
-it the least-exercised path in the whole QA suite. When the session ceiling is fixed, do it here and
-early, not behind the destructive probes.
+and 4 both failed to reach it (round 3 died to F10, round 4 to the then-per-session iteration
+ceiling), which makes it the least-exercised path in the whole QA suite. The ceiling is per-ask since
+T14, so the obstacle is now only volume: **`rails-blog.md` §1 is where that act now lives**, and it
+carries the precondition (real tool bytes) that a short session cannot satisfy.

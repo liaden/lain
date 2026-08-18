@@ -201,7 +201,65 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
 # tool calls live INSIDE turn records as content blocks, not as their own type
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="turn";
   Array(r["content"]).each{|b| puts "#{r["role"]}/#{b["type"]}: #{(b["text"]||b["name"]).to_s[0,90].gsub("\n"," ")}"}}' "$J"
+
+# EVERY TOOL REFUSAL THE MODEL SAW -- the only trace a tripped bound leaves; see below
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="turn";
+  Array(r["content"]).each{|b| next unless b["type"]=="tool_result" && b["is_error"];
+    puts b["content"].to_s[0,200].gsub("\n"," ")}}' "$J"
+
+# the compaction quartet: what was decided, what it paid for, and what shipped
+ruby -rjson -e 'c=Hash.new(0); ARGF.each_line{|l| r=JSON.parse(l) rescue next;
+  c[r["type"]]+=1 if %w[compaction_decision compaction context_derived oracle_answer].include?(r["type"])}; p c' "$J"
+
+# why a decision did NOT compact -- would_not_shrink is the field a short-output run pegs true
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="compaction_decision";
+  puts "compacted=#{r["compacted"]} shrink_refused=#{r["would_not_shrink"]} hits=#{r["summary_hits"]} " \
+       "misses=#{r["summary_misses"]} head=#{r["head_bytes"]}"}' "$J"
 ```
+
+## Three things that make a check pass while asserting nothing
+
+Each has already voided a probe. They are here rather than in a scenario because they void probes in
+several.
+
+1. **A tripped tool bound writes NO journal record.** `Tool::Bounds` returns a `Tool::Result.error`
+   and nothing more — there is no `Telemetry` for it — so a bound is visible **only** as a
+   `tool_result` block with `"is_error": true` inside a `turn` record (the reduction above), or as
+   the text on screen. A driver grepping the journal for a record type will conclude, wrongly, that
+   no bound fired. *(This is the chunk's own integration check 5, which cannot be performed as
+   written; recorded here so the next round does not re-derive it.)*
+2. **`Provider::Mock` reports all-zero cache fields.** Anything reading `cache_read_input_tokens` or
+   `cache_creation_input_tokens` — cache waste, cold detection, `lain friction`'s dollars — passes
+   vacuously against a mock, a `--dry-run`, or a recorded fixture built from one. **Cache readings
+   need a real session against a real endpoint**, and the figure to sanity-check them against is
+   `turn_usage.usage`, which is nested (see above).
+3. **There is no `lain ledger` command.** The corrected price table (T1) is reachable from
+   `lain friction SESSION`, from `lain bench arms`' cost column, and from `/ruby` inside a live
+   session — nowhere else. A step written against `lain ledger` fails as an unknown command, which
+   reads like a broken sandbox.
+
+## `/ruby` is the no-model-call instrument, and it is under-used
+
+`/ruby <expression>` evaluates inside a live session and prints the result's `inspect` — **no model
+call, no tokens, no wall-clock**. `self` is a frozen `CLI::InspectionBinding` exposing `timeline`,
+`session`, `supervisor` and `status`; anything else must be spelled fully qualified
+(`Lain::PriceBook.default…`). It is read-mostly by construction: assigning an ivar raises
+`FrozenError` rather than quietly rebinding what the next inspection reads.
+
+That makes it the cheapest way to interrogate the *loaded library* from inside the cockpit the round
+is already running — a constant's real value, a bound's real ceiling, whether this session records a
+path as fully or only partially read:
+
+```bash
+# a session command journals nothing, so drive.sh's quiet window would just run out --
+# pass a SHORT one and read the answer off the pane
+$QA/drive.sh '/ruby Lain::Tools::ReadFile::WHOLE_BOUND.limit' 6 30 >/dev/null; $QA/peek.sh 6
+$QA/drive.sh '/ruby session.partially_read?(File.expand_path("big.txt"))' 6 30 >/dev/null; $QA/peek.sh 6
+```
+
+Prefer it to reasoning from the source when a scenario asks "is this the number that is actually
+live", and note the answer in the record — a constant read from a file is a claim about the repo, a
+constant read through `/ruby` is a claim about the process under test.
 
 ## Check the machine is quiet, at the start and again before any timing claim
 
@@ -223,10 +281,15 @@ contaminant here**, not other people's jobs.
 
 ## Budget the round around the harness's own limits
 
-- **A session is spent after ~25 model calls** (round 4's F21: the iteration ceiling is per-session,
-  not per-ask) and then **silently swallows prompts**. Plan one act per session, restart
-  deliberately, and check the `turn_usage` count before diagnosing a dead session. *Remove this note
-  when F21 lands.*
+- **The iteration ceiling bounds ONE ask, not the session** (T14, 2026-08-18). A session no longer
+  goes dead after ~25 model calls, so an act may span many prompts and a `turn_usage` count in the
+  hundreds is not by itself a reason to restart. What is still bounded is a single ask: 25 model
+  calls **within one prompt** stops that ask, and the human is told in one line —
+  `error: loop ran 25 iterations, ceiling is 25` — after which **the next prompt must be answered
+  normally**. The round-4 failure to regress against is the opposite of a crash: a prompt accepted
+  at `you>`, committed as a `turn`, immediately `run_interrupted`, and answered with nothing on
+  screen while the HUD read `idle 0s`. So the check is not "did it stop" but **"did it say so, and
+  did the session survive saying it"**.
 - **Restart the session at the first literal `<function=` in a transcript.** Once one malformed tool
   call is committed as assistant text the model imitates it and the session never recovers, so every
   later act measures a poisoned context (round 4, MODEL-1).
@@ -241,7 +304,9 @@ contaminant here**, not other people's jobs.
   succeeded immediately in a fresh one.
 - **It loops on clarifying questions instead of acting**, and on exploration instead of writing.
   Round 4 watched it burn the **entire 25-iteration ceiling on `/create-plan` without writing a
-  single file** — git status, then find, then grep, then more listing.
+  single file** — git status, then find, then grep, then more listing. Since T14 that ceiling is
+  spent by ONE ask rather than by the session, so the same behaviour now ends in a rendered refusal
+  and a session that still works: the loop is the model's, the recovery is the harness's.
 - **Pointing a 3B-active MoE at multi-step orchestration scaffolds (`/create-plan`,
   `/execute-plan`) is the part it cannot do.** It writes the domain code fine. A failure to produce
   a usable plan is a MODEL finding, not a lain finding: hand-write the artifact and continue, because

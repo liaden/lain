@@ -22,19 +22,31 @@ Pick by the question being asked, not by coverage. Each states its own cost and 
 
 | Scenario | The question it answers | Cost |
 |---|---|---|
-| [`session-and-window.md`](scenarios/session-and-window.md) | Is the bench **honest** — served window, `provenance`, occupancy, the launch-level refusals, the `options` asymmetry? Mostly needs no model call. | cheap |
+| [`session-and-window.md`](scenarios/session-and-window.md) | Is the bench **honest before a model is asked** — served window, `provenance`, occupancy, the launch-level refusals, the `options` asymmetry, **which prices it will quote and which collapse strategy it resolved**? Mostly needs no model call. | cheap |
 | [`rust-cli.md`](scenarios/rust-cli.md) | Does the loop work **end to end**, on a non-Ruby toolchain, with a real compile-error unhappy path? The smoke test. | cheap |
-| [`cockpit-surfaces.md`](scenarios/cockpit-surfaces.md) | Do the nvim/tmux surfaces tell the truth — review flow, buffer staleness, the approval surfaces, the HUD? **Four of round 4's seven defects were here.** | cheap, piggybacks |
-| [`failure-injection.md`](scenarios/failure-injection.md) | Is the record **unforgeable**, and does every failure path refuse by name? Deterministic, no model needed. A good standalone regression gate. | minutes |
+| [`cockpit-surfaces.md`](scenarios/cockpit-surfaces.md) | Do the nvim/tmux surfaces tell the truth — review flow, buffer staleness, the approval surfaces and the notifier that shares their queue, the live timeline, how a refusal is *delivered*? **Four of round 4's seven defects were here, and every fix landed somewhere other than where the symptom was.** | cheap, piggybacks |
+| [`failure-injection.md`](scenarios/failure-injection.md) | Is the record **unforgeable**, does every failure path refuse by name, and do the **tool bounds, the windowed-read contract and the summarizer's ceilings** hold? The deterministic half needs no model at all. The standalone regression gate. | minutes |
 | [`bowling-ruby.md`](scenarios/bowling-ruby.md) | Does the **authoring loop** produce something worth having — plan, execute, critique, graded against driver-owned oracles? | 1–3 sessions |
-| [`bench-arms.md`](scenarios/bench-arms.md) | Does the arm driver produce numbers that are not artifacts? | ~5 min |
-| [`rails-blog.md`](scenarios/rails-blog.md) | **Context economics at scale** — compaction firing for real, unbounded tool output, the gate under volume. The only scenario that reaches these. | expensive |
+| [`bench-arms.md`](scenarios/bench-arms.md) | Does the arm driver produce numbers that are not artifacts, **say what produced them, and refuse a price it cannot stand behind**? | ~5 min |
+| [`rails-blog.md`](scenarios/rails-blog.md) | **Context economics at scale** — the composed compaction strategy firing for real, unbounded tool output, the gate under volume, and what a broken cache cost in dollars. The only scenario that reaches any of these. | expensive |
 
 **A suggested full round:** `session-and-window` → `rust-cli` → one subject (`bowling-ruby` or
 `rails-blog`) with `cockpit-surfaces` piggybacked → `bench-arms` → `failure-injection`.
 
 **A suggested regression gate after a chunk lands:** `failure-injection` + `session-and-window`.
-Both are cheap, deterministic, and cover the paths most chunks touch.
+Both are cheap, deterministic, and cover the paths most chunks touch. As of 2026-08-18 that pair
+also covers **most of a chunk that was mostly not about the cockpit at all** — the price table and
+its lint, `--compact-strategy` resolution, both tool-bound shapes, the `edit_file` refusal
+vocabulary, the summarizer's ceilings, the per-ask iteration ceiling and the `lain up`
+crash-on-start case. That is deliberate: **a check that only runs in an expensive scenario mostly
+does not run**, so anything deterministic belongs in the cheap pair even when the feature it guards
+is expensive.
+
+The corollary is the one thing the pair cannot do: **nothing deterministic can tell you a
+compaction strategy works**, because a compaction needs volume that a cheap scenario cannot
+manufacture. `rails-blog.md` §0 is the only place that act lives, and it carries a precondition
+(tool results of real size) without which it silently measures nothing while paying for a model
+call per turn.
 
 ## Findings
 
@@ -70,3 +82,10 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   "the plumbing is usable" are not separated. One wiring mistake once cost 84.0s against 7.5s and
   nothing here would catch the same class again.
 - **Compaction at scale** — reachable only from `rails-blog.md`, and not yet reached by any round.
+  The obstacle that stopped rounds 3 and 4 (a per-session iteration ceiling) is gone since T14, so
+  what remains is only volume and patience. Until a round actually reaches it, **every claim about
+  the two content-selective strategies rests on specs alone**, and `--compact-strategy` is checked
+  no further than name resolution.
+- **A tripped tool bound leaves no journal record.** The bounds are checkable, but only through the
+  `tool_result` text — so nothing here can answer "did a bound fire during ordinary use", which is
+  the question that would say whether a ceiling is set too low.

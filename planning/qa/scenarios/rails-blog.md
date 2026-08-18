@@ -47,6 +47,51 @@ run. Record how far it got; do not coax it past the mechanical escalation trigge
 
 ## What to watch, in order of value
 
+### 0. The precondition that decides whether §1 measures anything
+
+**Drive this act with `--compact-strategy elide-tools+summarize-conversation`, and only over tools
+that return REAL BYTES.** Both halves of that sentence are load-bearing, and the second is a trap
+that has already cost this chunk real time.
+
+```bash
+lain chat --provider ollama --model qwen3-coder:30b \
+     --compact-strategy elide-tools+summarize-conversation --summarizer-provider ollama
+```
+
+That pair is the one to reach for because the two strategies are **exact complements by
+construction** — both ask one predicate which messages carry a tool block — so they partition a span
+instead of fighting over it. Any other pairing may not; `elide+summarizing` resolves happily and then
+raises `Overlap` at the first compacting turn, which is a legitimate thing to drive here once,
+deliberately, since this is the only scenario that reaches a compacting turn at all.
+
+**Why the tool results must be large, measured rather than assumed.** The elide half writes a
+per-message attestation of about **230 bytes** — role, digest, byte count. Over `"ok"`-sized tool
+results the attestation is *bigger than what it replaced*, so `shrinks?` is **false on every turn**;
+it turns true around **2 KB** of tool result. The driver is the elide half, not the oracle half.
+
+And a run that fails to shrink does not merely fail to demonstrate the strategy — **it pays for a
+model call and throws it away, every turn.** The derivation asks the oracle first and checks whether
+the result would shrink second, so a refused turn has already been billed. Measured on a three-turn
+refused run:
+
+```
+oracle_answer => 4   context_derived => 3   compaction_decision => 3   compaction => 0
+```
+
+Four answers bought, none shipped. Read exactly that shape before trusting anything in §1:
+
+```bash
+ruby -rjson -e 'c=Hash.new(0); ARGF.each_line{|l| r=JSON.parse(l) rescue next;
+  c[r["type"]]+=1 if %w[compaction_decision compaction context_derived oracle_answer].include?(r["type"])}; p c' "$JOURNAL"
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="compaction_decision";
+  puts "compacted=#{r["compacted"]} shrink_refused=#{r["would_not_shrink"]}"}' "$JOURNAL"
+```
+
+**`would_not_shrink: true` on every decision with `compaction => 0` is the signature of a scenario
+that was too small, not of a broken strategy.** `rails new`, `bundle install`, `read_file` on a
+schema and `glob '**/*.rb'` all clear 2 KB easily — which is exactly why this act lives here and not
+in `bowling-ruby.md`, where it would produce that null every time.
+
 ### 1. Compaction, at last
 
 Do this **early in the act, not last** — it is the point of the scenario.
@@ -67,6 +112,27 @@ Expected once occupancy climbs: `signals` stops being `[]`, a compaction is warr
   compaction firing on a *provisional* window and rewriting three times.)
 - Does occupancy actually fall afterwards, and does the HUD's `ctx N%` follow it down?
 - Does the prompt cache go cold at the rewrite, and is that visible?
+
+**Then read what the composed strategy actually did to the history, which is the check nothing else
+in this bench can make.** Pull the rewritten span out of the derived context and confirm the split:
+
+- **tool-carrying messages became attestations** — one line each, of the shape
+  `[<role> <digest> <bytes> bytes] …`, with the elision prose after it;
+- **conversational turns survive verbatim and in position** — not summarized, not reordered;
+- a **lone** conversational turn sitting between two tool runs is *retained*, not summarized. The
+  strategy deliberately declines to pay a model call to turn one message into one message, so an
+  `oracle_answer` for a single-message run is a defect, not thoroughness;
+- the oracle was asked **once per claimed run**, not once per span — so the per-turn multiplier is
+  N, not 1, and a session with many conversational stretches costs proportionally. Count
+  `oracle_answer` records against the number of conversational runs in the span rather than against
+  the number of compactions.
+
+**What wrong looks like, in order of how easily it is missed:** an `Overlap` raise mid-turn (the two
+selections have stopped being complements — that is the failure T7's shared predicate exists to make
+impossible, so it is a serious finding, not a flake); attestations covering conversational messages
+too (one predicate answered inconsistently); and the quiet one — `compaction => 0` with
+`oracle_answer` climbing, which is §0's paid-and-discarded shape and means the act is measuring
+nothing while spending on every turn.
 
 ### 2. Tool-result volume
 
@@ -103,6 +169,55 @@ ruby -rjson -e 'n=0; ARGF.each_line{|l| r=JSON.parse(l) rescue next; n+=1 if r["
 and check for `run_interrupted` records with nothing rendered. Restarting the session mid-scenario
 is expected here; say in the findings which act boundary you restarted at, because it changes what
 the compaction reading means.
+
+### 5. What the broken cache cost, in dollars
+
+`lain friction SESSION` gained a fourth analyzer this chunk, and **this is the only scenario that
+can exercise it honestly**: `Provider::Mock` reports all-zero cache fields, so a mock-backed or
+`--dry-run` reading passes while asserting nothing (`method.md`). It needs a real session against a
+real endpoint, and it needs one that broke its prefix — which a long compacting run does by
+construction.
+
+```bash
+lain friction "$JOURNAL"
+```
+
+Read the `cache_waste` line, and read it as a *pair of figures*, never as one:
+
+    cache_waste: at most <N> tokens re-billed across <K> prefix break(s), <cost>; <M> tokens served
+    from cache over <C> priced main-agent call(s), <saved>: look at what edits the prompt PREFIX
+    mid-session -- a Workspace or reminder block that changes every turn, or compaction firing while
+    the cache was still warm
+
+Four things to check, and three of them are about honesty rather than arithmetic:
+
+- **"at most" is load-bearing.** The figure is an upper bound: a call that both broke its prefix and
+  appended new messages has its whole cache write counted. A report stating a bare figure has lost
+  the error's direction.
+- **A clean session says so explicitly.** With no prefix break the section must still appear —
+  `cache_waste: none -- no prefix break was re-billed; …` — because an omitted section and a clean
+  session are indistinguishable to a reader.
+- **What the cache BOUGHT is always reported beside what it wasted.** A waste figure alone is an
+  anti-metric by this repo's own rule: an agent that reads nothing wastes nothing. If the "tokens
+  served from cache" half is missing, that is the finding.
+- **`/model` mid-session must not be charged as waste.** Drive one deliberately — a model switch is
+  indistinguishable from a real prefix edit unless the journal is segmented per model, and `/model`
+  is a normal move. The report must say so:
+
+      <n> model switch(es) counted, not charged -- <reason>
+
+  A waste figure that jumps by roughly a whole prefix at the switch is the metric inflating, which
+  is the single most likely defect in this analyzer.
+
+Two more, both expected rather than wrong: a local model is **unpriced**, so the dollars are absent
+and the report says `dollar figures exclude qwen3-coder:30b -- no price recorded` rather than
+printing a confident `$0.00`; and every figure covers the **main agent only**, since subagent turns
+are outside the journaling middleware — the wording says `priced main-agent call(s)` for exactly
+that reason, so do not reconcile it against a fleet's total.
+
+**Then grep the report for anything it must not contain.** It is built from journal records and may
+carry digests, token counts and dollars — never message content, never a path. A report is pasted
+into an issue; this is the check that keeps it safe to paste.
 
 ## What this scenario does NOT test
 

@@ -1,7 +1,9 @@
 # Scenario: the arm driver
 
 **What it exercises:** `lain bench arms` — the orchestration arms (single-thread,
-orchestrator-worker, dual-ledger), the grader, the token ledger and the cost columns.
+orchestrator-worker, dual-ledger), the grader, the token ledger, and since 2026-08-18 the **cost
+column and the attribution header**: whether the report says what produced it, and whether it
+refuses to quote a price it cannot stand behind.
 
 **Cost:** ~5 minutes, no interaction. **Precondition: the chat is closed.** A second model on one
 GPU evicts the first, which is a measured 84.0s against 7.5s.
@@ -45,6 +47,62 @@ Round 4's reading, for comparison:
 
 All three checks passed: the orchestrator-worker arm's 0.812 is backed by 441.6 real tokens, so it
 is not a collapsed arm faking a grade on its own timeline.
+
+## The header must say what produced the report
+
+Since T12 the report opens with attribution, not just counts — because a dollar figure on a report
+naming no model is exactly the lie `PriceBook` refuses to tell:
+
+```
+Arm driver — 3 arms over 8 tasks
+  fixture:   spec/fixtures/arms/tasks.yml
+  model:     qwen3-coder:30b
+  isolation: unset — Arm::NoIsolation leased nothing
+```
+
+Check all four lines:
+
+- **the fixture path is the one you passed**, not a count of prompts. The Driver is handed prompts
+  and cannot name its own suite, so this arrives from the command — a blank here means the wiring
+  was lost, and an unattributable bench report is a weak experiment record.
+- **the model is the SEAM's own answer**, so it is what actually ran rather than a second resolution
+  of the flags. If it disagrees with `--model`, that disagreement is the finding.
+- **an unset backend says `unset — Arm::NoIsolation leased nothing`**, not a blank and not `none`. A
+  blank field reads as "there was none"; this says the run leased nothing, which is a fact about the
+  experiment. With `--isolation` set, the header prints **the operator's own word** (`none`,
+  `worktree`) rather than a class name — a header reading `Isolation::Journal` means it fell back to
+  the wrapper's class and can no longer distinguish the two backends it exists to distinguish.
+- **no credential and no base URL anywhere in it.** `spec/output_discipline_spec.rb` cannot see
+  inside a report String, so this one is checked by eye, every round.
+
+`unrecorded` in any field is the honest "the record does not know" — legitimate for a hand-assembled
+run, and a finding when the flag was actually passed.
+
+## The cost column, and its deliberate refusal
+
+`cost (USD)` joins `grader score`, `total tokens` and `wall-time (s)` as a fourth table. **Against a
+local model it does not print numbers, and that is the correct outcome** — `qwen3-coder:30b` has no
+row in `PriceBook::DEFAULTS`, so pricing raises and the section degrades to the Ledger's own message:
+
+```
+cost (USD)
+  not priced — no price for model "qwen3-coder:30b"; configure a fallback to degrade
+```
+
+Three things this is checking, and the first is the one that actually broke:
+
+1. **The rest of the report still renders.** Score, tokens and wall-time never needed a model. Letting
+   the price failure out took the *whole* report down — after every run was already paid for, and
+   with the memo never landing, so a retry re-ran and re-paid the suite for no record. A missing
+   report where a `not priced` line belongs is a serious regression, not a cosmetic one.
+2. **It refuses rather than printing `0.000000`.** A silently-free model is the lie this whole object
+   exists to prevent; a zero cost row beside non-zero tokens is the failure.
+3. **One refused arm refuses the SECTION, not just its row.** A table with figures for two arms and a
+   gap for the third invites exactly the comparison the missing number cannot support.
+
+To see real figures, run one small sweep against a priced model — and note what the number excludes:
+**LLM-judge tokens are not on the arms' ledgers**, so a rubric-graded run's cost omits the judge. That
+omission is now *visible* for the first time; it is recorded, not fixed.
 
 ## Also confirm
 

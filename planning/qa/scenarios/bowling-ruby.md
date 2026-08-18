@@ -8,7 +8,9 @@ than 30 × 10.
 gate, skill dispatch (`/create-plan`, `/execute-plan`, `/critique`), the summarizer tiers, and
 whether the artifact at the end is worth having.
 
-**Cost:** one to three sessions (see the session ceiling in `method.md`).
+**Cost:** one to three sessions. The iteration ceiling bounds one **ask** rather than the session
+since T14, so a session no longer expires after ~25 model calls — restart for a poisoned transcript
+(`method.md`), not for a spent budget.
 
 **Needs:** `bench.md` up. A git-initialised project directory seeded with at least one file under
 `lib/` and one under `spec/` — an empty tree makes the model spend turns on redundant listings.
@@ -69,6 +71,12 @@ fires, and the fix looks unshipped.
 **Expect this act to fail on the model, not on lain.** Round 4 watched `qwen3-coder:30b` burn the
 entire 25-iteration ceiling here without writing a file. That is a MODEL finding. Hand-write the
 plan and continue — the seams the later acts test still need driving.
+
+Since T14 that exhaustion is survivable, and confirming so is a cheap piggybacked check: the ceiling
+should end **this ask** with one rendered line (`error: loop ran 25 iterations, ceiling is 25`), and
+the very next prompt should be answered normally on a fresh count. If the session goes quiet instead
+— prompts accepted, nothing rendered — that is the per-session counter returning, and it is a
+session-killer worth stopping the round for.
 
 ## 2 — `/execute-plan`, and the wedge
 

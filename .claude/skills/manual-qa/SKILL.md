@@ -64,9 +64,13 @@ Follow the scenario's own steps. Four rules override any impulse to improvise:
 Record per act as `method.md` says: journal path, `.lain/state.json`, `.lain/config.toml`, both
 panes captured at the moment of a finding, `ollama ps`.
 
-**Budget the round around the harness's own limits.** A session is spent after ~25 model calls and
-then silently swallows prompts; restart deliberately between acts rather than diagnosing a dead
-session. Restart immediately if a literal `<function=` appears in a transcript — the model imitates
+**The session ceiling no longer bounds the round, and that changed in both halves.** It used to be
+that a session was spent after ~25 model calls and then silently swallowed prompts, so a round had
+to be budgeted around it. The iteration ceiling is now per-ASK: a long single ask still stops at it
+and says so, and the next prompt runs from zero. The silent swallow is gone with it. **So do not
+restart between acts to dodge a limit that is not there** — and if you ever do see a prompt accepted
+and answered with nothing at all, that is a finding worth the round, not a known cost of doing
+business. Restart immediately if a literal `<function=` appears in a transcript — the model imitates
 its own malformed call and never recovers, so everything measured after that is measuring a poisoned
 context.
 
