@@ -291,6 +291,49 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
     end
   end
 
+  # T6's owed test, and it is owed because the survival is a CLASSIFICATION
+  # rather than a structural fact. Grep's trailer survives for a structural
+  # reason -- {Matches#paths_in} finds no `path:lineno:text` split in it and so
+  # offers the classifier nothing. {Listing#paths_in} is `[row]`, so under
+  # `glob` and `list_files` the cap notice IS offered as a candidate path, is
+  # joined to the base, and survives only because {Lain::Sensitivity} rules it
+  # ordinary. A rule that someday matched it would silently delete the one row
+  # that says the answer is partial, leaving a capped listing reading as
+  # complete -- the exact failure both this class and {Lain::Tool::Bounds}
+  # exist to prevent.
+  #
+  # The notice is read from the tool's OWN bound rather than written out here,
+  # the `no_rows?` rule: one definition, read from both ends.
+  describe "a listing that both caps and withholds" do
+    # One ordinary file over the cap, plus a gated one that sorts first (so it
+    # is inside the surviving prefix and there is really something to withhold).
+    let(:total) { Lain::Tools::Glob::BOUND.limit + 2 }
+    let(:notice) { Lain::Tools::Glob::BOUND.notice(total) }
+
+    before do
+      FileUtils.mkdir_p(File.join(dir, "many"))
+      (total - 1).times { |i| File.write(File.join(dir, "many", format("f%05d.txt", i)), "") }
+      write("many/credentials.json", "{\"token\":\"#{secret}\"}\n")
+    end
+
+    it "keeps glob's cap notice as an ordinary row and counts only the secret as withheld" do
+      shown = content(glob("many/*", path: dir))
+
+      expect(shown.split("\n")).to include(notice)
+      expect(shown).to end_with("\n1 path withheld (credential)")
+      expect(shown).not_to include("credentials.json")
+      expect(shown).not_to include(secret)
+    end
+
+    it "keeps list_files' cap notice as an ordinary row too" do
+      shown = content(list(File.join(dir, "many")))
+
+      expect(shown.split("\n")).to include(Lain::Tools::ListFiles::BOUND.notice(total))
+      expect(shown).to end_with("\n1 path withheld (credential)")
+      expect(shown).not_to include("credentials.json")
+    end
+  end
+
   describe "a row this class cannot even join" do
     # A matched line carrying `\0:12:` makes the SECOND reading of the row hold
     # a NUL byte, and `File.join` raises on one before the classifier is ever

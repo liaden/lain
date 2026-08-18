@@ -66,6 +66,51 @@ RSpec.describe Lain::Tools::WebSearch do
     end
   end
 
+  # Ranked hits are an ENUMERATION under {Lain::Tool::Bounds}' boundary, and
+  # this is the one of the six whose ordering the repo does not own. It is
+  # capped anyway, and the reason is that the cap adds no nondeterminism the
+  # response did not already carry: the tool imposes no ordering of its own, so
+  # the surviving set is `first(limit)` of exactly what the backend returned,
+  # in the RANK the backend chose. Top-N of a ranked list is also the right
+  # partial answer -- rank 1 is the best hit by the backend's own claim, which
+  # is not true of a filesystem walk order.
+  describe "the enumeration bound" do
+    let(:bound) { described_class::BOUND }
+    let(:overflow) { 3 }
+
+    def hits(count)
+      Array.new(count) { |i| result(title: "hit #{i}", url: "https://example.com/#{i}") }
+    end
+
+    def searching(count)
+      described_class.new(backend: ->(_query) { hits(count) }).call({ query: "q" }, nil).content
+    end
+
+    it "caps an oversized result set and discloses the cap and the true count in band" do
+      total = bound.limit + overflow
+
+      content = searching(total)
+
+      expect(content).to end_with("... capped at #{bound.limit} of #{total} results")
+      expect(content).to include("hit #{bound.limit - 1}")
+      expect(content).not_to include("hit #{bound.limit}")
+    end
+
+    it "keeps the backend's own rank order, so the survivors are its top results" do
+      expect(searching(bound.limit + overflow).split("\n\n").first(3))
+        .to eq(["1. hit 0\n   https://example.com/0",
+                "2. hit 1\n   https://example.com/1",
+                "3. hit 2\n   https://example.com/2"])
+    end
+
+    it "leaves a result set within the cap byte-identical" do
+      result = tool.call({ query: "ruby frozen string" }, nil)
+
+      expect(result.content).to eq("1. Frozen string literals\n   https://ruby-doc.org/frozen\n   magic comment\n\n" \
+                                   "2. String#freeze\n   https://ruby-doc.org/freeze")
+    end
+  end
+
   describe "immunity to a backend result that overrides #equal?" do
     # The review's Fix 1: `raw.equal?(NOT_CONFIGURED)` calls `#equal?` on the
     # UNTRUSTED value the backend returned, so a result that overrides

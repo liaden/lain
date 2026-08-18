@@ -14,6 +14,20 @@ module Lain
     # report naming only one is the signal to reach for {AstDump} next and find
     # the node kind the pattern is missing.
     class TestPattern < Tool
+      # A match report is an ENUMERATION under {Tool::Bounds}' stated boundary,
+      # and it is the closest of the six to the precedent: {Grep} and
+      # {AstSearch} cap structural matches at 200, this reports structural
+      # matches, so it takes the same number outright rather than inventing a
+      # second one for the same shape.
+      #
+      # The disclosure is only half new here. `report`'s header already states
+      # the TRUE count, so a capped report was never going to lie about how many
+      # matches there were -- what it lacked was a row saying which of them the
+      # reader is looking at. The notice supplies that, and the two numbers are
+      # deliberately allowed to disagree: the header is what the pattern found,
+      # the rows are what fits.
+      BOUND = Tool::Bounds::Enumeration.new(limit: 200, unit: "matches")
+
       # The wire shape: the pattern under test, the source to run it against,
       # and which grammar to parse both with.
       class Input < Tool::Input
@@ -33,7 +47,9 @@ module Lain
       def description
         "Runs an ast-grep pattern against a source snippet and reports how " \
           "many structural matches it found, with the line and captures of " \
-          "each. A valid pattern can still under-match a construct that looks " \
+          "each. The count is always the true one; the per-match rows are " \
+          "capped at #{BOUND.limit} and a capped report says so. " \
+          "A valid pattern can still under-match a construct that looks " \
           "the same but parses to a different node kind (a singleton method " \
           "def vs a plain one, for example) -- if the count looks lower than " \
           "the source warrants, use ast_dump on the same snippet to see the " \
@@ -66,7 +82,7 @@ module Lain
         return "0 matches." if matches.empty?
 
         header = "#{matches.size} match#{"es" unless matches.size == 1}:"
-        [header, *matches.each_with_index.map { |match, index| describe(match, index) }].join("\n")
+        [header, *BOUND.cap(matches.each_with_index.map { |match, index| describe(match, index) })].join("\n")
       end
 
       def describe(match, index)

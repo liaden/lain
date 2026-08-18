@@ -64,4 +64,44 @@ RSpec.describe Lain::Tools::TestPattern do
 
     expect(result).to have_attributes(is_error: true, content: /cobol/)
   end
+
+  # A match report is an ENUMERATION under {Lain::Tool::Bounds}' stated
+  # boundary -- the same shape {Lain::Tools::Grep} and {Lain::Tools::AstSearch}
+  # already cap -- so it caps and announces the cut IN BAND. The header already
+  # states the true count, so the notice completes a disclosure this tool had
+  # half of: the count is what the pattern found, the rows are what fits.
+  describe "the enumeration bound" do
+    let(:bound) { described_class::BOUND }
+    let(:overflow) { 5 }
+
+    def many_methods(count)
+      Array.new(count) { |i| "def m#{format("%05d", i)}()\nend\n" }.join
+    end
+
+    it "caps an oversized match report and discloses the cap and the true count in band" do
+      total = bound.limit + overflow
+
+      rows = tool.call(pattern: "def $NAME($$$A)", code: many_methods(total), language: "ruby")
+                 .content.split("\n")
+
+      expect(rows.first).to eq("#{total} matches:")
+      expect(rows.length).to eq(bound.limit + 2)
+      expect(rows.last).to eq("... capped at #{bound.limit} of #{total} matches")
+    end
+
+    it "caps after the match ordering, so the survivors are the first matches in the source" do
+      rows = tool.call(pattern: "def $NAME($$$A)", code: many_methods(bound.limit + overflow), language: "ruby")
+                 .content.split("\n")
+
+      expect(rows[1]).to eq('  1. line 1: NAME="m00000"')
+      expect(rows[bound.limit]).to eq("  #{bound.limit}. line #{(2 * bound.limit) - 1}: " \
+                                      "NAME=\"m#{format("%05d", bound.limit - 1)}\"")
+    end
+
+    it "leaves a match report within the cap byte-identical" do
+      result = tool.call(pattern: "def $NAME($$$A)", code: "def total(x)\nend\n", language: "ruby")
+
+      expect(result.content).to eq("1 match:\n  1. line 1: NAME=\"total\"")
+    end
+  end
 end

@@ -41,6 +41,26 @@ module Lain
     # rejected, same as it would be for `read_file` or `list_files`; what a
     # denied path loses is its row in the answer, not the walk that found it.
     class Glob < Tool
+      # A glob is an ENUMERATION under {Tool::Bounds}' stated boundary: its rows
+      # are independent answers, so the first N of them ARE a usable partial
+      # answer and the model can narrow the pattern itself. It therefore caps
+      # and discloses in band rather than refusing, exactly as {Grep} does.
+      #
+      # 500, and the number is a byte budget rather than a taste. Grep's shipped
+      # ceiling is 200 rows of `path:lineno:text` -- roughly 70 B each here, so
+      # ~14 KB of observation. A path row measures 33.5 B on average over this
+      # repo's 1610 tracked files, so 500 of them is ~17 KB: the same order, and
+      # the two tools' worst cases cost a turn comparably. It is also above
+      # every query a human organizes a subtree for (`lib/**/*.rb` is 647 here
+      # -- capped, deliberately, and told so) while bounding the pathological
+      # ones this exists for, where a repo-wide `**/*` runs to thousands.
+      #
+      # The cap is applied to the SORTED list, never by stopping the walk. That
+      # is what keeps "returns matches in deterministic sorted order" true of a
+      # capped result -- see the walk-order divergence {Grep} records, where two
+      # search paths return different 200s of the same tree.
+      BOUND = Tool::Bounds::Enumeration.new(limit: 500, unit: "paths")
+
       # The wire shape: a required glob pattern, plus an optional base
       # directory it is matched from.
       class Input < Tool::Input
@@ -69,7 +89,9 @@ module Lain
       def description
         "Finds paths matching a glob pattern (e.g. \"**/*.rb\") relative to " \
           "an optional base directory, returned one per line in sorted " \
-          "order. No matches is not an error -- the result names the " \
+          "order. Output is capped at #{BOUND.limit} paths; a capped result " \
+          "says so and names the true match count rather than truncating " \
+          "silently. No matches is not an error -- the result names the " \
           "pattern and says there were no matches, not an empty string."
       end
 
@@ -92,8 +114,12 @@ module Lain
 
       private
 
+      # {BOUND} is applied after `.sort` and never by stopping the walk, the
+      # same position {ListFiles#entries} puts it in: `cap` reads the true
+      # count off the collection it is handed, and the rows that survive are
+      # decided by the ordering rather than by the filesystem.
       def matches(base, pattern)
-        Dir.glob(pattern, base:).sort
+        BOUND.cap(Dir.glob(pattern, base:).sort)
       end
     end
   end

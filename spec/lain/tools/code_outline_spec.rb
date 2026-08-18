@@ -188,4 +188,64 @@ RSpec.describe Lain::Tools::CodeOutline do
       expect(result).to have_attributes(is_error: true, content: "no such file: #{tmpdir}/nope.rb")
     end
   end
+
+  # An outline is an ENUMERATION under {Lain::Tool::Bounds}' stated boundary --
+  # a row-shaped result whose first N rows are a usable partial answer -- so it
+  # caps and announces the cut IN BAND rather than refusing. The cap lands
+  # AFTER `render`'s by-line ordering, so the survivors are the first
+  # definitions in the FILE rather than whichever pattern query ran first
+  # (`class_entries` are collected before `method_entries`, so an unordered cap
+  # would answer with every class and no method).
+  describe "the enumeration bound" do
+    let(:bound) { described_class::BOUND }
+    let(:overflow) { 5 }
+
+    def many_methods(count)
+      write("many.rb", Array.new(count) { |i| "def m#{format("%05d", i)}()\nend\n" }.join)
+    end
+
+    it "caps an oversized outline and discloses the cap and the true count in band" do
+      total = bound.limit + overflow
+      path = many_methods(total)
+
+      rows = tool.call(path:, language: "ruby").content.split("\n")
+
+      expect(rows.length).to eq(bound.limit + 1)
+      expect(rows.last).to eq("... capped at #{bound.limit} of #{total} definitions")
+    end
+
+    it "caps after the by-line ordering, so the survivors are the first definitions in the file" do
+      path = many_methods(bound.limit + overflow)
+
+      rows = tool.call(path:, language: "ruby").content.split("\n")
+
+      expect(rows.first(2)).to eq(["L1  def m00000", "L3  def m00001"])
+      expect(rows[bound.limit - 1]).to eq("L#{(2 * bound.limit) - 1}  def m#{format("%05d", bound.limit - 1)}")
+    end
+
+    # `sort_by` is NOT stable in CRuby, and the cap promotes that from cosmetic
+    # to load-bearing. `class_entries` are collected before `method_entries`, so
+    # two definitions sharing ONE line sit 300 apart in the collection and
+    # quicksort decides their order by its own internals. Measured against this
+    # exact fixture before the index tiebreak: the within-line order FLIPS
+    # partway down the file -- `{["def","class"] => 66, ["class","def"] => 34}`
+    # -- so at 200 rows it decides which definitions EXIST rather than merely
+    # how two of them are spelled. One definition per line, which every other
+    # ordering example here uses, never exercises it.
+    it "breaks a within-line tie by collection order, identically on every tied line" do
+      path = write("tied.rb", (1..300).map { |i| "class K#{i}; def m#{i}(); end; end\n" }.join)
+
+      rows = tool.call(path:, language: "ruby").content.split("\n")
+
+      expect(rows.first(4)).to eq(["L1  class K1", "L1  def m1", "L2  class K2", "L2  def m2"])
+      expect(rows.take(bound.limit).each_slice(2).map { |a, b| [a[/class|def/], b[/class|def/]] }.tally)
+        .to eq({ %w[class def] => bound.limit / 2 })
+    end
+
+    it "leaves an outline within the cap byte-identical" do
+      path = write("small.rb", "class Thing\nend\n")
+
+      expect(tool.call(path:, language: "ruby").content).to eq("L1  class Thing")
+    end
+  end
 end

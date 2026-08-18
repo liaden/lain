@@ -225,4 +225,111 @@ RSpec.describe Lain::Tools::FileSymbols do
       expect(result).to have_attributes(is_error: true, content: "no such file: #{tmpdir}/nope.rb")
     end
   end
+
+  # A symbol table is an ENUMERATION under {Lain::Tool::Bounds}' stated
+  # boundary, and it is the only one of the six with TWO of them: definitions
+  # and references are separate sections with separate true counts, so they
+  # carry separate bounds. Capping the occurrences before the partition would
+  # let a definition-heavy file consume the whole budget and return an empty
+  # REFERENCES section -- a partial answer that reads like a complete one,
+  # which is the failure the boundary exists to prevent.
+  describe "the enumeration bounds" do
+    let(:definitions) { described_class::DEFINITIONS_BOUND }
+    let(:references) { described_class::REFERENCES_BOUND }
+    let(:overflow) { 5 }
+
+    # One method per call site, so a single fixture overflows BOTH sections and
+    # the two caps are observed against the same run.
+    def many_methods(count)
+      write("many.rb", Array.new(count) { |i| "def m#{format("%05d", i)}\n  c#{format("%05d", i)}()\nend\n" }.join)
+    end
+
+    def sections_for(total)
+      tool.call(path: many_methods(total), language: "ruby").content.split("\n\n")
+    end
+
+    it "caps each section against its own bound and discloses both true counts in band" do
+      total = references.limit + overflow
+
+      definitions_section, references_section = sections_for(total)
+
+      expect(definitions_section.lines.map(&:chomp).last)
+        .to eq("... capped at #{definitions.limit} of #{total} definitions")
+      expect(references_section.lines.map(&:chomp).last)
+        .to eq("... capped at #{references.limit} of #{total} references")
+    end
+
+    it "keeps both sections present when only one of them overflows" do
+      total = definitions.limit + overflow
+
+      definitions_section, references_section = sections_for(total)
+
+      expect(definitions_section).to include("... capped at #{definitions.limit} of #{total} definitions")
+      expect(references_section).to start_with("REFERENCES")
+      expect(references_section).not_to include("capped at")
+      expect(references_section.lines.length).to eq(total + 1)
+    end
+
+    it "caps after the by-line ordering, so the survivors are the first symbols in the file" do
+      definitions_section, = sections_for(definitions.limit + overflow)
+
+      rows = definitions_section.lines.map(&:chomp)
+      expect(rows[1]).to eq("  L1  method  m00000")
+      expect(rows[definitions.limit]).to eq("  L#{(3 * definitions.limit) - 2}  method  " \
+                                            "m#{format("%05d", definitions.limit - 1)}")
+    end
+
+    # The same instability {Lain::Tools::CodeOutline}'s tie example pins, on the
+    # tool where ties are the COMMON case rather than the odd one: several
+    # references share a line whenever a method chains calls. `sort_by` is not
+    # stable in CRuby, so under a cap an unstable tie decides which occurrences
+    # exist at all.
+    #
+    # Recorded honestly: unlike the outline's, these two fixtures came out in
+    # source order BEFORE the tiebreak as well, so they went green in the red
+    # run -- and a review sweep of 23,988 collections (12 tie widths x 1999 line
+    # counts, up to 24,000 rows) found ZERO flips. That is structural, not a
+    # fixture nobody looked hard enough for: `ruby_qsort` leaves an
+    # already-ordered partition undisturbed, and `occurrences` cannot hand it a
+    # disordered one, since `line_for` is monotone in the byte offset and
+    # tree-sitter emits captures in byte order. The outline's shape, whose ties
+    # sit ~300 apart across the class/method blocks, flips at 592 of 599 sizes.
+    #
+    # So be exact about what these two guard, or the next reader will assume the
+    # tiebreak is covered on both tools and delete it from one. They do NOT
+    # guard the tiebreak -- removing it from `ordered` leaves them green. They
+    # guard `occurrences`' DOCUMENT ORDER: they fail if a second query is merged
+    # in, if a partition by role lands before the sort, or if the capture walk
+    # stops being byte-ordered -- which is precisely the change that would make
+    # the tiebreak start mattering here. The tiebreak's own guard is
+    # {Lain::Tools::CodeOutline}'s tie example, which does red without it.
+    it "breaks a within-line tie among definitions by collection order" do
+      path = write("tied.rb", (1..300).map { |i| "class K#{i}; def m#{i}; end; end\n" }.join)
+
+      rows = tool.call(path:, language: "ruby").content.split("\n\n").first.lines.map(&:chomp).drop(1)
+
+      expect(rows.first(4)).to eq(["  L1  class  K1", "  L1  method  m1",
+                                   "  L2  class  K2", "  L2  method  m2"])
+      expect(rows.take(definitions.limit)
+                 .each_slice(2).map { |a, b| [a[/class|method/], b[/class|method/]] }.tally)
+        .to eq({ %w[class method] => definitions.limit / 2 })
+    end
+
+    it "breaks a within-line tie among references by collection order" do
+      path = write("calls.rb", (1..300).map { |i| "def m#{i}; a#{i}(); b#{i}(); c#{i}(); d#{i}(); end\n" }.join)
+
+      rows = tool.call(path:, language: "ruby").content.split("\n\n").last.lines.map(&:chomp).drop(1)
+
+      expect(rows.take(references.limit)
+                 .each_slice(4).map { |group| group.map { _1[/\s(\w)\d+\z/, 1] } }.tally)
+        .to eq({ %w[a b c d] => references.limit / 4 })
+    end
+
+    it "leaves a symbol table within the caps byte-identical" do
+      path = write("thing.rb", "class Thing\nend\n")
+
+      expect(tool.call(path:, language: "ruby").content)
+        .to eq("DEFINITIONS\n  L1  class  Thing\n\nREFERENCES\n  (none)")
+    end
+  end
 end

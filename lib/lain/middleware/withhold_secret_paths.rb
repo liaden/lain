@@ -42,6 +42,16 @@ module Lain
     # OUTPUT. So the arithmetic closes: rows shown plus rows withheld is what
     # the search returned.
     #
+    # Under `glob` and `list_files` that sum is now the CAP rather than the
+    # whole answer, and there is a third number. Both tools bound their listing
+    # through {Tool::Bounds::Enumeration}, whose notice names the cap AND the
+    # true total -- so `shown + withheld` is what the tool SENT, and the notice
+    # says how much it did not. Nothing leaks by subtraction: the withheld count
+    # already implied its own total, and a capped listing tells the model
+    # strictly less about the tail than an uncapped one did. The notice row
+    # itself is offered to the classifier like any other -- see {Listing} and
+    # the spec's "a listing that both caps and withholds".
+    #
     # Making the cap ignore the withheld rows was the alternative and is not
     # available from here: this class sees a formatted result, not the walk, so
     # "200 that survived" would mean asking the tool to search again. It would

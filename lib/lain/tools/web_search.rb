@@ -23,6 +23,43 @@ module Lain
     # and came up empty, so the model does not keep retrying a search that was
     # never going to work.
     class WebSearch < Tool
+      # Ranked hits are an ENUMERATION under {Tool::Bounds}' stated boundary,
+      # and this is the one tool of the six whose ordering this repo does not
+      # own. It is capped anyway, and the reasoning is worth stating because the
+      # obvious objection -- "a nondeterministic cap" -- does not apply.
+      #
+      # The rule the other five follow is cap AFTER the deterministic sort,
+      # never by stopping the walk; its point is that WHICH rows survive must be
+      # decided by an ordering rather than by an accident. Here the tool imposes
+      # no ordering at all: it renders the backend's own sequence, so the
+      # survivors are `first(limit)` of exactly what came back, in the RANK the
+      # backend chose. The cap can therefore introduce no variation the response
+      # did not already carry -- two identical responses cap identically -- and
+      # unlike a filesystem walk order, rank is MEANINGFUL: hit 1 is the best
+      # answer by the backend's own claim, so top-N is the right partial answer
+      # rather than an arbitrary slice.
+      #
+      # What the notice's TOTAL means here, which is not what it means anywhere
+      # else. The shared wording is `capped at 20 of N results`, and for the
+      # five filesystem tools N is the universe -- every path that matched,
+      # every symbol in the file. Here N is only what THIS call returned, so a
+      # backend that pages internally makes N a page size rather than a corpus
+      # size. That is true rather than misleading -- N is exactly the number of
+      # results the cap withheld rows from -- but a reader who learned the
+      # sentence on `glob` would otherwise carry the stronger reading over.
+      #
+      # It is also inert on the shipped path: the default backend is
+      # {Backend::Null}, which returns {Backend::NOT_CONFIGURED} and never
+      # reaches `render`. This cap binds only once a real backend is wired.
+      #
+      # 20, and it is small on purpose. A rendered hit (rank, title, URL,
+      # snippet) is the fattest row shape of the six at ~250-400 B, so 20 of
+      # them already reach ~6-8 KB -- {Grep}'s band. Conventional search
+      # backends page at 10-20 results, so this ceiling is at or above what an
+      # ordinary backend returns in one call: it bounds a backend that answers
+      # with hundreds without touching one that behaves.
+      BOUND = Tool::Bounds::Enumeration.new(limit: 20, unit: "results")
+
       # One ranked hit. A plain, deeply-frozen value: what a backend yields and
       # what the tool renders.
       Result = Data.define(:title, :url, :snippet) do
@@ -64,7 +101,10 @@ module Lain
 
       def description
         "Searches the web for a query and returns ranked results, each with a " \
-          "title and a URL. Returns an error result if the search backend fails."
+          "title and a URL. Output is capped at the top #{BOUND.limit} " \
+          "results; a capped result says so and names the true count rather " \
+          "than truncating silently. Returns an error result if the search " \
+          "backend fails."
       end
 
       # The wire shape: one required query string.
@@ -108,8 +148,13 @@ module Lain
         "web_search failed for #{query.inspect}: #{error.message}"
       end
 
+      # The hits are rendered before they are capped, not after. {Bounds::
+      # Enumeration#cap} derives the true count from the collection it is
+      # handed, and a backend has already materialised every hit by the time it
+      # returns -- so rendering all of them buys the count the notice needs and
+      # costs nothing the backend did not already spend.
       def render(results)
-        results.each_with_index.map { |hit, i| render_hit(hit, i + 1) }.join("\n\n")
+        BOUND.cap(results.each_with_index.map { |hit, i| render_hit(hit, i + 1) }).join("\n\n")
       end
 
       def render_hit(hit, rank)

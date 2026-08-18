@@ -19,6 +19,23 @@ module Lain
       # directory the glob walks, so a literal there allocates once per entry.
       DOTS = %w[. ..].freeze
 
+      # A listing is an ENUMERATION under {Tool::Bounds}' stated boundary: its
+      # rows are independent answers, so the first N of them ARE a usable
+      # partial answer and the model can narrow the path itself. It caps and
+      # discloses in band rather than refusing.
+      #
+      # Same 500 as {Glob}, from the same byte budget and deliberately the same
+      # number: the two produce the identical row shape (a path), are read by
+      # the identical {Middleware::WithholdSecretPaths::Listing} reader, and a
+      # model that learned one tool's ceiling has learned the other's. This one
+      # needs it more -- a recursive listing at a repo root walks `.git` and
+      # runs to tens of thousands of entries -- which is why the cap is set by
+      # what a partial answer is worth rather than by what a listing usually is.
+      #
+      # Applied AFTER `entries`' sort, never by stopping the walk: which rows
+      # survive is decided by the ordering, not by the filesystem.
+      BOUND = Tool::Bounds::Enumeration.new(limit: 500, unit: "paths")
+
       class << self
         # A pure function of the resolved path. Public and class-level so
         # {Middleware::WithholdSecretPaths} can recognize this exact sentinel
@@ -37,6 +54,8 @@ module Lain
       def description
         "Lists the entries of a directory at the given path, one per line, " \
           "sorted. Set recursive: true to descend into subdirectories. " \
+          "Output is capped at #{BOUND.limit} paths; a capped listing says so " \
+          "and names the true entry count rather than truncating silently. " \
           "Returns an error result if the path does not exist, is not a " \
           "directory, or cannot be read. An empty directory is not an error " \
           "-- the result names it as empty rather than returning blank content."
@@ -78,12 +97,17 @@ module Lain
       # `**` with FNM_DOTMATCH visits the directory itself (as ".") but never
       # loops into "..", so filtering the two dot entries is all that is
       # needed to keep the listing to real children.
+      #
+      # {BOUND} is applied at the END of this chain rather than in `#perform`,
+      # and the position is the point: `cap` reads the true count off the
+      # collection it is handed, and it sits after `.sort` so the rows that
+      # survive are decided by the ordering rather than by the walk.
       def entries(path, recursive)
         pattern = recursive ? File.join(path, "**", "*") : File.join(path, "*")
-        Dir.glob(pattern, File::FNM_DOTMATCH)
-           .reject { |entry| DOTS.include?(File.basename(entry)) }
-           .map { |entry| entry.delete_prefix("#{path}/") }
-           .sort
+        BOUND.cap(Dir.glob(pattern, File::FNM_DOTMATCH)
+                     .reject { |entry| DOTS.include?(File.basename(entry)) }
+                     .map { |entry| entry.delete_prefix("#{path}/") }
+                     .sort)
       end
     end
   end

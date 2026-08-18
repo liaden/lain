@@ -20,6 +20,28 @@ module Lain
     # scope walk over the CST (tree-sitter `locals`), which is T8's job, not
     # this card's.
     class CodeOutline < Tool
+      # An outline is an ENUMERATION under {Tool::Bounds}' stated boundary: one
+      # row per definition, independent of the rest, so the first N of them are
+      # a usable partial answer. It caps and discloses in band.
+      #
+      # 200, which is {Grep::MAX_MATCHES} taken outright rather than re-derived
+      # -- the row is match-shaped and the model already knows that number from
+      # `grep` and `ast_search`. It sits well above anything a human writes:
+      # measured with THIS tool over all 647 of the repo's `lib/**/*.rb`, the
+      # densest outline is **80** definitions (`lib/lain/review/docent.rb`,
+      # with `frontend/neovim/rpc_thread.rb` next at 79). So the ceiling binds
+      # only on generated or pathological source, which is the case it is here
+      # for. At ~23 B a row it costs ~5 KB, under {Glob}'s ceiling, and
+      # that asymmetry is right: an outline is per-FILE, so a caller that hits
+      # this cap has a narrower question available (`ast_search` for one
+      # construct) that a listing's caller does not.
+      #
+      # Applied after `render`'s by-line sort, never during collection --
+      # `class_entries` are gathered before `method_entries`, so a cap taken
+      # before the sort would answer a large file with every class and no
+      # method while claiming to be an outline of it.
+      BOUND = Tool::Bounds::Enumeration.new(limit: 200, unit: "definitions")
+
       # The wire shape: a file path plus the language to parse it as.
       class Input < Tool::Input
         field :path, :string, description: "Path to the file to outline.", required: true
@@ -38,7 +60,9 @@ module Lain
           "each tagged with its 1-based line number and ordered by position " \
           "in the file. Matching is structural (an ast-grep pattern over the " \
           "parsed syntax tree), so an identifier that only appears inside a " \
-          "comment or a string literal is never reported. Returns an error " \
+          "comment or a string literal is never reported. Output is capped at " \
+          "#{BOUND.limit} definitions; a capped outline says so and names the " \
+          "true count rather than truncating silently. Returns an error " \
           "result if the path does not exist, is a directory, cannot be " \
           "read, or the language is unsupported."
       end
@@ -132,8 +156,24 @@ module Lain
         end
       end
 
+      # The index in the sort key is not decoration. `sort_by` is NOT stable in
+      # CRuby, and this collection is `class_entries` followed by
+      # `method_entries` -- so two definitions sharing ONE line sit far apart in
+      # it and quicksort decides which comes first by its own internals, not by
+      # anything the language promises. Measured over 300 lines of
+      # `class K; def m(); end; end`: the within-line order FLIPS partway down
+      # the file (`{["def","class"] => 66, ["class","def"] => 34}`).
+      #
+      # Before {BOUND} that was cosmetic -- two rows on one line in an odd
+      # order. Under a cap it decides which rows EXIST, which is exactly what
+      # the cap-after-the-sort rule exists to keep away from accidents. The
+      # index makes collection order the tiebreak, so this method's claim to
+      # return the file's FIRST definitions is true rather than usually true.
       def render(entries)
-        entries.sort_by(&:line).map { |e| "L#{e.line}  #{format_entry(e)}" }.join("\n")
+        rows = entries.each_with_index
+                      .sort_by { |entry, index| [entry.line, index] }
+                      .map { |entry, _| "L#{entry.line}  #{format_entry(entry)}" }
+        BOUND.cap(rows).join("\n")
       end
 
       # A label ending in "." (the "def self." singleton-method prefix)

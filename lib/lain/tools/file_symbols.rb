@@ -18,6 +18,48 @@ module Lain
     # regex outline. Nesting is deliberately flat: each entry carries only its
     # own line, ordered by position; a real scope tree is a separate concern.
     class FileSymbols < Tool
+      # A symbol table is an ENUMERATION under {Tool::Bounds}' stated boundary,
+      # and it is the only tool here with TWO of them. DEFINITIONS and
+      # REFERENCES are separate sections with separate true counts, so one
+      # shared bound taken before the partition would let a definition-heavy
+      # file spend the whole budget and return an empty REFERENCES heading --
+      # a partial answer that reads like a complete one, which is precisely the
+      # failure the boundary exists to prevent. Two bounds, two notices, two
+      # counts.
+      #
+      # Definitions take {CodeOutline::BOUND}'s 200: it is the same question
+      # with roles attached. The measurement is this tool's own, not that one's
+      # -- a role query finds more than a pattern catalog does, so the densest
+      # DEFINITIONS section over the repo's 647 `lib/**/*.rb` is **135**
+      # (`lib/lain/review/docent.rb`) where the same file outlines at 80. 200
+      # clears both.
+      #
+      # References get 500 because call sites outnumber definitions, and the
+      # multiple is the number: measured over the 182 `lib/` files with more
+      # than 20 definitions, the reference:definition ratio has a MEDIAN of
+      # **2.45** and a maximum of 4.26. 500/200 is 2.5, so the two sections fill
+      # at about the same rate on real source -- which is the property being
+      # bought. One shared cap would truncate references on ordinary files while
+      # the definition section never filled, making the cap a fact about the
+      # tool rather than about the file.
+      #
+      # The anchor is denominated per OBSERVATION, and this is the only tool
+      # here that emits two sections, so its worst case is the sum: 700 rows at
+      # a measured 22.7 B (110 `lib/` files of over 100 rows) is **~16 KB**,
+      # which is {Grep}'s ~14 KB band rather than a second helping of it.
+      DEFINITIONS_BOUND = Tool::Bounds::Enumeration.new(limit: 200, unit: "definitions")
+      REFERENCES_BOUND = Tool::Bounds::Enumeration.new(limit: 500, unit: "references")
+
+      # Built from the two bounds rather than written out beside them, so the
+      # numbers the model is told and the numbers enforced cannot drift. It
+      # lives here, next to what it reads, instead of inside {#description}:
+      # two bounds take two clauses, and the sentence is the only part of that
+      # string that is derived rather than prose.
+      CAP_NOTE = "Each section caps separately, at #{DEFINITIONS_BOUND.limit} definitions and " \
+                 "#{REFERENCES_BOUND.limit} references; a capped section says so and names its true count."
+                 .freeze
+      private_constant :CAP_NOTE
+
       # The wire shape: a file path plus the language to parse it as.
       class Input < Tool::Input
         field :path, :string, description: "Path to the file to read.", required: true
@@ -38,8 +80,9 @@ module Lain
           "sites. Matching is structural (a tree-sitter query over the parsed " \
           "syntax tree), so an identifier that only appears in a comment or a " \
           "string literal is never reported. Supports ruby, typescript, and " \
-          "rust. Returns an error result if the path does not exist, is a " \
-          "directory, cannot be read, or the language is unsupported."
+          "rust. #{CAP_NOTE} Returns an error result if the path does not " \
+          "exist, is a directory, cannot be read, or the language is " \
+          "unsupported."
       end
 
       # Audited: reads Session#worker_env.cwd (a value read, not a mutation) to
@@ -122,14 +165,30 @@ module Lain
 
       def render(occurrences)
         definitions, references = occurrences.partition { |occurrence| occurrence.kind == "definition" }
-        [section("DEFINITIONS", definitions), section("REFERENCES", references)].join("\n\n")
+        [section("DEFINITIONS", definitions, DEFINITIONS_BOUND),
+         section("REFERENCES", references, REFERENCES_BOUND)].join("\n\n")
       end
 
-      def section(heading, occurrences)
-        rows = occurrences.sort_by(&:line).map do |occurrence|
+      # The cap notice lands FLUSH LEFT among two-space-indented rows, and that
+      # is left as it is: a row that is not a symbol should not be shaped like
+      # one, and {Tool::Bounds::Enumeration#cap} owns the notice's format so
+      # that every adopting tool discloses in the same words.
+      def section(heading, occurrences, bound)
+        rows = bound.cap(ordered(occurrences).map do |occurrence|
           "  L#{occurrence.line}  #{occurrence.role}  #{occurrence.name}"
-        end
+        end)
         ([heading] + (rows.empty? ? ["  (none)"] : rows)).join("\n")
+      end
+
+      # The index in the sort key is not decoration: `sort_by` is NOT stable in
+      # CRuby, and ties are the COMMON case here rather than the odd one --
+      # every chained call puts several references on one line. Under a bound an
+      # unstable tie stops being cosmetic and decides which occurrences exist at
+      # all, so collection order (which is the query's, which is the document's)
+      # is made the tiebreak explicitly. {CodeOutline#render} carries the
+      # measurement that shows the instability is real and not theoretical.
+      def ordered(occurrences)
+        occurrences.each_with_index.sort_by { |occurrence, index| [occurrence.line, index] }.map(&:first)
       end
     end
   end

@@ -93,6 +93,53 @@ RSpec.describe Lain::Tools::ListFiles do
     expect(tool.description).to match(/empty/i)
   end
 
+  # A listing is an ENUMERATION under {Lain::Tool::Bounds}' stated boundary --
+  # a row-shaped result whose first N rows are a usable partial answer -- so it
+  # caps and announces the cut IN BAND rather than refusing. Capping happens
+  # after `entries`' sort, never by stopping the walk: which rows survive is
+  # decided by the ordering, not by the filesystem.
+  describe "the enumeration bound" do
+    let(:bound) { described_class::BOUND }
+    let(:overflow) { 5 }
+
+    def fill(count)
+      names = Array.new(count) { |i| format("f%05d.txt", i) }
+      names.each { |name| File.write(File.join(tmpdir, name), "") }
+      names
+    end
+
+    def rows_for = tool.call(path: tmpdir).content.split("\n")
+
+    it "caps an oversized listing and discloses the cap and the true count in band" do
+      total = bound.limit + overflow
+      fill(total)
+
+      rows = rows_for
+
+      expect(rows.length).to eq(bound.limit + 1)
+      expect(rows.last).to eq("... capped at #{bound.limit} of #{total} paths")
+    end
+
+    it "caps after the deterministic sort, so the surviving rows are the sorted prefix" do
+      names = fill(bound.limit + overflow)
+
+      expect(rows_for.first(bound.limit)).to eq(names.sort.first(bound.limit))
+    end
+
+    it "returns the same entries in the same order on every run" do
+      fill(bound.limit + overflow)
+
+      expect(rows_for).to eq(rows_for)
+    end
+
+    it "leaves a listing within the cap byte-identical" do
+      touch("a.txt")
+      touch("b.txt")
+
+      expect(tool.call(path: tmpdir).content).to eq("a.txt\nb.txt")
+    end
+  end
+
   describe "resolving paths against the session WorkerEnv" do
     def invocation_with(session)
       Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
