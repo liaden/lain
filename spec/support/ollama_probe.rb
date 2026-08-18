@@ -47,11 +47,20 @@
 # once per turn, so an N-turn cassette wants N recorded probes. That loudness is
 # deliberate: the silent version hands compaction accounting a nil that looks
 # exactly like "no runner resident".
+#
+# T6 added a SECOND endpoint on the same launch path, for the same reason and
+# with the same default. `CLI::Backend` asks `/api/show` for the model's TRAINED
+# maximum at construction, to refuse a `--num-ctx` no runner could ever serve --
+# but only when the flag is actually set, so most examples never reach it. The
+# default answers a body with no `model_info`, which means "no ceiling
+# discoverable": a provider that cannot state one must not block a launch, so
+# again nothing an example measures moves.
 module OllamaProbeStub
   PATH = "/api/ps"
+  SHOW_PATH = "/api/show"
 
-  def self.cassette_answers?
-    VcrCassetteStack.serves?(PATH)
+  def self.cassette_answers?(path = PATH)
+    VcrCassetteStack.serves?(path)
   end
 end
 
@@ -71,5 +80,8 @@ RSpec.configure do |config|
     stub_request(:get, %r{/api/ps})
       .with { !OllamaProbeStub.cassette_answers? }
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: '{"models":[]}')
+    stub_request(:post, %r{/api/show})
+      .with { !OllamaProbeStub.cassette_answers?(OllamaProbeStub::SHOW_PATH) }
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: "{}")
   end
 end

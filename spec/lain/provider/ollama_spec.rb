@@ -740,6 +740,145 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
+  # The OTHER number, behind a deliberately different name. `/api/show`'s
+  # `model_info.<arch>.context_length` is the GGUF's trained maximum, and the
+  # describe above spends most of its length refusing to let it near a
+  # denominator. T6 needs it anyway, for the one question it can honestly
+  # answer: is an operator's `--num-ctx` above what this model could ever be
+  # served? So it arrives through its own accessor, and the pair of files
+  # asserts BOTH halves -- that this one answers the trained figure, and that
+  # the served one still never does.
+  describe "#trained_context_tokens" do
+    let(:trained) { 262_144 }
+
+    def show_body(architecture: "qwen3moe", context_length: trained)
+      { "model_info" => { "general.architecture" => architecture,
+                          "#{architecture}.context_length" => context_length },
+        "capabilities" => %w[completion tools] }
+    end
+
+    def transport_show(body)
+      Class.new do
+        define_method(:model_details) { |_model| Struct.new(:body).new(body) }
+      end.new
+    end
+
+    it "answers the GGUF's trained maximum, keyed by the model's own architecture" do
+      provider = described_class.new(transport: transport_show(show_body))
+
+      expect(provider.trained_context_tokens("qwen3-coder:30b")).to eq(trained)
+    end
+
+    # The architecture key is not a constant: `general.architecture` names
+    # which `<arch>.context_length` entry is this model's, and a book keyed on
+    # a hard-coded "qwen3" would answer nil for every other family.
+    it "reads the architecture the body names rather than a hard-coded one" do
+      provider = described_class.new(transport: transport_show(show_body(architecture: "llama")))
+
+      expect(provider.trained_context_tokens("llama3:8b")).to eq(trained)
+    end
+
+    # Same rule as the served figure, same reason: upstream's GGUF metadata is
+    # typed, and `Integer()` reads "0x40000" as 262,144 while truncating a
+    # Float. A ceiling built by coercion would REFUSE flags nobody should have
+    # been refused.
+    describe "on a context_length that is not a positive Integer" do
+      {
+        "a hex string" => "0x40000",
+        "a plain decimal string" => "262144",
+        "a float" => 262_144.5,
+        "a null" => nil,
+        "a zero" => 0,
+        "an array" => [262_144]
+      }.each do |shape, context_length|
+        it "answers nil rather than coercing #{shape}" do
+          provider = described_class.new(transport: transport_show(show_body(context_length:)))
+
+          expect(provider.trained_context_tokens("qwen3-coder:30b")).to be_nil
+        end
+      end
+    end
+
+    # Degrade, never refuse: a provider that cannot say must not block a
+    # launch, so every unknown shape is nil rather than a raise.
+    describe "on a body that is not ollama's" do
+      [nil, "not json at all", [], { "model_info" => "a string" },
+       { "model_info" => { "general.architecture" => "qwen3moe" } },
+       { "model_info" => { "qwen3moe.context_length" => 262_144 } }].each do |body|
+        it "answers nil rather than raising on #{body.inspect}" do
+          expect(described_class.new(transport: transport_show(body)).trained_context_tokens("q")).to be_nil
+        end
+      end
+    end
+
+    # The same three-way split `#context_window_tokens` makes: a wiring bug
+    # stays loud, an operator's flag mistake answers nil.
+    it "still raises for a transport that cannot answer at all, rather than reading as an unknown" do
+      mute = Class.new { def sync_post(*) = nil }.new
+
+      expect { described_class.new(transport: mute).trained_context_tokens("qwen3:4b") }
+        .to raise_error(NoMethodError, /model_details/)
+    end
+
+    describe "over the real transport", :webmock do
+      it "answers nil rather than raising when the server is not running" do
+        stub_request(:post, "http://localhost:11434/api/show").to_raise(Faraday::ConnectionFailed)
+
+        expect(described_class.new.trained_context_tokens("qwen3:4b")).to be_nil
+      end
+
+      it "answers nil rather than raising on a 404 for a model the server does not have" do
+        stub_request(:post, "http://localhost:11434/api/show")
+          .to_return(status: 404, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate("error" => "model not found"))
+
+        expect(described_class.new.trained_context_tokens("nosuch:1b")).to be_nil
+      end
+
+      it "names the model it is asking about, since /api/show answers per model" do
+        stub_request(:post, "http://localhost:11434/api/show")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate(show_body))
+
+        described_class.new.trained_context_tokens("qwen3-coder:30b")
+
+        expect(a_request(:post, "http://localhost:11434/api/show")
+                 .with(body: { model: "qwen3-coder:30b" })).to have_been_made.once
+      end
+
+      # The trap this card walks past, in one example: both numbers are live,
+      # they differ by 8x, and each accessor answers its own. An implementation
+      # that merged the two would pass every example above and fail this one.
+      it "answers the trained ceiling while the served accessor answers the runner's window" do
+        stub_request(:post, "http://localhost:11434/api/show")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate(show_body))
+        stub_request(:get, "http://localhost:11434/api/ps")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate("models" => [{ "name" => "qwen3-coder:30b",
+                                                        "model" => "qwen3-coder:30b",
+                                                        "context_length" => 32_768 }]))
+        provider = described_class.new
+
+        expect(provider.trained_context_tokens("qwen3-coder:30b")).to eq(262_144)
+        expect(provider.context_window_tokens("qwen3-coder:30b")).to eq(32_768)
+      end
+
+      # The escalation trigger this card carried: a refusal that bought a hang
+      # is worse than the flag it refuses. `/api/show` therefore rides the SAME
+      # bounded probe budget `/api/ps` does -- one attempt, not the completion
+      # path's four -- so a launch cannot spend four retries plus backoff
+      # learning a ceiling.
+      it "makes exactly one attempt when the server is down, not the completion path's four" do
+        stub_request(:post, "http://localhost:11434/api/show").to_raise(Faraday::ConnectionFailed)
+
+        described_class.new.trained_context_tokens("qwen3:4b")
+
+        expect(a_request(:post, "http://localhost:11434/api/show")).to have_been_made.once
+      end
+    end
+  end
+
   # A transport double that captures the payload it was handed.
   def capturing_transport
     Class.new do

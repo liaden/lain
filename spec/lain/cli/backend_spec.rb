@@ -312,10 +312,19 @@ RSpec.describe Lain::CLI::Backend do
         expect(ollama_backend(num_ctx: 65_536).context_window.window_tokens(model)).to eq(32_768)
       end
 
-      it "stands alone when the provider reports nothing" do
+      # T6 CHANGED THE SECOND HALF of this deliberately. The number stands --
+      # discarding a plausible `--num-ctx` would over-report 4x on the ordinary
+      # `--num-ctx 32768` case -- but nobody measured it, so it is a guess and
+      # not the tier whose docstring says "the server said so". Measured before
+      # the split: `--num-ctx 999999` journaled `provenance="probed"` while
+      # ollama served 262,144.
+      it "stands alone when the provider reports nothing, as a guess" do
         serving
+        resolution = ollama_backend(num_ctx: 16_384).context_window.resolve(model)
 
-        expect(ollama_backend(num_ctx: 16_384).context_window.window_tokens(model)).to eq(16_384)
+        expect(resolution.window_tokens).to eq(16_384)
+        expect(resolution.provenance).to eq(Lain::ContextWindow::GUESSED)
+        expect(resolution).not_to be_authoritative
       end
 
       # `0` is TRUTHY, so nothing downstream fell back for it: it was sent
@@ -357,6 +366,119 @@ RSpec.describe Lain::CLI::Backend do
 
       it "is a Lain::Error, so the exe presents it cleanly rather than as a backtrace" do
         expect(Lain::CLI::Backend::InvalidCeiling).to be < Lain::Error
+      end
+
+      # T6. An operator's `--num-ctx` is a REQUEST, and there is exactly one
+      # number it can be checked against before a runner exists: the maximum
+      # the weights were trained for. `--num-ctx 999999` on a model trained to
+      # 262,144 was accepted, sent, and journaled as the run's whole window
+      # while ollama quietly served 262,144.
+      #
+      # The trained figure arrives through {Provider#trained_context_tokens},
+      # which is a separate accessor for a reason spelled out at both ends: it
+      # is a ceiling for refusing a flag and never a denominator. If it ever
+      # becomes the second, the 8x under-report this area exists to prevent is
+      # back one layer up.
+      describe "above what the model can ever serve" do
+        def trained(context_length)
+          stub_request(:post, "http://localhost:11434/api/show")
+            .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                       body: JSON.generate("model_info" => {
+                                             "general.architecture" => "qwen3moe",
+                                             "qwen3moe.context_length" => context_length
+                                           }))
+        end
+
+        it "refuses at CONSTRUCTION, naming the flag, the value and the maximum" do
+          trained(262_144)
+
+          expect { ollama_backend(num_ctx: 999_999) }
+            .to raise_error(Lain::CLI::Backend::UnservableWindow,
+                            "--num-ctx 999999 is above the model's trained maximum of 262144; " \
+                            "no runner can serve a window larger than the weights were trained for")
+        end
+
+        it "is a Lain::Error, so the exe presents it cleanly rather than as a backtrace" do
+          expect(Lain::CLI::Backend::UnservableWindow).to be < Lain::Error
+        end
+
+        # Construction is what every command goes through, so a refused launch
+        # never reaches a chat -- and it must not have opened one on the way to
+        # deciding.
+        it "starts no chat" do
+          trained(262_144)
+
+          expect { ollama_backend(num_ctx: 999_999) }.to raise_error(Lain::CLI::Backend::UnservableWindow)
+          expect(a_request(:post, "http://localhost:11434/api/chat")).not_to have_been_made
+        end
+
+        # The boundary, both sides. Equal is servable -- it is exactly what the
+        # weights allow -- and an off-by-one here would refuse the very flag an
+        # operator reads off `/api/show` and types in.
+        it "accepts a value at the trained maximum" do
+          trained(262_144)
+
+          expect { ollama_backend(num_ctx: 262_144) }.not_to raise_error
+        end
+
+        it "accepts a value below it" do
+          trained(262_144)
+
+          expect { ollama_backend(num_ctx: 32_768) }.not_to raise_error
+        end
+
+        # Degrade, do not refuse. Only ollama publishes a trained maximum;
+        # {Provider}'s base answers nil, and a provider that cannot say must
+        # not block a launch -- so the refusal fires only where a ceiling is
+        # known AND exceeded.
+        it "does not block a launch on a provider that publishes no trained maximum" do
+          expect do
+            with_env("ANTHROPIC_API_KEY" => "sk-test") do
+              backend_for(provider: "anthropic", model: "claude-opus-4-5", max_tokens: 64, num_ctx: 999_999)
+            end
+          end.not_to raise_error
+        end
+
+        # An ollama that is not running is the ordinary state of this arm, and
+        # a launch that cannot be validated is not a launch that is wrong.
+        it "does not block a launch when the server cannot answer" do
+          stub_request(:post, "http://localhost:11434/api/show").to_raise(Faraday::ConnectionFailed)
+
+          expect { ollama_backend(num_ctx: 999_999) }.not_to raise_error
+        end
+
+        # A flag nobody set has nothing to check, and checking it anyway would
+        # buy every `lain up` a round trip for a question it is not asking.
+        it "asks no ceiling at all when --num-ctx is unset" do
+          serving(ps_entry(model, 32_768))
+
+          ollama_backend.context_window
+
+          expect(a_request(:post, "http://localhost:11434/api/show")).not_to have_been_made
+        end
+
+        # The construction ORDER, which T6's fix round made user-visible and
+        # which nothing pinned: `--api-base` is validated before `--num-ctx`,
+        # because the ceiling lookup is the first thing in construction that
+        # talks to a server and a base URL it is about to probe has to be a
+        # usable one first. Asserted through a run that gets BOTH flags wrong,
+        # since that is the only case in which the order is observable -- swap
+        # the two lines in `#initialize` and this reads InvalidCeiling instead.
+        it "refuses a bad --api-base before it asks that base for a ceiling" do
+          expect { ollama_backend(api_base: "localhost:11434", num_ctx: 0) }
+            .to raise_error(Lain::CLI::Backend::InvalidEndpoint, /--api-base "localhost:11434"/)
+        end
+
+        # `--num-ctx 0` is refused by {Ceiling} for being non-positive, and that
+        # refusal has to come first: a zero is a flag mistake whatever the model
+        # was trained to, and reordering would make the message depend on
+        # whether a server happened to be up.
+        it "still refuses a non-positive value in Ceiling's name, not this one" do
+          trained(262_144)
+
+          expect { ollama_backend(num_ctx: 0) }
+            .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--num-ctx must be positive/)
+        end
       end
     end
 

@@ -20,6 +20,40 @@ class AgentBuildSpecBackend < Lain::CLI::Backend
     @provider_calls << kwargs
     @mock
   end
+
+  # Wrapped IN PLACE OF {Lain::CLI::Backend}'s own memo, deliberately: `super`
+  # fills `@context_window` with the real book, and this assignment then
+  # replaces it with the counting wrapper -- so there is one object, and it is
+  # the one the wiring hands the Agent. Counting on a second book built to
+  # observe would answer a question nobody is asking.
+  def context_window = @context_window ||= AgentBuildSpecWindow.new(super)
+end
+
+# Counts the re-resolutions the turn stack triggers and delegates the three
+# reader messages, so "the trigger fired on the run's own book" is a property
+# an example can see. A real {Lain::CLI::Backend::WindowBook::Live} answers the
+# same duck and would count nothing.
+class AgentBuildSpecWindow
+  attr_reader :refreshes, :trail
+
+  # `trail` is SHARED with the chronicle's turn member in the ordering example
+  # below, because a list of classes says what the stack holds and not what ran
+  # first -- and it is the running order three docstrings call load-bearing.
+  def initialize(book, trail = [])
+    @book = book
+    @refreshes = 0
+    @trail = trail
+  end
+
+  def reresolve
+    @refreshes += 1
+    @trail << :window
+    @book.reresolve
+  end
+
+  def resolve(model) = @book.resolve(model)
+  def window_tokens(model) = @book.window_tokens(model)
+  def occupancy(used_tokens, model:) = @book.occupancy(used_tokens, model:)
 end
 
 # Captures the timeline handle {AgentBuild} hands the chronicle so an example
@@ -41,6 +75,38 @@ class AgentBuildSpecChronicle < Lain::CLI::Chronicle::Null
   # at all. Against the unmemoized one every comparison is between two distinct
   # Nulls and passes for the wrong reason -- or fails for it.
   def spool = @spool ||= super
+end
+
+# A chronicle whose turn phase is NOT empty.
+#
+# Written because the ordering assertions against the Null chronicle CANNOT
+# FAIL: its `turn_middleware` is an empty Stack, so `[ResolveWindow, *[]]` and
+# `[*[], ResolveWindow]` are the same list, and a mutant moving the refresh to
+# the innermost position survived the entire suite. Benign today -- JournalTurns
+# runs its work after `downstream` and reads no window -- but the ordering is
+# stated as load-bearing in three docstrings, and a documented claim that
+# nothing holds is the shape this chunk keeps producing.
+class AgentBuildSpecJournallingChronicle < AgentBuildSpecChronicle
+  # Named so the ordering reads as a list of classes, and RECORDING so the same
+  # example can pin what actually ran first.
+  class Member < Lain::Middleware::Base
+    def initialize(trail)
+      @trail = trail
+      super()
+    end
+
+    def call(env, &app)
+      @trail << :chronicle
+      downstream(env, &app)
+    end
+  end
+
+  def initialize(trail)
+    @trail = trail
+    super()
+  end
+
+  def turn_middleware(_timeline) = Lain::Middleware::Stack.new([Member.new(@trail)])
 end
 
 # The Switchboard's side of the seam, recorded. A stand-in rather than the real
@@ -199,8 +265,41 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
         .not_to be_empty
     end
 
-    it "takes the turn phase from the chronicle, which is empty for the Null one" do
-      expect(backing[:instrumentation].turn_middleware.to_a).to eq([])
+    # T6 added the run's own member ahead of the chronicle's, so the Null
+    # chronicle's empty phase is no longer an empty stack -- it is the window
+    # refresh alone.
+    it "takes the turn phase from the chronicle, ahead of which it puts the window refresh" do
+      expect(backing[:instrumentation].turn_middleware.to_a.map(&:class))
+        .to eq([Lain::Middleware::ResolveWindow])
+    end
+
+    # The OWNER of the re-resolution trigger, named here because the book
+    # cannot own it: {CLI::Backend::WindowBook::Live} has no clock and no turn
+    # count, and re-resolving per READ would let one turn's three readers see
+    # three windows. It must refresh the run's ONE book -- the same instance
+    # handed to the Agent as `context_window:` -- or the reader that self-
+    # corrects is not the reader anything divides by.
+    # The ordering, against a turn stack that HAS another member -- the only
+    # arrangement in which the wrong order is distinguishable. Both halves are
+    # asserted: what the stack holds, and what ran first.
+    it "puts the window refresh outermost, ahead of the chronicle's own members" do
+      trail = backend.context_window.trail
+      chronicle = AgentBuildSpecJournallingChronicle.new(trail)
+      stack = described_class.backing(backend, channel, -> {}, chronicle:, board:)[:instrumentation]
+                             .turn_middleware
+
+      stack.call({}) { |env| env }
+
+      expect(stack.to_a.map(&:class))
+        .to eq([Lain::Middleware::ResolveWindow, AgentBuildSpecJournallingChronicle::Member])
+      expect(trail).to eq(%i[window chronicle])
+    end
+
+    it "refreshes the very book the Agent is handed, once per turn" do
+      backing[:instrumentation].turn_middleware.call({}) { |env| env }
+
+      expect(backing[:context_window]).to be(backend.context_window)
+      expect(backend.context_window.refreshes).to eq(1)
     end
 
     it "builds its provider over the live channel, not the Null default" do

@@ -215,8 +215,24 @@ module Lain
       #
       # A black-holed host is the one case the budget, not the rescue, has to
       # answer for: `--api-base http://10.255.255.1:11434` costs the full
-      # {Transport::PROBE_TIMEOUT_SECONDS} -- measured **2002 ms**, once, at
-      # launch. That is the ceiling on what this method can cost a chat.
+      # {Transport::PROBE_TIMEOUT_SECONDS} -- measured **2002 ms** PER CALL.
+      #
+      # An earlier edition of this comment said "once, at launch", and called
+      # that the ceiling on what this method can cost a chat. It stopped being
+      # true when the window book stopped being a permanent answer:
+      # {CLI::Backend#context_window} memoizes the BOOK, and
+      # {Middleware::ResolveWindow} re-asks at the top of every ITERATION of the
+      # agent loop -- so a tool-calling turn would re-probe once per tool call
+      # for as long as the book stayed a guess, which for a model the shipped
+      # table does not carry is forever. Measured before it was bounded: 2.003s
+      # per re-resolution, three in a row, so a ten-tool-call turn cost +20s.
+      #
+      # {CLI::Backend::WindowBook::Live::REASK_LIMIT} is what bounds it now, and
+      # the honest ceiling is per SESSION rather than per call: at most
+      # `1 + REASK_LIMIT` of these, i.e. **8 s** on the numbers above. A merely
+      # -down ollama is not affected at all -- it answers ECONNREFUSED in ~0.3ms
+      # rather than dropping packets -- and a server that answers settles the
+      # book on its first reply, after which this method is not called again.
       #
       # @param model [String]
       # @return [Integer, nil]
@@ -230,7 +246,54 @@ module Lain
         nil
       end
 
+      # The GGUF's trained maximum for `model`, or nil.
+      #
+      # THE NUMBER {#context_window_tokens} REFUSES TO RETURN, behind its own
+      # name so the two can never be mistaken for each other. Read that method's
+      # docstring first: `/api/show`'s `model_info.<arch>.context_length` is
+      # 262,144 for qwen3-coder:30b while the runner serves 32,768, and dividing
+      # occupancy by the larger under-reports 8x so compaction never fires.
+      #
+      # So this is a CEILING FOR REFUSING A FLAG, NEVER A DENOMINATOR
+      # ({Provider#trained_context_tokens} states the contract). Its one caller
+      # -- {CLI::Backend}, refusing a `--num-ctx` no runner could ever serve --
+      # compares against it and discards it. If it ever reaches
+      # {ContextWindow::WindowResolution}, the bug this pair exists to prevent
+      # is back one layer up.
+      #
+      # The architecture is read from the body rather than assumed: the KV key
+      # is `<general.architecture>.context_length`, so a hard-coded family name
+      # would answer nil for every other model. Both the key's presence and the
+      # value's type are checked, never coerced -- `Integer("0x40000")` is
+      # 262,144, and a ceiling built by coercion refuses flags that were fine.
+      #
+      # Same rescue set and same reasoning as {#context_window_tokens}: nil is
+      # the ordinary answer for a server that is not running or a model it does
+      # not have, because a provider that cannot state a ceiling must not block
+      # a launch; a transport that cannot answer at all is a wiring bug and
+      # stays loud, told apart by the error's receiver.
+      #
+      # @param model [String]
+      # @return [Integer, nil]
+      def trained_context_tokens(model)
+        trained_context_length(wrapping_errors { @transport.model_details(model).body })
+      rescue APIError
+        nil
+      rescue NoMethodError => e
+        raise if e.receiver.equal?(@transport)
+
+        nil
+      end
+
       private
+
+      # `model_info` is the GGUF KV table handed back nearly verbatim
+      # (`routes.go`'s GetModelInfo), so the key is derived, not fixed.
+      def trained_context_length(body)
+        info = body.is_a?(Hash) ? body["model_info"] : nil
+        tokens = info.is_a?(Hash) ? info["#{info["general.architecture"]}.context_length"] : nil
+        tokens if tokens.is_a?(Integer) && tokens.positive?
+      end
 
       # Upstream declares this field `ContextLength int` (`api/types.go`), so a
       # value that is not already an Integer means the body is not ollama's.

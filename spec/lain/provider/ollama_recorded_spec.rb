@@ -267,20 +267,26 @@ RSpec.describe Lain::Provider::Ollama, records: :ollama do
   # dangerous one (`model_info`'s context_length is the GGUF's TRAINED maximum
   # and must never be used as a denominator).
   #
-  # Read these two as a FIXTURE, not as coverage. Nothing in lib/ consumes
-  # `/api/show` yet, so they drive the transport directly and cannot red on a
-  # decoder regression -- there is no decoder. What they buy is that the endpoint's
-  # real answer is committed, so the card that wires capability discovery can be
-  # written and tested by somebody with no GPU.
+  # `capabilities` is still a FIXTURE rather than coverage -- nothing in lib/
+  # consumes it, so it drives the transport directly and cannot red on a decoder
+  # regression. What it buys is that the endpoint's real answer is committed, so
+  # the card that wires capability discovery can be written and tested by
+  # somebody with no GPU.
+  #
+  # The trained figure is no longer in that position. T6 gave it a decoder --
+  # {Lain::Provider#trained_context_tokens}, a ceiling for refusing a `--num-ctx`
+  # and never a denominator -- so the second example drives the PROVIDER and
+  # reds on a real regression, against a real GGUF's real KV table rather than a
+  # body this spec wrote itself.
   describe "what /api/show answers", vcr: { cassette_name: "ollama_show" } do
-    let(:body) { T13RecordedOllama.transport.connection.post("api/show", { model: "qwen3:4b" }).body }
-
     it "states the model's capabilities" do
+      body = T13RecordedOllama.transport.connection.post("api/show", { model: "qwen3:4b" }).body
+
       expect(body["capabilities"]).to include("completion", "tools", "thinking")
     end
 
-    it "offers a context_length that is the TRAINED maximum, not the served window" do
-      trained = body["model_info"]["qwen3.context_length"]
+    it "offers a trained maximum, which is larger than the window that model is served" do
+      trained = T13RecordedOllama.provider.trained_context_tokens("qwen3:4b")
 
       expect(trained).to eq(262_144)
       expect(trained).to be > T13RecordedOllama::SERVED_CONTEXT_TOKENS

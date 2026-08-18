@@ -4,6 +4,7 @@ require_relative "backend/ceiling"
 require_relative "backend/endpoint"
 require_relative "backend/summarizer"
 require_relative "backend/span_summarizer"
+require_relative "backend/num_ctx"
 require_relative "backend/window_book"
 
 module Lain
@@ -144,8 +145,8 @@ module Lain
         @options = options
         summarizer_name
         summarizer_max_tokens
-        num_ctx
         api_base
+        num_ctx
       end
 
       # Anthropic reads its key from the environment; Ollama is local and takes an
@@ -182,11 +183,13 @@ module Lain
       #   start actually reaches the frontend. Like spool it defaults to the
       #   Null instance (headless/bench pass nothing, so their events land
       #   nowhere). Every arm gets it now: Bedrock and -- since T2/F7 -- Ollama
-      #   too, whose retries used to reach no Journal at all. That makes a retry
-      #   storm READABLE AFTERWARDS, not visible live: {Frontend::Decorators}
-      #   renders only ToolOutput and leaves ProviderRetry deliberately
-      #   unpainted, so the 400-second hang still shows the operator a blank
-      #   screen until T12 bounds it.
+      #   too, whose retries used to reach no Journal at all. Since T4 that
+      #   makes a retry storm VISIBLE LIVE as well as readable afterwards:
+      #   {Frontend::Decorators::ProviderRetry} paints each
+      #   {Telemetry::ProviderRetry} as it lands, so a long stall shows the
+      #   operator what is happening instead of a blank screen. An earlier
+      #   edition of this note said the opposite, and called leaving it
+      #   unpainted a decision rather than a gap; T4 reversed the decision.
       def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance)
         case name
         when "ollama" then Provider::Ollama.new(api_base: @options[:api_base], channel:)
@@ -266,8 +269,18 @@ module Lain
       # this exists to prevent, and the probe is one live round trip whose
       # answer can move under a runner reload.
       #
-      # @return [ContextWindow, WindowBook::Served]
-      def context_window = @context_window ||= WindowBook.new(backend: self).book
+      # The memo is of the OBJECT, not of the answer inside it (T6). A run
+      # launched with `--num-ctx` while nothing is resident resolves to a guess,
+      # and a memoized guess is permanent -- the runner loads on turn one and
+      # the session goes on dividing by a number nobody confirmed. So the three
+      # readers keep sharing one {WindowBook::Live}, whose answer
+      # {Middleware::ResolveWindow} re-resolves once per turn until it is
+      # authoritative and then stops. Both halves are load-bearing: sharing is
+      # what keeps the readers agreeing, and the once-per-turn trigger is what
+      # keeps them agreeing WITHIN a turn.
+      #
+      # @return [WindowBook::Live]
+      def context_window = @context_window ||= WindowBook::Live.new(source: WindowBook.new(backend: self))
 
       # `--num-ctx`, through the same {Ceiling} both `--max-tokens` flags go
       # through, and OPTIONAL: unset means "serve the model's own", which is a
@@ -283,8 +296,13 @@ module Lain
       #
       # Refused at CONSTRUCTION, with both summarizer flags and for their
       # reason: it is the one path every command takes, so the refusal cannot
-      # depend on which collaborator a given run happens to build.
-      def num_ctx = @options[:num_ctx] && Ceiling.new(flag: "--num-ctx", value: @options[:num_ctx]).tokens
+      # depend on which collaborator a given run happens to build. {NumCtx} owns
+      # both refusals, and MEMOIZED because the second of them costs a round
+      # trip: {WindowBook} reads this on every re-resolution, and asking the
+      # server for a ceiling that cannot have changed would spend one per turn.
+      # It runs AFTER {#api_base} for the same reason -- a base URL it is about
+      # to talk to has to be a usable one first.
+      def num_ctx = @num_ctx ||= NumCtx.new(backend: self, value: @options[:num_ctx]).tokens
 
       # `--api-base`, through {Endpoint}, and OPTIONAL the same way `--num-ctx`
       # is: unset means "ollama's own default", a real answer, not the

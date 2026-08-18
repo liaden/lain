@@ -78,6 +78,33 @@ module Lain
       nil
     end
 
+    # The largest window this model could EVER be served, or nil when the
+    # provider cannot say.
+    #
+    # A CEILING FOR REFUSING A FLAG, NEVER A DENOMINATOR, and the separation is
+    # the whole reason it is a second method rather than a fallback inside
+    # {#context_window_tokens}. The two numbers differ by 8x on this box --
+    # qwen3-coder:30b is trained to 262,144 and served 32,768 -- and dividing
+    # occupancy by the larger is precisely the never-fires failure the method
+    # above spends its docstring refusing. Nothing may pass this to
+    # {ContextWindow::WindowResolution}; {CLI::Backend} reads it to answer one
+    # question -- is an operator's `--num-ctx` above what any runner could
+    # serve? -- and throws it away.
+    #
+    # Unlike the served window this is a property of the model FILE, so it is
+    # knowable before any runner loads, which is what lets the refusal happen at
+    # construction rather than on the first turn.
+    #
+    # nil is a real answer, as it is above: a provider that publishes no trained
+    # maximum must not block a launch, so the refusal fires only where a ceiling
+    # is known AND exceeded.
+    #
+    # @param _model [String]
+    # @return [Integer, nil]
+    def trained_context_tokens(_model)
+      nil
+    end
+
     # Raise unless the capability is present. The message names the provider, so
     # a degraded bench run says which arm lost the tactic.
     def require!(capability)

@@ -156,6 +156,11 @@ RSpec.describe LainCLI do
     # this assertion was `@turn_middleware.to_a == []` before T22, and `nil.to_a`
     # is `[]` -- so it passed unchanged after the ivar it names stopped existing.
     # An empty expectation has to prove it measured something first.
+    #
+    # T6 put the run's OWN member ahead of the chronicle's, so the Null
+    # chronicle's contribution is now "nothing after the window refresh" rather
+    # than an empty stack. The reading is the same one: what the chronicle
+    # added, isolated by dropping the member this wiring always adds.
     it "wires the chronicle's (empty, for Null) turn middleware into build_agent" do
       agent = wiring.send(:build_agent, toolset:, channel:, session: Lain::Session.new,
                                         backend: backend(provider: "ollama", model: nil, max_tokens: 4096))
@@ -164,7 +169,7 @@ RSpec.describe LainCLI do
       instrumentation = agent.instance_variable_get(:@instrumentation)
 
       expect(instrumentation).to be_a(Lain::Agent::Instrumentation)
-      expect(instrumentation.turn_middleware.to_a).to eq([])
+      expect(instrumentation.turn_middleware.to_a.map(&:class)).to eq([Lain::Middleware::ResolveWindow])
       # The tool phase over the SAME chronicle is NOT empty, so "empty" above is
       # a reading of the Null chronicle and not of an unwired instrumentation.
       expect(instrumentation.tool_middleware.to_a.map(&:class))

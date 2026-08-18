@@ -101,9 +101,30 @@ module Lain
           # what {Agent#occupancy} answers with no keyword, which is the `ctx`
           # segment of the REPL prompt -- so the prompt and `.lain/state.json`
           # cannot report two occupancies for one turn.
-          { provider:, context_window: backend.context_window,
+          #
+          # T6 made the ANSWER inside it refreshable and put the trigger here,
+          # OUTSIDE the book: {Middleware::ResolveWindow} re-resolves once per
+          # turn, ahead of the journal's own turn middleware, until the answer
+          # is authoritative. This is the owner of that trigger -- the book has
+          # no clock and no turn count, and a book that re-resolved per READ
+          # would let one turn's three readers see three windows.
+          window = backend.context_window
+          { provider:, context_window: window,
             instrumentation: mount.instrumentation.with(tool_middleware: ToolGuard.stack(chronicle, board),
-                                                        turn_middleware: chronicle.turn_middleware(timeline)) }
+                                                        turn_middleware: turn_phase(chronicle, timeline, window)) }
+        end
+
+        # The turn stack, with the window refresh OUTERMOST -- ahead of the
+        # chronicle's own members, because re-resolving a denominator is not
+        # part of the turn a journal records, and everything downstream that
+        # reads a window must see the refreshed one.
+        #
+        # A {Middleware::Stack} rather than a `>>` composition, for the reason
+        # `middleware.rb` gives for Stack existing at all: the ordering is the
+        # footgun, and a Stack is the shape that stays inspectable.
+        def turn_phase(chronicle, timeline, window)
+          Middleware::Stack.new([Middleware::ResolveWindow.new(book: window),
+                                 *chronicle.turn_middleware(timeline).to_a])
         end
 
         # T13: WRITE what this run's Context asks for that its Provider cannot

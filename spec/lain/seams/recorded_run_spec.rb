@@ -87,9 +87,19 @@ require "tmpdir"
 # `Provider::Ollama#context_window_tokens` is deliberately un-memoised and T13's
 # header says an N-turn cassette wants N probes. That is true of a cassette
 # driven at the PROVIDER. It is not true here, and the difference is the wiring:
-# there is one caller of that method in lib/ ({Backend::WindowBook#served}),
-# reached through {Backend#context_window}, which IS memoized -- so the run
-# resolves its denominator once, at wiring time, and no turn asks again.
+# there is one caller of that method in lib/ ({Backend::WindowBook#book}),
+# reached through {Backend#context_window}, which memoizes the BOOK -- and
+# {Backend::WindowBook::Live} stops re-resolving the moment its answer is
+# authoritative. This cassette's `/api/ps` names a resident runner, so the very
+# first resolution is PROBED and settles; the turn stack's
+# {Middleware::ResolveWindow} then asks nothing on either turn.
+#
+# T6 made that a live guard rather than a property of a memo. A book that kept
+# re-resolving after it had a measured answer would probe once per turn, and
+# THIS FILE is where that fails loudly: the second probe finds the cassette
+# already consumed and raises mid-run. Take a sudden `VCR::Errors::
+# UnhandledHTTPRequestError` on `/api/ps` here as "something started asking
+# again", not as a recording problem.
 #
 # So the number to count is BACKEND CONSTRUCTIONS, not turns. A second Backend --
 # a subagent spawn, a second run in one example -- is a second probe, and it

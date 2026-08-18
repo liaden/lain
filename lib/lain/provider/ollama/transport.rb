@@ -25,6 +25,10 @@ module Lain
         # the GGUF's trained maximum, which is a different and larger number.
         # See references/ollama/api-show-and-context.md.
         PROCESS_PATH = "api/ps"
+        # The model's own metadata, including the GGUF KV table its TRAINED
+        # maximum lives in. Never a served window -- see {PROCESS_PATH} and
+        # references/ollama/api-show-and-context.md.
+        SHOW_PATH = "api/show"
         DEFAULT_API_BASE = "http://localhost:11434"
 
         # A metadata probe is not a completion and must not inherit a
@@ -85,6 +89,18 @@ module Lain
         # is local and this transport sends no auth.
         def process_status
           probe_connection.get(PROCESS_PATH)
+        end
+
+        # One model's metadata. A POST, because `/api/show` takes the model in
+        # a body rather than a path segment (`api/types.go`'s ShowRequest).
+        #
+        # {#probe_connection}, not {#connection}: this runs at LAUNCH, in front
+        # of the chronicle open, and the reference's own advice for a second
+        # metadata endpoint is to share the probe's budget rather than spend
+        # the completion path's four attempts on a number the caller degrades
+        # without.
+        def model_details(model)
+          probe_connection.post(SHOW_PATH, { model: })
         end
 
         # The SAME vendored stack the completion path uses -- same middleware,
