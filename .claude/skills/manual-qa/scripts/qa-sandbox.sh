@@ -23,7 +23,6 @@ export QA="$QA"
 export LAIN_REPO="$REPO"
 export QA_SOCK="$SOCK"
 eval "\$(mise env -s bash ruby@4.0.6)"
-export LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib
 export XDG_CONFIG_HOME="\$QA/xdg/config"
 export XDG_STATE_HOME="\$QA/xdg/state"
 export XDG_CACHE_HOME="\$QA/xdg/cache"
@@ -37,7 +36,6 @@ EOF
 cat > "$QA/shim/lain" <<EOF
 #!/usr/bin/env bash
 eval "\$(mise env -s bash ruby@4.0.6)"
-export LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib
 exec "$REPO/exe/lain" "\$@"
 EOF
 chmod +x "$QA/shim/lain"

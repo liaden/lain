@@ -21,11 +21,15 @@ which is machine-local and globally gitignored — so a reader of this plan alon
 
 ```bash
 eval "$(mise env -s bash ruby@4.0.6)"
-export LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib
 ```
 
 **Override `.envrc`'s `TMPDIR` with the run's own sandbox**, or the QA run and the spec suite share
 a tmp tree.
+
+**Do NOT copy CLAUDE.md's `LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib`.** Verified 2026-08-18:
+that directory does not exist on this box, and the mise-installed 4.0.6 loads OpenSSL 3.5.5 without
+it and does not link Homebrew at all. The workaround belongs to the `~/.rubies/ruby-4.0.6` build,
+which CLAUDE.md itself says not to use. Harmless, but it implies a fragility that is not there.
 
 `.claude/skills/manual-qa/scripts/qa-sandbox.sh` builds the whole sandbox — XDG redirection, the
 `lain` shim, `drive.sh`, `peek.sh`, `nv.sh` — and is the supported way in. The rest of this section
@@ -113,8 +117,8 @@ only worth having if it is read rather than skimmed:
   not the signal. Check `tmux -L lain-qa has-session -t lain-qa`.
 - **Launch by ABSOLUTE path, through a shim.** `bundle exec ./exe/lain up` leaves `$PROGRAM_NAME`
   relative and `PaneCommand.call` interpolates it into the pane's command, so the chat pane exits
-  **127** the moment the cwd differs. The shim also carries `LD_LIBRARY_PATH` and the mise `bin`,
-  neither of which survives `PANE_ENV`.
+  **127** the moment the cwd differs. The shim also re-establishes the mise toolchain, which does
+  not survive `PANE_ENV`'s eleven-name `LAIN_*` allowlist.
 - **Size the server before the panes exist.** At tmux's default 80x24 nvim hits its hit-enter prompt
   and the RPC attach **deadlocks**. `new-session -x 220 -y 50` *and* `set-option -g default-size
   220x50` — the option is what later panes inherit.
