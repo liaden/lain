@@ -1,6 +1,6 @@
 # The cost axis, and the compaction strategies it makes measurable
 
-status: draft   (13 cost-axis cards + 5 from manual-QA round 4 = 18, 3 waves)
+status: done   (18 cards + 2 unplanned production fixes, landed 2026-08-18)
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds · Jeremy Evans · Sandi Metz · Richard Schneeman · Aaron Patterson
@@ -427,7 +427,13 @@ in `lib/lain/cli/wiring/base_tools.rb:15-22` and dispatched by `Agent::ToolRunne
 Scenario: a windowed read returns only the requested window
   Given a file of 5000 lines
   When read_file is called with offset 2001 and limit 2000
-  Then the result contains line 2001 through line 4000 and no other lines
+  Then the result contains line 2001 through line 4000 and no line of the file besides
+    and one trailing notice says the window is partial and the file continues
+
+Scenario: a window that reaches the end of the file adds no notice
+  Given a file of 100 lines
+  When read_file is called with offset 1 and limit 100
+  Then the result is the whole file with no notice appended
 
 Scenario: editing after only a windowed read is refused, naming the partial read
   Given read_file has returned a window of a file
@@ -449,12 +455,18 @@ Scenario: an unwindowed read of a normal file is unchanged
 **Escalation triggers:**
 - **The deadlock this card must not create.** T5 refuses an unwindowed read above a cap; if a
   windowed
-  read can never complete the read-set, `edit_file` on a large file becomes permanently impossible
-  and
-  the only escape is `write_file`, which checks `masked_read?` only (`tools/write_file.rb:56`) and
-  whole-file-overwrites the very file too big to read. AC 3 exists to prevent this. If AC 3 turns
-  out
-  unimplementable, **stop** — T5 must not land without it.
+  read can never complete the read-set, `edit_file` on a large file becomes permanently impossible.
+  AC 3 exists to prevent this. If AC 3 turns out unimplementable, **stop** — T5 must not land
+  without it.
+
+  **Corrected 2026-08-18 by T3's implementer, and the correction raises the stakes rather than
+  lowering them.** This trigger originally said the escape was `write_file`, "which checks
+  `masked_read?` only and whole-file-overwrites the very file too big to read". That is wrong:
+  `write_file` carries a **second** contract, `"path exists and was never read this session"`
+  (`tools/write_file.rb:59-63`), which asks `Session#read?` and is therefore false for a partial
+  read. So the feared clobber hatch never existed — what existed was a **dead end**: before this
+  card, a windowed read left an existing file with no writing path at all, neither `edit_file` nor
+  `write_file`. AC 3 is not one door of two; it is the only door.
 - `spec/lain/tools/read_file_spec.rb:23` asserts read_file "reads a file's **full** contents" and
   `:55-95` pins read-set recording. The default path's bytes must not change; if they do, stop.
 - The read-before-write contract is a **safety** property. If any existing `edit_file` spec passes
@@ -485,6 +497,15 @@ named here; nothing constructs `Bounds` on the production path until they land.
   is
   refused above its cap, and the refusal names a narrower action. Truncating one is not a partial
   answer, it is a *misleading* one, and the model has a better move available.
+- **A window the model asked for discloses too, and it is the cheap case.** Added 2026-08-18 after
+  T3's review, which found the chunk about to ship two doctrines. A windowed `read_file` is neither
+  an enumeration nor a whole artifact — the model chose the bound — so the first draft let it stay
+  silent. But the `complete` bit that decides editability is computed on the way past and then
+  thrown away, so a silent window makes the model learn its own partialness by attempting an edit
+  and eating a refusal round trip. The disclosure is free: a window knows it is short without a
+  total, exactly as `grep`'s `"... capped at 200 matches"` names a cap and never a total. **So it
+  discloses when short and says nothing when it covered the file** — a complete window withholds
+  nothing and a notice on it would be noise. One rule across the chunk, no exemption.
 
 **Acceptance criteria:**
 
@@ -528,7 +549,18 @@ Scenario: the refusal decision can be made from a size alone
 ### T5 — Bound the whole-artifact tools   [wave 2] [risk: high]
 
 **Depends on:** T3, T4
-**Files:** `lib/lain/tools/read_file.rb`, `lib/lain/tools/bash.rb`, `lib/lain/tools/memory_read.rb`
+**Files:** `lib/lain/tools/read_file.rb`, `lib/lain/tools/bash.rb`, `lib/lain/tools/memory_read.rb`,
+and — **added 2026-08-18 by orchestrator ruling at review** — `lib/lain/tools/memory_write.rb`.
+Review measured that `memory_write` accepts a 262,145-byte body and `memory_read` then refuses it
+**forever**, which is the read/write asymmetry T3's own trigger exists to prevent, reproduced in a
+different toolset. Neither narrower action the read refusal named survives being followed: there is
+no manifest *tool* to consult (`Tools.constants.grep(/Memory/)` is `[:MemoryWrite, :MemoryRead]` —
+the manifest rides every Request via `Workspace`), and "supersede it under the same id" is
+destructive and requires knowing what was denied. The ceiling belongs where the artifact is created
+and where the model has a real alternative — write less, or split across ids — which also makes the
+read ceiling unreachable-by-construction, as the card already claimed it was. A window on
+`memory_read` is **not** the answer; `memory_read_spec.rb:32` pins `properties.keys == ["id"]` and
+widening that is its own card.
 **Reuse:** `Tool::Bounds`' artifact shape from T4; `read_file`'s window from T3 is the narrower
 action
 its refusal names. `Bash.render_output` (`tools/bash.rb:64-68`) is shared by both the Ruby and
@@ -646,9 +678,10 @@ Scenario: a message carrying text alongside a tool block is still a tool message
   Given an assistant message with a text block and a tool_use block
   Then it is classified as a tool message
 
-Scenario: the two selections are exact complements over any span
+Scenario: the two selections never claim the same index
   Given any span of messages
-  Then the tool runs and the conversational runs together cover the span with no overlap
+  Then no index is claimed by both the tool runs and the conversational runs
+    and every index claimed by neither is a lone conversational run
 
 Scenario: a conversational run of one message is not selected for summarizing
   Given a span where a single conversational message sits between two tool runs
@@ -719,8 +752,10 @@ Scenario: a purely conversational span proposes nothing
 **Files:** `lib/lain/compaction/strategy/summarize_conversation.rb`
 **Reuse:** subclass `Compaction::Strategy::Summarizing` (`strategy/summarizing.rb:87`) to inherit
 the
-oracle contract, content-address keying and recorded-answer replay; use `Compaction::ToolMessages`
-from T7 for the complement selection — **do not spell the predicate here**.
+oracle contract, content-address keying and recorded-answer replay; use
+`Compaction::ToolMessages.conversational_runs` from T7 — **do not spell the predicate here**, and
+note it is the FILTERED complement (`.select { |run| run.size > 1 }`), not the raw one, which is
+what AC 2 depends on.
 **Shared-file wiring:** `require` line in `lib/lain/compaction/strategy.rb`'s subtree index;
 generator
 entry in `spec/support/algebra_generators.rb` if a property is declared (orchestrator-owned).
@@ -729,9 +764,11 @@ entry in `spec/support/algebra_generators.rb` if a property is declared (orchest
 **Acceptance criteria:**
 
 ```gherkin
-Scenario: only conversational runs are claimed
+Scenario: only conversational runs of more than one message are claimed
   Given a span where two messages carry tool blocks
-  Then the proposed ranges cover the span excluding those messages
+  Then the proposed ranges claim the conversational runs of length two or more
+    and claim no message carrying a tool block
+    and leave a lone conversational message unclaimed
 
 Scenario: the oracle is asked once per claimed run
   Given a span with two separate conversational runs of more than one message
@@ -818,13 +855,30 @@ Scenario: composing two whole-span strategies fails at the first compaction, nam
 - **A refused derivation has already paid for the strategy.**
   `chunk-derived-context-timeline.md:1753-1757`
   records that under an oracle-backed strategy the model call is made and journaled as an
-  `oracle_answer` **whose answer is discarded**, and because the memo keys on span content address,
-  a
-  session that keeps chatting **pays it every turn**. This card makes
+  `oracle_answer` **whose answer is discarded**. This card makes
   `elide-tools+summarize-conversation` the recommended spelling and integration check 7 runs it
-  against a real repo — so if a refusal path is reachable under the composed strategy, the manual
-  pass
-  burns money per turn. Verify before the manual pass, not after.
+  against a real repo, so a reachable refusal path burns money on the manual pass.
+
+  **MEASURED 2026-08-18. The refusal path IS reachable, it is the outcome on every turn with short
+  tool results, and "pays it every turn" is the wrong shape.** The memo keys per RUN, so unchanged
+  runs are hits: the cost is **N on the first compacting turn, then ~1 per turn** — where N is the
+  number of conversational runs the history had accumulated before compaction first fired. From a
+  13-message history N is 2; from a 33-message history it is **7**. A burst, not a doubled call, and
+  it scales with how long the session chatted first.
+
+  **It is not only money — it pollutes the experiment record.** On a three-turn run that refused
+  every turn, the journal holds `oracle_answer => 4`, `context_derived => 3`,
+  `compaction_decision => 3`, `compaction => 0`: four model calls paid and journalled, three
+  derivations written into the Store, **zero compactions committed**. That is precisely the hazard
+  `source.rb`'s `timely?` comment argues for the *timing* gate — "would fill the experiment record
+  with derivations no render ever used" — with the floor gate sitting on the wrong side of the same
+  argument. `Source#weigh` calls `@derived.over(...)` before both defer gates (`source.rb:390-398`),
+  so the spend is unconditional.
+
+  **The switch is not tool-output size**, which a first reading suggested: with large
+  *conversational* messages and 2-byte tool results the composition still shrinks. It is the net of
+  the elide half's ~230 B-per-message attestation against the summarize half's saving. Integration
+  check 7 carries the operative form of this.
 
 ### T11 — Attribute and price cache waste per session, segmented by model   [wave 2] [risk: medium]
 
@@ -986,14 +1040,24 @@ above a sane summarizer input — and the summarizer's live tier defaults to a l
 **Acceptance criteria:**
 
 ```gherkin
-Scenario: an input above the upper bound is declined before any tier is asked
+Scenario: an input above the upper bound is never sent to a paid tier
   Given a tool result larger than the summarizer's input bound
   When the routed summarizer is asked for a summary
-  Then it declines without consulting the free tier or the model tier
+  Then the model tier is not asked
+
+Scenario: a project's own summarizer is not bounded by this ceiling
+  Given a project catalog that answers for a tool result larger than the input bound
+  Then its answer is used
 
 Scenario: the two bounds are independent
   Given an input below the model threshold and another above the upper bound
-  Then the first is offered to the free tier only and the second is declined entirely
+  Then the first is offered to the free tier only
+    and the second reaches no paid tier
+
+Scenario: a bound that could never admit anything is refused at construction
+  Given an input bound whose limit is at or below the model threshold
+  When the routed summarizer is built
+  Then it refuses, naming both knobs
 
 Scenario: an input between the bounds is summarized exactly as before
   Given an input above the model threshold and below the upper bound
@@ -1002,6 +1066,21 @@ Scenario: an input between the bounds is summarized exactly as before
 → spec file: `spec/lain/oracle/routed_summarizer_spec.rb`
 
 **Escalation triggers:**
+**AC 1 corrected 2026-08-18, after review measured the premise away.** It originally read "declined
+before any tier is asked … without consulting the free tier or the model tier", and that wording is
+what forced the ceiling in front of the catalog — re-introducing, at a different size, exactly the
+mistake `effect/handler/summarizing.rb:33-44` exists to prevent: **a project's own
+`.lain/summarizers.rb` going dead for results it was written to handle.** The CPU justification did
+not survive measurement (the docstring's own example predicate over 5 MiB is **1.87ms**, against a
+`split("\n")` at 40ms and a documented *spinning*-predicate hazard of 0.637s on a 17-byte result,
+which no size gate reaches). And the region the ceiling removed is the one where the free tier is the
+**only** tier that can answer: a 5 MiB `web_fetch` is 65-87k tokens, past `qwen3:4b`'s 32,768 trained
+maximum, so the model tier could never have served it. The `input_bound:` escape does not rescue the
+affected party either — `CLI::Backend#summary_oracle` passes neither keyword and there is no flag or
+`.lain/` knob, so a project has no lever at all. **The ceiling is a cost gate; it belongs on the tier
+that costs money.** Keep it, and site the test in `#fallthrough` beside the threshold so
+`custom(source)` stays unbounded.
+
 - `MODEL_THRESHOLD_BYTES` is a **lower** bound and this adds an **upper** one. If an implementation
   collapses them into one knob, stop — they answer different questions, and merging them would
   silently change which results get a free-tier summary.
@@ -1055,6 +1134,19 @@ Scenario: a refused run says so
   refusal; propose it and stop.
 - `commit_and_account`'s `defer_stop` region (`agent.rb:393-400`) exists so a stop cannot land
   between a Timeline commit and its `TurnUsage`. Do not move the reset inside it.
+
+**Recorded at review, 2026-08-18 — a scheduled debt, not a hidden one.** With this card's line,
+`Agent` sits at **exactly `Metrics/ClassLength` 110/110** (measured against main with
+`rubocop --stdin`: main clean, main+patch clean, main+patch+one counted line `[111/110]`). No limit
+was loosened and the inline was the right call here — extracting a *method* cannot satisfy
+`ClassLength`, it adds lines; only extracting an **object** does, which is precisely what the cop is
+saying. The object is already named by `#seed_run_state`'s own docstring — *"the mutable run
+context"*: session, snapshot_writer, budget, iterations, failure_reason, transition_listener. The
+tell that it is overdue is in this card's diff, where `@iterations = 0` now appears twice in two
+methods meaning two different scopes and needs a paragraph to stop it reading as a contradiction.
+An `Agent::RunState` would let `#run_loop` say `@run = RunState.begin(...)`. **The next card that
+touches `agent.rb` inherits this extraction** — written here rather than left in a hand-back so it
+arrives as a decision rather than as an ambush at 111/110 mid-work.
 
 ### T15 — Every pending approval reaches the surface the human is looking at   [wave 1] [risk: high]
 
@@ -1125,6 +1217,29 @@ currently record the traceback as unavoidable — true of *raising*, and the poi
 `Task may have ended with unhandled exception` and 27 frames before `Repl#respond` renders the
 correct line.
 
+**Two corrections from T14's review, 2026-08-18, and the first one costs money.**
+
+**The reproduction this card was written against no longer exists, and its replacement is worse.**
+T14 makes the iteration ceiling per-ask, so "type anything after the ceiling" is gone as a way to
+reach a bust — drive **one** ask into a tool loop instead. But the panel measured that
+`max_total_tokens` still reproduces the identical wedge shape and **survives T14 untouched**: with
+the token ceiling busted, each later `ask` commits a user turn, **reaches the provider**, commits an
+assistant turn, then raises — measured `provider calls=3, turns committed after the first bust=4`
+across three dead prompts. It is permanent exactly as the iteration ceiling's was, and strictly
+worse in one respect: the old dead prompts were free, these cost a full round trip each. It renders
+(`error: spent N tokens, ceiling is 50`) and it is off by default (`max_total_tokens: nil`), which
+is why it is a SHOULD-FIX rather than a session-killer — but the first thing anyone who sets it on
+an unattended run meets is a session that keeps accepting prompts and keeps spending. **Use it as
+this card's live repro.**
+
+**Do not let the silent render close as "diagnosed".** T14 discharged manual-QA's "nothing rendered
+at all" by making the state that exhibited it unreachable, which is correct and sufficient for that
+finding. The **mechanism was never identified**: the panel traced `Repl#respond`'s rescue,
+`record_interruption` (which cannot raise on a merely-extending timeline) and `render_error`, and
+found no path in `lib/` that produces an empty screen. So if it is real it fires for *any*
+`Lain::Error` raised mid-ask, and the token bust above is the ready-made reproduction. Inherit the
+open question with the repro rather than recording it as closed.
+
 ```gherkin
 Scenario: a verdict refused over an unreviewed changeset reads as a refusal
   Given a changeset review with one unreviewed file
@@ -1189,6 +1304,19 @@ Scenario: a digest the store cannot resolve stays legible
 - A spec that asserts the buffer's content after ONE ask cannot catch this. The regression test must
   drive **two** asks; that is the whole reason it survived a green suite.
 
+  **Corrected 2026-08-18 by the implementer, who found the real mechanism and showed this guidance
+  was wrong.** Two asks is NOT sufficient — they drove two asks three ways, including a real
+  `lain up` cockpit, and it passed every time. The trigger is a **newline**.
+  `nvim_buf_set_lines` refuses any item containing one, and renders ride `nvim_exec_lua` as a
+  **notify**, so the refusal reaches nobody: `TimelineView#preview` joined a turn's text blocks
+  verbatim, real model prose is multi-line, and the first such turn silently lost the whole buffer
+  write — and every later render still carried it, which is why the freeze is permanent and why its
+  onset moved with whenever the model first wrote a paragraph. Reproduced deterministically by
+  replaying QA round 4's own journal through the real frontend (`2 → 4 → 4 → 4 …` while request went
+  `557 → 724`), with the error caught verbatim by proxying `_G.__lain.set_view`:
+  `'replacement string' item contains newlines`. **The fixture must contain a newline**; the ask
+  count is incidental.
+
 ### T18 — Three surfaces that are right about the facts and wrong about saying them   [wave 3] [risk: low]
 
 **Depends on:** none
@@ -1233,32 +1361,267 @@ Scenario: an idle journal view says what it is waiting for
   summary line is attempted, note that `Review::Surface::MESSAGES` is a closed set — that is a
   seventh message, not a reworded one, and it belongs in its own card if it grows past a line.
 
+## One method lesson worth keeping
+
+**A stated obstacle is the most dangerous prose to leave unverified, because it terminates the
+enquiry — nobody re-checks a road marked closed.** T9 declined to restate an algebra refutation and
+wrote the reason into `lib/`: that doing so "would go red as an ORPHAN at the coverage sweep". The
+sweep actually fails such a claim as **MISSING**, which is the ordinary cost its sibling card had
+already paid. The claim was checkable in one command and was never run, and because it was written
+as a *closed road* rather than an open question, it survived the implementer, the hand-back, and
+would have survived the chunk had the two cards not been reviewed as a pair. The implementer's own
+statement of the lesson is better than a rule: they reasoned from the registry's **purpose** rather
+than its **mechanism**, then wrote a checkable claim about a failure mode into `lib/` without
+running it.
+
+This is the same shape as the two grounding corrections earlier in this chunk — the `write_file`
+"clobber hatch" that was really a dead end, and the `remain-on-exit` comment that recorded a
+traceback as unavoidable when the sibling command had already dodged it. **Prose that says "we
+cannot" earns a command, not a nod.**
+
+## Discovered during the chunk — owed cards, not this chunk's work
+
+Recorded here rather than left in hand-backs, which are deleted with their worktrees.
+
+1. **`lain up` applies `remain-on-exit` too late to catch the failures it was added for.**
+   Found while fixing the tmux flake, and demonstrated deterministically with tmux alone. `up.rb`
+   runs `create_session` — which spawns the pane already running chat — and only *then*
+   `configure_session` → `keep_failed_pane`. A chat that exits inside that gap takes pane → window →
+   session → **the whole server**, and `up.call` itself then raises `TmuxUnavailable: no server
+   running` from `up.rb:333`. So the `remain-on-exit failed` option, added for the 2026-08-06 "starts
+   and immediately crashes" report, does not cover the fastest crashes — exactly the ones it exists
+   for.
+
+   **TWO examples witness it, not one, and a close-out reading only this line will meet the second
+   as a surprise.** `up_spec.rb`'s "threads -- chat args into the spawned window's command, each
+   argument shell-escaped" is the one found here; "--nvim cockpit splits the chat window into an
+   nvim pane and a chat pane sharing one socket and one cwd" in the same file fails from the same
+   cause. `chunk-qa-round3-defects.md:143` already names both together and is the fuller record.
+   The cockpit one was separately repaired this chunk (`6a7b51d5`) for a DIFFERENT, real defect --
+   it used to fail with a misleading `Errno::ENOENT` from a lossy parse -- so it now fails HONESTLY
+   when load kills both panes. Neither was silenced with a server-wide `-g remain-on-exit on`,
+   because that would delete the only witness. **A production card, and it should keep both.**
+
+2. **The approval surfaces copy `QueueSurface`'s machinery instead of sharing it.** T15's panel
+   showed `Notify` reimplements `POLL_INTERVAL`, `@raised`, `@pruning`, `#sweep`, `#unraised?` and
+   `#notify_about` as a hand copy of `QueueSurface`'s `watch`/`sweep`/`mine?`/`adjudicate`, and that
+   two of T15's own findings *are* that copy's drift — the missing `decided?` re-check and the
+   missing fault guard, both lost in the same commit that made the copy. `CLAUDE.md` names the
+   remedy: `ActiveSupport::Concern` for orthogonal behaviour that wants separate testing. Deferred
+   because it is an architecture change across the approval surfaces, wider than the card that found
+   it. T15 instead ships `spec/approval_consumer_discipline_spec.rb`, which is what actually stops
+   the bug regrowing — a second `dequeue` consumer now fails at commit.
+
+3. **`max_total_tokens` keeps spending after it is busted, and the leak has no card of its own.**
+   Confirmed twice by measurement in this chunk. With the token ceiling busted, each later `ask`
+   commits a user turn, **reaches the provider**, commits an assistant turn, then raises — measured
+   4 asks, 4 provider calls, 8 turns. T16 fixed the *noise* half (the refusal no longer arrives as an
+   unhandled-exception warning plus 27 frames) as a side effect; the **cost** half is untouched. It
+   renders and it is off by default (`max_total_tokens: nil`), which is why it is not a
+   session-killer — but the first thing anyone who sets it on an unattended run meets is a session
+   that keeps accepting prompts and keeps paying for them. `grep max_total_tokens planning/
+   ROADMAP.md` currently returns **nothing**: the only description of this lives inside T16's card as
+   "this card's live repro", so when T16 closes a live spend-after-bust leak has no owner.
+
+4. **The empty render QA saw is still unexplained, and the best-founded candidate is the interrupt
+   path — not the one T16's hand-back originally pointed at.** T16 could not reproduce it and
+   correctly declined to call it fixed. Its first pointer (`Repl#dispatch`/`#middleware_turn`) is a
+   hypothesis with no producer: `SkillDispatch` is the only repl-phase short-circuit in `lib/` and it
+   sets a real `Response`. What review **measured** instead: `Agent::Budget#interrupt` is `task.stop`
+   (`budget.rb:55-57`), and `Async::Task#wait` on a stopped task **returns `nil` without raising**.
+   So an interrupted ask yields `Outcome(response: nil)` → `Ask#settle(nil)` → not a `Lain::Error` →
+   `nil` → `middleware_turn`'s `deliver(nil)` → `catch_up`, and **renders nothing** — with `Shutdown`
+   rendering no outcome line either and the ticker having erased the countdown. A reachable,
+   in-`lib/`, screen-renders-nothing path on the interrupt half, which nobody has traced.
+
+5. **`:LainNoteDone`'s second raise site (`assert_saved`) still tracebacks, and the obvious fix has a
+   trap in it.** Recorded with the corrected facts, because the version in T16's hand-back would
+   cause a defect if followed. `55_compose.lua:106` and `60_question.lua:138,143` are **not** `define`d
+   commands — they are `BufWriteCmd` autocmds whose raise is **load-bearing**, and `55_compose.lua`
+   says why in place: "Erroring here is what leaves 'modified' set, so the buffer keeps saying it
+   holds unsaved text and nvim refuses to DISCARD it -- `:bdelete`/`:bwipeout` answer E89."
+   Converting those would let a failed write be silently discarded. The genuine change is small:
+   `review_notes.assert_saved` has one caller (`settled`), which has one caller (`:LainNoteDone` at
+   `48_annotate.lua:415`), and `settled()` returning `payload, refusal` needs no `pcall` and no
+   duplicated `reap`. **Two functions, one call site.**
+
+6. **A refusal wider than one clause still raises a hit-enter modal, and the repo already knows why.**
+   T16 removed the `stack traceback:`, which was the card's subject and is genuinely gone — but the
+   blocking `Press ENTER` is not, and it also blocks the RPC channel while up. Measured: `nvim_echo`
+   of a 128-character refusal at 80 columns puts nvim in mode `r` with `blocking: true`; the same
+   message at width 200, and a 23-character message at width 80, do not. AC 1's own scenario hits it,
+   because the unreviewed-changeset refusal (`review/verdict/policy.rb:92`) is **230 characters** and
+   names `Lain::Review::Verdict::Policy::Permissive` in full. The doctrine is already written down
+   twice — `Surface::Neovim::MARKED` and `ASK_VERDICT` (`review/surface/neovim.rb:217-221`) say a
+   message must be "one short clause" *because* `65_review.lua:37` echoes it, and two specs cap
+   echoed notices at `< 60` and `< 40` naming `Press ENTER or type command to continue` as the
+   failure. `:LainReviewDone`'s own 152-character refusal has it too, so this is rail-wide.
+   **No spec anywhere attaches a UI** (`grep nvim_ui_attach` finds nothing), which is why 13924
+   examples cannot see it; `nvim_get_mode().blocking` is the available witness.
+
+7. **`Approval::Escalation`'s surface taxonomy cannot name a frontend surface, and this is a
+   load-order constraint rather than a preference.** Found by T15, which needed a name for a
+   fault-denial so it would stop being journalled as though a person had typed `n`.
+   `Surfaces::AUTOMATIC` (`escalation.rb:629`) is that name's true home, and **cannot hold it**: the
+   constant is evaluated while `lain/approval` loads, before `Frontend::ApprovalPolicy` exists, so
+   referencing it there is a load-time `NameError`. T15 ships `FAULT_SURFACE = "tty_fault"` accounted
+   for in `escalation_spec` instead, with the reason in a comment. **Making the taxonomy late-bound
+   is the real fix and is a design change to how `Escalation` classifies surfaces** — wider than the
+   card that found it. Whoever takes it should note the comment exists precisely to stop the obvious
+   move (relocating the constant into `AUTOMATIC`), which fails at boot.
+
+8. **Bound the rewrite before the oracle is paid, in `Source#weigh`.** The card this chunk's cost
+   measurements earn. `Source#weigh` calls `@derived.over(...)` **before** both defer gates
+   (`source.rb:390-398`), so an oracle-backed strategy is paid unconditionally and then possibly
+   refused on the `shrinks?` floor — measured at four paid calls and three stored derivations for
+   zero committed compactions over three turns. This bites whole-span `summarizing` identically;
+   `elide-tools+summarize-conversation` merely makes it reachable and recommended.
+
+   **The bound is free, which is what makes this a card rather than a wish.** The elide half's
+   attestation cost is fully deterministic with no model call, and the summarize half's saving has a
+   hard ceiling — it cannot save more than the bytes it replaces. So `Source` can ask "even with a
+   perfect summary, would this shrink?" for zero tokens and defer before `over`. One card discharges
+   it for every oracle-backed strategy at once.
+
+   **A per-operand shrink test is explicitly REFUSED, so it is not re-litigated.** `shrinks?`
+   measures the *rendered history* — the array a render actually sends — and there is no such thing
+   as half a rendered history, so a per-operand verdict answers a question nobody asks. Worse,
+   `Base` declares `commutative_monoid on: :|` with property tests walking the registry, and a
+   partial application that can drop one operand makes the result depend on which operand was
+   measured first. It would also require `Source` to reach into `strategy.operands` and undo a
+   composition the operator asked for, and would still pay the oracle first. One `shrinks?` verdict
+   over the composed rewrite is the right seam.
+
+9. **The real-tmux specs leak a socket inode per example.** Measured 2026-08-18 while reviewing the
+   `lain up` fix: **19,604 stale socket files in `/tmp/tmux-1000` against ZERO live servers**, and
+   confirmed independently. `up_spec` mints a per-example socket (`lain-spec-<pid>-<object_id>`) and
+   the server dies with the example, but the socket file is never unlinked.
+
+   **It is NOT a flake contributor, and an earlier draft of this entry wrongly guessed it might be.**
+   Corrected on review: tmux resolves `-L NAME` to an exact path and `connect()`s, never enumerating
+   the directory, and these are zero-byte inodes on tmpfs — no per-operation cost, no memory
+   pressure. This chunk's two real tmux flake causes were both found and both proven, and neither
+   needed a third explanation. The two reasons it still earns a card are different ones: `/tmp` is
+   tmpfs with a finite **1,048,576-inode ceiling** (~19.7k of the 12% in use is these sockets) and
+   the leak is unbounded until reboot; and it makes `CLAUDE.md`'s own mandated "check for stray
+   `tmux -L` servers before believing a result" noisy, so 19k dead entries invite reading a quiet box
+   as a busy one — a direct tax on the debugging discipline that found both defects.
+
+   It is **three** spec files, not one: `lain-spec-*` 14,625, `tmux-surface-spec-*` 4,050,
+   `fleet-windows-spec-*` 672. `kill-server` does not unlink its socket, and the `after` hook kills
+   the server without removing the file. The cheap fix covers all three at once: point `TMUX_TMPDIR`
+   at the per-example `Dir.mktmpdir` the around hook already creates, so the socket dies with the
+   directory. Cleaning the existing backlog is safe whenever `pgrep -c tmux` is 0.
+
+10. **A private method is reached with `.send` in `chat_flags_spec.rb:222` to make a claim about the
+   executable's flag surface**, and T10's new "the unset name" group now asserts the same fact
+   through the public API. The honest end state is deleting the `.send` line as a duplicate rather
+   than renaming it — but no card owns that file, so it was left renamed and correct.
+
+11. **The `lain://journal` rename proposal's file list was incomplete, and the miss was functional.**
+   T18 proposed renaming the buffer to `lain://tool-output` and listed `journal_view.rb`'s `NAME`,
+   `doc/lain.txt:197,696` and ~8 seam specs. Its panel found two more, one of which is code rather
+   than prose: **`plugin/nvim/lua/lain/config.lua:19`**, where the shipped **default window layout**
+   names the buffer literally — applying the proposal as listed would silently break it — and
+   `README.md:368,395`. Prose references that would go stale also live in `lib/lain/cli/live_views.rb:115`,
+   `spec/lain/cli/live_views_spec.rb:84`, `spec/lain/cli/wiring_spec.rb:551` and several `.lua`
+   runtime headers. **Whoever takes the rename inherits this corrected list, not the hand-back's.**
+
+## Close-out (2026-08-18)
+
+**All 18 cards landed**, plus two fixes this chunk's own work surfaced and the user asked for:
+the `up_spec` cwd-parse repair (`6a7b51d5`) and the **`lain up` `remain-on-exit` ordering defect**
+(`014b8d45`) — a real user-facing bug where a chat that died instantly took the tmux server with it,
+so the option added for the 2026-08-06 "starts and immediately crashes" report never covered the
+crashes it was written for. Forced reproduction: **9 losses in 20 repeats before, 0 in 20 after.**
+
+**Integration checks.** 1 green on BOTH paths (`rake pspec`, and a full serial `bundle exec rake` at
+**14272 examples / 0 failures / 15 pending**, rubocop clean over 1325 files — the serial path was
+failing on `up_spec` before the production fix and passes after, which is independent confirmation
+of the cause). 2 green, with one honest caveat: a single `cargo test` failure appeared once and did
+**not** reproduce across three further runs, and its name was not captured — recorded as one
+unattributed failure, explicitly NOT added to any flake list, per this repo's own rule that an
+unnamed entry is worse than none. 3 green including the new price-freshness lint. 6 unaffected.
+**4 and 5 could not be performed as written and say so above rather than being skipped.**
+7-13 are the human manual pass, still owed — `planning/qa/` now carries scenarios for all of it.
+
+**What the panel caught that a green 14,000-example suite did not.** Every card was reviewed; nine
+came back REQUEST-CHANGES or with a blocker. The findings that mattered most were all *wrong answers
+returned as successes*, which is the class a suite is worst at: `read_file` handing back line 1's
+tail labelled "line 2" because `drop` counts chunks and not lines; a cache-waste meter reporting a
+clean bill against $0.375 of real waste on an alternating-`/model` session, and 500,000 tokens
+attributed against a truth of 12,000 when a subagent's usage landed between a request and its own;
+`lain bench arms --provider ollama` destroying its entire report after paying for the runs;
+`FrozenError` on `touch foo.rb`. Three panels also overturned their own round-1 claims with
+measurement, and one overturned a claim of mine.
+
+**The recurring defect of this chunk was prose, not code**: a checkable claim written into `lib/` or
+a hand-back and never run. It appeared at least six times — the `write_file` "clobber hatch" that was
+really a dead end, the traceback recorded as unavoidable when the sibling command had already dodged
+it, T9's "would go red as an ORPHAN" (it fails as MISSING), `Up::Tmux`'s "the ONE place", the
+`-f File::NULL` pin that silently made an assertion vacuous, and **T1's "Reachable from: `lain
+ledger`" — a command that does not exist, which survived both a grounding pass and a panel review.**
+See "One method lesson worth keeping" above.
+
+**Eleven owed cards are recorded above**, including the one this chunk most wants next: bound the
+rewrite before the oracle is paid (`Source#weigh`), which measured **four model calls and three
+stored derivations for zero committed compactions** on a three-turn refused run.
+
 ## Integration checks
 
 After the last wave:
 
 1. `bundle exec rake` (compile, full suite, rubocop) green. Re-measure the example count rather than
    quoting one — `CLAUDE.md` records that the headline figure is a date stamp, not a fact.
+
+   **Measured mid-chunk at `144913f7` (T1, T7, T14, T4, T3, T12, T2, T18, T8 landed): 14033 examples,
+   0 failures, 15 pending.** Recorded because three separate implementers independently reported a
+   mismatch against a figure their orchestrator had quoted, and each correctly flagged rather than
+   adjusted to it. Every one of those readings (13910-13971) was taken on a worktree cut from a stale
+   base and therefore missing landed cards — the count is a function of which commits are present, so
+   a figure quoted across agents working from different bases is guaranteed to disagree. **Quote the
+   commit with the count, or do not quote the count.**
 2. `cargo test && cargo clippy --all-targets -- -D warnings` green (no Rust in scope; regression
    only).
 3. `pre-commit run --all-files` green, **including the new price-freshness lint from T2**.
-4. Confirm the corrected price table changes stored-journal readings: run `lain ledger` over an
-   existing recorded Opus session before and after, and record both figures in the close-out. **A
-   ~3×
-   drop is the expected, correct outcome** — not a regression.
-5. Confirm no tool bound fires during a normal `rake pspec` run. Bounds must emit a `Telemetry`
-   record
-   when they trip, so this is greppable in a run's journals; a bound that trips in ordinary use is
-   set
-   too low. (If no such record exists, this check cannot be performed — raise it rather than
-   skipping.)
+4. Confirm the corrected price table changes stored-journal readings, and record both figures in
+   the close-out. **A ~3x drop is the expected, correct outcome** — not a regression.
+
+   **CORRECTED 2026-08-18: there is no `lain ledger` command, and this check named one.** The
+   verified command set is `approve arms bench chat consolidate deny epic friction improve
+   improvements land open plan-sweep queue record review sessions status submit survey sweep up
+   variance watch`. Worse, **T1's own "Reachable from" line made the same claim** ("read by `lain
+   ledger` and every bench cost column") and it survived both the pre-flight grounding check and a
+   panel review — a reachability claim is exactly the kind that reads as verified because it names a
+   file and a method, while the *door* it names is the unchecked half. Use a surface that exists:
+   **`lain friction SESSION`**, whose cache-waste section T11 added and which prices per turn, or
+   **`lain bench arms`**, whose cost column T12 added. Both read `PriceBook` through `Ledger#cost_of`
+   on a real path.
+5. Confirm no tool bound fires during a normal `rake pspec` run.
+
+   **RAISED 2026-08-18, as this check's own parenthesis instructed: no such record exists.** The
+   check assumed bounds emit a `Telemetry` record when they trip, making it greppable in a run's
+   journals. `lib/lain/tool/bounds.rb` references `Telemetry` nowhere, and neither T4 (which built
+   it) nor T5/T6/T13 (which applied it) added one — correctly, since no card asked for it. So the
+   check is **unperformable as written** and is not being silently skipped. What stands in for it:
+   the suite is green with every bound applied, and both applying cards report that no fixture
+   tripped a bound and that no cap was raised to make a spec pass. **Whether a tripped bound should
+   be observable at all is a real question and belongs to a card** — a bench whose thesis is that
+   observation tokens dominate a turn arguably wants to count the moment it refuses to spend them.
 6. Confirm `lain bench arms spec/fixtures/arms/tasks.yml` reports the same scores as before this
    chunk. Nothing here touches the arm path except T12's column, so a score change is a finding.
 7. **Manual pass (human):** run `lain chat --compact-strategy elide-tools+summarize-conversation`
    against a real repo until compaction fires at least twice, and confirm from the journal that tool
    observations were elided while conversational turns survived verbatim. This is the only
-   end-to-end
-   check that the composed strategy works on the live path.
+   end-to-end check that the composed strategy works on the live path.
+
+   **Use tools that return REAL BYTES, and treat this as a precondition rather than advice.** T10
+   probed the composed strategy against the real `Derived` and found `shrinks?` is **false on every
+   turn** when tool results are `"ok"`-sized, and true at 2 KB. The driver is the **elide half's
+   ~230-byte attestation**, not the oracle half -- `summarize-conversation` alone shrinks on the same
+   history. So a short-output scenario does not merely fail to demonstrate the strategy: every turn
+   asks the oracle, is refused as `would_not_shrink`, and discards what it paid for. A manual pass on
+   toy outputs measures nothing and bills for it. Read a few real files; do not drive it with `echo`.
 8. **Manual pass (human):** run `lain friction` over that session and confirm the cache-waste
    section
    reports a figure, and that a `/model` switch mid-session is not counted as waste.
