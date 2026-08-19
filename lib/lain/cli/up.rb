@@ -34,6 +34,13 @@ module Lain
       # machine.
       class TmuxUnavailable < Error; end
 
+      # A chat `lain up` will not open a session for, refused in chat's own
+      # words. The message is the child's stderr VERBATIM: the exe maps a
+      # {Lain::Error} to a `Thor::Error`, which prints the message and nothing
+      # else, so what the operator reads is exactly what the pane would have
+      # shown them -- and, unlike the pane, with its first line intact.
+      class ChatRefused < Error; end
+
       # The PATH argument: a directory a user typed, expanded against the
       # shell's own and checked ONCE. Everything below that names a directory
       # reads the result -- both panes' tmux `-c`, the nvim socket's hash, and
@@ -71,14 +78,15 @@ module Lain
 
       DEFAULT_SESSION = "lain"
       CHAT_WINDOW = "chat"
-      DEFAULT_STATUS_INTERVAL = 5
+
+      Report = Data.define(:session, :created, :warnings)
 
       # `created` tells the caller whether a fresh session was just built (so
       # it can say so before attaching) or one was already running (so a
       # second `lain up` reads as "reattaching", never "duplicating").
       # `warnings` carries the jq-missing notice, if any -- the exe `say`s it
       # before attaching so a degraded HUD is never a SILENT one.
-      Report = Data.define(:session, :created, :warnings) do
+      class Report
         # The created-vs-reattaching line is the Report's OWN knowledge (it
         # already carries exactly the two fields that decide it), not exe
         # glue -- the exe just `say`s whatever this returns, alongside
@@ -164,15 +172,16 @@ module Lain
           @shell_out_factory = shell_out_factory
         end
 
-        # Exposed because {Up#attach_command} composes an argv for
-        # `Kernel.exec` rather than running it through here.
-        def socket_flag = @socket ? ["-L", @socket] : []
+        # The argv for a tmux command on THIS socket, composed but not run --
+        # what {Up#attach_command} hands to `Kernel.exec`, which has to
+        # replace the process rather than spawn a child.
+        def argv(*) = ["tmux", *socket_flag, *]
 
         # TOLERATES a nonzero exit, which two callers need: `has-session`'s
         # "no such session" is an expected answer rather than a failure, and
         # {Up#keep_failed_pane} is deliberately best-effort.
         def run(*)
-          @shell_out_factory.call("tmux", *socket_flag, *).tap(&:run_command)
+          @shell_out_factory.call(*argv(*)).tap(&:run_command)
         rescue Errno::ENOENT
           raise TmuxUnavailable, "tmux not found on PATH -- install it (or fix PATH) before `lain up`"
         end
@@ -186,6 +195,161 @@ module Lain
           return shell_out if shell_out.exitstatus.zero?
 
           raise TmuxUnavailable, "tmux #{args.first} failed: #{shell_out.stderr.strip}"
+        end
+
+        private
+
+        # PRIVATE again since {#argv} exists: composing an argv on this socket
+        # is now something this object does for its callers rather than a flag
+        # it lends them to compose one themselves.
+        def socket_flag = @socket ? ["-L", @socket] : []
+      end
+
+      # Asks `chat` whether it would refuse, before a session exists to hide
+      # the answer in. A missing API key, a bad `--num-ctx`, an unknown
+      # `--compact-strategy` -- each used to reach the operator only from
+      # inside a dying pane, where tmux's dead-pane banner scrolls the content
+      # up by exactly one line and the line it eats is the one naming the
+      # cause (`planning/qa/scenarios/failure-injection.md` §11).
+      #
+      # It asks by RUNNING chat, in a child process, with the argument vector
+      # {Up} already built and never read. That is the whole design: chat's
+      # flags are declared in `exe/lain` and validated by chat, so the check
+      # has to be chat's too -- {Up#default_chat_command} records why Up may
+      # not learn them, and reproducing the refusals here would be a second
+      # copy of a surface that already exists. What comes back is an exit
+      # status and stderr, which is all {Up} needs to decide.
+      #
+      # {ChatLaunch::PREFLIGHT_ENV} is what makes that child a check rather
+      # than a chat; see {ChatLaunch#preflight} for what it does and does not
+      # do (no record opened, no server asked).
+      #
+      # Two things it will NOT do. It will not refuse when it could not RUN --
+      # a check that cannot answer must not close the cockpit, so that
+      # degrades to a warning, the rule {Up#cockpit_wanted?} and the jq
+      # fallback already follow. And it runs only where a chat pane is about
+      # to be spawned: reattaching respawns nothing, so there is no launch to
+      # pre-empt and a refusal would only lock an operator out of a session
+      # that is already running.
+      #
+      # KNOWN RESIDUAL: the child inherits `lain up`'s OWN environment, while
+      # the pane inherits the tmux SERVER's (plus {PaneCommand}'s re-exports,
+      # which deliberately exclude `ANTHROPIC_API_KEY` -- a pane command is
+      # readable from the process table). So the one refusal whose answer can
+      # differ between the two is the missing-key one, and it can differ in
+      # both directions. It is the same environment {PaneCommand} already
+      # treats as authoritative for every `LAIN_*` default.
+      class ChatPreflight
+        # Bounded because `lain up` must not hang on a check. Generous against
+        # a cold bootsnap cache (~3.6s to load lain) plus `--num-ctx`'s own 2s
+        # probe, so no honest pre-flight comes near it.
+        #
+        # It is not the whole wait, and the overshoot is ADDITIVE rather than
+        # proportional: Mixlib escalates before it kills (TERM, wait, KILL),
+        # which costs a flat ~3.1s. Measured against a TERM-ignoring child at
+        # three settings -- 3s -> 6.1s, 8s -> 11.3s, 15s -> 18.2s. So the
+        # worst case here is ~18s, and the earlier `TIMEOUT = 30` really would
+        # have stalled a cockpit for ~33s. (A single reading at 3s reads as
+        # "about double", which is the coincidence of 3 + 3; two more points
+        # are what tell the two laws apart.)
+        TIMEOUT = 15
+
+        # What the child's stderr may spend on the operator's terminal. A
+        # refusal is a line or two; anything approaching these bounds is not a
+        # refusal, and this is the one message on the path that lain did not
+        # write.
+        MAX_LINES = 20
+        MAX_BYTES = 4_000
+
+        # A backtrace frame's PREFIX, in both of Ruby's spellings -- the
+        # raising line, and its `from ...` continuations -- and matching a
+        # bare `-e` or an eval'd name as readily as a `.rb` path.
+        #
+        # A prefix rather than a line, and that distinction is the whole of
+        # {#deframed}: Ruby's FIRST backtrace line is
+        # `path:n:in 'method': MESSAGE (Class)`, so the frame and the cause
+        # share it. Dropping it whole satisfies "no frames" by taking the one
+        # sentence this check exists to deliver with it -- the operator would
+        # read `refused these arguments (exit 1)` about a chat that crashed
+        # saying exactly why.
+        FRAME = /\A\s*(from\s+)?\S+:\d+:in\s+('[^']*'|`[^']*'|\S+)(:[ \t]*)?/
+
+        # @param shell_out_factory [#call] `Mixlib::ShellOut.new`, or a double
+        # @param cwd [String] where the chat pane will run, so a project-shaped
+        #   refusal (`--root`, `--cwd`, a skill that will not load) is decided
+        #   against the directory `lain up PATH` named rather than the shell's
+        # @param executable [String] the launching binary, read live for
+        #   {PaneCommand}'s reason -- it is whatever actually got us here.
+        #   Expanded when it names a path, since `cwd:` would otherwise
+        #   resolve a relative one against the wrong directory
+        def initialize(shell_out_factory:, cwd:, executable: $PROGRAM_NAME)
+          @shell_out_factory = shell_out_factory
+          @cwd = cwd
+          @executable = executable.include?(File::SEPARATOR) ? File.expand_path(executable) : executable
+        end
+
+        # @param chat_args [Array<String>] the exe's `-- ARGS` capture, passed
+        #   through untouched -- one process argument per element, so nothing
+        #   here needs a shell and nothing here reads a flag
+        # @return [Array<String>] warnings; empty when chat accepted the argv
+        # @raise [ChatRefused] when chat refused it
+        def call(chat_args)
+          answer = @shell_out_factory.call(@executable, "chat", *chat_args,
+                                           cwd: @cwd, timeout: TIMEOUT,
+                                           env: { ChatLaunch::PREFLIGHT_ENV => "1" })
+          answer.run_command
+          return [] if answer.exitstatus&.zero?
+          # No status at all is a SIGNALLED child -- neither a refusal nor an
+          # acceptance, so it degrades with the rest rather than guessing (and
+          # rather than dying on `nil.zero?`, which is how it would read).
+          return [unchecked("`lain chat` was killed before it could answer")] if answer.exitstatus.nil?
+
+          raise ChatRefused, refusal(answer)
+        rescue Errno::ENOENT, Mixlib::ShellOut::CommandTimeout => e
+          [unchecked(e.message)]
+        end
+
+        private
+
+        # stderr is where Thor prints a refusal and where every named
+        # {Lain::Error} lands through it. stdout is the fallback rather than
+        # the alternative, and the exit status is the last resort: a child that
+        # refused without saying anything is still a refusal, and "exit 3" is
+        # more use to the operator than an empty line.
+        def refusal(answer)
+          said = [answer.stderr, answer.stdout].map { |text| legible(text) }.find { |text| !text.empty? }
+          said.to_s.empty? ? "`lain chat` refused these arguments (exit #{answer.exitstatus})" : said
+        end
+
+        # Scrubbed, de-framed and capped, in that order. The encoding pass is
+        # first because everything after it is line and byte arithmetic on text
+        # that arrived as bytes -- a child is free to emit invalid UTF-8, and a
+        # String carrying it reaches a terminal through the exe's `say`.
+        # `force_encoding` then `scrub`, NOT `encode`: a String already tagged
+        # UTF-8 is its own target encoding, so `encode` returns it unchanged
+        # and the invalid bytes sail through. Scrubbed again after the byte
+        # cap, which can land mid-character.
+        def legible(text)
+          text.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?")
+              .each_line.lazy.filter_map { |line| deframed(line) }.first(MAX_LINES).join.strip
+              .byteslice(0, MAX_BYTES).scrub("?")
+        end
+
+        # The frame off, the cause kept. A `from ...` continuation has nothing
+        # after its prefix and so disappears; the raising line keeps its
+        # message. A line that never looked like a frame is returned untouched
+        # -- including a blank one, since spacing a child chose is not this
+        # object's to edit.
+        def deframed(line)
+          return line unless line.match?(FRAME)
+
+          rest = line.sub(FRAME, "")
+          rest unless rest.strip.empty?
+        end
+
+        def unchecked(reason)
+          "could not pre-flight the chat arguments (#{reason}) -- opening the cockpit unchecked, " \
+            "so a refusal will surface in the chat pane instead"
         end
       end
 
@@ -217,20 +381,27 @@ module Lain
       # {ProjectDir} is a THIRD object both this class and {StatusFeed} name,
       # never one reaching into the other's private path helper; threading a
       # root through it is what that separation was left room for.
+      #
+      # `chat_preflight:` is injected on the `shell_out_factory:` model, and
+      # for a reason a spec cannot get around: the real one SPAWNS the
+      # launching binary, which under rspec is rspec. A group driving real
+      # tmux hands in a no-op so it keeps measuring tmux; the seam's own
+      # examples drive the real object over a fake factory.
       def initialize(session: DEFAULT_SESSION, socket: nil, cwd: Dir.pwd,
                      state_path: ProjectDir.new(root: cwd).state_path,
-                     chat_command: nil, chat_args: [], status_interval: DEFAULT_STATUS_INTERVAL,
+                     chat_command: nil, chat_args: [], status_interval: Hud::DEFAULT_INTERVAL,
                      nvim: nil, paths: Paths.new,
-                     shell_out_factory: Mixlib::ShellOut.public_method(:new))
+                     shell_out_factory: Mixlib::ShellOut.public_method(:new),
+                     chat_preflight: ChatPreflight.new(shell_out_factory:, cwd:))
         @session = session
         @tmux = Tmux.new(socket:, shell_out_factory:)
         @cwd = cwd
-        @hud = Hud.new(state_path:)
+        @hud = Hud.new(state_path:, interval: status_interval)
         @chat_args = chat_args
         @chat_command = chat_command || default_chat_command
-        @status_interval = status_interval
         @cockpit = Cockpit.new(option: nvim, cwd:, paths:)
         @shell_out_factory = shell_out_factory
+        @chat_preflight = chat_preflight
         @warnings = []
       end
 
@@ -282,10 +453,7 @@ module Lain
       # @param nested [Boolean] true when the calling shell is itself an
       #   attached tmux client
       # @return [Array<String>] argv for Kernel.exec
-      def attach_command(nested:)
-        verb = nested ? "switch-client" : "attach"
-        ["tmux", *@tmux.socket_flag, verb, "-t", @session]
-      end
+      def attach_command(nested:) = @tmux.argv(nested ? "switch-client" : "attach", "-t", @session)
 
       private
 
@@ -303,7 +471,13 @@ module Lain
 
       # The ordering here IS the fix, and each step is load-bearing.
       #
-      # `cockpit_wanted?` FIRST, because it spawns `nvim --version` and touches
+      # {ChatPreflight} FIRST, and it is the only step that can REFUSE: a chat
+      # this session could not run is a session that should never have been
+      # created, and a refusal raised after `new-session` would leave one
+      # behind for the next `lain up` to reattach to. Nothing tmux has been
+      # asked to do yet -- `has-session` above creates no server.
+      #
+      # `cockpit_wanted?` next, because it spawns `nvim --version` and touches
       # no tmux. Computing it before anything exists keeps the missing-nvim
       # warning where HEAD had it, and keeps its cost out of the window below.
       #
@@ -317,6 +491,7 @@ module Lain
       # chat wherever the tmux SERVER was started, which is a different project
       # from the one `lain up PATH` names and from the one the HUD reads.
       def create_session
+        @warnings.concat(@chat_preflight.call(@chat_args))
         cockpit = cockpit_wanted?
         @tmux.act("new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cwd)
         keep_failed_pane
@@ -412,7 +587,7 @@ module Lain
         status_right, warning = @hud.status_right(jq_present: binary_present?("jq"))
         @warnings << warning if warning
         set_option("status-right", status_right)
-        set_option("status-interval", @status_interval.to_s)
+        set_option("status-interval", @hud.interval.to_s)
         @tmux.act("set-window-option", "-t", chat_target, "monitor-bell", "on")
       end
 

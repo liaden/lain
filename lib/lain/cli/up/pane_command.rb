@@ -33,12 +33,46 @@ module Lain
           LAIN_TEMPERATURE
         ].freeze
 
+        # Names lain sets on ITSELF that a pane must never inherit. The
+        # counterpart to {PANE_ENV}, and the harder direction: that list is
+        # about values a pane is missing, this one about a value a pane would
+        # be poisoned by.
+        #
+        # {ChatLaunch::PREFLIGHT_ENV} turns a `lain chat` into a construction
+        # check that exits without conversing. `lain up` sets it on the child
+        # it runs deliberately -- but a variable is inherited by everything
+        # downstream of wherever it was set, and a tmux SERVER hands its own
+        # environment to every pane it spawns. Measured: a pane on a server
+        # started with LAIN_PREFLIGHT=1 reads back `1`. The chat pane then
+        # pre-flighted instead of chatting and exited 0, which
+        # `remain-on-exit failed` does not hold, so the window, the session and
+        # the server went with it and nothing was printed anywhere -- a worse
+        # failure than the dead-pane banner the pre-flight exists to route
+        # around, because the banner at least eats only one line.
+        #
+        # Scrubbed here rather than on `lain up`'s own `new-session`, because
+        # here is strictly stronger: scrubbing the server lain starts protects
+        # only servers lain started, while a pane command scrubs its own line
+        # whatever server it lands on -- including one already poisoned before
+        # `lain up` ran.
+        #
+        # A method rather than a constant, and that is load order rather than
+        # taste: `lain.rb` requires this subtree with {Up}, ahead of
+        # {ChatLaunch}, so a constant body would resolve the name at load time
+        # and die. Read at call time it is still the one authority, named once.
+        #
+        # @return [Array<String>] the variables, in unset order
+        def self.scrubbed = [ChatLaunch::PREFLIGHT_ENV].freeze
+
+        # @return [String] the `unset` preamble, first thing on the line
+        def self.scrubs = scrubbed.map { |name| "unset #{name}; " }.join
+
         # Composed per call, never a constant, because `$PROGRAM_NAME` must be
         # read when the exe runs (under rspec it is not the lain binary).
         # Callers: `lain up`'s chat window, its cockpit panes, /fork's window
         # and /btw's popup.
         def self.call(*argv)
-          "#{gem_exports}#{lain_exports}exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
+          "#{scrubs}#{gem_exports}#{lain_exports}exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
         end
 
         # PATH alone is HALF a chruby, and the missing half is what made `lain

@@ -42,6 +42,11 @@ end
 RSpec.describe Lain::CLI::Up do
   def tmux_present? = system("tmux", "-V", out: File::NULL, err: File::NULL)
 
+  # THIS checkout's executable, for the one example that runs a real `lain
+  # chat` child. `$PROGRAM_NAME` is rspec here, which is exactly why the
+  # pre-flight takes its binary as an argument.
+  def lain_exe = File.expand_path("../../../exe/lain", __dir__)
+
   # Strips tmux's `#(job)` status-right wrapper and runs the job directly
   # through a real shell -- proves what the HUD would render WITHOUT relying
   # on tmux's own async status-bar refresh timing (a real render was verified
@@ -63,7 +68,13 @@ RSpec.describe Lain::CLI::Up do
     let(:socket) { "lain-spec-#{Process.pid}-#{object_id}" }
     let(:state_path) { File.join(@state_dir, "state.json") }
     let(:session) { "lain" }
-    let(:up) { described_class.new(session:, socket:, state_path:) }
+    # The real pre-flight SPAWNS the launching binary, which under rspec is
+    # rspec -- so every example in this group would read a refusal from that
+    # instead of driving tmux. Handed a no-op here on purpose: the seam has its
+    # own group below, over a fake factory, where both the call it makes and
+    # the verdict it draws are visible.
+    let(:no_preflight) { ->(_chat_args) { [] } }
+    let(:up) { described_class.new(session:, socket:, state_path:, chat_preflight: no_preflight) }
 
     after { system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL) }
 
@@ -170,7 +181,8 @@ RSpec.describe Lain::CLI::Up do
     it "survives a chat that dies INSTANTLY, keeping the corpse rather than the server" do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
 
-      report = described_class.new(session:, socket:, state_path:, chat_command: "exit 1").call
+      report = described_class.new(session:, socket:, state_path:, chat_command: "exit 1",
+                                   chat_preflight: no_preflight).call
 
       expect(report.created).to be true
       expect(dead_chat_pane?).to be(true)
@@ -198,7 +210,10 @@ RSpec.describe Lain::CLI::Up do
         args.include?("respawn-pane") ? FakeShellOut.new(1, "forced respawn-pane failure") : real
       end
 
-      expect { described_class.new(session:, socket:, state_path:, shell_out_factory: sabotage).call }
+      expect do
+        described_class.new(session:, socket:, state_path:, shell_out_factory: sabotage,
+                            chat_preflight: no_preflight).call
+      end
         .to raise_error(described_class::TmuxUnavailable, /respawn-pane/)
 
       expect(tmux("list-sessions")).not_to include(session)
@@ -213,10 +228,14 @@ RSpec.describe Lain::CLI::Up do
         real = Mixlib::ShellOut.new(*args)
         args.include?("respawn-pane") ? FakeShellOut.new(1, "forced respawn-pane failure") : real
       end
-      expect { described_class.new(session:, socket:, state_path:, shell_out_factory: sabotage).call }
+      expect do
+        described_class.new(session:, socket:, state_path:, shell_out_factory: sabotage,
+                            chat_preflight: no_preflight).call
+      end
         .to raise_error(described_class::TmuxUnavailable)
 
-      retried = described_class.new(session:, socket:, state_path:, chat_command: "sleep 30").call
+      retried = described_class.new(session:, socket:, state_path:, chat_command: "sleep 30",
+                                    chat_preflight: no_preflight).call
 
       expect(retried.created).to be true
       expect(retried.warnings).to be_empty
@@ -227,7 +246,7 @@ RSpec.describe Lain::CLI::Up do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
       chat_args = ["--model", "claude-fable-5", "--no-journal"]
 
-      described_class.new(session:, socket:, state_path:, chat_args:).call
+      described_class.new(session:, socket:, state_path:, chat_args:, chat_preflight: no_preflight).call
 
       # `#{pane_start_command}` is tmux's OWN format-string syntax, not Ruby
       # interpolation -- single-quoted so it reaches tmux byte-for-byte.
@@ -237,11 +256,58 @@ RSpec.describe Lain::CLI::Up do
       expect(pane_command).to include("chat --model claude-fable-5 --no-journal")
     end
 
+    # The one example that drives the REAL pre-flight -- a genuine `lain chat`
+    # child, booted from this checkout's own exe -- against a REAL tmux. Every
+    # other example in this file fakes one side or the other, and the blocker
+    # the review found lived exactly in the interaction: LAIN_PREFLIGHT is
+    # inherited like any variable, a tmux server hands its environment to
+    # every pane, and the chat pane pre-flighted itself into a silent exit
+    # that took the server down.
+    #
+    # So the environment carries one, deliberately. What must hold is that the
+    # session is still built, nothing is warned about, and the pane's own line
+    # neutralises the variable whatever the server it landed on holds. (The
+    # pane still dies moments later, as it does in every example here: it
+    # re-execs $PROGRAM_NAME, which under rspec is rspec. What the pane's SHELL
+    # does with the scrub is pinned separately, against a real `sh`.)
+    it "creates for real, with a real pre-flight, even when LAIN_PREFLIGHT is exported", :seam do
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
+      real_preflight = Lain::CLI::Up::ChatPreflight.new(shell_out_factory: Mixlib::ShellOut.public_method(:new),
+                                                        cwd: @state_dir, executable: lain_exe)
+
+      chat_args = ["--provider", "ollama", "--no-journal"]
+
+      report = with_env("LAIN_PREFLIGHT" => "1") do
+        described_class.new(session:, socket:, state_path:, chat_preflight: real_preflight, chat_args:,
+                            chat_command: "#{pane_command_class.scrubs}exec #{lain_exe} chat " \
+                                          "#{chat_args.join(" ")}").call
+      end
+
+      expect([report.created, report.warnings]).to eq([true, []])
+      expect(session_survives_its_own_launch?).to be true
+    end
+
+    # The blocker's signature, and why THIS is the assertion rather than "the
+    # pane is alive": a pane that pre-flighted itself exited **0** about a
+    # second in, and an exit-0 pane is not what `remain-on-exit failed` holds
+    # -- so the window, the session and the whole server went with it. Every
+    # OTHER way for a chat to die exits non-zero, which the option does hold.
+    # So "the session outlives its own chat pane" is exactly the property the
+    # scrub restores, and nothing else about a chat's health disturbs it.
+    # Three seconds is twice the boot measured on this box, so the failure has
+    # time to happen rather than being outrun.
+    def session_survives_its_own_launch?
+      deadline = Time.now + 3
+      alive = -> { tmux("list-sessions").include?(session) }
+      sleep(0.05) while Time.now < deadline && alive.call
+      alive.call
+    end
+
     it "attaches instead of duplicating on a second call" do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
 
       first = up.call
-      second = described_class.new(session:, socket:, state_path:).call
+      second = described_class.new(session:, socket:, state_path:, chat_preflight: no_preflight).call
 
       expect(first.created).to be true
       expect(second.created).to be false
@@ -316,7 +382,7 @@ RSpec.describe Lain::CLI::Up do
             system("tmux", "-L", socket, "set-option", "-g", "remain-on-exit", "on")
 
             described_class.new(session:, socket:, state_path:, nvim: "", cwd: project, paths:,
-                                chat_args: ["--no-journal"]).call
+                                chat_args: ["--no-journal"], chat_preflight: no_preflight).call
 
             # `#{...}` here is tmux's format-string syntax, not Ruby
             # interpolation -- single-quoted so it reaches tmux byte-for-byte.
@@ -475,10 +541,38 @@ RSpec.describe Lain::CLI::Up do
     # below, which drive an injected env and pin the bytes.
     it "composes the env re-exports, the launching binary, and the escaped argv" do
       expect(described_class.pane_command("chat", "--fork", "a b"))
-        .to eq("export PATH=#{File.dirname(RbConfig.ruby)}:$PATH; " \
+        .to eq("#{pane_command_class.scrubs}" \
+               "export PATH=#{File.dirname(RbConfig.ruby)}:$PATH; " \
                "export GEM_HOME=#{Gem.paths.home}; " \
                "export GEM_PATH=#{Gem.path.join(File::PATH_SEPARATOR)}; " \
                "#{pane_command_class.lain_exports}exec #{$PROGRAM_NAME} chat --fork a\\ b")
+    end
+
+    # The blocker: `lain up` runs its pre-flight by exporting LAIN_PREFLIGHT
+    # into a child, and a variable is inherited by everything downstream of
+    # wherever it was set. A tmux SERVER carries it to every pane it spawns
+    # (measured), so the chat pane pre-flighted instead of chatting, exited 0
+    # -- which `remain-on-exit failed` does not hold -- and took the window,
+    # the session and the server with it, saying nothing anywhere.
+    #
+    # Scrubbed HERE rather than on `new-session`, and that is the stronger
+    # place: scrubbing the server lain starts protects only servers lain
+    # started, while a pane command scrubs its own line whatever server it
+    # lands on -- including one already tainted before `lain up` ran. /fork's
+    # window and /btw's popup share the recipe, so they are covered too.
+    #
+    # Driven through a REAL `sh -c` with the variable exported, because what
+    # is under test is what the pane's own shell does with the line, not what
+    # the line looks like.
+    it "unsets a stray LAIN_PREFLIGHT before the pane execs, so no pane ever runs as a pre-flight" do
+      out, = Open3.capture3({ "LAIN_PREFLIGHT" => "1" }, "sh", "-c",
+                            "#{pane_command_class.scrubs}printenv LAIN_PREFLIGHT; echo status=$?")
+
+      expect(out).to eq("status=1\n")
+    end
+
+    it "puts the scrub AHEAD of the exec, where it can still take effect" do
+      expect(described_class.pane_command("chat")).to start_with(pane_command_class.scrubs)
     end
 
     # The regression this pair exists for, and the reason PATH alone was not
@@ -627,14 +721,15 @@ RSpec.describe Lain::CLI::Up do
       # examples above, which pin every export); what THIS pair is about is the
       # argv tail, so the prefix is delegated rather than duplicated -- the same
       # way btw_spec and fork_spec compare against the recipe.
-      expect(command).to eq("#{pane_command_class.gem_exports}exec #{$PROGRAM_NAME} chat " \
-                            "--model claude-fable-5 --no-journal")
+      expect(command).to eq("#{pane_command_class.scrubs}#{pane_command_class.gem_exports}" \
+                            "exec #{$PROGRAM_NAME} chat --model claude-fable-5 --no-journal")
     end
 
     it "leaves the chat command untouched when no chat args are given" do
       command = capture_chat_pane_command(chat_args: [])
 
-      expect(command).to eq("#{pane_command_class.gem_exports}exec #{$PROGRAM_NAME} chat")
+      expect(command).to eq("#{pane_command_class.scrubs}#{pane_command_class.gem_exports}" \
+                            "exec #{$PROGRAM_NAME} chat")
     end
 
     it "keeps a hostile chat arg inert -- it reaches chat as one literal argument, never shell syntax" do
@@ -654,6 +749,185 @@ RSpec.describe Lain::CLI::Up do
       command = capture_chat_pane_command(chat_args: [hostile])
 
       expect(command).to end_with(Shellwords.escape(hostile))
+    end
+  end
+
+  # T9: a construction refusal reaches the operator's OWN terminal, before a
+  # session exists to hide it. `lain up` asks `chat` whether it would refuse
+  # by running it -- in a child process, with the same argv it would have put
+  # in the pane -- and reads the exit status and stderr back.
+  #
+  # Why it cannot be answered any other way: `chat`'s flag surface is Thor's,
+  # declared in exe/lain, and Up is forbidden to parse it (`Up
+  # #default_chat_command`'s note -- "Up never parses or knows the flag
+  # names"). So the check runs the flags' own owner and reports its verdict.
+  # These examples therefore assert on the CALL Up makes and on what it does
+  # with the answer; what the child then checks is chat_launch_spec's subject.
+  describe "the chat pre-flight" do
+    let(:state_path) { "/tmp/irrelevant-for-these-examples/state.json" }
+
+    # One fake factory for both callees, told apart the way the subject tells
+    # them apart: tmux is invoked as "tmux", the pre-flight as the launching
+    # binary. `calls` is the example's own array so it survives a refusal --
+    # what did NOT happen afterwards is half of what these examples assert.
+    # `session_exists` drives the create-vs-reattach branch.
+    def run_up(calls, chat_args: [], preflight: FakeShellOut.new(0, ""), session_exists: false, **keywords)
+      spy = lambda do |*args|
+        calls << args
+        # Only the launching binary gets the example's answer: `jq --version`
+        # comes through the same factory, and handing IT a refusal would prove
+        # the wrong thing.
+        others = FakeShellOut.new(args[1] == "has-session" && !session_exists ? 1 : 0, "")
+        args.first == $PROGRAM_NAME ? preflight : others
+      end
+      described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: spy, **keywords).call
+    end
+
+    # By the BINARY, not by "the call that is not tmux": `jq` and `nvim` are
+    # probed through the same factory, and a helper that matched either of
+    # those would pass for the wrong reason.
+    def preflight_call(calls) = calls.find { |args| args.first == $PROGRAM_NAME }
+
+    # The raised object, for the examples that assert on the message rather
+    # than on which call was or was not made.
+    def refusal_from(answer, chat_args: [])
+      run_up([], chat_args:, preflight: answer)
+      raise "expected a ChatRefused"
+    rescue Lain::CLI::Up::ChatRefused => e
+      e
+    end
+
+    it "refuses in chat's own words, and no tmux session is created" do
+      refusal = "ANTHROPIC_API_KEY is not set; --provider anthropic needs it to build a client\n"
+      calls = []
+
+      expect { run_up(calls, preflight: FakeShellOut.new(1, refusal)) }
+        .to raise_error(Lain::CLI::Up::ChatRefused, refusal.strip)
+      expect(calls.flatten).not_to include("new-session")
+    end
+
+    # The exe maps a Lain::Error to a Thor::Error, which prints the message
+    # and nothing else -- so what the message carries IS what the operator
+    # reads. A backtrace frame here would reach them verbatim.
+    it "carries the refusal verbatim, with no backtrace frames" do
+      thor_refusal = "ERROR: \"lain chat\" was called with arguments [\"--nosuchflag\"]\nUsage: \"lain chat\"\n"
+
+      error = refusal_from(FakeShellOut.new(1, thor_refusal), chat_args: ["--nosuchflag"])
+
+      expect(error.message).to eq(thor_refusal.strip)
+      expect(error.message).not_to match(/\.rb:\d+:in/)
+    end
+
+    # The one message on this path that lain did not write. A refusal is a
+    # line; a CRASHING child is a backtrace, and AC1 promises the operator
+    # never reads a frame -- so the frames are dropped rather than relayed,
+    # and what is left is capped, since this ends up on a terminal.
+    it "relays what the child said without its backtrace frames, and caps a runaway stderr" do
+      crash = +"/x/y.rb:12:in 'boom': something broke (RuntimeError)\n" \
+               "\tfrom /x/y.rb:30:in 'block in <main>'\n" \
+               "\tfrom /x/y.rb:9:in 'Kernel#loop'\n" \
+               "chat could not start\n"
+      crash << ("noise\n" * 1_000_000) # ~6MB, the shape the review measured at 8
+
+      error = refusal_from(FakeShellOut.new(1, crash))
+
+      expect(error.message).not_to match(/:\d+:in /)
+      expect(error.message).to include("chat could not start")
+      expect(error.message.bytesize).to be <= described_class::ChatPreflight::MAX_BYTES
+    end
+
+    # The half that "drop the frames" gets wrong if it drops LINES: Ruby puts
+    # the frame and the cause on the same first line
+    # (`path:n:in 'method': MESSAGE (Class)`), so a line-wise filter hands the
+    # operator "refused these arguments (exit 1)" about a chat that said
+    # exactly what went wrong. The frame goes; the sentence stays.
+    #
+    # Driven off a REAL uncaught exception rather than a hand-typed one --
+    # the format is Ruby's to change, and it has (the method label was
+    # backtick-quoted before 3.4).
+    it "keeps the cause on the line the frame shares with it" do
+      _, crashed, = Open3.capture3(RbConfig.ruby, "-e", 'raise "boom from inside chat"')
+
+      error = refusal_from(FakeShellOut.new(1, crashed))
+
+      expect(error.message).to include("boom from inside chat")
+      expect(error.message).not_to match(/:\d+:in /)
+    end
+
+    it "replaces bytes that are not valid UTF-8 rather than handing them to a terminal" do
+      error = refusal_from(FakeShellOut.new(1, (+"bad \xC3\x28 byte").force_encoding(Encoding::BINARY)))
+
+      expect(error.message.encoding).to eq(Encoding::UTF_8)
+      expect(error.message).to be_valid_encoding
+    end
+
+    it "hands chat the argv it would have put in the pane, one element per argument" do
+      hostile = "; rm -rf /"
+
+      calls = []
+      run_up(calls, chat_args: ["--model", "claude-fable-5", hostile])
+
+      expect(preflight_call(calls).take(5)).to eq([$PROGRAM_NAME, "chat", "--model", "claude-fable-5", hostile])
+    end
+
+    # LAIN_PREFLIGHT is what stops the child opening a conversation, and the
+    # timeout is what stops `lain up` hanging on a check.
+    it "runs the child in the project's directory, in pre-flight mode, under a bounded wait" do
+      calls = []
+      run_up(calls, cwd: "/some/project")
+
+      expect(preflight_call(calls).last)
+        .to eq(cwd: "/some/project", env: { Lain::CLI::ChatLaunch::PREFLIGHT_ENV => "1" },
+               timeout: described_class::ChatPreflight::TIMEOUT)
+    end
+
+    it "creates the session and spawns the chat pane as before when chat accepts the argv" do
+      calls = []
+      report = run_up(calls, chat_args: ["--no-journal"])
+
+      expect(calls.flatten).to include("new-session")
+      expect(calls.find { |args| args.include?("respawn-pane") }.last)
+        .to eq("#{pane_command_class.scrubs}#{pane_command_class.gem_exports}" \
+               "exec #{$PROGRAM_NAME} chat --no-journal")
+      expect(report.warnings).to be_empty
+    end
+
+    # Reattaching respawns nothing, so there is no launch to pre-empt -- and
+    # a check that refused here would lock an operator out of a session that
+    # is already running perfectly well.
+    it "asks nothing when reattaching, since no chat pane is spawned" do
+      calls = []
+      run_up(calls, session_exists: true)
+
+      expect(preflight_call(calls)).to be_nil
+    end
+
+    # Degraded is never silent, and it is never fatal either: a check that
+    # cannot run is not a refusal, so the cockpit still opens.
+    it "warns and opens anyway when the check itself cannot run" do
+      calls = []
+      cannot_run = lambda do |*args|
+        calls << args
+        raise Errno::ENOENT, "no such file or directory - lain" if args.first == $PROGRAM_NAME
+
+        FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
+      end
+
+      report = described_class.new(session: "lain", state_path:, shell_out_factory: cannot_run).call
+
+      expect(report.warnings.join).to match(/pre-flight|preflight/i)
+      expect(calls.flatten).to include("new-session")
+    end
+
+    # A child with NO exit status was signalled, which answers neither
+    # question -- so it degrades with the rest rather than reading as a
+    # refusal (or dying on `nil.zero?`, which is how it read before).
+    it "warns and opens anyway when the child was killed before it could answer" do
+      calls = []
+      report = run_up(calls, preflight: FakeShellOut.new(nil, ""))
+
+      expect(report.warnings.join).to include("killed before it could answer")
+      expect(calls.flatten).to include("new-session")
     end
   end
 

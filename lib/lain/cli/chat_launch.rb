@@ -16,6 +16,26 @@ module Lain
     # flow through {#call}'s block (the exe's `say`, the one output seam this
     # object is lent); nothing here touches $stdout.
     class ChatLaunch
+      # Turns this launch into the construction-only check {#preflight}
+      # describes, and nothing else -- read at the ONE place a chat becomes a
+      # conversation, so a caller cannot get half of it.
+      #
+      # A MODE rather than a flag, and that is forced rather than chosen:
+      # `lain up` is the only caller, it forwards the operator's `-- ARGS`
+      # verbatim, and it is forbidden to add a word to that vector or even to
+      # read one ({Up#default_chat_command}). An environment variable is the
+      # one channel that reaches the child without touching the argv the
+      # operator typed. `LAIN_DESKTOP` is the precedent for the spelling.
+      PREFLIGHT_ENV = "LAIN_PREFLIGHT"
+
+      # Exactly `1`, never "any non-empty value": `LAIN_PREFLIGHT=0` reads as
+      # off to anyone who types it, and a chat that silently declined to
+      # converse would look like a hang rather than like a mode.
+      #
+      # @param env [#[]] the environment; injected so a spec states its own
+      # @return [Boolean]
+      def self.preflight?(env = ENV) = env[PREFLIGHT_ENV].to_s.strip == "1"
+
       # @param options [Hash] the exe's parsed chat flags. Most are passed
       #   through whole to {Backend}, {LiveViews} and {Wiring} rather than read
       #   here — this object owns the bracket's ORDER, not the meaning of any
@@ -68,7 +88,15 @@ module Lain
       # before any journal file is opened -- a refusal never orphans a fresh
       # journal. A bare --resume arrives as "" (newest); absent as nil (a plain
       # new session).
+      #
+      # {PREFLIGHT_ENV} short-circuits the whole bracket to {#preflight}. The
+      # branch is HERE, at the one place a chat becomes a conversation, so no
+      # caller can reach the second half without it -- and the ensure below
+      # still runs, closing the memoized Null chronicle a pre-flight leaves,
+      # which is a no-op rather than a nil guard.
       def call(&notice)
+        return preflight(&notice) if self.class.preflight?
+
         refuse_windows_without_journal!
         resumed = resumed_run(backend)
         resolve_project!
@@ -85,6 +113,60 @@ module Lain
         # in the RAW journal, not the tee, so a failure path may never cross the
         # fleet sink's boundary recognition -- this teardown drain guarantees it.
         @live_views&.fleet&.drain_pending
+      end
+
+      # Every refusal `lain chat` raises before it reads a byte of the
+      # terminal, with nothing opened and nothing asked of a server. `lain up`
+      # runs this in a child process ({Up::ChatPreflight}) so a construction
+      # refusal lands on the operator's own terminal rather than in a tmux pane
+      # whose dead-pane banner eats the line naming the cause.
+      #
+      # ENUMERATED, and the enumeration is the maintenance cost: a refusal
+      # added elsewhere on the launch path has to be added here too, or
+      # `lain up` goes back to losing it. What keeps the list honest is the two
+      # things it may not do.
+      #
+      # **It opens no record.** A refusal must never orphan a fresh journal --
+      # #call's own ordering rule -- and this runs in a SECOND process, so a
+      # file it opened would be one nothing else closes.
+      #
+      # **It asks no server anything.** An unreachable `--api-base` fails at
+      # TURN level, not launch level, so refusing it here would stop the
+      # cockpit opening for a model server that is merely down. That is why the
+      # span policy resolves through {Backend::SpanSummarizer.resolve} and not
+      # {Backend#pipeline_source}, which builds the window book off a live
+      # round trip. Construction's one probe is `--num-ctx`'s own, bounded and
+      # already degrading to "no ceiling knowable" when nothing answers.
+      #
+      # `--resume`/`--fork` are deliberately absent: resolving one reads the
+      # record and may repair it, which is not construction, and doing it in
+      # two processes would put that repair in the history twice. Their
+      # refusals stay the pane's to report.
+      #
+      # @raise [Lain::Error] whatever the flags refuse, in the flag's own name
+      # @return [nil]
+      def preflight(&notice)
+        refuse_windows_without_journal!
+        resolve_project!
+        constructed
+        # A mode that says nothing looks exactly like a hang, and this one is
+        # reachable by accident: LAIN_PREFLIGHT is inherited like any other
+        # variable, so a stray one turns a `lain chat` somebody typed into a
+        # process that exits 0 having done nothing. `lain up` reads the exit
+        # status and ignores this line; a human reads the line.
+        #
+        # ⚠️ The `&.` is not defensive padding, and it is not free either:
+        # **a caller that omits the block re-opens exactly that silent 0-byte
+        # exit.** It stays because this method is a CHECK first and a mode
+        # second -- its product is the raise, which needs nowhere to print, and
+        # a dozen examples call it directly to ask "are these flags
+        # constructible?". Requiring a block would make flag validation depend
+        # on having somewhere to write, and raising for a missing one would
+        # trade a latent silence for a latent FALSE REFUSAL, which `lain up`
+        # would then relay to an operator as chat's own words.
+        notice&.call("pre-flight only (#{PREFLIGHT_ENV} is set): these arguments construct, " \
+                     "and no conversation was started")
+        nil
       end
 
       # The session record opens FIRST (per --journal), then --nvim views tee
@@ -149,6 +231,33 @@ module Lain
       def chronicle = @chronicle ||= Chronicle::Null.new
 
       private
+
+      # The collaborators the flags decide, built and thrown away. Split out of
+      # {#preflight} so that method reads as the three things it promises --
+      # refuse, construct, say so -- and so the one refusal whose answer
+      # depends on WHERE the check ran has somewhere honest to be re-stated.
+      #
+      # That refusal is the missing key, and it is the only environment-derived
+      # one: every other flag arrives on the command line. A tmux server
+      # started from a shell that HAS a key hands it to every pane it later
+      # spawns, so "ANTHROPIC_API_KEY is not set" can be false of the place it
+      # matters while being true of the place this check can see. The message
+      # therefore says where it looked and what to do, rather than asserting a
+      # global fact it is not in a position to know -- a refusal that states a
+      # false cause is the thing this codebase's refusals exist to prevent.
+      def constructed
+        backend.provider
+        backend.context
+        # Gated, because a pre-flight must refuse a SUBSET of what chat
+        # refuses and never a superset: under --no-compact chat resolves no
+        # strategy, so a refusal here would reject a chat that would have run.
+        Backend::SpanSummarizer.resolve(backend:, options: @options) if backend.compaction?
+      rescue Backend::MissingAPIKey => e
+        raise Backend::MissingAPIKey, "#{e.message} -- looked for in the environment this pre-flight " \
+                                      "ran in, which is not the one a tmux server started elsewhere " \
+                                      "hands its panes; export it here, or start that server from a " \
+                                      "shell that has it"
+      end
 
       # --windows observes the live-view tee, which --no-journal never builds;
       # refuse loudly up front rather than opening a chat whose flag is silently

@@ -439,3 +439,162 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
     expect(chronicle_factory).to have_received(:call).with(enabled: true, btw: true)
   end
 end
+
+# T9: the construction-only run `lain up` asks for before it creates a tmux
+# session. A refusal a chat raises at construction -- a missing API key, a bad
+# --num-ctx, an unknown --compact-strategy -- used to reach the operator only
+# from inside a dying pane, where tmux's dead-pane banner eats its first line
+# and with it the cause (failure-injection.md §11). `lain up` runs this in a
+# child process instead, with the argv it would have put in the pane.
+#
+# Two bounds define it, and both are asserted below: it opens no record, and it
+# asks no server anything. The second is the one that is easy to get wrong --
+# an unreachable `--api-base` is a TURN-level failure (failure-injection.md
+# §5), so a pre-flight that refused it would stop the cockpit opening for a
+# model server that is merely down.
+RSpec.describe Lain::CLI::ChatLaunch, "the construction-only pre-flight" do
+  # Offline by construction: ollama builds a client without asking anything,
+  # and nothing here sets --num-ctx, which is construction's one probe.
+  def offline(**overrides)
+    { journal: false, provider: "ollama", model: nil, max_tokens: 16 }.merge(overrides)
+  end
+
+  describe ".preflight?" do
+    it "is off when the variable is unset" do
+      expect(described_class.preflight?({})).to be false
+    end
+
+    it "is on for exactly 1" do
+      expect(described_class.preflight?({ described_class::PREFLIGHT_ENV => "1" })).to be true
+    end
+
+    # Not "any non-empty value": LAIN_PREFLIGHT=0 reads as off to everyone who
+    # types it, and a chat that silently declined to converse would look like a
+    # hang rather than like a mode.
+    it "is off for anything else, 0 included" do
+      expect(described_class.preflight?({ described_class::PREFLIGHT_ENV => "0" })).to be false
+    end
+  end
+
+  # The blocker the panel found: LAIN_PREFLIGHT is inherited like any other
+  # variable, so a stray one in a shell turned `lain chat` into a process that
+  # exited 0 with zero bytes on either stream -- a conversation that never
+  # happened and never said so. A mode that cannot be seen is worse than the
+  # dead-pane banner this card exists to fix, because the banner eats only ONE
+  # line. The notice block is the one output seam this object is lent, and it
+  # is where the mode announces itself.
+  it "says what it did, rather than exiting silently" do
+    said = []
+
+    with_env(described_class::PREFLIGHT_ENV => "1") do
+      described_class.new(offline).call { |notice| said << notice }
+    end
+
+    expect(said.join).to match(/pre-flight/i)
+    expect(said.join).to include(described_class::PREFLIGHT_ENV)
+  end
+
+  it "opens no record and holds no conversation" do
+    chronicle_factory = spy("chronicle_factory")
+    wiring_factory = spy("wiring_factory")
+
+    with_env(described_class::PREFLIGHT_ENV => "1") do
+      described_class.new(offline, chronicle_factory:, wiring_factory:).call { |_notice| nil }
+    end
+
+    expect(chronicle_factory).not_to have_received(:call)
+    expect(wiring_factory).not_to have_received(:call)
+  end
+
+  # --resume/--fork resolution READS the record and may repair it, so it is not
+  # construction and doing it twice is a change to the session's history. Its
+  # refusals stay the pane's to report.
+  it "resolves neither --resume nor --fork" do
+    resume_factory = spy("resume_factory")
+
+    with_env(described_class::PREFLIGHT_ENV => "1") do
+      described_class.new(offline(resume: ""), resume_factory:).call { |_notice| nil }
+    end
+
+    expect(resume_factory).not_to have_received(:call)
+  end
+
+  describe "the refusals it still raises" do
+    def preflighting(options) = described_class.new(options).preflight
+
+    it "refuses --windows without --journal" do
+      expect { preflighting(offline(windows: true, journal: false)) }
+        .to raise_error(Lain::Error, /--windows needs the session journal/)
+    end
+
+    it "refuses a missing ANTHROPIC_API_KEY by name" do
+      with_env("ANTHROPIC_API_KEY" => "") do
+        expect { preflighting(offline(provider: "anthropic")) }
+          .to raise_error(Lain::CLI::Backend::MissingAPIKey, /ANTHROPIC_API_KEY is not set/)
+      end
+    end
+
+    # The refusal must not state a FALSE cause, which is the whole of this
+    # repo's refusal doctrine. A key can be set where it matters -- a tmux
+    # server started from a shell that has one hands it to every pane it later
+    # spawns -- while this check, reading the environment `lain up` itself was
+    # run from, cannot see it. So the message says WHERE it looked and what to
+    # do, rather than asserting a global fact it is not in a position to know.
+    it "names the environment it looked in, since the chat pane may be handed another" do
+      with_env("ANTHROPIC_API_KEY" => "") do
+        expect { preflighting(offline(provider: "anthropic")) }
+          .to raise_error(Lain::CLI::Backend::MissingAPIKey, /tmux server/)
+      end
+    end
+
+    it "refuses an unknown --provider by name" do
+      expect { preflighting(offline(provider: "nosuchprovider")) }
+        .to raise_error(Lain::CLI::UnknownProvider, /nosuchprovider/)
+    end
+
+    it "refuses a non-positive --num-ctx by name" do
+      expect { preflighting(offline(num_ctx: 0)) }
+        .to raise_error(Lain::CLI::Backend::InvalidCeiling, /--num-ctx/)
+    end
+
+    it "refuses a scheme-less --api-base by name" do
+      expect { preflighting(offline(api_base: "localhost:11434")) }
+        .to raise_error(Lain::CLI::Backend::InvalidEndpoint, /--api-base/)
+    end
+
+    it "refuses an unknown --compact-strategy by name" do
+      expect { preflighting(offline(compact: true, compact_strategy: "nosuchstrategy")) }
+        .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /nosuchstrategy/)
+    end
+
+    # A pre-flight must refuse a SUBSET of what chat refuses, never a superset:
+    # under --no-compact chat never resolves the flag, so neither may this, or
+    # `lain up --no-compact --compact-strategy typo` refuses a chat that would
+    # have run.
+    it "leaves --compact-strategy alone under --no-compact, exactly as chat does" do
+      expect { preflighting(offline(compact: false, compact_strategy: "nosuchstrategy")) }.not_to raise_error
+    end
+  end
+
+  describe "the network boundary" do
+    # The stub registry is not a clean slate here: spec/support/ollama_probe.rb
+    # registers /api/ps and /api/show for every example, so an example asserting
+    # a request was NEVER made has to reset first (that file says so).
+    it "asks no server anything" do
+      WebMock.reset!
+
+      expect { described_class.new(offline(api_base: "http://127.0.0.1:1")).preflight }.not_to raise_error
+    end
+
+    # The `--num-ctx` probe is construction's ONE round trip -- bounded, and
+    # degrading to "no ceiling knowable" -- so an endpoint nothing is listening
+    # on still launches. This is the AC that separates construction failure
+    # from reachability failure.
+    it "does not refuse an --api-base nothing answers on" do
+      stub_request(:post, %r{/api/show}).to_timeout
+
+      expect { described_class.new(offline(api_base: "http://10.255.255.1:11434", num_ctx: 8192)).preflight }
+        .not_to raise_error
+    end
+  end
+end

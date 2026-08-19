@@ -93,6 +93,30 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
 
   def collapsed(strategy) = Sync { strategy.blocks(messages) }.map { |block| block["text"] }
 
+  # T9: the flag's KEY lives here, so the pipeline that builds the run and the
+  # construction check `lain up` makes before it creates a session resolve
+  # `--compact-strategy` through one object. See {Lain::CLI::ChatLaunch
+  # #preflight} for why that check cannot reach it through
+  # {Lain::CLI::Backend#pipeline_source} instead.
+  describe ".resolve" do
+    def flags(**overrides) = { provider: "ollama", model: "qwen3:4b", max_tokens: 64 }.merge(overrides)
+
+    it "reads --compact-strategy out of the flag set it is handed" do
+      strategy = described_class.resolve(backend: summarizing_backend, options: flags(compact_strategy: "elide"))
+
+      expect(strategy).to be_a(Lain::Compaction::Strategy::Elide)
+    end
+
+    it "answers nil for a flag set naming none, exactly as the constructor does" do
+      expect(described_class.resolve(backend: summarizing_backend, options: flags)).to be_nil
+    end
+
+    it "refuses an unknown name in the flag's own words" do
+      expect { described_class.resolve(backend: summarizing_backend, options: flags(compact_strategy: "nope")) }
+        .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /--compact-strategy/)
+    end
+  end
+
   describe "the tier a named strategy resolves to" do
     it "answers nil for an un-flagged run rather than resolving the resolver's default" do
       expect(described_class.new(backend: summarizing_backend, name: nil, sink:).strategy).to be_nil

@@ -58,6 +58,26 @@ module Lain
       # would journal one question while the model answered another, with every
       # spec green.
       class SpanSummarizer
+        # `--compact-strategy` read and resolved in one call, so the flag's KEY
+        # lives with the object that already owns what its absence means rather
+        # than at each caller. Two callers now: {Backend#compaction_source},
+        # which builds the run's pipeline, and {ChatLaunch#preflight}, which
+        # only wants to know whether the name is one lain can build. The
+        # pre-flight cannot go through the pipeline for that -- it resolves the
+        # window book off a live round trip, and a construction check must not
+        # consult a server -- so the shared seam is HERE, one resolver over one
+        # Backend, which is what keeps the two from meaning different things.
+        #
+        # @param backend [Backend] the run's flag resolution
+        # @param options [Hash] the invoked command's parsed flags
+        # @option options [String, nil] :compact_strategy the flag itself
+        # @param sink [Lain::Sink] where a resolved policy reports a DOWN tier
+        # @return [Compaction::Strategy::Base, nil] nil when no flag was given
+        # @raise [CompactionStrategy::Unknown] on a name outside its set
+        def self.resolve(backend:, options:, sink: Sink::Null.new)
+          new(backend:, name: options[:compact_strategy], sink:).strategy
+        end
+
         # @param backend [#summarizer_provider, #summarizer_model,
         #   #summarizer_max_tokens, #journal] the run's flag resolution
         # @param name [String, nil] `--compact-strategy`; nil means the flag

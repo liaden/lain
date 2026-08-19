@@ -495,7 +495,7 @@ module Lain
           cold: Compaction::Cold.new(cache_profile:, journal:),
           hard_cap: knob(:compact_cap, DEFAULT_HARD_CAP), keep_last: knob(:compact_keep, DEFAULT_KEEP_LAST),
           eager:, journal:, model:, price_book: COMPACTION_PRICES, context_window:,
-          strategy: SpanSummarizer.new(backend: self, name: @options[:compact_strategy], sink:).strategy
+          strategy: SpanSummarizer.resolve(backend: self, options: @options, sink:)
         )
       end
 

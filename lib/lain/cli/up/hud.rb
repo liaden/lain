@@ -85,9 +85,21 @@ module Lain
         JQ_MISSING_WARNING = "jq not found on PATH -- status-right falls back to raw state.json " \
                              "(install jq for the formatted warmth/fleet/inbox HUD)"
 
-        def initialize(state_path:)
+        # How often tmux re-runs the `#(...)` job below. Lives here rather
+        # than on {Up} because it is a fact about this renderer -- what it
+        # costs to redraw, and how stale its numbers may get -- not about
+        # sessions, windows or attaching.
+        DEFAULT_INTERVAL = 5
+
+        # @param state_path [String] the `.lain/state.json` the job reads
+        # @param interval [Integer] seconds between re-renders; tmux's
+        #   `status-interval`, which {Up} writes as a session option
+        def initialize(state_path:, interval: DEFAULT_INTERVAL)
           @state_path = state_path
+          @interval = interval
         end
+
+        attr_reader :interval
 
         # @return [Array(String, String), Array(String, nil)] the status-right
         #   value, paired with the named warning when jq is absent -- so a
