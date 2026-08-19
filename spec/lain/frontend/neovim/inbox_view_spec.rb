@@ -329,7 +329,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       opened = view.open(1, generation: two_listed)
 
       expect(opened).not_to be_opened
-      expect(opened.report).to include("no longer pending")
+      expect(opened.report).to include("is not pending")
       expect(editor.opened).to be_empty
     end
 

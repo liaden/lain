@@ -34,12 +34,14 @@ module Lain
           # set in it (the placeholder, or past the end); it names one that has
           # since been answered or withdrawn; or the record on it is no question
           # set at all.
-          UNSHOWN = "#{NAME} is showing rendering %<generation>s, which is not one this view still holds -- " \
-                    "it has re-rendered since, so line %<line>d could name two different sets and this " \
-                    "will not guess between them".freeze
+          #
+          # Written to `spec/refusal_width_discipline_spec.rb`'s bar, which is
+          # what took {UNSHOWN} from 194 rendered characters to here. Each keeps
+          # its condition and its remedy and gives up the explanation between
+          # them; this comment is where that explanation now lives.
+          UNSHOWN = "#{NAME} re-rendered since %<generation>s -- press again on the row you want".freeze
           NO_SET = "no question set on #{NAME} line %d".freeze
-          RETIRED = "the question set on #{NAME} line %d is no longer pending -- it was answered or " \
-                    "withdrawn since that line was rendered".freeze
+          RETIRED = "#{NAME} line %d is not pending -- press again on a listed row".freeze
           UNREADABLE = "the question set on #{NAME} line %d cannot be read -- %s".freeze
 
           # A fifth, and it is the row that is hardest to explain: the set on it
@@ -48,14 +50,16 @@ module Lain
           # round trip later. Re-rendering it would hand the human a fresh
           # UNANSWERED document over the ticks they just made, so the gesture is
           # refused and the sentence says which of the two states this is.
-          ANSWERED = "the question set on #{NAME} line %d has already been answered -- it clears from the " \
-                     "inbox once the agent has taken the answer, and reopening it would replace what you " \
-                     "wrote with a blank document".freeze
+          # It says CLEARS rather than warning that reopening would blank the
+          # document, because only one of those fits the rail and only one is an
+          # instruction: "wait" is what the human has to do, and the blanking is
+          # why -- which is what this comment is for.
+          ANSWERED = "#{NAME} line %d is answered -- it clears once the agent takes it".freeze
 
           # The two the ADVANCE answers with (T16). No line number in either:
           # that gesture is not a cursor, it is "the human just submitted a set,
           # show them the next one", so the sentences name the surface instead.
-          NOTHING_NEXT = "that was the last question set -- #{NAME} lists nothing further pending".freeze
+          NOTHING_NEXT = "nothing further is pending -- #{NAME} lists no more question sets".freeze
           NEXT_UNREADABLE = "the next question set in #{NAME} cannot be read -- %s".freeze
 
           # @param pending [Hash{String=>Object}] {InboxView}'s live listing,
@@ -75,7 +79,7 @@ module Lain
           # The `<CR>`/`r` gesture, once the buffer it came from is identified.
           # @return [Opened]
           def open(line, generation)
-            return unopened(format(UNSHOWN, generation: generation.inspect, line:)) unless
+            return unopened(format(UNSHOWN, generation: generation.inspect)) unless
               @renderings.holds?(generation)
 
             listed(@renderings.digest_at(line, generation), line)

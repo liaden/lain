@@ -706,6 +706,15 @@ module Lain
       # construction, at two different call sites, by callers that may bind
       # either one or neither.
       class Gestures
+        # The gesture's own surface broke its outcome contract. A CONSTANT and
+        # not a literal at the call site, which is a width requirement rather
+        # than taste: `spec/refusal_width_discipline_spec.rb` measures what
+        # rides this rail, and a bare literal at a sink has no definition site
+        # to name -- this sentence shipped at 128 columns of lain's own words
+        # for exactly that reason. `%s` is LAST for the rule that spec states:
+        # the embedded message is of a length no bar reaches.
+        UNANSWERED_OUTCOME = "this gesture's surface could not read its outcome -- nothing happened: %s"
+
         # All three are READERS, not the surfaces -- the bound-accessor shape
         # {Frontend::Neovim}'s listener uses, and for the same reason: every one
         # is bound after this object exists, at its own call site, and a review
@@ -817,8 +826,7 @@ module Lain
         def gestured(outcome)
           @editor.call.review_refused(outcome.report) unless yield(outcome)
         rescue NoMethodError => e
-          @editor.call.review_refused("the surface answering this gesture could not answer this gesture's " \
-                                      "outcome, so nothing happened and lain cannot say why (#{e.message})")
+          @editor.call.review_refused(format(UNANSWERED_OUTCOME, e.message))
         end
       end
 

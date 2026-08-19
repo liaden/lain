@@ -214,13 +214,17 @@ module Lain
         # or caller fault. Neither is "it has re-rendered since", which is a
         # true and specific claim about a stamp that WAS issued and has since
         # aged out of {HELD}.
-        NO_STAMP = "the buffer this gesture came from carries no rendering stamp, so nothing has been " \
-                   "rendered into #{NAME} yet and line %d names nothing".freeze
-        UNISSUED = "#{NAME} was sent a rendering stamp of %<generation>s, which this view never issued -- " \
-                   "the gesture did not come from a rendering this view drew".freeze
-        UNSHOWN = "#{NAME} is showing rendering %<generation>s, which is not one this view still holds -- " \
-                  "it has re-rendered since, so row %<line>d could name two different files and this will " \
-                  "not guess between them".freeze
+        #
+        # All three are pinned under `spec/refusal_width_discipline_spec.rb`'s
+        # bar, which is what took them from 131/140/194 rendered characters to
+        # here: they ride the echo rail, and the message area is one line wide.
+        # Each keeps its CONDITION and its REMEDY and gives up the explanation
+        # in between -- the reasoning above is where a reader who wants it goes.
+        # `%<line>d` left {UNSHOWN} for that: the row is under the human's
+        # cursor, so naming it back cost width and told them nothing.
+        NO_STAMP = "this gesture carries no rendering stamp -- render #{NAME} first".freeze
+        UNISSUED = "#{NAME} never issued rendering %<generation>s -- press again on a drawn row".freeze
+        UNSHOWN = "#{NAME} re-rendered since %<generation>s -- press again on the row you want".freeze
         NO_FILE = "no file on #{NAME} line %d".freeze
 
         # {NO_FILE}'s sibling, and NOT a reuse of it: a commit header names no
@@ -402,7 +406,7 @@ module Lain
 
         def resolve(line, generation)
           rendering = @held.find { |held| held.generation == generation }
-          return unopened(refused(line, generation)) if rendering.nil?
+          return unopened(refused(generation)) if rendering.nil?
 
           row = rendering.at(line)
           row.nil? || row.path.nil? ? unopened(format(NO_FILE, line)) : offer(row)
@@ -411,11 +415,11 @@ module Lain
         # Which of the three things went wrong. `1..@generation` is exactly the
         # set of stamps this view has ever issued, so "never issued" and "issued
         # and since aged out" are told apart by arithmetic rather than by guess.
-        def refused(line, generation)
-          return format(NO_STAMP, line) if generation.nil?
+        def refused(generation)
+          return NO_STAMP if generation.nil?
           return format(UNISSUED, generation: generation.inspect) unless (1..@generation).cover?(generation)
 
-          format(UNSHOWN, generation: generation.inspect, line:)
+          format(UNSHOWN, generation: generation.inspect)
         end
 
         def offer(row)
@@ -432,7 +436,7 @@ module Lain
         # is the whole reason {#refused} exists.
         def resolve_marks(line, generation)
           rendering = @held.find { |held| held.generation == generation }
-          return unmarked(refused(line, generation)) if rendering.nil?
+          return unmarked(refused(generation)) if rendering.nil?
 
           row = rendering.at(line)
           keys = row.nil? ? NO_KEYS : row.hunk_keys

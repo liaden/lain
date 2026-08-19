@@ -160,8 +160,7 @@ module Lain
       # started one. Two different facts, and two different things for the human
       # to do about them.
       module NoReviewWrites
-        UNOPENED = "no review is open in this editor, so there is nothing to record this against -- " \
-                   "nothing was submitted and your text is untouched"
+        UNOPENED = "no review is open here -- open one first; your text is untouched"
 
         def self.wrote_annotation(_note) = UNOPENED
         def self.wrote_verdict(_verdict) = UNOPENED

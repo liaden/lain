@@ -1128,7 +1128,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         expect(outcome).to include("ok" => true)
 
         text = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
-        expect(text).to include("lain:").and include("no review is open in this editor")
+        expect(text).to include("lain:").and include("no review is open here")
         expect(text).not_to include("stack traceback")
       end
     end

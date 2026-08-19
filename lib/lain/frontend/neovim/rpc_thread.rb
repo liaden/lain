@@ -951,8 +951,7 @@ module Lain
             # lain://question buffer OUTLIVES the attach that made it, so a
             # write really can arrive at a frontend wiring no view. Every other
             # answer here is a no-op because nothing downstream reads it.
-            UNANSWERABLE = "this editor has no question surface wired, so there is no set to answer -- " \
-                           "nothing was submitted and your text is untouched"
+            UNANSWERABLE = "no question surface is wired -- nothing submitted, your text is untouched"
 
             # {UNANSWERABLE}'s reason for the review pair (T11), and it reaches
             # further: a `nofile` review buffer outlives its attach just as a
@@ -960,8 +959,7 @@ module Lain
             # would clear 'modified' and report a note recorded by a frontend
             # with nowhere on earth to put it. One sentence for the two because
             # it is one fact: nothing here holds a review.
-            UNREVIEWABLE = "this editor has no review surface wired, so there is nothing to record it against -- " \
-                           "nothing was submitted and your text is untouched"
+            UNREVIEWABLE = "no review surface is wired -- nothing submitted, your text is untouched"
 
             def died = nil
             def resend(_lines) = nil

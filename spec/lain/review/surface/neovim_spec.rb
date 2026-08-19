@@ -615,8 +615,7 @@ RSpec.describe Lain::Review::Surface::Neovim do
       outcome = surface.marked_at(2, :reviewed, generation: rendered.generation)
 
       expect(outcome.marked?).to be(false)
-      expect(outcome.report).to eq("no such hunk -- 1 of 2 hunks on that row were recorded before it, " \
-                                   "so the row is now partly marked")
+      expect(outcome.report).to eq("marked 1 of 2 hunks on that row; the rest were refused -- no such hunk")
     end
 
     it "hands the view's own answer back, so a consumer reads #marked? and #report off one value" do

@@ -1368,7 +1368,7 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
 
       frontend.run do
         expect(run("LainReviewVerdict approve")).to include("ok" => true)
-        expect(refusal_shown).to include("no review is open in this editor")
+        expect(refusal_shown).to include("no review is open here")
       end
     end
 

@@ -1139,7 +1139,7 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       with_surfaces { editor.refusals.any? }
 
-      expect(editor.refusals).to contain_exactly(a_string_matching(/could not answer this gesture.*opened\?/m))
+      expect(editor.refusals).to contain_exactly(a_string_matching(/could not read its outcome.*opened\?/m))
     end
 
     # WHY {Gestures} resolves its surfaces per call rather than holding them.

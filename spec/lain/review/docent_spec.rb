@@ -487,7 +487,7 @@ RSpec.describe Lain::Review::Docent do
 
       expect(prompts.size).to eq(1)
       expect(second).not_to be_asked
-      expect(second.report).to include("already asked")
+      expect(second.report).to include("the answer to this is in the pane")
       expect(second.task).to be_nil
       expect(journal.map(&:journal_type)).to eq(%w[docent_asked docent_answered])
     end
@@ -605,7 +605,7 @@ RSpec.describe Lain::Review::Docent do
 
       expect(opened).to be_nil
       expect(subject.ask("a-60", "why?")).not_to be_asked
-      expect(subject.ask("a-60", "why?").report).to include("no hunk")
+      expect(subject.ask("a-60", "why?").report).to include("open one on a hunk")
       expect(prompts).to be_empty
     end
   end
@@ -931,7 +931,7 @@ RSpec.describe Lain::Review::Docent do
 
       refused = docent(answerer:).ask("a-99", "  ")
 
-      expect(refused.report).to include("no thread is open")
+      expect(refused.report).to include("no thread at anchor")
     end
   end
 

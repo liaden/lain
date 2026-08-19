@@ -139,20 +139,18 @@ module Lain
       # are indistinguishable from the editor's side and call for the same fix:
       # `open` was never called for that anchor, or it was and no hunk of this
       # changeset covers the line.
-      NO_THREAD = "no thread is open at anchor %s -- either nothing opened one, or no hunk of this changeset " \
-                  "covers that line, so there is nothing to ask a docent about"
+      NO_THREAD = "no thread at anchor %s -- open one on a hunk of this changeset first"
 
       # A `:w` on a thread whose typed region is whitespace. lua refuses this
       # first (its own `typed` answers nil), so reaching here means some other
       # caller did it -- answered rather than raised, because this rail refuses
       # in words.
-      BLANK = "a docent needs a question, and nothing but whitespace was typed under the conversation"
+      BLANK = "a docent needs a question -- type one under the conversation and submit"
 
       # The duplicate refusal. It quotes the question back, because the human's
       # screen shows the thread and not the wire, and "already asked" without the
       # words reads as a bug in the pane.
-      DUPLICATE = "this thread has already asked %p, and the answer to it is in the pane -- ask it in " \
-                  "different words to spend another round trip on it"
+      DUPLICATE = "the answer to this is in the pane; reword to ask again. asked: %p"
 
       # A question that reached a docent and came back with no answer. The
       # failure rides verbatim: the docent's own words are the finding.

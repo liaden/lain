@@ -88,8 +88,7 @@ module Lain
       # receive neither. It says what is true anyway, because a null that
       # answers a lie is worse than a nil check.
       module Detached
-        NO_EDITOR = "no editor is attached to this review, so nothing has been rendered and this line names " \
-                    "no row"
+        NO_EDITOR = "no editor is attached -- nothing is rendered, so this line names no row"
 
         def self.open(_line, **) = Frontend::Neovim::ReviewView::Opened.new(path: nil, line: nil, report: NO_EDITOR)
 
@@ -118,8 +117,7 @@ module Lain
       # of the same coupling. {CLI::HumanReplies::NoReview::Nothing} answers its
       # own outcome for the same reason.
       module Unattended
-        NO_DOCENT = "no docent is wired to this review, so there is nobody to ask about this hunk and " \
-                    "nothing was spent on it"
+        NO_DOCENT = "no docent is wired to this review -- nothing was asked and nothing spent"
 
         # The duck {CLI::HumanReplies::Gestures} asks of whatever comes back:
         # `#asked?` decides whether the human is owed a sentence, and `#report`
@@ -220,8 +218,15 @@ module Lain
       # refused for the rest. {Surface::Neovim::PARTLY_MARKED}'s sentence and
       # its reason: "nothing happened" and "half of it happened" need different
       # things from the human.
-      PARTLY_MARKED = "%<refusal>s -- %<landed>d of %<total>d hunks on that row were recorded before it, " \
-                      "so the row is now partly marked"
+      #
+      # `%<refusal>s` is LAST, and that ordering is the rule
+      # `spec/refusal_width_discipline_spec.rb` states and cannot assert: the
+      # embedded sentence is another component's, of a length no width bar
+      # reaches, so lain's own words go first and a shortened echo truncates the
+      # quotation rather than the count. This row is the ONE rail sentence known
+      # to exceed that spec's bar in service -- `%<refusal>s` is never empty
+      # here -- so the ordering is the whole of the mitigation available.
+      PARTLY_MARKED = "marked %<landed>d of %<total>d hunks on that row; the rest were refused -- %<refusal>s"
 
       # @param session [Review::Session] the aggregate every gesture records
       #   against

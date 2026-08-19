@@ -516,7 +516,7 @@ RSpec.describe Lain::Review::Handover do
       marked = handover(view: half).mark(2, "reviewed", generation: 1)
 
       expect(marked.marked?).to be(false)
-      expect(marked.report).to include("1 of 2").and include("partly marked")
+      expect(marked.report).to include("1 of 2").and include("the rest were refused")
       expect(records_of("hunk_marked").size).to eq(1)
     end
 

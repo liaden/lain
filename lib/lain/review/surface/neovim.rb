@@ -206,9 +206,12 @@ module Lain
         # A session that took some of a row's hunks and refused the rest. The
         # figures lead with what is now TRUE of the row rather than with the
         # refusal alone, because "nothing happened" and "half of it happened"
-        # need different things from the human.
-        PARTLY_MARKED = "%<refusal>s -- %<landed>d of %<total>d hunks on that row were recorded before it, " \
-                        "so the row is now partly marked"
+        # need different things from the human -- and because the embedded
+        # refusal is of a length no width bar reaches, so lain's own words have
+        # to come first. {Handover::PARTLY_MARKED} carries the same sentence,
+        # and its comment records why this row is the one known to exceed
+        # `spec/refusal_width_discipline_spec.rb`'s bar in service.
+        PARTLY_MARKED = "marked %<landed>d of %<total>d hunks on that row; the rest were refused -- %<refusal>s"
 
         # The ask, naming the vocabulary rather than a command: the changeset
         # review's `review_verdict` verb has no lua caller yet (T18/T20), and a
@@ -232,7 +235,7 @@ module Lain
         # REFUSES, because a gesture the human made that reaches no model must
         # say so rather than be dropped.
         module Unbound
-          NO_SESSION = "no review session is bound to this surface, so there is nothing to record a mark against"
+          NO_SESSION = "no review session is bound here -- open a review before marking a hunk"
 
           module_function
 
