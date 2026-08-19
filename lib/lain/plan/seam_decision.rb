@@ -31,10 +31,17 @@ module Lain
     # answers `rewrite_now`, and that is HONEST EV, not a degenerate case:
     # without a cache there is nothing to protect, but there is everything to
     # save -- compaction shortens every future turn's FULL-PRICE input resend,
-    # so `payback = tokens_removed x input x 1.0 x turns` genuinely outweighs
-    # the one-off `rewrite_cost = tokens_after x input x 1.0`. The only path
-    # that defers regardless is an UNPRICED arm (`model: nil`), where both
-    # sides are zero -- see {#initialize}.
+    # so `payback = bytes_removed.to_tokens x input x 1.0 x turns` genuinely
+    # outweighs the one-off `rewrite_cost = bytes_after.to_tokens x input x 1.0`.
+    # The only path that defers regardless is an UNPRICED arm (`model: nil`),
+    # where both sides are zero -- see {#initialize}.
+    #
+    # BOTH operands are the compaction subsystem's canonical-BYTE proxy and both
+    # rates are per TOKEN, so each side crosses through {Lain::ProxyBytes#to_tokens}
+    # first -- the one divisor, shared with {Compaction::Scheduler}. The divisor
+    # cancels in `payback > rewrite_cost`, so it moves the journaled dollars and
+    # never the verdict; a spec re-derives every verdict from the unconverted
+    # arithmetic to hold that.
     class SeamDecision
       # The annotation-tier turn estimate per S/M/L class -- the fallback used
       # when no Journal calibration is supplied yet (P5's `median_turns` returns
@@ -58,10 +65,12 @@ module Lain
 
       # Weigh one seam and journal the verdict.
       #
-      # @param chunk [#size, #tokens_before, #tokens_after] the runtime-measured
-      #   chunk: its S/M/L annotation, the current prefix token proxy, and the
-      #   shorter prefix a rewrite would leave. (The same byte/token proxy the
-      #   compaction subsystem measures history in -- units cancel in the ratio.)
+      # @param chunk [#size, #bytes_before, #bytes_after] the runtime-measured
+      #   chunk: its S/M/L annotation, the current prefix byte proxy, and the
+      #   shorter prefix a rewrite would leave, both as plain Integer BYTE
+      #   counts. (The same canonical-byte proxy the compaction subsystem
+      #   measures history in, named for its unit since UX5; this method wraps
+      #   them in {Lain::ProxyBytes} before either reaches a price.)
       # @param profile [CacheProfile] the provider's cache economics (F1)
       # @param prices [PriceBook] the model-price map (CE-6)
       # @param calibration [#median_turns, nil] P5's Journal-calibrated medians;
@@ -70,13 +79,21 @@ module Lain
       #   the journal), carrying the verdict and both sides' inputs
       def call(chunk:, profile:, prices:, calibration: nil)
         size = chunk.size.to_s
-        removed = [chunk.tokens_before - chunk.tokens_after, 0].max
+        # Wrapped HERE, inline, where {Compaction::Scheduler} wraps on its
+        # measurement object instead ({Compaction::Scheduler::Rewrite#dropped}
+        # and `#remaining`). The two idioms differ for a reason and a reader
+        # should not copy the wrong one: that Scheduler OWNS its measurement --
+        # `#measure` builds the Rewrite -- while `chunk` here is a foreign duck
+        # P3/P6 own, so this policy has nowhere to hang the crossing but its own
+        # entry point. Same divisor, same value object, different seam.
+        removed = ProxyBytes.new(count: [chunk.bytes_before - chunk.bytes_after, 0].max)
+        after = ProxyBytes.new(count: chunk.bytes_after)
         # median_turns is trusted to answer an Integer/Float or nil (P5's
         # Calibration contract); a non-numeric here would surface downstream.
         calibrated = calibration&.median_turns(size)
         turns = calibrated || ANNOTATION_TURNS.fetch(size)
-        commit(size:, turns:, calibrated: !calibrated.nil?, removed:, after: chunk.tokens_after,
-               cost: rewrite_cost(chunk.tokens_after, profile, prices),
+        commit(size:, turns:, calibrated: !calibrated.nil?, removed:, after:,
+               cost: rewrite_cost(after, profile, prices),
                pay: payback(removed, turns, profile, prices))
       end
 
@@ -86,28 +103,45 @@ module Lain
       # commit {Compaction::Scheduler#pipeline} makes for its own accounting.
       def commit(size:, turns:, calibrated:, removed:, after:, cost:, pay:)
         record = Telemetry::SeamDecision.new(
-          size:, estimated_turns: turns, calibrated:, tokens_removed: removed, tokens_after: after,
+          size:, estimated_turns: turns, calibrated:,
+          bytes_removed: removed.count, bytes_after: after.count,
           rewrite_cost: cost, payback: pay, verdict: pay > cost ? :rewrite_now : :defer
         )
         @journal << record
         record
       end
 
-      # One cache write of the shorter prefix: its tokens at the input rate,
-      # marked up by the profile's write premium.
-      def rewrite_cost(tokens_after, profile, prices)
+      # One cache write of the shorter prefix: its bytes CROSSED INTO TOKENS at
+      # the input rate, marked up by the profile's write premium.
+      #
+      # The crossing is {Lain::ProxyBytes#to_tokens} and it is not optional: the
+      # operand counts bytes while every {PriceBook} rate is per token, so
+      # multiplying them directly overstates by the bytes-per-token ratio -- the
+      # defect UX5 named, which {Compaction::Scheduler} shared until the same
+      # crossing landed there. One divisor, defined once, used by both.
+      #
+      # @param bytes_after [Lain::ProxyBytes] the shorter prefix a rewrite leaves
+      # @param profile [CacheProfile] the provider's cache economics
+      # @param prices [PriceBook] the model-price map
+      def rewrite_cost(bytes_after, profile, prices)
         return BigDecimal(0) if @model.nil?
 
-        input_rate(prices) * tokens_after * multiplier(profile.write_multiplier)
+        input_rate(prices) * bytes_after.to_tokens * multiplier(profile.write_multiplier)
       end
 
-      # What NOT rewriting costs: the dropped tokens resent at the provider's
+      # What NOT rewriting costs: the dropped span resent at the provider's
       # per-turn read rate (its cache discount where one exists, full input
-      # under NO_CACHING) every one of the estimated remaining turns.
+      # under NO_CACHING) every one of the estimated remaining turns. Crosses
+      # into tokens exactly as {#rewrite_cost}'s operand does.
+      #
+      # @param removed [Lain::ProxyBytes] the span a rewrite would drop
+      # @param turns [Integer, Float] the estimated remaining turns
+      # @param profile [CacheProfile] the provider's cache economics
+      # @param prices [PriceBook] the model-price map
       def payback(removed, turns, profile, prices)
         return BigDecimal(0) if @model.nil?
 
-        input_rate(prices) * removed * multiplier(profile.read_multiplier) * multiplier(turns)
+        input_rate(prices) * removed.to_tokens * multiplier(profile.read_multiplier) * multiplier(turns)
       end
 
       def input_rate(prices)

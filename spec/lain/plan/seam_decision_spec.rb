@@ -8,7 +8,7 @@ RSpec.describe Lain::Plan::SeamDecision do
   # plain duck -- P3/P6 own the object that carries these at live seams -- so an
   # anonymous Data stands in rather than a coupled Plan type.
   def build_chunk(size:, before:, after:)
-    Data.define(:size, :tokens_before, :tokens_after).new(size:, tokens_before: before, tokens_after: after)
+    Data.define(:size, :bytes_before, :bytes_after).new(size:, bytes_before: before, bytes_after: after)
   end
 
   # A Calibration stand-in: the decision depends on the #median_turns message,
@@ -23,9 +23,11 @@ RSpec.describe Lain::Plan::SeamDecision do
   let(:prices)  { Lain::PriceBook.default }       # opus input = $5/Mtok (T1: corrected from $15/Mtok)
   let(:journal) { [] }
 
-  # Hand-computed against opus's $5/Mtok input rate (0.000005/token):
-  #   rewrite_cost = tokens_after * input * write_multiplier(1.25)
-  #   payback      = tokens_removed * input * read_multiplier(0.1) * turns
+  # Hand-computed against opus's $5/Mtok input rate (0.000005/token). Both
+  # operands are BYTES and the rate is per TOKEN, so each crosses through
+  # {Lain::ProxyBytes#to_tokens} first (UX5) -- BYTES_PER_TOKEN is 4:
+  #   rewrite_cost = (bytes_after / 4) * input * write_multiplier(1.25)
+  #   payback      = (bytes_removed / 4) * input * read_multiplier(0.1) * turns
   describe "#call" do
     context "with an L chunk whose payback dominates the rewrite" do
       let(:chunk) { build_chunk(size: "L", before: 10_000, after: 2_000) }
@@ -36,13 +38,13 @@ RSpec.describe Lain::Plan::SeamDecision do
         expect(record).to be_rewrite
         expect(record.verdict).to eq(:rewrite_now)
         expect(record.size).to eq("L")
-        expect(record.tokens_removed).to eq(8_000)
-        expect(record.tokens_after).to eq(2_000)
+        expect(record.bytes_removed).to eq(8_000)
+        expect(record.bytes_after).to eq(2_000)
         expect(record.estimated_turns).to eq(described_class::ANNOTATION_TURNS.fetch("L"))
-        # rewrite_cost = 2000 * 0.000005 * 1.25 = 0.0125
-        expect(BigDecimal(record.rewrite_cost)).to eq(BigDecimal("0.0125"))
-        # payback = 8000 * 0.000005 * 0.1 * 13 = 0.052
-        expect(BigDecimal(record.payback)).to eq(BigDecimal("0.052"))
+        # rewrite_cost = (2000/4) * 0.000005 * 1.25 = 500 * 0.000005 * 1.25 = 0.003125
+        expect(BigDecimal(record.rewrite_cost)).to eq(BigDecimal("0.003125"))
+        # payback = (8000/4) * 0.000005 * 0.1 * 13 = 2000 * 0.000005 * 0.1 * 13 = 0.013
+        expect(BigDecimal(record.payback)).to eq(BigDecimal("0.013"))
       end
 
       it "journals exactly one seam_decision carrying the verdict and both costs" do
@@ -52,8 +54,8 @@ RSpec.describe Lain::Plan::SeamDecision do
         entry = record.to_journal
         expect(entry["type"]).to eq("seam_decision")
         expect(entry).to include("size" => "L", "verdict" => :rewrite_now,
-                                 "rewrite_cost" => "0.0125", "payback" => "0.052",
-                                 "tokens_removed" => 8_000, "tokens_after" => 2_000)
+                                 "rewrite_cost" => "0.003125", "payback" => "0.013",
+                                 "bytes_removed" => 8_000, "bytes_after" => 2_000)
       end
     end
 
@@ -63,14 +65,14 @@ RSpec.describe Lain::Plan::SeamDecision do
 
       # HONEST EV, not a degenerate case: with no cache there is nothing to
       # PROTECT, but everything to SAVE -- compaction shortens every future
-      # turn's full-price input resend. payback = 8000 * 0.000005 * 1.0 * 13 =
-      # 0.52, dwarfing rewrite_cost = 2000 * 0.000005 * 1.0 = 0.01.
+      # turn's full-price input resend. payback = (8000/4) * 0.000005 * 1.0 * 13
+      # = 0.13, dwarfing rewrite_cost = (2000/4) * 0.000005 * 1.0 = 0.0025.
       it "still answers rewrite-now because it shortens every full-price resend" do
         record = decision.call(chunk:, profile:, prices:)
 
         expect(record).to be_rewrite
-        expect(BigDecimal(record.rewrite_cost)).to eq(BigDecimal("0.01"))
-        expect(BigDecimal(record.payback)).to eq(BigDecimal("0.52"))
+        expect(BigDecimal(record.rewrite_cost)).to eq(BigDecimal("0.0025"))
+        expect(BigDecimal(record.payback)).to eq(BigDecimal("0.13"))
       end
     end
 
@@ -95,8 +97,8 @@ RSpec.describe Lain::Plan::SeamDecision do
 
         expect(record.estimated_turns).to eq(4)
         expect(record.calibrated).to be(true)
-        # payback = 8000 * 0.000005 * 0.1 * 4 = 0.016 > cost 0.0125 -> still rewrite
-        expect(BigDecimal(record.payback)).to eq(BigDecimal("0.016"))
+        # payback = (8000/4) * 0.000005 * 0.1 * 4 = 0.004 > cost 0.003125 -> still rewrite
+        expect(BigDecimal(record.payback)).to eq(BigDecimal("0.004"))
         expect(record).to be_rewrite
       end
 
@@ -118,6 +120,46 @@ RSpec.describe Lain::Plan::SeamDecision do
         expect(BigDecimal(record.payback)).to eq(0)
         expect(record.verdict).to eq(:defer)
         expect(record.estimated_turns).to eq(described_class::ANNOTATION_TURNS.fetch("L"))
+      end
+    end
+  end
+
+  # UX5's conversion moved the DOLLARS and not the DECISION. `pay > cost`
+  # compares two products that each carry the divisor exactly once, so it
+  # cancels -- and that is the reason converting was safe, not a reason to have
+  # left the dollars wrong. Proved rather than asserted: every verdict below is
+  # re-derived from the UNCONVERTED byte arithmetic this policy used before the
+  # crossing, and the two must agree.
+  #
+  # Exact for the ratio, approximate for these integers, because
+  # {Lain::ProxyBytes#to_tokens} floors each side independently. Measured, the
+  # disagreement band is NOT a low-magnitude floor to stay above -- it straddles
+  # the `pay == cost` TIE LINE, at every magnitude: 1 to 3 disagreeing byte
+  # offsets in a 61-byte window at `bytes_after` of 1 000, 40 000 and 400 000
+  # alike. That is harmless, because a verdict at an exact tie is arbitrary in
+  # either direction. What makes these fixtures meaningful is that they sit
+  # decisively on ONE side of the tie, as a real seam does.
+  describe "the conversion moves the dollars, not the verdict" do
+    # The formula as it stood before the crossing: raw BYTES against a per-TOKEN
+    # rate, on both sides.
+    def unconverted_verdict(chunk, profile, prices, turns)
+      removed = [chunk.bytes_before - chunk.bytes_after, 0].max
+      cost = unconverted(prices, chunk.bytes_after, profile.write_multiplier)
+      pay = unconverted(prices, removed, profile.read_multiplier) * BigDecimal(turns.to_s)
+      pay > cost ? :rewrite_now : :defer
+    end
+
+    # Raw BYTES against a per-TOKEN rate, times a profile multiplier.
+    def unconverted(prices, bytes, multiplier)
+      prices.price("opus").input * bytes * BigDecimal(multiplier.to_s)
+    end
+
+    [["L", 10_000, 2_000], ["M", 5_000, 1_000], ["S", 3_000, 2_900], ["S", 8_000, 2_000]].each do |size, before, after|
+      it "reaches the same verdict for a #{size} chunk of #{before} -> #{after} bytes" do
+        chunk = build_chunk(size:, before:, after:)
+        record = decision.call(chunk:, profile:, prices:)
+
+        expect(record.verdict).to eq(unconverted_verdict(chunk, profile, prices, record.estimated_turns))
       end
     end
   end
@@ -168,7 +210,7 @@ RSpec.describe Lain::Plan::SeamDecision do
   it "refuses a size outside S/M/L at the record" do
     expect do
       Lain::Telemetry::SeamDecision.new(
-        size: "XL", estimated_turns: 3, calibrated: false, tokens_removed: 100, tokens_after: 50,
+        size: "XL", estimated_turns: 3, calibrated: false, bytes_removed: 100, bytes_after: 50,
         rewrite_cost: 0, payback: 0, verdict: :defer
       )
     end.to raise_error(ArgumentError, %r{size.*S/M/L.*XL})

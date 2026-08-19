@@ -35,20 +35,30 @@ module Lain
     # Every seam's full EV accounting (PC-4): the size class weighed (`size`),
     # the turns-remaining estimate it priced payback over (`estimated_turns`)
     # and whether that estimate came from Journal calibration (`calibrated`,
-    # false when the annotation default stood in), the tokens a rewrite would
-    # drop (`tokens_removed`) and the shorter prefix it would leave
-    # (`tokens_after`, priced by `rewrite_cost`), and BOTH priced sides --
+    # false when the annotation default stood in), the span a rewrite would
+    # drop (`bytes_removed`) and the shorter prefix it would leave
+    # (`bytes_after`, priced by `rewrite_cost`), and BOTH priced sides --
     # `rewrite_cost` (one cache write of that shorter prefix) versus `payback`
-    # (resending the dropped tokens at the provider's per-turn resend rate --
+    # (resending the dropped span at the provider's per-turn resend rate --
     # its cache read discount where one exists, full input where it does not --
     # over the estimated remaining turns) -- so {Compare} can audit the
     # rewrite-now/defer decision,
     # AND re-derive each cost from the record alone, against what the chunk
-    # ACTUALLY consumed. Recording both token operands (removed AND after)
-    # matches the sibling {Compaction} record, which carries `tokens_before`
-    # and `tokens_after` for the same self-contained-audit reason.
+    # ACTUALLY consumed. Recording both operands (removed AND after)
+    # matches the sibling {Compaction} record, which carries `bytes_before`
+    # and `bytes_after` for the same self-contained-audit reason.
     # `calibrated: false` on a mis-sized annotation is what keeps the
     # estimate-vs-actual drift visible rather than silently absorbed.
+    #
+    # Both figures are the compaction subsystem's canonical-BYTE-length proxy,
+    # and they say so because they did not before: the pair was named for tokens
+    # beside provider-measured token counts in the same NDJSON stream, which is
+    # the confusion UX5 named. Renaming only the {Compaction} half would have
+    # relocated it, since this record's own header declares the two a matched
+    # pair. WIRE COMPATIBILITY, as for the sibling: old journals are NOT
+    # migrated and no shim reads them -- a record written before this rename
+    # carries `tokens_removed`/`tokens_after` holding exactly these byte figures
+    # under that misleading name.
     #
     # `rewrite_cost`/`payback` are held as fixed-point decimal STRINGS, not
     # `BigDecimal`, for exactly the reason {Compaction}'s `cost_saved`/
@@ -63,11 +73,11 @@ module Lain
     # Emitted by {Plan::SeamDecision#call} -- the same decide-then-journal
     # pairing {Compaction::Scheduler} makes for its own {Compaction} accounting,
     # one seam, one durable verdict.
-    SeamDecision = Data.define(:size, :estimated_turns, :calibrated, :tokens_removed, :tokens_after,
+    SeamDecision = Data.define(:size, :estimated_turns, :calibrated, :bytes_removed, :bytes_after,
                                :rewrite_cost, :payback, :verdict) do
       include Journalable
 
-      def initialize(size:, estimated_turns:, calibrated:, tokens_removed:, tokens_after:,
+      def initialize(size:, estimated_turns:, calibrated:, bytes_removed:, bytes_after:,
                      rewrite_cost:, payback:, verdict:)
         size = size.to_s
         verdict = verdict.to_sym
@@ -77,7 +87,7 @@ module Lain
 
         super(
           size: -size, estimated_turns:, calibrated: calibrated ? true : false,
-          tokens_removed: Integer(tokens_removed), tokens_after: Integer(tokens_after),
+          bytes_removed: Integer(bytes_removed), bytes_after: Integer(bytes_after),
           rewrite_cost:, payback:, verdict:
         )
       end

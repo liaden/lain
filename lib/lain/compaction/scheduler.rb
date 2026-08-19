@@ -68,11 +68,25 @@ module Lain
       # once is an object (CLAUDE.md), and making it one is what lets the
       # decision and the record read the SAME measurement rather than two that
       # happen to agree.
+      #
+      # Its two members stay bare Integers: {Bench::PlanSweep::Driver} feeds
+      # `before` straight back in as a `head_bytes:`/`history_size:` threshold,
+      # where a byte count is exactly what is wanted. It is only the PRICING
+      # boundary that must not see one, so {#dropped} and {#remaining} are where
+      # the figures become {Lain::ProxyBytes}.
       Rewrite = Data.define(:before, :after) do
         # STRICT: a byte-NEUTRAL rewrite is declined too. It buys nothing and
         # still breaks the cache prefix, so `<=` would be a rewrite that costs
         # a full cache write to change nothing.
         def shrinks? = after < before
+
+        # The two operands the pricing boundary consumes, as {Lain::ProxyBytes}. The
+        # clamp travels WITH the subtraction rather than being left behind at
+        # the pricing site: a rewrite that grew the history dropped nothing, and
+        # that is a fact about the measurement, not about the money.
+        def dropped = ProxyBytes.new(count: [before - after, 0].max)
+
+        def remaining = ProxyBytes.new(count: after)
       end
 
       # WHOSE rates this compaction's dollars may be quoted at, and whether they
@@ -269,37 +283,45 @@ module Lain
       def accounting(decision, need, rewrite, quote)
         Telemetry::Compaction.new(
           trigger: need.signals, cache_state: decision.cache_state,
-          tokens_before: rewrite.before, tokens_after: rewrite.after, model: quote.model,
-          **costs(quote, decision, rewrite.before, rewrite.after)
+          bytes_before: rewrite.before, bytes_after: rewrite.after, model: quote.model,
+          **costs(quote, decision, rewrite)
         )
       end
 
       # Absent, never zero: `cost_spent` already zeroes legitimately on a
       # `:cold` compaction and both figures zero on an unpriced scheduler, so a
       # switched run reporting zero would be indistinguishable from one that
-      # genuinely ran for free. The tokens and the trigger are still measured
+      # genuinely ran for free. The bytes and the trigger are still measured
       # and still journaled -- only the dollars are withheld.
-      def costs(quote, decision, before, after)
+      def costs(quote, decision, rewrite)
         return { cost_saved: nil, cost_spent: nil } if quote.switched?
 
-        { cost_saved: cost_saved(before, after), cost_spent: cost_spent(decision, after) }
+        { cost_saved: cost_saved(rewrite.dropped), cost_spent: cost_spent(decision, rewrite.remaining) }
       end
 
-      # What continuing to resend the dropped tokens every subsequent turn
-      # would have cost, at the model's plain input rate.
-      def cost_saved(before, after)
+      # What continuing to resend the dropped span every subsequent turn would
+      # have cost, at the model's plain input rate.
+      #
+      # @param dropped [Lain::ProxyBytes] the span the rewrite drops. A {Lain::ProxyBytes}
+      #   and not an Integer because the {PriceBook} quotes per TOKEN while the
+      #   measurement counts BYTES: `#to_tokens` is that crossing, stated once.
+      def cost_saved(dropped)
         return BigDecimal(0) if @model.nil?
 
-        @price_book.cost(@model, Usage.new(input_tokens: [before - after, 0].max))
+        @price_book.cost(@model, Usage.new(input_tokens: dropped.to_tokens))
       end
 
       # A `:forced` compaction pays a cache_creation rewrite of the new head;
       # a `:cold` one is free -- there was no warm prefix left to protect
       # (see this class's header).
-      def cost_spent(decision, after)
+      #
+      # @param decision [Decision] this turn's outcome, read for its cache state
+      # @param remaining [Lain::ProxyBytes] the shorter prefix the rewrite leaves,
+      #   crossed into tokens exactly as {#cost_saved}'s operand is.
+      def cost_spent(decision, remaining)
         return BigDecimal(0) if @model.nil? || decision.cache_state == :cold
 
-        @price_book.cost(@model, Usage.new(cache_creation_input_tokens: after))
+        @price_book.cost(@model, Usage.new(cache_creation_input_tokens: remaining.to_tokens))
       end
     end
   end

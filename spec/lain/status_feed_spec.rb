@@ -49,8 +49,8 @@ RSpec.describe Lain::StatusFeed do
   def frozen_run_clock(at: 1000.0) = Lain::RunClock.new(clock: -> { at })
 
   def compaction_record
-    Lain::Telemetry::Compaction.new(trigger: "token_threshold", cache_state: :cold, tokens_before: 100,
-                                    tokens_after: 10, cost_saved: nil, cost_spent: nil, model: nil)
+    Lain::Telemetry::Compaction.new(trigger: "token_threshold", cache_state: :cold, bytes_before: 100,
+                                    bytes_after: 10, cost_saved: nil, cost_spent: nil, model: nil)
   end
 
   around do |example|
@@ -711,7 +711,7 @@ RSpec.describe Lain::StatusFeed do
                  "cache_read_input_tokens" => 0, "cache_creation_input_tokens" => 0 }
       )
       telemetry << Lain::Telemetry::Compaction.new(trigger: "token_threshold", cache_state: :cold,
-                                                   tokens_before: 10, tokens_after: 1,
+                                                   bytes_before: 10, bytes_after: 1,
                                                    cost_saved: nil, cost_spent: nil)
 
       expect(published["occupancy"]).to eq(0.5)

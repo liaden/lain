@@ -768,7 +768,7 @@ RSpec.describe Lain::Telemetry do
 
     it "is what an unpriced Compaction formats through, so its refusal stays nil in the record" do
       refused = Lain::Telemetry::Compaction.new(trigger: %i[token_threshold], cache_state: :cold,
-                                                tokens_before: 100, tokens_after: 40,
+                                                bytes_before: 100, bytes_after: 40,
                                                 cost_saved: nil, cost_spent: nil, model: "claude-opus-4-8")
       expect(refused).not_to be_priced
       expect(refused.to_journal).to include("cost_saved" => nil, "cost_spent" => nil)
@@ -786,8 +786,8 @@ RSpec.describe Lain::Telemetry do
     end
 
     def seam_decision(rewrite_cost: BigDecimal("0.5"), payback: BigDecimal("1.5"))
-      Lain::Telemetry::SeamDecision.new(size: "M", estimated_turns: 8, calibrated: false, tokens_removed: 900,
-                                        tokens_after: 100, rewrite_cost:, payback:, verdict: :rewrite_now)
+      Lain::Telemetry::SeamDecision.new(size: "M", estimated_turns: 8, calibrated: false, bytes_removed: 900,
+                                        bytes_after: 100, rewrite_cost:, payback:, verdict: :rewrite_now)
     end
   end
 end

@@ -114,6 +114,27 @@ RSpec.describe Lain::Compaction::Scheduler do
 
       expect(neutral.measure(history).shrinks?).to be(false)
     end
+
+    # UX5. The two operands the pricing boundary consumes leave the measurement
+    # as VALUES that know their unit, not as bare Integers -- which is what
+    # makes "priced the byte proxy at a per-token rate" a loud failure rather
+    # than a plausible-looking dollar figure.
+    it "hands the pricing boundary proxy bytes rather than bare integers" do
+      measured = scheduler.measure(history)
+
+      expect(measured.dropped)
+        .to eq(Lain::ProxyBytes.new(count: measured.before - measured.after))
+      expect(measured.remaining).to eq(Lain::ProxyBytes.new(count: measured.after))
+    end
+
+    # `cost_saved` clamped this itself before the operands were values; the
+    # clamp moved WITH the subtraction rather than being left behind at the
+    # pricing site.
+    it "never reports a negative drop when the rewrite grew the history" do
+      grown = described_class::Rewrite.new(before: 100, after: 140)
+
+      expect(grown.dropped.count).to eq(0)
+    end
   end
 
   describe "#pipeline" do
@@ -188,7 +209,7 @@ RSpec.describe Lain::Compaction::Scheduler do
 
       expect(Lain::Canonical).not_to have_received(:dump)
       expect(records.first)
-        .to include("tokens_before" => measured.before, "tokens_after" => measured.after)
+        .to include("bytes_before" => measured.before, "bytes_after" => measured.after)
     end
 
     # T17 review fix 3, and the card's own sin caught: the measurement must not
@@ -216,8 +237,8 @@ RSpec.describe Lain::Compaction::Scheduler do
 
       built.pipeline(need: need(:token_threshold), cold: false, history_size: 100, base:)
 
-      expect(records.first).to include("tokens_before" => built.measure([]).before,
-                                       "tokens_after" => built.measure([]).after)
+      expect(records.first).to include("bytes_before" => built.measure([]).before,
+                                       "bytes_after" => built.measure([]).after)
     end
 
     it "leaves the injected base pipeline unmutated across a compacting decision (renders stay pure)" do

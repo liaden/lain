@@ -47,19 +47,33 @@ module Lain
     # expects the full CAC-6 vocabulary; it is not a value this scheduler
     # emits today.
     #
-    # `tokens_before`/`tokens_after` are the SAME canonical-byte-length proxy
+    # `bytes_before`/`bytes_after` are the SAME canonical-byte-length proxy
     # {Compaction::Need::TokenThreshold} and {Context::Compact} already use in
     # place of a real tokenizer (see either's header for why a deterministic
     # proxy is the only property needed here) -- one consistent unit across
-    # the compaction subsystem, not a second, incompatible one.
+    # the compaction subsystem, not a second, incompatible one. They are named
+    # for that unit because they were not before, and it cost a reader:
+    # `tokens_before / window_tokens` read 80% occupancy against a session every
+    # other reader put at 32%, because the numerator counted BYTES and the
+    # denominator provider-measured TOKENS (QA round 5, UX5). `head_bytes` on
+    # {Compaction::Source}'s sibling record already named the unit honestly;
+    # this record is the one that did not.
+    #
+    # WIRE COMPATIBILITY: old journals are NOT migrated and no shim reads them.
+    # A record written before this rename carries `tokens_before`/`tokens_after`
+    # holding exactly these byte figures under the misleading name -- so a
+    # pre-chunk NDJSON line is still readable, but only by a reader who knows
+    # that. Anything crossing the two units goes through
+    # {Lain::ProxyBytes#to_tokens}, which is the only place a
+    # byte count becomes a token count at all.
     #
     # `cost_saved`/`cost_spent` are ESTIMATES, not payments: unlike
     # {TurnUsage}, no model call happens inside a compaction -- `Compact`'s
     # summarizer is a pure, already-injected, deterministic function (see its
     # own header) -- so there is no real {Lain::Usage} to price against.
-    # `cost_saved` prices the token delta at the model's plain input rate:
-    # what continuing to resend the dropped tokens every subsequent turn
-    # would have cost. `cost_spent` prices `tokens_after` at the
+    # `cost_saved` prices the byte delta at the model's plain input rate:
+    # what continuing to resend the dropped span every subsequent turn
+    # would have cost. `cost_spent` prices `bytes_after` at the
     # cache_creation rate ONLY when `cache_state` is `:forced` -- rewriting
     # the message tier while the cache was still warm is exactly what forces
     # that write -- and is zero on `:cold`, matching {Compaction::Scheduler}'s
@@ -124,19 +138,19 @@ module Lain
     # that guard used to build (`reason`/`tier` alone). There is one record at
     # that call site, not two synchronized ones: extending what was already
     # there, not adding a second, independently-guarded emission path.
-    Compaction = Data.define(:trigger, :cache_state, :tokens_before, :tokens_after, :cost_saved, :cost_spent,
+    Compaction = Data.define(:trigger, :cache_state, :bytes_before, :bytes_after, :cost_saved, :cost_spent,
                              :model) do
       include Journalable
 
       # `model:` defaults, so every constructor that predates it keeps building
       # the record it always did and reads as the unpriced case.
-      def initialize(trigger:, cache_state:, tokens_before:, tokens_after:, cost_saved:, cost_spent:, model: nil)
+      def initialize(trigger:, cache_state:, bytes_before:, bytes_after:, cost_saved:, cost_spent:, model: nil)
         trigger = Array(trigger).map(&:to_sym).freeze
         cache_state = cache_state.to_sym
         cost_saved = Telemetry.fixed_point(cost_saved)
         cost_spent = Telemetry.fixed_point(cost_spent)
         Guards::Compaction.check!(trigger:, cache_state:, cost_saved:, cost_spent:)
-        super(trigger:, cache_state:, tokens_before: Integer(tokens_before), tokens_after: Integer(tokens_after),
+        super(trigger:, cache_state:, bytes_before: Integer(bytes_before), bytes_after: Integer(bytes_after),
               cost_saved:, cost_spent:, model: model&.to_s&.freeze)
       end
 

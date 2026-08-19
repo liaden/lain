@@ -20,7 +20,7 @@ RSpec.describe "Compaction journaling" do
   let(:journal) { Lain::Journal.new(io: journal_io) }
   # A deterministic, pure, SHAREABLE summarizer -- the Compact contract. Six
   # substantial messages, keep_last(2), threshold 5: enough that a scheduled
-  # compaction actually rewrites the head, so tokens_before/tokens_after
+  # compaction actually rewrites the head, so bytes_before/bytes_after
   # measure a real reduction rather than a no-op.
   let(:compact) do
     Lain::Context::Compact.new(threshold: 5, keep_last: 2, summarizer: JournalingShareableFixtures::SUMMARIZER)
@@ -54,6 +54,10 @@ RSpec.describe "Compaction journaling" do
     Lain::Compaction::Scheduler.new(compact:, hard_cap:, journal:, model:, price_book:)
   end
 
+  # The record journals BYTES; pricing wants tokens. This is the one crossing,
+  # and a spec re-deriving a dollar figure from the record must make it too.
+  def proxy(bytes) = Lain::ProxyBytes.new(count: bytes)
+
   describe "a compacting decision journals its full accounting" do
     it "carries trigger, cache-state, tokens before/after, and cost saved vs spent" do
       scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
@@ -64,7 +68,7 @@ RSpec.describe "Compaction journaling" do
       expect(record["type"]).to eq("compaction")
       expect(record["trigger"]).to eq(["token_threshold"])
       expect(record["cache_state"]).to eq("forced")
-      expect(record["tokens_before"]).to be > record["tokens_after"]
+      expect(record["bytes_before"]).to be > record["bytes_after"]
       expect(BigDecimal(record["cost_saved"])).to be > BigDecimal(0)
       expect(BigDecimal(record["cost_spent"])).to be > BigDecimal(0)
     end
@@ -78,15 +82,33 @@ RSpec.describe "Compaction journaling" do
       expect(delta).to be_a(BigDecimal)
     end
 
+    # UX5. The record's figures are BYTES and the PriceBook quotes per TOKEN, so
+    # the estimate crosses through {Lain::ProxyBytes#to_tokens}
+    # before it is priced -- which is exactly what an auditor re-deriving the
+    # dollars from the record alone has to do too.
     it "prices a forced-warm rewrite's message-tier cache write as cost_spent" do
       scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
                  model: "claude-sonnet-4-6")
 
       record = records.first
       expected_spent = Lain::PriceBook.default.cost(
-        "claude-sonnet-4-6", Lain::Usage.new(cache_creation_input_tokens: record["tokens_after"])
+        "claude-sonnet-4-6",
+        Lain::Usage.new(cache_creation_input_tokens: proxy(record["bytes_after"]).to_tokens)
       )
       expect(BigDecimal(record["cost_spent"])).to eq(expected_spent)
+    end
+
+    # The bug UX5 named, pinned: the dollars used to price the raw byte count at
+    # a per-token rate and so overstated by the whole bytes-per-token ratio.
+    it "prices the converted proxy, never the raw byte count" do
+      scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
+                 model: "claude-sonnet-4-6")
+
+      record = records.first
+      unconverted = Lain::PriceBook.default.cost(
+        "claude-sonnet-4-6", Lain::Usage.new(cache_creation_input_tokens: record["bytes_after"])
+      )
+      expect(BigDecimal(record["cost_spent"])).to be < unconverted
     end
 
     it "a cold compaction runs for free -- cost_spent is zero, matching the scheduler's own rationale" do
@@ -245,7 +267,7 @@ RSpec.describe "Compaction journaling" do
   describe Lain::Telemetry::Compaction do
     subject(:compaction) do
       described_class.new(
-        trigger: %i[token_threshold], cache_state: :forced, tokens_before: 100, tokens_after: 40,
+        trigger: %i[token_threshold], cache_state: :forced, bytes_before: 100, bytes_after: 40,
         cost_saved: BigDecimal("0.002"), cost_spent: BigDecimal("0.0005")
       )
     end
@@ -257,12 +279,12 @@ RSpec.describe "Compaction journaling" do
     it "journals as a compaction record that round-trips through JSON" do
       expect(compaction.to_journal).to include(
         "type" => "compaction", "trigger" => %i[token_threshold], "cache_state" => :forced,
-        "tokens_before" => 100, "tokens_after" => 40
+        "bytes_before" => 100, "bytes_after" => 40
       )
       round_tripped = JSON.parse(JSON.generate(compaction.to_journal))
       expect(round_tripped).to include(
         "type" => "compaction", "trigger" => ["token_threshold"], "cache_state" => "forced",
-        "tokens_before" => 100, "tokens_after" => 40, "cost_saved" => "0.002", "cost_spent" => "0.0005"
+        "bytes_before" => 100, "bytes_after" => 40, "cost_saved" => "0.002", "cost_spent" => "0.0005"
       )
     end
 
@@ -272,14 +294,14 @@ RSpec.describe "Compaction journaling" do
 
     it "rejects an empty trigger -- a compaction record must name what fired it" do
       expect do
-        described_class.new(trigger: [], cache_state: :cold, tokens_before: 1, tokens_after: 1,
+        described_class.new(trigger: [], cache_state: :cold, bytes_before: 1, bytes_after: 1,
                             cost_saved: 0, cost_spent: 0)
       end.to raise_error(ArgumentError, /trigger/)
     end
 
     it "rejects a cache_state outside warm/cold/forced" do
       expect do
-        described_class.new(trigger: %i[manual], cache_state: :lukewarm, tokens_before: 1, tokens_after: 1,
+        described_class.new(trigger: %i[manual], cache_state: :lukewarm, bytes_before: 1, bytes_after: 1,
                             cost_saved: 0, cost_spent: 0)
       end.to raise_error(ArgumentError, /cache_state/)
     end
@@ -294,7 +316,7 @@ RSpec.describe "Compaction journaling" do
 
     it "holds the model as a frozen String and stays Ractor-shareable with one" do
       priced = described_class.new(
-        trigger: %i[token_threshold], cache_state: :forced, tokens_before: 100, tokens_after: 40,
+        trigger: %i[token_threshold], cache_state: :forced, bytes_before: 100, bytes_after: 40,
         cost_saved: 0, cost_spent: 0, model: +"claude-opus-4-8"
       )
 
@@ -309,7 +331,7 @@ RSpec.describe "Compaction journaling" do
     describe "a record that quotes no figures" do
       subject(:refused) do
         described_class.new(
-          trigger: %i[token_threshold], cache_state: :forced, tokens_before: 100, tokens_after: 40,
+          trigger: %i[token_threshold], cache_state: :forced, bytes_before: 100, bytes_after: 40,
           cost_saved: nil, cost_spent: nil, model: "claude-opus-4-8"
         )
       end
@@ -352,14 +374,14 @@ RSpec.describe "Compaction journaling" do
       # answering `priced?` true about it.
       it "refuses a `false` cost -- nil is the refusal, and nothing else is" do
         expect do
-          described_class.new(trigger: %i[manual], cache_state: :cold, tokens_before: 1, tokens_after: 1,
+          described_class.new(trigger: %i[manual], cache_state: :cold, bytes_before: 1, bytes_after: 1,
                               cost_saved: false, cost_spent: false)
         end.to raise_error(ArgumentError, /BigDecimal/)
       end
 
       it "refuses to quote one figure without the other -- absence is a property of the record" do
         expect do
-          described_class.new(trigger: %i[manual], cache_state: :cold, tokens_before: 1, tokens_after: 1,
+          described_class.new(trigger: %i[manual], cache_state: :cold, bytes_before: 1, bytes_after: 1,
                               cost_saved: 0, cost_spent: nil)
         end.to raise_error(ArgumentError, /cost_saved/)
       end
@@ -367,7 +389,7 @@ RSpec.describe "Compaction journaling" do
 
     it "accepts a String cache_state (JSON never round-trips Symbols) equal to the Symbol form" do
       from_string = described_class.new(
-        trigger: %i[token_threshold], cache_state: "forced", tokens_before: 100, tokens_after: 40,
+        trigger: %i[token_threshold], cache_state: "forced", bytes_before: 100, bytes_after: 40,
         cost_saved: 0, cost_spent: 0
       )
 

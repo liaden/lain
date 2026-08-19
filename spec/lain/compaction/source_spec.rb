@@ -853,16 +853,16 @@ RSpec.describe Lain::Compaction::Source do
   end
 
   describe "the accounting it hands the scheduler" do
-    it "journals tokens_before over the WHOLE history, not the head" do
+    it "journals bytes_before over the WHOLE history, not the head" do
       line = timeline
       built = source(need: build_need(byte_threshold: 100), hard_cap: 100)
 
       context_for(built, line)
 
-      expect(compactions.first["tokens_before"]).to eq(Lain::Canonical.dump(messages_of(line)).bytesize)
+      expect(compactions.first["bytes_before"]).to eq(Lain::Canonical.dump(messages_of(line)).bytesize)
     end
 
-    it "journals tokens_after for the messages a render actually sends" do
+    it "journals bytes_after for the messages a render actually sends" do
       line = timeline
       built = source(need: build_need(byte_threshold: 100), hard_cap: 100)
       messages = messages_of(line)
@@ -876,7 +876,7 @@ RSpec.describe Lain::Compaction::Source do
 
       context_for(built, line)
 
-      expect(compactions.first["tokens_after"])
+      expect(compactions.first["bytes_after"])
         .to eq(Lain::Canonical.dump([summary] + messages.last(keep_last)).bytesize)
     end
 
