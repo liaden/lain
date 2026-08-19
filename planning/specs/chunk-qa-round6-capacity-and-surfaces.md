@@ -1,6 +1,6 @@
 # Chunk — provider admission, and the surfaces that carry a pending item
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds · Jeremy Evans · Sandi Metz · Richard Schneeman · Aaron Patterson
@@ -201,7 +201,21 @@ POSITION, so a two-line row would send `<CR>` to a set the human did not choose"
    the docs implying `$?` is meaningful. Reopen only with a named consumer.
 2. **T8 builds test-only machinery and is deliberately unreachable from production.** The local model
    cannot produce two simultaneous pendings, so the notifier's fan-out is otherwise untestable.
-3. **Default admission width is 1 per resolved endpoint, not probed.** Reading a server's real
+3. **AMENDED 2026-08-19 (orchestrator), after T2 traced the construction sites: width 1 applies to
+   LOCAL endpoints only; a non-local endpoint gets the unbounded Null arm.** The original decision
+   below justified width 1 by *"1 is correct for every local server this bench has run"* — a
+   local-server argument — but the mechanism as written applied it to every resolved endpoint,
+   hosted ones included. That is a silent throughput regression the chunk never intended:
+   `cli/wiring.rb:475` → `toolset_build.rb:316` builds **one shared `Subagent::Seam` provider** that
+   every child spawn is built over, so concurrent subagents are N callers arriving at **one endpoint
+   key** and would serialise behind a width of 1. *(Mechanism corrected 2026-08-19 by T2's review — I
+   first wrote "a provider per subagent", which is wrong. The conclusion is unchanged, and is if
+   anything stronger: they contend even without separate provider objects.)* The AC *"a hosted endpoint is
+   not serialised behind a local one"* shows the intent; serialising a hosted endpoint behind *itself*
+   is the same harm in a different shape. `LAIN_PROVIDER_CONCURRENCY` still overrides globally, and
+   probing a server's real parallelism remains out of scope. Original text follows.
+
+   **Default admission width is 1 per resolved endpoint, not probed.** Reading a server's real
    parallelism is out of scope: it is a provider-specific probe on a path that must stay synchronous,
    and 1 is correct for every local server this bench has run. **`LAIN_PROVIDER_CONCURRENCY=0`
    selects the Null admission** and is the documented escape hatch for a session admission has
@@ -1004,3 +1018,98 @@ execute*. All were verified against the code before acting; all are discharged.
 
 **Critical path shortened from 3 to 2**, and the chunk gained parallelism rather than losing it —
 which the panel noted is the usual sign the seams were in the wrong place to begin with.
+
+## Close-out — 2026-08-19
+
+**All 12 cards landed.** 14 commits, `c7b3ff92`..`6d3df47b`, every one green through the hook.
+
+**Verification.** `rake pspec` **14665 examples, 0 failures, 15 pending**, cross-checked against a
+SERIAL `rspec` at **14665** — the counts match, which is the check CLAUDE.md insists on because a
+dead worker and an OOM kill both present as *"fewer examples, 0 failures"*. Bare `rubocop` clean over
+1345 files; `pre-commit run --all-files` all-passed; `cargo test` 9 passed and
+`cargo clippy --all-targets -- -D warnings` clean. `~/.local/state/lain` gained nothing.
+
+**What the panel caught that a green suite did not.** Two blockers and one near-blocker, none of
+which any spec would have found:
+
+- **F26 still reproduced after T2's first cut.** `.local?` folded loopback spellings but `.for` keyed
+  on the raw endpoint *string*, so `--api-base http://127.0.0.1:11434` and the bare
+  `Provider::Ollama.new` from `Oracle::SecretRead` — the site that forced admission into the provider
+  — took two slots on one server. The card's own AC passed only because it configured the
+  **byte-identical default string**, the one spelling an operator never has to think about.
+- **T9 could hide a secrets warning from the human approving the call.** `summary_for` elided
+  mid-preamble while `body_for` carried only the call, so *"N sensitive regions outstanding"* could
+  vanish from an item entirely — on the one surface whose stated purpose is that a human reads what
+  they approve. Fixed by wrapping the whole summary, making the summary line a cut PREFIX of the body.
+- **T1's `LAIN_PROVIDER_CONCURRENCY=-1` built a permanently shut gate.** `0 < -1` is false forever, so
+  with nothing in flight every caller polled the full 300 s and raised — and `-1` is the idiom for
+  "no limit", making the failure mode a hung session produced by trying to disable the feature.
+
+Also: **both fold ACs on T9 were asserted by a `grep`**, and a mutant deleting folding entirely
+survived its whole 140-example suite. The fix was a `:seam, :nvim` example reading real
+`foldclosed()`; T12 inherited the lesson and killed the same mutant by construction.
+
+**Escalations, and what they changed.**
+
+1. **T1 refused to build the card's mandated primitive**, and was right. `Async::Semaphore` is not
+   thread-safe, and `Provider#complete` is reachable from the Neovim resend-worker thread, where it
+   raised `FiberError` in the *releasing* fiber (killing the turn), wedged the waiter, and left the
+   gate silently not gating. Ruled to a Mutex-guarded counter with a deadline-bounded poll.
+2. **T2's tracing exposed a ruling I had to make and then correct.** Width 1 keyed per resolved
+   endpoint would have serialised concurrent subagents on a *hosted* endpoint; Open decision 3 is
+   amended to local-only. My stated mechanism ("a provider per subagent") was wrong — it is one shared
+   `Subagent::Seam` provider, N callers, one key — corrected in place.
+3. **T3 stopped rather than wire its own decorator**, on my instruction, and its refutation was
+   decisive: a `Channel` is not a journal (its own docstring says the Journal does not ride it), and
+   `@channel` is not even retained on `Ollama` — the one arm that queues. My "one line" hypothesis
+   would have shipped a `NoMethodError` on the only provider the feature exists for.
+
+**`Metrics/ClassLength` named a missing object four times, and was never once a limit worth raising**
+— `Wiring`→`RunState`, `Ollama`/`Backend`→`Provider::Admitted` (eight duplicated lines),
+`InboxView`→`Row`, `Admission`→`Endpoint`. The last is load-bearing: locality and canonicalisation
+*must agree*, and their disagreement is exactly what left F26 live.
+
+**Manual passes still owed** (integration checks 4-7). None can be discharged by a spec:
+
+4. **The F26 seam end to end.** Start `$QA/proxy.rb`, launch a cockpit through it, drive a turn whose
+   tool result summons the oracle, and assert from the proxy log that **no two `/api/chat` requests
+   are in flight at once** and that no `stalled stream` appears in the pane.
+5. **The sixth construction site.** The same run with `--secret-oracle` active — the only end-to-end
+   proof that putting admission inside the provider was right, since `Backend#provider` never sees it.
+6. **A manual `human>` pass.** `/ruby`, `/mode`, `/status` each render and leave the question parked;
+   `/quit` is refused by name; `/inbox` answers the parked set and not the oldest; prose still answers.
+7. **A real-terminal cockpit pass (human, not agent).** Park two approvals with T8's fixture and
+   confirm by eye that each row folds open to its full command and closed to its summary, and that `y`
+   on a continuation line answers that item. T10 exists to make this checkable.
+
+**Known-good state carried forward.** CLAUDE.md gained the reproduced `worktree_handback` flake BY
+NAME (a second example in a file whose existing entry named only the `Dir.mktmpdir` shape, so it read
+as *"not this one"*), and the mutation-harness rule that a harness must refuse to score unless the
+example count **equals the baseline count** — learned in three stages, the last when the guard let its
+own author through with a real `0 examples, 0 failures`.
+
+### Follow-ups this chunk deliberately did not take
+
+1. **The nvim RPC hang has no established cause.** 40x24 does not break RPC or `botright vsplit` on
+   0.12.4. T6's widening is right on its own merits but **does not demonstrably fix the round-6 hang**.
+2. **`Provider::Admission::Journal` is not wired**, so `provider_wait` never emits in production. Needs
+   a journal-bearing sink on the provider first (`CompactionMount#fed_journal`'s `JournalTee` is the
+   pattern), touching `ollama.rb`, `anthropic.rb`, `bedrock.rb` and `backend.rb#provider`.
+3. **The approval/inbox cursor race.** A stationary cursor over a re-rendered list answers the wrong
+   item — the stamp is current, the human's aim is stale. Five routes assessed, all blocked or
+   contradicting a pinned contract. **T9/T12 widened it** (1-line rows shifted into inert trailer;
+   multi-line items land inside another answerable item). Rejected route recorded with its refutation.
+4. **`Registry#detours_replies?`** — split `serves_replies?` ("opens its own terminal read") from the
+   reply prompt's real need ("this is my own inbox detour"). A census guard ships instead, and it is
+   suite-side, so an out-of-tree command evades it.
+5. **`notify_spec`'s `:desktop` seam is unreachable** — `spec/support/endpoint_env.rb:54` deletes
+   `LAIN_DESKTOP` process-wide at support-load, so the documented invocation still skips.
+6. **Telemetry can kill the operation it observes** — a journal whose `<<` raises kills the admitted
+   round trip. Same exposure in `Isolation::Journal`, so it is a two-site fix.
+7. `TmuxSurface#session` creates detached sessions with no geometry (T6's defect class, other site).
+8. `Provider::Bedrock#complete` ungated — a no-op under the locality rule, but the enumeration is open.
+9. **`InboxView` builds every pending body on every render** just to decide row height; a 60KB question
+   draws 655 lines and nothing bounds the fold.
+10. `Artifact#refusal`'s return-vs-raise design — the card's claim that T5 removed its reason was wrong.
+11. `PaneCommand.call` does not thread env; `lain_exports(env = ENV)` has the seam, callers stub `ENV.[]`.
+12. `nv.sh` has no current-window guard before reading fold state.
