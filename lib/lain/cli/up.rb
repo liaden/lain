@@ -41,6 +41,13 @@ module Lain
       # shown them -- and, unlike the pane, with its first line intact.
       class ChatRefused < Error; end
 
+      # A chat pane that died before `lain up` could attach to anything, told
+      # in the pane's own words. The sibling of {ChatRefused}: that one is what
+      # `chat` could be ASKED about beforehand, this one is what only running
+      # it reveals -- an exec that failed, a pathological login shell, a crash
+      # on the way up. {PaneCorpse} composes the message.
+      class ChatDied < Error; end
+
       # The PATH argument: a directory a user typed, expanded against the
       # shell's own and checked ONCE. Everything below that names a directory
       # reads the result -- both panes' tmux `-c`, the nvim socket's hash, and
@@ -353,6 +360,218 @@ module Lain
         end
       end
 
+      # Reads the chat pane back, shortly after it has been given its command,
+      # and answers what it died of -- or nothing at all, which is the ordinary
+      # case and the one this is tuned for.
+      #
+      # It exists because {ChatPreflight} can only cover what `chat` will
+      # REFUSE. A pane that fails to exec, or whose login shell exits, or which
+      # crashes on the way up, is discovered by running it -- and the operator
+      # then gets attached to a corpse with no idea what they are looking at,
+      # or (worse, on an older tmux) a terminal that blinks once and returns to
+      # the shell.
+      #
+      # **The scrollback, not the visible region.** tmux draws its own
+      # `Pane is dead (status N, ...)` banner INTO the pane, which scrolls the
+      # content up by exactly one line -- and the first line is where a refusal
+      # names its cause. Measured on tmux 3.7b: a plain `capture-pane -p` comes
+      # back without it, `-S -` still has it. That displacement is the whole
+      # reason this object reads history rather than screen.
+      #
+      # **What it costs the healthy path, and why it is not a fixed wait.** tmux
+      # reaps an exited pane on its own event loop, so death is a fact that
+      # arrives late -- measured 11-20ms after `respawn-pane` on this box, 15
+      # reps, and that includes the polling client's own round trip. So the
+      # grace is counted from the moment the pane was given its command rather
+      # than from the moment the check starts: every tmux call {Up} makes in
+      # between is time already spent, and a loaded box -- where a wait would
+      # hurt most -- spends the grace on work instead of on sleeping. A pane
+      # confirmed dead ends the wait immediately, so only a HEALTHY launch pays,
+      # and only for the remainder.
+      #
+      # **Nothing is lost when the grace is too short.** A death slower than
+      # {GRACE} is simply not converted into a message on the operator's own
+      # terminal; `remain-on-exit failed` still holds the corpse on screen where
+      # they can read it, exactly as before. That is what makes a small bound
+      # the right trade rather than a compromise.
+      #
+      # Best-effort throughout, on {Up#keep_failed_pane}'s rule: a tmux that
+      # will not answer (too old to have held the pane at all, or a server that
+      # exited under us) means the check cannot tell, and a diagnostic that
+      # cannot tell must never close a cockpit that would otherwise open.
+      class PaneCorpse
+        # Seconds from the pane's spawn. ~7x the 11-20ms reap latency measured
+        # above, which is the only thing the wait is here to outlast.
+        GRACE = 0.15
+
+        # Fine enough that a confirmed death is reported promptly, coarse
+        # enough that the poll costs a handful of tmux round trips rather than
+        # a spin.
+        CADENCE = 0.01
+
+        # What a dead pane's screen may spend on the operator's terminal.
+        # Larger than {ChatPreflight}'s caps because this is a SCREEN rather
+        # than a refusal, and unlike the pre-flight's it keeps backtrace frames:
+        # a refusal that needs a frame to explain itself is a bug, while an
+        # unexpected crash IS the frames.
+        MAX_LINES = 40
+        MAX_BYTES = 4_000
+
+        # tmux's OWN format syntax, not Ruby interpolation -- single-quoted so
+        # it reaches tmux byte for byte. `display-message -p` resolves it
+        # against the window's ACTIVE pane, which is the chat pane in both
+        # shapes `lain up` builds: the sole pane of a plain window, and the
+        # one `split-window` just made in the cockpit.
+        # rubocop:disable Lint/InterpolationCheck
+        FORMAT = '#{pane_dead} #{pane_dead_status}'
+        # rubocop:enable Lint/InterpolationCheck
+
+        # Built where the pane is handed its command, because the grace it
+        # measures is the PANE's life and not this object's -- so there is no
+        # constructing one early and arming it later, and no corpse to ask
+        # about a pane that was never spawned.
+        #
+        # @param tmux [Tmux] the same server {Up} built the session on
+        # @param target [String] the chat window, `session:chat`
+        # @param session [String] the session that will survive the pane, named
+        #   separately because the advice is spelled in tmux's own words and
+        #   `kill-session` takes a session rather than a window
+        # @param clock [#call] the monotonic source the grace is measured
+        #   against, defaulted from {RunClock::MONOTONIC} as every `clock:` seam
+        #   in the repo is -- naming the primitive here instead would be the
+        #   second site of a constant that is spec'd to have exactly one. It is
+        #   also what lets a spec pin the poll EXACTLY, in probe counts, rather
+        #   than bounding it in wall time and hoping the box stays quiet.
+        def self.watching(tmux:, target:, session:, clock: RunClock::MONOTONIC) = new(tmux:, target:, session:, clock:)
+
+        def initialize(tmux:, target:, session:, clock: RunClock::MONOTONIC)
+          @tmux = tmux
+          @target = target
+          @session = session
+          @clock = clock
+          @spawned_at = @clock.call
+        end
+
+        # @return [String, nil] what the pane died of, or nil -- which covers
+        #   both "it is alive" and "tmux would not say", deliberately: the two
+        #   have the same consequence, which is that `lain up` attaches.
+        def call
+          deadline = @spawned_at + GRACE
+          verdict = probe
+          verdict = wait_and_probe while verdict == :alive && @clock.call < deadline
+          verdict.is_a?(String) ? report(verdict) : nil
+        end
+
+        private
+
+        def wait_and_probe
+          sleep(CADENCE)
+          probe
+        end
+
+        # `rescue StandardError`, and the breadth is the point rather than
+        # laziness. {Tmux#run} names only `Errno::ENOENT`; every other way
+        # asking can fail -- EACCES on the binary, EMFILE out of fork -- would
+        # otherwise escape as something `exe/lain`'s `rescue Lain::Error` does
+        # not catch, putting a backtrace on the operator's terminal AND killing
+        # a launch that was working. So the rescue is on the BEHAVIOUR (this
+        # could not ask) and not on a list of errnos, because the list is what
+        # was wrong: a diagnostic never fails `lain up`, whatever went wrong
+        # inside it.
+        #
+        # @return [String, :alive, :unanswerable] the pane's exit status when
+        #   it is dead
+        def probe
+          answer = @tmux.run("display-message", "-p", "-t", @target, FORMAT)
+          return :unanswerable unless answer.exitstatus&.zero?
+
+          dead, status = answer.stdout.strip.split(" ", 2)
+          dead == "1" ? status.to_s : :alive
+        rescue StandardError
+          :unanswerable
+        end
+
+        # An empty status is tmux before 2.9, which has `pane_dead` but not
+        # `pane_dead_status` -- so the death is known and the number is not,
+        # and the sentence has to survive saying so.
+        #
+        # It names the SESSION and what a re-run does with it because the
+        # obvious shorter sentence -- "there is nothing to attach to" -- is true
+        # for exactly one command. {Up#create_session} built a session and
+        # {Up#keep_failed_pane} is holding the corpse inside it on purpose, so
+        # the next `lain up` reattaches straight into that pane. An operator
+        # told "nothing to attach to" and then dropped into it one command later
+        # has been misled by us, not by tmux.
+        def report(status)
+          died = status.empty? ? "died" : "exited #{status}"
+          "the chat pane #{died} moments after `lain up` started it, so this did not attach. " \
+            "Session '#{@session}' survives with the dead pane in it: another `lain up` attaches to " \
+            "it as it stands, `tmux kill-session -t #{@session}` clears it for a fresh start. " \
+            "What #{@target} held:\n\n#{held}"
+        end
+
+        # Same breadth as {#probe}, failing the other way round: by here the
+        # pane IS dead, so the refusal is already correct and only its evidence
+        # can go missing. Losing the capture must not lose the refusal.
+        def held
+          text = legible(@tmux.run("capture-pane", "-p", "-S", "-", "-t", @target).stdout)
+          text.empty? ? "(nothing -- it died without writing a line)" : text
+        rescue StandardError
+          "(nothing -- tmux would not hand back the pane's screen)"
+        end
+
+        # Scrubbed first, because everything after it is line and byte
+        # arithmetic on text a terminal was free to fill with any bytes at all;
+        # scrubbed again after the byte cap, which can land mid-character.
+        #
+        # The squeeze is where this parts company with {ChatPreflight#legible},
+        # whose rule is that spacing a child chose is not its to edit. A PANE is
+        # a fixed grid, so most of what comes back is tmux padding the rows it
+        # was given -- measured end to end, twenty blank lines between the cause
+        # and the dead-pane banner, which would also have been twenty of
+        # {MAX_LINES}. Runs collapse to one, so a blank line the program itself
+        # wrote between paragraphs still survives.
+        #
+        # Two bounds on that, neither of them free: a program's own DOUBLE blank
+        # line is flattened to a single one, and a padded row -- blank but
+        # carrying spaces -- is not squeezed at all. So this works because tmux
+        # strips a row's trailing whitespace, not because the regexp guarantees
+        # anything: measured on a real `-S -` capture, 36 truly-blank rows and
+        # zero whitespace-only ones. A tmux that padded with spaces would leave
+        # the screenful back, which is cosmetic rather than wrong.
+        def legible(text)
+          text.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?").strip.gsub(/\n{3,}/, "\n\n")
+              .each_line.first(MAX_LINES).join.byteslice(0, MAX_BYTES).scrub("?")
+        end
+      end
+
+      # "Is this one installed, and does it answer?" -- asked of `jq` for the
+      # HUD and of `nvim` for the cockpit, and belonging to neither of them.
+      # `--version` is the probe because it is the one flag both have and
+      # neither does any work for, and ENOENT is the answer that matters: a
+      # binary that is not there is a DEGRADE here, never an error, so the
+      # rescue is the point of the object rather than a guard on it.
+      #
+      # Extracted so that {Up} RUNS nothing itself. Be precise about what that
+      # buys, because the looser claim is false: {Up#initialize} still takes a
+      # `shell_out_factory` and still hands it to three collaborators. What it
+      # no longer has is one of its OWN -- no ivar, no call site -- so every
+      # subprocess `lain up` causes goes through an object named for what it
+      # runs ({Tmux}, {ChatPreflight}, {PaneCorpse}, this), which is also what
+      # keeps the fake factory a spec injects readable where it lands.
+      class Binaries
+        # @param shell_out_factory [#call] `Mixlib::ShellOut.new`, or a double
+        def initialize(shell_out_factory:) = @shell_out_factory = shell_out_factory
+
+        # @param binary [String] a command name, resolved against PATH
+        # @return [Boolean]
+        def present?(binary)
+          @shell_out_factory.call(binary, "--version").tap(&:run_command).exitstatus.zero?
+        rescue Errno::ENOENT
+          false
+        end
+      end
+
       # @param options [Hash] `up`'s parsed flags; {Flags} is where they are read
       # @param chat_args [Array<String>] the flags after `--`, forwarded to `chat` verbatim
       # @param path [String, nil] the PATH argument: the project directory to open
@@ -400,7 +619,7 @@ module Lain
         @chat_args = chat_args
         @chat_command = chat_command || default_chat_command
         @cockpit = Cockpit.new(option: nvim, cwd:, paths:)
-        @shell_out_factory = shell_out_factory
+        @binaries = Binaries.new(shell_out_factory:)
         @chat_preflight = chat_preflight
         @warnings = []
       end
@@ -425,10 +644,33 @@ module Lain
       # public in their own right (existing specs keep exercising each in
       # isolation); this just composes them.
       #
+      # {PaneCorpse} hangs off HERE and not off `#call`, which is a decision
+      # rather than convenience: `#call` was asked to build a session and it
+      # built one -- with a corpse in it, which is exactly what
+      # {#keep_failed_pane} is for. What a corpse changes is whether ATTACHING
+      # is still the right next move, and "what the exe does once the session
+      # exists" is this method's whole subject. It also keeps the refusal off
+      # every other caller of `#call`, none of which is about to attach.
+      #
+      # `@corpse` is nil when nothing was SPAWNED, which is the reattach path,
+      # and that silence is deliberate twice over: there is no launch to judge,
+      # and a corpse the operator came back to is evidence they are entitled to
+      # attach to and read rather than something to lock them out of.
+      #
+      # Nil by ABSENCE, and stated here because nothing in `#initialize` says
+      # so: {#build_panes} is the only writer, so "no corpse" is a pane that was
+      # never spawned rather than a default anyone has to remember to set. The
+      # reattach examples pin the behaviour; this paragraph is what stops the
+      # unset ivar reading as an oversight.
+      #
       # @param nested [Boolean] forwarded to {#attach_command} unchanged
       # @return [LaunchPlan]
+      # @raise [ChatDied] the chat pane died before anyone could attach to it
       def launch_plan(nested:)
         report = call
+        died = @corpse&.call
+        raise ChatDied, died if died
+
         LaunchPlan.new(messages: report.warnings + [report.announcement], argv: attach_command(nested:))
       end
 
@@ -510,8 +752,14 @@ module Lain
       # Scoped to AFTER the window exists, deliberately: a `new-session` that
       # failed because another `lain up` just took the name must never be
       # answered by killing THEIR session.
+      #
+      # {PaneCorpse} starts its clock HERE, once, for both shapes: the grace it
+      # measures is the PANE's life, so it has to start where the pane is handed
+      # its command and not where the question is later asked. Nothing builds
+      # one on the reattach path, which is what makes `@corpse` nil there.
       def build_panes(cockpit)
         cockpit ? spawn_cockpit_panes : spawn_chat_pane
+        @corpse = PaneCorpse.watching(tmux: @tmux, target: chat_target, session: @session)
       rescue StandardError
         @tmux.run("kill-session", "-t", @session)
         raise
@@ -537,7 +785,7 @@ module Lain
       # reproach for something they did not do.
       def cockpit_wanted?
         return false unless @cockpit.requested?
-        return true if binary_present?("nvim")
+        return true if @binaries.present?("nvim")
 
         @warnings << "nvim not found on PATH -- opening the plain chat window instead of the cockpit " \
                      "(install neovim for the editor pane, or pass --no-nvim to stop asking)"
@@ -584,7 +832,7 @@ module Lain
       end
 
       def configure_session
-        status_right, warning = @hud.status_right(jq_present: binary_present?("jq"))
+        status_right, warning = @hud.status_right(jq_present: @binaries.present?("jq"))
         @warnings << warning if warning
         set_option("status-right", status_right)
         set_option("status-interval", @hud.interval.to_s)
@@ -643,12 +891,6 @@ module Lain
       def chat_target = "#{@session}:#{CHAT_WINDOW}"
 
       def set_option(name, value) = @tmux.act("set-option", "-t", @session, name, value)
-
-      def binary_present?(binary)
-        @shell_out_factory.call(binary, "--version").tap(&:run_command).exitstatus.zero?
-      rescue Errno::ENOENT
-        false
-      end
     end
   end
 end

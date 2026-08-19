@@ -190,6 +190,47 @@ RSpec.describe Lain::CLI::Up do
         .to eq("remain-on-exit failed")
     end
 
+    # The other side of the example above. Keeping the corpse is what makes it
+    # READABLE; it does not put it in front of the operator, who gets attached
+    # to a dead pane and left to work out what happened. So `#launch_plan`
+    # refuses to attach and hands the pane's own screen back instead.
+    #
+    # The assertion is on the FIRST line deliberately. tmux draws its dead-pane
+    # banner into the pane, which scrolls the content up by exactly one line:
+    # measured on tmux 3.7b, a plain `capture-pane -p` comes back missing
+    # `no API key found`, and `-S -` (the scrollback) still has it. The first
+    # line is where a refusal names its cause, so a capture that reads only the
+    # visible region delivers everything EXCEPT the answer.
+    it "hands back the dead chat pane's screen -- first line included -- instead of attaching to a corpse" do
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
+      chat_command = %(printf 'no API key found for anthropic\\nexport ANTHROPIC_API_KEY\\n' >&2; exit 1)
+
+      expect do
+        described_class.new(session:, socket:, state_path:, chat_command:,
+                            chat_preflight: no_preflight).launch_plan(nested: false)
+      end.to raise_error(described_class::ChatDied, /no API key found for anthropic.*export ANTHROPIC_API_KEY/m)
+    end
+
+    # The degrade, against real tmux with only the probe faked -- which is the
+    # shape of the two cases that reach it in the wild: a tmux too old for
+    # `remain-on-exit failed` (so the pane, window, session and server are all
+    # gone before anything can be read) and a server that exited under us.
+    # Either way the answer is "could not tell", and a diagnostic that cannot
+    # answer must not close the cockpit -- the rule {#keep_failed_pane} and the
+    # jq fallback already follow.
+    it "launches anyway when tmux will not say whether the pane died -- a diagnostic never fails `lain up`" do
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
+      mute_probe = lambda do |*args|
+        args.include?("display-message") ? FakeShellOut.new(1, "no server running") : Mixlib::ShellOut.new(*args)
+      end
+
+      plan = described_class.new(session:, socket:, state_path:, chat_command: "exit 1",
+                                 shell_out_factory: mute_probe, chat_preflight: no_preflight)
+                            .launch_plan(nested: false)
+
+      expect(plan.argv).to eq(["tmux", "-L", socket, "attach", "-t", session])
+    end
+
     # Opening the window before putting the command in it costs the property
     # HEAD had for free: `new-session` carried the command, so it either
     # produced a session already running chat or produced nothing at all, and a
@@ -928,6 +969,331 @@ RSpec.describe Lain::CLI::Up do
 
       expect(report.warnings.join).to include("killed before it could answer")
       expect(calls.flatten).to include("new-session")
+    end
+  end
+
+  # T10. The pre-flight above removes the refusals `up` can PREDICT; this
+  # covers the ones it cannot -- a pathological login shell, an exec that
+  # fails, a crash on the way up. All fake-factory, so the verdict `up` draws
+  # from each tmux answer is visible on every machine; the live-tmux pair sits
+  # in the real-server group above, where the banner it defeats is real.
+  #
+  # The check hangs off `#launch_plan`, never `#call`, and that is a decision:
+  # `#call` builds a session and it BUILT one -- with a corpse in it, which is
+  # what `remain-on-exit failed` is for. What the corpse changes is whether
+  # attaching is the right next move, and "what the exe does after the session
+  # exists" is exactly `#launch_plan`'s domain.
+  describe "a chat pane that dies at once" do
+    let(:state_path) { "/tmp/irrelevant-for-these-examples/state.json" }
+
+    # Told apart by tmux VERB rather than by binary: the corpse probe is
+    # `display-message`, its capture is `capture-pane`, and `has-session`
+    # drives the create-vs-reattach branch. `jq --version` falls to the same
+    # else-branch as the ordinary tmux calls, which is what it wants (present,
+    # exit 0). The pre-flight is stubbed out entirely -- T9's own group is
+    # where it is exercised, and the real one would spawn rspec.
+    def launch(calls, dead: "1 1", captured: "boom", probe_exit: 0, session_exists: false, raises: nil, **keywords)
+      spy = ->(*a) { calls << a and answer(a[1], dead:, captured:, probe_exit:, session_exists:, raises:) }
+      described_class.new(session: "lain", state_path:, shell_out_factory: spy,
+                          chat_preflight: ->(_args) { [] }, **keywords).launch_plan(nested: false)
+    end
+
+    def answer(verb, dead:, captured:, probe_exit:, session_exists:, raises:)
+      raise Errno::EACCES, "tmux" if verb == raises
+
+      case verb
+      when "has-session" then FakeShellOut.new(session_exists ? 0 : 1, "")
+      when "display-message" then FakeShellOut.new(probe_exit, "", dead)
+      when "capture-pane" then FakeShellOut.new(0, "", captured)
+      else FakeShellOut.new(0, "")
+      end
+    end
+
+    def corpse_error(**keywords)
+      launch([], **keywords)
+      raise "expected a ChatDied"
+    rescue Lain::CLI::Up::ChatDied => e
+      e
+    end
+
+    def capture_call(calls) = calls.find { |args| args.include?("capture-pane") }
+    def probe_call(calls) = calls.find { |args| args.include?("display-message") }
+
+    # A Lain::Error and nothing more exotic, because that is the entire
+    # mechanism: exe/lain wraps the launch in `rescue Lain::Error => e; raise
+    # Thor::Error, e.message`, so raising here both skips the unconditional
+    # `Kernel.exec` below it and prints one clean line with no backtrace. No
+    # "do not attach" flag to thread, and no edit to the exe.
+    it "is a Lain::Error, which is what stops the exe's exec without a flag to thread" do
+      expect(described_class::ChatDied.new("x")).to be_a(Lain::Error)
+    end
+
+    # The refusal used to stop at "there is nothing to attach to", which is
+    # true for exactly one command: the session survives around the corpse, so
+    # the very next `lain up` reports "reattaching to \'lain\'" and execs
+    # straight into the dead pane -- no diagnostic, and tmux\'s banner eating
+    # the first line again. Whatever else is done about that, the sentence has
+    # to stop being false. So it names what survived and what a re-run will
+    # actually do with it.
+    it "names the session that survived and what a re-run of `lain up` will do with it" do
+      error = corpse_error
+
+      expect(error.message).to include("Session 'lain' survives")
+        .and include("another `lain up` attaches").and include("tmux kill-session -t lain")
+    end
+
+    it "refuses to attach, quoting what the pane held and the status it died of" do
+      error = corpse_error(dead: "1 127", captured: "lain: command not found")
+
+      expect(error.message).to include("lain: command not found").and include("127")
+    end
+
+    # `-S -` is the whole point: tmux's banner has already displaced the pane's
+    # first line out of the visible region by the time anyone can read it.
+    it "reads the pane's SCROLLBACK, not the visible region the banner has already eaten" do
+      calls = []
+      expect { launch(calls) }.to raise_error(described_class::ChatDied)
+
+      expect(capture_call(calls)).to eq(["tmux", "capture-pane", "-p", "-S", "-", "-t", "lain:chat"])
+    end
+
+    it "attaches as before when the pane is alive, having asked" do
+      calls = []
+      plan = launch(calls, dead: "0 ")
+
+      expect(plan.argv).to eq(%w[tmux attach -t lain])
+      expect(probe_call(calls)).not_to be_nil
+    end
+
+    # Reattaching respawns nothing, so there is no launch to judge -- and a
+    # corpse from an EARLIER `lain up` is a thing the operator is entitled to
+    # attach to and read. Refusing here would lock them out of their own
+    # evidence. Same create-only rule the pre-flight follows.
+    it "asks nothing when reattaching, and never refuses a corpse the operator came back for" do
+      calls = []
+      plan = launch(calls, session_exists: true)
+
+      expect(probe_call(calls)).to be_nil
+      expect(plan.argv).to eq(%w[tmux attach -t lain])
+    end
+
+    # `Tmux#run` turns only Errno::ENOENT into a named Lain error, so every
+    # OTHER subprocess failure -- EACCES on the binary, EMFILE out of fork --
+    # escapes as something exe/lain:924 does not rescue. That puts a full
+    # backtrace on the operator's terminal AND kills a launch that would
+    # otherwise have worked, which is this object's own rule inverted: a
+    # diagnostic never fails `lain up`. The rescue is therefore on the
+    # BEHAVIOUR (any failure to ask) rather than on one errno.
+    it "launches anyway when the probe explodes with something other than a missing tmux" do
+      calls = []
+      plan = launch(calls, raises: "display-message")
+
+      expect(plan.argv).to eq(%w[tmux attach -t lain])
+      expect(capture_call(calls)).to be_nil
+    end
+
+    # The other half, and it fails the opposite way: the pane IS dead, so the
+    # refusal is right and only the evidence is missing. Losing the capture
+    # must not lose the refusal.
+    it "still refuses, saying it could not read the screen, when the capture explodes" do
+      error = corpse_error(dead: "1 9", raises: "capture-pane")
+
+      expect(error.message).to include("9").and include("would not hand back")
+    end
+
+    it "launches unchecked rather than failing when the probe itself cannot answer" do
+      calls = []
+      plan = launch(calls, probe_exit: 1, dead: "")
+
+      expect(plan.argv).to eq(%w[tmux attach -t lain])
+      expect(capture_call(calls)).to be_nil
+    end
+
+    # A pane can die with nothing on screen -- an exec that failed silently, a
+    # shell that exited. The status is then the only fact there is, and it is
+    # more use than an empty message.
+    it "names the exit status when the pane left nothing to read" do
+      error = corpse_error(dead: "1 2", captured: "   \n\n  ")
+
+      expect(error.message).to include("2").and include("nothing")
+    end
+
+    # tmux 2.6-2.8 has `pane_dead` but not `pane_dead_status`, so the death is
+    # known and the number is not. The sentence has to survive saying so rather
+    # than reading "the chat pane exited  moments after".
+    it "still reports the death when tmux is too old to name the status" do
+      error = corpse_error(dead: "1", captured: "the shell exited")
+
+      expect(error.message).to include("the chat pane died moments after").and include("the shell exited")
+    end
+
+    # A pane is a fixed grid, so most of a capture is tmux padding rows it was
+    # given -- measured end to end, twenty blank lines between the cause and
+    # the dead-pane banner. They are tmux's, not the program's, and they would
+    # also have been twenty of the line cap. One blank line survives, because
+    # that one might be the program's own paragraph break.
+    it "squeezes the blank rows tmux pads a pane with, keeping a paragraph break the program wrote" do
+      error = corpse_error(captured: "cause\n\nwhy\n#{"\n" * 20}Pane is dead (status 1)\n")
+
+      expect(error.message).to end_with("cause\n\nwhy\n\nPane is dead (status 1)")
+    end
+
+    it "caps a pane that scrolled, rather than spending a screenful of history on the terminal" do
+      error = corpse_error(captured: "#{"noise\n" * 500}tail")
+
+      expect(error.message.lines.size).to be <= described_class::PaneCorpse::MAX_LINES + 4
+      expect(error.message.bytesize).to be <= described_class::PaneCorpse::MAX_BYTES + 500
+    end
+
+    # A pane is a terminal: it can hold any bytes at all, and this string is
+    # about to be printed by the exe. Same treatment the pre-flight gives its
+    # child's stderr, for the same reason.
+    it "replaces bytes that are not valid UTF-8 rather than handing them to a terminal" do
+      error = corpse_error(captured: (+"cause: \xC3\x28 here").force_encoding(Encoding::BINARY))
+
+      expect(error.message).to include("cause: ?( here")
+      expect(error.message).to be_valid_encoding
+    end
+
+    # The tax on the common case, pinned. The grace is counted from the moment
+    # the pane was given its command, NOT from the moment the check starts, so
+    # every tmux call `up` makes in between is time the healthy path does not
+    # pay twice -- and a slow box, which is where the wait would hurt, spends
+    # the grace on work rather than on sleeping. This bound is the worst case:
+    # fakes make the intervening work free, so nothing has been deducted.
+    #
+    # `GRACE * 2` and not `GRACE + 0.5`: a 650ms ceiling on a 150ms guarantee
+    # cannot see a 4x regression, which makes it decoration rather than a test.
+    # This one fails the moment the wait doubles, and still leaves room for the
+    # sleep cadence and a loaded box's scheduling.
+    it "bounds what it costs a HEALTHY launch by the grace it states" do
+      elapsed = monotonic { launch([], dead: "0 ") }
+
+      expect(elapsed).to be < described_class::PaneCorpse::GRACE * 2
+    end
+
+    # The other half of "not a fixed wait", and the half that makes a FAILING
+    # launch cost nothing: a pane already known to be dead ends the poll at
+    # once rather than sleeping out a grace whose answer has already arrived.
+    it "does not wait out the grace once the pane is known to be dead" do
+      elapsed = monotonic { corpse_error }
+
+      expect(elapsed).to be < described_class::PaneCorpse::GRACE / 2
+    end
+
+    def monotonic
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      yield
+      Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+    end
+
+    # The two bounds above prove `Up` wires the REAL clock and that the whole
+    # path stays inside the grace. They cannot say more than that, because a
+    # wall-time assertion on a shared box has to leave slack. These say the
+    # rest of it exactly, by driving `PaneCorpse` directly over the repo's
+    # `clock:` seam: a probe COUNT is the precise statement of "it stops the
+    # moment it knows", and it costs the suite nothing and never flakes.
+    #
+    # The clock advances by `tick` on every reading, INCLUDING the one
+    # `.watching` takes to start the grace -- so `tick: GRACE` is a launch
+    # whose intervening tmux work already outlasted the whole grace, and
+    # `tick: GRACE / 4` is one with four readings' worth of it left.
+    describe "the poll, counted rather than timed" do
+      def poll(answers, tick:)
+        calls = []
+        now = 0.0
+        corpse = described_class::PaneCorpse.watching(
+          tmux: described_class::Tmux.new(socket: nil, shell_out_factory: answering(answers, calls)),
+          target: "lain:chat", session: "lain", clock: -> { now += tick }
+        )
+        [corpse.call, calls.count { |args| args.include?("display-message") }]
+      end
+
+      # Each answer is one reading of `pane_dead`; the list running out means
+      # "still alive", so a poll can be scripted by its first few answers alone.
+      def answering(answers, calls)
+        lambda do |*args|
+          calls << args
+          FakeShellOut.new(0, "", args.include?("capture-pane") ? "what it held" : (answers.shift || "0 "))
+        end
+      end
+
+      def grace = described_class::PaneCorpse::GRACE
+
+      # The short-circuit, exactly: a pane already known to be dead is asked
+      # ONCE and the clock is never read again. Bounding this in wall time can
+      # only say "fast"; this says "it did not poll".
+      it "asks once and stops when the first answer is already a death" do
+        verdict, probes = poll(["1 1"], tick: grace / 4)
+
+        expect(probes).to eq(1)
+        expect(verdict).to include("what it held")
+      end
+
+      # The other end of the same property, and the one that makes the grace
+      # "counted from the spawn" rather than a fixed wait: a launch whose own
+      # tmux work already spent the grace pays for no extra poll at all.
+      it "asks once and gives up when the grace was already spent before the question" do
+        verdict, probes = poll([], tick: grace)
+
+        expect(probes).to eq(1)
+        expect(verdict).to be_nil
+      end
+
+      it "keeps asking while the grace lasts, then answers that the pane is alive" do
+        verdict, probes = poll([], tick: grace / 4)
+
+        expect(probes).to eq(4)
+        expect(verdict).to be_nil
+      end
+
+      # Death arriving mid-poll ends it there rather than at the deadline --
+      # the case a real `respawn-pane` produces, since tmux reaps on its own
+      # event loop a few milliseconds later.
+      it "stops on the reading that finds the death, not on the deadline" do
+        verdict, probes = poll(["0 ", "0 ", "1 5"], tick: grace / 4)
+
+        expect(probes).to eq(3)
+        expect(verdict).to include("exited 5")
+      end
+    end
+  end
+
+  # Covered indirectly by every nvim/jq degrade example above, and directly
+  # here, because the indirect coverage all runs through `Up` and so pins the
+  # DECISIONS rather than the probe. The probe is where the one interesting
+  # rule lives: a binary that is not installed is a degrade, never an error.
+  describe "Binaries, the PATH probe the HUD and the cockpit share" do
+    def probing(answer)
+      calls = []
+      present = described_class::Binaries.new(shell_out_factory: lambda { |*args|
+        calls << args
+        answer.respond_to?(:call) ? answer.call : answer
+      }).present?("jq")
+      [present, calls]
+    end
+
+    it "asks with --version, which is the one flag every such binary has and none does work for" do
+      _, calls = probing(FakeShellOut.new(0, ""))
+
+      expect(calls).to eq([%w[jq --version]])
+    end
+
+    it "answers true when the binary is there and answers" do
+      expect(probing(FakeShellOut.new(0, "")).first).to be true
+    end
+
+    # Installed but broken -- a wrapper on PATH that exits non-zero. Absent for
+    # the caller's purposes, which is the only question being asked.
+    it "answers false when the binary is there but will not answer" do
+      expect(probing(FakeShellOut.new(1, "")).first).to be false
+    end
+
+    # THE rule, and the reason this is an object rather than a line: `lain up`
+    # must open a cockpit on a machine with no jq and no nvim. An ENOENT that
+    # escaped here would fail the launch over a status bar.
+    it "answers false rather than raising when the binary is not on PATH at all" do
+      expect(probing(-> { raise Errno::ENOENT, "jq" }).first).to be false
     end
   end
 
