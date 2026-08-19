@@ -1442,6 +1442,73 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         expect(messages).not_to include("stack traceback")
       end
     end
+
+    # 'messagesopt' ARRIVED IN NVIM 0.11, and this rail is the only thing in the
+    # runtime that reads it. Every other option it touches ('more', 'columns')
+    # predates nvim entirely, so this is the one place where a supported editor
+    # can be too old for the mechanism -- and reading an option nvim does not
+    # have is not a nil, it is an `Unknown option` error thrown out of the lua
+    # callback, which nvim then decorates with its own `stack traceback:`. That
+    # is precisely the shape this rail exists to keep off a human's screen, and
+    # before the shortening path existed at all a long refusal merely PAGED.
+    # Erroring where we used to page would be a strict regression for anyone on
+    # 0.10, so the capability is asked for rather than assumed.
+    #
+    # The fallback is the honest one and it costs almost nothing: echo the
+    # fitted line WITH history instead of recording the unfolded original
+    # separately. A fitted line cannot raise either prompt -- that is what
+    # `fitted` guarantees -- so the old editor gets no paging, no error, and
+    # `:messages` still holds what the human was shown. What it loses is only
+    # the untruncated tail of a sentence that had one, and since every refusal
+    # lain ships is already inside the bar (`spec/refusal_width_discipline_spec.rb`),
+    # that is reachable only through an unbounded interpolated field.
+    #
+    # Simulated rather than skipped, because a version guard nobody exercises is
+    # a version guard that rots: `vim.o` is shadowed so the option both reports
+    # absent AND raises on access, which is exactly what 0.10 does. Restored in
+    # the same lua block so nothing leaks into a later example.
+    it "neither errors nor pages on an nvim too old to have 'messagesopt'" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        attach_ui(columns: 60)
+
+        outcome = inspector.exec_lua(<<~LUA, [overlong_refusal])
+          local real_o, real_exists = vim.o, vim.fn.exists
+          vim.o = setmetatable({}, {
+            __index = function(_, key)
+              if key == "messagesopt" then error("Unknown option 'messagesopt'", 2) end
+              return real_o[key]
+            end,
+            __newindex = function(_, key, value)
+              if key == "messagesopt" then error("Unknown option 'messagesopt'", 2) end
+              real_o[key] = value
+            end,
+          })
+          vim.fn.exists = function(name)
+            if name == "&messagesopt" then return 0 end
+            return real_exists(name)
+          end
+
+          local ok, answer = pcall(_G.__lain.review_refused, ...)
+
+          vim.o, vim.fn.exists = real_o, real_exists
+          return { ok = ok, answer = tostring(answer) }
+        LUA
+
+        # The refusal COMPLETED rather than raising -- the whole point.
+        expect(outcome).to include("ok" => true)
+        expect(outcome["answer"]).to start_with("lain: approve is").and end_with("judge regardless")
+
+        # And it did not page: a fitted line cannot raise either prompt.
+        expect(settled_mode).to include("blocking" => false)
+
+        # The human can still read it back, which is what the fallback buys
+        # over simply skipping the recording pass.
+        expect(messages).to include("lain: approve is")
+        expect(messages).not_to include("stack traceback")
+      end
+    end
   end
 
   # HumanReplies as the Repl builds it, minus nothing that matters here: the
