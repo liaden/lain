@@ -274,34 +274,297 @@ RSpec.describe Lain::Notify do
       expect(consumed).to contain_exactly("tu_0", "tu_1")
     end
 
-    # The guarantee draining `#dequeue` gave for free and the sweep does not:
-    # `Queue#dequeue` skipped already-decided arrivals by its own recursion.
-    # A sweep collects its snapshot with no yield, then #decide BLOCKS for a
-    # whole dunstify wait -- so every element after the first is stale by the
-    # time this surface reaches it, and a sibling (or the queue's clock) can
-    # have settled it meanwhile. Without the re-check, a settled pending gets a
-    # `-u critical` popup for a decision already made and orphans the dunstify
-    # process behind it for the window's full 300s.
-    it "raises no notification for a pending a sibling settled while it was showing the last one" do
-      fired = []
-      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 2.0)
-      parked = nil
-      factory = lambda do |*args, **_kwargs|
-        fired << args.join(" ")
-        # The sibling answers the OTHER pending while this notification is up.
-        queue.reject(&:decided?).each { |item| item.deny(surface: "tty") }
-        fake_shell_out_class.new(answer: "approve")
+    # T4, from manual-QA round 5 (F24). A pending gets its notification when it
+    # PARKS, not when the previous one is answered. `dunstify -A` blocks its own
+    # process for the whole of the queue's 300s window, so a surface that waited
+    # inline showed the human exactly ONE approval per window however many calls
+    # a turn gated -- and the second notification arrived, if it ever did, after
+    # the human had already answered somewhere else.
+    #
+    # Every example here answers its notifications BY HAND, through a
+    # rendezvous: `Thread::Queue#pop(timeout:)`, which parks the FIBER under the
+    # reactor and blocks plainly without one (measured, both). None of them
+    # sleeps for a duration and then asserts. A sleep in a concurrency spec
+    # asserts that a race is usually won, which is the one thing these examples
+    # exist to refuse.
+    describe "several approvals parked at once" do
+      def gated_call(command)
+        Lain::Effect::ToolCall.new(tool_use_id: command, name: "bash", input: { "command" => command })
       end
 
-      Sync do |task|
-        running = gated_pair(task, queue)
-        parked = task.async { described_class.new(shell_out_factory: factory).watch(queue) }
-        task.with_timeout(1) { task.async { Async::Task.current.sleep(0.2) }.wait }
+      # A pending outside any queue. {Notify#sweep}'s parked set is any
+      # Enumerable of them ({Approval::Queue} is one, and the example that has
+      # to speak about consumption uses the real thing) -- and an Array is what
+      # lets an example drive one deterministic pass.
+      def parked(command)
+        Lain::Approval::Queue::Pending.new(effect: gated_call(command), requester: "agent", clock: -> { 0.0 })
+      end
+
+      # A Pending that records every decision attempted on it: the surface, the
+      # verdict, whether that answer WON, and the Thread and Fiber it was
+      # answered from. The real class subclassed rather than a double, because
+      # what these examples are about is exactly what
+      # {Approval::Queue::Pending#decide} does with a second answer.
+      def spying_pending(command, attempts)
+        Class.new(Lain::Approval::Queue::Pending) do
+          define_method(:decide) do |verdict, surface:|
+            super(verdict, surface:).tap do |won|
+              attempts << { surface:, verdict:, won:, thread: Thread.current, fiber: Fiber.current }
+            end
+          end
+        end.new(effect: gated_call(command), requester: "agent", clock: -> { 0.0 })
+      end
+
+      # dunstify, driven by hand. Each invocation announces its own argv on
+      # `raised` and then blocks ITS OWN Thread on a reply queue of its own
+      # until the example says what that notification reported -- so answering
+      # one says nothing whatever about any other, which is the property these
+      # examples measure. Keyed by the command the pending would run, because
+      # the argv is the only thing that tells two notifications apart.
+      def scripted_dunstify(*commands)
+        raised = Thread::Queue.new
+        replies = commands.to_h { |command| [command, Thread::Queue.new] }
+        [scripted_factory(scripted_shell_out_class, raised, replies), raised, replies]
+      end
+
+      # The same shape as `holding_shell_out_class` above, except that the queue
+      # it blocks on is per-notification and carries the stdout to report.
+      def scripted_shell_out_class
+        Class.new do
+          def initialize(reply:)
+            super()
+            @reply = reply
+          end
+
+          def run_command = tap { @answer = @reply.pop }
+          def stdout = @answer.to_s
+        end
+      end
+
+      def scripted_factory(shell_out, raised, replies)
+        lambda do |*args, **|
+          argv = args.join(" ")
+          raised.push(argv)
+          shell_out.new(reply: replies.fetch(replies.keys.find { |command| argv.include?(command) }))
+        end
+      end
+
+      # The production loop, run for exactly as long as the example needs it:
+      # {Notify#watch} sweeps at POLL_INTERVAL and drains whatever came back
+      # since. `with_timeout` bounds it, so a surface that never applies a
+      # verdict fails the example loudly instead of hanging it.
+      def watching(pendings, factory)
+        notifier = described_class.new(shell_out_factory: factory)
+        Sync do |task|
+          watcher = task.async do
+            @watching_fiber = Fiber.current
+            notifier.watch(pendings)
+          end
+          task.with_timeout(3) { yield(notifier) }
+        ensure
+          watcher&.stop
+        end
+      end
+
+      # Park until the condition holds. The interval is only how often it is
+      # re-asked; nothing any example asserts depends on its value, which is
+      # what keeps this from being "the race is usually won" spelled as a sleep.
+      def until_true(interval: 0.005)
+        Async::Task.current.sleep(interval) until yield
+      end
+
+      # The first half of what T4 buys, and the half that cannot be seen with
+      # one gated call -- which is exactly why a green suite shipped the
+      # serialised version. Driven through the REAL queue, because "consumed
+      # neither" is a claim about {Approval::Queue#dequeue} and nothing else can
+      # make it.
+      it "raises the second notification while the first is still unanswered, and consumes neither" do
+        factory, raised, replies = scripted_dunstify("one", "two")
+        queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 2.0)
+        consumed = []
+        shown = []
+
+        Sync do |task|
+          gated = %w[one two].map { |command| task.async { queue.call(gated_call(command), nil) } }
+          reader = task.async { 2.times { consumed << queue.dequeue.input.fetch("command") } }
+
+          described_class.new(shell_out_factory: factory).sweep(queue)
+          shown = [raised.pop(timeout: 2), raised.pop(timeout: 2)]
+        ensure
+          replies.each_value { |reply| reply.push("2") }
+          [*gated, reader].each { |fiber| fiber&.stop }
+        end
+
+        expect(shown.compact.size).to eq(2)
+        expect(shown.join(" ")).to include("one").and include("two")
+        expect(consumed).to contain_exactly("one", "two")
+      end
+
+      it "applies the answer to the notification that returned, and leaves the other undecided" do
+        factory, raised, replies = scripted_dunstify("one", "two")
+        first, second = %w[one two].map { |command| parked(command) }
+        shown = []
+
+        watching([first, second], factory) do
+          shown = Array.new(2) { raised.pop(timeout: 2) }
+          replies.fetch("one").push("approve")
+          first.await
+        end
+
+        expect(shown.compact.size).to eq(2)
+        expect(first).to have_attributes(decision: :approve, surface: "dunst")
+        expect(second.decided?).to be(false)
       ensure
-        [*running, parked].each { |fiber| fiber&.stop }
+        # The second notification is deliberately never answered, which is the
+        # whole assertion -- so its Thread would otherwise sit on `@reply.pop`
+        # for the rest of the worker's life. Every sibling example closes its
+        # replies for the same reason.
+        replies.each_value { |reply| reply.push("2") }
       end
 
-      expect(fired.size).to eq(1)
+      # This example REPLACES the single-flight pin that stood here, and the
+      # replacement is deliberately weaker in one exact place. The old one
+      # worked because its factory settled the sibling's pending WHILE the first
+      # notification blocked the sweep; once notifications are concurrent the
+      # second popup is already dispatched by then, so "a pending a sibling
+      # settled gets no popup" is unattainable in the raise-then-settle window
+      # and cannot honestly be asserted. {Notify#notify_about}'s re-check
+      # degrades from a narrowing to a guard that only a set settling mid-`select`
+      # can even reach, and both are witnessed by the two examples below.
+      #
+      # What IS still true, and is what a human actually depends on, is the race
+      # OUTCOME: the sibling's decision stands, this surface signs nothing over
+      # it, and nothing raises. `won:` is the mechanical statement --
+      # {Approval::Queue::Pending#decide}'s Boolean is the only honest source
+      # for whether an answer landed ({Frontend::Neovim::ApprovalView#decide}
+      # argues the same, at more length).
+      it "loses cleanly to a sibling that settled a pending while its notification was in flight" do
+        attempts = []
+        factory, raised, replies = scripted_dunstify("one", "two")
+        first = parked("one")
+        second = spying_pending("two", attempts)
+
+        watching([first, second], factory) do
+          2.times { raised.pop(timeout: 2) }
+          second.deny(surface: "tty")
+          replies.each_value { |reply| reply.push("approve") }
+          until_true { attempts.size == 2 }
+        end
+
+        expect(second).to have_attributes(decision: :deny, surface: "tty")
+        expect(attempts.map { |attempt| attempt.values_at(:surface, :won) })
+          .to eq([%w[tty].push(true), %w[dunst].push(false)])
+      end
+
+      # The card's central constraint, witnessed rather than asserted in prose.
+      # {Approval::Queue::Pending}'s single-shot resolution is safe without a
+      # lock "only because ... two FIBERS cannot both pass the guard" -- a fiber
+      # argument, not a thread one -- and `Promise#resolve` reaches an
+      # `Async::Condition` that resumes reactor-owned fibers, which is a
+      # `FiberError` from a foreign thread. So the Thread runs the shellout and
+      # nothing else, and the sweep applies the verdict.
+      it "takes every decision on the watching fiber, never on the shellout's own thread" do
+        attempts = []
+        threads = Thread::Queue.new
+        factory, raised, replies = scripted_dunstify("one")
+        recording = lambda do |*args, **kwargs|
+          threads.push(Thread.current)
+          factory.call(*args, **kwargs)
+        end
+        approval = spying_pending("one", attempts)
+
+        watching([approval], recording) do
+          raised.pop(timeout: 2)
+          replies.fetch("one").push("approve")
+          approval.await
+        end
+
+        expect(approval.decision).to eq(:approve)
+        expect(attempts.map { |attempt| attempt[:fiber] }).to eq([@watching_fiber])
+        expect(attempts.map { |attempt| attempt[:thread] }).to eq([Thread.current])
+        expect(threads.pop(timeout: 1)).not_to eq(Thread.current)
+      end
+
+      # Fail-closed, asked again of the DRAIN: the verdict now crosses back from
+      # a Thread and is applied a sweep later, so none of these restates the
+      # inline #decide examples above.
+      [["a Deny click", "deny"], ["a dismissal close reason", "2"], ["nothing at all", ""]].each do |name, answer|
+        it "denies with surface dunst when the notification reports #{name}" do
+          factory, raised, replies = scripted_dunstify("one")
+          approval = parked("one")
+
+          watching([approval], factory) do
+            raised.pop(timeout: 2)
+            replies.fetch("one").push(answer)
+            approval.await
+          end
+
+          expect(approval).to have_attributes(decision: :deny, surface: "dunst")
+        end
+      end
+
+      it "denies with surface dunst when the shellout raises on its own thread" do
+        approval = parked("one")
+        failing = ->(*, **) { raise Errno::ENOENT, "dunstify" }
+
+        watching([approval], failing) { approval.await }
+
+        expect(approval).to have_attributes(decision: :deny, surface: "dunst")
+      end
+
+      # `@raised` still does its one job. It matters MORE now, not less: the
+      # sweep no longer blocks, so a 50ms poll over a pending whose popup is
+      # still up would raise a fresh `-u critical` notification twenty times a
+      # second.
+      it "asks about a pending once, however many sweeps run over it" do
+        factory, raised, replies = scripted_dunstify("one")
+        approval = parked("one")
+        notifier = described_class.new(shell_out_factory: factory)
+
+        3.times { notifier.sweep([approval]) }
+        raised.pop(timeout: 2)
+
+        expect(raised.pop(timeout: 0.2)).to be_nil
+      ensure
+        replies.fetch("one").push("2")
+      end
+
+      # The half of the old single-flight pin that SURVIVES: a pending a sibling
+      # settled BEFORE the sweep began gets no popup at all. Named for the line
+      # that actually does it -- {Notify#unraised?}, one frame earlier -- because
+      # this never reaches {Notify#notify_about}'s own `decided?` guard and a
+      # title claiming otherwise would send a reader to the wrong method.
+      it "raises nothing for a pending a sibling had already settled before the sweep" do
+        factory, raised, = scripted_dunstify("one")
+        approval = parked("one")
+        approval.deny(surface: "tty")
+
+        described_class.new(shell_out_factory: factory).sweep([approval])
+
+        expect(raised.pop(timeout: 0.2)).to be_nil
+        expect(approval).to have_attributes(decision: :deny, surface: "tty")
+      end
+
+      # And this is the one that reaches {Notify#notify_about}'s `decided?`
+      # guard, which is otherwise UNREACHABLE: nothing between {Notify#sweep}'s
+      # `select` and the ask yields, so a set that settles as it is enumerated is
+      # the only shape that can flip a pending in between. Contrived on purpose
+      # -- the guard is kept for T4b, which puts a real yield point back when it
+      # adds the withdrawal, and an untested guard is one that quietly stops
+      # working before the card that needs it arrives.
+      it "raises nothing for a pending that settles between the snapshot and the ask" do
+        factory, raised, = scripted_dunstify("one")
+        approval = parked("one")
+        settling = Object.new
+        settling.define_singleton_method(:select) do |&block|
+          [approval].select(&block).tap { approval.deny(surface: "tty") }
+        end
+
+        described_class.new(shell_out_factory: factory).sweep(settling)
+
+        expect(raised.pop(timeout: 0.2)).to be_nil
+        expect(approval).to have_attributes(decision: :deny, surface: "tty")
+      end
     end
 
     # {QueueSurface#swept}'s guard, and the reason it is not optional here any

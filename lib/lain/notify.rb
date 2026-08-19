@@ -27,12 +27,38 @@ module Lain
   # hooks those directly), so trusting it not to stall the WHOLE reactor
   # thread -- every other fiber in the process, not just this one -- is not a
   # chance worth taking for a notifications adapter. The bridge back to the
-  # calling fiber is a `Thread::Queue#pop`: Ruby's Fiber::SchedulerInterface
+  # calling fiber is a `Thread::Queue`: Ruby's Fiber::SchedulerInterface
   # hooks Queue's blocking pop (`block`/`unblock`, confirmed against this
   # project's `async` (2.42) in `Async::Scheduler#block`/`#unblock`) as a
   # FIBER park, not an OS-thread block -- and the identical code is an
   # ordinary blocking wait with no reactor present at all (a bare script, a
   # spec with no `Sync` block), so nothing here depends on `async` running.
+  #
+  # THAT THREAD DOES EXACTLY ONE THING: it runs the shellout and pushes the
+  # answer. It reads only the ivars fixed at construction (`@command`,
+  # `@shell_out_factory`, `@timeout_ms`), writes none, and decides no
+  # {Pending} -- so nothing it can reach is state a sweep also mutates.
+  # {#sweep} DISPATCHES a notification per parked pending and drains the
+  # finished ones on a later pass, so a call that parks while an earlier
+  # notification is still on screen gets its own popup at once instead of in
+  # five minutes' time (QA round 5, F24: `dunstify -A` blocks for the queue's
+  # whole 300s window, so waiting inline meant one approval per window however
+  # many a turn gated).
+  #
+  # Applying the verdict stays on the sweep fiber, and that is a constraint
+  # rather than a taste. {Approval::Queue::Pending#decide}'s lock-free
+  # single-shot resolution is safe "only because ... two FIBERS cannot both
+  # pass the guard" -- a fiber argument, which two OS threads do not satisfy --
+  # and `Promise#resolve` reaches an `Async::Condition` that resumes
+  # reactor-owned fibers, which from a foreign thread is a `FiberError`. So
+  # the verdict crosses back as data and this fiber decides.
+  #
+  # {#decide} has no caller in `lib/` or `exe/`, and that is not an oversight to
+  # be tidied away: it is the one-pending INLINE form the surface loop
+  # deliberately stopped using, and it is spec-facing -- {Null#decide}'s mirror,
+  # the `:desktop` real-dunstify probe's only entry, and the sharer of {#settle}
+  # that keeps the inline and dispatched fail-closed rules from drifting apart.
+  # Do not grep for a caller and conclude it is dead.
   class Notify
     # This surface's name in the approval Journal, alongside "tty".
     SURFACE = "dunst"
@@ -67,6 +93,14 @@ module Lain
     # process group if the subprocess outlives it, {Mixlib::ShellOut::CommandTimeout}
     # lands in {#capture}'s `rescue`, and the fail-closed deny fires exactly
     # as it would for a real dismissal.
+    #
+    # That group is PER CHILD, which is what makes this backstop safe now that
+    # N notifications can be in flight at once. `Mixlib::ShellOut`'s forked
+    # child calls `Process.setsid` before exec (3.4.10, `shellout/unix.rb:337`,
+    # whose own comment gives the same reason), so its pgid is its own pid and
+    # `child_pgid` is `-@child_pid` (`:192-195`) -- one notification's reaper
+    # cannot reach another's dunstify. A shared group would have made the first
+    # timeout kill every live popup on the screen.
     #
     # In the ordinary case this backstop never fires first: with
     # `DEFAULT_TIMEOUT_MS` at the queue's own window, {Approval::Queue}'s
@@ -152,7 +186,19 @@ module Lain
       # Identity-keyed, {QueueSurface}'s reason exactly: a Pending is a plain
       # object, and one notification per pending is the contract -- a poll that
       # re-raised a dismissed one every 50ms would be its own defect.
+      #
+      # TOUCHED ONLY BY THE SWEEP FIBER, and saying so matters more than it did:
+      # N shellout Threads now hold a reference to the same Pendings, so an
+      # unsynchronised read of this Hash from one of them would be a real data
+      # race. None of them can reach it -- {#fired}'s Thread is handed an argv
+      # and a queue and is given nothing else to touch.
       @raised = {}.compare_by_identity
+      # The notifications currently ON SCREEN: pending => the {Thread::Queue}
+      # its answer will arrive on. One queue per notification, so an answer is
+      # correlated to the pending it answers by construction rather than by a
+      # key, and answering one says nothing about any other. Same ownership rule
+      # as `@raised`, for the same reason.
+      @inflight = {}.compare_by_identity
       @pruning = Approval::QueueSurface::Pruning.new
     end
 
@@ -202,27 +248,42 @@ module Lain
       end
     end
 
-    # One pass: every parked pending this surface has neither raised nor seen
-    # settled. The snapshot is materialized before the first {#decide}, which
-    # blocks for the whole of dunstify's wait -- so the enumeration cannot
-    # mutate under a concurrent park.
+    # One pass, in three parts: apply the verdicts that have come back since the
+    # last pass, release the seen-set entries of everything now settled, then
+    # raise a notification for each parked pending this surface has neither
+    # asked about nor seen settled.
+    #
+    # NONE OF THE THREE BLOCKS, which is the whole of what changed. The
+    # enumeration is materialized and consumed with no yield point anywhere in
+    # it, so it cannot go stale under a concurrent park or settle the way it
+    # could when each element waited for a human -- and the pending that parks
+    # last is asked about in the same pass as the one that parked first.
     #
     # Public because {#swept} is what the loop calls and a caller driving one
     # deterministic pass should not have to reach through the guard.
     def sweep(queue)
+      settle_answered
       @pruning.call(@raised)
       queue.select { |pending| unraised?(pending) }.each { |pending| notify_about(pending) }
     end
 
-    # Answer ONE pending approval: fire a notification with Approve/Deny
-    # buttons, decide from whichever action (or non-action) dunstify reports.
-    # Fails closed on anything that isn't literally {APPROVE} -- a Deny click,
-    # a dismissal, an expiry, or the shellout itself raising all deny.
+    # Answer ONE pending approval INLINE: fire a notification with Approve/Deny
+    # buttons and park this fiber on whichever action (or non-action) dunstify
+    # reports. Fails closed on anything that isn't literally {APPROVE} -- a Deny
+    # click, a dismissal, an expiry, or the shellout itself raising all deny.
+    #
+    # The surface loop no longer comes through here, and that is F24's fix:
+    # waiting inline is exactly what let one unanswered popup hold every later
+    # approval for the queue's whole window. This stays as the ONE-pending form
+    # -- {Null#decide}'s mirror, and what a caller answering a single approval
+    # with nothing else in flight wants -- and it shares its fail-closed rule
+    # with the drain, in {#settle}, so the two cannot come to disagree about
+    # what an answer means.
     #
     # @param pending [Lain::Approval::Queue::Pending]
     # @return [Boolean] whether THIS surface's decision won the race
     def decide(pending)
-      pending.decide(run(approval_args(pending)) == APPROVE, surface: SURFACE)
+      settle(pending, run(approval_args(pending)))
     end
 
     # A plain informational notification -- no actions, nothing to decide.
@@ -280,27 +341,65 @@ module Lain
     # raises every gated call, which is what a notifier is for.
     def unraised?(pending) = !pending.decided? && !@raised.key?(pending)
 
-    # Marked BEFORE the ask, not after: {#decide} blocks for the whole of
-    # dunstify's wait, and a sweep that ran in between must not raise a second
-    # notification for the pending this one is already showing.
+    # Marked BEFORE the ask, not after: the notification stays on screen for the
+    # whole of dunstify's wait, and the sweeps that run in the meantime (twenty
+    # a second) must not raise a second one for the pending this one is already
+    # showing.
     #
-    # Then asked AGAIN whether it is still undecided, and that second check is
-    # not belt-and-braces -- it is {QueueSurface#adjudicate}'s, for its reason
-    # one blocking call further on. The snapshot {#sweep} materialized is
-    # collected with no yield, but {#decide} yields for a whole dunstify wait,
-    # so every element after the first is stale by the time this reaches it: a
-    # sibling surface (or the queue's clock) can have settled it meanwhile.
-    # Without this, a settled pending gets a `-u critical` Approve/Deny popup
-    # for a decision already made, and the dunstify process behind it is
-    # orphaned for the window's full 300s. Draining `#dequeue` used to skip
-    # decided arrivals for free (`Queue#dequeue`'s own recursion), so this is
-    # the one guarantee that did NOT come across with the loop.
+    # Then asked AGAIN whether it is still undecided -- and that guard is
+    # UNREACHABLE on the shipped call graph, which is said here rather than left
+    # for the next reader to discover as dead-looking code. Nothing between
+    # {#sweep}'s `select` and this line yields, so a pending that satisfied
+    # {#unraised?} one frame ago cannot have settled since; branch coverage over
+    # an ordinary parked set shows zero hits on the early return. It fires only
+    # for an Enumerable that settles a pending as it yields it, which is the
+    # shape its one spec example has to build by hand.
+    #
+    # It is kept, and not as insurance. It used to be a real guarantee: each
+    # element of the snapshot waited for a human before the next was reached, so
+    # every element after the first was stale by the time this got to it. T4b
+    # puts a yield point back between the snapshot and the ask when it adds the
+    # withdrawal, so deleting the guard now would only mean rediscovering it
+    # then.
+    #
+    # What no guard here can close is the raise-then-settle window, and it is
+    # the price of dispatching: a sibling surface that settles a pending a
+    # moment after this fires leaves a live popup naming a call somebody has
+    # already answered, for as long as 305s -- `-u critical` is exempt from
+    # auto-expiry (see {SHELLOUT_GRACE_MS}) and only that backstop ends it.
+    # SO T4 IS HALF OF F24 AND MUST NOT BE READ AS SHIPPED UNTIL T4b LANDS:
+    # T4b correlates a notification handle and WITHDRAWS the popup whose pending
+    # somebody else answered. Until it does, this surface leaves MORE stale
+    # popups on screen than the serialised version did -- knowingly, and this is
+    # the paragraph that says so.
     def notify_about(pending)
       @raised[pending] = true
       return if pending.decided?
 
-      decide(pending)
+      @inflight[pending] = fired(approval_args(pending))
     end
+
+    # The verdicts that arrived since the last pass, applied HERE -- on the
+    # sweep fiber, never on the Thread that did the waiting (see the class
+    # comment for why that is not negotiable). A queue that reports itself
+    # non-empty holds exactly one answer and only this fiber ever pops one, so
+    # the pop below cannot block.
+    def settle_answered
+      @inflight.reject { |_pending, answers| answers.empty? }.each do |pending, answers|
+        @inflight.delete(pending)
+        settle(pending, answers.pop)
+      end
+    end
+
+    # Fail-closed, in ONE place for both the inline and the dispatched path:
+    # anything that isn't literally {APPROVE} -- a Deny click, one of dunst's
+    # numeric close-reason codes, or the empty string {#capture} answers with
+    # when the shellout raised -- is a denial.
+    #
+    # @return [Boolean] whether THIS surface's answer won. A sibling surface, or
+    #   the queue's own clock, having settled it first makes that false, which
+    #   is normal operation and the queue's own doctrine rather than an error.
+    def settle(pending, answer) = pending.decide(answer == APPROVE, surface: SURFACE)
 
     # THE THIRD DECIDING SURFACE, so it carries the same warning the other two
     # do. A click on Approve here signs a full approval in the Journal as
@@ -333,15 +432,26 @@ module Lain
       ["-a", "lain", "-u", "normal", "-t", @timeout_ms.to_s, "#{agent} asks", text]
     end
 
-    # See the class comment: dunstify's wait runs on a dedicated Thread, and
-    # `Thread::Queue#pop` is the fiber-scheduler-safe bridge back.
-    def run(args)
-      queue = Thread::Queue.new
+    # One notification, DISPATCHED and not waited on. The Thread runs the
+    # blocking shellout and pushes exactly one answer onto the queue handed
+    # back; that is the whole of its job. It touches no state of this object's
+    # and decides no {Pending}, which is what keeps `@raised`, `@inflight` and
+    # every Pending single-fiber-owned.
+    #
+    # @return [Thread::Queue] where this notification's answer will arrive
+    def fired(args)
+      answers = Thread::Queue.new
       # Not joined: #capture's own timeout bounds this Thread's lifetime, and
-      # `queue.pop` below is what actually waits for its result.
-      Thread.new { queue.push(capture(args)) }
-      queue.pop
+      # the queue is what actually carries the result back.
+      Thread.new { answers.push(capture(args)) }
+      answers
     end
+
+    # The inline form, for {#decide} and {#question}: dispatch, then park THIS
+    # fiber on the answer. See the class comment -- `Thread::Queue#pop` is the
+    # fiber-scheduler-safe bridge back, and an ordinary blocking wait where
+    # there is no reactor at all.
+    def run(args) = fired(args).pop
 
     # Fails closed on any shellout error (a vanished binary, a broken D-Bus
     # session) rather than raising out of a notification surface -- an
