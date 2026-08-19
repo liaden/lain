@@ -30,10 +30,15 @@ scenario is already running** rather than driving a session just for it.
 `Surfaces#prime`'s own docstring states the principle: prime every view so "an idle session that
 shows no buffers reads as 'broken' (the first manual verification pass stumbled exactly there)".
 
+**The primed set is seven buffers, and it is not the same as the set of `lain://` names.** At attach
+`Surfaces#prime` creates `journal timeline workspace diff inbox request approval`. `lain://review`
+is **not** among them — nothing renders it until a `/survey` runs — so iterating it here reads as a
+missing buffer every time and teaches a driver to ignore the one check this section is:
+
 ```bash
 S=$XDG_RUNTIME_DIR/lain/nvim-<hash>.sock
 nvim --server "$S" --remote-expr "join(map(getbufinfo({'buflisted':0}), {_,b -> b.name.' ('.b.linecount.')'}), '\n')"
-for b in journal timeline workspace inbox approval diff review; do
+for b in journal timeline workspace diff inbox request approval; do
   echo "== lain://$b =="; nvim --server "$S" --remote-expr "join(getbufline(bufnr('lain://$b'), 1, 5), '\n')"
 done
 ```
@@ -42,6 +47,18 @@ Expected placeholders: `(no reminders)`, `(no questions pending)`, `(no approval
 `(no requests yet)`, and — since T18 — **`(no streamed tool output yet)`** for `lain://journal`,
 which was the one view priming to a bare empty line. An empty `lain://journal` at rest is now the
 regression, not the status quo.
+
+**`lain://approval` is the newest of the seven and the reason this loop was corrected.** It used to
+be absent until the first pending parked, which made "the buffer is not there" and "there is nothing
+pending" indistinguishable — and `method.md`'s rule about reading it before answering a blind
+approval depended on telling them apart. It is now primed at attach holding `(no approvals pending)`,
+and because the runtime opens its window only when it has rows, **priming it takes no window**:
+`getbufinfo` must find it while the tab layout is unchanged. A `lain://approval` window on screen at
+rest is the over-correction to watch for.
+
+It is also deliberately *not* in the runtime's `LainAttach` buffers payload — the runtime creates it
+itself — so a config iterating that payload still sees six names. Six there and seven here is
+correct, not a discrepancy.
 
 That view is still named misleadingly: it renders `Telemetry::ToolOutput` (streamed tool bytes)
 only, never the NDJSON session journal, and a rename was proposed rather than taken because
@@ -182,6 +199,29 @@ If `nvim_get_mode` ever reports `mode = "rm"` here, read the pane with tmux (it 
 blocked) and note that Enter may not clear it -- at 60 lines in a 20-row pane, twenty `<CR>`s
 did not.
 
+**Record the nvim version beside this result, because one axis of the fix needs 0.11.** The rail
+suppresses the hit-enter prompt by swapping `'messagesopt'`'s `hit-enter` item for `wait:0` while it
+writes the unfolded sentence to `:messages`, and `'messagesopt'` arrived in nvim **0.11**. It is
+asked for rather than assumed (`vim.fn.exists("&messagesopt")`) — reading `vim.o.messagesopt` on an
+older editor does not return nil, it **raises** `Unknown option`, out of a callback where nvim
+appends the very `stack traceback:` this rail exists to keep off a human's screen.
+
+So on nvim 0.10 the rail **degrades rather than errors**: it echoes the fitted line *with* history
+instead of recording the unfolded original beside it. What that costs is the untruncated tail in
+`:messages`, and nothing else — no paging, no traceback, and `:messages` still holds what the human
+was shown. Two consequences for driving this section:
+
+- the no-paging and no-traceback checks apply on **every** supported nvim, and a failure of either
+  is a finding regardless of version;
+- the "**the full sentence survives in `:messages`**" check applies only on **0.11+**. On 0.10 the
+  truncated form in `:messages` is the documented degrade, not a regression — so `nvim --version`
+  belongs in the record, or that reading cannot be interpreted.
+
+Every refusal lain itself ships is inside the 80-column bar
+(`spec/refusal_width_discipline_spec.rb`), so the degrade is reachable in practice only through a
+sentence carrying an unbounded interpolated field — a quoted `Lain::Error#message`, a path, a
+docent's exception. Which is exactly what the `:LainReviewVerdict` partial refusal below is.
+
 An earlier edition of this section said `method.md` "sizes the QA server at 220x50 precisely so
 this does not fire", and concluded that a blocking read here meant the window had been resized.
 **That premise was wrong: nvim never gets 220 columns.** Measured round 5, on a correctly-sized
@@ -220,8 +260,10 @@ stale `lain_view_generation`, or drop the step — do not record "could not repr
 
 ## 5 — The approval surfaces must agree
 
-Force a turn with **two** gated `bash` calls, the first producing streamed stdout (`echo HELLO`
-then `echo WORLD` is enough). Then compare all four surfaces for the *second* call:
+Force a turn with **three** gated `bash` calls, the first producing streamed stdout (`echo HELLO`,
+`echo WORLD`, `echo AGAIN` is enough). Two is the historical minimum — it is what reproduced the
+wedge — but three is what the notifier checks below need, and one turn can serve both. Compare all
+the surfaces for the *second* call:
 
 | surface | check |
 |---|---|
@@ -246,19 +288,55 @@ consumed — a permanent wedge. The plain path is where this defect is fatal.
 consumer of the approval queue.** `Approval::Queue#dequeue` hands each arrival to exactly ONE
 waiter. The TTY surface takes the first call and then *leaves the queue* to ask a human, while the
 desktop notifier re-parks immediately — so the notifier sat ahead in the waiter FIFO, took the
-second call, and held it for `dunstify`'s blocking 300s window. Streamed tool output between the two
-calls only changed the timing. The notifier now *sweeps* the parked set and never consumes.
+second call, and held it for `dunstify`'s blocking 300s window.
 
-Two consequences for how this section is driven:
+**Two separate things have since been fixed there, and a driver needs both in mind.** The notifier
+sweeps the parked set and **never consumes** it (T15) — that is what unwedged the second prompt. And
+the sweep no longer **blocks**: it used to spawn one shellout and immediately park the fiber on
+`Thread::Queue#pop`, so element *N+1* was unreachable until element *N*'s `dunstify` exited, which
+is why "it notifies every approval" was true of the design and false of the code. The shellout thread
+now only runs the command and pushes its result; the sweep drains finished results and applies each
+verdict itself, on the reactor fiber. So **every parked approval raises its own notification at
+once**.
+
+Three consequences for how this section is driven, and the third is new:
 
 - **`--desktop` must be ON and `dunstify` must be on `PATH`, or the bug cannot reproduce.** It is on
   by default (`--no-desktop` silences one run, `LAIN_DESKTOP=0` a whole shell), but the sandbox's
   `PATH` is rebuilt by the shim — so check `command -v dunstify` before the act and **record the
   answer**. With no notifier there is only one consumer, the second prompt renders, and the check
   passes while asserting nothing. That is the most likely way this section produces a false green.
-- **A desktop notification must still fire** for both calls. A fix that stopped the wedge by
-  silencing notification would pass every check above and remove a feature; confirm two
-  notifications, and confirm that answering one on the desktop still decides that call.
+- **Drive THREE gated calls in one turn, not two, and expect three notifications at once.** Two
+  cannot tell "raises concurrently" from "raises the next one as soon as the first is answered" —
+  the old behaviour would show a second popup the moment you answered the first, which looks
+  identical to a pass if you only ever look at two. With three, all three must be on screen
+  *together*, before any of them is answered. Answering one on the desktop must decide that call and
+  leave the other two undecided.
+- **Answering elsewhere must WITHDRAW the popup.** Answer one of the three at the chat prompt or
+  through `:LainApprove` instead of on the desktop. That pending's notification must disappear on
+  its own, and the other two must stay up:
+
+      dunstctl count displayed     # 3 before, 2 shortly after the sibling answers
+
+  The sweep runs every **50 ms** and closes a raised popup whose pending reports `decided?`, so the
+  withdrawal lands about that long after the answer, not on the next turn. Correlation is a
+  self-assigned replace id (`dunstify -r <id>`, allocated at or above 1,000,000 so it can never
+  collide with the human's own notifications) and the close is `dunstify -C <id>` through the same
+  binary — so a desktop with `dunstify` can always withdraw, with no dependency on `dunstctl` being
+  installed.
+
+**Why the withdrawal is load-bearing rather than a nicety, which is worth knowing before judging a
+stale popup as cosmetic.** The queue's window is 300 s and this dunst is configured with
+`idle_threshold = 120`, which **pauses expiry entirely** while nobody has touched the keyboard —
+and an unanswered approval is, by construction, an idle desktop. So in the only case this surface
+exists for, an un-withdrawn popup never expires at all, and once the shellout is reaped nothing left
+in the system can close it. A popup still naming a command that was already decided is therefore a
+real finding here, not a cosmetic one.
+
+**And the degrade must hold.** A desktop where the close fails or closes nothing must leave the
+surface exactly as it was — a stale popup is a worse UX, but a notifier that *raises* out of a
+withdrawal is a session with no desktop approvals at all. Failures are journalled by the sweep, not
+dropped; check the journal rather than assuming silence means success.
 
 Also read the guard's own record: a notifier that dies mid-sweep now journals a **`tty_fault`**
 rather than signing a denial as though a person typed `n`. A `denied` decision with no human at the

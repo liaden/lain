@@ -69,6 +69,24 @@ A repeated ordinal is the regression. Both providers must agree on what "attempt
 Anthropic path is exercised in the same round, read its taps too — one provider counting from 1 and
 the other from 0 is worse than the original bug.
 
+**Read the backoff FIGURE too, not just the ordinal — this is the only place it renders.** The retry
+middleware hands back a raw Float, and it used to be printed whole: `retrying in
+0.14368744774438316s`, precision nobody reads at. Four shapes now, and each says something the raw
+Float did not:
+
+| backoff | renders | why |
+|---|---|---|
+| `0.14368744774438316` | `retrying in 0.14s` | two places, which is what a human reads at |
+| a whole second | `retrying in 2s` | no decimal tail, so `2.0` cannot masquerade as measured to the millisecond |
+| under 0.01s | `retrying in under 0.01s` | a rounded `0s` is indistinguishable from no wait at all, and a real one is happening |
+| non-finite | `retrying in a while` | reachable from a misbehaving server's oversized `Retry-After`, which parses to `Float::INFINITY` |
+
+The last row is the one that used to be a **crash** rather than a cosmetic problem: `Float::INFINITY.round(2)`
+raises, so a server-supplied `Retry-After` could take the render down where the old code printed
+harmlessly. It is not reachable from the blackhole probe above — a connect failure has no header —
+so if the round exercises the Anthropic path or a proxy that can forge one, that is where to look.
+A long decimal tail on any of these is the regression.
+
 ## 3 — Cold start, then warm, in ONE session
 
 Launch cold (nothing resident), drive one trivial turn, then drive a second.
@@ -205,6 +223,25 @@ prices compaction through `CLI::Backend::COMPACTION_PRICES`, the same table degr
 fallback, so `cost_saved`/`cost_spent` on a `compaction` record are honest zeros beside a local model
 id — not a free compaction and not a defect. The main `PriceBook` still **raises** for the same
 model; the two differ on purpose.
+
+**⚠️ Against a PRICED model, every non-zero `cost_saved`/`cost_spent` is now roughly a QUARTER of its
+pre-chunk value, and that drop is the fix rather than a defect.** Recorded prominently because a
+driver comparing a fresh reading against a round-4 record will otherwise file it as a regression.
+The cause: compaction measures its span with a canonical-byte proxy, not a tokenizer, and those
+bytes were being fed straight into a per-**token** price — so the dollars overstated by the whole
+bytes-per-token ratio. The crossing is now explicit and happens exactly once, at the pricing
+boundary, dividing by `Lain::ProxyBytes::BYTES_PER_TOKEN`, which is **4**:
+
+```bash
+$QA/drive.sh '/ruby Lain::ProxyBytes::BYTES_PER_TOKEN' 6 30 >/dev/null; $QA/peek.sh 6
+```
+
+Two things follow for reading any figure here. The division **truncates**, on purpose: an estimate
+that lands in a dollar claim should err low, and a span under one token's worth of bytes is worth
+no tokens. And the ratio is an *estimate* — ~4 characters per token is what the major BPE
+tokenizers are quoted at for English prose, and canonical bytes are ASCII-dominated JSON of that
+prose — so these dollars are the right order of magnitude and not a measurement. A figure matching a
+round-4 record exactly is the old arithmetic returning.
 
 The freshness lint is a repo lint (`pre-commit`), not a runtime check, and it runs from the checkout
 rather than the sandbox:

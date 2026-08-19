@@ -87,6 +87,45 @@ the good direction — `--resume` is equally clean and carries its own `cannot r
 
 A bad digest **prefix** must also refuse by name: `no turn matching "<prefix>" recorded in <session>`.
 
+### Every door, not just `--fork`
+
+**A damaged journal must refuse by name from all four doors, and one of them used to die with a raw
+backtrace.** The rebuild has three production constructors — `--fork` and `--resume` share one —
+and they used to rescue independently, so which exception a damaged journal produced was an accident
+of which record set the damage landed in. Drive the same damaged file through each:
+
+| door | how | expected |
+|---|---|---|
+| `--fork` | `lain chat --fork SESSION@DIGEST` | `cannot fork <session>: …` |
+| `--resume` | `lain chat --resume SESSION` | `cannot resume <session>: …` |
+| the bench | `lain bench variance <the damaged file>` | `<path>: <the same refusal>` |
+| the supervisor | a supervised restart whose replay reads it | `cannot restart "<role>" from its session record: …` |
+
+All four exit 1 with **no backtrace frames** — `Bench::Session::Corrupt` is a `Lain::Error`, so the
+exe maps it onto Thor's contract. **The supervisor door is the one worth the effort**: it had no
+rescue at all before this chunk, so a damaged journal took a supervised restart down with a raw
+trace. If it is hard to reach in the sandbox, say so in the record rather than marking it passed —
+an untested door here is exactly the shape of the defect.
+
+### Damage the flat records too, not only the turns
+
+The probes above all break a `turn`. A `message` or `child_turn` record has its **own** index space
+and its own sentence, and the two must not be conflated:
+
+    turn record 26 (user) cites a causal parent this fold never landed: …
+    message record 4 (<label>) cites a causal parent this replay never landed: …
+
+Both land as `Bench::Session::Corrupt`, which is the single refusal currency the callers above
+depend on. Two shapes are worth breaking separately, because they escaped by different routes and
+only one was ever a *dangling* edge:
+
+- **dangling** — a `causal_parents` digest no record in the file carries;
+- **malformed** — a `null` inside `causal_parents`, or a real digest beside a `null`. These are not
+  the same case: a `null` used to be compacted away and the record then called reachable, so the
+  Store refused a put nothing had pre-checked and `Store::MissingObject` escaped as itself. A bare
+  `ArgumentError` from sorting a list containing `null` is the other old shape. **Neither is an
+  acceptable answer now** — anything but `Corrupt` from any of the four doors is the finding.
+
 ## 4 — A severed transport
 
 **Use a severing proxy, not a killed server.** Put a small TCP forwarder in front of the model
@@ -225,11 +264,30 @@ Five more things to check, because each is a way the shape can be right and the 
 - **The decision precedes the read.** An oversized file must be refused from its size, not read and
   then measured. Watch for a multi-second pause or a memory spike before the refusal — either means
   the file was materialised first, which is the memory half of the claim failing quietly.
-- **One enormous line is its own case, and worth one extra seed.** A minified bundle or one-line
-  JSON (`ruby -e 'File.write("one.json", "[" + "0,"*600_000 + "0]")'`) cannot be narrowed by
-  `offset`/`limit` at all, since both count lines. Its refusal must say so and point at a byte range
-  — the distinctive fragment is `one line alone is over the ceiling` — rather than advising a window
-  that cannot help. Advice a model cannot act on is the loop this whole shape exists to break.
+- **One enormous line is its own case, and worth TWO extra seeds — the probe and its control.** The
+  boundary is `WINDOW_BOUND` (1 MiB), not `WHOLE_BOUND`, and getting it wrong in either direction is
+  a real defect, so seed both sides:
+
+      ruby -e 'File.write("one.json", "[" + "0,"*600_000 + "0]")'   # 1,200,003 bytes -- OVER 1 MiB
+      ruby -e 'File.write("mid.json", "[" + "0,"*150_000 + "0]")'   #   300,003 bytes -- under 1 MiB
+
+  **`one.json` is the probe.** A newline-free file over 1 MiB cannot be narrowed by `offset`/`limit`
+  at all, since both count lines, so every window is refused in turn. Its refusal must say so and
+  point at a byte range — the distinctive fragment is `one line alone is over the ceiling`, and it
+  names a `head -c 100000` sized to sit under `bash`'s own 128 KiB ceiling, so following the advice
+  steps the model *down* a ceiling rather than into another refusal.
+
+  **`mid.json` is the control, and it is the guard against over-reach.** It is over `WHOLE_BOUND`
+  and newline-free, but *under* `WINDOW_BOUND` — so a window covering it would itself be admitted,
+  and the correct advice is still the full-cover one:
+
+      read it with read_file's offset and limit (a window covering the whole file counts as a
+      complete read, so edit_file still accepts it)
+
+  If `mid.json` gets the byte-range advice too, the fix over-reached and every newline-free file
+  between 256 KiB and 1 MiB has quietly lost its route back to being editable. **Both files offered
+  the same advice is the finding, whichever way round** — the same rule as `big.txt`/`mid.rb` above,
+  one ceiling up.
 
 ### The disclosing shape
 
@@ -311,59 +369,134 @@ and check:
 - the result then renders as an **elision line** carrying its type, content address and byte count.
   Silence there — a block that simply vanishes — is the failure.
 
-## 11 — `lain up` when the chat pane dies instantly
+## 11 — `lain up` refuses before it builds, and reports a corpse it cannot attach to
 
 The 2026-08-06 report was "`lain up` starts and immediately crashes". What actually happened: `chat`
 refused a missing API key, printed a clear line, exited 1 — and being the session's only pane, took
 the **whole tmux server** down with it, so the operator saw a terminal blink once and return to a
-shell. Drive it deliberately:
+shell. That is now covered on **two** paths, and they are different mechanisms with different
+evidence, so drive them separately and do not conflate a pass on one with a pass on the other.
+
+### 11a — the pre-flight refusal: no pane, no session, no tmux at all
+
+`Up#create_session` runs `ChatPreflight` **first**, before `new-session`. It spawns
+`<exe> chat <args>` with `LAIN_PREFLIGHT=1`, which constructs everything a chat needs and exits
+without reading stdin; a nonzero exit becomes `Up::ChatRefused`, which is a `Lain::Error` and so
+reaches Thor's contract — message on stderr, nonzero exit, **no backtrace**. The reasoning is worth
+knowing, because it is what the check is really for: a chat this session could not run is a session
+that should never have been created, and a refusal raised *after* `new-session` would strand an
+empty session for the next `lain up` to reattach to.
 
 ```bash
 tmux -L lain-qa kill-server 2>/dev/null
 lain up "$QA/project" -- --provider anthropic --model claude-opus-5   # no ANTHROPIC_API_KEY in the sandbox
-tmux -L lain-qa has-session -t lain-qa; echo "session=$?"
-tmux -L lain-qa list-panes -t lain-qa:chat -F '#{pane_dead} #{pane_dead_status}'
-tmux -L lain-qa capture-pane -p -t lain-qa:chat | tail -6
+echo "exit=$?"
+tmux -L lain-qa has-session -t lain-qa; echo "has-session=$?"
 ```
 
-Expected: **the server is still up**, the chat pane is `pane_dead 1`, and its refusal is still
-readable in the pane. `remain-on-exit failed` — not `on` — is what makes this cost nothing in the
-ordinary case:
+Expected: the refusal on the **operator's own terminal**, nonzero exit, and `has-session` failing
+because **no session was created**. `list-panes` and `capture-pane` are the wrong assertions here —
+there is nothing to capture, and a driver reaching for them will read "no server running" as the
+defect rather than as the pass.
+
+The same shape covers the other construction refusals, which is the point of doing it here rather
+than only through `lain chat` in `session-and-window.md` §1 — a bad `--num-ctx` or an unknown
+`--compact-strategy` now costs no pane either:
+
+```bash
+lain up "$QA/project" -- --num-ctx 0
+lain up "$QA/project" -- --compact-strategy nonesuch
+```
+
+**The caveat that decides whether this section tests anything.** `ChatPreflight#call` rescues
+`Errno::ENOENT` and `Mixlib::ShellOut::CommandTimeout` and degrades to a **warning**, opening the
+cockpit unchecked:
+
+    could not pre-flight the chat arguments (<reason>) -- opening the cockpit unchecked,
+    so a refusal will surface in the chat pane instead
+
+That is correct behaviour — a pre-flight that cannot run must not take `lain up` down — but it
+silently restores the pre-chunk world, and the sandbox is exactly where it fires: the pre-flight
+spawns `$PROGRAM_NAME`, so a shim that is not on `PATH` under `cwd`, or a cold bootsnap cache
+pushing the child past `TIMEOUT` (15s, plus Mixlib's flat ~3.1s escalation), lands here. **Read the
+warning lines before believing a §11a result**, and if that sentence appears, this section measured
+the corpse path below and not the pre-flight one.
+
+### 11b — the corpse report: a pane that dies faster than anyone can read it
+
+`ChatPreflight` can only cover what `chat` will *refuse*. A pane that fails to exec, whose login
+shell exits, or which crashes on the way up is discovered only by running it — so `PaneCorpse`
+reads the pane back `GRACE = 0.15`s after it was handed its command and, if it is dead, raises
+`Up::ChatDied` instead of attaching. The session **does** survive here, deliberately, and the
+message says so:
+
+    the chat pane exited <status> moments after `lain up` started it, so this did not attach.
+    Session 'lain-qa' survives with the dead pane in it: another `lain up` attaches to it as it
+    stands, `tmux kill-session -t lain-qa` clears it for a fresh start. What <pane> held:
+
+    <the pane's scrollback>
+
+Check three things, and the third is the one that replaced the old residual:
+
+1. **`lain up` did not attach**, and said why on the operator's terminal — nonzero exit, no backtrace.
+2. **The session is still there** with the dead pane in it, exactly as the sentence promises. An
+   operator told "nothing to attach to" and then dropped into that pane by re-running `lain up` one
+   command later has been misled by us, not by tmux.
+3. **The refusal's first line survives.** `PaneCorpse#held` reads `capture-pane -p -S -` —
+   *scrollback*, not the visible region — precisely because tmux draws its own `Pane is dead
+   (status N, ...)` banner into the pane and scrolls the content up by one line. A plain
+   `capture-pane -p` comes back without that first line; `-S -` still has it.
+
+**That retires the old "the banner eats the FIRST line, always" table**, which recorded a residual on
+a path that no longer reaches the operator. It is recorded here as retired rather than deleted
+because the underlying tmux behaviour has not changed — only who reads around it. If a future
+`capture-pane` in this section loses the causal first line again, the `-S -` has been dropped.
+
+**The `-- --nosuchflag` probe is retired with it, and for a different reason: it no longer reaches a
+pane at all.** Thor's unknown-flag error is a nonzero exit from `lain chat`, so §11a's pre-flight
+catches it first and it never becomes a corpse. Multi-line retention is now 11b's business instead,
+and it is `PaneCorpse#held` that bounds it: `MAX_LINES = 40` and `MAX_BYTES = 4000`, with runs of
+blank rows squeezed to one so that tmux's grid padding does not spend the line budget (measured:
+twenty blank rows between the cause and the banner). So drive a pane-only failure and check
+the *shape* of what comes back.
+
+**Getting into 11b at all takes care, because 11a now catches almost everything.** Anything `chat`
+refuses — a bad `--api-base`, a missing key, an unknown strategy — is a nonzero exit from the
+pre-flight child and never becomes a corpse. What reaches 11b is a failure the pre-flight child
+does not share, and the bench already has one: launching by a **relative** path. `ChatPreflight`
+expands a `$PROGRAM_NAME` containing a separator against the launch cwd, so the check passes, while
+`PaneCommand` interpolates it raw and the pane exits **127** the moment its cwd differs. That
+asymmetry is deliberate on the pre-flight's side and is exactly the corpse case:
+
+```bash
+cd "$QA" && bundle exec ./exe/lain up "$QA/project"    # relative $PROGRAM_NAME; pre-flight passes, pane 127s
+```
+
+(`method.md` gives the same mechanism as the reason to launch by absolute path through a shim. Here
+it is being used deliberately, as the cheapest way to make a pane die without making `chat` refuse.)
+
+The cause must be present and readable, blank-line padding must not have crowded it out, and a
+program's own paragraph break should survive as a single blank line. Losing the whole body — the
+report arriving with `(nothing -- it died without writing a line)` against a pane that plainly wrote
+one — is the failure; that sentence is reserved for a pane that really said nothing, and
+`(nothing -- tmux would not hand back the pane's screen)` for a capture that failed.
+
+A pane that dies *slower* than `GRACE` is simply not converted into a message; `remain-on-exit
+failed` still holds the corpse on screen where it can be read, exactly as before. That is a small
+bound on purpose, not a compromise — only a healthy launch pays for it, and only for the remainder.
+
+### 11c — `remain-on-exit`, which underpins both
 
 ```bash
 tmux -L lain-qa show-window-options -t lain-qa:chat remain-on-exit   # -> remain-on-exit failed
 ```
 
-**A clean exit must still close the pane.** If a normal `/quit` leaves a dead pane behind, the option
-has been widened to `on` and the fix has overshot.
+`failed` — not `on` — is what makes holding a corpse cost nothing in the ordinary case. **A clean
+exit must still close the pane.** If a normal `/quit` leaves a dead pane behind, the option has been
+widened to `on` and the fix has overshot.
 
-**The stated residual, measured precisely in round 5: the banner eats the FIRST line, always.**
-tmux prints its own dead-pane banner at the top of the held pane, which scrolls the content up by
-exactly one line. An earlier edition of this section said one-line refusals are lost while
-"two-plus-line refusals (a missing key prints several) survive". Both halves of that need
-correcting:
-
-| refusal | lines | what the pane retains |
-|---|---|---|
-| `ANTHROPIC_API_KEY is not set; --provider anthropic needs it to build a client` | **1** | nothing but the dead banner |
-| Thor's `ERROR: "lain chat" was called with arguments [...]` + `Usage: "lain chat"` | 2 | only `Usage: "lain chat"` |
-
-So it is **not** "one-liners are lost, multi-liners survive" -- it is **the first line is always
-lost, and the first line is the one naming the cause**. A two-line refusal degrades to a `Usage:`
-line that tells the operator nothing about what went wrong.
-
-**And the missing-key refusal is now exactly ONE line**, so the example this section names as its
-multi-line control is in fact the one-line case. To check multi-line retention, use a refusal that
-really is multi-line -- Thor's unknown-flag error is the cheapest:
-
-```bash
-lain up --socket "$QA_SOCK" --session lain-qa "$QA/project" -- --nosuchflag
-tmux -L "$QA_SOCK" capture-pane -p -t lain-qa:chat | grep -v '^$' | tail -4
-```
-
-Losing one line is the known residual. Losing ALL lines of a multi-line refusal would be the fix
-regressing.
-
-**On an older tmux this whole section is a no-op, not a failure.** `remain-on-exit failed` needs
+**On an older tmux this whole section degrades rather than fails.** `remain-on-exit failed` needs
 tmux ≥ 3.2 and the option is set best-effort on purpose: a diagnostic nicety must not take `lain up`
-down. Record the tmux version beside the result, or the reading cannot be interpreted.
+down. `PaneCorpse` is best-effort on the same rule — a tmux that will not answer means the check
+cannot tell, and it stays quiet rather than guessing. Record the tmux version beside the result, or
+neither reading can be interpreted.

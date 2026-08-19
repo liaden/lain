@@ -30,8 +30,15 @@ Pick by the question being asked, not by coverage. Each states its own cost and 
 | [`bench-arms.md`](scenarios/bench-arms.md) | Does the arm driver produce numbers that are not artifacts, **say what produced them, and refuse a price it cannot stand behind**? | ~5 min |
 | [`rails-blog.md`](scenarios/rails-blog.md) | **Context economics at scale** — the composed compaction strategy firing for real, unbounded tool output, the gate under volume, and what a broken cache cost in dollars. The only scenario that reaches any of these. | expensive |
 
-**A suggested full round:** `session-and-window` → `rust-cli` → one subject (`bowling-ruby` or
-`rails-blog`) with `cockpit-surfaces` piggybacked → `bench-arms` → `failure-injection`.
+**A full round — the default when no scope is named** (`.claude/skills/manual-qa` defers to this
+line for the order): `session-and-window` → `rust-cli` → a subject with `cockpit-surfaces`
+piggybacked → `bench-arms` → `failure-injection`.
+
+**Run BOTH subjects** (`bowling-ruby` and `rails-blog`), rather than picking one. This line used to
+say "one subject", and the predictable consequence is that the cheaper one always won:
+`rails-blog` is the expensive scenario and round 5 did not reach it at all, which is why compaction
+at scale still has no manual evidence behind it. Dropping either is a decision to name in the
+findings, not a default — a scenario that is skipped by convention stops being a gap anyone can see.
 
 **A suggested regression gate after a chunk lands:** `failure-injection` + `session-and-window`.
 Both are cheap, deterministic, and cover the paths most chunks touch. As of 2026-08-18 that pair
@@ -74,7 +81,9 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   concerns exist on a bare `lain chat` too — and round 4 found that the approval surface is *worse*
   there, with no `:LainApprove` to recover through. `cockpit-surfaces.md` §5 now forces one
   `--no-nvim` comparison; nothing else does.
-- **`--resume`**, except the one probe in `failure-injection.md`.
+- **`--resume`**, except `failure-injection.md`'s damaged-journal probes and `bowling-ruby.md`'s F23
+  regression step. Both drive it as a refusal or a rebuild; nothing continues a resumed session and
+  checks the conversation actually carried over.
 - **The secret boundary** — `Sensitivity::Policy` and the two middlewares get zero manual coverage,
   despite CLAUDE.md calling the three-place split forced. This is the largest untested surface here.
 - **Isolation backends** — no scenario runs `--isolation worktree`, which is where the real-`git`

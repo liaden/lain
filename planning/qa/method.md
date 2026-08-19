@@ -113,8 +113,18 @@ only worth having if it is read rather than skimmed:
 ## Driving the cockpit
 
 - **`lain up` execs `tmux attach`** — it replaces the process. In a non-interactive shell it fails
-  with "open terminal failed: not a terminal" *after* the session was created, so the exit status is
-  not the signal. Check `tmux -L lain-qa has-session -t lain-qa`.
+  with "open terminal failed: not a terminal" *after* the session was created, so for that failure
+  the exit status is not the signal. Check `tmux -L lain-qa has-session -t lain-qa`.
+
+  **That rule no longer covers every `lain up` failure, and inverting it is the point.** `lain up`
+  now pre-flights the chat command *before* `new-session`, so a construction refusal — a missing API
+  key, a bad `--num-ctx`, an unknown `--compact-strategy` — exits nonzero on the operator's own
+  terminal with **no session created at all**. There the exit status IS the signal, and
+  `has-session` failing is the pass rather than the defect. A third shape sits between them: a chat
+  pane that dies within ~150ms makes `lain up` print the pane's scrollback and decline to attach,
+  with the session left standing and the corpse inside it. So read the exit status *and*
+  `has-session` together, and see `failure-injection.md` §11 for which combination means what. A
+  creating `lain up` pays ~110ms for the pre-flight; a reattach is untaxed.
 - **Launch by ABSOLUTE path, through a shim.** `bundle exec ./exe/lain up` leaves `$PROGRAM_NAME`
   relative and `PaneCommand.call` interpolates it into the pane's command, so the chat pane exits
   **127** the moment the cwd differs. The shim also re-establishes the mise toolchain, which does
@@ -197,8 +207,17 @@ nvim --server "$S" --remote-send '2G'                # then 'x', '<CR>', ':LainA
 nvim --server "$S" --remote-expr "execute('messages')"   # read a refusal the message line lost
 ```
 
-That last one is how round 4 found F22. A refusal delivered as a Lua error scrolls away behind a
-`Press ENTER` modal; `:messages` is the only place it survives.
+That last one is how round 4 found F22, when a refusal delivered as a Lua error scrolled away behind
+a `Press ENTER` modal and `:messages` was the only place it survived. **The modal is gone** — the
+refusal rail is now width-, break- and height-aware, so no refusal can raise a hit-enter or
+`-- More --` prompt — but the read is more useful than ever rather than less: the rail *deliberately*
+displays one fitted line and records the complete, unfolded sentence to `:messages`. So `:messages`
+is now where the full text lives **by design**, not a workaround for a prompt. Read it whenever a
+refusal looks truncated on the message line; that truncation is the mechanism working.
+
+(One version caveat: recording the unfolded copy needs `'messagesopt'`, which is nvim 0.11+. On 0.10
+the rail degrades to echoing the fitted line into history instead, so `:messages` holds what was
+shown and not more. `cockpit-surfaces.md` §4 has the detail; record `nvim --version`.)
 
 ### Read the `lain://` buffers, not just `capture-pane`
 
@@ -254,7 +273,30 @@ ruby -rjson -e 'c=Hash.new(0); ARGF.each_line{|l| r=JSON.parse(l) rescue next;
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="compaction_decision";
   puts "compacted=#{r["compacted"]} shrink_refused=#{r["would_not_shrink"]} hits=#{r["summary_hits"]} " \
        "misses=#{r["summary_misses"]} head=#{r["head_bytes"]}"}' "$J"
+
+# what a compaction actually moved -- the proxy is BYTES and now says so
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="compaction";
+  puts "before=#{r["bytes_before"]} after=#{r["bytes_after"]} saved=#{r["cost_saved"]} spent=#{r["cost_spent"]}"}' "$J"
 ```
+
+**Mind the unit, and mind the vintage of the journal you are reading.** Two field pairs were renamed
+this chunk because they counted bytes under token names, which cost a reader once already —
+`tokens_before / window_tokens` read 80% occupancy against a session every other reader put at 32%,
+because the numerator was bytes and the denominator provider-measured tokens:
+
+| record | was | is now |
+|---|---|---|
+| `compaction` | `tokens_before` / `tokens_after` | **`bytes_before` / `bytes_after`** |
+| the seam decision | `tokens_removed` / `tokens_after` | **`bytes_removed` / `bytes_after`** |
+
+**`used_tokens` and `window_tokens` were deliberately NOT renamed** — those are provider-measured
+token counts and always were, so the reductions above that read them are unchanged.
+
+**Old journals are not migrated and no shim reads them.** A record written before this chunk still
+carries `tokens_before`/`tokens_after` holding exactly these byte figures under the misleading name.
+So a reduction written against the new names returns nothing on a pre-chunk file, which looks like
+"no compaction fired" — check the vintage before concluding that, and say which naming a recorded
+figure came from when comparing rounds.
 
 ## Three things that make a check pass while asserting nothing
 

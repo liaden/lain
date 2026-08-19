@@ -95,25 +95,60 @@ session-killer worth stopping the round for.
   session**, which is what proves it. Collect every `digest` and every `causal_parents` entry and
   assert the difference is empty.
 
-**Round 5 found the fork REFUSES on a healthy session, and that is F23.** Once a subagent
-message lands, a `turn` cites a `message` record as a `causal_parent` -- and the fold never puts
-`message` records in the store, so BOTH `--fork` and `--resume` refuse and the session is stranded
-with no continuation path at all:
+### The F23 regression step — a spawned session must fork AND resume
+
+**This step exists because it used to fail, and the failure was total.** Round 5 found that once a
+subagent message landed, a `turn` cited a `message` record as a `causal_parent` while the fold never
+put `message` records in the store -- so BOTH `--fork` and `--resume` refused and a session that had
+spawned was stranded with no continuation path at any point in its history. That was F23. It is
+fixed: `Bench::Session::Loader#recording` now alternates the chain fold and the flat-event replay to
+a fixpoint over both record sets, so an edge running either way resolves.
+
+So drive **both doors**, and both must exit 0:
+
+```bash
+lain sessions                                    # take the head digest of the spawned session
+lain chat --fork SESSION@DIGEST   < /dev/null    # exit 0   (banner: SESSION@DIGEST)
+lain chat --resume SESSION        < /dev/null    # exit 0   (bare --resume picks the newest)
+```
+
+**Keep the control, and run it in the same act:** a session with **no `message` records** -- one
+that never spawned -- which has always forked at its head. The pair is what distinguishes "the
+fixpoint works" from "nothing spawned, so nothing was tested"; a spawned session is only a spawned
+session if `/execute-plan`'s `@researcher[/critique]` wedge above actually ran, so check the record
+counts before believing either result:
+
+```bash
+ruby -rjson -e 'c=Hash.new(0); ARGF.each_line{|l| r=JSON.parse(l) rescue next; c[r["type"]]+=1};
+  puts "message=#{c["message"]} child_turn=#{c["child_turn"]} turn=#{c["turn"]}"' "$JOURNAL"
+```
+
+Zero `message` records means this step asserted nothing, whatever it printed.
+
+**What must NOT appear.** The old refusal sentence still lives in `lib/`
+(`bench/session/chain_fold.rb`) because it is the correct answer for a *genuinely* damaged journal.
+Seeing it against a healthy spawned session is F23 returning:
 
     cannot fork <session>: turn record 26 (user) cites a causal parent this fold never landed:
     no object "blake3:6efd2c62..." in store: putting "blake3:1845d569..." would dangle
 
-Two things make this easy to misread, so check them explicitly before filing anything else:
+Two things made the original easy to misread, and they are still how you tell a regression from real
+damage:
 
-- **The journal is NOT damaged.** Scan it -- every `causal_parents` digest resolves against a
-  digest the journal records (round 5: 102 digests, 7 unique refs, 0 unresolved). The cited object
-  is present as a `type=message`. The refusal uses the *damaged-session* vocabulary for a session
-  that is intact, which is itself worth recording.
-- **The fork POINT does not matter.** The fold replays the whole journal before selecting, so a
-  digest recorded before the first `message` fails identically. There is no reachable fork point.
+- **A healthy journal is not damaged, and the refusal used the damaged-session vocabulary anyway.**
+  Scan it before filing: every `causal_parents` digest should resolve against a digest the journal
+  records (round 5: 102 digests, 7 unique refs, 0 unresolved), and the cited object should be
+  present as a `type=message`.
+- **The fork POINT does not matter.** The fold replays the whole journal before selecting, so under
+  F23 a digest recorded *before* the first `message` failed identically. If a refusal moves with the
+  fork point, it is ordinary damage and not this.
 
-The control that proves it is a session with **no `message` records** -- one that never spawned --
-which forks at its head with exit 0. Run both; the pair is the finding.
+**The sibling refusal, which is newer and has its own vocabulary.** A flat record with a bad edge now
+refuses in its own index space rather than borrowing the turn one -- `message record N (<label>)
+cites a causal parent this replay never landed` (`bench/session/message_replay.rb`). Both land as
+`Bench::Session::Corrupt`, so which sentence you get says which record set the damage is in, and
+neither should ever appear here. Driving that one deliberately belongs in
+`failure-injection.md` §3, not in this act.
 
 **Note for `failure-injection.md`:** `causal_parents` only exist once a spawn has run. A session of
 plain turns links via `parent`. Round 4's journals had no `causal_parents` at all.
