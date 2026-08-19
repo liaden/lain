@@ -135,6 +135,7 @@ module Lain
   end
 end
 
+require_relative "provider/admission"
 require_relative "provider/stream_started_signal"
 require_relative "provider/error_wrapping"
 require_relative "provider/anthropic_encoding"
