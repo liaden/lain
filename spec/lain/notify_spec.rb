@@ -373,6 +373,106 @@ RSpec.describe Lain::Notify do
         Async::Task.current.sleep(interval) until yield
       end
 
+      # Hoisted from "a popup whose approval somebody else answered" (T8
+      # review): both that describe's own withdrawal examples and this
+      # describe's own "several approvals park together" examples need a
+      # recording dunstify that tracks `-r` ids and `-C` withdrawals, so the
+      # fixture lives at the level both share rather than inside either one.
+      #
+      # dunst's own numeric close reason for "closed via the API", measured
+      # below. A method rather than a constant, as every other fixture in this
+      # file is, to stay clear of Lint/ConstantDefinitionInBlock.
+      def closed_via_api = "3"
+
+      # The scripted dunstify, extended with the two things a withdrawal
+      # needs: the `-r` id each notification was raised with, and a record of
+      # every `-C` this surface issued. A `-C` is not a question anybody
+      # answers -- it returns at once -- so it gets no reply queue.
+      #
+      # `release:` is what the real desktop does: closing a popup releases the
+      # `dunstify -A` blocked on it, with the close reason above. Turning it
+      # OFF is not a hypothetical -- a close that lands on nothing leaves the
+      # blocked process exactly where it was -- and it is what lets one
+      # example below prove the withdrawal is issued once WITHOUT relying on
+      # the drain having already happened to hide a second one.
+      # `clocks` records the `timeout:` each invocation was built with, keyed
+      # by flag, because a withdrawal and an approval are owed very different
+      # ones. `delivered` announces that a notification's Thread has produced
+      # its answer, which is the happens-before one example below needs.
+      def withdrawable_dunstify(*commands, release: true)
+        desk = empty_desk(commands)
+        desk.factory = lambda do |*args, **kwargs|
+          flag = args.include?("-C") ? "-C" : "-A"
+          desk.lock.synchronize { desk.clocks[flag] = kwargs[:timeout] }
+          flag == "-C" ? closed(desk, args, release:) : announced(desk, args)
+        end
+        desk
+      end
+
+      # `ids` and `clocks` are plain Hashes written from each notification's
+      # OWN Thread, so they carry the lock the Thread::Queues have built in.
+      def empty_desk(commands)
+        Struct.new(:factory, :raised, :withdrawn, :replies, :ids, :lock, :clocks, :delivered)
+              .new(nil, Thread::Queue.new, Thread::Queue.new,
+                   commands.to_h { |command| [command, Thread::Queue.new] }, {}, Mutex.new,
+                   {}, Thread::Queue.new)
+      end
+
+      # The `-C` branch: record which id was closed, and release the dunstify
+      # blocked on that popup with dunst's own close reason -- which is what
+      # the real desktop was measured doing, and what makes the withdrawn
+      # notification's late verdict a real path rather than a hypothetical.
+      def closed(desk, args, release:)
+        id = args[args.index("-C") + 1]
+        command = desk.lock.synchronize { desk.ids.key(id) }
+        desk.replies.fetch(command).push(closed_via_api) if release && command
+        desk.withdrawn.push(id)
+        closing_shell_out
+      end
+
+      # `dunstify -C` is not a question: it returns at once, exits 0 and
+      # prints nothing (measured, including against an id dunst no longer
+      # holds, which is a silent no-op).
+      def closing_shell_out
+        Class.new do
+          def run_command = self
+          def stdout = ""
+        end.new
+      end
+
+      # The `-A` branch: remember the `-r` id this notification was raised
+      # with -- the correlation everything else here is asserted against --
+      # announce the argv, and block on this command's own reply queue.
+      def announced(desk, args)
+        argv = args.join(" ")
+        command = desk.replies.keys.find { |candidate| argv.include?(candidate) }
+        remember_id(desk, command, args)
+        desk.raised.push(argv)
+        delivering_shell_out.new(reply: desk.replies.fetch(command), delivered: desk.delivered)
+      end
+
+      # `scripted_shell_out_class` plus a signal, sent once the reply has been
+      # taken, so an example can know the answer exists without sweeping for
+      # it -- sweeping is the very thing under test in the example that needs
+      # this.
+      def delivering_shell_out
+        Class.new do
+          def initialize(reply:, delivered:)
+            super()
+            @reply = reply
+            @delivered = delivered
+          end
+
+          def run_command = tap { @answer = @reply.pop }
+          def stdout = @answer.to_s.tap { @delivered.push(true) }
+        end
+      end
+
+      # Written from the notification's own Thread, so under the lock.
+      def remember_id(desk, command, args)
+        desk.lock.synchronize { desk.ids[command] = args[args.index("-r") + 1] }
+      end
+
       # The first half of what T4 buys, and the half that cannot be seen with
       # one gated call -- which is exactly why a green suite shipped the
       # serialised version. Driven through the REAL queue, because "consumed
@@ -589,99 +689,12 @@ RSpec.describe Lain::Notify do
       # which {Notify#capture} would strip and read as "not approve" -- silently
       # denying every approval.
       describe "a popup whose approval somebody else answered" do
-        # dunst's own numeric close reason for "closed via the API", measured
-        # above. A method rather than a constant, as every other fixture in this
-        # file is, to stay clear of Lint/ConstantDefinitionInBlock.
-        def closed_via_api = "3"
-
-        # The scripted dunstify, extended with the two things a withdrawal
-        # needs: the `-r` id each notification was raised with, and a record of
-        # every `-C` this surface issued. A `-C` is not a question anybody
-        # answers -- it returns at once -- so it gets no reply queue.
-        #
-        # `release:` is what the real desktop does: closing a popup releases the
-        # `dunstify -A` blocked on it, with the close reason above. Turning it
-        # OFF is not a hypothetical -- a close that lands on nothing leaves the
-        # blocked process exactly where it was -- and it is what lets one
-        # example below prove the withdrawal is issued once WITHOUT relying on
-        # the drain having already happened to hide a second one.
-        # `clocks` records the `timeout:` each invocation was built with, keyed
-        # by flag, because a withdrawal and an approval are owed very different
-        # ones. `delivered` announces that a notification's Thread has produced
-        # its answer, which is the happens-before one example below needs.
-        def withdrawable_dunstify(*commands, release: true)
-          desk = empty_desk(commands)
-          desk.factory = lambda do |*args, **kwargs|
-            flag = args.include?("-C") ? "-C" : "-A"
-            desk.lock.synchronize { desk.clocks[flag] = kwargs[:timeout] }
-            flag == "-C" ? closed(desk, args, release:) : announced(desk, args)
-          end
-          desk
-        end
-
-        # `ids` and `clocks` are plain Hashes written from each notification's
-        # OWN Thread, so they carry the lock the Thread::Queues have built in.
-        def empty_desk(commands)
-          Struct.new(:factory, :raised, :withdrawn, :replies, :ids, :lock, :clocks, :delivered)
-                .new(nil, Thread::Queue.new, Thread::Queue.new,
-                     commands.to_h { |command| [command, Thread::Queue.new] }, {}, Mutex.new,
-                     {}, Thread::Queue.new)
-        end
-
-        # The `-C` branch: record which id was closed, and release the dunstify
-        # blocked on that popup with dunst's own close reason -- which is what
-        # the real desktop was measured doing, and what makes the withdrawn
-        # notification's late verdict a real path rather than a hypothetical.
-        def closed(desk, args, release:)
-          id = args[args.index("-C") + 1]
-          command = desk.lock.synchronize { desk.ids.key(id) }
-          desk.replies.fetch(command).push(closed_via_api) if release && command
-          desk.withdrawn.push(id)
-          closing_shell_out
-        end
-
-        # `dunstify -C` is not a question: it returns at once, exits 0 and
-        # prints nothing (measured, including against an id dunst no longer
-        # holds, which is a silent no-op).
-        def closing_shell_out
-          Class.new do
-            def run_command = self
-            def stdout = ""
-          end.new
-        end
-
-        # The `-A` branch: remember the `-r` id this notification was raised
-        # with -- the correlation everything else here is asserted against --
-        # announce the argv, and block on this command's own reply queue.
-        def announced(desk, args)
-          argv = args.join(" ")
-          command = desk.replies.keys.find { |candidate| argv.include?(candidate) }
-          remember_id(desk, command, args)
-          desk.raised.push(argv)
-          delivering_shell_out.new(reply: desk.replies.fetch(command), delivered: desk.delivered)
-        end
-
-        # `scripted_shell_out_class` plus a signal, sent once the reply has been
-        # taken, so an example can know the answer exists without sweeping for
-        # it -- sweeping is the very thing under test in the example that needs
-        # this.
-        def delivering_shell_out
-          Class.new do
-            def initialize(reply:, delivered:)
-              super()
-              @reply = reply
-              @delivered = delivered
-            end
-
-            def run_command = tap { @answer = @reply.pop }
-            def stdout = @answer.to_s.tap { @delivered.push(true) }
-          end
-        end
-
-        # Written from the notification's own Thread, so under the lock.
-        def remember_id(desk, command, args)
-          desk.lock.synchronize { desk.ids[command] = args[args.index("-r") + 1] }
-        end
+        # `closed_via_api`, `withdrawable_dunstify` and friends are defined one
+        # level up, in "several approvals parked at once" -- T8's own examples
+        # need the same recording dunstify and sit at that level too (T8
+        # review: a describe block that lies about its contents costs the next
+        # reader more than the reuse saves), so the fixture lives where both
+        # can reach it rather than being re-specified.
 
         # The correlation itself: two live popups must not share an id, or `-r`
         # would make the second REPLACE the first instead of joining it.
@@ -1043,6 +1056,74 @@ RSpec.describe Lain::Notify do
 
           expect(consumed).to contain_exactly("one", "two")
         end
+      end
+
+      # T8: the fan-out this file could otherwise only argue about with two
+      # pendings, exercised through spec/support/parked_approvals.rb --
+      # ParkedApprovals.park generalises this describe's own `gated`-shaped
+      # Sync/async/spun-until dance (approval_view_spec.rb:311-322's working
+      # shape) from two pendings to N, parked on a REAL Approval::Queue so
+      # Queue#each's "observes without draining" claim is one only a real
+      # queue can make. `withdrawable_dunstify` is this describe's own
+      # recording double for dunstify -- no real binary, {Notify::Null}'s
+      # degrade path untouched -- reused rather than re-specified, per its own
+      # escalation trigger. Sits at THIS level, not nested inside "a popup
+      # whose approval somebody else answered" (T8 review): these three are
+      # not about a popup somebody else answered, and a describe that
+      # misdescribes its own contents costs the next reader more than nesting
+      # depth saves.
+      it "lists three undecided pendings when the queue is observed without draining" do
+        queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 5)
+
+        ParkedApprovals.park(queue, count: 3) do |parked_queue|
+          expect(parked_queue.count).to eq(3)
+          expect(parked_queue.map(&:decided?)).to eq([false, false, false])
+        end
+      end
+
+      # T8 review: `shown.compact.size == 3` alone is blind to WHICH pending
+      # got notified -- a defect that raised the same pending three times and
+      # never touched the other two would still leave three non-nil argvs in
+      # `shown`. Mapping each raised argv back to the command it correlates to
+      # (the same substring match `withdrawable_dunstify` itself uses to route
+      # replies) and asserting the three are DISTINCT is what makes this
+      # example fail on that defect rather than merely on an outright silence.
+      it "raises one notification per parked approval before any of them is answered" do
+        queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 5)
+        dunst = withdrawable_dunstify("tu_0", "tu_1", "tu_2")
+        notifier = described_class.new(shell_out_factory: dunst.factory)
+
+        ParkedApprovals.park(queue, count: 3) do |parked_queue|
+          notifier.sweep(parked_queue)
+          shown = Array.new(3) { dunst.raised.pop(timeout: 2) }
+
+          notified = shown.map { |argv| dunst.replies.keys.find { |command| argv.to_s.include?(command) } }
+          expect(notified).to contain_exactly("tu_0", "tu_1", "tu_2")
+          expect(parked_queue.map(&:decided?)).to eq([false, false, false])
+        end
+      ensure
+        dunst.replies.each_value { |reply| reply.push("2") }
+      end
+
+      it "withdraws the notification decided elsewhere, and leaves the other two raised" do
+        queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 5)
+        dunst = withdrawable_dunstify("tu_0", "tu_1", "tu_2")
+        notifier = described_class.new(shell_out_factory: dunst.factory)
+
+        ParkedApprovals.park(queue, count: 3) do |parked_queue|
+          notifier.sweep(parked_queue)
+          3.times { dunst.raised.pop(timeout: 2) }
+
+          parked_queue.find { |pending| pending.tool_use_id == "tu_0" }.deny(surface: "tty")
+          notifier.sweep(parked_queue)
+
+          expect(dunst.withdrawn.pop(timeout: 2)).to eq(dunst.ids.fetch("tu_0"))
+          expect(dunst.withdrawn.pop(timeout: 0.2)).to be_nil
+          expect(parked_queue.reject { |pending| pending.tool_use_id == "tu_0" }.map(&:decided?))
+            .to eq([false, false])
+        end
+      ensure
+        dunst.replies.each_value { |reply| reply.push("2") }
       end
     end
 
