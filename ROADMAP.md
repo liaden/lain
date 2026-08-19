@@ -48,9 +48,18 @@ milestone exists to make an axis swappable and measured.
 | **Tool disclosure** | upfront-JSON vs. deferred/searchable vs. code-API | tokens; correct-call rate |
 | **Prompt slots** | base template vs. user-filled holes (persona · domain framing · output contract) | correct-call rate; grader; cache-hit |
 | **Provider / model** | Anthropic vs. OpenAI-compatible vs. local (ollama) vs. Bedrock (work key — `planning/specs/bedrock-provider.md`) | grader score; cost; latency |
-| **Orchestration** | single-thread · orchestrator-worker · **fork-worker** · **cache-sibling fan-out** · dual-ledger · handoff · LATS · MoA · adaptive router · **shared-artifact (CRDT)** · **control-flow-as-code (coded FSM vs prompt-ReAct)** | grader; tokens (~15× risk); cache-write; context-loss events; **loop-depth / no-progress** |
+| **Orchestration** | single-thread · orchestrator-worker · **fork-worker** · **cache-sibling fan-out** · dual-ledger · handoff · LATS · MoA · adaptive router · **shared-artifact (CRDT)** · **control-flow-as-code (coded FSM vs prompt-ReAct)** | grader; tokens (~15× risk); cache-write; context-loss events; **loop-depth / no-progress**; **merge fraction** `[exp]` |
+| **Decorrelation** (within a fan-out) `[exp]` | identical prompts · seeded prompt variation · role-differentiated · model-heterogeneous | **distinct approaches; inter-child diff distance; unique files touched** — diversity, *not* mean score (agents are low-variance: 18/30 chose one branch name, `planning/hn-agent-landscape-2026-08.md` T1-2) |
+| **Verification** `[exp]` | no verifier · test suite · suite + profiler · metamorphic/property oracle · **harness-generated oracle** (recorded reference state) | grader score; turns-to-green; wall-clock share spent verifying |
+| **Role assignment** `[exp]` | the same content rendered as the agent's own thought · a user message · a tool result · a system `<memory>` block | **explicit-correction rate** (flagged, *not* silently re-derived); grader score. `Context#render` already decides this and `KINDS` is closed, so the arms are byte-comparable by construction — and the best label is **domain-dependent**, so it cannot be fixed (`arXiv:2606.05976`: +23-93pp, bytes held identical) |
 | **Memory / retrieval** | Manifest · BM25 · Hybrid · Vector · Graph · temporal-KG · content-addressed versioning · structural · **lineage/outcome-ranked (Journal-native)** | recall@k; tokens on recall; abstention |
 | **Merge strategy** (concurrent edits) | git 3-way vs. CRDT auto-converge | final grader score; conflict/thrash |
+
+**Report every arm at matched spend** `[exp]`. Token *price* is not task cost — a third party
+measured a cheaper-per-token model costing *more per task* while scoring six points lower, and the
+same model through two harnesses differing >2× in cost at equal quality
+(`planning/hn-agent-landscape-2026-08.md` T2-9). Score-at-matched-spend plus the score/spend curve,
+and the provider's write/read price *shape* is a confound, not a nuisance parameter.
 
 **The bench's first experiment is on itself:** the 2026 literature ("the harness, not the model,
 sets the score") is exactly Lain's thesis. Quantifying **harness-induced variance** with byte-diff
@@ -207,13 +216,15 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     needed; likely the highest-leverage cheap change `[exp]`.
   - **GEPA-style optimizer** over tool descriptions / prompt slots — turns the bench from a ruler into
     a *search* (metric = grader, textual feedback = Journal, cheap eval = dry replay). **Parked** (a
-    lain-dev tool; land the bench and run strategies by hand first — see the self-improving harness in
+   lain-dev tool; land the bench and run strategies by hand first — see the self-improving harness
+   in
     `first-class-concepts.md`). `[exp · parked]`
   - **Cache-aware compaction scheduling** (TODO 4): a scheduling policy on `Compact` (3c-2.3) — run
     only when the cache is already cold (idle > the model's *sliding* TTL, confirmed by
-    `cache_read_input_tokens == 0`), with soft-defer + hard-cap while warm, plan-step completion as a
+   `cache_read_input_tokens == 0`), with soft-defer + hard-cap while warm, plan-step completion as a
     trigger, and prepare-once-apply-on-resume for idle. Compaction rewrites only the *message* cache
-    tier, so the forced-warm penalty is bounded. **Spec:** `planning/specs/cache-aware-compaction.md`. `[exp]`
+   tier, so the forced-warm penalty is bounded. **Spec:**
+   `planning/specs/cache-aware-compaction.md`. `[exp]`
   - **Cache economics** (HN 48883275 + `references/prompt-caching-mechanics.md`): cache-**write**
     attribution via a per-breakpoint **Request digest chain** journaled per call (rewrite count +
     depth + the turn that broke the prefix — `diverge_at` at the request level, CE-2); the
@@ -253,7 +264,8 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
   - **Attested-context combinator** + a grader that verifies every fact traces to a `tool_result`
     digest (hallucination becomes structurally detectable) `[exp]`.
   - **Behavioral & verification graders** (HN scan, `planning/hn-agent-landscape-2026-07.md` #1): a
-    **two-pass verification wrapper** (a refutation pass filters false positives — a generic decorator
+   **two-pass verification wrapper** (a refutation pass filters false positives — a generic
+   decorator
     over any rubric grader, reusable bench-wide), a **tool-steering detector** (declared
     description vs observed selection frequency), and a **frustration/repair grader** that walks a
     behavioral signal back through the DAG to the turn that caused it (attribution only our
@@ -261,7 +273,8 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     **Spec:** `planning/specs/graders.md`. `[exp]`
   - **Tool-call repair + guardrail stack** (HN 48883275 §4 + Forge id=48192383): the repair middleware
     (`tolerant` / `tolerant-and-tattling`) composed as a *sequence* — validate → rescue-parse →
-    **prereq/step-enforce** → nudge-retry — each a `Middleware` in the monoid; scored by **compounding
+   **prereq/step-enforce** → nudge-retry — each a `Middleware` in the monoid; scored by
+   **compounding
     accuracy over N steps** on a **local 8B** (where the lift is visible), and a **per-phase toolset
     narrowing** guard (attenuation made dynamic mid-run). Shape, never safety — never reachable by a
     validator that sounds like a security control. `[exp]`
@@ -272,28 +285,31 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     validator-green-but-non-functional trap — score a non-functional check, not just "it parses."
     `[exp · parked]`
   - **Per-effect external-$ budget + recursive subagent ceiling** (HN scan #7, the DN42 bankruptcy):
-    extend CE-6's cost model with a **tool-side external-cost** dimension (egress/instance $, invisible
+   extend CE-6's cost model with a **tool-side external-cost** dimension (egress/instance $,
+   invisible
     to a token cap) and a **per-lineage spawn ceiling** that hard-stops mid-run before a bill lands.
     `[exp · parked]`
   - **DELEGATE-52-style corruption fixture** (HN scan Tier-3): a long-workflow document-edit fixture
-    (their naive `read_file`/`write_file` harness corrupted ~25% — *exactly what we vary*); A/B naive
+   (their naive `read_file`/`write_file` harness corrupted ~25% — *exactly what we vary*); A/B naive
     vs structured edit tools, beside the "Hey" fixture. `[exp · parked]`
   - **Start the memory sweep with `Manifest`** the moment the bench exists — no index, cache-stable.
   - **Pluggable prompt slots** — named holes the user fills with **markdown partials** (Rails-view-
     partial model) for durable, rarely-changed **freeform system-prompt adjustment** and **per-role
-    behavior** (test-engineer / orchestrator). Fills live at `.lain/slots/<name>.md`, rendered via ERB
+   behavior** (test-engineer / orchestrator). Fills live at `.lain/slots/<name>.md`, rendered via
+   ERB
     in a **purity-enforcing locked binding** (impurity fails loudly), output content-addressed with
     slot digests journaled; rare mutation keeps them cache-safe in the prefix. CLI transparency now,
     Neovim-annotated in M4. **Spec:** `planning/specs/prompt-slots.md`. `[exp]`
   - **The experiment DSL** (RSpec/`factory_bot`-style) as the interface to `Bench`/`Compare` — a
-    lain-dev tool, **parked** for now (design sketch in "The DSL" below); the bench works without it.
+   lain-dev tool, **parked** for now (design sketch in "The DSL" below); the bench works without it.
     `[exp · parked]`
   - **User-injectable middleware** (TODO 44): users add their own `model`/`tool`/`turn`/`repl`
     middleware into the stack via the DSL — a testable hook *is* middleware `[exp]`.
   - **Grader from Gherkin** (TODO 82–85): `/research` + `/plan` produce human-approved Given/When/Then
     acceptance criteria — a transient structured-English **IR**, not `.feature` files — that the
     test-engineer role (M5) turns into tests in the **lain user's** framework (rspec/pytest/jest/…);
-    those tests *are* the `Grader::Fixture`. **Spec:** `planning/specs/grader-from-gherkin.md`. `[exp]`
+   those tests *are* the `Grader::Fixture`. **Spec:** `planning/specs/grader-from-gherkin.md`.
+   `[exp]`
 
 ### M4 — Rust timeline, Neovim, and time-travel `[planned]` (4-1 `[built]`)
 - `[built]` (M4-1) Persistent Merkle DAG behind the existing interface; the same property tests pass
@@ -314,13 +330,15 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     recency-scored), not a feature. Registers are a secret-leak surface: conservative allowlist,
     byte caps, opt-in. See `planning/interface-integration.md`. `[exp]`
   - **Plan-iteration as a diff-driven review + CRDT collab-buffer** (TODO 34–42): plans are templates
-    with named **`COMMENT` annotation slots** the human fills — the plan-side twin of the prompt-slots
-    arm — and the diff + those inline comments drive the next agent action; human and planner co-edit
+   with named **`COMMENT` annotation slots** the human fills — the plan-side twin of the
+   prompt-slots
+   arm — and the diff + those inline comments drive the next agent action; human and planner co-edit
     live `[exp]`. See `planning/crdt-exploration.md`.
   - **Aider's repo-map** (tree-sitter + PageRank) as a `Context` combinator `[exp]`.
   - **Full-prompt transparency** in the `lain://request` buffer: render the *whole* prompt with slot
-    boundaries and **cache breakpoints annotated** (holes above the cache line = expensive to change;
-    holes in the uncached tail = cheap), shown as a **diff against the base template**. Disclosing the
+   boundaries and **cache breakpoints annotated** (holes above the cache line = expensive to change;
+   holes in the uncached tail = cheap), shown as a **diff against the base template**. Disclosing
+   the
     harness, made visible — the inspection half of the prompt-slots arm. `[exp]`
   - **Spatial "where did the agent work" replay overlay** (HN scan Tier-3, Mindwalk): the Workspace
     Timeline already records which files each Effect touched — a spatial change-density overlay over
@@ -357,17 +375,19 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
 - **Fold-ins:**
   - **Event-sourced orchestration** (TODO 27–30): fibers (`Async` / socketry); the Store is the event
     log and mailboxes are projections over it; `ask_human` returns a **promise** (continue working,
-    block only when the answer is actually needed); **one-shot *and* long-lived actor** subagent modes;
+   block only when the answer is actually needed); **one-shot *and* long-lived actor** subagent
+   modes;
     supervision = replay-to-checkpoint (the same machinery as M2 resume). A whole team's run is
-    forkable/replayable — you can *substitute a model for the human* from recorded replies for offline
+   forkable/replayable — you can *substitute a model for the human* from recorded replies for
+   offline
     evaluation. **Spec:** `planning/specs/orchestration-model.md`. `[exp]`
   - **Supervision trees + checkpoint restart** (TODO 27 + 3) — **✅ landed 2026-07-17** (`b315b60`
     reactor, `fe9de76` replay-restart flagship, `bin/demo-supervision` ships): the orchestrator is
     a supervisor; a crashed subagent restarts from its last content-addressed checkpoint
     (Workspace Timeline).
   - **Meta-agents that study the harness** (TODO 94–100): the **court-clerk** (records memories from
-    subagent timelines = the "dreams"/consolidation pattern, auditable because content-addressed) and
-    the **friction-observer** (watches the Journal for harness friction, emits *experiment proposals*
+   subagent timelines = the "dreams"/consolidation pattern, auditable because content-addressed) and
+   the **friction-observer** (watches the Journal for harness friction, emits *experiment proposals*
     into the GEPA loop → a **self-improving harness**) `[exp]`.
   - **Spawn prefix strategy as an axis** (CE-4 — **✅ landed 2026-07-17**, `5b077c9`): fresh-root |
     fork-the-parent | sibling-template is a policy object at the spawn seam, **orthogonal to** the
@@ -378,7 +398,8 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     on the Channel + stagger scheduling — CE-5 **✅ landed 2026-07-17**, `b2967b9`/`738f83e`,
     `bin/demo-fanout` ships).
   - **Orchestration arms** (see `planning/orchestration-experiments.md`): single-thread ·
-    orchestrator-worker · fork-worker · cache-sibling fan-out · dual-ledger (Magentic-One) · handoff ·
+   orchestrator-worker · fork-worker · cache-sibling fan-out · dual-ledger (Magentic-One) · handoff
+   ·
     LATS · MoA · adaptive router · shared-artifact (CRDT). Build the *comparison* before the fleet;
     each worker is worktree-isolated, and where tests collide (ports, DBs) they get a container or a
     separate DB schema (TODO 71–73).
@@ -392,12 +413,14 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     loop-depth / repeated-tool / no-progress Journal events. See
     `planning/hn-agent-landscape-2026-07.md` #3 + `orchestration-experiments.md`. `[exp]`
   - **git-for-its-mind** tools (`fork_and_try`, `rewind_to`, `diff_branches`) `[exp]`; the
-    **self-crystallizing toolset** (promote successful code-mode fragments to versioned capabilities,
+   **self-crystallizing toolset** (promote successful code-mode fragments to versioned capabilities,
     TODO 104) `[exp]`.
   - **Agent role catalog** — orchestration roles are **attenuated subagents** (capabilities, not
     config), each `toolset.only(...)` + a role prompt slot: a **dev**; a **test-engineer** authoring
-    Gherkin acceptance criteria that become `Grader::Fixture`s (TODO 82–85); specialized **reviewers**
-    — SRE/perf, DBA/migrations, security/devops, dovetailing the `security-review` skill (TODO 86–90);
+   Gherkin acceptance criteria that become `Grader::Fixture`s (TODO 82–85); specialized
+   **reviewers**
+   — SRE/perf, DBA/migrations, security/devops, dovetailing the `security-review` skill (TODO
+   86–90);
     a **researcher** (TODO 60); plus the **court-clerk** and **friction-observer** above. The
     orchestrator fans out to, and merges, whichever roles the task structure calls for. **Built-in
     catalog + `.lain/slots/role/<name>.md` overrides (PS-3); user-defined roles are a longer-term
@@ -405,7 +428,7 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
   - **Isolation as a swappable backend; egress as an observable Effect; credential brokering**
     (HN scan #6): microVM / container / bwrap as a *compared* knob (not just an exec seam); every
     allowed/denied network attempt an attributed Journal event; secrets stay host-side and proxied,
-    never entering the sandbox (fits "Workspace is sent, not stored", keeps digests credential-free).
+   never entering the sandbox (fits "Workspace is sent, not stored", keeps digests credential-free).
     Field lesson: the sandbox is the easy 10%, the policy engine + credential brokering the 90%.
     `[exp · parked]`
   - **Smaller parked arms** (HN scan Tier-3): **summary-inheritance** as a third CE-4 spawn-prefix
@@ -443,7 +466,8 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     beat are **Zep**'s and MemPalace's temporal KGs vs. Lain's content-addressed versioning on the
     `knowledge-updates` split.
   - Adopt MemPalace's borrowable designs: the **AAAK symbolic index** as `Manifest`, the
-    **"signal-not-gate"** retrieval-safety invariant, the **query sanitizer** (a contaminated query is
+   **"signal-not-gate"** retrieval-safety invariant, the **query sanitizer** (a contaminated query
+   is
     a silent recall cliff), candidate-local **BM25 reranking**.
   - **Structural memory** (`petgraph` subgraph-isomorphism): recall by trajectory *shape* — a fifth
     modality BM25/Vector/Hybrid/Graph can't express `[exp]`.
@@ -452,7 +476,8 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
     expand-on-demand context artifact for the planner/debugger `[exp]`.
   - **Journal-native retrieval, ranked by lineage/outcome** (HN scan #4: deja-vu + zby's four-field
     taxonomy): index the Journal itself as the memory corpus (the turns we already own,
-    content-addressed), with **index-time secret redaction**; rank hits by **successful `spawned_from`
+   content-addressed), with **index-time secret redaction**; rank hits by **successful
+   `spawned_from`
     lineage/outcome**, not just lexical score, so an abandoned branch's close text loses to a
     proven turn — a hybrid BM25+lineage arm no flat verbatim index can express. zby's four-field
     record (substrate · form · lineage · authority) is an axis-set for the sweep; "storage ≠
@@ -461,7 +486,7 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
   - **Local-model fidelity + tiny tool-callers** (HN scan Tier-3): treat chat-template / tool-call
     fidelity as a *named measured variable* on the ollama arm (where small models silently break); a
     **26M distilled tool-caller** as a candidate Provider variant ("tool-calling is
-    retrieval-and-assembly, not reasoning"); **in-process vs out-of-process inference overhead** as a
+   retrieval-and-assembly, not reasoning"); **in-process vs out-of-process inference overhead** as a
     measured trade-off (LibArgus argues the opposite of our exec split for the inference hot loop).
     `[exp · parked]`
 
@@ -740,7 +765,8 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
 
 1. **✅ M1b–M3b — done**: hands, Journal + cost accounting, test infra, transport fork.
 2. **✅ M3c — the bench — done** (this session): the `Context` combinators, the `turn`/`repl` phases,
-   capability guarding, `DryReplay`/`Grader`/`Compare` + speculative branching. The thesis is unlocked.
+   capability guarding, `DryReplay`/`Grader`/`Compare` + speculative branching. The thesis is
+   unlocked.
 3. **✅ M4-1 — the Rust Timeline — done** (this session): the persistent Merkle DAG in `ext/lain`, both
    impls green against the shared law groups.
 4. **P — provisional cleanup** (needs a Console key): re-record the transport cassette, run the `:live`
@@ -757,9 +783,11 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    out to be already built in `exe/lain`.)
 7. **Early headline experiment** — quantify harness-induced variance (all prerequisites now built): a
    `DryReplay`/`Compare` sweep over the harness's own recorded sessions. The cache-write columns
-   (CE-2) make this the study HN 48883275 could not produce: grader × tokens × cache-write, no proxy.
+   (CE-2) make this the study HN 48883275 could not produce: grader × tokens × cache-write, no
+   proxy.
 8. **✅ Chunk done (2026-07-15)** — the event spine, the M5 orchestration band, the M6 retrieval
-   sweep, and the Neovim frontend, landed together (`planning/specs/chunk-spine-agents-sweep-nvim.md`):
+   sweep, and the Neovim frontend, landed together
+   (`planning/specs/chunk-spine-agents-sweep-nvim.md`):
    the `Lain::Event` envelope + Turn collapse (TL-1/TL-2), projections (TL-4), fibers adopted in
    the agent loop (5-0.2/5-0.3), `Tool::Subagent` one-shot + actor + within-turn concurrency
    (5-1.1–5-1.4), `ask_human` as a promise (OM-4), the role catalog on prompt slots (OM-5/PS-3),
@@ -798,7 +826,8 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    `planning/dominator-meet-research-2026-07.md`.
 
 11. **Planned (2026-07-21, panel-reviewed)** — two independent chunks authored via
-   `/create-plan`, executable in either order: `planning/specs/chunk-parallel-tools-core-skeleton.md`
+   `/create-plan`, executable in either order:
+   `planning/specs/chunk-parallel-tools-core-skeleton.md`
    (M6: parallel tool execution widened past `Subagent` with barrier semantics + the
    `crates/lain-core` msgpack-RPC exec skeleton, `forbid(unsafe_code)`, confinement
    explicitly out of scope) and `planning/specs/chunk-gherkin-meta-agents-plan-compaction.md`
@@ -859,8 +888,10 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
 
 15. **Planned (2026-07-27, panel-reviewed)** —
    `planning/specs/chunk-algebra-vocabulary.md`: the algebra vocabulary. Lain already maintains a
-   monoid (`Context::Combinator#>>`), a commutative monoid (`Usage#+`), and a meet-semilattice on two
-   of `Timeline`'s three meet-ish operations — and every one of those facts is evidenced only by how a
+   monoid (`Context::Combinator#>>`), a commutative monoid (`Usage#+`), and a meet-semilattice on
+   two
+   of `Timeline`'s three meet-ish operations — and every one of those facts is evidenced only by how
+   a
    method behaves plus an `include_examples` call in a spec, with nothing in `lib/` saying so. This
    chunk names the properties as modules (following `Lain::ContentAddressed`), declares them
    **per-operation** where the structures live (so `#causal_meets` can be declared *not* a
@@ -868,14 +899,18 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    sweep that refuses any claim with no means of proof and proves every refutation by asserting the
    law actually fails. Applies the same vocabulary to existing code: `DedupeToolCalls` and
    `PurgeFailedInputs` already analyze-then-map, and naming that factoring makes their analysis
-   inspectable and their output traceable to its input. Closes a Rust gap too — `ext/lain/src/dag.rs`
+   inspectable and their output traceable to its input. Closes a Rust gap too —
+   `ext/lain/src/dag.rs`
    claims a meet-semilattice in its module doc and tests 2 of the 4 laws. Ruled out with citations:
-   algebra traits in Rust (no production caller, and a second Rust-native parity suite would fork the
-   differential oracle), and declaring `Regular` / `Store` idempotence / `Canonical` determinism (each
+   algebra traits in Rust (no production caller, and a second Rust-native parity suite would fork
+   the
+   differential oracle), and declaring `Regular` / `Store` idempotence / `Canonical` determinism
+   (each
    needs a generator under the sweep's contract).
 
 16. **Planned (2026-07-27, panel-reviewed)** —
-   `planning/specs/chunk-derived-context-timeline.md` (**requires chunk 15**): the derived context timeline. Compaction
+   `planning/specs/chunk-derived-context-timeline.md` (**requires chunk 15**): the derived context
+   timeline. Compaction
    stops being a render-time projection and becomes a **second lineage** — a derived `Timeline` in
    the same content-addressed Store whose replacement events name the source events they subsume
    via `causal_parents`, so the session timeline stays the lossless record while the derived chain
@@ -960,7 +995,8 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
 19. **Planned (2026-07-28, panel-reviewed)** —
    `planning/specs/chunk-bench-arms-subcommand.md`: a **live door for the arm comparison**. Split
    out of chunk 18 during panel review — zero shared files, zero dependency edges, and unlike the
-   transport work it spends real API money and carries a human-gated manual pass. `Bench::CLI#arm_report`
+   transport work it spends real API money and carries a human-gated manual pass.
+   `Bench::CLI#arm_report`
    has been fully implemented and spec-tested since the orchestration chunk but is reachable from no
    Thor subcommand, so the arm comparison can only be run by specs. Narrows (does **not** close)
    ROADMAP Deviation 8: the chat half was closed by the 2026-07-26 `--isolation` follow-up, and
@@ -1021,7 +1057,8 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    (`git log --oneline 3053e49^..3d16d55 -- lib/lain/epic.rb lib/lain/epic lib/lain/cli/epic.rb
    lib/lain/cli/epic_queue.rb lib/lain/approval` — the plain `3053e49..3d16d55` range is 41
    commits and excludes `3053e49` itself, so it is not the thing to cite). They landed a
-   content-addressed issue graph and the sign-off machinery over it: `Epic::Issue` (an issue value that cannot be addressed until it parses, carrying the
+   content-addressed issue graph and the sign-off machinery over it: `Epic::Issue` (an issue value
+   that cannot be addressed until it parses, carrying the
    unit's `STORED_STATUSES` and grammar), `Epic::Graph` (blocking / related / discovered-from
    edges and the queries that schedule them), `Epic::Stage`, `Epic::Document` (the markdown an
    author edits, and the digest it must preserve), `Epic::Records`, `Epic::Progress` (runtime
@@ -1074,7 +1111,8 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    shapes it splits into: **doors for roadmapped seams** — the sweeps are the clearest case, with
    `Bench::CLI#arm_sweep_report` (`bench/cli.rb:66`) fully implemented and reachable from no Thor
    subcommand (item 19 narrowed Deviation 8 and left this half open), and `Bench::DeciderSweep`
-   (422 lines, which this file calls "the headline experiment" at § M5, above) and `Bench::DisclosureSweep`
+   (422 lines, which this file calls "the headline experiment" at § M5, above) and
+   `Bench::DisclosureSweep`
    (332 lines with `Toolset::Disclosure` and `Tools::ToolSearch`) having no `Bench::CLI` method
    at all, so neither runs without throwaway Ruby. And **deletion candidates where a ruling
    already went the other way** — chunk 13 ruled the tool-disclosure arms out during planning and
@@ -1222,7 +1260,8 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    real verification.
 
 29. **Landed 2026-08-09** (24 commits, `d0b3cc4`..this one; planned 2026-08-07, panel-reviewed) —
-   **the project root, and the secret boundary.** `planning/specs/chunk-project-root-and-secret-boundary.md`
+   **the project root, and the secret boundary.**
+   `planning/specs/chunk-project-root-and-secret-boundary.md`
    (requirements draft: `planning/project-root-and-secret-boundary.md`, now stamped at every
    position the grounding overrode). **Twenty-three cards, seven waves** — the plan was written
    with twenty-two and gained T23 mid-execution, which is the entry's real finding and is worth
@@ -1282,6 +1321,86 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    evaluates `Size.lines_in` **eagerly as a `guard!` argument** — so laziness needed its own card
    or it would have shipped decorative.
 
+31. **Proposed (2026-08-18, not yet folded)** — `planning/hn-agent-landscape-2026-08.md`: the
+   August field, reconciled. Three HN scans and seven comment-mined papers accumulated in
+   `references/` over five weeks with **no `planning/` counterpart and no ROADMAP line** — the July
+   fold-in practice stopped after July. That doc is the backlog it created: **52 numbered items
+   reconciled against this plan — 6 already covered, 13 partial, 20 genuinely new** — and the
+   pattern is that almost everything new is a **metric or a control, not a mechanism**. The seams
+   are built; what the field surfaced is what to *measure* across them and what to *assert* about
+   them. Tier 1: the **Verification** axis (three windows converging, plus `arXiv:2608.13122`'s
+   harness-generated oracle — 162 kernels, 5.1×, 5 real defects); **decorrelation + diversity +
+   merge fraction** for fan-out (Anthropic: 18 of 30 agents chose one branch name, so a fan-out of
+   5 may buy ~1× the coverage); **does `diverge_at` recover a poisoned session** (ThoughtDAG
+   published a better-specified version — 4 models × 540 conditions, subgraph removal repairing
+   72/72 against source-only's 68/72); the **freeze list + confound set** (incl. provider-side
+   safeguards routing, which makes "hold the model fixed" unguaranteeable and invisible in the
+   response); and **fixture sealing** so grader tampering is an invalid run rather than a flattering
+   score. The axis-table rows for the first two are folded in above; the rest is a ledger in that
+   doc. **Three claims in the source scans were wrong and are corrected there:** the "excursion"
+   spawn arm already ships as `SpawnPolicy`'s `inherit`, the compaction-loop guard already ships as
+   `Scheduler#shrinks?`, and "compaction only appends" is **false for Lain by construction** — the
+   assertable law is that compaction must not *narrow the continuation set*. A phantom citation to
+   an "unmatched-effort rule" in `chunk-bench-science.md` (which contains no such rule) was
+   corrected in three places.
+
+32. **Planned (2026-08-18, panel-reviewed)** —
+   `planning/specs/chunk-cost-axis-and-compaction-arm.md`: the cost axis, and the compaction
+   strategies it makes measurable. **Every cost number this bench has produced for an Opus model is
+   3× too high** (`PriceBook::DEFAULTS` prices opus at 15/75; current list is 5/25), and **fourteen
+   tools bound their output not at all** — `read_file` is a bare `File.read` whose result is then
+   inlined verbatim into the eager summarizer's prompt, against `arXiv:2508.21433`'s measurement
+   that observation tokens are **~84% of an average turn**. Twelve cards: refresh the price
+   table and lint
+   it against rot; give `read_file` a window and teach `edit_file` to say *why* it refuses a partial
+   read; add `Tool::Bounds` with **two shapes on a stated boundary** (enumerations disclose in band
+   like `grep` already does, whole artifacts refuse and name a narrower action); ship the first
+   **content-selective** strategies — `elide-tools` and `summarize-conversation` over one shared
+   predicate — which is what makes `elide | summarize` composable instead of an `Overlap`; and join
+   the two halves of a cache-waste meter that have existed unconnected since CE-2. Everything lands
+   reachable from `lain chat` or `lain friction`. **13 cards, 3 waves.**
+   A survey of the roadmap and spec tree proposed five adjacent additions; a critique panel then cut
+   four of them **on soundness, not on cost** — an `arm_sweep_report` door whose card contradicted
+   the method's own two-path signature and offline docstring, a zero-caller lint that inverts item
+   24's "review item, not a build item" ruling and would ship with ~12 exemptions, a
+   `name→builder` map that would have handed `DerivationAudit` a **live** tier where its own doc
+   requires `Oracle::Recorded` (`cli/compaction_strategy.rb:212` refuses exactly that), and
+   deferred-wiring markers no commit could ever read. What survived: the arm report gains a **cost
+   column and attribution** (a dollar figure on a report naming no model is the lie
+   `price_book.rb:48-50` refuses), and a summarizer input bound **re-sited** onto
+   `Oracle::RoutedSummarizer` — because `effect/handler/summarizing.rb:33-44` records that the size
+   gate was moved *out* of the mount for a reason, and the first draft put it back. CE-6.3's `$/sec`
+   term is deferred on **design order**: item 21 already owns collapsing the four metric registries
+   (two incompatible shapes), and a computed total is the case those shapes cannot express.
+
+33. **Planned (2026-08-18, panel-reviewed)** —
+   `planning/specs/chunk-qa-round5-causal-fold-and-surfaces.md`: discharge QA round 5 at the level of
+   its causes. Three of its eight findings share one shape — **an edge, a surface or a unit the
+   design treats as first-class and the implementation treats as second-class.** The session rebuild
+   *validates* the causal edge without replaying it, so **any session that spawned can be neither
+   forked nor resumed** while `lain sessions` reports it healthy (F23); the design's own
+   `event-schema.md` says supervision/resume is "replay `render_parent` + `causal_parents` … one
+   mechanism", and it is two passes in sequence. The desktop notifier's spec comment says it "raises
+   the notification for EVERY approval" while `sweep` blocks up to 300s on the first, so only one of
+   N is ever shown (F24). The Lua refusal rail is documented as message-area-width-bound and has no
+   width-aware code at all, so a 225-character refusal pages **and blocks the nvim RPC** (F25). Plus
+   `lain://approval` never primed, a byte proxy and provider-measured tokens both called "tokens" in
+   one NDJSON stream — and already *combined*, priced per-token in `Scheduler#cost_saved` — one-line
+   files advised to use `offset`/`limit`, a raw-float retry backoff, and `lain up` losing a dying
+   pane's first line to tmux's banner. **12 cards, 2 waves.**
+   The panel returned *request changes* on the first draft and found four BLOCKERs, all fixed:
+   T4's premise misquoted its own source (`Pending#decide` is **fiber**-safe, not thread-safe, so the
+   verdict must cross back to the reactor fiber); T11's probe was exact in one size branch and a
+   **false positive in the other**, empirically falsified against the real tool; T8's
+   "cannot be combined" type collides with `scheduler.rb:290-302`, which already combines them, so
+   the pricing question is now an open decision the card must stop at; and the plan had ordered a
+   spec **deleted** that should keep passing — `chain_fold_spec.rb:86-113`'s fixture is turn records
+   only, so it is a legitimate dangling case despite its prose. Also cut: a new `Fold` class, as
+   speculative generality over a fixpoint `Loader` can reach in place. The orchestration-DAG surface
+   was scoped **out** deliberately (T13 records the gap and corrects `ROADMAP.md:635`, which calls
+   `lain://timeline` "the DAG" while it renders a linear first-parent chain).
+
+
 ---
 
 ## Map of the documents
@@ -1296,5 +1415,7 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
   fold-ins), `orchestration-experiments.md`, `first-class-concepts.md`, `crdt-exploration.md`,
   `merge-conflict-handling.md` (how lain merges its own workers' work — item 28).
 - **Grounding sources:** `references/` — `INDEX.md`, `SCOPE.md`, `memory-and-retrieval.md`,
-  `oss-inspiration.md`, 15 papers in `papers/rst/`, reference impls in `repos/`.
+  `oss-inspiration.md`, `prompt-caching-mechanics.md`, `firecracker-microvm-isolation.md`,
+  26 papers in `papers/rst/`, reference impls in `repos/`, and the recurring HN scans
+  (`hn-agent-landscape-2026-07.md` … `-2026-08-18.md`).
 - **Origin brainstorm:** `TODO.md` — the raw idea list this ROADMAP reconciles.

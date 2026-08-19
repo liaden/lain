@@ -142,6 +142,45 @@ Round 4 drove every act this way and produced **zero** duplicated turns. Keep th
 segment entirely. That makes the status line honest, but it is still a point-in-time snapshot
 printed into the pane, not a live widget. Poll the journal.)*
 
+### Pin the journal, and size the quiet window above a model reload
+
+Two ways the wait itself lies, both found in round 5 and both of which make a probe assert
+nothing while looking like it passed.
+
+**`drive.sh` picks the newest journal, which stops being the cockpit's.** It resolves
+`ls -t "$XDG_STATE_HOME/lain/sessions"/*/*.ndjson | head -1`. Every non-interactive probe --
+`session-and-window` §1/§2/§6 and `failure-injection` §5 all run several -- writes a journal
+NEWER than the live cockpit's, so from the first such probe onward the quiet loop polls a
+file that will never move again. It returns after one quiet window having waited for
+nothing, and the driver then reads the cockpit BEFORE the render lands. Round 5 got a clean
+"`lain://timeline` frozen at 4 lines" out of this, which is indistinguishable from round 4's
+F17 and evaporated on re-measurement. **Pin it:**
+
+```bash
+export LAIN_QA_JOURNAL="$XDG_STATE_HOME/lain/sessions/<hash>/<the cockpit's file>"
+```
+
+and poll that, not `ls -t`. (`$QA/drive2.sh` in round 5's sandbox is `drive.sh` with exactly
+this one change.)
+
+**A model reload is longer than a naive quiet window.** `OLLAMA_KEEP_ALIVE=5m` plus any pause
+between acts evicts the model, and the reload is **27-40s of total journal silence** (29.6s
+measured cold, round 5). A quiet window at or below that reads the reload as "the turn is
+done" and returns mid-turn. Use **>= 60s** for anything that may span a reload.
+
+**Before calling a session wedged, check three things** -- round 5 twice diagnosed a "wedge"
+that was neither:
+
+```bash
+tail -1 "$J" | ruby -rjson -e 'p JSON.parse(STDIN.read)["ts"]'   # how old is the last record?
+date -u +%Y-%m-%dT%H:%M:%SZ                                      # ... against now
+curl -s localhost:11434/api/ps | ruby -rjson -e 'puts JSON.parse(STDIN.read)["models"].empty? ? "COLD/RELOADING" : "RESIDENT"'
+```
+
+A `request_sent` a few seconds old with an empty `/api/ps` and a young `llama-server` child
+is a RELOAD, not a hang. The HUD's `idle Ns` is no help here: it is a snapshot printed once
+per prompt, so it goes stale by design.
+
 ### Drive nvim over RPC, not tmux keys
 
 **The single biggest process improvement of round 4.** The old advice — "repeat `C-w h` until

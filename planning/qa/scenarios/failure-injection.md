@@ -337,12 +337,32 @@ tmux -L lain-qa show-window-options -t lain-qa:chat remain-on-exit   # -> remain
 **A clean exit must still close the pane.** If a normal `/quit` leaves a dead pane behind, the option
 has been widened to `on` and the fix has overshot.
 
-**The stated residual, and it may be the original case.** tmux prints its own dead-pane banner at the
-top of the held pane, which scrolls the content up by exactly one line — so a refusal that was **a
-single line** is still lost, and the pane looks empty. The two-plus-line refusals (a missing key
-prints several) survive. So: check retention with a multi-line refusal, and record separately
-whether a one-liner is readable. If it is not, that is the known residual and not a new finding —
-but if a *multi-line* refusal is also gone, the fix has regressed.
+**The stated residual, measured precisely in round 5: the banner eats the FIRST line, always.**
+tmux prints its own dead-pane banner at the top of the held pane, which scrolls the content up by
+exactly one line. An earlier edition of this section said one-line refusals are lost while
+"two-plus-line refusals (a missing key prints several) survive". Both halves of that need
+correcting:
+
+| refusal | lines | what the pane retains |
+|---|---|---|
+| `ANTHROPIC_API_KEY is not set; --provider anthropic needs it to build a client` | **1** | nothing but the dead banner |
+| Thor's `ERROR: "lain chat" was called with arguments [...]` + `Usage: "lain chat"` | 2 | only `Usage: "lain chat"` |
+
+So it is **not** "one-liners are lost, multi-liners survive" -- it is **the first line is always
+lost, and the first line is the one naming the cause**. A two-line refusal degrades to a `Usage:`
+line that tells the operator nothing about what went wrong.
+
+**And the missing-key refusal is now exactly ONE line**, so the example this section names as its
+multi-line control is in fact the one-line case. To check multi-line retention, use a refusal that
+really is multi-line -- Thor's unknown-flag error is the cheapest:
+
+```bash
+lain up --socket "$QA_SOCK" --session lain-qa "$QA/project" -- --nosuchflag
+tmux -L "$QA_SOCK" capture-pane -p -t lain-qa:chat | grep -v '^$' | tail -4
+```
+
+Losing one line is the known residual. Losing ALL lines of a multi-line refusal would be the fix
+regressing.
 
 **On an older tmux this whole section is a no-op, not a failure.** `remain-on-exit failed` needs
 tmux ≥ 3.2 and the option is set best-effort on purpose: a diagnostic nicety must not take `lain up`

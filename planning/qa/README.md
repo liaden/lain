@@ -52,6 +52,7 @@ call per turn.
 
 Written per round, kept in `planning/` alongside the chunk specs that discharge them:
 
+- [`../qa-findings-round5-2026-08-18.md`](../qa-findings-round5-2026-08-18.md) — round 5
 - [`../qa-findings-round4-2026-08-18.md`](../qa-findings-round4-2026-08-18.md) — round 4
 - [`../qa-findings-round2-2026-08-18.md`](../qa-findings-round2-2026-08-18.md) — rounds 2–3
 - [`../qa-findings-research-2026-08.md`](../qa-findings-research-2026-08.md) — the research pass

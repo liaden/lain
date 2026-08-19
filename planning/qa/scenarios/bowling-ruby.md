@@ -95,6 +95,26 @@ session-killer worth stopping the round for.
   session**, which is what proves it. Collect every `digest` and every `causal_parents` entry and
   assert the difference is empty.
 
+**Round 5 found the fork REFUSES on a healthy session, and that is F23.** Once a subagent
+message lands, a `turn` cites a `message` record as a `causal_parent` -- and the fold never puts
+`message` records in the store, so BOTH `--fork` and `--resume` refuse and the session is stranded
+with no continuation path at all:
+
+    cannot fork <session>: turn record 26 (user) cites a causal parent this fold never landed:
+    no object "blake3:6efd2c62..." in store: putting "blake3:1845d569..." would dangle
+
+Two things make this easy to misread, so check them explicitly before filing anything else:
+
+- **The journal is NOT damaged.** Scan it -- every `causal_parents` digest resolves against a
+  digest the journal records (round 5: 102 digests, 7 unique refs, 0 unresolved). The cited object
+  is present as a `type=message`. The refusal uses the *damaged-session* vocabulary for a session
+  that is intact, which is itself worth recording.
+- **The fork POINT does not matter.** The fold replays the whole journal before selecting, so a
+  digest recorded before the first `message` fails identically. There is no reachable fork point.
+
+The control that proves it is a session with **no `message` records** -- one that never spawned --
+which forks at its head with exit 0. Run both; the pair is the finding.
+
 **Note for `failure-injection.md`:** `causal_parents` only exist once a spawn has run. A session of
 plain turns links via `parent`. Round 4's journals had no `causal_parents` at all.
 

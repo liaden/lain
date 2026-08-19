@@ -148,13 +148,39 @@ three things, in this order:
 3. the editor is not blocked: `nvim --server "$S" --remote-expr "nvim_get_mode()"` must not report
    `blocking = true`.
 
-**The residual is exact, measured, and not a defect.** The traceback and the raise are gone; the
-hit-enter prompt is *not always* gone, because `nvim_echo` still pages a message longer than the
-window. Measured with a UI attached: a 134-character refusal at **80 columns** leaves
-`nvim_get_mode()` reading `{mode = "r", blocking = true}`; the same message at **200 columns**, and
-a short one at 80, do not. `method.md` sizes the QA server at 220×50 precisely so this does not
-fire — so a blocking read *in this bench* means either the window was resized or a much longer
-refusal appeared, and both are worth recording. A traceback, by contrast, is always a finding.
+**The residual is exact and measured. It is NOT avoided by the bench's sizing -- round 5
+corrected that.** The traceback and the raise are gone; the hit-enter prompt is not, because
+`nvim_echo` pages a message longer than the window.
+
+An earlier edition of this section said `method.md` "sizes the QA server at 220x50 precisely so
+this does not fire", and concluded that a blocking read here meant the window had been resized.
+**That premise was wrong: nvim never gets 220 columns.** Measured round 5, on a correctly-sized
+bench with no resize:
+
+| | width |
+|---|---|
+| tmux server / window | 220 |
+| **the nvim pane** -- `lain up` splits the window with chat | **110** |
+| the review tab's three windows | **40 / 32 / 36** |
+| the `:LainReviewVerdict approve` partial refusal | **225 characters** |
+
+So the modal fires on that refusal EVERY time, in this bench, unresized. The contrast confirms the
+mechanism is width and not sizing policy: the short refusal (`lain: no hunk on lain://review line
+1 ...`) does not block.
+
+**And the modal blocks the RPC, not just the keyboard** -- the part that matters for anyone driving
+this bench. `nvim --server "$S" --remote-expr "execute('messages')"` HANGS while the prompt is up
+(round 5 measured a full 2-minute timeout), so the documented recovery paths -- reading
+`lain://approval`, driving `:LainApprove` -- are unavailable exactly when a refusal is on screen.
+Read the pane with tmux instead, which works while blocked, and clear it by sending Enter to the
+nvim PANE:
+
+```bash
+tmux -L "$QA_SOCK" capture-pane -p -t "$NVPANE" | grep -v '^$' | tail -4   # reads while blocked
+tmux -L "$QA_SOCK" send-keys -t "$NVPANE" Enter                            # dismisses it
+```
+
+A traceback, by contrast, is always a finding.
 
 **The stale-stamp step can no longer be driven by hand.** Back-to-back `x` presses both land; the
 redraw is prompt enough that the window is unreachable from tmux. Drive it through the RPC with a
