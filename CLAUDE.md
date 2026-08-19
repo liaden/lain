@@ -593,6 +593,25 @@ Structures that plausibly qualify, and what they buy:
   than by any test. And **never park the harness in `spec/support/`**: `spec_helper.rb` globs
   `support/**/*.rb`, so it loads in every worker of every run — one defined `Object#run` globally
   and called `Dir.chdir` at load.
+
+  **And make the harness refuse to score when it measured nothing — refusing a MISSING count is
+  only half of it.** Learned twice in one day, 2026-08-19. First half: a run invoked outside its
+  toolchain wrapper printed every structural line it was built to print — "mutant applied",
+  "restored", "identical: yes" — while every `rspec` line came back EMPTY, because the interpreter
+  was wrong. Structure without measurements reads as a pass at a glance, and the blank `examples`
+  fields were the only tell. Second half, found when that very guard let its own author through: a
+  mutant that broke class *definition* made rspec load nothing and print a perfectly real
+  `0 examples, 0 failures`, which satisfies "a count line was produced" and still measures nothing.
+  **A mutant that does not load is not a surviving mutant, it is an unrun one**, and it scores as a
+  kill unless the harness says otherwise. Third door, and it subsumes the other two: a count line
+  that is real, non-zero and **SHORT**. A `SystemExit` or a load-order truncation yields
+  `22 examples, 0 failures` where the baseline was 32, which reads as *"the mutant survived"* rather
+  than *"half the file never ran"* — the same truncation trap recorded above, wearing a mutation
+  harness. **So the rule is not "a count was produced" but "the count EQUALS the baseline count"**;
+  capture the baseline once before mutating and compare against it every run. This is the stale-bytecode
+  confident-green above, arriving through two more doors — and the same shape as a script that
+  asserts its anchor EXISTS without asserting its edit APPLIED, which is how this very paragraph
+  failed to land the first time it was written.
 - **A generic filename in a shared scratchpad is shared mutable state between concurrent agents.**
   One agent's `run.sh` toolchain wrapper was overwritten by another and silently repointed at a
   *different worktree*; commands kept running and kept passing, against someone else's checkout.
