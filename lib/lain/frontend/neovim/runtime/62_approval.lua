@@ -46,6 +46,29 @@ local lain_approval = {
   },
 }
 
+-- The fold and motion boundary for this buffer, registered from HERE rather
+-- than written into 05_records' own table literal: the key is this module's
+-- NAME, which 00_constants deliberately does not carry (see its note), so an
+-- entry over there would spell it a second time. 20_buffers' rule -- a
+-- capability stays deletable with its file -- is the precedent.
+--
+-- `spanning_record` UNWRAPPED, taking no region bound, and that is the whole
+-- test: a line NOT carrying ApprovalView::INDENT starts an item. Ruby indents
+-- nothing outside the list, so the blank and the hint below it answer true on
+-- the pattern alone and need no `rows` -- see 05_records' note for why a
+-- trailer answering true is what keeps the items closed at rest, and for the
+-- one case (an indented trailer) that does need the bound.
+--
+-- WHAT THE ENTRY BUYS is everything 10_folds already installs for a view that
+-- has one -- folds at record boundaries, `foldminlines = 0` so a one-line item
+-- still closes, the older-closed default, and ]]/[[ from 20_buffers. An
+-- approval's command is unbounded and now renders over several lines, so
+-- without a fold surface three parked calls are a wall of text and the list
+-- stops being readable at a glance; with one, the list at rest is one summary
+-- line per call and the human OPENS the one they are about to answer. That is
+-- the standing rule this serves: a human must read what they approve.
+RECORD_START[lain_approval.NAME] = spanning_record
+
 -- `named_buf` attaches a filetype from READONLY_FILETYPES, a table in
 -- 00_constants which this module does not edit -- so the lookup misses and the
 -- option lands unset. 46_sidebar records the fix and this follows it: join the
@@ -66,13 +89,25 @@ end
 -- set_view's is optional: this buffer's rows move the instant ANY call is
 -- answered -- at the terminal, on the desktop, or by the clock -- and two
 -- renderings are routinely the same height. Ruby resolves a keypress only
--- against the rendering the stamp names.
+-- against the rendering the stamp names. What the stamp does NOT protect is a
+-- cursor that did not move while the list did -- it says which rendering a line
+-- belongs to, never whether that is still the call the human aimed at; see
+-- ApprovalView#decide's note, which is where that analysis lives.
 --
--- b:lain_approval_rows is how many of the lines are answerable calls, and it is
--- what makes the keys inert on the hint line and on the empty state without
+-- b:lain_approval_rows is how many of the LEADING LINES are answerable, and it
+-- is what makes the keys inert on the hint line and on the empty state without
 -- this module pattern-matching text Ruby drew. 70_inbox states the rule it
 -- serves: a line holding no record sends NOTHING, because an rpcrequest whose
 -- only possible answer is "that line names no call" is worse than silence.
+--
+-- LINES, NEVER CALLS, and the two were the same number only while every item
+-- was one line. An item whose command did not fit contributes all of its lines
+-- here, so a cursor on a continuation line is INSIDE the list and answers the
+-- item it continues -- ApprovalView::Rendering holds the line -> call map that
+-- says which, and it is built by the same pass that drew these lines. The
+-- alternative was a keypress that did nothing on every line but the first,
+-- which is the same silence 70_inbox reserves for a line holding no record at
+-- all -- and here it would be a lie, because the line does hold one.
 --
 -- IT TAKES THE WINDOW, and only on the way IN. set_question's reason applies
 -- with more force here: lain is not merely handing the human something, it is
@@ -113,6 +148,13 @@ end
 -- reactor, which this project has ruled out twice. So the gesture rides the
 -- command inbox to the consumer fiber, and a refusal comes back on the rail
 -- `__lain.review_refused` renders, exactly as a refused open does.
+--
+-- WHAT THE CURSOR CANNOT SAY, recorded here because this is where the cursor is
+-- read: the line is where the human is LOOKING, not what they AIMED at. A
+-- re-render between their last motion and their keypress moves the items under
+-- a cursor that stays put, and the stamp this sends is the fresh one, so
+-- nothing refuses. Ruby's ApprovalView#decide carries the full note and why
+-- neither side can close it alone.
 local function submit_approval(verdict)
   local buf = vim.api.nvim_get_current_buf()
   if vim.api.nvim_buf_get_name(buf) ~= lain_approval.NAME then

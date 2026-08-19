@@ -90,6 +90,53 @@ module Lain
         # that just appeared in front of them.
         HINT = "-- y approve, n deny  (:LainApprove / :LainDeny)"
 
+        # How wide a summary line may be, and it is a FOLD's measurement rather
+        # than a terminal's: a closed item shows this line plus `10_folds.lua`'s
+        # "  (+N lines)" marker on ONE screen line, and the cockpit's nvim pane
+        # measures 110 columns ({Review::Surface::Neovim::MARKED}'s reading of
+        # that same pane). Generous at the other end on purpose -- the warning
+        # {Approval::Queue::Outstanding#preamble} puts AHEAD of the call runs to
+        # ~84 columns on its own, and a bar that cut into that would hide the
+        # one sentence a `y` on this row is most about.
+        WIDTH = 96
+
+        # What every line of an item after its first carries, and the whole of
+        # the runtime's boundary test: `05_records.lua`'s CONTINUATION pattern
+        # is this string anchored, so "does this line start a record" is
+        # answerable there without parsing the call's own text. Two spaces
+        # rather than a tab or a glyph: nothing ever parses these lines back, so
+        # the indent's only job is to be unmistakable against a summary line,
+        # which leads with a requester name.
+        INDENT = "  "
+
+        # What says a summary was cut. ASCII, `65_review.lua`'s SENTINEL
+        # spelling, so a font with no ellipsis glyph shows a cut rather than a
+        # replacement box.
+        ELISION = "..."
+
+        # An item's body: the row, hard-wrapped, never at a word boundary. What
+        # the human is being asked to approve is a COMMAND, and a wrap that
+        # moved bytes around -- swallowing a run of spaces at a break -- would
+        # show them something other than what a `y` releases. `/m` so a newline
+        # is CARRIED rather than silently dropped, a drop being the worse of the
+        # two failures here; `input.inspect` is what keeps a raw one unreachable
+        # in practice, and it has to, because nothing downstream re-checks --
+        # {RenderQueue#checked_lines} guards `post_view`, and this view posts
+        # through `post_approval`, which does not call it.
+        #
+        # ONE MODE, RULED, and the alternative is recorded so it is not
+        # re-opened: hard-wrapping breaks {Approval::Queue::Outstanding#preamble}
+        # mid-sentence when the wrap lands inside it, and word-wrapping the
+        # PREAMBLE (lain's own prose) while hard-wrapping the CALL (bytes that
+        # must survive) was considered and rejected. A break is legibility -- the
+        # human reading the opened fold has the whole sentence either way -- and
+        # two modes would be two code paths over one buffer whose seam falls at
+        # the elision point, which is precisely where "it was cut but we thought
+        # the body carried it" already cost this file one review cycle. One mode
+        # is what keeps {#lines_for}'s summary a cut PREFIX of the body, and that
+        # property is checkable by reading rather than by remembering.
+        BODY = /.{1,#{WIDTH - INDENT.length}}/m
+
         # No editor took the rendering: none is attached, or the one that was
         # has died, or it has stopped draining. One sentence for all three,
         # because they are one fact from the human's side ({Compose::DETACHED}'s
@@ -133,6 +180,44 @@ module Lain
         # can only mean "hand it back").
         Decided = Data.define(:pending, :report) do
           def decided? = !pending.nil?
+        end
+
+        # One rendering of the parked set: the lines the editor took, and WHICH
+        # parked call each of the LEADING lines belongs to -- one entry per
+        # LINE, never one per call.
+        #
+        # THE MAP IS THE ADDRESS, and what it replaces is position addressing:
+        # a keypress used to resolve as `rendering[line - 1]`, which is the same
+        # answer only while every item is exactly one line. The moment one is
+        # not, that broke in two places at once -- Ruby answered the
+        # NEIGHBOURING call, and the editor's own inert test
+        # (`line <= b:lain_approval_rows`) made every continuation line a
+        # keypress about nothing. One value fixes both, because {#rows} is
+        # `owners.size`: any line of an item answers that item, and the region
+        # the keys are live in is exactly the lines the map holds.
+        #
+        # BUILT IN ONE PASS with the lines it maps ({InboxView#render}'s rule --
+        # "the lines and the line -> digest index are ONE pass' two outputs"),
+        # so an index built by a second walk cannot disagree with the rendering
+        # the first one drew.
+        Rendering = Data.define(:lines, :owners) do
+          # The parked call line `line` belongs to, or nothing at all.
+          #
+          # The 1-based/0-based seam is guarded here rather than at the call
+          # site ({InboxView::Renderings::Rendering#at}'s rule): line 0 would
+          # index -1, which is the LAST answerable line -- a cursor nvim never
+          # reports would silently answer the wrong call. An unreadable line
+          # answers no call rather than raising on the consumer's fiber.
+          def at(line)
+            index = Integer(line, exception: false)
+            index&.positive? ? owners[index - 1] : nil
+          end
+
+          # How many of the leading lines answer a call -- which is what
+          # `b:lain_approval_rows` has meant since protocol 12 ("how many of its
+          # leading lines are answerable calls"). Only the VALUE changed: it
+          # stopped assuming one line per call.
+          def rows = owners.size
         end
 
         # The four ways a keypress decides nothing, and four sentences because
@@ -253,6 +338,26 @@ module Lain
         # answers whether THIS answer won; that Boolean is the only honest
         # source for what to tell the human, and it is atomic by construction.
         #
+        # KNOWN, OPEN, AND NOT WHAT THE STAMP CATCHES -- the stationary cursor.
+        # The stamp answers "which rendering is this line a line OF", and it
+        # cannot answer "is this still the call the human AIMED at". Cursor on
+        # item B; the terminal (or the clock) answers A; the list re-renders
+        # under a cursor that did not move; `y` now carries the CURRENT stamp,
+        # nothing refuses, and whichever item took those lines is approved.
+        # Everything here is behaving as specified, which is exactly why no
+        # check in this method can see it.
+        #
+        # Multi-line items WIDENED it and did not create it: while every item
+        # was one line a shifted cursor often landed past `rows`, in the inert
+        # trailer, where the keypress died; four-line items make the same shift
+        # land inside another ANSWERABLE item. Closing it needs the editor to
+        # know which item a line belongs to (identity on the wire, which this
+        # card's transport deliberately does not carry -- see {Rendering}) or a
+        # diffing write in `set_approval` so nvim's own line adjustment carries
+        # the cursor with its item. Neither is contained in this file; both are
+        # a card of their own. Recorded here rather than in a plan doc because
+        # this is the method a reader will be standing in when they wonder.
+        #
         # @param line [Integer] 1-based, as nvim's cursor reports it
         # @param verdict [String] one of {VERDICTS}' keys, as the human's key
         #   sent it
@@ -267,7 +372,7 @@ module Lain
           # rendering this view does hold.
           return undecided(format(UNSHOWN, generation: generation.inspect)) unless @renderings.key?(generation)
 
-          pending = row_at(line, generation)
+          pending = @renderings.fetch(generation).at(line)
           return undecided(format(NO_ROW, line.inspect)) if pending.nil?
 
           answer = VERDICTS[token(verdict)]
@@ -313,16 +418,6 @@ module Lain
 
         def undecided(report) = Decided.new(pending: nil, report:)
 
-        # The 1-based/0-based seam, guarded here rather than at the call site
-        # ({InboxView::Renderings::Rendering#at}'s rule): line 0 would index
-        # -1, which is the LAST row -- a cursor nvim never reports would
-        # silently answer the wrong call. An unreadable line answers no row at
-        # all rather than raising on the consumer's fiber.
-        def row_at(line, generation)
-          index = Integer(line, exception: false)
-          index&.positive? ? @renderings.fetch(generation)[index - 1] : nil
-        end
-
         # What the screen shows, recorded only for a rendering that reached the
         # screen -- so a refused post leaves `@shown` alone, which is what makes
         # the next sweep RETRY rather than treat the lost rendering as the state
@@ -343,11 +438,12 @@ module Lain
         # @return [Integer, nil] the stamp the editor took, or nothing when it
         #   refused the post
         def posted(parked)
+          rendering = rendering_of(parked)
           generation = @generation + 1
-          return nil unless @rpc.set_approval(lines_of(parked), generation, parked.size).nil?
+          return nil unless @rpc.set_approval(rendering.lines, generation, rendering.rows).nil?
 
           @generation = generation
-          @renderings[generation] = parked
+          @renderings[generation] = rendering
           @renderings.shift if @renderings.size > HELD
           generation
         end
@@ -356,11 +452,37 @@ module Lain
         # keys be inert outside the list from a count alone (`lain_approval_rows`)
         # rather than from a pattern match on rendered text that would have to
         # be kept in step with this method.
-        def lines_of(parked)
-          return EMPTY.dup if parked.empty?
+        def rendering_of(parked)
+          return Rendering.new(lines: EMPTY.dup, owners: []) if parked.empty?
 
-          parked.map { |pending| row_for(pending) } + ["", HINT]
+          items = parked.map { |pending| lines_for(pending) }
+          Rendering.new(lines: items.flatten(1) + ["", HINT],
+                        owners: items.zip(parked).flat_map { |lines, pending| Array.new(lines.size, pending) })
         end
+
+        # One item: a summary line, and -- only where the summary had to be cut
+        # -- the call in full beneath it, foldable away. A call that already
+        # fits renders exactly as it always did, so the ordinary list is still
+        # one line per call and stays quiet at rest.
+        def lines_for(pending)
+          summary = summary_for(pending)
+          return [summary] if summary.length <= WIDTH
+
+          [summary[0, WIDTH - ELISION.length] + ELISION] + body_for(summary)
+        end
+
+        # THE WHOLE ROW, never just the call, and the difference is a defect
+        # this file shipped for one review cycle. A body carrying only
+        # `call_of` reads fine until the summary is cut INSIDE
+        # {Approval::Queue::Outstanding#preamble} -- a deep enough path does it
+        # on its own -- and then "4 sensitive regions outstanding" is in the
+        # buffer NOWHERE, on the one surface whose premise is that a human reads
+        # what they approve. Wrapping the summary makes the fold's first line a
+        # cut PREFIX of what is underneath it, so no clause can go missing
+        # without the prefix going missing too.
+        def body_for(summary) = summary.scan(BODY).map { |part| INDENT + part }
+
+        def call_of(pending) = "#{pending.tool}(#{pending.input.inspect})"
 
         # {Frontend::ApprovalPolicy#prompt_for}'s THREE facts in the terminal's
         # own spelling -- what a yes would release, then `tool(input.inspect)`
@@ -375,9 +497,21 @@ module Lain
         # running, "who is asking" is what separates two identical-looking rows.
         # The release sentence sits between it and the call rather than at the
         # end, because `input.inspect` is unbounded and a warning past the edge
-        # of a nomodifiable window is a warning nobody read.
-        def row_for(pending)
-          "#{pending.requester}  #{pending.outstanding.preamble}#{pending.tool}(#{pending.input.inspect})"
+        # of a nomodifiable window is a warning nobody read. That ordering keeps
+        # the warning on SCREEN for the common row; it is emphatically NOT what
+        # makes {WIDTH}'s cut safe, and an earlier draft of this comment claimed
+        # it was. A path long enough puts the cut inside the warning itself.
+        # What makes the cut safe is {#body_for} carrying this whole sentence.
+        #
+        # A summary must never OPEN with {INDENT}, which is why the `lstrip` is
+        # here and not a tidying: that prefix is the runtime's whole test for a
+        # continuation line, so a context naming NOBODY ({Approval::Queue
+        # #requester_for}'s one caller that can) would draw a summary the fold
+        # surface reads as part of the item above it. One call makes the
+        # invariant structural instead of something the queue has to keep
+        # promising.
+        def summary_for(pending)
+          "#{pending.requester}  #{pending.outstanding.preamble}#{call_of(pending)}".lstrip
         end
       end
     end

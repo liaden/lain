@@ -10,6 +10,48 @@ local function journal_prefix(line)
   return line:match("^%[([^%]]*)%]")
 end
 
+-- A record that SPANS lines, and the one convention every view drawing one
+-- shares: the RUBY side indents every line after a record's first, so a
+-- boundary test never has to parse the record's own text -- which for
+-- lain://approval is an arbitrary command, and for lain://inbox is a human's
+-- arbitrary prose. Anchored, and the ONE spelling of it: ApprovalView::INDENT
+-- is the same two spaces on the drawing side, pinned against this line by
+-- approval_view_spec so the two languages cannot drift apart in silence.
+--
+-- IT IS A KEYPRESS RULE BEFORE IT IS A FOLD RULE. Every gesture on these
+-- buffers rides a LINE, so the moment a record spans two of them a cursor on
+-- the second answers the NEIGHBOUR (Ruby resolving `rendering[line - 1]`) or
+-- answers nothing at all (an editor-side `line <= rows` test). Marking the
+-- continuations is what lets both sides say "this line belongs to the record
+-- above" without either one guessing.
+local CONTINUATION = "^  "
+
+-- Does line `i` START a record? Every line does, except a continuation.
+--
+-- A TRAILER MUST ANSWER TRUE, and that was measured rather than reasoned.
+-- 10_folds' at-rest default closes every fold and then RE-OPENS the one holding
+-- the buffer's LAST line. So a trailer under a list -- a blank, a hint, a
+-- placeholder -- that answers FALSE carries foldexpr level "=", joins the fold
+-- of the last ITEM, and makes that at-rest re-open open the last item, every
+-- time. Live reading with the trailer swallowed: `foldclosed()` was -1 on every
+-- line of a rendered approval, i.e. nothing folded at all. With the trailer
+-- answering true: [1, 1, 1, 1, 5, -1] -- the item closed onto its summary, the
+-- blank its own closed one-line fold, only the hint open. A one-line fold
+-- displays as its own text (10_folds' foldtext), so a trailer loses nothing by
+-- getting one.
+--
+-- `rows` -- the last line that may be a continuation -- is how a view whose
+-- TRAILER IS ITSELF INDENTED still answers true there, and it is nil for
+-- lain://approval, whose drawing side indents nothing outside the list: the
+-- blank and the hint fail the pattern on their own, so the bound would be dead
+-- code. Passing one is the exception, not the shape. (An earlier draft made it
+-- mandatory and read the count out of a buffer variable, which cost a
+-- `nvim_get_current_buf()` this predicate has no business asking for -- it is
+-- handed `lines`, and the buffer those came from is nobody's contract here.)
+local function spanning_record(lines, i, rows)
+  return (rows ~= nil and i > rows) or lines[i]:match(CONTINUATION) == nil
+end
+
 -- lain://question's record is one QUESTION, and its start is the heading
 -- Question::Document writes: "## `id` (arity)". The ARITY WORD rides in the
 -- heading, so this is the same line the `x` keymap recovers a question's
@@ -55,4 +97,10 @@ local RECORD_START = {
     return i == 1 or journal_prefix(lines[i]) ~= journal_prefix(lines[i - 1])
   end,
   [QUESTION] = function(lines, i) return question_heading(lines[i]) end,
+  -- lain://approval's entry is NOT here, and it is the one view whose absence
+  -- is deliberate rather than a gap: its NAME belongs to 62_approval, which
+  -- registers itself into this table with `spanning_record` above. Same
+  -- argument 20_buffers makes for `compose_buf` and `question_buf` living with
+  -- their round trips -- a capability stays deletable with its file -- and it
+  -- keeps 00_constants from having to name a buffer nothing else there needs.
 }

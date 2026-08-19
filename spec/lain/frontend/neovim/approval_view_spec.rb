@@ -1,6 +1,10 @@
 # frozen_string_literal: true
 
 require "async"
+require "fileutils"
+require "neovim"
+require "timeout"
+require "tmpdir"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module ApprovalViewSpecSupport
@@ -407,6 +411,192 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
   end
 
+  # T9. An approval's command is UNBOUNDED, and one `input.inspect` line is how
+  # a human ends up approving a command they never read: past the right edge of
+  # a narrow window there is nothing to scroll to, because the row IS the
+  # buffer line. So an item is a RECORD now -- a summary line the list stays
+  # quiet with, and the call in full underneath it, foldable like every other
+  # lain record.
+  #
+  # WHICH BREAKS POSITION ADDRESSING IN TWO PLACES AT ONCE, and both are pinned
+  # here. Ruby resolved a keypress as `rendering[line - 1]`, which answers the
+  # NEIGHBOUR the moment an item spans two lines; and the editor's own inert
+  # test (`line <= b:lain_approval_rows`) would make every continuation line a
+  # keypress about nothing. The rendering now carries a line -> call map, and
+  # `rows` counts answerable LINES -- which is what protocol 12's history entry
+  # already says it counts ("how many of its leading lines are answerable
+  # calls"), so the stamp's MEANING is unchanged and only its value stopped
+  # assuming one line per call.
+  describe "an item longer than one line" do
+    let(:window) { 0.15 }
+
+    # Comfortably past {Lain::Frontend::Neovim::ApprovalView::WIDTH} without
+    # being a wall of text in a failure message.
+    let(:long_command) { "git log --oneline --graph --decorate --all #{"--author=someone " * 12}" }
+
+    def long_call(id) = effect("bash", { "command" => "#{long_command}#{id}" }, id)
+
+    def three_long_calls = %w[tu_1 tu_2 tu_3].map { |id| long_call(id) }
+
+    # The item starting on `line`, read back the way the runtime's fold reads
+    # it: the summary, then every line carrying the continuation indent.
+    def item_at(line)
+      lines = rpc.last[:lines]
+      [lines[line - 1]] + lines.drop(line).take_while { |text| text.start_with?(described_class::INDENT) }
+    end
+
+    # Wrapped lines put back together: the indent off, the pieces joined with
+    # nothing, because the wrap is a hard cut at a column and adds no bytes.
+    def reassembled(lines) = lines.map { |line| line.delete_prefix(described_class::INDENT) }.join
+
+    # The 1-based buffer line each item starts on, taken from what the editor
+    # was actually GIVEN rather than computed from the fixture -- an off-by-one
+    # in the drawing is exactly what these examples are here to catch.
+    def item_starts
+      lines = rpc.last[:lines]
+      (1..rpc.last[:rows]).reject { |line| lines[line - 1].start_with?(described_class::INDENT) }
+    end
+
+    it "summarises on the item's first line and carries the whole command in the rest" do
+      gated(timeout: window, calls: [long_call("tu_1")]) { |_queue| nil }
+
+      item = item_at(1)
+      expect(item.size).to be > 1
+      expect(item.first.length).to be <= described_class::WIDTH
+      expect(item.first).not_to include(long_command)
+      expect(reassembled(item.drop(1))).to include(long_command)
+    end
+
+    it "gives each parked call exactly one summary line, whatever its command's length" do
+      gated(timeout: window, calls: three_long_calls) { |_queue| nil }
+
+      expect(item_starts.size).to eq(3)
+      expect(item_starts.map { |line| item_at(line).first }).to all(start_with("agent  "))
+    end
+
+    # What a CLOSED fold leaves on screen is the summary line and nothing else
+    # (`10_folds.lua`'s foldtext), so the summary alone has to say who is asking
+    # and what would be released -- otherwise collapsing the list hides the very
+    # facts a `y` is about.
+    it "leaves a self-sufficient line behind when the item is collapsed onto its summary" do
+      gated(timeout: window, calls: [long_call("tu_1")]) { |_queue| nil }
+
+      expect(item_at(1).first).to start_with("agent  ").and include("bash(")
+    end
+
+    it "counts answerable LINES in the stamp, so the keys are inert only past the list" do
+      gated(timeout: window, calls: three_long_calls) { |_queue| nil }
+
+      expect(rpc.last[:rows]).to eq(item_starts.sum { |line| item_at(line).size })
+      expect(rpc.last[:lines][rpc.last[:rows]]).to eq("")
+      expect(rpc.last[:lines].last).to include("LainApprove", "LainDeny")
+    end
+
+    it "answers the item the summary line belongs to, never its neighbour" do
+      result = gated(timeout: window, calls: three_long_calls) do |_queue|
+        view.decide(item_starts.last, "approve", generation:)
+      end
+
+      expect(result[:verdicts]).to eq([false, false, true])
+      expect(decisions.first).to include("tool" => "bash", "verdict" => "approve",
+                                         "surface" => described_class::SURFACE)
+    end
+
+    it "answers that same item from a CONTINUATION line, and is never inert on one" do
+      result = gated(timeout: window, calls: three_long_calls) do |_queue|
+        view.decide(item_starts.last + 1, "approve", generation:)
+      end
+
+      expect(result[:outcome]).to be_decided
+      expect(result[:verdicts]).to eq([false, false, true])
+    end
+
+    # The line BETWEEN two items is the second one's summary, not the first
+    # one's tail: an item owns its own lines and no more.
+    it "stops an item at its own last line, so the next summary answers the next call" do
+      result = gated(timeout: window, calls: three_long_calls) do |_queue|
+        [view.decide(item_starts[0], "deny", generation:), view.decide(item_starts[1], "approve", generation:)]
+      end
+
+      expect(result[:verdicts]).to eq([false, true, false])
+    end
+
+    # THE CUT MUST NOT EAT THE WARNING, and this is the one way this card could
+    # have made the surface WORSE than it found it. Before T9 the row was one
+    # unwrapped line, so {Approval::Queue::Outstanding#preamble}'s sentence was
+    # always in the buffer somewhere; an elided summary whose body carried only
+    # the CALL puts a long enough path's warning nowhere at all. `y` here is a
+    # full approval signing surface "nvim", and this is the surface whose whole
+    # premise is that a human reads what they approve -- so the item carries the
+    # WHOLE row, and the summary is a cut prefix OF it rather than a separate
+    # sentence that can lose a clause the body never had.
+    describe "a cut that lands inside the sensitive-region warning" do
+      # Deep enough that `requester + preamble` alone overruns WIDTH, so the
+      # elision falls INSIDE the warning rather than after it -- which is the
+      # only arrangement that can lose the sentence.
+      let(:deep_path) { "/#{"vendor/" * 11}.env" }
+      let(:secrets) { (1..4).map { |n| "KEY_#{n}=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE#{n}\n" }.join }
+      let(:outstanding) do
+        Lain::Approval::Queue::Outstanding.new(path: deep_path,
+                                               regions: Lain::Sensitivity::Regions.detect(secrets))
+      end
+
+      def cut_item
+        gated(timeout: window, outstanding:, calls: [effect]) { |_queue| nil }
+        item_at(1)
+      end
+
+      it "cuts inside the warning -- the arrangement the rest of this block is about" do
+        expect(cut_item.first).to end_with(described_class::ELISION)
+        expect(cut_item.first).not_to include("outstanding")
+      end
+
+      # Read back the way a human reads a wrapped paragraph -- indent stripped,
+      # lines rejoined -- rather than line by line. The body is HARD-wrapped
+      # (see {ApprovalView::BODY}: a command's spaces are load-bearing, so a
+      # word-boundary wrap is not available here), so the sentence legitimately
+      # straddles a line break. A break is display; a missing clause is loss,
+      # and only the second is what this block is about.
+      it "still puts the whole warning in the item, where a human about to press y can read it" do
+        expect(reassembled(cut_item)).to include("4 sensitive regions outstanding")
+      end
+
+      it "carries the WHOLE row below the summary, warning and call alike" do
+        item = cut_item
+        whole = reassembled(item.drop(1))
+
+        expect(whole).to include(outstanding.preamble).and include("bash(")
+        expect(whole).to start_with(item.first.delete_suffix(described_class::ELISION))
+      end
+
+      it "puts none of the regions' bytes in the editor, however it wrapped them" do
+        expect(cut_item.join).not_to include("sk-ant-api03")
+      end
+    end
+
+    # ONE convention, spelled in two languages, and nothing but this makes them
+    # meet: Ruby marks a continuation with {ApprovalView::INDENT}, the runtime
+    # tests for it with `05_records.lua`'s CONTINUATION, and a silent
+    # disagreement would leave every item's fold boundary in the wrong place.
+    #
+    # A DRIFT GUARD, and deliberately not evidence that anything folds -- that
+    # claim is behavioural and is made where behaviour can be observed, in "the
+    # fold surface, in a real editor" below. This block reads source on purpose,
+    # because "the two spellings are the same string" is a property of the
+    # source and of nothing else.
+    describe "the indent both languages have to agree on" do
+      def runtime_source(file)
+        File.read(File.join(Lain::Frontend::Neovim::RuntimeLoader::MODULES, file))
+      end
+
+      it "marks its continuation lines with exactly the prefix the runtime's pattern tests for" do
+        pattern = runtime_source("05_records.lua")[/^local CONTINUATION = "\^([^"]*)"$/, 1]
+
+        expect(pattern).to eq(described_class::INDENT)
+      end
+    end
+  end
+
   # F25's width bar, on this view's OWN sentences. Every refusal here comes back
   # as a {Decided#report} and is echoed by {Lain::CLI::HumanReplies::Gestures}
   # through `review_refused`, which is one `nvim_echo` into the MESSAGE AREA --
@@ -519,6 +709,155 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       view.prime
 
       expect(view.decide(1, "approve", generation: rpc.last[:generation])).not_to be_decided
+    end
+  end
+
+  # THE FOLD HALF IS NOT ASSERTABLE FROM HERE, and a review found that out the
+  # expensive way: two of this card's acceptance criteria -- "the items are
+  # closed by default" and "only its summary line remains visible" -- were
+  # covered by examples that grepped the runtime SOURCE for a registration.
+  # Mutating `spanning_record` to `return true` makes every line its own record,
+  # so nothing folds and three approvals are a wall of text; the whole committed
+  # suite stayed green through it. A fold is a property of a WINDOW in a running
+  # editor, and only a running editor can be asked.
+  #
+  # :seam, at the mirror path, because that is what a seam with an obvious
+  # subject does (spec/support/tags.rb): two real components -- this view and
+  # the injected lua runtime -- with no double between them, over a real
+  # headless nvim. :nvim as well, so a machine without the binary EXCLUDES it
+  # rather than dying in the spawn (that tag's own note: the guard has to be a
+  # filter, never a per-example skip).
+  describe "the fold surface, in a real editor", :nvim, :seam do
+    # A socket this example NAMED. Never a glob, never one found on disk: a
+    # sibling agent on this chunk attached to a stranger's editor that way, and
+    # the failure mode is driving somebody else's session.
+    around do |example|
+      socket = File.join(Dir.tmpdir, "lain-t9-approval-fold-#{Process.pid}-#{rand(1_000_000)}.sock")
+      pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket, out: File::NULL, err: File::NULL)
+      Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
+      @socket = socket
+      example.run
+    ensure
+      @inspector = nil
+      kill_editor(pid)
+      FileUtils.rm_f(socket)
+    end
+
+    # By PID, the one this block spawned. `pkill -f nvim` would match a human's
+    # own cockpit -- and this shell's argv besides.
+    def kill_editor(pid)
+      Process.kill("TERM", pid)
+      Process.wait(pid)
+    rescue Errno::ESRCH, Errno::ECHILD
+      nil
+    end
+
+    # A THIRD connection, so observing never disturbs the frontend's own.
+    def inspector = @inspector ||= Neovim.attach_unix(@socket)
+
+    def buffer_lines
+      inspector.exec_lua(<<~LUA, [described_class::BUFFER])
+        local buf = vim.fn.bufnr(...)
+        if buf == -1 then return {} end
+        return vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+      LUA
+    end
+
+    # `foldclosed()` per line, read INSIDE the window holding the buffer: folds
+    # are a window fact, and nvim_buf_call's temporary window carries none of
+    # the window-local fold options at all. -1 means "not in a closed fold";
+    # any other value is the line the closed fold containing it STARTS on, so a
+    # run of the same number is one item collapsed onto that line.
+    def fold_state
+      inspector.exec_lua(<<~LUA, [described_class::BUFFER])
+        local buf = vim.fn.bufnr(...)
+        local win = vim.fn.win_findbuf(buf)[1]
+        if win == nil then return { "no window showing the buffer" } end
+        return vim.api.nvim_win_call(win, function()
+          return vim.tbl_map(vim.fn.foldclosed, vim.fn.range(1, vim.fn.line("$")))
+        end)
+      LUA
+    end
+
+    let(:long_command) { "git log --oneline --graph --decorate --all #{"--author=someone " * 12}" }
+
+    # One parked call, rendered through the REAL frontend into the REAL editor:
+    # the view is the frontend's own, so the post takes the RpcThread and the
+    # runtime's set_approval, exactly as a gated session does.
+    #
+    # THE REACTOR RUNS ON ITS OWN THREAD, and that is not tidiness -- it is the
+    # arrangement buffers_spec already uses, for a reason this block rediscovered
+    # by hanging for five seconds. The inspector's msgpack round trips are
+    # blocking IO; driven from INSIDE the Sync that holds the parked fiber they
+    # deadlock the two against each other. The editor is read from the example's
+    # own thread, and the queue lives on the worker's.
+    def rendered_fold_state
+      @release = Thread::Queue.new
+      screen = nil
+      frontend = Lain::Frontend::Neovim.new(channel: Lain::Channel.new, socket_path: @socket)
+      # `Neovim#run` answers its own teardown, never the block's value, so the
+      # reading is carried out rather than returned.
+      frontend.run { |handle| screen = read_screen(handle) }
+      screen
+    end
+
+    def read_screen(handle)
+      worker = Thread.new { park_and_sweep(handle) }
+      waited_for { buffer_lines.any? { |line| line.include?("git log") } }
+      { lines: buffer_lines, folds: fold_state }
+    ensure
+      @release.push(:done)
+      raise "the parked approval's thread never stopped" unless worker&.join(20)
+    end
+
+    def park_and_sweep(handle)
+      Sync do |task|
+        queue = Lain::Approval::Queue.new(journal:, timeout: 60)
+        parked = task.async { queue.call(effect("bash", { "command" => long_command }, "tu_1"), nil) }
+        task.with_timeout(20) { swept(handle, queue) }
+      ensure
+        parked&.stop
+      end
+    end
+
+    def swept(handle, queue)
+      spun_until { queue.one? }
+      handle.approval_view.sweep(queue)
+      spun_until { !@release.empty? }
+    end
+
+    # Wall clock, because this one waits on the RPC thread rather than on a
+    # fiber -- {#spun_until}'s scheduler yield would never let it make progress.
+    def waited_for(timeout: 10)
+      deadline = Time.now + timeout
+      until yield
+        raise "the editor never showed the rendering" if Time.now > deadline
+
+        sleep 0.02
+      end
+    end
+
+    it "closes each item onto its summary at rest, leaving the lines under it hidden" do
+      screen = rendered_fold_state
+      item = screen[:lines].take_while { |line| !line.empty? }
+
+      expect(item.size).to be > 1
+      # Every line of the item reports the SAME closed fold, starting at line 1
+      # -- which is "only its summary line remains visible", stated in the one
+      # vocabulary nvim has for it. The mutant that deletes the fold surface
+      # reads [1, 2, 3, 4] here (each line its own fold) or all -1 (nothing
+      # folded at all); neither survives this.
+      expect(screen[:folds].first(item.size)).to all(eq(1))
+    end
+
+    it "leaves the hint below the list open, which is what keeps the items closed" do
+      screen = rendered_fold_state
+
+      # 10_folds re-opens the fold holding the LAST line at rest. The hint being
+      # its own record is what makes that harmless; were it swallowed into the
+      # last item's fold, the re-open would open that item, every time.
+      expect(screen[:folds].last).to eq(-1)
+      expect(screen[:lines].last).to include("LainApprove")
     end
   end
 
