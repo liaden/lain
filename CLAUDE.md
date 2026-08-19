@@ -620,6 +620,16 @@ Structures that plausibly qualify, and what they buy:
   does not re-place the diff on every further move once it is back`; and
   `isolation/worktree_handback_spec`'s `Dir.mktmpdir` teardown racing git maintenance.
 
+  Added 2026-08-19, and it is a SECOND example in that same file rather than the teardown shape
+  above -- which is why the entry above was not enough to recognise it:
+  `Lain::Isolation::Worktree::Handback a conflicted path git would otherwise quote names
+  "we\nird.txt" as it is on disk, and can conclude it`. Reproduced deliberately (2 of 2 full
+  `rake pspec` runs at 14490 examples, 11 `nvim` processes live from other worktrees; run 2 red,
+  green in isolation). It surfaced during a chunk that never touched isolation, and cost a card an
+  unexplained red it recorded rather than smoothed over -- the cheapest possible outcome, but only
+  because the count reconciled (+5, exactly the examples that card added) so truncation was ruled
+  out first.
+
   **The `up_spec` entries are RETIRED as of 2026-08-18 -- both had real causes and both are fixed.**
   Recording that here because a stale "known flake" is worse than none: it reads "not a regression"
   to the next person who sees them red. `threads -- chat args ...` and `leaves the global theme

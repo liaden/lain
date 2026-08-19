@@ -108,6 +108,48 @@ class RecordingChangesetReview
   end
 end
 
+# A registered `/word` as the reply prompt sees it (T4): the whole command duck
+# {Lain::CLI::Command::Registry} asks of a member -- a name, a usage line, and
+# one `call(args, env)` -- with the args RECORDED, so an example can assert that
+# a line typed at `human> ` reached the command rather than the asker.
+#
+# What it returns is the caller's, because a command's outcome is exactly what
+# the reply prompt has to sort: rendered text, a {Lain::Renderable}, a Repl
+# ACTION it cannot honour, or nil.
+class RecordingCommand
+  def initialize(name, returns: nil)
+    @name = name
+    @returns = returns
+    @calls = []
+  end
+
+  attr_reader :name, :calls
+
+  def usage = "/#{@name} -- a command a spec registered"
+
+  def call(args, _env)
+    @calls << args
+    @returns
+  end
+end
+
+# The command that blows up ANSWERING whether it reads the terminal, which is
+# the one raise nothing wraps: {Lain::CLI::Command::Registry#invoke} guards the
+# CALL, and `#serves_replies?` is asked before any call is made. Its own class
+# rather than an option on {RecordingCommand}, because a command that declares
+# the message at all is a different duck -- the registry asks `respond_to?`
+# first, so a defaulted `serves_replies?` would quietly change every other
+# example's command into a declarer.
+class HostilePredicateCommand
+  def name = "hostile"
+
+  def usage = "/hostile -- a command a spec registered"
+
+  def serves_replies? = raise("serves_replies? blew up")
+
+  def call(_args, _env) = "never reached"
+end
+
 # T13: #drain_at_prompt is the `/inbox`-at-`you>` half of this class -- the
 # SAME TTY drain UX #answer_loop's read_drained_answer calls at `human>`
 # (`@tty.drain_inbox`), reused rather than a second presentation, and the
@@ -463,6 +505,179 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(drained).to include("## `region`")
       expect(drained).not_to include("## `db`")
       expect(ask_human.pending?).to be(true) # the older set is untouched by an answer it never saw
+    end
+  end
+
+  # T4 (QA round 6, F27). `human> ` used to be prose or the ONE string literal
+  # `/inbox`, so every other registered `/word` was recorded as an answer -- a
+  # human who typed `/status` while a set was parked sent the model the text
+  # "/status" and got no status. The registry already parameterises exactly this
+  # decision ({Lain::CLI::Command::Registry#dispatch} runs or yields), so the
+  # prompt consults it instead of comparing strings.
+  #
+  # Two exceptions are pinned here rather than left to reading:
+  #
+  # * `/inbox` is a REPLY SURFACE, not a session command, and stays item-scoped.
+  #   Dispatched through the registry it would drain `@inbox.oldest` and
+  #   reintroduce the defect {Lain::CLI::HumanReplies::Reply#for}'s docstring
+  #   records as fixed. The exception is expressed through the command's own
+  #   `serves_replies?`, which is why the REAL {Lain::CLI::Command::Inbox} is
+  #   registered below.
+  # * a command returning a Repl ACTION has nowhere to go from here (the reply
+  #   loop hands back an answer and an item, and nothing else), so it is refused
+  #   BY NAME. The real {Lain::CLI::Command::Quit} is registered for the same
+  #   reason: the refusal is about what production's `/quit` returns.
+  describe "a session command typed at the reply prompt" do
+    let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+    let(:ruby) { RecordingCommand.new("ruby", returns: "=> 2") }
+    # Opaque on purpose: the registry curries it and hands it to the command,
+    # and nothing about this seam depends on which collaborators it holds. A
+    # strict double is also the loud witness if `/inbox` were ever dispatched --
+    # {Lain::CLI::Command::Inbox#call} reads `env.replies`.
+    let(:env) { instance_double(Lain::CLI::Command::Env) }
+    let(:registry) do
+      Lain::CLI::Command::Registry.new([ruby, Lain::CLI::Command::Inbox.new, Lain::CLI::Command::Quit.new])
+    end
+
+    before { replies.bind_commands(registry.bind(env)) }
+
+    it "runs the command instead of answering the question" do
+      typed = ["/ruby 1 + 1", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(ruby.calls).to eq(["1 + 1"])
+      expect(ask_human.last_answer.body["answer"]).not_to include("/ruby")
+    end
+
+    # A command that runs and shows nothing is indistinguishable from one that
+    # was swallowed, which is the defect this card fixes wearing a hat. Both
+    # return shapes {Repl#settle_command} delivers are delivered here too.
+    it "renders what the command returned, in both of the shapes a command may answer with" do
+      structured = RecordingCommand.new("status", returns: Lain::Renderable.new.plain("all quiet"))
+      registry.register(structured)
+      typed = ["/ruby 1 + 1", "/status", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(output.string).to include("=> 2").and include("all quiet")
+    end
+
+    it "leaves the question awaiting a reply while the command runs" do
+      typed = ["/ruby 1 + 1"]
+      allow(conductor).to receive(:read_reply) { typed.shift || Async::Task.current.sleep(30) }
+
+      Sync { announced(ask_human, "which db?") }
+      surfaces_settle
+
+      expect(ruby.calls).to eq(["1 + 1"])
+      expect(ask_human.pending?).to be(true)
+    end
+
+    it "keeps /inbox item-scoped: it answers the set the loop is parked on, never the oldest listed" do
+      other = other_asker
+      Sync { listed(ask_human, announcement_of(question_of("db"))) } # older, still pending, still listed
+      typed = ["/inbox", "use postgres"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(other, announcement_of(question_of("region"))) }
+      with_surfaces { other.last_answer }
+
+      expect(other.last_answer.body["answer"]).to include("`region`")
+      expect(other.last_answer.body["answer"]).not_to include("`db`")
+      expect(ask_human.pending?).to be(true)
+    end
+
+    it "refuses a command that would return a Repl action, by name, and keeps the question answerable" do
+      typed = ["/quit", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(output.string).to include("error:").and include("/quit")
+      expect(ask_human.last_answer.body["answer"]).to include("go left")
+    end
+
+    it "still answers the question with prose" do
+      allow(conductor).to receive(:read_reply).and_return("go left")
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(ask_human.last_answer.body["answer"]).to include("go left")
+    end
+
+    it "still answers the question with an UNREGISTERED slash word" do
+      allow(conductor).to receive(:read_reply).and_return("/not-a-command")
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(ask_human.last_answer.body["answer"]).to include("/not-a-command")
+    end
+
+    # Review fix 1. `Registry#invoke` wraps a raise from `#call` into an
+    # attributed Lain::Error; NOTHING wraps a raise from `#serves_replies?`,
+    # which is asked BEFORE any call. Un-rescued it climbs to
+    # {Lain::CLI::HumanReplies::AnswerLoop#exchange}, whose `rescue
+    # StandardError` reports the line SETTLED -- so the item is retired while
+    # the promise is still pending, and the agent is parked forever with the
+    # only line that could unpark it deleted. Measured, before the fix:
+    # `replies.pending? == false` against `ask_human.pending? == true`.
+    it "survives a raise from the PREDICATE, not only from the call, and keeps the question answerable" do
+      registry.register(HostilePredicateCommand.new)
+      typed = ["/hostile", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(output.string).to include("serves_replies? blew up")
+      expect(ask_human.last_answer.body["answer"]).to include("go left")
+    end
+
+    # Review fix 3, the bound half. See the sibling describe for why this is a
+    # regression rather than a new capability.
+    it "answers with a line the skill grammar calls malformed, rather than refusing it" do
+      allow(conductor).to receive(:read_reply).and_return("@bob/ go left")
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(ask_human.last_answer.body["answer"]).to include("@bob/ go left")
+      expect(output.string).not_to include("malformed")
+    end
+  end
+
+  # Review fix 3. `line.strip == "/inbox"` parsed nothing; consulting a registry
+  # runs the real skill grammar over every reply line, and
+  # {Lain::Skill::Invocation.parse} RAISES on a line that attempts the
+  # `@role/skill` shape and breaks it. So `@bob/` -- a perfectly ordinary typed
+  # answer -- became a `malformed skill invocation` refusal at a prompt that
+  # dispatches no skills and has no malformed invocation to report.
+  #
+  # Pinned on BOTH paths because the Null is what a caller with no registry
+  # gets, which is production until the reply prompt is wired to the command
+  # surface: the regression ships without the fix's own payload.
+  #
+  # `/not-a-command` is the settled precedent this restores it to. An
+  # unparseable slash-or-at word at a reply prompt is an ANSWER.
+  describe "a reply line the skill grammar calls malformed" do
+    let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+
+    it "is an answer, not a refusal, with no registry bound" do
+      allow(conductor).to receive(:read_reply).and_return("@bob[/ go left")
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(ask_human.last_answer.body["answer"]).to include("@bob[/ go left")
+      expect(output.string).not_to include("malformed")
     end
   end
 

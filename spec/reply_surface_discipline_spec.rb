@@ -106,6 +106,33 @@ module ReplySurfaceDiscipline
     Unreachable.new(file.basename.to_s, e.message)
   end
 
+  # Every class this directory defines that answers the command duck, by the
+  # one naming convention {.subject_for} uses -- asked of the CLASS rather than
+  # of an instance, which is what lets it see the whole shipped set. {Built}
+  # cannot serve here: it must CONSTRUCT, and nine of the commands take
+  # collaborators, so an instance-based census silently omits `/help`,
+  # `/approve`, `/review` and six more. Measured while writing this: 15 of 21.
+  #
+  # The duck is asked rather than a denylist kept, because this directory also
+  # holds {Lain::CLI::Command::Registry}, {Lain::CLI::Command::Surface} and
+  # {Lain::CLI::Command::Env}, and a list of their filenames would need editing
+  # every time a fourth arrived. `Registry` is the one that matters: it answers
+  # `serves_replies?` itself, as the object commands are asked THROUGH.
+  def command_classes
+    command_root.glob("*.rb").filter_map do |file|
+      klass = Lain::CLI::Command.const_get(file.basename(".rb").to_s.camelize)
+      klass if klass.is_a?(Class) && klass.method_defined?(:name) && klass.method_defined?(:call)
+    rescue NameError
+      nil
+    end
+  end
+
+  # Every command that declares itself a reply surface. The declaration IS a
+  # method, so this is a question about the class and needs no instance -- and
+  # a command that defines it and answers false still counts as a declarer
+  # here, deliberately: the point is to notice the second one being written.
+  def declarers = command_classes.select { |klass| klass.method_defined?(:serves_replies?) }
+
   # Every command file that reads the terminal, paired with its reads.
   def terminal_readers
     command_root.glob("*.rb").filter_map do |file|
@@ -132,6 +159,43 @@ RSpec.describe "reply-surface discipline" do
         "Repl::LineScope will open a second reader over it and the human's keystroke " \
         "can reach a surface they were not answering. Found:\n#{listing}"
     }
+  end
+
+  # T4, and the reason this example sits HERE rather than beside the reply
+  # prompt: `serves_replies?` now has TWO readers that mean different things by
+  # it, and only one of them is written above.
+  #
+  # {Lain::CLI::Repl::LineScope} reads it as "this line reads the terminal
+  # itself, so open no second reader over it" -- the rule this file enforces.
+  # {Lain::CLI::HumanReplies::Reply#typed} reads it as "this line is the inbox
+  # detour, so drain THIS parked item instead of dispatching" -- which is the
+  # only way the reply prompt can keep `/inbox` item-scoped without a string
+  # literal (see that method, and Open decision 5 of the QA round 6 chunk).
+  #
+  # The second reading is true of `/inbox` and of nothing else, and it is true
+  # by accident of `/inbox` being the sole declarer. A SECOND declarer -- the
+  # very command this file exists to require the declaration from -- would be
+  # swallowed at `human> `: it would never run, and the human's next line would
+  # answer the parked set instead. Measured at review: zero calls, silently.
+  #
+  # So this pins the coincidence until the two readings are given two
+  # predicates. If you are here because you added a terminal-reading command and
+  # this went red, that is the guard working: the fix is a distinct predicate
+  # for the reply prompt's own detour, not deleting this example.
+  it "pins /inbox as the ONLY declarer, which the reply prompt's detour depends on" do
+    expect(ReplySurfaceDiscipline.declarers.map(&:to_s)).to eq(["Lain::CLI::Command::Inbox"])
+  end
+
+  # The census must be known to SEE the commands, or the example above passes by
+  # finding nothing -- and it must see the ones no instance-based walk can build.
+  # The exact count is not the point and would be churn; that it is most of the
+  # directory is.
+  it "sees the whole shipped set, including commands that take collaborators (self-test)" do
+    census = ReplySurfaceDiscipline.command_classes.map(&:to_s)
+
+    expect(census).to include("Lain::CLI::Command::Inbox", "Lain::CLI::Command::Quit",
+                              "Lain::CLI::Command::Help", "Lain::CLI::Command::Approve")
+    expect(census.size).to be > 15
   end
 
   # The guard's OWN failure mode, said in its own words: a new command file that

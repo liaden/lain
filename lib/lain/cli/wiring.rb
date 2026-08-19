@@ -3,8 +3,10 @@
 require "active_support/core_ext/module/delegation"
 
 require_relative "wiring/agent_build"
+require_relative "wiring/askers"
 require_relative "wiring/base_tools"
 require_relative "wiring/board_build"
+require_relative "wiring/run_state"
 require_relative "wiring/toolset_build"
 
 module Lain
@@ -61,131 +63,37 @@ module Lain
     # budget, which is why {#epic_mount} is a method now -- the same rule, at
     # a different cop.
     #
+    # QA round 6 was the fourth time, and what it wanted was ONE statement: the
+    # reply prompt's `bind_commands` in {#build_repl}. The class stood at 110 of
+    # 110, so the rule applied to a one-liner exactly as it applies to a feature.
+    # Two things moved: {Askers} to `wiring/askers.rb` -- this comment had
+    # ALREADY called it a second responsibility, and the only reason it was
+    # nested was that T11 scoped that chunk to this file, so once that reason was
+    # spent the file was simply where it had not moved from yet -- and
+    # {RunState}, whose recorder/Session pair carries an invariant of its own.
+    #
+    # ⚠️ MEASURE THE MOVE, because this cop does not count what you expect.
+    # `Metrics/ClassLength` DISCOUNTS a nested class's body, so {Askers} was
+    # costing this class ONE line, not the thirty-four it occupies in a reader's
+    # scroll. Promoting it was worth doing and bought almost nothing; {RunState}
+    # is what bought the headroom. A future extraction that moves a nested class
+    # out will move this number by ~1 -- take it out of the class's OWN methods.
+    #
+    # ⚠️ Headroom is not the same as settled. The object {#assemble_surface}'s
+    # comment has been asking for is still unnamed, and neither seam a reader
+    # reaches for first will take it: #assemble_surface cannot simply leave
+    # (`wiring/agent_build_spec.rb` drives it directly, to assert the switchboard
+    # memo is set by the time the surface is assembled), and #run cannot either
+    # -- it ORCHESTRATES this class's own assembly steps, so an object holding it
+    # would have to be handed this one, which is a god-object handle rather than
+    # the {AgentBuild} shape.
+    #
     # The cop's config (see .rubocop.yml) is a reasoned policy, not a number
     # to raise: a long assembler is fine, a SECOND responsibility hiding in it
     # is not. So spend the headroom the same way -- {CompactionMount},
     # {Command::Surface}, {ToolsetBuild} and {EpicMount} are the shape to copy --
     # and when it runs out again, extract rather than loosen.
     class Wiring
-      # Who may ask the human, and where an arrival goes. One object because
-      # the three are one fact: an asker that announces to a queue nobody
-      # registered can be answered by nobody, and a registration without the
-      # announcement is an agent parked in silence.
-      #
-      # It is a SECOND responsibility rather than more of this class's own --
-      # "assemble a chat" does not include "route an answer back to whoever
-      # asked" -- and {Wiring} had one line of ClassLength headroom, so the
-      # rule the class comment states applied: extract, do not grow. Nested
-      # rather than a file of its own because T11 scopes the CLI half of the
-      # question chunk to this file, the reason {Frontend::TTY::Inbox} is
-      # nested in tty.rb.
-      class Askers
-        # An asker and the thing that stops it being routable. Both, because
-        # retention in the {Tools::AskHuman::Directory} runs from `register`
-        # to `deregister` and NOTHING else releases it: whoever owns an
-        # asker's lifetime has to hold the registration, which the run's own
-        # asker never needs (it dies with the run) and a child's lease does.
-        Enrolled = Data.define(:asker, :registration)
-
-        # What a desktop notification may spend on WHO is asking: dunstify
-        # renders `"#{agent} asks"` as the title, and an asker's identity in
-        # the record is a 71-character correlation digest -- not a title. The
-        # same 19 the TTY drain and {Frontend::Neovim::InboxView} already clamp
-        # their sender column to, so the three surfaces name an asker the same
-        # way.
-        NAME_WIDTH = 19
-
-        attr_reader :questions, :directory
-
-        # The seam wired to nothing: its arrivals reach a queue nobody drains
-        # and a desktop that is not there, and its directory routes only its
-        # own askers. It exists for the direct-construction seams the specs
-        # drive -- {ToolsetBuild::NoSwitchboard}'s precedent, one class over --
-        # and it is NOT a sanctioned production state: a child enrolled here
-        # parks a human question nobody can see, which is the exact failure the
-        # arrival seam exists to prevent. The exe always passes the run's own.
-        def self.unwired
-          new(notifier: Lain::Notify::Null.new, observer: Lain::Event::ChainWriter::Null.new)
-        end
-
-        # @param notifier [Lain::Notify] the desktop half of an arrival
-        # @param observer [#call] the chronicle's -- Q and A are exactly the
-        #   events a Timeline walk can never find, so a missing observer is
-        #   silent record loss; required for that reason, not defaulted.
-        def initialize(notifier:, observer:)
-          @notifier = notifier
-          @observer = observer
-          @questions = Async::Queue.new
-          @directory = Lain::Tools::AskHuman::Directory.new
-        end
-
-        # One agent's asker: announced to the human on every ask, and
-        # registered so an answer NAMING one of its sets routes back to it.
-        # Both locals are read inside the notify thunk at CALL time -- the
-        # late-binding idiom this file uses twice more -- so the tool, the
-        # names it opens, and the announcement it fans out cannot come apart.
-        #
-        # `registration` is declared before the thunk that reads it because
-        # the two cannot be built in one order: the registration needs the
-        # asker, and the asker's announcement needs the registration. A name
-        # first mentioned INSIDE the block parses as a method call and raises
-        # there instead, which is the whole reason the nil is written out.
-        #
-        # @param parent [Timeline, #call] the live parent-Timeline handle ({AskHuman}'s
-        #   own `parent:`) -- a Timeline or a thunk reading one, since the toolset is
-        #   built before the Agent; the shared Store and the asker's identity both
-        #   ride on it
-        # @param agent [String, nil] what a human is told is asking, when this
-        #   asker has a name worth reading (the main chat's, a child's role).
-        #   Per-asker, never per-seam: one name for every arrival is the
-        #   hardcoded `"lain"` this widening removed. Absent, the correlation
-        #   stands in, clamped -- see {#desktop_name}.
-        #
-        #   It is handed to the ASKER as well as to the announcement (T15), so
-        #   it rides the Q event ({Tools::AskHuman::ASKED_BY}) and the surfaces
-        #   that never see an arrival -- {Frontend::Neovim::InboxView} folds the
-        #   record stream -- name the asker the same way this one does.
-        def enrol(parent, agent: nil)
-          registration = nil
-          asker = Lain::Tools::AskHuman::Notifying.new(
-            parent:, observer: @observer, agent:,
-            notify: ->(question) { announce(question, asker:, registration:, agent:) }
-          )
-          registration = @directory.register(asker)
-          Enrolled.new(asker:, registration:)
-        end
-
-        private
-
-        # I5, widened (T11): ONE arrival, three surfaces. What rides the queue
-        # is the inbox item itself, not the question's bytes -- the digest an
-        # answer must cite, and the asker that asked it -- and both are read
-        # HERE, at the instant the Q event was written, because that is the
-        # only instant they are true. Read at drain time instead, "who asked"
-        # is whoever asked most recently and the digest is not recoverable at
-        # all.
-        #
-        # The name is opened on the registration BEFORE the arrival goes out,
-        # and that ordering is the whole of the routing: {Directory} answers
-        # only names some registration has heard of, so a question announced
-        # to a human who could then answer it faster than it was registered
-        # would be refused as unknown.
-        def announce(question, asker:, registration:, agent:)
-          item = HumanReplies::InboxItem.asked(question, asker.last_question, agent:)
-          registration.asked(item.digest)
-          @questions.enqueue(item)
-          @notifier.question(agent: desktop_name(agent, item), text: question)
-        end
-
-        # Who the desktop is told is asking: this asker's own name when it has
-        # one, else the correlation that identifies it everywhere else. Both
-        # arms clamp, and they clamp in ONE place, so the bound holds for a
-        # name nobody thought to keep short as much as for a digest.
-        def desktop_name(agent, item)
-          (Blankness.blank?(agent) ? item.from.to_s : agent.to_s)[0, NAME_WIDTH]
-        end
-      end
-
       # What a human is told is asking when the question came from the chat
       # they are having, rather than from something it spawned. Named here and
       # not in {Askers} because it is a fact about THIS agent -- a child passes
@@ -310,21 +218,12 @@ module Lain
       # finished schema), before the Agent (whose turn middleware records through
       # it). A resumed chat threads the chained-header fields (resumed_from/written)
       # into that header and seeds the Agent with the resumed Timeline.
-      # The recorder and the journaled Session, fresh or resumed. One Recorder
-      # backs the memory_write tool for the whole session -- the single mutable
-      # holder of the live Memory::Index, so each write supersedes the last (its
-      # prior root still resolves the old item); a resumed chat inherits the
-      # chain-wide recorder instead, so its manifest sees every memory the
-      # resumed sessions wrote. The chronicle then decorates both run-state
-      # seams: reads/todos journal through Session::Journaled, and each
-      # turn_usage pairs with the memory root in force (JournalMemoryRoot) --
-      # identity under --no-journal.
-      def run_state(resumed)
-        recorder = resumed ? resumed.recorder : Lain::Memory::Recorder.new
-        session = resumed ? resumed.session : Lain::Session.new(memory: recorder, worker_env: chat_env)
-        chronicle.wrap_memory(recorder)
-        [recorder, chronicle.wrap_session(session)]
-      end
+      # The recorder and the journaled Session, fresh or resumed -- {RunState}'s
+      # question, and its invariant is written there rather than here. Kept as a
+      # method on this class rather than inlined at its one caller because it is
+      # PUBLIC surface: four spec files drive `wiring.run_state(nil)` to get a
+      # real recorder and session to build the rest of an assembly against.
+      def run_state(resumed) = RunState.for(resumed:, chronicle:, worker_env: chat_env)
 
       # The main chat's host-side context: {WorkerEnv.default}'s environment
       # snapshot, at the PROJECT's cwd. Still not a leased environment -- the
@@ -554,6 +453,12 @@ module Lain
       def build_repl(tty:, agent:, backend:)
         @replies = HumanReplies.new(tty:, conductor: @conductor, ask_human: directory, questions:)
         @command_surface = assemble_surface(agent:, library: backend.library, tty:)
+        # Bound rather than injected: the registry is built FROM this object
+        # (Command::Surface takes `replies:`), so no constructor ordering exists
+        # in which HumanReplies could take one. Both prompts then dispatch
+        # through the one bound registry over the one Env, which is what makes a
+        # command behave the same at `you> ` and at `human> `.
+        @replies.bind_commands(@command_surface.commands)
         Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
                  supervisor:, middleware: @command_surface.middleware, commands: @command_surface.commands,
                  auto_surface:, secret_surface:, goal_driver:)

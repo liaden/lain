@@ -171,6 +171,20 @@ module Lain
         @approvals = approvals || NoApprovals
       end
 
+      # The `you>` command registry ({Command::Registry::Bound}), so a
+      # registered `/word` typed at `human> ` RUNS instead of being recorded as
+      # the answer to the parked set. It was a bare `/inbox` string literal
+      # until then, which made `/status` at a reply prompt send the model the
+      # text "/status" and show the human nothing.
+      #
+      # BOUND rather than taken as a keyword, because the registry is built
+      # FROM this object: {Wiring#build_repl} constructs this class first and
+      # hands it to {Command::Surface} as `replies:`, so there is no ordering in
+      # which a constructor could take one. Same shape and same nil rule as
+      # {#bind_editor} -- the registry that is not there is an object
+      # ({Reply::NoSessionCommands}), so nothing downstream asks whether one was wired.
+      def bind_commands(commands) = @reply.bind_commands(commands)
+
       # The editor a changeset is DRAWN in, and the second rail a review's
       # writes are answered on (T31a). The whole frontend, and deliberately not
       # a piece of it the way {#bind_editor} takes two: what this class needs
@@ -924,11 +938,46 @@ module Lain
       # belong to the READ, and the panel's note that the pair should be built
       # where the knowledge is points at exactly this seam.
       class Reply
-        def initialize(tty:, conductor:, inbox:)
+        # The session registry nobody bound -- {NoEditor}'s rule one class down,
+        # so {#read} never asks whether one was wired: a single-asker caller
+        # (and every spec that is not about commands) constructs {HumanReplies}
+        # without a registry and still reads answers. It answers the whole
+        # {Command::Registry::Bound} duck, and `dispatch` YIELDS, because the
+        # fallthrough block IS the unmatched path in the real registry too.
+        #
+        # NO SESSION command is registered here -- and `/inbox` is not one.
+        # `/inbox` at this prompt is THIS surface under another name (the
+        # item-scoped drain, {#for}), it predates the registry, and a caller
+        # that wired no commands must not lose it. So the predicate is still put
+        # to the real {Command::Inbox}, which is what makes this a Null Object
+        # rather than the string literal this method used to be.
+        #
+        # A class holding one instance rather than a module holding none: an
+        # ivar set in `#initialize` is neither the class state `ThreadSafety`
+        # objects to nor a constant pinning this leaf's load order against
+        # `cli/command.rb`, and it builds the registry once per session instead
+        # of once per typed line.
+        class NoSessionCommands
+          def initialize
+            @registry = Command::Registry.new([Command::Inbox.new])
+            freeze
+          end
+
+          def serves_replies?(text) = @registry.serves_replies?(text)
+
+          def dispatch(_text) = yield
+        end
+
+        def initialize(tty:, conductor:, inbox:, commands: NoSessionCommands.new)
           @tty = tty
           @conductor = conductor
           @inbox = inbox
+          @commands = commands
         end
+
+        # See {HumanReplies#bind_commands}, which is this method's only caller
+        # and where the reason for binding rather than injecting is written.
+        def bind_commands(commands) = @commands = commands || NoSessionCommands.new
 
         # The reply prompt of a PARKED set. `/inbox` detours to the drain for
         # THIS item -- the set the run is parked on, whose note the human is
@@ -957,18 +1006,124 @@ module Lain
         # suppresses its countdown ticker's render + key-read. `.to_s` is
         # load-bearing: EOF returns nil, and an empty answer is honest where
         # `Tool::Result.ok(nil)` would raise.
-        # `legible` runs BEFORE the `/inbox` test, not after: `String#strip` on
-        # invalid bytes raises Encoding::CompatibilityError, which is not the
-        # ArgumentError the refusal path rescues, so it would climb past every
-        # guard here to `#serve_question`'s ensure -- retiring the line while
-        # leaving the promise pending, which is the exact end state `legible`
-        # exists to prevent, reached one line above it.
+        # `legible` runs BEFORE the registry is consulted, not after:
+        # `String#strip` on invalid bytes raises Encoding::CompatibilityError,
+        # which is not the ArgumentError the refusal path rescues, so it would
+        # climb past every guard here to `#serve_question`'s ensure -- retiring
+        # the line while leaving the promise pending, which is the exact end
+        # state `legible` exists to prevent, reached one line above it.
         def read(item)
           line = legible(@conductor.read_reply(@tty, "human> ").to_s)
-          return [line, item] unless line.strip == "/inbox"
-
-          drained(answering: item)
+          typed(line, item)
         end
+
+        # What the line turned out to be, in the order the registry itself draws
+        # the lines. It used to be `line.strip == "/inbox"` and nothing else, so
+        # every OTHER registered `/word` was recorded as the human's answer.
+        #
+        # A command that SERVES REPLIES is not a session command at all -- it is
+        # this surface under another name, and `/inbox` is the only one. It keeps
+        # the ITEM-SCOPED drain it has always had, and is deliberately NOT routed
+        # through `dispatch`: {Command::Inbox} drains `@inbox.oldest`, which is
+        # the defect {#for}'s docstring records as fixed. The predicate is the
+        # command's own claim ({Registry#serves_replies?}), so the exception
+        # lives with the command instead of as a literal here.
+        #
+        # `answer` is set from the FALLTHROUGH block because the block is the
+        # only thing that can say a command did NOT claim the line: a command's
+        # outcome may be any value, `nil` included, so reading the return would
+        # take a quiet `/keep` for an answer.
+        #
+        # A raise from EITHER registry call is rendered and RE-READ, never
+        # allowed to climb: {AnswerLoop#exchange}'s rescue reports the line
+        # SETTLED, which retires the item while the promise stays pending -- the
+        # agent parked forever with the only line that could unpark it deleted,
+        # which is what {#accepted} exists to prevent one layer up.
+        #
+        # `StandardError`, not `Lain::Error`, and the difference is a measured
+        # hole rather than caution: {Registry#invoke} wraps a raise from a
+        # command's `#call` into an attributed Lain::Error, and NOTHING wraps
+        # `#serves_replies?`, which is asked first. A command whose predicate
+        # raised took the parked question down exactly as above. `Async::Stop`
+        # is not a StandardError, so a cancelled read still climbs.
+        def typed(line, item)
+          return [line, item] if prose?(line)
+          return drained(answering: item) if @commands.serves_replies?(line)
+
+          answer = nil
+          outcome = @commands.dispatch(line) { answer = [line, item] }
+          answer || delivered(outcome, line)
+        rescue StandardError => e
+          @tty.render_error(e.message)
+          nil
+        end
+
+        # Whether the line cannot name a command AT ALL, asked before the
+        # registry so that no reply line is ever refused for the grammar's
+        # reasons. Two shapes reach it:
+        #
+        # * a line the grammar cannot parse. {Skill::Invocation.parse} RAISES
+        #   {Skill::Invocation::Malformed} on a leading token that attempts
+        #   `@role/skill` and breaks it, which is right at `you> ` and wrong
+        #   here: this prompt dispatches no skills, so `@bob/` is a typed answer
+        #   exactly as `/not-a-command` is. Left to climb it did worse than
+        #   refuse -- past {#refusable}'s ArgumentError catch into
+        #   {AnswerLoop#exchange}, which settles the line, so the set was
+        #   retired unanswered and the next line never reached it either.
+        # * a ROLE-BOUND line, which no command can be: {Registry} matches only
+        #   the inline shape, so this merely says so one call earlier.
+        def prose?(line)
+          invocation = Skill::Invocation.parse(line)
+          invocation.nil? || !invocation.inline?
+        rescue Skill::Invocation::Malformed
+          true
+        end
+
+        # A command's outcome AT THIS PROMPT, and always nil so the prompt comes
+        # round again: the set is still parked, and running a command is not
+        # answering it. {Repl#settle_command}'s contract minus the one case this
+        # surface cannot honour -- a Repl ACTION is handed UP there for
+        # `#converse` to act on, and {AnswerLoop#exchange} hands back an answer
+        # and an item and nothing else. So it is refused BY NAME rather than
+        # dropped: a `/quit` that appears to do nothing reads as a wedged
+        # session, which is worse than being told where it does not run.
+        #
+        # ⚠️ The refusal is POST-HOC -- the command has already run. `/quit` is
+        # the only one of the shipped set returning a Symbol and its `#call` is
+        # `= :quit`, so nothing happens before it is refused. A future
+        # action-returning command that DOES something first would fire that
+        # side effect here and then be told it cannot run, which is a lie the
+        # human cannot act on. At that point this needs the registry to answer
+        # "does this command return an action" BEFORE the call, not a wider
+        # rescue.
+        def delivered(outcome, line)
+          case outcome
+          when nil then nil
+          when String then @tty.render_response(spoken(outcome))
+          when Renderable then @tty.render_renderable(outcome)
+          else @tty.render_error(refusal(outcome, line))
+          end
+          nil
+        end
+
+        # A command's rendered text on the SAME synthetic Response
+        # {Repl#deliver_text} builds, so a command's answer reaches the terminal
+        # through one renderer whichever prompt it was typed at.
+        def spoken(text) = Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: :end_turn)
+
+        # Both halves say WHICH command, {Repl#called}'s attribution rule: a
+        # refusal that names no command is one the human cannot act on.
+        def refusal(outcome, line)
+          return "command #{called(line)} returned something a reply prompt cannot render: #{outcome.inspect}" \
+            unless outcome.is_a?(Symbol)
+
+          "#{called(line)} is a session command and cannot run at a reply prompt -- answer the question first"
+        end
+
+        # Only a line the registry already matched reaches here, so its leading
+        # word IS the command -- {Repl#called}'s reason for splitting the typed
+        # line rather than parsing it a second time that could disagree.
+        def called(line) = line.to_s.split.first
 
         # The drain answers the item it was NAMED, and that item is what the
         # answer is paired with here -- the caller's own object, never one
