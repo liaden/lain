@@ -1,6 +1,6 @@
 ---
 name: manual-qa
-description: Drive a manual end-to-end QA round against a real lain cockpit — tmux, nvim, and a live local model — from a scenario in planning/qa/scenarios/. Use when asked to run manual QA, run a QA round, verify a chunk's fixes end to end, or exercise happy and unhappy paths against the real binary.
+description: Drive a manual end-to-end QA round against a real lain cockpit — tmux, nvim, and a live local model — from the scenarios in planning/qa/scenarios/. With no scope named it runs the FULL round over every scenario in that directory, in planning/qa/README.md's order. Use when asked to run manual QA, run a QA round, verify a chunk's fixes end to end, or exercise happy and unhappy paths against the real binary.
 ---
 
 # Manual QA
@@ -19,13 +19,26 @@ components disagreeing with each other, and for the moments a human would be mis
 
 ---
 
-## Phase 1 — Choose, and say what you chose
+## Phase 1 — Scope, and say what you chose
 
-Read `planning/qa/README.md` and pick by the question being asked, not by coverage. If the user
-named a scenario, use it. If they asked for "a QA round" with no scope, propose the suggested full
-round and start — do not block on the question.
+**The inputs live in `planning/qa/`, and the scenario set is whatever `planning/qa/scenarios/*.md`
+currently holds — enumerate that directory rather than working from a remembered list.** Scenarios
+get added there, and a round that runs a hard-coded five silently stops covering the sixth.
 
-State up front, in one or two lines: which scenarios, why, and the rough cost. Then go.
+**With no scope named, the default is the FULL round: every scenario in that directory.** Take
+`planning/qa/README.md`'s ordering as the authority — as of 2026-08-19 that is `session-and-window`
+→ `rust-cli` → a subject with `cockpit-surfaces` piggybacked → `bench-arms` → `failure-injection` —
+and run **both** subjects (`bowling-ruby` and `rails-blog`) rather than picking one. `rails-blog` is
+the expensive one, which is exactly why it is the one that never gets run: round 5 did not reach it
+at all, so compaction at scale still has no manual evidence behind it.
+
+If the user named a scenario, use that one. If they asked for a regression gate after a chunk,
+README's cheap pair (`failure-injection` + `session-and-window`) is the answer, and README says why
+that pair is worth more than its cost.
+
+**Dropping a scenario from a full round is a decision, not a default** — name which and why, in the
+findings, so the gap is legible rather than looking like coverage. Do not block on the question:
+state the plan in one or two lines with its rough cost, and start.
 
 ## Phase 2 — Bring up the bench, and prove the sandbox
 
@@ -44,6 +57,16 @@ Then, following `planning/qa/bench.md`: start or confirm the model server, recor
 2. `~/.lain` does not exist.
 3. The machine is quiet (`uptime`, and check for orphaned spinners from earlier agent work).
 
+**A fourth thing to settle before any act, because the sandbox does NOT cover it: the desktop.**
+`--desktop` is ON by default for an interactive chat, and `qa-sandbox.sh` rebuilds `PATH` but still
+ends it in `:$PATH` — so `/usr/bin/dunstify` stays reachable and a round fires **real notifications
+onto the human's real screen**. That is not hypothetical: CLAUDE.md records nine of them landing on
+a working human's display from agents' trees, which is why `desktop:` defaults to off everywhere the
+caller does not own the human's attention. So decide, and say which: the acts that verify the
+approval notifier run with it **on** and are named; every other act runs under `LAIN_DESKTOP=0`. A
+round that cannot say which acts raised notifications is a round whose notifications nobody can
+account for.
+
 Also record the round's start time — you need it for the close-out negative check.
 
 ## Phase 3 — Run the scenario
@@ -59,7 +82,9 @@ Follow the scenario's own steps. Four rules override any impulse to improvise:
   that disagreement is the finding.
 - **Never approve a command you have not read.** If a gated call renders no prompt, read
   `lain://approval` over RPC first. An unrendered approval is itself a finding — record it and then
-  recover through `:LainApprove`.
+  recover through `:LainApprove`. Note the buffer now exists **at rest**, holding
+  `(no approvals pending)` and taking no window, so its ABSENCE has flipped meaning: it used to be
+  the ordinary state of a session that had never gated, and is now itself a defect.
 
 Record per act as `method.md` says: journal path, `.lain/state.json`, `.lain/config.toml`, both
 panes captured at the moment of a finding, `ollama ps`.
@@ -89,6 +114,13 @@ embarrasses itself.
   *UX* finding instead, which is the right category.
 - **Prefer a measurement to an inference.** A counting TCP listener turned "how many retries" from a
   suspicion into a number.
+- **Re-measure the number the doc gives you.** A recorded measurement is evidence of what one
+  machine did once, not a fact — including a measurement in these documents. The 2026-08-19 chunk
+  overturned three of its own: the echo ceiling was `v:echospace` and not `&columns`; a
+  "305-second" stale popup was really dunst suspending expiry after 120s idle, which makes it
+  unbounded on precisely the idle desktop an unanswered approval creates; and a hand-counted twelve
+  over-bar refusals was really eighteen. Each looked like a complete answer until someone measured
+  again. If a step turns on a number, take the number yourself.
 - **Separate MODEL findings from LAIN findings.** The local model failing to drive `/create-plan` is
   not a defect in lain. Record it under model behaviour so the next round does not re-derive it.
 
@@ -113,6 +145,12 @@ each, whether differently means better. A fix that turned a hang into a crash is
 - Kill the QA tmux server; confirm no stray `lain` processes.
 - **Verify the negative:** `find ~/.local/state/lain -newermt '<round start>'` must be empty. That
   is the proof the sandbox held, and it belongs in the findings.
+- **Clear the desktop, and verify that negative too.** If any act ran with the notifier on, close
+  what it raised (`dunstctl close-all`) and confirm none survives. This is not tidiness: approvals
+  are raised `-u critical`, which never auto-expires, and dunst suspends expiry entirely while
+  nobody has touched the keyboard for 120s — which is exactly what an unattended round produces.
+  Withdrawal only fires when another surface answers the pending, so a round that ends early leaves
+  them up indefinitely on the human's screen, naming commands nobody is going to run.
 - Leave the sandbox directory in place — it is the evidence.
 - Fold anything the round taught the *process* back into `planning/qa/method.md` or the scenario,
   and say you did. A round that improves only the code and not the method will re-learn the same
