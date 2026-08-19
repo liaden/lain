@@ -2068,3 +2068,133 @@ RSpec.describe LainCLI, "naming a project on the command line" do
     end
   end
 end
+
+# tmux sizes a session with no client attached from `default-size`, which is
+# 80x24 out of the box -- and `lain up` builds its session DETACHED, splits it,
+# and boots nvim in the left pane before anyone attaches, so the cockpit came up
+# as two 40-column panes. That a 40-column editor pane is unusable is the whole
+# of the case; it was NOT shown to be what hung nvim's RPC in QA round 6, and
+# {Lain::CLI::Up::DETACHED_WIDTH}'s "What this is NOT a fix for" paragraph
+# records what was tried and why that cause is still open. The geometry
+# is stated on `new-session` itself, which tmux records as `default-size` on
+# THAT SESSION (measured: the server's global stays 80x24, and a sibling
+# session keeps its own) -- the same session-scoped rule the HUD options and
+# `monitor-bell` already follow.
+RSpec.describe Lain::CLI::Up, "the size of the session it creates" do
+  # Nothing here opens it -- the HUD only composes a jq command around the path
+  # -- but it is spelled through `Dir.tmpdir` rather than a literal `/tmp`
+  # anyway, because in this repo TMPDIR is a decision (it has to share a
+  # filesystem with the checkout) and a hardcoded `/tmp` is a bad pattern for
+  # the next reader to copy.
+  let(:state_path) { File.join(Dir.tmpdir, "irrelevant-for-these-examples", "state.json") }
+
+  # tmux always answers; `session_exists` is what drives the create-vs-reattach
+  # branch, and the pre-flight is a no-op because the real one spawns rspec.
+  def tmux_calls(session_exists: false, **keywords)
+    calls = []
+    spy = lambda do |*args|
+      calls << args
+      FakeShellOut.new(args[1] == "has-session" && !session_exists ? 1 : 0, "")
+    end
+    described_class.new(session: "lain", state_path:, shell_out_factory: spy,
+                        chat_preflight: ->(_args) { [] }, **keywords).call
+    calls
+  end
+
+  # `-x 200` reaches tmux as two ADJACENT argv elements, so the pair is what
+  # gets read -- for the reason {Lain::CLI::Up "opening a PATH"}'s own helper
+  # records about `-c`: a flag and a value asserted separately both pass on an
+  # argv that carried the number somewhere else entirely.
+  def flag_value(call, flag) = call.each_cons(2).filter_map { |name, value| value if name == flag }.first
+
+  it "asks for a session wide and tall enough for the cockpit, not tmux's 80x24 default" do
+    new_session = tmux_calls.find { |args| args.include?("new-session") }
+
+    expect(flag_value(new_session, "-x").to_i).to be >= 200
+    expect(flag_value(new_session, "-y").to_i).to be >= 50
+  end
+
+  # A session `lain up` did not create may have a human attached to it, and
+  # resizing THAT is a cockpit fixing its own layout by shrinking somebody's
+  # terminal. Reattaching states no geometry at all, which leaves the size the
+  # attached client's -- exactly where tmux already had it.
+  it "resizes nothing when it reattaches to a session that already exists" do
+    calls = tmux_calls(session_exists: true)
+
+    expect(calls.flatten.grep(/\Aresize-/)).to be_empty
+    expect(calls.flatten).not_to include("-x")
+    expect(calls.flatten).not_to include("default-size")
+  end
+
+  # The geometry is only worth stating if tmux still holds it for what is
+  # opened NEXT -- which is when the cockpit splits and nvim boots, with no
+  # client attached to lend a size. So the check is a further pane rather than
+  # the created window's own dimensions: those could read 200 wide while
+  # everything opened after them fell back to 80.
+  #
+  # A VERTICAL split, deliberately: it leaves both panes the window's full
+  # width, so the number read back is the stated geometry rather than half of
+  # it, and an unsized session would answer 80.
+  describe "against a real tmux server" do
+    before { skip("tmux not found on PATH") unless system("tmux", "-V", out: File::NULL, err: File::NULL) }
+
+    let(:socket) { "lain-spec-size-#{Process.pid}-#{object_id}" }
+
+    after { system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL) }
+
+    def tmux(*args) = Open3.capture2("tmux", "-L", socket, *args).first.strip
+
+    # A control session started FIRST, with `-f File::NULL`, for the reason the
+    # "leaves the global theme untouched" example above records at length: a
+    # scratch `-L` server sources the developer's own tmux.conf, whose
+    # background tpm rewrites options at 300-500ms, and `-f` is only read when
+    # the SERVER is created. Letting `Up` create the server hands those two the
+    # chance to answer for us. It is also the honest baseline for the global
+    # assertion below -- a session on the same server that `Up` never touches.
+    def control_session
+      system("tmux", "-L", socket, "-f", File::NULL,
+             "new-session", "-d", "-s", "control", "-x", "80", "-y", "24")
+    end
+
+    it "sizes a pane opened later from the stated geometry, while nothing is attached" do
+      Dir.mktmpdir do |dir|
+        control_session
+
+        described_class.new(session: "lain", socket:, state_path: File.join(dir, "state.json"), cwd: dir,
+                            chat_command: "sleep 30", chat_preflight: ->(_args) { [] }).call
+
+        system("tmux", "-L", socket, "split-window", "-v", "-t", "lain:chat")
+        # `#{pane_width}` is tmux's own format syntax, not Ruby interpolation.
+        # rubocop:disable Lint/InterpolationCheck
+        widths = tmux("list-panes", "-t", "lain:chat", "-F", '#{pane_width}').lines.map { |l| l.strip.to_i }
+        # rubocop:enable Lint/InterpolationCheck
+
+        expect(widths.size).to eq(2)
+        expect(widths).to all(be >= 200)
+      end
+    end
+
+    # The card's first escalation trigger, as an assertion rather than as a
+    # measurement in a hand-back. `-x`/`-y` on `new-session` writes
+    # `default-size` on the new SESSION, and the whole reason this is safe to
+    # do against the operator's own tmux server is that it stops there -- so
+    # what the argv examples cannot see (a `set-option -g` written alongside
+    # the perfectly correct `-x`/`-y`) is what this reads back from tmux.
+    # Verified as a real guard: a mutant that keeps the argv and ALSO writes
+    # the global passes all 139 other examples in this file and fails here.
+    it "leaves the server's own default-size alone -- the geometry is the session's" do
+      Dir.mktmpdir do |dir|
+        control_session
+        global_before = tmux("show-options", "-g", "default-size")
+
+        described_class.new(session: "lain", socket:, state_path: File.join(dir, "state.json"), cwd: dir,
+                            chat_command: "sleep 30", chat_preflight: ->(_args) { [] }).call
+
+        expect(tmux("show-options", "-g", "default-size")).to eq(global_before)
+        expect(tmux("show-options", "-v", "-t", "control", "default-size")).to eq("80x24")
+        expect(tmux("show-options", "-v", "-t", "lain", "default-size"))
+          .to eq("#{described_class::DETACHED_WIDTH}x#{described_class::DETACHED_HEIGHT}")
+      end
+    end
+  end
+end

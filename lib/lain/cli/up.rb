@@ -86,6 +86,52 @@ module Lain
       DEFAULT_SESSION = "lain"
       CHAT_WINDOW = "chat"
 
+      # The size a session `lain up` CREATES is built at, stated because tmux
+      # sizes a session with no client attached from `default-size` -- 80x24
+      # out of the box. Everything `lain up` does happens before anyone
+      # attaches: the window is opened, split, and nvim boots in the left pane
+      # while the exe is still on its way to `attach`. At tmux's default that
+      # made the cockpit two 40-column panes, which is not an editor anyone can
+      # work in, and 40 columns is what nvim computes its own layout against.
+      #
+      # What this is NOT a fix for, stated because the first draft of this
+      # comment claimed it: 40x24 was never shown to BREAK nvim. Review
+      # reproduced neither half -- `nvim --clean --listen` in a real 40x24 tmux
+      # pane serves RPC and answers `&columns` at once (0.12.4), and four
+      # `botright vsplit`s (the plugin's own layout primitive) succeed at 40
+      # columns with no E36. So the QA round 6 hang, where an nvim RPC never
+      # answered, has NO established cause and is still open. This widens the
+      # session because a 40-column editor pane is not a usable cockpit, which
+      # stands on its own.
+      #
+      # 200x50 rather than a guess at the terminal: the operator's real client
+      # resizes the whole window on attach (`window-size latest`, tmux's
+      # default), so this number only has to be big enough for the layout that
+      # boots BEFORE anyone is there -- and being generous costs a session
+      # nobody is looking at nothing. The invariant is "true at CREATION", not
+      # "true whenever detached": once an 80x24 client has attached, the window
+      # is 80x24 and DETACHING does not restore this (measured -- `window-size
+      # latest` keeps the last client's size). Harmless here, because
+      # everything that reads the geometry has already run by then.
+      #
+      # Session-scoped like every other option here: `-x`/`-y` on `new-session`
+      # is recorded as `default-size` ON THAT SESSION (measured: a sibling
+      # session on the same server keeps its own, and the server's global stays
+      # 80x24), so this needs no `-g` write and cannot reach the operator's own
+      # sessions. That last part is ASSERTED, not just measured -- a global
+      # write is the one outcome worse than the defect, and it is invisible to
+      # every argv assertion. Nothing states geometry on the REATTACH path
+      # either: a session lain did not create may have a human attached, and
+      # resizing that would shrink their terminal to fix our layout.
+      #
+      # Sized for the cockpit but applied to every created session, `--no-nvim`
+      # included -- one window in a 200x50 session is no worse off. There is a
+      # case that a layout's dimensions belong to {Cockpit} rather than here;
+      # left alone because what is written is an option on the SESSION, which
+      # is this class's own object.
+      DETACHED_WIDTH = 200
+      DETACHED_HEIGHT = 50
+
       Report = Data.define(:session, :created, :warnings)
 
       # `created` tells the caller whether a fresh session was just built (so
@@ -732,10 +778,15 @@ module Lain
       # `--no-nvim` session that inherited tmux's default-path would run its
       # chat wherever the tmux SERVER was started, which is a different project
       # from the one `lain up PATH` names and from the one the HUD reads.
+      #
+      # `-x`/`-y` for {DETACHED_WIDTH}'s reason: every pane below is opened
+      # while the session is still detached, so the size stated HERE is the one
+      # the split and nvim's own layout are computed against.
       def create_session
         @warnings.concat(@chat_preflight.call(@chat_args))
         cockpit = cockpit_wanted?
-        @tmux.act("new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cwd)
+        @tmux.act("new-session", "-d", "-s", @session, "-n", CHAT_WINDOW, "-c", @cwd,
+                  "-x", DETACHED_WIDTH.to_s, "-y", DETACHED_HEIGHT.to_s)
         keep_failed_pane
         build_panes(cockpit)
       end
