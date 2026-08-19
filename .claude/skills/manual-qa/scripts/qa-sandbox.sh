@@ -61,11 +61,28 @@ CHAT=$(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id} #{pane_current_command}' 
 # NEVER type while an approval is parked: at a `[y/N]` prompt the Enter below IS
 # the answer, and the default is DENY. One round denied a call by accident this
 # way and spent three turns watching the model recover from it.
-if S=$(find "$XDG_RUNTIME_DIR" -name 'nvim-*.sock' -type s 2>/dev/null | head -1) && [ -n "$S" ]; then
-  if ! nvim --server "$S" --remote-expr "join(getbufline(bufnr('lain://approval'),1,2),' ')" 2>/dev/null \
-       | command grep -q 'no approvals pending'; then
-    echo "REFUSING to send: an approval is pending -- answer it first" >&2; exit 2
-  fi
+#
+# Refuse rather than guess when resolving the nvim socket -- several agents
+# share this box, and `head -1` on an ambiguous glob silently picks a
+# STRANGER's cockpit if XDG_RUNTIME_DIR ever falls back to the real per-user
+# runtime dir. Only run the check when this shell's own env.sh sourcing above
+# proves the sandbox is active; a mismatch here means something upstream
+# already failed (see $LAIN_QA_JOURNAL's own check, above) rather than a
+# reason to fall back to a wider glob.
+if [ "$XDG_RUNTIME_DIR" = "$QA/xdg/runtime" ]; then
+  mapfile -t NVSOCKS < <(find "$XDG_RUNTIME_DIR" -name 'nvim-*.sock' -type s 2>/dev/null)
+  case "${#NVSOCKS[@]}" in
+    0) : ;;  # no nvim attached (--no-nvim run) -- nothing to check
+    1) if ! nvim --server "${NVSOCKS[0]}" --remote-expr "join(getbufline(bufnr('lain://approval'),1,2),' ')" 2>/dev/null \
+            | command grep -q 'no approvals pending'; then
+         echo "REFUSING to send: an approval is pending -- answer it first" >&2; exit 2
+       fi
+       ;;
+    *) echo "REFUSING to send: ${#NVSOCKS[@]} nvim sockets under $XDG_RUNTIME_DIR -- ambiguous, not guessing:" >&2
+       printf '  %s\n' "${NVSOCKS[@]}" >&2
+       exit 2
+       ;;
+  esac
 fi
 
 before=$(wc -l < "$J")
@@ -86,11 +103,17 @@ EOF
 # --- read a pane -------------------------------------------------------------
 cat > "$QA/peek.sh" <<'EOF'
 #!/usr/bin/env bash
-# peek.sh [lines] [chat|nvim]
+# peek.sh [lines] [chat|nvim] [attrs]
+# attrs (any non-empty 3rd arg) captures with -e -- tmux's plain -p strips SGR
+# colour/attribute escapes on the way out, so a check phrased "is this coloured"
+# needs -e instead, never -p. See method.md's "What a text read cannot verify"
+# for the recipe this wraps and a real measurement. -e output is for a human or
+# a decoder, not for grep -- it is unusable as plain text by design.
 . "$(dirname "$0")/env.sh"
 WHICH="${2:-chat}"; PAT=ruby; [ "$WHICH" = nvim ] && PAT=nvim
 P=$(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id} #{pane_current_command}' | command grep -w "$PAT" | head -1 | cut -d' ' -f1)
-tmux -L "$QA_SOCK" capture-pane -p -t "$P" | command grep -v '^$' | tail -"${1:-12}"
+FLAGS=(-p); [ -n "${3:-}" ] && FLAGS=(-e -p)
+tmux -L "$QA_SOCK" capture-pane "${FLAGS[@]}" -t "$P" | command grep -v '^$' | tail -"${1:-12}"
 EOF
 
 # --- nvim over RPC: the reliable way to drive the editor ---------------------
@@ -102,9 +125,32 @@ cat > "$QA/nv.sh" <<'EOF'
 # nv.sh tabs                          -- tab -> buffer map
 # nv.sh msgs                          -- :messages (where modal refusals survive)
 # nv.sh buf   lain://timeline [n]     -- first n lines of a buffer
+# nv.sh fold  <lnum>                  -- level/closed/closedend of the CURRENT window's fold at lnum;
+#                                         a text read (bufs/buf above) cannot see this -- fold state is
+#                                         a window rendering decision, not buffer content. Navigate to
+#                                         the right tab/window first (send ':tabnext N<CR>'), same as
+#                                         every other gesture in this method -- verify with `expr bufname()`.
 . "$(dirname "$0")/env.sh"
-S=$(find "$XDG_RUNTIME_DIR" -name 'nvim-*.sock' -type s | head -1)
-[ -n "$S" ] || { echo "no nvim socket under $XDG_RUNTIME_DIR" >&2; exit 1; }
+
+# Refuse rather than guess: several agents share this box, and this script
+# must never attach to a socket it did not create. If XDG_RUNTIME_DIR ever
+# falls back to the real per-user runtime dir -- env.sh not sourced, this
+# file run from outside the sandbox, a copy-pasted recipe -- the glob below
+# would match every OTHER agent's nvim on the machine, and `send` can TYPE
+# into a stranger's editor. Verified 2026-08-19: a reviewer following this
+# file's own recipe attached to a different agent's live cockpit this way.
+[ "$XDG_RUNTIME_DIR" = "$QA/xdg/runtime" ] || {
+  echo "refusing: this sandbox is not active in this shell (XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-<unset>}, expected $QA/xdg/runtime) -- source $QA/env.sh first" >&2
+  exit 1
+}
+mapfile -t NVSOCKS < <(find "$XDG_RUNTIME_DIR" -name 'nvim-*.sock' -type s)
+case "${#NVSOCKS[@]}" in
+  0) echo "no nvim socket under $XDG_RUNTIME_DIR" >&2; exit 1 ;;
+  1) S="${NVSOCKS[0]}" ;;
+  *) echo "refusing: ${#NVSOCKS[@]} nvim sockets under $XDG_RUNTIME_DIR -- ambiguous, not guessing:" >&2
+     printf '  %s\n' "${NVSOCKS[@]}" >&2
+     exit 1 ;;
+esac
 case "${1:-}" in
   expr) nvim --server "$S" --remote-expr "$2" ;;
   send) nvim --server "$S" --remote-send "$2" ;;
@@ -112,7 +158,8 @@ case "${1:-}" in
   tabs) nvim --server "$S" --remote-expr "join(map(gettabinfo(), {_,t -> 'tab'.t.tabnr.'='.len(t.windows)}), ' ')" ;;
   msgs) nvim --server "$S" --remote-expr "execute('messages')" | tr '\\' '\n' ;;
   buf)  nvim --server "$S" --remote-expr "join(getbufline(bufnr('$2'), 1, ${3:-20}), '\n')" ;;
-  *)    echo "usage: nv.sh {expr|send|bufs|tabs|msgs|buf} ..." >&2; exit 2 ;;
+  fold) nvim --server "$S" --remote-expr "'level='.foldlevel($2).' closed='.foldclosed($2).' closedend='.foldclosedend($2)" ;;
+  *)    echo "usage: nv.sh {expr|send|bufs|tabs|msgs|buf|fold} ..." >&2; exit 2 ;;
 esac
 EOF
 

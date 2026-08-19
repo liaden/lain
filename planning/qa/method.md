@@ -319,6 +319,123 @@ Buffers: `lain://journal` (streamed tool output ONLY, not the NDJSON journal), `
 `lain://workspace`, `lain://inbox`, `lain://approval`, `lain://request`, `lain://diff`,
 `lain://review`.
 
+## What a text read cannot verify, and how to capture it
+
+Every RPC recipe above — `bufname()`, `getbufline`, `execute('messages')` — returns text, and text
+answers a content question or a position question. Two properties this method needs do not survive
+that channel, because the text they would need to carry is not text: whether a rendered cell carries
+an ATTRIBUTE (colour, bold, underline) rather than a plain codepoint, and whether the line a text
+read just fetched is sitting inside a CLOSED fold or an open one. `getbufline` returns the same
+string either way — folded or not — so a check built only from it cannot tell "the row is folded to
+its summary" from "the row happens to be one line". Both need a real terminal, and both are cheap to
+ask for.
+
+**Escalation check, not a residual worry:** `capture-pane -e` was measured 2026-08-19 against a real
+nvim rendering a syntax-highlighted file in a scratch tmux pane (`termguicolors`, `TERM=tmux-256color`,
+NVIM v0.12.4) and came back fully usable — every one of 50 captured lines carried a decodable SGR
+sequence, not noise. If a future round ever finds `-e` output that is *not* usable this way — binary
+soup a driver cannot correlate back to a line — say so here rather than shipping a recipe nobody
+follows (this card's own escalation trigger). That has not happened yet.
+
+**Never point `nv.sh` (or a hand-typed `nvim --server` recipe) at a socket you did not create.**
+Several agents share this box, and `nv.sh` resolves its target by globbing
+`$XDG_RUNTIME_DIR` for `nvim-*.sock` — if that variable is ever the real per-user runtime dir
+rather than this sandbox's own (`env.sh` not sourced, the recipe run from outside the sandbox), the
+glob matches every OTHER agent's live cockpit, and `send` can type into a stranger's editor.
+Verified 2026-08-19: a reviewer following this file's own recipe attached to a different agent's
+live nvim this way, opened a scratch buffer, and deleted it again — no damage, but it should have
+been impossible. `nv.sh` now refuses rather than guesses (checks `$XDG_RUNTIME_DIR` against the
+sandbox's own path before globbing, and refuses on more than one match instead of taking `head -1`);
+a hand-typed recipe copied out of this doc has no such guard, so resolve `$S` through `$QA/nv.sh`
+where possible rather than reimplementing the `find` by hand.
+
+### Pane attributes: `capture-pane -e`, not `-p`
+
+`-p` is what every other recipe in this method uses, and it is the wrong flag for a colour question:
+tmux's plain capture already stripped the SGR codes it read off the pane, by design — it is built
+for a plain-text record, not a rendering record. `-e` preserves them. `$QA/peek.sh` now takes a third
+argument for this (`peek.sh <lines> <chat|nvim> attrs`); the recipe it wraps:
+
+```bash
+tmux -L "$QA_SOCK" capture-pane -p -t "$PANE" > plain.txt      # tmux already stripped SGR
+tmux -L "$QA_SOCK" capture-pane -e -t "$PANE" > escaped.txt    # -e keeps it -- note: -p is STILL required for stdout
+grep -aPc '\x1b' plain.txt      # presence probe: count of lines carrying an ESC byte
+grep -aPc '\x1b' escaped.txt
+```
+
+**Trap verified 2026-08-19: `-e` alone writes to a tmux paste buffer, not stdout — `-p` is required
+alongside it, same as every other capture.** Omitting `-p` produced a silent zero-byte file that
+looked like "no attributes", not "wrong flag".
+
+Measured, on the setup above:
+
+```
+plain.txt:   50 lines, grep -aPc '\x1b' plain.txt   -> 0
+escaped.txt: 50 lines, grep -aPc '\x1b' escaped.txt -> 50
+```
+
+A sample line from each, `cat -v`'d for the escaped one so the codes print rather than act:
+
+```
+plain.txt:1:      1   # frozen_string_literal: true
+escaped.txt:1:    ^[[1m^[[38;2;219;206;146m^[[48;2;25;30;44m    1   ^[[0m^[[38;2;205;205;206m^[[48;2;41;50;73m# frozen_string_literal: true
+```
+
+The `\e[38;2;R;G;Bm` / `\e[48;2;R;G;Bm` pairs are 24-bit foreground/background SGR — exactly what
+`termguicolors` emits and exactly what `-p` throws away. This is the recipe for any check phrased
+"is this rendered in colour" — a torn-turn error highlight, a refusal rail's colour, a diff's
+red/green — none of which a `getbufline` or a plain `capture-pane -p` can answer.
+
+### Fold state: `foldlevel()`/`foldclosed()` over RPC, not `getbufline`
+
+A fold is a WINDOW-local rendering decision, not a buffer property `getbufline` exposes — the
+underlying lines are all still there whether the fold is open or shut. The two primitives, now also
+`$QA/nv.sh fold <lnum>` (reads against the CURRENT window, same as every other `nv.sh` gesture):
+
+```bash
+nvim --server "$S" --remote-expr "foldlevel(<lnum>)"      # fold nesting depth at that line; 0 = no fold
+nvim --server "$S" --remote-expr "foldclosed(<lnum>)"     # the CLOSED fold's start line, or -1 if open/none
+nvim --server "$S" --remote-expr "foldclosedend(<lnum>)"  # the closed fold's LAST line -- how much it hides
+```
+
+Both read against the CURRENT window, so switch tabs/windows first (`:tabnext N<CR>`, `:Nwincmd w<CR>`
+per the RPC recipe above) exactly as any other gesture in this method does — a fold state read from
+the wrong window answers a question about a buffer nobody is looking at.
+
+**Measured 2026-08-19** against a real nvim (same instance as above, second tab) over a 9-line, three-
+row fixture built to mimic a folded approval/inbox row — a one-line summary followed by two detail
+lines, three rows, `foldmethod=manual`, one `:N,Mfold` per row:
+
+```bash
+nvim --server "$S" --remote-send ':1,3fold<CR>'    # row 1: lines 1-3
+nvim --server "$S" --remote-send ':4,6fold<CR>'    # row 2: lines 4-6
+nvim --server "$S" --remote-send ':7,9fold<CR>'    # row 3: lines 7-9
+
+nvim --server "$S" --remote-expr 'foldlevel(1)'       # -> 1
+nvim --server "$S" --remote-expr 'foldclosed(1)'      # -> 1      (closed, folds start closed)
+nvim --server "$S" --remote-expr 'foldclosedend(1)'   # -> 3      (hides lines 1-3 down to a summary)
+
+nvim --server "$S" --remote-send ':1foldopen<CR>'
+nvim --server "$S" --remote-expr 'foldlevel(1)'       # -> 1      (still a fold at this line)
+nvim --server "$S" --remote-expr 'foldclosed(1)'      # -> -1     (now OPEN -- level alone can't tell you this)
+
+nvim --server "$S" --remote-expr 'foldclosed(4)'      # -> 4      (row 2 untouched: still closed on its own line)
+```
+
+That last line is the check integration check 7 actually needs: **each row's fold state is
+independent of its neighbours' — opening row 1 must not open or close row 2 or row 3.** `foldlevel`
+alone cannot distinguish open from closed (it stayed `1` across the open), which is why the
+recipe needs both calls, not one: `foldlevel` answers "is there a fold here at all", `foldclosed`
+answers "is it presently hiding its contents".
+
+This is the exact recipe `cockpit-surfaces.md`'s review-flow and approval sections already point at
+by hand (`nvim_get_mode`, `:messages`) for a related class of question, and it is what a round should
+run against `lain://approval` and `lain://inbox` once T9/T12 land: read the row's line number off the
+buffer's own record boundary (`RECORD_START`, the same test the `]]`/`[[` motions and the fold's own
+`foldexpr` already ride — see `runtime/05_records.lua` and `runtime/10_folds.lua`), then `foldlevel`
+and `foldclosed` that line before and after `<CR>`/`zo`/`zc`, both by eye (does the row visually
+expand to its full command?) and over RPC (does the primitive agree with what the eye saw?).
+
 ## Record before you interpret
 
 Per act, with literal spellings:

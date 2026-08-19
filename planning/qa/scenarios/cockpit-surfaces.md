@@ -438,3 +438,61 @@ What is worth checking:
   of this fix read `Agent#state` and left the machine parked at `:awaiting_model`, suppressing the
   reading for the rest of the session — silence that is just as dishonest.
 - `ctx N%` must agree with `.lain/state.json` `occupancy` and the journal's `compaction_decision`.
+
+## 8 — Fold state on the approval and inbox rows
+
+**This is the RPC half of integration check 7's real-terminal pass** ("park two approvals and
+confirm by eye that each row folds open to its full command and closed to its summary — and that
+`y` on a continuation line answers that item"). `lain://timeline`, `lain://inbox`, `lain://journal`
+and `lain://question` are already fold-eligible (`RECORD_START` in `runtime/05_records.lua` names
+them, and `runtime/10_folds.lua` installs an expr fold per record — see the comment there for why
+folds are wired before buffers, not after). `lain://approval` is not, as of this writing — driving
+this section against it is exactly what T9/T12 are meant to add, and this section is the recipe a
+round should run once they land, not a claim that they already have.
+
+**A text read cannot answer this.** `getbufline` and `getbufinfo(...).linecount` return the same
+lines whether a row's fold is open or shut — folding is a window-rendering decision, not a change to
+the buffer's content — so a driver relying on the buffer probes elsewhere in this file (§1, §2) would
+read a folded and an unfolded approval list as identical. `method.md`'s "What a text read cannot
+verify" section has the two primitives and a worked measurement; use them here:
+
+```bash
+nvim --server "$S" --remote-send ':tabnext N<CR>'    # wherever lain://approval (or lain://inbox) lives
+nvim --server "$S" --remote-expr 'bufname()'          # VERIFY before every gesture, as always
+nvim --server "$S" --remote-expr "foldlevel(<row's first line>)"
+nvim --server "$S" --remote-expr "foldclosed(<row's first line>)"     # the row's own line if closed, else -1
+nvim --server "$S" --remote-expr "foldclosedend(<row's first line>)"  # how far the summary is hiding
+```
+
+`$QA/nv.sh fold <lnum>` wraps all three against the current window.
+
+Drive it against **two parked approvals**, matching the integration check's own wording:
+
+1. Force two gated calls so two rows exist in `lain://approval` (§5's three-call recipe works;
+   answer one to leave two, or just read both before answering either).
+2. Before touching anything: both rows' first lines should read `foldclosed(<line>) == <line>`
+   (closed, showing the one-line summary — `<requester> asks: approve <tool>(<input>)? [y/N]` per
+   §5) and `foldclosedend(<line>)` should be past it (the full command and any other detail lines
+   are hidden beneath).
+3. Open one row (`<CR>`, or whatever gesture T9 wires): its `foldclosed` must flip to `-1` and the
+   full command must now be on screen — check both eye (the pane) and RPC (`getbufline` between
+   `foldclosed()` and `foldclosedend()` before the open, `getline` after).
+4. The **other** row's fold must be untouched — `foldclosed` still equals its own first line. Opening
+   one row opening or closing its neighbour is the regression this check exists to catch (folds are
+   per-window state, not a single shared cursor, so nothing in the mechanism should couple them —
+   but a render that re-applies `default_folds` on every poll, rather than only at install per
+   `runtime/10_folds.lua`'s comment, would do exactly this).
+5. **The continuation-line case, named directly in the integration check:** with a row open, move
+   the cursor onto one of its *detail* lines (not the summary line) and answer it (`y`/`:LainApprove`
+   per §5, whatever T9 lands). It must resolve the same call the summary line names, not refuse for
+   "nothing on that row" and not silently answer the neighbouring row. `submit_approval`'s existing
+   guard (`vim.api.nvim_buf_get_name(buf)`) is a buffer check, not a row check — verify a continuation
+   line resolves through the SAME line-to-call mapping `RECORD_START`-based rows use elsewhere
+   (§4's `x` refusal — "nothing on that row" — is the sibling failure mode to watch for if a
+   continuation line is not recognised as belonging to its row's call).
+
+Record `nvim --version` beside the result — `runtime/10_folds.lua`'s `foldminlines = 0` write is what
+makes a single-line row (no continuation lines at all, e.g. an inbox item before T12 adds detail
+lines) fold at all; a single-line row on a build that skipped that write folds open regardless of
+`foldlevel`, which would read as "row won't close" and is a different bug than a row that closes but
+won't reopen.
