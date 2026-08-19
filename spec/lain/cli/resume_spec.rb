@@ -42,6 +42,19 @@ RSpec.describe Lain::CLI::Resume do
 
   def turn_records(timeline) = timeline.to_a.map { |turn| Lain::SessionRecord.turn(turn) }
 
+  # A journal is bytes, and bytes rot. A null INSIDE causal_parents is
+  # malformed rather than dangling, and it used to slip through MessageReplay's
+  # `compact`ing reachability check to be refused by the Store as a bare
+  # Store::MissingObject -- from the sweep, where no translation reached it.
+  # MessageReplay shape-checks the field now, so it refuses one layer down; the
+  # two examples below pin what a USER gets, which is the same named refusal
+  # from either door regardless of which layer catches it.
+  def null_parent_message
+    payload = Lain::Event::Payload.new(kind: :message, body: { "text" => "which dose?" })
+    event = Lain::Event.new(kind: :message, carried_payload: payload, from: "agent", to: "human")
+    Lain::Telemetry::Message.from_event(event).to_journal.merge("causal_parents" => [nil])
+  end
+
   def closed_record(head) = Lain::Telemetry::SessionClosed.new(head:, reason: :exit).to_journal
 
   def write_session(name, records)
@@ -712,13 +725,13 @@ RSpec.describe Lain::CLI::Resume do
         .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
     end
 
-    # T3: defence in depth alongside T2's turn-record translation. A `message`
-    # record's causal edge is deliberately left untranslated by MessageReplay
-    # (its own class comment: that is the Store's own job, not a Corrupt this
-    # class manufactures) -- so a session whose message record cites a digest
-    # that was never journaled (a crash mid-write, say) reaches the fold as a
-    # bare Store::MissingObject. It must still refuse namedly rather than let
-    # the raw store message -- with no file attached -- escape to the exe.
+    # Defence in depth alongside the turn-record translation. This case USED to
+    # reach the fold as a bare Store::MissingObject, and no longer does: the
+    # Loader's fixpoint forces its remainder through MessageReplay#forced_put,
+    # which translates the Store's refusal into the same Corrupt a bad turn
+    # raises. What is pinned here is unchanged and is the part that matters to a
+    # user -- whichever currency the fold picks, the refusal arrives NAMED, with
+    # the file attached, never as a raw store message with no provenance.
     it "refuses a fork over a message record citing a digest never journaled" do
       payload = Lain::Event::Payload.new(kind: :message, body: { "text" => "81 mg" })
       dangling_digest = "blake3:#{"a" * 64}"
@@ -731,6 +744,17 @@ RSpec.describe Lain::CLI::Resume do
         .to raise_error(described_class::Refusal) do |error|
           expect(error.message).to include("20260101T000000-1.ndjson", dangling_digest)
         end
+    end
+
+    # End to end over a REAL damaged journal rather than a stub. This shape is
+    # refused by MessageReplay's own shape check now, so what it pins here is
+    # the door's behaviour, not the rescue arm's: whichever layer catches it,
+    # `--fork` names the file. It goes red if the shape check regresses.
+    it "refuses a fork over a message record whose causal_parents holds a null" do
+      write_closed("20260101T000000-1.ndjson", three, extra: [null_parent_message])
+
+      expect { resume.fork(selector: "20260101@#{prefix_for(ancestor)}") }
+        .to raise_error(described_class::Refusal, /20260101T000000-1\.ndjson/)
     end
   end
 
@@ -812,6 +836,21 @@ RSpec.describe Lain::CLI::Resume do
       expect { resume.call }.to raise_error(described_class::Refusal) do |error|
         expect(error).to be_a(Lain::Error)
         expect(error.message).to include("20260101T000000-1.ndjson", answered.digest)
+      end
+    end
+
+    # The asymmetry this card deleted: #fork rescued Store::MissingObject beside
+    # Corrupt and #rebuild did not, so when this shape still escaped the rebuild
+    # the SAME damaged file refused namedly from `--fork` and arrived as a raw
+    # store message -- no file, no session, a backtrace -- from `--resume`.
+    # Which door a user came through decided whether they were told anything
+    # useful. Both doors are pinned now, so neither can drift alone again.
+    it "refuses a session whose message record holds a null causal parent" do
+      write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), extra: [null_parent_message])
+
+      expect { resume.call }.to raise_error(described_class::Refusal) do |error|
+        expect(error).to be_a(Lain::Error)
+        expect(error.message).to include("20260101T000000-1.ndjson")
       end
     end
 

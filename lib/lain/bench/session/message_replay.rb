@@ -137,17 +137,87 @@ module Lain
                          "replay never landed: #{e.message}"
         end
 
+        # The `compact` is for an ABSENT `render_parent` -- a `message` record
+        # legitimately has none -- and it must be reached only once the edge set
+        # is known to hold digest strings, or it silently drops a malformed
+        # entry as well and calls the record reachable. {#cited_parents?} is
+        # what keeps that from happening.
         def resolvable?(record)
-          [record["render_parent"], *record.fetch("causal_parents")].compact.all? { |digest| @store.key?(digest) }
+          cited_parents?(record) &&
+            [record["render_parent"], *cited(record)].compact.all? { |digest| @store.key?(digest) }
+        end
+
+        # DEFAULTED, never fetched, exactly as {ChainFold#cited_parents} has
+        # defaulted it since it was written: no key IS the empty set, the same
+        # tolerance `meta` already has. Fetching it instead made the gate below
+        # raise {KeyError} before it could answer -- and KeyError is no
+        # {Lain::Error}, so `exe/lain`'s rescue misses it and an operator gets a
+        # raw backtrace. Absence is not silently lossy: a record that really
+        # carried an edge fails its content address without one.
+        def cited(record) = record.fetch("causal_parents", [])
+
+        # A journal is bytes, and bytes can be wrong. `payload`, `from`/`to` and
+        # every other field announce their corruption through the digest they
+        # then fail to re-derive -- but `causal_parents` reaches neither that
+        # check nor the Store's, because {Event#normalize_causal} maps and SORTS
+        # it before any digest exists. Three ways out, none of them {Corrupt}: a
+        # String dies in `map`, a null BESIDE a digest dies in `sort`, and a
+        # lone null slipped through the `compact` above to be refused by the
+        # Store as a {Store::MissingObject} raised from the SWEEP, where
+        # {#forced_put}'s translation cannot reach it. {ChainFold#cited_parents}
+        # has checked the identical field for turn records since it was written;
+        # this half had not, and that asymmetry -- not any one of the three
+        # escapes -- was the defect.
+        #
+        # FIELD-scoped, like its {ChainFold} counterpart and unlike a name such
+        # as "well formed": `render_parent`, `kind`, `digest` and `payload` are
+        # equally the record's form and none of them are checked here.
+        #
+        # Asked as a QUESTION here and refused from {#cited_parents} on the
+        # landing path, deliberately, and the asymmetry with {ChainFold} --
+        # which raises straight out of its own `resolvable?` -- is principled
+        # rather than incidental. ChainFold FORCES its remainder inside
+        # {ChainFold#timeline}, so it has no tolerant question to protect; this
+        # class's sweep/force split is consulted by one that must stay tolerant.
+        # WITHIN ONE FILE, {Loader#timeline} answers over damage in a flat
+        # record nothing cites (its own note), and {Loader#converged} sweeps
+        # every round -- so a gate that RAISED here would take that away. Scoped
+        # to one file on purpose: ACROSS a resume chain the prior file's replay
+        # is forced by {Loader#fixpoint}'s `prior:`, so {Loader#timeline} and
+        # {Loader#on_chain?} do refuse over a stray damaged prior-file record,
+        # which `loader_fixpoint_spec.rb` pins. A malformed record simply cannot
+        # land; {#force} is where every record still arrives, and where it is
+        # named.
+        def cited_parents?(record)
+          parents = cited(record)
+          parents.is_a?(Array) && parents.all?(String)
         end
 
         def verified(record, index)
-          event = rebuilt(record)
+          event = rebuilt(record, cited_parents(record, index))
           recorded = record.fetch("digest")
           return event if event.digest == recorded
 
           raise Corrupt, "message record #{index} (#{labelled(record)}) recorded as #{recorded} " \
                          "re-commits to #{event.digest}; its content no longer matches its content address"
+        end
+
+        # The checked edge set, handed to {#rebuilt} so the value that lands IS
+        # the value that passed the gate -- a later caller cannot re-read the
+        # field and route around it. Same index space and label as every other
+        # refusal here ({#labelled}): two record types share it, and the
+        # journal's own `type` is the honest name.
+        #
+        # Runs a second time per LANDED record ({#resolvable?} asked already),
+        # which costs an Array#all? over a handful of digests and is worth
+        # naming rather than optimising: on the sweep path this raise is dead,
+        # and it is live only from {#forced_put}, where nothing pre-checked.
+        def cited_parents(record, index)
+          return cited(record) if cited_parents?(record)
+
+          raise Corrupt, "message record #{index} (#{labelled(record)}) records causal_parents as " \
+                         "#{cited(record).inspect}; the field is a set of digest strings, " \
+                         "and only an array of them lands"
         end
 
         # The JOURNAL's record type, never the event's `kind`. Two record types
@@ -159,13 +229,15 @@ module Lain
         # deliberately not {ChainFold}'s "turn record".
         def labelled(record) = record["type"] || record.fetch("kind")
 
-        def rebuilt(record)
+        # Takes the checked edge set rather than re-reading the field, so the
+        # gate in {#cited_parents} cannot be routed around from here.
+        def rebuilt(record, cited)
           payload = Event::Payload.new(kind: record.fetch("kind"), body: record.fetch("payload"))
           @store.put(payload)
           event = Event.new(kind: record.fetch("kind"), carried_payload: payload,
                             from: record.fetch("from"), to: record.fetch("to"),
                             render_parent: record["render_parent"],
-                            causal_parents: record.fetch("causal_parents"), correlation: record.fetch("correlation"))
+                            causal_parents: cited, correlation: record.fetch("correlation"))
           @store.put(event)
           event
         end

@@ -326,6 +326,100 @@ RSpec.describe Lain::Supervisor::Restart do
     expect(restarted["snapshot"]).to be_nil
   end
 
+  # ---- A damaged record refuses by NAME, and the supervisor survives it -------
+  #
+  # THE M2 code path had no rescue at all, so a journal that lost bytes took a
+  # supervised restart down with whatever the Loader happened to raise, carrying
+  # no role, no record and no supervision context -- and for one real damage
+  # shape that was a bare Store::MissingObject, a store's private complaint. The
+  # other two doors onto the same rebuild (CLI::Resume, Bench::CLI) had long
+  # since learned to attribute it; this one had not.
+  #
+  # It stays a RAISE. Nothing here decides retry-versus-abandon -- Restore::Dirty
+  # above already establishes that a refused restart raises, registers nothing,
+  # and leaves the supervisor able to take the next one. Swallowing this into a
+  # Result would be a supervision policy change, and is deliberately not made.
+  describe "a session record too damaged to replay" do
+    # Rewrites the causal edge of the FIRST record the predicate picks and
+    # leaves every other line byte-identical, so the refusal has exactly one
+    # cause to name.
+    def edge_cut(pick, parents)
+      cut = false
+      record_io.string.each_line.map do |line|
+        record = JSON.parse(line)
+        hit = !cut && pick.call(record)
+        cut ||= hit
+        hit ? "#{JSON.generate(record.merge("causal_parents" => parents))}\n" : line
+      end
+    end
+
+    # Dangling: the assistant turn cites a digest no record in the file carries
+    # (a torn write, the failure the whole sidecar exists for), so the fold's
+    # own translation reaches it and it is already Corrupt.
+    def dangling_parent_record
+      edge_cut(->(record) { record["type"] == "turn" && record["role"] == "assistant" },
+               ["blake3:#{"a" * 64}"])
+    end
+
+    # Malformed rather than dangling: a null inside a message record's
+    # causal_parents used to survive MessageReplay's compacting pre-check and
+    # reach this path as a bare Store::MissingObject -- the shape that made a
+    # rescue-less restart die with a store's private complaint on it. Refused a
+    # layer down now, so this pins the door rather than the rescue arm.
+    def null_parent_record
+      edge_cut(->(record) { record["type"] == "message" }, [nil])
+    end
+
+    it "refuses a dangling causal parent as a Corrupt naming the role being restarted" do
+      provider = Lain::Provider::Mock.new(responses: life_responses)
+
+      Sync do |task|
+        record_killed_actor(task, provider:)
+        supervisor = Lain::Supervisor.new.run(task)
+
+        expect { restart_over(dangling_parent_record, supervisor:) }
+          .to raise_error(Lain::Bench::Session::Corrupt, /researcher/)
+
+        expect(supervisor.to_a).to be_empty
+        supervisor.stop
+      end
+    end
+
+    it "refuses a malformed causal parent in the SAME currency, never a raw store complaint" do
+      provider = Lain::Provider::Mock.new(responses: life_responses)
+
+      Sync do |task|
+        record_killed_actor(task, provider:)
+        supervisor = Lain::Supervisor.new.run(task)
+
+        expect { restart_over(null_parent_record, supervisor:) }
+          .to raise_error(Lain::Bench::Session::Corrupt, /researcher/)
+
+        supervisor.stop
+      end
+    end
+
+    it "leaves the supervisor running: it adopts the NEXT restart of a sound record" do
+      provider = Lain::Provider::Mock.new(responses: life_responses)
+      killed_head = nil
+
+      Sync do |task|
+        actor = record_killed_actor(task, provider:)
+        killed_head = actor.timeline.head_digest
+        supervisor = Lain::Supervisor.new.run(task)
+
+        expect { restart_over(null_parent_record, supervisor:) }.to raise_error(Lain::Bench::Session::Corrupt)
+        expect(supervisor.to_a).to be_empty
+        expect(restart_journal.drain).to be_empty # nothing recorded for a restart that never happened
+
+        result = restart_over(record_io.string.each_line, supervisor:)
+        expect(result.actor.timeline.head_digest).to eq(killed_head)
+        expect(supervisor.map(&:role)).to eq(["researcher"])
+        supervisor.stop
+      end
+    end
+  end
+
   it "refuses a revival that does not stand at the replayed head, registering nothing" do
     provider = Lain::Provider::Mock.new(responses: life_responses)
 

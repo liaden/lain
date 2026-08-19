@@ -135,6 +135,25 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
+    # The other half of that sentence. A null inside a message record's
+    # causal_parents is MALFORMED rather than dangling, and it used to survive
+    # MessageReplay's compacting pre-check and reach the experimenter as a bare
+    # Store::MissingObject with no path attached at all. It is refused a layer
+    # down now; what this pins is the door -- same damage, same file, same
+    # named answer, whichever layer catches it.
+    it "names the file when a message record's causal_parents holds a null" do
+      Dir.mktmpdir do |tmp|
+        FileUtils.cp(File.join(fixture_dir, "one.ndjson"), tmp)
+        payload = Lain::Event::Payload.new(kind: :message, body: { "text" => "which dose?" })
+        event = Lain::Event.new(kind: :message, carried_payload: payload, from: "agent", to: "human")
+        malformed = Lain::Telemetry::Message.from_event(event).to_journal.merge("causal_parents" => [nil])
+        File.write(File.join(tmp, "two.ndjson"),
+                   File.read(File.join(fixture_dir, "two.ndjson")) + "#{JSON.generate(malformed)}\n")
+        expect { cli.variance_report([tmp]) }
+          .to raise_error(Lain::Bench::Session::Corrupt, /two\.ndjson/)
+      end
+    end
+
     it "refuses a missing session file with a Refusal, not a raw ENOENT" do
       expect do
         cli.variance_report([File.join(fixture_dir, "absent.ndjson"), File.join(fixture_dir, "one.ndjson")])

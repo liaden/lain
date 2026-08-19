@@ -317,9 +317,16 @@ module Lain
       # Corrupt's own message names a digest, but only this layer still holds
       # the path -- and an experimenter with a directory of n sessions needs
       # to know WHICH file to regenerate.
+      #
+      # The MissingObject arm is DEFENSIVE, and kept: the Loader translates
+      # every store refusal it can currently be made to raise, but that property
+      # lives in two classes this one cannot see, and it was believed and false
+      # once already. Landed as Corrupt rather than carried as itself, so this
+      # command still speaks ONE refusal type whichever arm fires ({CLI::Resume}
+      # and {Supervisor::Restart} take the same pair, for the same reason).
       def load_session(path)
         replayable(Session.load(path), path)
-      rescue Session::Corrupt => e
+      rescue Session::Corrupt, Store::MissingObject => e
         raise Session::Corrupt, "#{path}: #{e.message}"
       end
 

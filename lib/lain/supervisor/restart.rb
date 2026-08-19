@@ -104,7 +104,7 @@ module Lain
         raise ArgumentError, "a revival block is required: it rebuilds the Agent over the replayed timeline" if
           revive.nil?
 
-        recording = replay
+        recording = replay(role)
         notices = open_notices(recording)
         restore_blobs(recording.timeline.store)
         snapshot = latest_snapshot(recording)
@@ -125,7 +125,29 @@ module Lain
       # THE M2 code path: {Bench::Session::Loader}'s verified replay over the
       # already-materialized records (its own entries duck) -- re-commit plus
       # digest check, no provider anywhere.
-      def replay = Bench::Session::Loader.new(@records).recording
+      #
+      # A journal that lost bytes is exactly the failure this class exists to
+      # survive, so the refusal is ATTRIBUTED here rather than left as whatever
+      # the fold happened to raise: a supervisor bringing several roles back
+      # otherwise gets n identical complaints with nothing to tell them apart,
+      # and this path had no rescue at all -- one damage shape reached it as the
+      # Store's own private message, with no role, no record and no supervision
+      # context on it. The MissingObject arm is defensive now that both folds
+      # shape-check the causal edge, and kept for the reason {CLI::Resume#fork}
+      # records. Both land as {Bench::Session::Corrupt}, which {#call} already
+      # documents as its raise and the other two doors already take.
+      #
+      # It stays a RAISE, deliberately. Whether a failed restart is retried or
+      # abandoned is the SUPERVISOR's policy and no caller in this repo decides
+      # it here: a refused restart registers nothing (the {Workspace::Restore
+      # ::Dirty} path pins that), leaves the reactor running, and lets the next
+      # attempt proceed. Swallowing this into a Result would change that
+      # answer, and changing it is above this seam.
+      def replay(role)
+        Bench::Session::Loader.new(@records).recording
+      rescue Bench::Session::Corrupt, Store::MissingObject => e
+        raise Bench::Session::Corrupt, "cannot restart #{role.inspect} from its session record: #{e.message}"
+      end
 
       # A killed actor's record is OPEN by construction (no session_closed, no
       # farewell) -- said out loud, {CLI::Resume#open_notice}'s idiom.

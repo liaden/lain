@@ -179,6 +179,85 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
 
       expect { replay(records).messages }.to raise_error(Lain::Bench::Session::Corrupt, /content address/)
     end
+
+    # T2 scope expansion. `causal_parents` reaches neither of the two checks
+    # that catch every other kind of rot: it is mapped and SORTED by
+    # Event#normalize_causal before any digest exists, so a malformed entry
+    # never reaches the content-address comparison, and the Store's own edge
+    # check is not what the sweep consults. ChainFold has shape-checked the
+    # identical field for turn records since it was written and this half had
+    # not, which is the asymmetry these three pin -- not the individual escapes.
+    describe "a causal_parents that is not a set of digest strings" do
+      # The escape that mattered: #resolvable?'s `compact` is there to drop an
+      # ABSENT render_parent, and it dropped this null too -- so the record was
+      # called reachable, landed in the SWEEP, and the Store refused a put
+      # nothing had pre-checked. #forced_put's translation is on the force path
+      # and never sees it, so Store::MissingObject escaped the whole rebuild and
+      # reached CLI::Resume, Bench::CLI and Supervisor::Restart raw.
+      it "refuses a lone null, in Corrupt rather than the Store's own MissingObject" do
+        records = linked_messages(3)
+        records.last["causal_parents"] = [nil]
+
+        expect { replay(records).messages }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error).not_to be_a(Lain::Store::MissingObject)
+            expect(error.message).to include("message record 2", "causal_parents")
+          }
+      end
+
+      # The second escape, and it does not even reach the Store: a null BESIDE
+      # a real digest dies in normalize_causal's `sort` as a bare ArgumentError
+      # three frames down. Bench::CLI's taxonomy says an ArgumentError is a
+      # programmer bug that keeps its backtrace, so this one could not be
+      # rescued at a door -- it had to stop being raised.
+      it "refuses a null beside a real digest, not as a bare ArgumentError from the sort" do
+        records = linked_messages(3)
+        records.last["causal_parents"] = [records[1].fetch("digest"), nil]
+
+        expect { replay(records).messages }
+          .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+            expect(error.message).to include("message record 2", "causal_parents")
+          }
+      end
+
+      # Panel fix round (Evans). The gate fetched the field to inspect it and
+      # so raised KeyError before it could answer -- and KeyError is not a
+      # Lain::Error, so exe/lain's rescue misses it and an operator gets a raw
+      # backtrace from all three doors. ChainFold#cited_parents has defaulted
+      # this fetch since it was written ("no key IS the empty set", the same
+      # tolerance `meta` has), and not matching it was the very asymmetry this
+      # round exists to delete, one shape further out. No writer emits the
+      # shape; a hand-edited or truncated journal can.
+      it "treats an absent causal_parents as the empty set, like a turn record's" do
+        records = linked_messages(1)
+        records.last.delete("causal_parents")
+
+        expect(replay(records).messages.map(&:digest)).to eq(records.map { |record| record["digest"] })
+      end
+
+      # The same absence one record LATER, where the field was carrying a real
+      # edge: dropping it is not tolerable there, and the content address is
+      # what says so.
+      it "still refuses when that absence loses an edge the digest was taken over" do
+        records = linked_messages(3)
+        records.last.delete("causal_parents")
+
+        expect { replay(records).messages }
+          .to raise_error(Lain::Bench::Session::Corrupt, /content address/)
+      end
+
+      # A non-Array already refused, but only by ACCIDENT -- it survived to the
+      # digest comparison and was reported as a content-address mismatch, which
+      # sends a reader looking at the payload. The field that is actually wrong
+      # is now the field the refusal names.
+      it "names the field, rather than reporting a wrong-looking content address" do
+        records = linked_messages(3)
+        records.last["causal_parents"] = "blake3:#{"ab" * 32}"
+
+        expect { replay(records).messages }
+          .to raise_error(Lain::Bench::Session::Corrupt, /causal_parents/)
+      end
+    end
   end
 
   # The property that was traded away, pinned as a DECISION rather than left as

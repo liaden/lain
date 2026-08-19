@@ -104,12 +104,16 @@ module Lain
         forked = recording.timeline.checkout(point.digest)
         refuse_mid_tool!(point.path, forked)
         fork_result(point, recording, forked, model, provider)
-      # A message record's causal edge is deliberately the Store's own job to
-      # enforce, not a Corrupt {MessageReplay} manufactures (its class
-      # comment) -- so a session truncated mid-write can still cite a digest
-      # that never landed, and it reaches here as a bare MissingObject
-      # alongside a bad turn's Corrupt. Both name through the same formatter
-      # rather than either escaping raw with no file attached.
+      # Corrupt is the fold's one currency: both halves of the Loader's fixpoint
+      # translate the Store's refusal, and both shape-check the causal edge
+      # before putting it. So the second arm is DEFENSIVE and is kept
+      # deliberately -- it is not currently reachable from any journal we can
+      # construct, and the last time that was believed it was false. The
+      # property lives in two classes a door cannot see; one uncovered escape
+      # there is a raw backtrace out of the exe, against one constant here.
+      # Both name through the same formatter rather than either escaping raw
+      # with no file attached, and {#rebuild} carries the identical pair -- a
+      # damaged journal must not depend on which door a user came through.
       rescue Bench::Session::Corrupt, Store::MissingObject => e
         raise fork_refusal(point, e.message)
       rescue Errno::ENOENT
@@ -139,9 +143,13 @@ module Lain
         recording = load_recording(path) if outcome.recovered?
         refuse_mid_tool!(path, recording.timeline)
         resumed_result(path, recording, outcome, model, provider)
-      rescue Bench::Session::Corrupt => e
+      rescue Bench::Session::Corrupt, Store::MissingObject => e
         # Corrupt's own message names digests and reasons; only this layer
-        # still holds the path (Bench::CLI#load_session's precedent).
+        # still holds the path (Bench::CLI#load_session's precedent). The
+        # MissingObject arm is {#fork}'s, kept for the reason recorded there.
+        # It was missing here once, and the cost was not theoretical: the SAME
+        # damaged file refused namedly from `--fork` and escaped as a raw store
+        # complaint, with no file on it, from `--resume`.
         raise Refusal, "cannot resume #{File.basename(path)}: #{e.message}"
       rescue Provider::ResponseWal::CorruptFrame => e
         # The response WAL should never raise here -- salvage reads it TOLERANTLY

@@ -303,5 +303,49 @@ RSpec.describe Lain::Bench::Session::Loader do
 
       expect(loaded.timeline.head_digest).to eq(citing.head_digest)
     end
+
+    # T2 scope expansion, and the reason this case is spec'd at the Loader
+    # rather than only on MessageReplay: eager prior-file replay is exactly the
+    # path that carried the escape ACROSS a file boundary. A prior file damaged
+    # this way refused as a bare Store::MissingObject with nothing on it naming
+    # the file, the record, or even which of the chain's files was at fault.
+    it "refuses a MALFORMED causal edge in the prior file in the same currency" do
+      payload = Lain::Event::Payload.new(kind: :message, body: { "x" => 1 })
+      stranded = Lain::Event.new(kind: :message, carried_payload: payload, from: "a", to: "b")
+      malformed = message_record(stranded).merge("causal_parents" => [nil])
+      own = prior_head.commit(role: :assistant, content: text("later"))
+
+      expect { chained(prior_extra: [malformed], own_turn: own).timeline }
+        .to raise_error(Lain::Bench::Session::Corrupt, /causal_parents/)
+    end
+  end
+
+  # The tolerance #timeline documents ("a journal whose only damage is a flat
+  # record still answers here") has to survive the shape check, and it is not
+  # free: a gate that RAISED from the sweep would have taken it away, since
+  # #converged sweeps every round. So a malformed record answers the sweep's
+  # question with "cannot land" and is refused from the LANDING path instead,
+  # where every record still arrives via #force. Same currency, deferred to the
+  # question that actually depends on it.
+  #
+  # WITHIN ONE FILE, which is the whole scope of the claim. Across a resume
+  # chain it does not hold and is not meant to: #fixpoint passes
+  # `prior: resume_chain.prior_messages`, which FORCES the prior file's replay,
+  # so #timeline and #on_chain? both refuse over a stray damaged record in the
+  # predecessor -- the describe above pins exactly that, deliberately.
+  describe "a malformed flat record in THIS file, against the two questions" do
+    let(:malformed_order) do
+      broken = message_record(question).merge("causal_parents" => [nil])
+      roundtrip([header, turn_record(asked), broken])
+    end
+
+    it "still answers #timeline, because the turn chain it asks about is sound" do
+      expect(described_class.new(malformed_order).timeline.head_digest).to eq(asked.head_digest)
+    end
+
+    it "refuses #recording, which asks both halves" do
+      expect { described_class.new(malformed_order).recording }
+        .to raise_error(Lain::Bench::Session::Corrupt, /causal_parents/)
+    end
   end
 end
