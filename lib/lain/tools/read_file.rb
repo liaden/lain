@@ -87,7 +87,10 @@ module Lain
       FULL_COVER = "read it with read_file's offset and limit (a window covering the whole file " \
                    "counts as a complete read, so edit_file still accepts it)"
 
-      # What is left to say when even a full-cover window is over the ceiling.
+      # What is left to say when even a full-cover window is over the ceiling
+      # -- and the file still HAS lines a window can land between. A file that
+      # is one enormous line gets {LONG_LINE_NARROWER} instead, because
+      # `offset` and `limit` count lines and so cannot narrow it at all.
       PART_ONLY = "read part of it with read_file's offset and limit"
 
       # A window that hands back too much has one obvious narrower form, and
@@ -108,6 +111,16 @@ module Lain
         "take a byte range with bash (`head -c 100000 PATH`, or tail -c, or cut) -- one line alone is over the ceiling",
         *STRUCTURAL
       ].freeze
+
+      # 16 KiB, the block {ReadFile.separator_within?} reads in. Two numbers
+      # meet here and neither is the ceiling: it is what a single refusal may
+      # ALLOCATE, and it is how much of an ordinary file has to be read before
+      # a newline turns up. Sixteen kibibytes clears the second by a wide
+      # margin -- a file with lines in it answers on block one -- while leaving
+      # the first at four ten-thousandths of what a slurp at {WINDOW_BOUND}
+      # would cost. The worst case, a genuinely separatorless megabyte, is 64
+      # of these read one after another and never held together.
+      PROBE_BLOCK = 16 * 1024
 
       # The largest line number an input may name. Not a bound on how much may
       # be READ -- {WHOLE_BOUND} and {WINDOW_BOUND} own that -- but on what a
@@ -171,9 +184,16 @@ module Lain
       class Whole
         # `File.size` FIRST, and that ordering is the whole memory claim: the
         # decision to refuse costs a stat, so a file over the ceiling is never
-        # opened, let alone materialised. A post-hoc `File.read(path).bytesize`
-        # would produce the same message having already paid the cost the
-        # message exists to avoid.
+        # materialised. A post-hoc `File.read(path).bytesize` would produce the
+        # same message having already paid the cost the message exists to
+        # avoid.
+        #
+        # What the stat buys is the DECISION; what to SAY about the file is a
+        # separate question, and for a file over {WINDOW_BOUND} it is answered
+        # afterwards by a bounded, block-at-a-time look for a newline in
+        # {ReadFile.narrower_for}. The claim keeps the scope that makes it
+        # true: nothing over the ceiling is ever opened to DECIDE, and no file
+        # over the ceiling is ever materialised.
         #
         # But a stat is a DECISION, not a guarantee, and the second read is not
         # belt-and-braces. `File.size` answers a moment before the open, and an
@@ -510,11 +530,94 @@ module Lain
       # @param size [Integer] `File.size`, measured before any open
       # @return [Refused]
       def self.too_large(path, size)
-        Refused.new(result: WHOLE_BOUND.refusal(subject: path, size:, narrower: narrower_for(size)))
+        Refused.new(result: WHOLE_BOUND.refusal(subject: path, size:, narrower: narrower_for(path, size)))
       end
 
+      # Three answers, and the third is the one that costs anything. A file a
+      # WINDOW could still admit is told to cover itself with one; a larger
+      # file is normally told to read part of itself -- but `offset` and
+      # `limit` count LINES, so that advice is unfollowable for a file that IS
+      # one line, and the model spends a round trip discovering it. QA hit
+      # exactly that on a 1,200,003-byte one-line JSON.
+      #
+      # The probe is here rather than in {Whole#read} on purpose: it is about
+      # what to SAY, not about what to decide, so the decision above it still
+      # costs a stat and the {FULL_COVER} branch -- which has no bug -- still
+      # costs nothing at all.
+      #
+      # @param path [String] the resolved path, opened only on the branch where
+      #   the advice depends on the file's shape rather than on its size
+      # @param size [Integer] `File.size`, measured before any open
       # @return [Array<String>] the actions that would work on a file this big
-      def self.narrower_for(size) = [WINDOW_BOUND.admits?(size) ? FULL_COVER : PART_ONLY, *STRUCTURAL]
+      def self.narrower_for(path, size)
+        return [FULL_COVER, *STRUCTURAL] if WINDOW_BOUND.admits?(size)
+        return LONG_LINE_NARROWER if one_long_line?(path)
+
+        [PART_ONLY, *STRUCTURAL]
+      end
+
+      # Whether {Window} would refuse this file's first line however it is
+      # windowed. Exact rather than heuristic, and the boundary is one byte off
+      # its obvious reading -- which is the whole subtlety.
+      #
+      # {Window#read} chunks at `WINDOW_BOUND.limit + 1` and {LongLine} refuses
+      # any chunk strictly OVER the ceiling, so a first line of exactly
+      # `limit + 1` bytes INCLUDING its newline arrives whole and IS refused.
+      # That line's newline sits at byte index `limit`, so the question that
+      # agrees with {LongLine} on every file is "is there a newline inside the
+      # first `limit` bytes" -- one byte short of the chunk size. Asked over
+      # `limit + 1` instead, that file is offered a window that then refuses
+      # it, which is the round trip this exists to remove.
+      #
+      # @param path [String] a file already known to be over {WINDOW_BOUND}
+      # @return [Boolean]
+      def self.one_long_line?(path)
+        File.open(path, "rb") { |file| !separator_within?(file, WINDOW_BOUND.limit) }
+      end
+
+      # Blocks, and never a slurp. {Whole#capped}'s single `File.read(path, N)`
+      # is the right shape for a read whose bytes are the answer; here the
+      # answer is one Boolean, so at this ceiling that shape would allocate a
+      # megabyte per refusal on a tier-1 hot path -- the cost {Whole#read}'s
+      # stat-first ordering exists to avoid, reintroduced one line below it.
+      # The budget is spent one {PROBE_BLOCK} at a time and the walk stops at
+      # the first separator, so the ordinary file costs one block and the worst
+      # case has read a megabyte while holding 16 KiB.
+      #
+      # Binary, so a block is bytes and `\n` is a byte: there is nothing to
+      # decode for this question, and {Whole#capped}'s `force_encoding` answers
+      # one this does not ask. `read` answers nil at EOF, which ends the walk
+      # -- a file that shrank out from under the stat has no separator we can
+      # claim to have seen.
+      #
+      # The budget is counted in BYTES rather than in blocks so that it is
+      # exactly `budget` whether or not the ceiling divides by the block size.
+      # A short count would refuse a window that works; a long one would offer
+      # a window that does not.
+      #
+      # ONE buffer, reused: `IO#read`'s second argument fills a String the
+      # caller owns instead of minting one, which takes the worst case from 64
+      # 16 KiB Strings of garbage down to a single allocation -- and the answer
+      # here is a Boolean, so not one of those bytes outlives the block it was
+      # read into. That is safe only because the chain is LAZY end to end: each
+      # block is tested and discarded before the next `read` overwrites it. An
+      # eager step anywhere in it (a `to_a`, a `select`, a non-lazy `map`)
+      # would leave every element aliasing the same String, so keep it lazy or
+      # give the buffer up.
+      #
+      # @param file [File] positioned at the start
+      # @param budget [Integer] how many bytes may be looked at
+      # @return [Boolean]
+      def self.separator_within?(file, budget)
+        block = +""
+        Enumerator.produce(budget) { |left| left - PROBE_BLOCK }
+                  .lazy
+                  .take_while(&:positive?)
+                  .map { |left| file.read([left, PROBE_BLOCK].min, block) }
+                  .take_while { |filled| !filled.nil? }
+                  .any? { |filled| filled.include?("\n") }
+      end
+      private_class_method :one_long_line?, :separator_within?
 
       # The refusal for the SECOND check, where the read came back one byte
       # past the ceiling and so the file is bigger than the stat claimed --

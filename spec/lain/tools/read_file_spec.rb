@@ -508,6 +508,30 @@ RSpec.describe Lain::Tools::ReadFile do
       write(name, line * (size / line.bytesize))
     end
 
+    # Every block size the refusal's separator probe asked the filesystem for,
+    # in order. It wraps the tool's OWN File.open rather than standing a double
+    # in front of it, so the reading is of the real call; and it filters on the
+    # path so nothing else running in the example can contribute a row.
+    def probe_blocks(path)
+      asked = []
+      allow(File).to receive(:open).and_wrap_original do |original, *args, &opened|
+        if opened && args.first == path
+          original.call(*args) { |file| opened.call(recording(file, asked)) }
+        else
+          original.call(*args, &opened)
+        end
+      end
+      asked
+    end
+
+    def recording(file, asked)
+      allow(file).to receive(:read).and_wrap_original do |read, *sizes|
+        asked << sizes.first
+        read.call(*sizes)
+      end
+      file
+    end
+
     let(:whole_ceiling) { Lain::Tools::ReadFile::WHOLE_BOUND.limit }
     let(:window_ceiling) { Lain::Tools::ReadFile::WINDOW_BOUND.limit }
 
@@ -520,15 +544,49 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(result.content).to include(path, (whole_ceiling + 1).to_s, whole_ceiling.to_s)
     end
 
-    # AC1's mechanism, not an assertion about it: the decision is reached from
-    # File.size, so File.read is never reached for the refused path.
-    it "never reads the file it refuses" do
+    # AC1's mechanism, restated for T11 rather than relaxed. The DECISION is
+    # still reached from File.size -- what changed is that composing the ADVICE
+    # for a file over the WINDOW ceiling now costs a separator probe, so "it is
+    # never read" is no longer the true statement and asserting it would be
+    # asserting the wrong thing. The bound is what carries the memory claim
+    # now: every block the probe asks for is one block, and the whole probe is
+    # at most the window ceiling, against a 2 MiB file.
+    #
+    # `not_to be_empty` FIRST, and it is not a formality -- it is what stops
+    # the two bounds below being vacuous. `all` and `sum` are both true of an
+    # empty Array, so a probe that stopped going through this reader at all
+    # would satisfy them while allocating whatever it liked. Measured during
+    # review: a 1 MiB `File.read(path, N)` slurp -- exactly the shape this
+    # example exists to forbid -- left it green without this line.
+    #
+    # The `File.read` assertion is narrower than it looks and is kept for what
+    # it does cover: RSpec matches whole argument lists, so `with(path)`
+    # matches only the UNBOUNDED one-arg `File.read(path)` and never
+    # `File.read(path, n)`. The bounds above are what forbid the length-taking
+    # slurp.
+    it "reads at most a bounded probe of the file it refuses, and never slurps it" do
       path = sparse("huge.bin", whole_ceiling * 8)
       allow(File).to receive(:read).and_call_original
+      blocks = probe_blocks(path)
 
       tool.call(path:)
 
       expect(File).not_to have_received(:read).with(path)
+      expect(blocks).not_to be_empty
+      expect(blocks).to all(be_between(1, Lain::Tools::ReadFile::PROBE_BLOCK))
+      expect(blocks.sum).to be <= window_ceiling
+    end
+
+    # ... and the walk stops at the first separator, so the ordinary file --
+    # one that has newlines in it -- costs exactly one block however large it
+    # is. This is the half that keeps the probe off the hot path's budget.
+    it "stops the probe at the first newline" do
+      path = filled("many.txt", window_ceiling * 2)
+      blocks = probe_blocks(path)
+
+      tool.call(path:)
+
+      expect(blocks.size).to eq(1)
     end
 
     it "names a window and the structural tools as the narrower actions" do
@@ -538,6 +596,115 @@ RSpec.describe Lain::Tools::ReadFile do
 
       expect(content).to include("offset", "limit")
       expect(content).to match(/code_outline|file_symbols|ast_search/)
+    end
+
+    # T11. `offset` and `limit` count LINES, so advising them for a file that
+    # is ONE line is advice the model cannot act on -- QA spent a round trip on
+    # a 1,200,003-byte one-line JSON being told to window a file that refuses
+    # every window in turn. The branch is exactly the one where the advice is
+    # wrong: a file the WINDOW ceiling cannot admit either.
+    describe "a file whose first line alone is over the window ceiling" do
+      it "sends a one-line file over the window ceiling to a byte range instead" do
+        path = sparse("one.json", window_ceiling + 3)
+
+        content = tool.call(path:).content
+
+        expect(content).to include("head -c", "one line alone is over the ceiling")
+        expect(content).not_to include(Lain::Tools::ReadFile::PART_ONLY)
+        expect(content).not_to include(Lain::Tools::ReadFile::FULL_COVER)
+      end
+
+      it "still names the structural tools alongside the byte range" do
+        path = sparse("one.json", window_ceiling + 3)
+
+        expect(tool.call(path:).content).to match(/code_outline|file_symbols|ast_search/)
+      end
+
+      # The boundary is LongLine's own, and it is one byte off the obvious
+      # reading of it. Window#read chunks at `WINDOW_BOUND.limit + 1` and
+      # LongLine refuses any chunk OVER the ceiling, so a first line of exactly
+      # `limit + 1` bytes INCLUDING its newline arrives whole and IS refused --
+      # a probe asking "is there a newline within limit + 1 bytes" answers yes
+      # for this file and reopens the very loop this card closes.
+      it "sends a first line of exactly the ceiling plus its newline to a byte range too" do
+        path = write("edge.json", "#{"x" * window_ceiling}\n")
+
+        content = tool.call(path:).content
+
+        expect(content).to include("head -c")
+        expect(content).not_to include(Lain::Tools::ReadFile::PART_ONLY)
+        expect(content).not_to include(Lain::Tools::ReadFile::FULL_COVER)
+      end
+
+      # ... and it does not over-reach by one in the other direction: a first
+      # line of exactly the ceiling INCLUDING its newline is the largest one a
+      # window can still serve, so that file keeps the window advice, and the
+      # window is asserted to work rather than assumed to.
+      it "keeps the window advice for a first line of exactly the ceiling, and that window works" do
+        path = write("fits.json", "#{"x" * (window_ceiling - 1)}\nrest\n")
+
+        content = tool.call(path:).content
+
+        expect(content).to include(Lain::Tools::ReadFile::PART_ONLY)
+        expect(content).not_to include("head -c")
+        expect(tool.call(path:, offset: 1, limit: 1)).to have_attributes(is_error: false)
+      end
+
+      # The FULL_COVER branch has no bug and must not be widened into: a
+      # newline-free file UNDER the window ceiling has a line 1 under the
+      # ceiling, so LongLine never fires and a full-cover window serves it.
+      it "leaves a newline-free file under the window ceiling on its full-cover advice" do
+        path = sparse("wide.bin", whole_ceiling + 1024)
+
+        content = tool.call(path:).content
+
+        expect(content).to include(Lain::Tools::ReadFile::FULL_COVER)
+        expect(content).not_to include("head -c")
+      end
+
+      it "serves that same file through the full-cover window it was advised to use" do
+        path = sparse("wide.bin", whole_ceiling + 1024)
+
+        result = tool.call(path:, offset: 1, limit: 10_000_000)
+
+        expect(result).to have_attributes(is_error: false)
+        expect(result.content.bytesize).to eq(whole_ceiling + 1024)
+      end
+
+      it "still offers a window for a line-structured file under the window ceiling" do
+        path = filled("many.txt", whole_ceiling * 2)
+
+        expect(tool.call(path:).content).to include(Lain::Tools::ReadFile::FULL_COVER)
+      end
+
+      # ... and a line-structured file OVER the window ceiling keeps the
+      # partial-window advice: its line 1 is short, so a window narrow enough
+      # does reach it and the byte range would be the wrong ceiling to send it
+      # down.
+      it "still offers a partial window for a line-structured file over the window ceiling" do
+        path = filled("vast.txt", window_ceiling * 2)
+
+        content = tool.call(path:).content
+
+        expect(content).to include(Lain::Tools::ReadFile::PART_ONLY)
+        expect(content).not_to include("head -c")
+      end
+
+      it "carries none of the one-line file's bytes into the refusal" do
+        path = write("one.json", "SENTINEL" * ((window_ceiling / 8) + 2))
+
+        expect(tool.call(path:).content).not_to include("SENTINEL")
+      end
+
+      it "records nothing on the session for the one-line file it refused" do
+        path = sparse("one.json", window_ceiling + 3)
+        session = Lain::Session.new
+
+        tool.call({ path: }, invocation_with(session))
+
+        expect(session.read?(path)).to be(false)
+        expect(session.partially_read?(path)).to be(false)
+      end
     end
 
     it "carries none of the refused file's bytes" do
