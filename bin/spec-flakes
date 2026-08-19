@@ -1,0 +1,458 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Flake hunt: many full-suite runs, each in a randomized order, each from a
+# PRISTINE process, then a table of which examples did not agree with themselves.
+#
+# What it is looking for is leakage BETWEEN EXAMPLES -- a constant memoized in one
+# spec that the next one reads, a `Dir.chdir` never restored, an ENV key set and
+# not unset, a class reopened. Random order is how that surfaces, so every run
+# draws its own `--order random:<seed>` and the report names the seed that caught
+# each example, which is the seed you re-run to reproduce it.
+#
+# THE SPORK MODEL, AND WHERE THE PRELOAD LINE IS DRAWN
+#
+# `require "spec_helper"` costs 1.8s and ~700K objects (CLAUDE.md, "Allocations and
+# GC are a BOOT cost, not a per-example one"), and sixteen runs would pay it sixteen
+# times. So this process pays it ONCE and every run is a `fork` of it: copy-on-write
+# shares the loaded library rather than re-allocating ~80MB of it per run. That is
+# the memory half of the preloader argument CLAUDE.md leaves open, collected here
+# where it is free -- this is a hunt, not the inner loop, so nothing about `rake
+# pspec` changes.
+#
+# The line is drawn AFTER spec_helper and BEFORE the spec files, and that placement
+# is a correctness boundary rather than a tuning choice.
+#
+#   * BEFORE it would be pointless: sixteen `exec`s of `rspec` is what we already
+#     have, and each would re-allocate the whole library.
+#   * AFTER it would defeat the tool. Loading the spec files here would save ~6s a
+#     run and hand all sixteen runs ONE copy of every spec file's load-time state:
+#     `diff_mode_spec.rb`'s `SocketTmpdir.persistent` fixture would become a single
+#     directory sixteen processes race over, and the `at_exit` it registers would
+#     delete it the moment the first run finished. A flake hunter that manufactures
+#     its own flakes is worse than none.
+#
+# So the parent holds loaded CODE and nothing else -- no fixture, no tmpdir, no
+# thread (checked: one thread after spec_helper, so nothing is lost across `fork`),
+# no `at_exit`. Every run mints its own fixtures after the fork, which is exactly
+# the in-process cleanliness a re-`exec` would have given us, at none of its cost.
+#
+# WHAT ELSE HAD TO BE ISOLATED
+#
+# Four concurrent full suites collide by construction otherwise. CLAUDE.md records
+# the shape under its TMPDIR note -- a different example failing each run, green the
+# moment the other process exits -- and that is precisely the false positive this
+# tool must not generate. So each run gets its own TMPDIR (under the ambient one, so
+# it keeps the filesystem `deletability_spec`'s `cp -al` needs) and its own XDG tree.
+# What is already per-process needs nothing: tmux/nvim sockets are pid-scoped, and
+# `SocketTmpdir` mints unique names under /tmp.
+#
+# Usage:
+#
+#     bin/spec-flakes                  # 4 lanes x 4 runs = 16 full suites
+#     bin/spec-flakes 8                # 4 lanes x 8 runs = 32
+#     bin/spec-flakes 2 -- --tag seam  # pass anything after `--` to each rspec run
+#
+#     LAIN_FLAKE_LANES=6  concurrent full suites   (default 4)
+#     LAIN_FLAKE_RUNS=4   full suites PER LANE     (default 4)
+#     LAIN_FLAKE_SEED=..  base seed, to replay a whole hunt
+#     LAIN_FLAKE_KEEP=1   keep each run's scratch tree instead of deleting it
+#     LAIN_FLAKE_XDG=0    leave XDG_* alone (isolate TMPDIR only)
+#     LAIN_FLAKE_FORCE=1  start even with another suite run in flight
+#
+# It is honest about its own preconditions: a concurrent `parallel_rspec` or
+# `pre-commit` makes every number here a lie, so it refuses to start next to one.
+
+$LOAD_PATH.unshift(File.expand_path("../spec", __dir__))
+
+require "bundler/setup"
+require "fileutils"
+require "json"
+
+# The hunt: a preloaded parent, one fork per full-suite run, one report.
+module SpecFlakes
+  REPO = File.expand_path("..", __dir__)
+
+  # RSpec's own `--seed` space, so a seed printed here pastes straight back in.
+  SEED_SPACE = 100_000
+
+  # `bundle exec rspec` and this script are not the same program, and the suite
+  # can tell -- which makes every such difference a false flake the tool would
+  # report as the suite's. Two found so far, both reached through `$0`:
+  #
+  #   * `Configuration#files_or_directories_to_run=` appends `default_path`
+  #     ("spec") only when `$0` basenames to "rspec". Without this the hunt loads
+  #     no spec files at all and reports a confident green over zero examples.
+  #   * `CLI::Up::PreFlight` expands a relative executable to an absolute path
+  #     (lib/lain/cli/up.rb:295) while `up_spec`'s factory spy compares against
+  #     the raw `$PROGRAM_NAME`. Under `bundle exec rspec` argv-zero is always
+  #     absolute, so the assumption holds there; under `bin/spec-flakes` it is
+  #     relative, and ten examples failed in every run -- from the harness, not
+  #     from the suite. That is exactly the lie this tool must not tell.
+  #
+  # So each run presents rspec's own argv-zero. Fidelity, not disguise: the whole
+  # contract here is that a run means what the same run under `bundle exec rspec`
+  # would have meant.
+  RSPEC_BIN = begin
+    Gem.bin_path("rspec-core", "rspec")
+  rescue StandardError
+    "rspec"
+  end
+
+  # The two processes whose presence invalidates a hunt, matched the way CLAUDE.md
+  # insists -- on the BINARY, never `ps | grep`, whose pattern also matches the
+  # shell command lines of sibling checkers and so never reaches zero.
+  RIVALS = { "another spec run" => "mise/installs/ruby/[0-9.]*/bin/parallel_rspec",
+             "a pre-commit hook" => "[p]re-commit" }.freeze
+
+  # One full-suite run: its seed, its private filesystem, its artifacts.
+  class Run
+    attr_reader :index, :seed, :pid, :code, :duration
+
+    def initialize(index:, seed:, artifacts:, scratch:)
+      @index = index
+      @seed = seed
+      @artifacts = artifacts
+      @scratch = scratch
+    end
+
+    def name = format("run-%02d", @index)
+    def log = File.join(@artifacts, "#{name}.log")
+    def statuses = File.join(@artifacts, "#{name}.statuses")
+
+    # Fork the pristine preload. The child never returns from here.
+    def start(rspec_args)
+      @began = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      @pid = fork { run_suite(rspec_args) }
+    end
+
+    def finish(status)
+      @code = status.exitstatus
+      @duration = Process.clock_gettime(Process::CLOCK_MONOTONIC) - @began
+      FileUtils.remove_entry(@scratch) if File.directory?(@scratch) && ENV["LAIN_FLAKE_KEEP"] != "1"
+    end
+
+    def to_h = { record: "run", run: name, seed: @seed, exit: @code, seconds: @duration.round(1) }
+
+    private
+
+    def run_suite(rspec_args)
+      isolate!
+      $stdout.reopen(log, "w")
+      $stderr.reopen($stdout)
+      $stdout.sync = true
+      $PROGRAM_NAME = RSPEC_BIN
+      RSpec.configuration.example_status_persistence_file_path = statuses
+      seed_the_suites_own_rng!
+      exit(RSpec::Core::Runner.run(argv(rspec_args), $stderr, $stdout))
+    end
+
+    # `-O` replaces the project `.rspec`: its `--format documentation` would write
+    # 10865 lines per run into the log, its `--profile 10` measures a box under
+    # fourfold contention, and its `--require spec_helper` the parent has already
+    # satisfied. `random:<seed>` sets the order and the seed in one flag.
+    def argv(rspec_args)
+      ["-O", File::NULL, "--format", "progress", "--order", "random:#{@seed}", *rspec_args]
+    end
+
+    # RSpec's ordering RNG is its own and `--order` above has already set it. This
+    # is the SUITE's -- prop_check generators, fixture jitter. spec_helper runs
+    # `Kernel.srand config.seed` at configure time, which happened once in the
+    # PARENT, so without this every run would draw identical "random" data and only
+    # the order would vary.
+    def seed_the_suites_own_rng! = Kernel.srand(@seed)
+
+    # Per-run filesystem state. TMPDIR hangs off the AMBIENT one rather than off
+    # the repo: `.envrc` points it at a path on the same filesystem as the checkout
+    # because `deletability_spec` hard-links its fixtures, and a scratch tree
+    # inside the repo would additionally put every fixture git repo underneath
+    # lain's own `.git`.
+    def isolate!
+      FileUtils.mkdir_p(File.join(@scratch, "tmp"))
+      ENV["TMPDIR"] = File.join(@scratch, "tmp")
+      isolate_xdg! unless ENV["LAIN_FLAKE_XDG"] == "0"
+    end
+
+    # A run that writes a session, a cache or an nvim socket must not write it
+    # where another run reads it. Kept short on purpose -- `runtime_dir` carries
+    # `lain/nvim-<12>.sock`, and `sun_path` is 108 bytes.
+    def isolate_xdg!
+      { "XDG_CONFIG_HOME" => "config", "XDG_CACHE_HOME" => "cache", "XDG_STATE_HOME" => "state",
+        "XDG_DATA_HOME" => "data", "XDG_RUNTIME_DIR" => "run" }.each do |key, leaf|
+        ENV[key] = FileUtils.mkdir_p(File.join(@scratch, leaf)).first
+      end
+    end
+  end
+
+  # `lanes` suites in flight; a slot picks up the next one the moment its current
+  # one exits. Every run is a fresh fork of the preload -- which is the thing a lane
+  # running its suites back-to-back inside ONE process could not give us, and the
+  # whole reason the pool forks per run rather than per lane.
+  class Pool
+    def initialize(lanes:, rspec_args:)
+      @lanes = lanes
+      @rspec_args = rspec_args
+    end
+
+    def run(runs, &reporter)
+      queue = runs.dup
+      live = {}
+      until queue.empty? && live.empty?
+        fill(queue, live)
+        reap(live, &reporter)
+      end
+      runs
+    end
+
+    private
+
+    def fill(queue, live)
+      while live.size < @lanes && !queue.empty?
+        run = queue.shift
+        live[run.start(@rspec_args)] = run
+      end
+    end
+
+    def reap(live)
+      pid, status = Process.wait2
+      run = live.delete(pid)
+      run.finish(status)
+      yield run
+    end
+  end
+
+  # RSpec's example-status persistence file, one per run, is already the
+  # machine-readable per-example record we need -- `example_id | status | run_time`,
+  # with ids that paste back into `rspec` verbatim -- so no custom formatter exists
+  # to drift from the suite.
+  module Statuses
+    # "unknown" is dropped, and that is load-bearing rather than tidy. The file
+    # records every example RSpec LOADED, not every one it RAN, so a filtered
+    # example lands here as `unknown` -- `-e Canonical` writes 25 passed beside
+    # 14538 unknown. Keeping them would make the example count measure the spec
+    # FILES (identical in every run, so the truncation guard would never fire)
+    # and would make "how many runs saw this example" a count of runs that
+    # merely parsed it.
+    def self.parse(path)
+      return {} unless File.exist?(path)
+
+      File.readlines(path).drop(2).filter_map do |line|
+        id, status, = line.split("|").map(&:strip)
+        [id, status] unless status == "unknown"
+      end.to_h
+    end
+  end
+
+  # Which examples did not agree with themselves, and which merely failed.
+  #
+  # The distinction is the point: an example that fails in EVERY run is a broken
+  # spec and belongs in a bug report, not a flake list. Reporting the two together
+  # is how a flake list stops being read.
+  class Verdict
+    def initialize(runs)
+      @runs = runs
+      @by_run = runs.to_h { |run| [run, Statuses.parse(run.statuses)] }
+    end
+
+    def flaky = disagreements.reject { |id, seeds| seeds.size == observed(id) }
+    def broken = disagreements.select { |id, seeds| seeds.size == observed(id) }
+
+    # A run that exited non-zero while recording no failure did not fail an
+    # example -- it died beside one. That is a different bug and a different log.
+    def crashed(runs) = runs.select { |run| run.code != 0 && summary(run).fetch("failed", 0).zero? }
+
+    # A run whose example count differs from its siblings did not run the same
+    # suite. CLAUDE.md's two silent truncations -- an OOM-killed worker and a
+    # `SystemExit` inside an example -- both report "fewer examples, 0 failures",
+    # so the COUNT is the only thing that catches them.
+    def counts = @by_run.transform_values(&:size)
+    def truncated? = counts.values.uniq.size > 1
+
+    # A run that executed nothing. Never a flake result, always a broken hunt --
+    # a bad filter, a bad path, or the argv-zero trap RSPEC_BIN documents.
+    def empty = counts.select { |_run, size| size.zero? }.keys
+
+    def summary(run) = @by_run.fetch(run).values.tally
+
+    private
+
+    # example id => the seeds it failed under.
+    def disagreements
+      @disagreements ||= @by_run.each_with_object(Hash.new { |h, k| h[k] = [] }) do |(run, statuses), found|
+        statuses.select { |_id, status| status == "failed" }.each_key { |id| found[id] << run.seed }
+      end
+    end
+
+    # How many runs saw this example at all -- a tag filter can legitimately
+    # exclude it from some (an absent `nvim` on one lane, say), and "failed 3 of 3
+    # times it ran" is a different claim from "failed 3 of 16".
+    def observed(id) = @by_run.count { |_run, statuses| statuses.key?(id) }
+  end
+
+  # The report. `bin/` sits outside the output-discipline boundary
+  # (`spec/output_discipline_spec.rb` scans `lib/`), and for this script the
+  # terminal IS the deliverable.
+  #
+  # Terminal rendering, kept apart from the arithmetic so the tables can change
+  # without the verdict changing.
+  class Printer
+    COLUMNS = "%-6s %7s %6s %8s %10s %8s %8s"
+
+    def initialize(verdict, artifacts)
+      @verdict = verdict
+      @artifacts = artifacts
+    end
+
+    def call(runs)
+      puts "", format(COLUMNS, "run", "seed", "exit", "seconds", "examples", "failed", "pending")
+      runs.each { |run| puts row(run) }
+      warn_empty
+      warn_truncation
+      warn_crashes(runs)
+      section("FLAKY -- disagreed with itself across runs", @verdict.flaky)
+      section("BROKEN -- failed in every run that saw it (not a flake)", @verdict.broken)
+      puts "", "logs, per-run statuses and report.ndjson: #{@artifacts}"
+    end
+
+    private
+
+    def row(run)
+      tally = @verdict.summary(run)
+      format(COLUMNS, run.name, run.seed, run.code, run.duration.round(1),
+             @verdict.counts.fetch(run), tally.fetch("failed", 0), tally.fetch("pending", 0))
+    end
+
+    def warn_empty
+      empty = @verdict.empty
+      return if empty.empty?
+
+      puts "", "!! #{empty.size} run(s) executed NO examples (#{empty.map(&:name).join(", ")}).",
+           "   Nothing was measured -- check the paths and tag filters before reading anything below."
+    end
+
+    # Not a footnote: a short run is the shape both an OOM kill and a `SystemExit`
+    # inside an example produce, and both otherwise read as a clean pass.
+    def warn_truncation
+      return unless @verdict.truncated?
+
+      puts "", "!! Runs disagree on the EXAMPLE COUNT (#{@verdict.counts.values.uniq.sort.join(", ")}).",
+           "   A short run did not run the same suite -- read its log before reading anything else."
+    end
+
+    def warn_crashes(runs)
+      crashed = @verdict.crashed(runs)
+      return if crashed.empty?
+
+      puts "", "!! #{crashed.size} run(s) exited non-zero having recorded NO failed example:",
+           *crashed.map { |run| "   #{run.name} (exit #{run.code}) -> #{run.log}" }
+    end
+
+    def section(title, entries)
+      puts "", "#{title}: #{entries.empty? ? "none" : entries.size}"
+      entries.sort_by { |id, seeds| [-seeds.size, id] }.each do |id, seeds|
+        puts format("  %<count>-4s %<example>s", count: "#{seeds.size}x", example: id),
+             "       reproduce: bundle exec rspec --order random:#{seeds.first}"
+      end
+    end
+  end
+
+  # Everything the hunt needs to know before it forks anything.
+  class Plan
+    attr_reader :lanes, :runs, :rspec_args, :artifacts, :scratch, :stamp
+
+    def initialize(argv)
+      runs, @rspec_args = split(argv)
+      @lanes = Integer(ENV.fetch("LAIN_FLAKE_LANES", "4"))
+      @runs = Integer(runs || ENV.fetch("LAIN_FLAKE_RUNS", "4"))
+      @stamp = Time.now.strftime("%Y%m%dT%H%M%S")
+      @artifacts = FileUtils.mkdir_p(File.join(REPO, "tmp", "flakes", @stamp)).first
+      @scratch = FileUtils.mkdir_p(File.join(ambient_tmp, "flakes", @stamp)).first
+    end
+
+    def total = @lanes * @runs
+    # Memoized, and small enough to paste back: it is printed as the one number
+    # that replays a whole hunt, and a fresh draw per call would print a lie.
+    def base_seed = @base_seed ||= Integer(ENV.fetch("LAIN_FLAKE_SEED", Random.new_seed % SEED_SPACE))
+
+    # Distinct seeds, so two runs cannot silently be the same experiment. `|=`
+    # rather than a rejecting loop keeps the collision case free of `next`.
+    def seeds
+      @seeds ||= begin
+        rng = Random.new(base_seed)
+        drawn = []
+        drawn |= [rng.rand(SEED_SPACE)] while drawn.size < total
+        drawn
+      end
+    end
+
+    def build
+      seeds.each_with_index.map do |seed, index|
+        Run.new(index: index + 1, seed:, artifacts: @artifacts,
+                scratch: File.join(@scratch, format("run-%02d", index + 1)))
+      end
+    end
+
+    private
+
+    # Everything after `--` belongs to rspec; the one positional before it is the
+    # runs-per-lane count, so `bin/spec-flakes 8` reads the way the rake task does.
+    def split(argv)
+      fence = argv.index("--")
+      return [argv.first, []] if fence.nil?
+
+      [argv.first(fence).first, argv.drop(fence + 1)]
+    end
+
+    # `.envrc` pins TMPDIR to a path on the checkout's filesystem because
+    # `deletability_spec` hard-links its fixtures; inherit that choice rather than
+    # re-deciding it here.
+    def ambient_tmp = ENV.fetch("TMPDIR", File.join(Dir.home, "tmp", "lain"))
+  end
+end
+
+# A hunt run beside another suite measures contention, not flakiness -- CLAUDE.md's
+# "a red pspec is not evidence until no other parallel_rspec is live", which applies
+# doubly to a tool whose entire output is failure counts.
+def rivals_in_flight
+  SpecFlakes::RIVALS.select { |_what, pattern| system("pgrep", "-f", pattern, out: File::NULL, err: File::NULL) }
+end
+
+plan = SpecFlakes::Plan.new(ARGV)
+live = rivals_in_flight
+if live.any? && ENV["LAIN_FLAKE_FORCE"] != "1"
+  warn "Refusing to start: #{live.keys.join(" and ")} is running, and its contention would show up here",
+       "as flakes that are not there. Wait for it, or set LAIN_FLAKE_FORCE=1 to measure anyway."
+  exit 2
+end
+
+puts "Preloading the suite once, to fork #{plan.total} pristine runs from " \
+     "(#{plan.lanes} at a time, seed #{plan.base_seed})..."
+began = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+require "spec_helper"
+puts format("Preloaded in %.1fs. Each run is a fork of this process, so no run inherits another's state.",
+            Process.clock_gettime(Process::CLOCK_MONOTONIC) - began)
+
+runs = plan.build
+done = 0
+SpecFlakes::Pool.new(lanes: plan.lanes, rspec_args: plan.rspec_args).run(runs) do |run|
+  done += 1
+  puts format("  [%<done>2d/%<total>2d] %<name>s seed %<seed>-6d exit %<exit>-3s %<seconds>5.1fs",
+              done:, total: plan.total, name: run.name, seed: run.seed, exit: run.code, seconds: run.duration)
+end
+
+FileUtils.rmdir(plan.scratch) if Dir.exist?(plan.scratch) && Dir.empty?(plan.scratch)
+
+verdict = SpecFlakes::Verdict.new(runs)
+SpecFlakes::Printer.new(verdict, plan.artifacts).call(runs)
+
+File.open(File.join(plan.artifacts, "report.ndjson"), "w") do |file|
+  file.puts JSON.generate(record: "hunt", stamp: plan.stamp, lanes: plan.lanes, runs: plan.total,
+                          base_seed: plan.base_seed, rspec_args: plan.rspec_args)
+  runs.each { |run| file.puts JSON.generate(run.to_h) }
+  verdict.flaky.each { |id, seeds| file.puts JSON.generate(record: "flaky", example: id, failed_seeds: seeds) }
+  verdict.broken.each { |id, seeds| file.puts JSON.generate(record: "broken", example: id, failed_seeds: seeds) }
+end
+
+clean = verdict.flaky.empty? && verdict.broken.empty? && !verdict.truncated? &&
+        verdict.crashed(runs).empty? && verdict.empty.empty?
+exit(clean ? 0 : 1)

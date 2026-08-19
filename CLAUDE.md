@@ -391,6 +391,34 @@ defects have lived:
 Specs require nothing internal: `spec/spec_helper.rb` does `require "lain"` and `.rspec` loads
 it everywhere. The corollary is a commit-grouping rule — see Committing.
 
+### Hunting flakes: `rake spec:flakes`
+
+`bundle exec rake spec:flakes` runs the WHOLE suite 16 times (4 concurrent lanes × 4 runs;
+`rake 'spec:flakes[8]'` or `LAIN_FLAKE_LANES`/`LAIN_FLAKE_RUNS` to change that), each in its own
+random order, and reports which examples disagreed with themselves — separating those from the
+ones that failed in *every* run, which are broken specs and not flakes. Tens of minutes; it is a
+hunt, not a gate, and nothing in `check` or the pre-commit hook calls it.
+
+Deliberately **not** `pspec`. `parallel_rspec` packs whole FILES into groups, so a worker there
+sees a slice — which cannot find leakage between two examples that never met. The parallelism
+here is across RUNS, and each run is the whole suite in one process.
+
+`bin/spec-flakes` is a **spork**: it pays `require "spec_helper"` once (1.8s, ~700K objects) and
+every run is a `fork` of that, so COW shares the loaded library instead of re-allocating it. The
+preload line sits AFTER spec_helper and BEFORE the spec files on purpose — preloading spec files
+would hand all 16 runs one copy of every file's load-time fixture (`diff_mode_spec`'s
+`SocketTmpdir.persistent` directory, and the `at_exit` that deletes it) and the tool would
+manufacture the flakes it went looking for.
+
+Two things it had to correct, both worth knowing before writing any other out-of-band suite runner:
+each run gets its own `TMPDIR` and XDG tree (four concurrent suites collide on the shared ones by
+construction — the TMPDIR note above, four lanes deep), and each run sets `$PROGRAM_NAME` to
+rspec's own argv-zero. That second one is not cosmetic: `Configuration#files_or_directories_to_run=`
+appends the `spec` default path only when `$0` basenames to `rspec` (without it the hunt loads no
+spec files and reports a confident green over zero examples), and `CLI::Up::PreFlight` expands a
+relative executable to an absolute path while `up_spec`'s spy compares the raw `$PROGRAM_NAME` —
+10 examples failed in every run, from the harness rather than from the suite.
+
 ## Committing
 
 Commit directly on `main`, in logical chunks, with terse high-signal messages. No trailers.

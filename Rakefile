@@ -31,6 +31,27 @@ task :pspec do
      "'--format progress --format ParallelTests::RSpec::RuntimeLogger --out #{runtime_log}'"
 end
 
+namespace :spec do
+  # Deliberately NOT wired into `check` or the pre-commit hook. This is a hunt,
+  # not a gate: it runs the whole suite sixteen times and takes tens of minutes,
+  # and its answer is a list to investigate rather than a pass/fail on a commit.
+  #
+  # It does not use `pspec`. `parallel_rspec` packs whole FILES into groups, so a
+  # worker there sees a SLICE of the suite -- which is the one thing that cannot
+  # find leakage between two examples that never met. Every run here is the whole
+  # suite, in one process, in a random order; the parallelism is across RUNS.
+  # See bin/spec-flakes for why each run is a fork of one preload rather than a
+  # fresh `rspec`.
+  #
+  #     rake spec:flakes        # 4 concurrent lanes x 4 full suites = 16 runs
+  #     rake spec:flakes[8]     # ...x 8 = 32 (quote it in zsh: 'spec:flakes[8]')
+  #     LAIN_FLAKE_LANES=6 LAIN_FLAKE_RUNS=2 rake spec:flakes
+  desc "Hunt order-dependent and state-leaking specs: N full suites in randomized orders"
+  task :flakes, [:runs] do |_task, args|
+    sh({ "LAIN_FLAKE_RUNS" => args[:runs] }.compact, "bundle exec ruby bin/spec-flakes")
+  end
+end
+
 # A deliberately CONSERVATIVE default, and not the fastest count -- which is the
 # one thing the previous version of this comment got right for the wrong reason.
 #
