@@ -13,6 +13,10 @@ module Lain
       # the harness's own error and not unstyled prose, so it earns no new
       # token of its own.
       class ProviderRetry
+        # Below this, a rounded value reads "0s" -- indistinguishable from no
+        # wait at all, though a real backoff is happening.
+        FLOOR_SECONDS = 0.01
+
         def initialize(event) = @event = event
 
         # @param theme [Frontend::Theme]
@@ -32,7 +36,26 @@ module Lain
         # `will_retry_in` is nil exactly when {Provider::*::RetryTap} has given
         # up (see `exhausted_block`), so its presence is the whole test.
         def outcome
-          @event.will_retry_in ? ", retrying in #{@event.will_retry_in}s" : ", giving up"
+          @event.will_retry_in ? ", retrying in #{formatted_backoff}" : ", giving up"
+        end
+
+        # The retry middleware hands back a raw Float second count (observed:
+        # 0.14368744774438316), precision nobody reads at, and -- rarely, via
+        # a misbehaving server's oversized Retry-After header parsed to
+        # Float::INFINITY (see AnthropicWire::RESET_HEADER_PARSER) -- a
+        # non-finite one Float#round cannot take at all. So: round to a
+        # readable two places, and drop the decimal tail entirely for a
+        # whole-second backoff so `2.0` does not masquerade as measured to
+        # the millisecond; but for either edge -- non-finite, or too small to
+        # round to anything but a misleading zero -- name an honest bound
+        # instead of a number this render cannot stand behind.
+        def formatted_backoff
+          backoff = @event.will_retry_in
+          return "a while" unless backoff.finite?
+          return "under #{FLOOR_SECONDS}s" if backoff.positive? && backoff < FLOOR_SECONDS
+
+          rounded = backoff.round(2)
+          "#{rounded == rounded.to_i ? rounded.to_i.to_s : rounded.to_s}s"
         end
 
         def status_detail

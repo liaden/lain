@@ -41,6 +41,45 @@ RSpec.describe Lain::Frontend::Decorators::ProviderRetry do
     expect { described_class.new(event).render(theme) }.to output("").to_stdout.and output("").to_stderr
   end
 
+  it "rounds a raw float backoff to a readable precision, not the middleware's full Float" do
+    rendered = described_class.new(event(will_retry_in: 0.14368744774438316)).render(theme)
+
+    expect(rendered).to include("retrying in 0.14s")
+    expect(rendered).not_to include("0.14368744774438316")
+  end
+
+  it "still reads giving up and names its attempt ordinal when will_retry_in is nil" do
+    rendered = described_class.new(event(attempt: 4, will_retry_in: nil)).render(theme)
+
+    expect(rendered).to include("attempt 4")
+    expect(rendered).to include(", giving up")
+  end
+
+  it "renders a whole-second backoff without a misleading decimal tail" do
+    rendered = described_class.new(event(will_retry_in: 2.0)).render(theme)
+
+    expect(rendered).to include("retrying in 2s")
+    expect(rendered).not_to include("2.0s")
+  end
+
+  it "does not raise on a non-finite backoff, e.g. a Retry-After header that overflowed to Infinity" do
+    expect { described_class.new(event(will_retry_in: Float::INFINITY)).render(theme) }.not_to raise_error
+  end
+
+  it "renders a non-finite backoff as an honest bound rather than a raw Infinity" do
+    rendered = described_class.new(event(will_retry_in: Float::INFINITY)).render(theme)
+
+    expect(rendered).to include("retrying in")
+    expect(rendered).not_to include("Infinity")
+  end
+
+  it "renders a sub-hundredth-of-a-second backoff as an honest lower bound, not a rounded-to-zero number" do
+    rendered = described_class.new(event(will_retry_in: 0.004)).render(theme)
+
+    expect(rendered).not_to include("retrying in 0s")
+    expect(rendered).to include("under 0.01s")
+  end
+
   describe ".for" do
     it "returns a ProviderRetry decorator for a ProviderRetry event" do
       expect(Lain::Frontend::Decorators.for(event)).to be_a(described_class)
