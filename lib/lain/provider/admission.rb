@@ -1,6 +1,11 @@
 # frozen_string_literal: true
 
+# A sibling `admission/` directory makes this file that subtree's index, so it
+# requires its own children. Both sit here by CONVENTION, not by constraint:
+# neither reopens {Admission} nor resolves its constants at load time, so `lain`
+# loads with these at either end of the file. Probed, not assumed.
 require_relative "admission/endpoint"
+require_relative "admission/journal"
 
 module Lain
   class Provider
@@ -190,6 +195,13 @@ module Lain
       attr_reader :width
       # @return [Float] the acquire deadline, in seconds
       attr_reader :deadline
+      # The granularity of every wait this gate reports, since a waiter learns a
+      # slot is free only when it next wakes. Readable so an observer can
+      # describe the gate it is wrapping instead of assuming {POLL_INTERVAL} --
+      # a decorator that guessed would report a resolution the gate does not run
+      # at. A reader and never a writer: the interval is fixed at construction.
+      # @return [Float] seconds between attempts while waiting
+      attr_reader :poll_interval
 
       # The admission for one resolved endpoint, built once and shared.
       #
@@ -434,6 +446,15 @@ module Lain
         # @return [Float] unbounded, and says so rather than naming a number
         def width = Float::INFINITY
         def deadline = Float::INFINITY
+
+        # It never polls, so there is no interval to name. Zero rather than a
+        # borrowed default: it completes the duck an observer reads without
+        # claiming a granularity this arm does not have. Nothing journals it --
+        # this arm never queues, so it never emits a record -- and
+        # {Telemetry::Guards::ProviderWait} would rightly refuse a zero
+        # resolution if one ever reached a record.
+        # @return [Float]
+        def poll_interval = NO_WAIT
 
         # @return [Integer] callers inside right now; honest, never gated
         def in_flight = @lock.synchronize { @count }
