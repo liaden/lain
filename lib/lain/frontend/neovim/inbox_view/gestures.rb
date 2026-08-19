@@ -77,6 +77,28 @@ module Lain
           end
 
           # The `<CR>`/`r` gesture, once the buffer it came from is identified.
+          #
+          # KNOWN, OPEN, AND NOT WHAT THE STAMP CATCHES -- the stationary cursor.
+          # The stamp answers "which rendering is this line a line OF", and it
+          # cannot answer "is this still the set the human AIMED at". Cursor on
+          # item B; a consuming turn retires A; the list re-renders under a cursor
+          # that did not move; `<CR>` carries the CURRENT stamp, every check here
+          # passes, and whichever set took those lines opens. Everything is
+          # behaving as specified, which is why no check in this method can see it.
+          #
+          # T12 WIDENED IT AND DID NOT CREATE IT, exactly as multi-line items did
+          # on lain://approval: while every item was one line a shifted cursor often
+          # landed on a line the editor could tell was no row and swallowed; a
+          # four-line item makes the same shift land inside another ANSWERABLE one.
+          # Opening the wrong question set is cheaper than approving the wrong
+          # command and is still wrong.
+          #
+          # {Frontend::Neovim::ApprovalView#decide} carries the full analysis --
+          # every mitigation assessed, all blocked or contradicting a pinned
+          # contract, and the cheap-looking fifth route refuted -- and it is carried
+          # as a follow-up card for both surfaces rather than restated here. What
+          # belongs here is that it applies to THIS gesture too, because this is
+          # the method a reader will be standing in when they wonder.
           # @return [Opened]
           def open(line, generation)
             return unopened(format(UNSHOWN, generation: generation.inspect)) unless

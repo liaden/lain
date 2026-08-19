@@ -240,9 +240,13 @@ module Lain
       # row too. Those two read the summary rather than the bytes because a
       # lone question's body is exactly where the bytes are not one line: the
       # verbatim body belongs in the DOCUMENT the drain prints beneath the
-      # row, not in the row. Clamped rather than refused, unlike every field
-      # {Question} itself bounds -- these bytes were already accepted as a
-      # question, and this is a RENDER of them, not a value anybody answers.
+      # row, not in the row. That last clause is now the TTY drain's alone: since
+      # T12 lain://inbox still SHOWS this summary on the one line it keeps open at
+      # rest, but folds the verbatim body under it, read off this event body's own
+      # `"questions"` rather than off either rendering derived here
+      # ({Frontend::Neovim::InboxView::Row}). Clamped rather than refused, unlike
+      # every field {Question} itself bounds -- these bytes were already accepted
+      # as a question, and this is a RENDER of them, not a value anybody answers.
       # Both are derived here, once, so the surfaces cannot drift.
       class Announcement < String
         WIDTH = 96
@@ -409,7 +413,7 @@ module Lain
       #
       # The String arm now builds a {Question} where it used to write the bytes
       # straight into the body, so it answers {Question}'s rules and raises
-      # where it never used to: an unclosed ``` fence, a body past
+      # where it never used to: an unclosed triple-backtick fence, a body past
       # {Question::MAX_BODY}, a blank body, invalid UTF-8, and nil. That is a
       # contract change to a published duck ({Approval::Gate} and
       # {Gherkin::Approval} both ask through one) and it is documented rather
@@ -424,10 +428,10 @@ module Lain
       # Asking a second set while one is unanswered is refused ({Outstanding}),
       # and refused before the Q event is written.
       #
-      # @raise [ArgumentError] when the String cannot be a {Question} body
-      # @raise [QuestionOutstanding] when a set is already awaiting a reply
       # @return [Pending] a {Lain::Promise} wearing the Q event's digest,
       #   resolved by {#reply} with the human's answer
+      # @raise [ArgumentError] when the String cannot be a {Question} body
+      # @raise [QuestionOutstanding] when a set is already awaiting a reply
       def ask(question)
         announcement = announcement_for(question)
         @outstanding.open { emit_question(announcement) }
@@ -458,10 +462,10 @@ module Lain
       #
       # @param answer [String] what the human typed
       # @param digest [String] the Q event of the set this answers
+      # @return [Lain::Event] the A :message event
       # @raise [NoPendingQuestion] naming the digest, when no set of that name
       #   is awaiting a reply
       # @raise [Promise::AlreadyResolved] when that set was already answered
-      # @return [Lain::Event] the A :message event
       def reply(answer, digest)
         pending = @outstanding.answerable!(digest)
         parent = parent_timeline

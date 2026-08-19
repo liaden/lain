@@ -1,8 +1,9 @@
 -- I7 motions: ]]/[[ jump between "records", but the three bespoke buffers
 -- pack records differently, so each gets its own boundary TEST rather than
 -- one shared regex. lain://timeline is one turn per LINE (Buffers#turn_line);
--- lain://inbox is one item per LINE, marked by InboxView#line_for's own
--- two-space-padded age; lain://journal is the odd one out -- one tool-output
+-- lain://inbox is one question SET per item and an item spans as many lines as
+-- its question needs, so it rides the continuation convention below;
+-- lain://journal is the odd one out -- one tool-output
 -- RUN can span several wrapped LINES sharing an "[id stream]" prefix
 -- (JournalView#attribute_lines), so its boundary is a PREFIX CHANGE, not
 -- "next line" -- else every wrapped line would present as its own record.
@@ -41,10 +42,11 @@ local CONTINUATION = "^  "
 -- getting one.
 --
 -- `rows` -- the last line that may be a continuation -- is how a view whose
--- TRAILER IS ITSELF INDENTED still answers true there, and it is nil for
--- lain://approval, whose drawing side indents nothing outside the list: the
--- blank and the hint fail the pattern on their own, so the bound would be dead
--- code. Passing one is the exception, not the shape. (An earlier draft made it
+-- TRAILER IS ITSELF INDENTED still answers true there, and it is nil for both
+-- views drawing spanning records today: neither lain://approval nor
+-- lain://inbox indents anything outside its list, so their blanks and keys
+-- fail the pattern on their own and the bound would be dead code. Passing one
+-- is the exception, not the shape. (An earlier draft made it
 -- mandatory and read the count out of a buffer variable, which cost a
 -- `nvim_get_current_buf()` this predicate has no business asking for -- it is
 -- handed `lines`, and the buffer those came from is nobody's contract here.)
@@ -83,16 +85,18 @@ end
 
 local RECORD_START = {
   [TIMELINE] = function(lines, i) return lines[i]:match("^%a+:") ~= nil end,
-  -- Not anchored at column 1: `from` is a variable-length sender name
-  -- (InboxView::Item), so the age's COLUMN moves per line and there is no
-  -- fixed position to anchor to. Anchored on BOTH sides against the
-  -- separator instead -- exactly InboxView#line_for's two-space padding
-  -- around the age (`"#{from}  #{age}  #{question}"`) -- which is tighter
-  -- than "digits followed by s/m/h" alone: a question's free text would need
-  -- to independently contain that exact double-space-padded shape to
-  -- false-positive, an accepted low-probability risk for an ergonomic (not
-  -- correctness-critical) motion.
-  [INBOX] = function(lines, i) return lines[i]:match("  %d+[smh]  ") ~= nil end,
+  -- lain://inbox's items SPAN lines since T12 -- InboxView folds a set's whole
+  -- prose under the summary that could not hold it -- so its boundary is the
+  -- continuation convention above, the same one lain://approval rides, and
+  -- unwrapped for the same reason: the drawing side indents nothing outside
+  -- the list, so its trailer (a blank and the keys) answers true on the
+  -- pattern alone and needs no region bound.
+  --
+  -- The two-space-padded AGE that used to be this entry is not gone; it moved
+  -- to 70_inbox, the only place still asking "is this line an answerable ROW",
+  -- which is a different question from "does a record start here" the moment a
+  -- view draws anything below its rows. Keys are a record and are not a row.
+  [INBOX] = spanning_record,
   [JOURNAL] = function(lines, i)
     return i == 1 or journal_prefix(lines[i]) ~= journal_prefix(lines[i - 1])
   end,

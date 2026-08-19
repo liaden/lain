@@ -244,6 +244,102 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
   end
 
+  # T12's whole reason for existing: the index addresses by IDENTITY -- one
+  # entry per LINE, built by the pass that drew the lines -- so a row may span
+  # as many lines as its question needs and every one of them answers the set
+  # it belongs to. Under position addressing this was the defect that kept the
+  # row folded onto one line.
+  describe "an item that spans lines, addressed from any of them" do
+    let(:long_question) do
+      "which database should the migration target, and should it run before or after " \
+        "the deploy window closes tonight, given the replica lag we saw this morning?"
+    end
+
+    # The rows as the RUNTIME finds them: a line the drawing side did not
+    # indent, above the keys. Derived from the drawing convention rather than
+    # from the index these examples are about -- an index that lied could not
+    # also move these.
+    def item_starts(lines)
+      (1..lines.size).select do |line|
+        text = lines[line - 1]
+        !text.empty? && text != described_class::HINT && !text.start_with?(described_class::INDENT)
+      end
+    end
+
+    def owners(lines) = (1..lines.size).map { |line| view.digest_at(line, generation: view.generation) }
+
+    # Three pending sets whose items each span several lines, and the rendering
+    # that lists all three.
+    def three_spanning
+      questions = %w[a b c].map do |seed|
+        asked(one_question("db", "#{seed}: #{long_question}"), agent: "researcher", seed:)
+      end
+      [questions, questions.map { |question| view.update(record(question)) }.last]
+    end
+
+    it "answers the same set from every line of the item it drew" do
+      questions, lines = three_spanning
+
+      expect(item_starts(lines).size).to eq(3)
+      # A property rather than a vector: the owners run in listing order, the
+      # keys below them own nothing, and an item owns MORE than one line --
+      # which is what "every line of a fold answers its own set" means before
+      # any particular height is fixed.
+      expect(owners(lines).uniq).to eq(questions.map(&:digest) + [nil])
+      expect(owners(lines).count(questions[1].digest)).to be > 1
+    end
+
+    it "names no set on the keys line under the list" do
+      _questions, lines = three_spanning
+
+      expect(owners(lines).last(2)).to eq([nil, nil])
+    end
+
+    it "opens the set the cursor sits in, from a line of its question rather than its summary" do
+      questions, lines = three_spanning
+      continuation = item_starts(lines)[1] + 1
+
+      opened = view.open(continuation, generation: view.generation)
+
+      expect(opened).to be_opened
+      expect(opened.digest).to eq(questions[1].digest)
+      expect(editor.digests).to eq([questions[1].digest])
+    end
+
+    # AC3, on the reading of "answered" this view is pinned to: a reply is a
+    # :message and retires nothing, so the row stays and its NEIGHBOURS must
+    # still open from every line they own.
+    it "leaves every other item addressable when one has been answered" do
+      questions, lines = three_spanning
+      view.answered(questions[1].digest)
+      starts = item_starts(lines)
+
+      expect([starts[0], starts[0] + 1, starts[2], starts[2] + 1]
+               .map { |line| view.digest_at(line, generation: view.generation) })
+        .to eq([questions[0].digest, questions[0].digest, questions[2].digest, questions[2].digest])
+      # One open, not four: {QuestionView} holds ONE slot, so the gesture is
+      # shown honouring the addressing rather than repeated against it. The
+      # answered item stays listed and stays refused, which is the pinned rule
+      # a reply retires nothing.
+      expect(view.open(starts[2] + 1, generation: view.generation).digest).to eq(questions[2].digest)
+      expect(view.open(starts[1] + 1, generation: view.generation)).not_to be_opened
+    end
+
+    # And on the reading that MOVES every row below it: the consuming turn
+    # retires one, the list re-renders shorter, and each survivor still opens
+    # itself from its new lines rather than its neighbour.
+    it "re-addresses the survivors when a consuming turn retires one" do
+      questions, = three_spanning
+      lines = view.update(turn_usage(citing_timeline(questions[1].digest).head_digest))
+      starts = item_starts(lines)
+
+      expect(starts.size).to eq(2)
+      expect(starts.map { |line| view.digest_at(line, generation: view.generation) })
+        .to eq([questions[0].digest, questions[2].digest])
+      expect(view.open(starts.last + 1, generation: view.generation).digest).to eq(questions[2].digest)
+    end
+  end
+
   describe "#open -- the <CR>/r gesture on lain://inbox" do
     it "opens the document of the set rendered on that line, stamped with its digest" do
       view.update(record(asked(one_question("db", "which db?"), seed: "a")))
@@ -628,13 +724,246 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       expect(lines.first).to match(/  \d+[smh]  /)
     end
 
+    # Ruling 3 stands where it was made -- the summary LINE still counts a
+    # set's further questions rather than growing a column for them. What T12
+    # changed is what sits UNDER that line: the questions it counts, indented,
+    # folded away at rest.
     it "names a set's further questions through the summary it already carried, not a new column" do
       set = Lain::Question::Set.new(questions: [Lain::Question.new(id: "db", body: "which db?"),
                                                 Lain::Question.new(id: "when", body: "deploy now?")])
 
       lines = view.update(record(asked(set, agent: "researcher")))
 
-      expect(lines).to eq(["researcher  0s  which db? (+1 more)"])
+      expect(lines.first).to eq("researcher  0s  which db? (+1 more)")
+    end
+  end
+
+  # T12. A question is PROSE, and this row folded it onto one line for a reason
+  # that has since been removed: {Renderings} indexed digests by POSITION, so a
+  # two-line row would have sent `<CR>` to a set the human did not choose. The
+  # index is a line -> digest map now, one entry per LINE, so the row may grow
+  # -- and the point of growing it is that a human reads the question in the
+  # buffer that lists it, rather than opening a document to find out what they
+  # were asked.
+  describe "an item whose question does not fit its summary line" do
+    # Longer than {Tools::AskHuman::Announcement::WIDTH}, so the summary this
+    # view is handed has ALREADY been cut before it draws anything -- the
+    # arrangement the examples below are about. Its own guard is the first
+    # example: shorten this string and the rest go vacuously green.
+    let(:long_question) do
+      "which database should the migration target, and should it run before or after " \
+        "the deploy window closes tonight, given the replica lag we saw this morning?"
+    end
+
+    def listing(question, seed: "a") = asked(one_question("db", question), agent: "researcher", seed:)
+
+    def rendered(question, seed: "a") = view.update(record(listing(question, seed:)))
+
+    # One item's lines: the rendering stops at the blank that opens the keys.
+    def item_of(lines) = lines.take_while { |line| !line.empty? }
+
+    def body_of(lines) = item_of(lines).drop(1)
+
+    # The body as a human reads a wrapped paragraph -- indent off, lines
+    # rejoined. The wrap is HARD, so a break can land mid-word and an
+    # assertion on contiguous bytes has to read it back this way.
+    def unwrapped(lines) = body_of(lines).map { |line| line.delete_prefix(described_class::INDENT) }.join
+
+    # THE FIXTURE GUARD, and it is not ceremony: every example below is about a
+    # CUT, so a fixture that stopped eliding would leave them all passing over
+    # nothing. T9 shipped exactly that arrangement one review cycle ago.
+    it "still reproduces the two cuts every example below depends on" do
+      question = listing(long_question)
+      lines = view.update(record(question))
+
+      expect(question.body["question"]).to end_with(Lain::Tools::AskHuman::Announcement::ELLIPSIS)
+      expect(question.body["question"].length).to be < long_question.length
+      expect(lines.first).to end_with(described_class::ELISION)
+      expect(lines.first.length).to eq(described_class::WIDTH)
+    end
+
+    it "carries the question in full under its summary line" do
+      lines = rendered(long_question)
+
+      expect(body_of(lines)).not_to be_empty
+      expect(body_of(lines)).to all(start_with(described_class::INDENT))
+      expect(unwrapped(lines)).to include(long_question)
+    end
+
+    # THE SAFETY PROPERTY, which is the one {Row#whole} claims and the one this
+    # card's AC needs: the body is the item VERBATIM, so nothing the summary
+    # elided is missing. Asserted against the ITEM rather than against the
+    # summary's bytes, because this is what stays true of every shape below.
+    it "puts the whole item under the summary, so nothing the cut removed goes missing" do
+      question = listing(long_question)
+      lines = view.update(record(question))
+      headline = question.body["question"].delete_suffix(Lain::Tools::AskHuman::Announcement::ELLIPSIS)
+
+      expect(unwrapped(lines)).to include(long_question)
+      expect(unwrapped(lines)).to include(headline)
+    end
+
+    # The PREFIX relation is the COMMON case and not the guarantee, which is why
+    # this example's title says which row it is about. An earlier draft of
+    # {Row#whole} named it as THE invariant; a review found two shapes where it
+    # is false, both pinned below. An over-claimed invariant is worse than a
+    # narrow one -- a reader relies on exactly the sentence that is written down.
+    it "is a cut prefix of its body for the COMMON row: one question, headline first" do
+      lines = rendered(long_question)
+
+      expect(unwrapped(lines)).to start_with(lines.first.delete_suffix(described_class::ELISION))
+    end
+
+    # Counterexample 1: any set of more than one question. `(+1 more)` is the
+    # announcement's own arithmetic and appears NOWHERE in the body, so the
+    # summary cannot be a prefix of it -- while every question's text is still
+    # under the fold, which is the property that matters.
+    it "is NOT a prefix for a set, whose summary counts what the body spells out" do
+      set = Lain::Question::Set.new(questions: [Lain::Question.new(id: "db", body: long_question),
+                                                Lain::Question.new(id: "when", body: "deploy now?")])
+      lines = view.update(record(asked(set, agent: "researcher")))
+
+      expect(lines.first).to end_with(described_class::ELISION)
+      expect(unwrapped(lines)).not_to include("(+1 more)")
+      expect(unwrapped(lines)).to include(long_question).and include("deploy now?")
+    end
+
+    # Counterexample 2: a body whose headline is not where the collapsed body
+    # starts, and the shape is not the one to guess. A FENCED body does not do
+    # it -- the fence is the first line, so it heads the summary and the body
+    # alike, and the prefix survives (measured, not assumed: that fixture was
+    # written first and came out green). What does it is the two definitions of
+    # "nothing".
+    # {Announcement#headline} skips a first line of U+200B because {Blankness}
+    # counts it blank; {Row#prose}'s `String#strip` does NOT remove it, because
+    # Ruby strips ASCII whitespace. So the summary names the SECOND line while
+    # the body still opens with the first. The safety property holds; the prefix
+    # relation is not asserted here, because it is not owed.
+    it "is NOT a prefix when the headline is not where the body starts" do
+      lines = view.update(record(asked(one_question("db", "​\n#{long_question}"), agent: "researcher")))
+
+      expect(lines.first).to include(long_question[0, 40])
+      expect(unwrapped(lines)).to include(long_question)
+      expect(unwrapped(lines)).not_to start_with(lines.first.delete_suffix(described_class::ELISION))
+    end
+
+    it "lists every question of a set under the summary that only counts them" do
+      set = Lain::Question::Set.new(questions: [Lain::Question.new(id: "db", body: "which db?"),
+                                                Lain::Question.new(id: "when", body: long_question)])
+      lines = view.update(record(asked(set, agent: "researcher")))
+
+      expect(lines.first).to eq("researcher  0s  which db? (+1 more)")
+      expect(unwrapped(lines)).to include("which db?").and include(long_question)
+    end
+
+    # A question that fits is drawn exactly as it always was -- one line, no
+    # body, no keys under the list -- so an ordinary inbox is unchanged and
+    # only a question that could not be read grows a fold.
+    it "renders a question that fits as the one line it has always been" do
+      lines = rendered("which db?")
+
+      expect(lines).to eq(["researcher  0s  which db?"])
+    end
+
+    # WHITESPACE MUST NOT MANUFACTURE A FOLD. {Rules.prose} keeps a question's
+    # bytes verbatim while {Announcement#headline} strips each line, so a body
+    # ending in a newline made the summary and the whole item differ by one
+    # trailing space -- drawing a two-line item, and a keys line for the whole
+    # list, out of something no human can see. It is the "byte-identical for an
+    # ordinary list" argument that this defends: without {Row#prose}'s strip the
+    # examples that never moved were a fixture accident.
+    it "folds nothing for a question that differs only by trailing whitespace" do
+      lines = rendered("which db?\n")
+
+      expect(lines).to eq(["researcher  0s  which db?"])
+    end
+
+    it "folds nothing for one padded at both ends either" do
+      lines = rendered("  which db?  \n\n")
+
+      expect(lines).to eq(["researcher  0s  which db?"])
+    end
+
+    # THE SENDER IS SCRUBBED TOO, and this is the field that had been the
+    # exception. A newline reaching a rendered line is the T17/F17 shape --
+    # `nvim_buf_set_lines` refuses the write, the render rides as a notify, and
+    # the buffer stops taking writes with nothing said. It also keeps the row
+    # SHAPE trustworthy: both the runtime's record test and 70_inbox's row test
+    # find an item by `from  age  question`, which a newline inside `from` breaks.
+    it "draws one line for a sender name carrying a newline, rather than posting one" do
+      lines = view.update(question_record("blake3:q1", from: "resea\nrcher", question: "which db?"))
+
+      expect(lines).to eq(["resea rcher  0s  which db?"])
+      expect(lines.grep(/\n/)).to be_empty
+    end
+
+    # A summary must never OPEN with {INDENT}: that prefix is the runtime's
+    # whole test for a continuation, so a record naming NOBODY would otherwise
+    # draw a row the fold surface reads as part of the item above it -- and the
+    # `<CR>` walk would resolve it to that item's set. {ApprovalView}'s lstrip,
+    # for {ApprovalView}'s reason.
+    it "never draws a summary the runtime would read as a continuation line" do
+      lines = view.update(question_record("blake3:q1", from: "", question: "which db?"))
+
+      expect(lines.first).not_to start_with(described_class::INDENT)
+      expect(lines.first).to start_with("0s")
+    end
+  end
+
+  # ONE convention, spelled in two languages, and nothing but this makes them
+  # meet: Ruby marks a continuation with {InboxView::INDENT}, the runtime tests
+  # for it with `05_records.lua`'s CONTINUATION, and a silent disagreement
+  # would put every item's fold boundary -- and every `<CR>` -- in the wrong
+  # place. {ApprovalView} is pinned against the same line by its own spec.
+  #
+  # A DRIFT GUARD, and deliberately NOT evidence that anything folds: "the two
+  # spellings are the same string" is a property of the source and of nothing
+  # else. The behavioural claim is made in a real editor, at the bottom of this
+  # file.
+  describe "the indent both languages have to agree on" do
+    def runtime_source(file) = File.read(File.join(Lain::Frontend::Neovim::RuntimeLoader::MODULES, file))
+
+    it "marks its continuation lines with exactly the prefix the runtime's pattern tests for" do
+      pattern = runtime_source("05_records.lua")[/^local CONTINUATION = "\^([^"]*)"$/, 1]
+
+      expect(pattern).to eq(described_class::INDENT)
+    end
+
+    it "uses the one indent every spanning lain view draws, not a second of its own" do
+      expect(described_class::INDENT).to eq(Lain::Frontend::Neovim::ApprovalView::INDENT)
+    end
+  end
+
+  # THE TRAILER RULE (T9's, measured there rather than reasoned): `10_folds`
+  # closes every fold at rest and then RE-OPENS the one holding the buffer's
+  # LAST line. A list whose last line belongs to the last item therefore hands
+  # the human that item open, every time. lain://approval gets its trailer free
+  # from the keys it already drew; this view had none, and now draws one -- but
+  # only where there is a fold to protect, so every one-line rendering this
+  # view has ever produced is byte-identical.
+  describe "the keys under a folded list" do
+    let(:long_question) do
+      "which database should the migration target, and should it run before or after " \
+        "the deploy window closes tonight, given the replica lag we saw this morning?"
+    end
+
+    it "closes a folded list with keys that belong to no item" do
+      lines = view.update(record(asked(one_question("db", long_question), agent: "researcher")))
+
+      expect(lines.last(2)).to eq(["", described_class::HINT])
+      expect(view.digest_at(lines.size, generation: view.generation)).to be_nil
+      expect(view.digest_at(lines.size - 1, generation: view.generation)).to be_nil
+    end
+
+    it "draws none where nothing folds, so an ordinary list is exactly what it was" do
+      view.update(record(asked(one_question("db", "which db?"), seed: "a")))
+      lines = view.update(record(asked(one_question("when", "deploy now?"), seed: "b")))
+
+      expect(lines.size).to eq(2)
+    end
+
+    it "keeps them out of the empty state, which is one line and stays one line" do
+      expect(view.initial.fetch(described_class::NAME)).to eq(["(no questions pending)"])
     end
   end
 
@@ -906,6 +1235,203 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         feed("lain://inbox", "<CR>", cursor: [1, 0])
 
         expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [1, inbox_stamp(handle)]])
+      end
+    end
+  end
+
+  # T12, at the editor, and THE FOLD HALF IS ONLY ASSERTABLE FROM HERE: T9
+  # shipped two fold acceptance criteria pinned by grepping the runtime source,
+  # and a one-word mutant making every line its own record -- nothing folds,
+  # the list becomes a wall of prose -- walked through the whole committed
+  # suite. A fold is a property of a WINDOW in a running editor, and only a
+  # running editor can be asked.
+  #
+  # :seam as well as :nvim: two real components (this view and the injected lua
+  # runtime) with no double between them, at the mirrored path, which is what a
+  # seam with an obvious subject does.
+  describe "the fold surface on lain://inbox", :seam do
+    def inbox_stamp(handle) = handle.buffers.generation_of(Lain::Frontend::Neovim::InboxView::NAME)
+
+    # Longer than the announcement's headline width, so the row cannot be read
+    # on one line and the view folds it -- the only shape that folds at all.
+    def long_question(seed)
+      "#{seed}: which database should the migration target, and should it run before " \
+        "or after the deploy window closes tonight, given the replica lag?"
+    end
+
+    # Two spanning items, listed, with the buffer SHOWN -- folds are window
+    # options installed at BufWinEnter, so an unshown buffer has no fold state
+    # to read at all.
+    def ask_long(seed)
+      asker = Lain::Tools::AskHuman.new(parent: parent_chain(seed))
+      Sync { asker.ask(long_question(seed)) }
+      push_question(asker)
+    end
+
+    def two_spanning
+      %w[a b].each { |seed| ask_long(seed) }
+      lines = wait_until do
+        listed = buffer_lines("lain://inbox")
+        listed if listed.size > 4 && listed.last == Lain::Frontend::Neovim::InboxView::HINT
+      end
+      inspector.command("buffer lain://inbox")
+      lines
+    end
+
+    # `foldclosed()` per line, read INSIDE the window holding the buffer: folds
+    # are a window fact and a temporary window carries none of the window-local
+    # fold options. -1 is "not in a closed fold"; any other value is the line
+    # the closed fold containing it STARTS on, so a run of one number is one
+    # item collapsed onto that line.
+    def fold_state
+      inspector.exec_lua(<<~LUA, ["lain://inbox"])
+        local buf = vim.fn.bufnr(...)
+        local win = vim.fn.win_findbuf(buf)[1]
+        if win == nil then return { "no window showing the buffer" } end
+        return vim.api.nvim_win_call(win, function()
+          return vim.tbl_map(vim.fn.foldclosed, vim.fn.range(1, vim.fn.line("$")))
+        end)
+      LUA
+    end
+
+    # A rendering the VIEW cannot produce, written straight into its buffer:
+    # the projection is nomodifiable, so the flag is lowered and restored around
+    # the write exactly as a render does it.
+    def write_lines(bufname, lines)
+      inspector.exec_lua(<<~LUA, [bufname, lines])
+        local bufname, lines = ...
+        local buf = vim.fn.bufnr(bufname)
+        vim.bo[buf].modifiable = true
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+        vim.bo[buf].modifiable = false
+      LUA
+    end
+
+    def item_starts(lines)
+      hint = Lain::Frontend::Neovim::InboxView::HINT
+      indent = Lain::Frontend::Neovim::InboxView::INDENT
+      (1..lines.size).select do |line|
+        text = lines[line - 1]
+        !text.empty? && text != hint && !text.start_with?(indent)
+      end
+    end
+
+    it "closes each item onto its summary at rest, leaving its question hidden" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do
+        lines = two_spanning
+        folds = fold_state
+        starts = item_starts(lines)
+
+        expect(starts.size).to eq(2)
+        # Every line of an item reports the SAME closed fold, starting on that
+        # item's own summary line -- which is "only its summary remains
+        # visible" in the one vocabulary nvim has for it. The mutant that
+        # deletes the fold surface reads a rising sequence here (each line its
+        # own fold), and the one that swallows the keys reads all -1 (nothing
+        # folded at all); neither survives this.
+        starts.each_with_index do |start, index|
+          last = (starts[index + 1] || (lines.size - 1)) - 1
+          expect(last).to be > start
+          expect(folds[(start - 1)..(last - 1)]).to all(eq(start))
+        end
+      end
+    end
+
+    it "leaves the keys line open, which is what keeps the last item closed" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do
+        lines = two_spanning
+
+        # `10_folds` re-opens the fold holding the LAST line at rest. The keys
+        # being a record of their own is what makes that harmless; were they
+        # swallowed into the last item's fold, that re-open would hand the
+        # human the last question open, every time.
+        expect(fold_state.last).to eq(-1)
+        expect(lines.last).to eq(Lain::Frontend::Neovim::InboxView::HINT)
+      end
+    end
+
+    it "opens from a continuation line of an item, sending that very line" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        lines = two_spanning
+        continuation = item_starts(lines).last + 1
+
+        feed("lain://inbox", "<CR>", cursor: [continuation, 0])
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop })
+          .to eq(["open", [continuation, inbox_stamp(handle)]])
+      end
+    end
+
+    # The row a record naming NOBODY draws: {InboxView::Row} lstrips, so the age
+    # leads the line and the sender-then-age anchor the runtime usually reads is
+    # not there. The editor has a second pattern for exactly this line, and
+    # without it a whole item would be inert -- silently, since the fold around
+    # it still looks right.
+    it "opens a row whose record named no sender, which the age has to lead" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        channel.push(Lain::Telemetry::Message.new(digest: "blake3:q1", kind: :message, from: "", to: "human",
+                                                  payload: { "question" => long_question("nobody") },
+                                                  causal_parents: [], correlation: nil))
+        lines = wait_until do
+          listed = buffer_lines("lain://inbox")
+          listed if listed.size > 2 && listed.last == Lain::Frontend::Neovim::InboxView::HINT
+        end
+        expect(lines.first).to start_with("0s")
+
+        feed("lain://inbox", "<CR>", cursor: [1, 0])
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [1, inbox_stamp(handle)]])
+      end
+    end
+
+    # An AGE CAN GO BACKWARDS -- `InboxView#age_of` subtracts an observation time
+    # from a later clock read, and neither is monotonic, so an NTP step or a
+    # suspend draws `-5s`. Before T12 that row failed both of the editor's
+    # patterns, and the failure is the worst shape this surface has: the item
+    # folds like its neighbours, looks answerable, and silently sends nothing.
+    #
+    # Driven by writing the rendering into the buffer rather than through the
+    # view, because a negative age needs a clock the production frontend does not
+    # take. What is under test is the EDITOR's gate -- does the keypress leave
+    # nvim at all -- so the command arriving is the whole assertion; Ruby refuses
+    # it afterwards, as it refuses any line of a rendering it did not draw.
+    it "opens a row whose age went backwards, from its continuation line" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        wait_until { buffer_lines("lain://inbox").any? }
+        write_lines("lain://inbox", ["researcher  -5s  which database should the migration target...",
+                                     "  researcher  -5s  which database should the migration target?"])
+
+        feed("lain://inbox", "<CR>", cursor: [2, 0])
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["open", [2, inbox_stamp(handle)]])
+      end
+    end
+
+    # The keys line is a record (that is what keeps the items closed) and it is
+    # NOT a row, so `<CR>` there is a keystroke about nothing: an rpcrequest
+    # whose only possible answer is "that line names no set" is worse than
+    # silence. No sleep -- the gesture is followed by a real command, and the
+    # first thing to reach the inbox must be that real one.
+    it "sends nothing at all from the keys line under the list" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        lines = two_spanning
+
+        feed("lain://inbox", "<CR>", cursor: [lines.size, 0])
+        inspector.command("LainSend")
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["send"])
       end
     end
   end

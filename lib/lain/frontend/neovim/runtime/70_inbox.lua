@@ -23,10 +23,11 @@ end, { nargs = "+" })
 --
 -- :LainPin's shape in every respect that matters, and its comment states the
 -- rule this one follows too: the LINE rides as the argument, never a digest.
--- lain://inbox is one set per line and renders no digest on it
--- (InboxView#line_for), so the Ruby side's own line -> digest index is the only
--- thing that can name the set -- and that index is built by the same pass that
--- produced the lines.
+-- lain://inbox renders no digest on any of its lines (InboxView#line_for), so
+-- the Ruby side's own line -> digest index is the only thing that can name the
+-- set -- and that index is built by the same pass that produced the lines, one
+-- entry per LINE since T12, which is what lets a set's question fold under its
+-- summary without a cursor in that fold answering the neighbouring set.
 --
 -- WHAT THIS SENDS THAT :LainPin DOES NOT, and it is not decoration: the
 -- RENDERING STAMP this buffer carries (b:lain_view_generation, written by
@@ -44,7 +45,10 @@ end, { nargs = "+" })
 -- equal height are indistinguishable by count. Ruby then resolved the gesture
 -- against the WRONG rendering and reported success. The stamp is exact, and it
 -- is still not a digest: it says what the human is looking at, and Ruby remains
--- the only side that can name a set.
+-- the only side that can name a set. What it does NOT protect is a cursor that
+-- did not move while the list did -- it says which rendering a line belongs to,
+-- never whether that is still the set the human aimed at; InboxView::Gestures
+-- #open is where that analysis lives.
 --
 -- The buffer check is NOT redundant with the buffer-local maps below. `define`
 -- makes every :Lain* command GLOBAL, and this one reads the CURRENT window's
@@ -52,12 +56,50 @@ end, { nargs = "+" })
 -- the inbox lists on ITS line 7, a set the human never looked at. Hand-typing
 -- is an INVITED path here precisely because the maps invoke the command.
 --
--- A line holding no record sends NOTHING, and the test is RECORD_START[INBOX] --
--- the runtime's own answer to "does this line hold an inbox item", already the
--- predicate the ]]/[[ motions and the folds ride, so the keys and the motions
--- cannot disagree about what a line is. The empty-state placeholder is the case
--- that reaches it: <CR> there is a keystroke about nothing, and an rpcrequest
--- whose only possible answer is "that line names no set" is worse than silence.
+-- Which ROW a line belongs to, or nothing at all -- and this is a different
+-- question from RECORD_START[INBOX], which since T12 is `spanning_record`.
+-- "Does a record start here" is true of the blank and the keys under the list
+-- and of the empty-state placeholder, none of which names a set: <CR> on one
+-- is a keystroke about nothing, and an rpcrequest whose only possible answer
+-- is "that line names no set" is worse than silence. The two tests still share
+-- their one convention -- a continuation is a line the drawing side indented
+-- (05_records' CONTINUATION) -- so the fold a human sees and the row this
+-- resolves can never disagree about where an item begins.
+--
+-- A ROW is a line that convention did NOT indent, carrying InboxView#line_for's
+-- two-space-padded age. Not anchored at column 1: `from` is a variable-length
+-- sender name, so the age's COLUMN moves per line and there is nothing fixed to
+-- anchor to; anchored on BOTH sides against the separator instead, which is
+-- tighter than "digits followed by s/m/h" alone. The second pattern is that
+-- same row with NO sender at all -- #line_for lstrips, and it has to, or a
+-- record naming nobody would draw a summary opening with the very two spaces
+-- read here as a continuation.
+--
+-- `%-?` in both because an age can be NEGATIVE: InboxView#age_of subtracts an
+-- observation time from a later clock read and neither is monotonic, so an NTP
+-- step or a suspend renders `-5s`. Two characters, and the failure they buy off
+-- is the worst shape this file has -- the item still LOOKS answerable, folds
+-- like its neighbours, and silently sends nothing when a human presses enter.
+--
+-- The walk UP is what makes every line of a folded item answer that item. What
+-- rides is still the human's OWN line (:LainPin's rule), never the row this
+-- found: Ruby's line -> digest map holds an entry per LINE, so the editor never
+-- has to name a record and a wrong one stays unrepresentable.
+local function inbox_row(lines, i)
+  local at = i
+  while at >= 1 and lines[at] ~= nil and lines[at]:match(CONTINUATION) ~= nil do
+    at = at - 1
+  end
+  local row = at >= 1 and lines[at] or nil
+  if row == nil then
+    return nil
+  end
+  if row:match("  %-?%d+[smh]  ") ~= nil or row:match("^%-?%d+[smh]  ") ~= nil then
+    return at
+  end
+  return nil
+end
+
 define("LainOpen", function()
   if vim.api.nvim_buf_get_name(0) ~= INBOX then
     vim.notify("lain: :LainOpen opens the question set under the cursor in " .. INBOX, vim.log.levels.WARN)
@@ -66,7 +108,7 @@ define("LainOpen", function()
   local buf = vim.api.nvim_get_current_buf()
   local lines = cached_lines(buf)
   local line = vim.api.nvim_win_get_cursor(0)[1]
-  if RECORD_START[INBOX](lines, line) then
+  if inbox_row(lines, line) ~= nil then
     vim.rpcrequest(chan, "lain_command", "open", { line, vim.b[buf].lain_view_generation })
   end
 end)

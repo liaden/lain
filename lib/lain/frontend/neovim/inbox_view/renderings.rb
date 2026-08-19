@@ -16,18 +16,28 @@ module Lain
         # Nothing outside {InboxView} may hold one.
         class Renderings
           # One rendering, as a gesture has to read it back: the STAMP the
-          # editor's buffer carries for it (T16), and which set sits on each of
-          # its lines. The stamp is what the editor sends back with the gesture,
+          # editor's buffer carries for it (T16), and which set OWNS each of its
+          # lines. The stamp is what the editor sends back with the gesture,
           # and it is the whole of the identity -- the empty-state placeholder
           # and a one-item list are both ONE line high, so the height could
           # never separate them and the stamp always does.
-          Rendering = Data.define(:generation, :digests) do
+          #
+          # ONE ENTRY PER LINE, NEVER ONE PER SET (T12), and that is what this
+          # object had wrong rather than incomplete: `digests` used to be the
+          # listed sets in order, addressed as `digests[line - 1]`, which is the
+          # same answer only while every item is exactly one line. The moment a
+          # question folded under its summary, that arithmetic named the
+          # NEIGHBOURING set -- which is why {InboxView#line_for} was pinned to
+          # one line at all. `owners` is the map the drawing pass builds beside
+          # the lines it draws, so a set owns every line of its own item and the
+          # keys below the list own nothing.
+          Rendering = Data.define(:generation, :owners) do
             def stamped?(named) = generation == named
 
             # The 1-based/0-based seam, guarded here rather than at each caller:
-            # line 0 would index -1, which is the LAST set -- a cursor nvim never
-            # reports would silently open the newest one.
-            def at(line) = line.positive? ? digests[line - 1] : nil
+            # line 0 would index -1, which is the LAST line -- a cursor nvim never
+            # reports would silently open the newest set.
+            def at(line) = line.positive? ? owners[line - 1] : nil
           end
           private_constant :Rendering
 
@@ -44,7 +54,9 @@ module Lain
           # safe: a rendering still held resolves exactly, and one forgotten is
           # refused BY NAME ({UNSHOWN}). So this number only says how far
           # behind the screen may be before a keypress must be pressed again,
-          # and each rendering costs one frozen array of digests.
+          # and each rendering costs one frozen array of digests -- one entry
+          # per LINE since T12, which is a rendering's height rather than its
+          # item count and still nothing worth bounding more tightly.
           HELD = 16
 
           def initialize
@@ -64,9 +76,13 @@ module Lain
           # on an older rendering stays reachable until the render that removes
           # its row has landed, which is how a keypress on it is answered with
           # {RETIRED} rather than with its neighbour.
-          def remember(digests:)
+          #
+          # @param owners [Array<String, nil>] the set owning each LINE of the
+          #   rendering, in line order; shorter than the rendering itself where
+          #   the lines below the list belong to no set
+          def remember(owners:)
             @generation += 1
-            @held = [Rendering.new(generation: @generation, digests:), *@held].first(HELD).freeze
+            @held = [Rendering.new(generation: @generation, owners:), *@held].first(HELD).freeze
           end
 
           # Whether the rendering the editor names is one this view can still
