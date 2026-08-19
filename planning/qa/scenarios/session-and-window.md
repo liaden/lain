@@ -55,6 +55,13 @@ Expected: ~26s at the default 5s connect timeout, ~8s at 1s — **not** the ~20 
 (`request_timeout` 300s × 4 attempts) this used to take. Retries must render **live** on screen
 (`[retry] attempt N, retrying in Xs -- Faraday::ConnectionFailed`), not journal-only.
 
+**Judge this probe by the render and the journal, never by `$?`.** `--prompt` is `first_prompt`, a
+REPL seed (`lib/lain/cli/repl.rb:55-58`) consumed by exactly one `prompt.read`, not a batch mode —
+`lain chat --prompt` exits **0** whether the ask completed or the endpoint never answered (FG1,
+`qa-findings-round6-2026-08-19.md`). So the four exhausted attempts, the ordinals and the timing
+above are the only evidence; a driver that gates this act on the process exit code will read a
+healthy 0 out of a completely blackholed run.
+
 Count the attempts with a counting TCP listener (see `method.md`) — and then **check the rendered
 ordinals against that count**, which is the half T18 changed. The give-up line used to report the
 retry budget rather than the attempt that failed, so four real attempts rendered as `1, 2, 3, 3`

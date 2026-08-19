@@ -233,6 +233,18 @@ several probes in these scenarios would otherwise use.
 What I reached for: a one-shot `lain ask` (or `--prompt --exit-status`) whose status reflects the
 ask.
 
+**Ruled 2026-08-19: deliberately not fixed in code.** `--prompt` stays a REPL seed —
+`lib/lain/cli/repl.rb:55-58`'s `converse` reads `first_prompt || prompt.read` once, then resumes
+`next_text`/`prompt.read` exactly as an unseeded chat does, so nothing downstream of that first
+read distinguishes a seeded ask from a typed one, and Ctrl-D after a rendered error is the same
+clean exit either way. It is not a batch mode, so `$?` from `lain chat --prompt` was never load-
+bearing for a completed-vs-failed distinction; only a **launch-level** refusal (a `Lain::Error`
+raised during construction, mapped `Thor::Error` at `exe/lain:845-846` inside the `chat` method,
+`:843-847`) exits nonzero, and that split does not change. The non-interactive case alone does not
+justify new CLI surface. **Reopen only with a named consumer** — a script or CI step that actually
+needs the outcome of a `--prompt` ask from a shell exit code, rather than from the rendered text or
+the journal it already has today.
+
 ---
 
 ## Model behaviour — not lain defects
