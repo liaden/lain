@@ -1,6 +1,6 @@
 # Chunk — the causal fold, and the surfaces that carry a refusal
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds · Jeremy Evans · Sandi Metz · Richard Schneeman · Aaron Patterson
@@ -85,9 +85,20 @@ only mitigation in the codebase is "keep the sentence short", enforced by two le
 (`lib/lain/review/surface/neovim.rb:210-211`) and `ApprovalView`'s `UNSHOWN`/`UNKNOWN`/`SETTLED`
 (`approval_view.rb:138-146`) ride the same rail with **no length pin** and run well over 200
 characters. `lib/lain/review/surface/neovim.rb:186-203` records, verified against a real embedded
-UI, that `nvim_echo` writes the **message area** (`&columns` wide × `&cmdheight`) and never reads the
-window — so the binding number in the cockpit is the nvim pane's 110 columns. The round-5 finding
-originally blamed the 40-column sidebar; that was wrong and has been corrected in the findings doc.
+UI, that `nvim_echo` writes the **message area** and never reads the window — so the binding number
+in the cockpit is the nvim pane's width, not the 40-column sidebar the round-5 finding originally
+blamed. That correction has been made in the findings doc.
+
+**CORRECTED BY T5 AT EXECUTION (2026-08-19): the ceiling is `v:echospace`, not `&columns`.** Measured
+on nvim 0.12.4 against a real attached UI: a 110-column pane holds **98** cells on the echo line,
+because `'showcmd'` reserves 12. A fix written against `&columns` would therefore still page for any
+sentence between 99 and 110 characters — the bug would look fixed and would not be. Anything in this
+chunk reasoning about the rail's width must use `v:echospace`.
+
+**Why the existing suite never caught F25 at all:** a headless nvim with no UI attached never raises
+the hit-enter prompt, so no pre-T5 example in `neovim_runtime_spec.rb` could witness it. T5's are the
+first in that file to call `nvim_ui_attach`. That is worth more than the fix itself — it says every
+message-area assertion written before this chunk was vacuous.
 
 **The approval buffer (UX4).** Not an oversight — a recorded decision. `approval_view.rb:62-66` and
 `runtime/00_constants.lua:19-23` both argue against priming it, on the ground that it "would put an
@@ -168,6 +179,29 @@ at scale, `lain friction`'s `cache_waste` analyzer against a real broken prefix,
   keep passing. An earlier draft of this plan instructed an agent to rewrite it, which would have
   deleted real coverage with the panel's blessing.
 
+## Execution hazard found on the day (2026-08-19)
+
+**Agent worktrees fork from `origin/main`, not from local `main`, and this repo's local main was 45
+commits ahead of an unpushed `origin/main`.** Every wave-1 worktree was therefore created at
+`2adacc5d` ("plan: fix the QA round-3 defects", 2026-08-18 06:30) instead of `f5ac2190`. Two
+consequences, and the second is the dangerous one:
+
+- This plan doc did not exist in any worktree, so no agent could read its card at all -- a loud,
+  self-announcing failure. One agent (T4) diagnosed it unprompted.
+- Every `lib/` and `spec/` file was 45 commits stale, which is **silent**. T4 had already written
+  edits against a `notify.rb` that differs from main by +145 lines, and `notify_spec.rb` by +138.
+  Those edits were discarded and the card restarted from a clean read.
+
+Handled by fast-forwarding each worktree to local main immediately after spawn
+(`git -C <worktree> merge --ff-only main`) and messaging every agent to discard what it had read.
+The one worktree carrying edits refused the fast-forward -- which is the check working -- and was
+reset deliberately.
+
+**For wave 2 and for every review agent: fast-forward the worktree before the agent reads anything,
+or confirm `git rev-list --count origin/main..main` is 0 first.** The general lesson is the repo's
+own: a red result is not evidence until the conditions are checked, and here a *green* result would
+have been worse -- a card can pass its specs perfectly against a tree nobody is shipping.
+
 ## Open decisions
 
 - **The orchestration-DAG surface is deliberately OUT OF SCOPE** (decided at interview, 2026-08-18).
@@ -198,6 +232,29 @@ at scale, `lain friction`'s `cache_waste` analyzer against a real broken prefix,
   notifications on screen for up to 305 s, some showing decided commands. That is more stale popups
   than today, not fewer. If that trade is unacceptable, the correlation work must be scheduled
   instead of deferred — decide before executing T4, not after.
+
+  **⚠️ THE MECHANISM STATED ABOVE WAS WRONG, AND IT TOOK THREE MEASUREMENTS TO SETTLE (2026-08-19).**
+  This plan said `-u critical` "never auto-expires" and bounded the exposure at 305 s. **Both halves
+  are false**, and the two agents who corrected each other were each right about a different desktop:
+
+  - T4b measured a `-u critical -t 2000` popup dying at **2022 ms**, close reason `1` -- so a client's
+    `-t` **is** honoured, and "never auto-expires" is wrong.
+  - T4b's review panel measured the same shape still lit indefinitely -- so "bounded at 305 s" is
+    wrong too.
+  - The discriminator, found on the third pass, is **`idle_threshold = 120` in this dunstrc**: dunst
+    **pauses expiry entirely while nobody has touched the keyboard for 120 s.** Proven by raising a
+    LOW-urgency twin at the same instant (both blew through `-t`, so it is not an urgency rule), with
+    a `transient`-hint control that died at 2.1 s beside a plain one still lit at 6.4 s.
+
+  **The consequence is worse than either account, and is why T4b was not optional: an unanswered
+  approval IS, by construction, an idle desktop.** The queue's 300 s window is 2.5x the idle
+  threshold, so in the only case this surface exists for the popup never expires at all -- and once
+  `SHELLOUT_GRACE_MS` reaps the shellout, nothing left in the system can close it. There are two
+  independent leaks (a clock mismatch AND idle suppression); T4b's `withdraw_settled` on plain
+  `decided?` closes both ~50 ms after the queue denies, and depends on expiry not at all.
+
+  Recorded at this length because the chunk carried the 305 s figure from planning through execution,
+  three agents reasoned from it, and each new measurement looked like a complete answer at the time.
 - **T8's pricing question is open and its card must not proceed past it silently.**
   `Compaction::Scheduler#cost_saved`/`#cost_spent` (`lib/lain/compaction/scheduler.rb:290-302`)
   already feed the byte proxy into `Usage.new(input_tokens:)` / `Usage.new(cache_creation_input_tokens:)`
@@ -253,6 +310,15 @@ until T7's constants land.
 
 Same-wave file conflicts checked: T9 and T10 both touch `lib/lain/cli/up.rb` and are sequenced for
 that reason. No other file appears in two same-wave cards.
+
+**Integration touch-up owed between T5 and T7 (found at execution).** T7's priming adds a seventh
+`lain://` buffer, which breaks exactly one example in `spec/lain/frontend/neovim_runtime_spec.rb`
+("sets b:lain_view on every lain:// buffer") — a file T5 owns in the same wave. T7 correctly handed
+the one-line diff back rather than editing a sibling's file: introduce a
+`primed_views = all_views + [ApprovalView::BUFFER]` helper and use it in that example's two lines,
+leaving `all_views` itself at six because it pins the `LainAttach` payload. **Whichever of T5 and T7
+lands SECOND carries this touch-up**, per the git protocol's rule that integration work belongs with
+the later merge.
 
 ## Tasks
 
@@ -359,6 +425,29 @@ Scenario: rebuilding leaves no unreferenced payload behind
   in the hand-back — it means the cycle is deeper than the two-phase shape assumed here.
 
 ### T2 — Make every caller of the session rebuild refuse by name          [wave 2] [risk: low]
+
+**SCOPE EXPANDED BY THE ORCHESTRATOR, 2026-08-19, and the risk rating is wrong: this card found a
+defect in T1 AFTER T1 had landed.** T2 was briefed to *try to falsify* T1's single-currency claim
+rather than inherit it, and it did, over ~22 hand-damaged journal shapes. The claim holds for every
+**dangling** edge and fails for a **malformed** one:
+
+- `MessageReplay#resolvable?` `.compact`s a `null` out of `causal_parents` (the `.compact` is there
+  for an absent `render_parent`), so it calls the record reachable and `Store#put` then refuses a put
+  nothing pre-checked -- `Store::MissingObject` escapes the **sweep**, never reaching `forced_put`'s
+  translation. Reproduced on `message` records, `child_turn` records, and a resume chain's prior file.
+- `causal_parents: [<real digest>, null]` escapes as a bare `ArgumentError` from `normalize_causal`'s
+  `.sort` -- neither currency.
+
+**The asymmetry IS the defect**: `ChainFold#cited_parents` shape-checks that identical field for turn
+records and `MessageReplay` has no equivalent. T2 was authorised to fix it in
+`lib/lain/bench/session/message_replay.rb` -- T1's landed file -- because T2 holds the reproduction,
+the fixtures and the diagnosis, and T1's worktree was already retired.
+
+**The lesson worth keeping, which is this chunk's second instance of it:** a property verified by
+adversarial probing is only verified against the shapes the prober thought of. T1's panel probed
+every *dangling* shape it could construct and concluded single-currency held; nobody probed a
+*malformed* one until a card whose own scope depended on the answer was told to attack it. Briefing
+a downstream card to falsify an upstream claim, rather than to build on it, is what caught this.
 
 **Depends on:** T1
 **Files:** modify `lib/lain/cli/resume.rb`, `lib/lain/bench/cli.rb`,
@@ -707,8 +796,48 @@ Scenario: the rail stays traceback-free
 ### T6 — Pin the width of every sentence that rides the refusal rail     [wave 2] [risk: high]
 
 **Depends on:** T7
-**Files:** create `spec/refusal_width_discipline_spec.rb`; modify `lib/lain/review/surface/neovim.rb`
-(T7 owns `lib/lain/frontend/neovim/approval_view.rb` and brings its constants under the bar)
+**Files:** create `spec/refusal_width_discipline_spec.rb`; modify `lib/lain/review/surface/neovim.rb`,
+`lib/lain/review/handover.rb`, `lib/lain/frontend/neovim.rb`,
+`lib/lain/frontend/neovim/review_view.rb`, `lib/lain/frontend/neovim/rpc_thread.rb`, and the specs
+pinning any wording they change (T7 owns `lib/lain/frontend/neovim/approval_view.rb` and has already
+brought its constants under the bar)
+
+**SCOPE EXPANDED BY THE ORCHESTRATOR, 2026-08-19, on evidence from T7's hand-back.** The card was
+written believing `review/surface/neovim.rb` held the outliers. Measured against T7's chosen 80-column
+bar (including the `"lain: "` prefix), **twelve** over-bar refusal sentences live in four files the
+card did not list:
+
+| file | constants over the bar |
+|---|---|
+| `review/handover.rb` | `NO_EDITOR` 99, `NO_DOCENT` 110, `PARTLY_MARKED` 119 |
+| `frontend/neovim.rb` | `UNOPENED` 134 (plus `PARTLY_MARKED` 119, `NO_SESSION` 94 in the owned file) |
+| `frontend/neovim/review_view.rb` | `NO_STAMP` 139, `UNISSUED` 148, `UNSHOWN` **202**, `UNREAD` 93 |
+| `frontend/neovim/rpc_thread.rb` | `UNANSWERABLE` 129, `UNREVIEWABLE` 139 |
+
+Shortening them is in scope. A discipline spec that ships with those twelve allowlisted is the
+"worse than none" outcome the card's own trigger names.
+
+**⚠️ A FALSE-POSITIVE TRAP that would wreck the naive derivation.** `rpc_thread.rb` also holds
+`SET_VIEW` (94), `SET_REQUEST` (87), `SET_COMPOSE` (97), `SET_QUESTION` (104), `SET_REVIEW` (84),
+`SET_THREAD` (96), `SET_APPROVAL` (98), `OPEN_CHANGESET` (132) and `REVIEW_REFUSED` (82) — these are
+**Lua eval source strings, not refusal sentences**, and they are long for good reason. The card's
+suggested approximation ("every refusal constant in a class that sends `review_refused`") sweeps all
+nine and measures the wrong thing. So the derivation must key on **how a constant is used** — does it
+reach `review_refused`/`refusable` as a message — rather than on which class holds it. That is
+harder than the card assumed and is the main reason its high-risk rating is deserved. If the only
+honest derivation you can build still admits these, say so and escalate rather than allowlisting by
+name.
+
+**The bar is 80 columns including the `"lain: "` prefix**, chosen and already met by T7: inside the
+cockpit's 110 and an ordinary terminal, against the repo's existing `< 60` / `< 40` pins. Raising it
+is T6's to argue for; lowering it below 80 makes T7's landed constants red.
+
+**T5's independent measurement agrees and gives the hard ceiling: `v:echospace` is 98 cells in a
+110-column pane, so a sentence has 92 characters after `"lain: "`.** T7's 80-including-prefix is the
+stricter of the two and is what already ships; 98-including-prefix is where the rail actually pages.
+T6 must state which it enforces and why, rather than inheriting a number silently — and note the two
+were derived independently, by different agents, from different evidence, which is the only reason to
+trust either.
 **Reuse:** the two existing length assertions (`spec/lain/review/surface/neovim_spec.rb:337-343`
 `< 60`, `:432-440` `< 40`) as the convention being generalized; the repo's existing
 mechanical-discipline specs — `spec/output_discipline_spec.rb`,
@@ -1243,6 +1372,76 @@ Scenario: the roadmap no longer calls the timeline buffer the DAG
   missed, stop and escalate rather than editing the roadmap to match a wrong belief.
 - Do not add a roadmap item committing to build the DAG surface — the interview deferred it without
   scheduling it.
+
+## Follow-up work this chunk surfaced but deliberately did not do
+
+Recorded here so each is legible as a decision rather than an oversight. None is scheduled.
+
+1. **Merge the tmux server's environment under `PaneCommand`'s re-exports** (from T9). The pre-flight
+   child inherits `lain up`'s environment while the pane inherits the **tmux server's**, so a
+   missing-key verdict can differ in both directions. The dangerous direction is a `lain up` from a
+   keyless shell refusing a cockpit whose already-running server *does* hold the key -- a previously
+   working invocation, refused. T9 shipped the stated minimum (the refusal now names where it looked
+   and what to do) and declined to narrow, because a wrong environment merge silently refuses MORE
+   working cockpits, which is the failure class T9 had already been sent back for once. The merge is
+   the correct fix and is sketched in T9's hand-back.
+2. **A whole-record shape convention for journal records** (from T2's review). `MessageReplay` and
+   `ChainFold` both `fetch` required fields without defaults, so an *absent* `kind`, `digest`,
+   `payload`, `from` or `correlation` escapes as a bare `KeyError` -- not a `Lain::Error`, so
+   `exe/lain:924`'s rescue misses it and the operator gets a raw backtrace. T2 fixed only
+   `causal_parents`, to match `ChainFold` and close the asymmetry its own card was about. The general
+   case is a real gap but a pre-existing, consistent one: no writer in `lib/` can emit any of these
+   shapes, since `Telemetry::Message`/`ChildTurn` always carry them. Worth one card that decides the
+   posture for the whole record rather than five ad-hoc `fetch` defaults.
+3. **`dunstctl` verdict correlation beyond withdrawal** -- whether `Notify` should correlate verdicts
+   through `dunstctl` rather than parsing `dunstify` stdout. Untouched by T4/T4b, which changed only
+   when the fiber waits and added withdrawal.
+4. **The orchestration-DAG surface** -- out of scope by interview decision, recorded by T13 in
+   `planning/qa/README.md` and corrected in `ROADMAP.md`. Deferred, not scheduled.
+5. **`read_file`'s line-2 residual** (from T11): a file whose *second* line exceeds the window ceiling
+   still gets `PART_ONLY` and refuses at `offset:1, limit:1` -- two round trips. Unchanged from before
+   the chunk, and the second refusal is actionable (`LONG_LINE_NARROWER`), so it is a smaller version
+   of the bug T11 closed rather than a regression.
+
+## Outcome (2026-08-19)
+
+**All 13 cards landed** (T3 withdrawn during decomposition; T4b added at execution). Integration
+checks 1-3, 5 and 6 pass; check 4 is a manual pass still owed by the human.
+
+- `rake pspec`: **14477 examples, 0 failures, 15 pending** in 52s. Example count cross-checked
+  against a serial `--dry-run`: **14477** -- equal, so no worker died silently.
+- `bundle exec rubocop` (bare): 1330 files, no offenses. `pre-commit run --all-files`: every hook
+  passed.
+- `bundle exec rspec --tag seam` on a quiet box: **1058 examples, 0 failures**.
+- Every worktree and branch retired; `git worktree list` is one entry and no `worktree-agent-*`
+  branch remains.
+
+**What the review panels caught that green suites did not.** Recorded because it is the chunk's
+most transferable result: **eight defects were found by deliberately breaking working code and
+checking whether a test noticed** -- not by running the suite.
+
+| card | what a green suite missed |
+|---|---|
+| T12 | `Float::INFINITY.round(2)` raised where the old code printed harmlessly -- reachable from a server-supplied `Retry-After` header |
+| T1 | `on_chain?` never reached the fixpoint; 8 of 24 ask-orders still raised F23 on a HEALTHY session, masked only by one call site's line order |
+| T7 | reverting the production wiring left all four live examples GREEN -- the specs witnessed the priming, not the hand-over |
+| T11 | `have_received(:read).with(path)` never matches `File.read(path, N)`, so a 1 MiB slurp passed the example forbidding it |
+| T4b | `HANDLE_ID_FLOOR = 1` passed 54/54 -- the suite was green on a build that would close the HUMAN's own notifications |
+| T5 | three independent paging axes (cells, line breaks, height), each found by a different pass; the pre-existing suite could witness NONE of them, because headless nvim never raises the prompt |
+| T6 | the fix for its own blocker was unpinned: deleting the literal branch left all 25 examples green |
+| T2 | found a hole in T1 AFTER T1 landed and after T1's panel approved it -- malformed (not dangling) edges escaped the single-currency invariant |
+
+**Three facts the plan asserted that turned out to be wrong**, each corrected in place above:
+`&columns` (it is `v:echospace`); `-u critical` "never auto-expires" bounded at 305 s (it is
+`idle_threshold` suppression, and an unanswered approval is by construction an idle desktop); and
+the orchestrator's own hand-measured list of 12 over-bar refusals (there were 18, and T6's
+mechanical derivation found 19).
+
+**The one defect only the FULL suite caught:** T10 called `Process.clock_gettime` directly, tripping
+a Ripper scan in `run_clock_spec.rb`. No targeted run touches it, and neither the card's own band nor
+its panel's 1756-example sweep included it -- these `lib/`-wide scans are cross-cutting by
+construction, so "specs near my subject" is the wrong selector. Cost of catching it:
+`rspec spec/*.rb spec/lain/run_clock_spec.rb`, 255 examples, ~7s.
 
 ## Integration checks
 
