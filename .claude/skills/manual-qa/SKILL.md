@@ -27,10 +27,21 @@ get added there, and a round that runs a hard-coded five silently stops covering
 
 **With no scope named, the default is the FULL round: every scenario in that directory.** Take
 `planning/qa/README.md`'s ordering as the authority — as of 2026-08-19 that is `session-and-window`
-→ `rust-cli` → a subject with `cockpit-surfaces` piggybacked → `bench-arms` → `failure-injection` —
-and run **both** subjects (`bowling-ruby` and `rails-blog`) rather than picking one. `rails-blog` is
-the expensive one, which is exactly why it is the one that never gets run: round 5 did not reach it
-at all, so compaction at scale still has no manual evidence behind it.
+→ `rust-cli` → a subject with `cockpit-surfaces` piggybacked → `bench-arms` → `failure-injection`.
+
+**A scenario README marks `expensive` is driven as its OWN round, in its own context — never as the
+tail of another one.** `rails-blog` is the only one today. This is not a scheduling preference, it
+is the fix for a failure that has now repeated three times: rounds 4, 5 and 6 all ended without
+reaching it, each time because one driver context was carrying every scenario and the budget was
+spent by the time it came up. **Reordering does not fix that** — it only changes which scenario
+starves. Giving the expensive one its own context makes its position in the list irrelevant, which
+is the point.
+
+So a full round is: the sequence above in this context, **and** a separate invocation for
+`rails-blog` (`/manual-qa rails-blog`). Say in the findings which of the two you are writing up, and
+if you drove only the sequence, say plainly that the expensive round is still owed rather than
+listing it as dropped — a scenario with its own context is not competing for budget and so is never
+legitimately a casualty of one.
 
 If the user named a scenario, use that one. If they asked for a regression gate after a chunk,
 README's cheap pair (`failure-injection` + `session-and-window`) is the answer, and README says why
@@ -66,6 +77,24 @@ caller does not own the human's attention. So decide, and say which: the acts th
 approval notifier run with it **on** and are named; every other act runs under `LAIN_DESKTOP=0`. A
 round that cannot say which acts raised notifications is a round whose notifications nobody can
 account for.
+
+**`LAIN_DESKTOP=0` must be exported BEFORE the tmux server is started, and nowhere else works.**
+`LAIN_DESKTOP` is **not** in `PaneCommand::PANE_ENV` (an 11-name allowlist: `LAIN_API_BASE`,
+`LAIN_MAX_TOKENS`, `LAIN_MODEL`, `LAIN_NUM_BATCH`, `LAIN_NUM_CTX`, `LAIN_PROVIDER`, `LAIN_SEED`, the
+three `LAIN_SUMMARIZER_*`, `LAIN_TEMPERATURE`), so exporting it in the shell that runs `lain up` does
+**nothing** — a pane inherits it only from the *server's* environment. The 2026-08-19 trial did
+exactly that and drove an unmuted cockpit it had no way to notice. So the gate is not "did I export
+it" but:
+
+```bash
+for p in $(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_pid}'); do
+  tr '\0' '\n' < /proc/$p/environ | command grep -c '^LAIN_DESKTOP=0'
+done     # every pane must report 1 -- absent means the notifier is LIVE
+```
+
+A muted round proves it the same way it proves the sandbox held: **by the negative**. `dunstctl count
+displayed` and `waiting` both **0** after an act containing gated calls is that proof, because
+approvals are raised `-u critical` and never auto-expire — any that fired would still be on screen.
 
 Also record the round's start time — you need it for the close-out negative check.
 

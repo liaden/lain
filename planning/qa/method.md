@@ -132,6 +132,23 @@ only worth having if it is read rather than skimmed:
 - **Size the server before the panes exist.** At tmux's default 80x24 nvim hits its hit-enter prompt
   and the RPC attach **deadlocks**. `new-session -x 220 -y 50` *and* `set-option -g default-size
   220x50` — the option is what later panes inherit.
+
+  **`kill-server` is asynchronous, so let it settle or the sizing silently does not happen.** Run
+  back-to-back, `new-session` hits the dying server and prints `server exited unexpectedly`, then
+  `set-option` prints `no server running` — **and both fail**, so `lain up` later creates the server
+  itself at tmux's default **80x24** and you are in the deadlock this bullet exists to prevent.
+  Reproduced 2026-08-19: 1 run in 3 raced, and the resulting cockpit came up 80x24 with 40x24 panes
+  and an nvim RPC that hung until killed. `sleep` and then **verify**, rather than assuming:
+
+  ```bash
+  tmux -L "$QA_SOCK" kill-server 2>/dev/null; sleep 1
+  tmux -L "$QA_SOCK" new-session -d -s bootstrap -x 220 -y 50; sleep 0.5
+  tmux -L "$QA_SOCK" set-option -g default-size 220x50
+  tmux -L "$QA_SOCK" show-options -g default-size    # must print `default-size 220x50`, not an error
+  ```
+
+  This is also the cheapest explanation for an nvim RPC that hangs: check the pane geometry
+  (`list-panes -a -F '#{pane_width}x#{pane_height}'`) before hunting anything subtler.
 - **`remain-on-exit on` for every window the DRIVER opens**, or a crash erases its own evidence:
   `tmux -L lain-qa set-option -w -t <window> remain-on-exit on`.
 - **Chat input needs `-l`**: `send-keys -t <chat> -l '<text>'` then `send-keys -t <chat> Enter`.
@@ -139,6 +156,13 @@ only worth having if it is read rather than skimmed:
 - **Never pipe `lain` through `tee`** — that puts stdout on a pipe, the TUI never leaves the
   alternate screen, and `capture-pane` reads blank.
 - **`lain --version` does not exist** — it parses as `lain chat --version`. Smoke-test with `lain help`.
+- **`--prompt` is a SEED, not a batch mode, and its exit status says nothing about the ask.**
+  `Repl#converse` takes it as `first_prompt` and then reads the terminal as usual, so with
+  `< /dev/null` it dispatches one turn, hits EOF and exits **0** — including when the turn failed
+  outright. Round 6 measured exit 0 on a blackhole endpoint after four exhausted retries, and again
+  on connection-refused. Several scenarios use `--prompt` as "the cheap vehicle": judge those by the
+  rendered text and the journal, **never by `$?`**. A launch-level refusal is the opposite case and
+  does exit 1 — the split is construction (exits nonzero) versus a turn that failed (exits 0).
 
 ### Send Enter ONCE, then poll the JOURNAL — never the status line
 
@@ -147,6 +171,18 @@ defect **generator**: one intended prompt became **4 `turn` records, 4 `request_
 `compaction_decision`**. Readiness is the journal going quiet — `drive.sh` implements it.
 
 Round 4 drove every act this way and produced **zero** duplicated turns. Keep the rule.
+
+**And do not type at all while an approval is parked -- the Enter IS the answer, and it denies.**
+The rule above bounds how many times you send; this one bounds *when*. At an `[y/N]` prompt the
+newline a driver sends to submit its next PROMPT is consumed as the approval's answer, and the
+default is **deny**. Round 6 lost a `bash` call that way and then spent three turns watching the
+model recover from a denial nobody intended -- which reads exactly like a model failure and is the
+driver's. `drive.sh` now refuses to send while `lain://approval` holds anything, and a driver
+sending keys by hand should make the same check:
+
+```bash
+$QA/nv.sh buf 'lain://approval' 2 | command grep -q 'no approvals pending' || echo "ANSWER IT FIRST"
+```
 
 *(Since round 3's T10 fix the status line no longer claims `idle` mid-dispatch — it elides the
 segment entirely. That makes the status line honest, but it is still a point-in-time snapshot
@@ -191,6 +227,18 @@ A `request_sent` a few seconds old with an empty `/api/ps` and a young `llama-se
 is a RELOAD, not a hang. The HUD's `idle Ns` is no help here: it is a snapshot printed once
 per prompt, so it goes stale by design.
 
+**A hand-rolled `curl` probe can MANUFACTURE that reload, and then you measure it as latency.**
+`bench.md` records `--num-ctx` forcing a runner reload; the same is true of **any** option that
+differs from the resident runner's argv, and `num_batch` is the one a driver reaches for. Round 6
+measured "30.9s to first token" for a 33KB prompt and nearly filed it as prefill cost; the request
+had passed `num_batch: 2048` against a runner started with `-b 512`, so the figure was a ~27s
+reload. Re-measured without it: **9.3s**. Read the runner's real argv first, and pass nothing that
+disagrees with it:
+
+```bash
+tr '\0' '\n' < /proc/$(pgrep -P "$(pgrep -x ollama | head -1)" | head -1)/cmdline | paste -sd' '
+```
+
 ### Drive nvim over RPC, not tmux keys
 
 **The single biggest process improvement of round 4.** The old advice — "repeat `C-w h` until
@@ -218,6 +266,45 @@ refusal looks truncated on the message line; that truncation is the mechanism wo
 (One version caveat: recording the unfolded copy needs `'messagesopt'`, which is nvim 0.11+. On 0.10
 the rail degrades to echoing the fitted line into history instead, so `:messages` holds what was
 shown and not more. `cockpit-surfaces.md` §4 has the detail; record `nvim --version`.)
+
+### Making a session with `message` and `child_turn` records
+
+Several probes need a session whose causal edges are **not** plain `parent` links —
+`failure-injection.md` §3's `causal_parents` damage, and any F23-style fork/resume regression. A
+session of ordinary turns has none, so a probe written against that key silently tests nothing, and
+the scenario tells you to check first without telling you how to make one. It is one prompt:
+
+```bash
+@researcher[/critique] <path-to-some-file>     # spawns; produces message + child_turn records
+```
+
+**The bracket and the path are load-bearing.** A bare `@researcher <question>` does **not** spawn —
+it is treated as ordinary prose and produces no `message` record at all, which looks like a broken
+fleet. Verify rather than assume:
+
+```bash
+ruby -rjson -e 'c=Hash.new(0); File.foreach(ARGV[0]){|l| r=JSON.parse(l) rescue next; c[r["type"]]+=1}
+  p c.select{|k,_| %w[message child_turn].include?(k)}' "$LAIN_QA_JOURNAL"
+```
+
+Expect the HUD to gain a `fleet N` segment and the prompt to become `human>`. **Answering there is
+its own hazard — see the `human>` note below.**
+
+### At the `human>` prompt, only `/inbox` is a command
+
+Round 6 (F27): with a subagent's question parked, every other session command — `/ruby`, `/mode`,
+`/status` — is **silently delivered to the subagent as a prose answer**, and appears in the journal
+as `payload={"answer" => "/ruby …"}`. Nothing refuses and nothing renders.
+
+Two consequences for driving. **A `/ruby` reading taken at `human>` is not a reading** — it is a
+message to a subagent, and the value you wanted was never computed; several of round 6's inspection
+reads were lost this way before the cause was understood. And **the operator has no command-level
+way out** of a subagent that loops on questions, which is exactly when one is wanted. So: check the
+prompt before every `/` command, and clear the inbox before taking any inspection reading.
+
+```bash
+$QA/peek.sh 2 | tail -1        # `you>` or `human>`?
+```
 
 ### Read the `lain://` buffers, not just `capture-pane`
 
@@ -351,6 +438,19 @@ The 2026-08-17 run found **six orphaned `while :; do :; done` spinners at ~98% C
 left by a sub-agent from the *previous* chunk. **Orphans from agent work are the expected
 contaminant here**, not other people's jobs.
 
+**Ask with `pgrep -P` or the exe path, never a bare `pgrep -f` -- it matches YOUR OWN shell.** An
+agent shell's command line contains the pattern you are grepping for, so `pgrep -f 'pre-commit'`
+matches the `echo "=== pre-commit ==="` in the very command asking the question. Round 6 hit this
+**four** times in one round -- orphan spinners, `pre-commit`, the ollama runner, and a
+`bench arms` run it declared still-running two minutes after it had finished. CLAUDE.md records the
+trap for `parallel_rspec`; it generalises to every `pgrep -f` here. The reliable forms:
+
+```bash
+pgrep -P "$(pgrep -x ollama | head -1)" | head -1     # a child, by parent pid
+ps -eo pid,args | grep '[b]ench arms' | grep -v zsh   # bracket AND drop the shell
+ls -l /proc/<pid>/exe                                 # what it really is
+```
+
 ## Instruments worth building
 
 - **A counting TCP listener** — ~12 lines (accept, `SO_LINGER 0`, close, count to a file) — turns
@@ -359,6 +459,12 @@ contaminant here**, not other people's jobs.
 - **A severing proxy** — the same listener, but forwarding to the real endpoint and RST-ing after N
   bytes of response. Deterministic where killing a service is a timing race, and it leaves the
   operator's model server untouched. This is how F7 was found (control 1.9s vs >400s hung).
+- **A logging pass-through proxy** — forward to the real endpoint and record start / first-byte / end
+  per upstream request. This is the instrument for **concurrency**, which neither of the above can
+  see: it is what turned round 6's F26 from "the model seems slow" into "the journaled request
+  waited 35.8s for its first byte while an unjournaled sibling held the only slot", and it is the
+  only way to count lain's real model calls against the journal's. `$QA/proxy.rb` ships with the
+  sandbox; `failure-injection.md` §12 drives it.
 
 ## Budget the round around the harness's own limits
 

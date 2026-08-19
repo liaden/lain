@@ -202,15 +202,20 @@ from the process under test — say which one you used:
 bundle exec ruby -Ilib -rlain -e 'p Lain::PriceBook.default.price("claude-opus-5")'
 ```
 
-| model | input | output | cache write | cache read |
+| model | `input` | `output` | `cache_creation` | `cache_read` |
 |---|---|---|---|---|
 | `claude-opus-5` | **5** | **25** | 6.25 | 0.5 |
 | `claude-sonnet-5` | 3 | 15 | 3.75 | 0.3 |
 | `claude-haiku-4-5` | **1** | **5** | 1.25 | 0.1 |
 
 Per MTok, verified 2026-08-18 against the loaded `PriceBook.default`. **`15/75` on the opus row is
-the pre-chunk error returning.** Cache write must stay exactly 1.25× input and cache read exactly
-0.1× — a corrected input rate with a stale derived row is the half-fix to watch for.
+the pre-chunk error returning.** `cache_creation` must stay exactly 1.25× input and `cache_read`
+exactly 0.1× — a corrected input rate with a stale derived row is the half-fix to watch for.
+
+**Those are the literal `Lain::Price` member names, and the columns are spelled that way on
+purpose.** `Price.members` is `[:input, :output, :cache_creation, :cache_read]` — there is **no**
+`#cache_write`, and typing the older prose name straight into `/ruby` raises `NoMethodError`. Two
+separate drivers lost a turn to that on 2026-08-19.
 
 `claude-fable-5` and `claude-mythos-5` are deliberately **unpriced** and must raise by name:
 
@@ -261,6 +266,23 @@ unattended in 91 days — so drive the stale branch that way rather than by edit
 `load`, not `require_relative`: the file has no `.rb` extension. **What wrong looks like:** the lint
 exiting 0 with a marker it never found — check that a *deleted* marker fails too, since a regex that
 stops matching silently turns the lint into a no-op that passes forever.
+
+**The marker is literally `Reviewed YYYY-MM-DD`** (`MARKER = /Reviewed\s+(\d{4}-\d{2}-\d{2})/`,
+one line above `DEFAULTS`). Use that exact string to drive the deleted case, and **assert your own
+edit actually changed something** — on 2026-08-19 two independent drivers both guessed
+`reviewed-on:`, stripped a string that does not occur in the file, and got `ok?=true, message=nil`,
+which is precisely the silent-pass-forever shape this paragraph warns about. The probe reported the
+defect it was written to catch, and the defect was in the probe:
+
+```ruby
+orig = File.read("lib/lain/price_book.rb")
+src  = orig.gsub(/Reviewed\s+\d{4}-\d{2}-\d{2}/, "")
+abort "the gsub matched nothing -- you are testing your own typo" if src == orig
+p PriceFreshnessLinter.check(source: src, path: "lib/lain/price_book.rb", today: Date.today)
+```
+
+Correct output is `ok?=false` with
+`no "Reviewed YYYY-MM-DD" marker found near the price table`.
 
 ## What this scenario does not cover
 

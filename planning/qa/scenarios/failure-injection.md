@@ -500,3 +500,67 @@ tmux ≥ 3.2 and the option is set best-effort on purpose: a diagnostic nicety m
 down. `PaneCorpse` is best-effort on the same rule — a tmux that will not answer means the check
 cannot tell, and it stays quiet rather than guessing. Record the tmux version beside the result, or
 neither reading can be interpreted.
+
+## 12 — Concurrency against a one-slot server
+
+**Why this section exists: `bench.md` records `n_slots = 1` as a precondition for "the whole class of
+contention defects" and until round 6 nothing drove it.** F10 (round 3) and F26 (round 6) are the
+same mechanism and were both found by accident, a round apart, because the class had a precondition
+and no probe. This is that probe.
+
+**The mechanism to look for.** Lain issues more than one model call per turn — the turn's own
+request, and an **oracle** consulted about a tool result — and the second is dispatched within tens
+of milliseconds of the first. On a server with one slot they serialize, the loser blocks *at the
+server* with **zero bytes**, and if that wait exceeds `stream_stall_timeout` (30s) the turn is torn
+down with `stalled stream: no bytes for N.Ns` on a completely healthy endpoint.
+
+**The oracle's call is not journaled**, so this is invisible from the journal alone: you will see one
+`request_sent`, then `run_interrupted`, and nothing explaining the gap. **Do not attempt this probe
+without a proxy** — without one there is no way to distinguish contention from a slow model, and a
+driver will reasonably file the wrong cause.
+
+### The instrument
+
+A **logging pass-through proxy** — forward to the real endpoint, and record start / first-byte / end
+per upstream request. `$QA/proxy.rb` ships with the sandbox. Point `--api-base` at it:
+
+```bash
+ruby "$QA/proxy.rb" "$QA/records/proxy.log" &     # listens on 127.0.0.1:21434
+lain up "$QA/project" -- --provider ollama --model qwen3-coder:30b --api-base http://127.0.0.1:21434
+```
+
+Then drive a turn whose tool result is large enough to summon the oracle. A failing compile is
+reliable (`cargo build 2>&1 | head -40` against a crate that does not compile); so is any `bash`
+call returning tens of KB.
+
+### What to read, and what each reading means
+
+```bash
+command grep -E 'START|FIRST-BYTE' "$QA/records/proxy.log"
+```
+
+- **Two `START`s within ~50ms** is the dispatch shape. One is journaled, one is not.
+- **Count the proxy's `/api/chat` requests against the journal's `request_sent`.** A surplus is the
+  unjournaled internal call; round 6 measured **8 against 7**. Equality means either no oracle fired
+  this turn or the call is now journaled — check which before recording it as a fix.
+- **`FIRST-BYTE` minus `START` for the journaled request is the starvation.** Round 6 measured
+  **35.8s** and **64.8s** on a healthy resident model. Anything over `stream_stall_timeout` will have
+  torn the turn down; correlate with `run_interrupted` in the journal.
+
+### Two controls, because both innocent explanations are plausible
+
+Neither is optional — a starvation reading without them is a guess, and round 6 nearly filed the
+wrong cause twice.
+
+1. **It is not prefill.** Time an *uncached* prompt of comparable size end to end. Generate it
+   freshly so no prefix cache can cover it, and **pass no options the resident runner disagrees
+   with** (see `method.md` on `num_batch` manufacturing a reload). Round 6: 36,622 bytes, **9.3s**.
+2. **It is not the stall clock arming before the first byte.** `FaradayHandlers`' class doc says the
+   clock arms on the first tick and not before, so a slow *first* byte must be exempt. Drive it: a
+   proxy variant that holds the first response byte for 40s must produce **no stall** and a normal
+   answer. Round 6 measured 42.6s wall and a clean reply — the documented split holds, which is what
+   proves the tear-down is queued/mid-stream silence rather than a timing bug.
+
+**A clean run here is a real result and worth recording as one** — it means either the concurrency
+is gone or the server has more than one slot. Record `-np` from the runner's argv beside the
+reading, because this whole section is void on a multi-slot box.

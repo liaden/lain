@@ -306,6 +306,15 @@ Three consequences for how this section is driven, and the third is new:
   `PATH` is rebuilt by the shim — so check `command -v dunstify` before the act and **record the
   answer**. With no notifier there is only one consumer, the second prompt renders, and the check
   passes while asserting nothing. That is the most likely way this section produces a false green.
+- **⚠️ The house model cannot produce this shape, and round 6 burned turns discovering that.**
+  `qwen3-coder:30b` does **not** emit parallel tool calls: asked explicitly, twice, for three
+  `bash` calls as three `tool_use` blocks in one message, it emitted them strictly one per turn, so
+  two pendings never coexist and the check below asserts nothing. The single-pending path and the
+  withdrawal path *are* drivable and were verified; **the "all at once" property was not, and
+  remains an open half of F24.** Before spending turns here, check whether the model in use does
+  parallel tool use at all — and if it does not, say so in the findings rather than reporting the
+  section passed. Settling it properly needs a seeded multi-pending fixture or a model that batches;
+  that fixture does not exist yet and is worth building.
 - **Drive THREE gated calls in one turn, not two, and expect three notifications at once.** Two
   cannot tell "raises concurrently" from "raises the next one as soon as the first is answered" —
   the old behaviour would show a second popup the moment you answered the first, which looks
@@ -341,6 +350,37 @@ dropped; check the journal rather than assuming silence means success.
 Also read the guard's own record: a notifier that dies mid-sweep now journals a **`tty_fault`**
 rather than signing a denial as though a person typed `n`. A `denied` decision with no human at the
 keyboard is the shape to watch for in the journal.
+
+## 5b — Command dispatch at the `human>` prompt
+
+**New in round 6 (F27), and uncovered before it.** Every other section here drives the `you>`
+prompt; this one drives the *other* prompt, which appears whenever a subagent parks a question.
+
+Spawn a subagent (`method.md`, "Making a session with `message` and `child_turn` records") and wait
+for the prompt to become `human>`. Then, at that prompt:
+
+| input | expected |
+|---|---|
+| `/inbox` | renders the parked question and its reply affordance |
+| `/mode` | renders the posture, exactly as at `you>` |
+| `/status` | renders status |
+| `/ruby 1+1` | prints `2` |
+| ordinary prose | delivered to the subagent as the answer |
+
+**What round 6 actually found: only `/inbox` is honoured.** The rest are packaged as the human's
+answer and shipped to the subagent, silently — no refusal, nothing rendered. The journal is where
+this is unambiguous, so read it rather than the pane:
+
+```bash
+ruby -rjson -e 'File.foreach(ARGV[0]){|l| r=JSON.parse(l) rescue next; next unless r["type"]=="message"
+  puts "#{r["ts"]} from=#{r["from"].inspect} payload=#{r["payload"].to_s[0,120]}"}' "$LAIN_QA_JOURNAL"
+```
+
+A `payload={"answer" => "/ruby …"}` line is the defect, reproduced. **A refusal naming the command
+is an acceptable outcome too** — the requirement is that a command is either dispatched or refused,
+never forwarded as content. Forwarding is what makes it a silent failure in a codebase whose stated
+premise is that unknown values fail loudly, and what puts operator text into a subagent's context,
+which on a study bench corrupts the record being studied.
 
 ## 6 — `lain://timeline` follows the session, and a bad row says so
 

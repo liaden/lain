@@ -40,15 +40,34 @@ exec "$REPO/exe/lain" "\$@"
 EOF
 chmod +x "$QA/shim/lain"
 
-# --- send ONE prompt, then wait for the JOURNAL to go quiet ------------------
+# --- send ONE prompt, then wait for the PINNED journal to go quiet -----------
+# The journal is PINNED via $LAIN_QA_JOURNAL and never resolved with `ls -t`:
+# every non-interactive probe writes a journal NEWER than the cockpit's, so an
+# `ls -t` driver silently polls a file that will never move again, returns after
+# one quiet window having waited for nothing, and reads the cockpit BEFORE the
+# render lands. Two rounds produced a false "frozen buffer" finding that way.
 cat > "$QA/drive.sh" <<'EOF'
 #!/usr/bin/env bash
 # drive.sh "<text>" [quiet_seconds] [max_seconds]
+#   requires $LAIN_QA_JOURNAL -- pin it to the COCKPIT's journal, e.g.
+#   export LAIN_QA_JOURNAL="$XDG_STATE_HOME/lain/sessions/<hash>/<file>.ndjson"
 . "$(dirname "$0")/env.sh"
-TXT="$1"; QUIET="${2:-45}"; MAX="${3:-900}"
+TXT="$1"; QUIET="${2:-60}"; MAX="${3:-900}"
+J="${LAIN_QA_JOURNAL:?LAIN_QA_JOURNAL is not pinned -- see method.md, 'Pin the journal'}"
+[ -f "$J" ] || { echo "pinned journal does not exist: $J" >&2; exit 1; }
 CHAT=$(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id} #{pane_current_command}' | command grep -w ruby | head -1 | cut -d' ' -f1)
 [ -n "$CHAT" ] || { echo "no chat pane on tmux -L $QA_SOCK" >&2; exit 1; }
-J=$(ls -t "$XDG_STATE_HOME/lain/sessions"/*/*.ndjson | head -1)
+
+# NEVER type while an approval is parked: at a `[y/N]` prompt the Enter below IS
+# the answer, and the default is DENY. One round denied a call by accident this
+# way and spent three turns watching the model recover from it.
+if S=$(find "$XDG_RUNTIME_DIR" -name 'nvim-*.sock' -type s 2>/dev/null | head -1) && [ -n "$S" ]; then
+  if ! nvim --server "$S" --remote-expr "join(getbufline(bufnr('lain://approval'),1,2),' ')" 2>/dev/null \
+       | command grep -q 'no approvals pending'; then
+    echo "REFUSING to send: an approval is pending -- answer it first" >&2; exit 2
+  fi
+fi
+
 before=$(wc -l < "$J")
 tmux -L "$QA_SOCK" send-keys -t "$CHAT" -l "$TXT"; sleep 0.4
 tmux -L "$QA_SOCK" send-keys -t "$CHAT" Enter
@@ -112,6 +131,58 @@ loop do
 end
 EOF
 
+# --- a LOGGING pass-through proxy: makes concurrency measurable -------------
+# The counting listener answers "how many attempts"; this answers "were two
+# requests in flight at once, and how long did the loser wait" -- which is the
+# only way to see an unjournaled internal model call starving the main turn on a
+# one-slot server. See failure-injection.md 12.
+cat > "$QA/proxy.rb" <<'EOF'
+# ruby proxy.rb <log-file> [listen-port] [upstream-port]
+# Forwards to the real endpoint and records START / FIRST-BYTE / END per request.
+require "socket"
+LOG = File.open(ARGV[0], "a"); LOG.sync = true
+LISTEN = (ARGV[1] || 21434).to_i
+UPSTREAM = (ARGV[2] || 11434).to_i
+T0 = Time.now
+def stamp = format("%8.3f", Time.now - T0)
+srv = TCPServer.new("127.0.0.1", LISTEN)
+id = 0
+loop do
+  cli = srv.accept
+  myid = (id += 1)
+  LOG.puts "#{stamp} req##{myid} START"
+  Thread.new(cli, myid) do |c, i|
+    up = TCPSocket.new("127.0.0.1", UPSTREAM)
+    head = +""
+    pump = Thread.new do
+      begin
+        loop { d = c.readpartial(16_384); head << d if head.length < 200; up.write(d) }
+      rescue IOError, SystemCallError, EOFError
+        nil
+      end
+      begin; up.close_write; rescue IOError, SystemCallError; nil; end
+    end
+    first = true
+    begin
+      loop do
+        d = up.readpartial(16_384)
+        if first
+          first = false
+          LOG.puts "#{stamp} req##{i} FIRST-BYTE path=#{head[/^[A-Z]+ (\S+)/, 1]}"
+        end
+        c.write(d)
+      end
+    rescue IOError, SystemCallError, EOFError
+      nil
+    end
+    LOG.puts "#{stamp} req##{i} END"
+    pump.kill
+    begin; c.close; rescue IOError; nil; end
+    begin; up.close; rescue IOError; nil; end
+  end
+end
+EOF
+
 chmod +x "$QA/drive.sh" "$QA/peek.sh" "$QA/nv.sh"
 cp "$QA/env.sh" "$QA/records/env.snapshot" 2>/dev/null || true
 date -u +%Y-%m-%dT%H:%M:%SZ > "$QA/records/round-start"
@@ -123,9 +194,13 @@ tmux      -L $SOCK
 started   $(cat "$QA/records/round-start")   <- close-out negative check uses this
 
   . $QA/env.sh
-  tmux -L $SOCK kill-server 2>/dev/null
-  tmux -L $SOCK new-session -d -s bootstrap -x 220 -y 50
-  tmux -L $SOCK set-option -g default-size 220x50
+  export LAIN_DESKTOP=0          # MUST be before new-session: not in PANE_ENV, so a
+                                 # pane only gets it from the SERVER's environment.
+                                 # Omit it only for a named notifier act.
+  tmux -L $SOCK kill-server 2>/dev/null; sleep 1     # kill-server is async; without the
+  tmux -L $SOCK new-session -d -s bootstrap -x 220 -y 50; sleep 0.5   # settles, new-session
+  tmux -L $SOCK set-option -g default-size 220x50    # hits the dying server and BOTH fail
+  tmux -L $SOCK show-options -g default-size         # VERIFY: must print 220x50, not an error
   lain up --socket $SOCK --session lain-qa \$QA/project -- --provider ollama --model qwen3-coder:30b
 
 verify isolation BEFORE act 1:
@@ -133,5 +208,8 @@ verify isolation BEFORE act 1:
     tr '\\0' '\\n' < /proc/\$p/environ | command grep -E '^(XDG_|TMPDIR)'
   done
 
-helpers: \$QA/drive.sh  \$QA/peek.sh  \$QA/nv.sh  \$QA/counter.rb
+PIN THE JOURNAL before driving anything -- drive.sh refuses without it:
+  export LAIN_QA_JOURNAL=\$(ls -t "\$XDG_STATE_HOME/lain/sessions"/*/*.ndjson | head -1)
+
+helpers: \$QA/drive.sh  \$QA/peek.sh  \$QA/nv.sh  \$QA/counter.rb  \$QA/proxy.rb
 EOF

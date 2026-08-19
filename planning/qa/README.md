@@ -35,10 +35,18 @@ line for the order): `session-and-window` → `rust-cli` → a subject with `coc
 piggybacked → `bench-arms` → `failure-injection`.
 
 **Run BOTH subjects** (`bowling-ruby` and `rails-blog`), rather than picking one. This line used to
-say "one subject", and the predictable consequence is that the cheaper one always won:
-`rails-blog` is the expensive scenario and round 5 did not reach it at all, which is why compaction
-at scale still has no manual evidence behind it. Dropping either is a decision to name in the
-findings, not a default — a scenario that is skipped by convention stops being a gap anyone can see.
+say "one subject", and the predictable consequence is that the cheaper one always won.
+
+**But `rails-blog` gets its OWN round, in its own driver context** — it is not the tail of the
+sequence above, and it is not something a full round "reaches" if there is budget left. Rounds 4, 5
+and 6 each ended without it, always for the same reason: one context carried every scenario and was
+spent by the time the expensive one came up. **Reordering is not the fix** — it only moves which
+scenario starves. A scenario that owns its context has no position in the list to be unlucky about.
+
+So: dropping `bowling-ruby` from a round is a decision to name in the findings. `rails-blog` is not
+dropped, because it was never in that budget — it is **owed**, and a round should say so. A scenario
+skipped by convention stops being a gap anyone can see; one that is separately scheduled stays
+visible as an outstanding debt instead.
 
 **A suggested regression gate after a chunk lands:** `failure-injection` + `session-and-window`.
 Both are cheap, deterministic, and cover the paths most chunks touch. As of 2026-08-18 that pair
@@ -59,6 +67,7 @@ call per turn.
 
 Written per round, kept in `planning/` alongside the chunk specs that discharge them:
 
+- [`../qa-findings-round6-2026-08-19.md`](../qa-findings-round6-2026-08-19.md) — round 6
 - [`../qa-findings-round5-2026-08-18.md`](../qa-findings-round5-2026-08-18.md) — round 5
 - [`../qa-findings-round4-2026-08-18.md`](../qa-findings-round4-2026-08-18.md) — round 4
 - [`../qa-findings-round2-2026-08-18.md`](../qa-findings-round2-2026-08-18.md) — rounds 2–3
@@ -91,7 +100,15 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
 - **Cost and latency.** Nothing records wall-clock or tokens per act, so "the plumbing works" and
   "the plumbing is usable" are not separated. One wiring mistake once cost 84.0s against 7.5s and
   nothing here would catch the same class again.
-- **Compaction at scale** — reachable only from `rails-blog.md`, and not yet reached by any round.
+- **Compaction at scale** — still owed, and now for a *different* reason than budget. Round 6
+  recorded the first evidence the path executes at all: six `compaction` records fired incidentally
+  with `trigger: ["token_threshold"]`, 335–360 KB collapsing to 14–26 KB, with `bytes_before/after`
+  correctly named. That is the occupancy path running end to end — it is **not** `rails-blog.md` §1,
+  which additionally asks whether a *composed* strategy does what its name says, and that still rests
+  on specs alone. Round 6 also identified a live blocker: **F26** (a concurrent unjournaled oracle
+  call starving the turn on a one-slot server) fires precisely on the large tool results this
+  scenario needs, so a round driven before F26 lands would measure the stall rather than the
+  strategy.
   The obstacle that stopped rounds 3 and 4 (a per-session iteration ceiling) is gone since T14, so
   what remains is only volume and patience. Until a round actually reaches it, **every claim about
   the two content-selective strategies rests on specs alone**, and `--compact-strategy` is checked

@@ -74,7 +74,12 @@ A cold `cargo build` on a fresh crate is the closest thing in the QA suite to a 
 tool call. Use it to check the parts of the run loop that only a slow call exercises:
 
 - the stall clock does **not** fire on a healthy-but-slow tool (it arms on stream chunks from the
-  *model*, not the tool — confirm that is still true);
+  *model*, not the tool — confirm that is still true). **But when it does fire here, the tool is
+  almost certainly not the cause**: round 6 saw `stalled stream: no bytes for 30.8s` twice on this
+  scenario, both times *after* `cargo` had already returned its diagnostic, and the mechanism was a
+  concurrent unjournaled oracle call holding the only slot on a one-slot server (F26). A stall on a
+  turn whose tool result has already landed belongs to `failure-injection.md` §12, not here — do not
+  file it against the tool layer without a proxy reading;
 - the HUD/prompt does not claim `idle` while the call is in flight;
 - Ctrl-C during the call is survivable and the journal still parses afterwards (see
   `failure-injection.md`).
