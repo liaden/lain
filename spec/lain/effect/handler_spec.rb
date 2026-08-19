@@ -73,6 +73,18 @@ RSpec.describe Lain::Effect::Handler do
         expect(result.content).to include("kaboom")
       end
 
+      # AC: "an unexpected error still reaches the model as a usable sentence" --
+      # the message survives; the raising class (RuntimeError, here standing in
+      # for any error outside the harness's own ContractViolation/InvalidInput
+      # vocabulary) does not leak into the wire text.
+      it "carries an unexpected error's message but names no Ruby class" do
+        boom = tool(:boom) { |_input, _context| raise "kaboom" }
+        h = described_class.new(toolset: Lain::Toolset.new([boom]))
+        result = h.call(tool_call("boom"))
+        expect(result.content).to eq("kaboom")
+        expect(result.content).not_to include("RuntimeError")
+      end
+
       it "turns a contract violation into an error Result" do
         gated = Class.new(Lain::Tool) do
           def name = "gated"
@@ -84,6 +96,20 @@ RSpec.describe Lain::Effect::Handler do
         expect(h.call(tool_call("gated"))).to have_attributes(is_error: true, content: /precondition failed/)
       end
 
+      # AC: "a contract refusal reaches the model as its sentence alone" -- the
+      # precondition's own wording survives; the class it raised as does not.
+      it "does not leak the ContractViolation class name into the refusal" do
+        gated = Class.new(Lain::Tool) do
+          def name = "gated"
+          def description = "d"
+          requires("never") { |_input, _context| false }
+          def perform(_input, _context) = Lain::Tool::Result.ok("unreachable")
+        end.new
+        h = described_class.new(toolset: Lain::Toolset.new([gated]))
+        result = h.call(tool_call("gated"))
+        expect(result.content).not_to include("ContractViolation")
+      end
+
       it "turns an invalid input into an error Result rather than dispatching" do
         strict = tool(:strict) { |_input, _context| Lain::Tool::Result.ok("ran") }
         allow(strict).to receive(:input_schema).and_return(
@@ -91,6 +117,17 @@ RSpec.describe Lain::Effect::Handler do
         )
         h = described_class.new(toolset: Lain::Toolset.new([strict]))
         expect(h.call(tool_call("strict", {}))).to have_attributes(is_error: true, content: /text is required/)
+      end
+
+      # AC: "an invalid input refusal is equally clean" -- no Ruby class named.
+      it "does not leak the InvalidInput class name into the refusal" do
+        strict = tool(:strict) { |_input, _context| Lain::Tool::Result.ok("ran") }
+        allow(strict).to receive(:input_schema).and_return(
+          { type: :object, properties: { text: { type: :string } }, required: [:text] }
+        )
+        h = described_class.new(toolset: Lain::Toolset.new([strict]))
+        result = h.call(tool_call("strict", {}))
+        expect(result.content).not_to include("InvalidInput")
       end
 
       it "reports a call to an unknown tool as an error Result" do

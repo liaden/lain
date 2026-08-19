@@ -3,11 +3,21 @@
 # Captured from the scripted run below against the pre-lens ToolRunner (the
 # "before" half of AC 1). Kept out of the RSpec block per
 # Lint/ConstantDefinitionInBlock.
+#
+# Re-captured (T5, lain/effect/handler/live.rb): Live's error-result text
+# dropped its "#{e.class}: " prefix, so BoomTool's committed tool_result
+# content changed from "RuntimeError: kaboom" to "kaboom". Only entries [2]
+# and [3] moved -- [2] is the turn CARRYING that content, and [3] moved only
+# because its render_parent chains to [2]'s (now different) digest; [3]'s own
+# body ("done") is byte-identical before and after. [0] and [1] precede the
+# tool_result turn entirely and are untouched. Verified by reconstructing the
+# pre-T5 body (re-adding "RuntimeError: ") and recomputing: it reproduces the
+# four digests this constant held before T5, byte for byte.
 PRE_RESULT_LENS_DIGESTS = %w[
   blake3:4c979108fe0fccd553f923deb23d9cf48d1628f1f37caf4faaa3e9a984a6a9e1
   blake3:dfa6fa7152989de6a82b43afd5e9c1e345b66ae209312d768d94402d416ff8eb
-  blake3:827cf79c59e586a9f722ccf4e6eb2d7a00c5ef327b82e41792a377ac8190221b
-  blake3:cd6ec466ab7f6724798ff6e39c136f0add77c349de1636d2ff9f8ce7377d2560
+  blake3:cc0e76802b619241dac57ec0234ed19bf22f0b306e6177b16a00c53d93aa279c
+  blake3:3f139d768733e3de91b491a3196539cdda114e5f5f9dd6befeed5f5505f6fb37
 ].freeze
 
 RSpec.describe Lain::Tool::ResultBlock do
@@ -268,7 +278,7 @@ RSpec.describe Lain::Tool::ResultBlock do
 
       results = agent.timeline.to_a.flat_map(&:content)
                      .select { |block| block["type"] == "tool_result" }
-      expect(results.map { |block| block["content"] }).to eq(["hi", "RuntimeError: kaboom"])
+      expect(results.map { |block| block["content"] }).to eq(%w[hi kaboom])
     end
   end
 end

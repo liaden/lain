@@ -77,9 +77,12 @@ module Lain
       #
       # The message names the CLASS and never the value, and that is not
       # fussiness. {Effect::Handler::Live} turns a raising tool into
-      # `Result.error("#{e.class}: #{e.message}")`, so an exception that echoes
-      # its argument hands the model the very bytes a refusal exists to
-      # withhold -- one hop past the refusal, and just as leaked.
+      # `Result.error(e.message)`, so an exception that echoes its argument
+      # hands the model the very bytes a refusal exists to withhold -- one hop
+      # past the refusal, and just as leaked. That hazard is in `e.message`
+      # itself, not in how Live used to frame it: it held before Live stopped
+      # prefixing the class (T5, lain/effect/handler/live.rb) and holds
+      # unchanged after.
       def self.ceiling(value)
         raise ArgumentError, "a bound must be an Integer, got #{value.class}" unless value.is_a?(Integer)
         raise ArgumentError, "a bound must be non-negative, got #{value}" if value.negative?

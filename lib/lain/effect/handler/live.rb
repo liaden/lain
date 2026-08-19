@@ -75,7 +75,22 @@ module Lain
         rescue StandardError => e
           # Correctness gate 3: a failing tool returns a tool_result with
           # is_error: true; it is never dropped and never raised past the loop.
-          Tool::Result.error("#{e.class}: #{e.message}")
+          #
+          # The wire text carries the exception's OWN message and nothing else --
+          # no `#{e.class}` prefix. That class name is a Ruby implementation
+          # detail the model reads as noise on every ordinary refusal
+          # (ContractViolation, InvalidInput), and {Tool::Bounds.ceiling}'s
+          # comment already flags the sharper version of the same hazard: a
+          # class-prefixed string is one hop from leaking bytes a refusal
+          # exists to withhold. `ContractViolation` and `InvalidInput` are the
+          # two a tool subclass structurally cannot rescue (raised around
+          # `#perform` by {Tool#call}), so their own messages -- "precondition
+          # failed for X: ..." / "invalid input for X: ..." -- are what a
+          # reader actually sees. An unexpected error's class is genuinely lost
+          # here and is not journaled: `Live`'s only outlet is a view channel
+          # that never reaches the journal, and giving it one is a larger
+          # change than this warrants.
+          Tool::Result.error(e.message)
         end
       end
     end
