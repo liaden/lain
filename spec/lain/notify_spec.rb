@@ -565,6 +565,485 @@ RSpec.describe Lain::Notify do
         expect(raised.pop(timeout: 0.2)).to be_nil
         expect(approval).to have_attributes(decision: :deny, surface: "tty")
       end
+
+      # T4b: the second limb of F24. T4 made every parked approval get its own
+      # popup at once and knowingly left a popup naming a call somebody else had
+      # already answered on screen for as long as the 305s backstop, because
+      # `-u critical` is exempt from auto-expiry. These examples are the
+      # withdrawal that closes it.
+      #
+      # The mechanism was established by MEASUREMENT against the real dunst on
+      # this box (2026-08-19), not by recall, and the fake below models exactly
+      # what was measured:
+      #
+      #   dunstify -a lain -u critical -t 20000 -A approve,Approve -r 900101 ... &
+      #   dunstify -C 900101   -> exit 0, popup gone, dunst's own id counter untouched
+      #   the blocked dunstify -> exits, stdout "3"
+      #
+      # `3` is dunst's "closed via the API" close reason -- numeric, so it can
+      # never collide with {Notify::APPROVE} and it lands in the fail-closed
+      # path already there. The id is CHOSEN by this surface and handed to `-r`,
+      # so nothing new is parsed back out of dunstify: `--print-id` was
+      # DISQUALIFIED in the same session because with `-A` actions present it
+      # prints the id on the SAME stdout the action key arrives on ("191\n2"),
+      # which {Notify#capture} would strip and read as "not approve" -- silently
+      # denying every approval.
+      describe "a popup whose approval somebody else answered" do
+        # dunst's own numeric close reason for "closed via the API", measured
+        # above. A method rather than a constant, as every other fixture in this
+        # file is, to stay clear of Lint/ConstantDefinitionInBlock.
+        def closed_via_api = "3"
+
+        # The scripted dunstify, extended with the two things a withdrawal
+        # needs: the `-r` id each notification was raised with, and a record of
+        # every `-C` this surface issued. A `-C` is not a question anybody
+        # answers -- it returns at once -- so it gets no reply queue.
+        #
+        # `release:` is what the real desktop does: closing a popup releases the
+        # `dunstify -A` blocked on it, with the close reason above. Turning it
+        # OFF is not a hypothetical -- a close that lands on nothing leaves the
+        # blocked process exactly where it was -- and it is what lets one
+        # example below prove the withdrawal is issued once WITHOUT relying on
+        # the drain having already happened to hide a second one.
+        # `clocks` records the `timeout:` each invocation was built with, keyed
+        # by flag, because a withdrawal and an approval are owed very different
+        # ones. `delivered` announces that a notification's Thread has produced
+        # its answer, which is the happens-before one example below needs.
+        def withdrawable_dunstify(*commands, release: true)
+          desk = empty_desk(commands)
+          desk.factory = lambda do |*args, **kwargs|
+            flag = args.include?("-C") ? "-C" : "-A"
+            desk.lock.synchronize { desk.clocks[flag] = kwargs[:timeout] }
+            flag == "-C" ? closed(desk, args, release:) : announced(desk, args)
+          end
+          desk
+        end
+
+        # `ids` and `clocks` are plain Hashes written from each notification's
+        # OWN Thread, so they carry the lock the Thread::Queues have built in.
+        def empty_desk(commands)
+          Struct.new(:factory, :raised, :withdrawn, :replies, :ids, :lock, :clocks, :delivered)
+                .new(nil, Thread::Queue.new, Thread::Queue.new,
+                     commands.to_h { |command| [command, Thread::Queue.new] }, {}, Mutex.new,
+                     {}, Thread::Queue.new)
+        end
+
+        # The `-C` branch: record which id was closed, and release the dunstify
+        # blocked on that popup with dunst's own close reason -- which is what
+        # the real desktop was measured doing, and what makes the withdrawn
+        # notification's late verdict a real path rather than a hypothetical.
+        def closed(desk, args, release:)
+          id = args[args.index("-C") + 1]
+          command = desk.lock.synchronize { desk.ids.key(id) }
+          desk.replies.fetch(command).push(closed_via_api) if release && command
+          desk.withdrawn.push(id)
+          closing_shell_out
+        end
+
+        # `dunstify -C` is not a question: it returns at once, exits 0 and
+        # prints nothing (measured, including against an id dunst no longer
+        # holds, which is a silent no-op).
+        def closing_shell_out
+          Class.new do
+            def run_command = self
+            def stdout = ""
+          end.new
+        end
+
+        # The `-A` branch: remember the `-r` id this notification was raised
+        # with -- the correlation everything else here is asserted against --
+        # announce the argv, and block on this command's own reply queue.
+        def announced(desk, args)
+          argv = args.join(" ")
+          command = desk.replies.keys.find { |candidate| argv.include?(candidate) }
+          remember_id(desk, command, args)
+          desk.raised.push(argv)
+          delivering_shell_out.new(reply: desk.replies.fetch(command), delivered: desk.delivered)
+        end
+
+        # `scripted_shell_out_class` plus a signal, sent once the reply has been
+        # taken, so an example can know the answer exists without sweeping for
+        # it -- sweeping is the very thing under test in the example that needs
+        # this.
+        def delivering_shell_out
+          Class.new do
+            def initialize(reply:, delivered:)
+              super()
+              @reply = reply
+              @delivered = delivered
+            end
+
+            def run_command = tap { @answer = @reply.pop }
+            def stdout = @answer.to_s.tap { @delivered.push(true) }
+          end
+        end
+
+        # Written from the notification's own Thread, so under the lock.
+        def remember_id(desk, command, args)
+          desk.lock.synchronize { desk.ids[command] = args[args.index("-r") + 1] }
+        end
+
+        # The correlation itself: two live popups must not share an id, or `-r`
+        # would make the second REPLACE the first instead of joining it.
+        it "gives each live notification its own replace id" do
+          dunst = withdrawable_dunstify("one", "two")
+          first, second = %w[one two].map { |command| parked(command) }
+
+          described_class.new(shell_out_factory: dunst.factory).sweep([first, second])
+          2.times { dunst.raised.pop(timeout: 2) }
+
+          expect(dunst.ids.values.uniq.size).to eq(2)
+        ensure
+          dunst.replies.each_value { |reply| reply.push("2") }
+        end
+
+        # THE ONE PROPERTY STANDING BETWEEN LAIN AND SOMEBODY ELSE'S DESKTOP,
+        # and it is asserted against a LITERAL on purpose.
+        #
+        # dunst numbers its own notifications from a counter that climbs by one
+        # per notification the desktop shows; it was observed in the low
+        # hundreds throughout this chunk (191 -> 192, and 196 -> 198 during
+        # review), and a self-assigned id does not advance it. Every id lain
+        # allocates has to sit far above anything that counter will plausibly
+        # reach, because {Notify#withdraw} closes ids by number and a collision
+        # would close the human's browser or music-player popup instead.
+        #
+        # Writing this as `>= described_class::HANDLE_ID_FLOOR` is what the
+        # example did first, and it was WORTHLESS: ids are built as
+        # `HANDLE_ID_FLOOR + rand`, so the comparison cannot fail whatever the
+        # constant says. A review mutant setting the floor to 1 -- allocating
+        # ids inside dunst's live range -- passed all 53 examples. The literal
+        # is the whole point of these two assertions.
+        it "floors every replace id far above the range dunst numbers its own from" do
+          dunst = withdrawable_dunstify("one", "two")
+          first, second = %w[one two].map { |command| parked(command) }
+
+          described_class.new(shell_out_factory: dunst.factory).sweep([first, second])
+          2.times { dunst.raised.pop(timeout: 2) }
+
+          expect(described_class::HANDLE_ID_FLOOR).to be >= 1_000_000
+          expect(dunst.ids.values.map(&:to_i)).to all(be >= 1_000_000)
+        ensure
+          dunst.replies.each_value { |reply| reply.push("2") }
+        end
+
+        it "withdraws the popup for a pending a sibling settled, and leaves the other alone" do
+          dunst = withdrawable_dunstify("one", "two")
+          first, second = %w[one two].map { |command| parked(command) }
+
+          watching([first, second], dunst.factory) do
+            2.times { dunst.raised.pop(timeout: 2) }
+            first.deny(surface: "tty")
+            until_true { !dunst.withdrawn.empty? }
+          end
+
+          expect(dunst.withdrawn.pop(timeout: 1)).to eq(dunst.ids.fetch("one"))
+          expect(dunst.withdrawn.pop(timeout: 0.2)).to be_nil
+          expect(second.decided?).to be(false)
+        ensure
+          dunst.replies.each_value { |reply| reply.push("2") }
+        end
+
+        # The correlation's OWN witness, which the card asks be asserted rather
+        # than assumed: closing the popup out from under a blocked `dunstify -A`
+        # makes it report a close reason, which is not {Notify::APPROVE}, so it
+        # reaches {Approval::Queue::Pending#decide} as a deny -- and that deny
+        # LOSES, because the pending is already decided. `won: false` is the
+        # mechanical statement of "this surface signed nothing over the
+        # sibling's answer".
+        #
+        # The `thread:` assertion is T4's central constraint inherited whole:
+        # the late verdict is applied on the reactor thread, never on the
+        # dunstify Thread that carried it back.
+        it "lets the withdrawn notification's own late verdict lose, changing nothing" do
+          attempts = []
+          dunst = withdrawable_dunstify("one")
+          approval = spying_pending("one", attempts)
+
+          watching([approval], dunst.factory) do
+            dunst.raised.pop(timeout: 2)
+            approval.deny(surface: "tty")
+            until_true { attempts.size == 2 }
+          end
+
+          expect(approval).to have_attributes(decision: :deny, surface: "tty")
+          expect(attempts.map { |attempt| attempt.values_at(:surface, :won) })
+            .to eq([%w[tty].push(true), %w[dunst].push(false)])
+          expect(attempts.map { |attempt| attempt[:thread] }).to all(eq(Thread.current))
+        end
+
+        # "Ordered on the reactor fiber" means the DECISION to withdraw and the
+        # handle map it reads, not the subprocess: `dunstify -C` is a shellout
+        # like every other one here and runs on its own Thread, for the reason
+        # the class comment gives -- Mixlib's wait is not verified
+        # fiber-scheduler-safe, and stalling the whole reactor on a D-Bus round
+        # trip to a wedged dunst is exactly the chance T4 declined to take.
+        #
+        # {Notify#sweep} contains no yield point, so a withdrawal already
+        # ordered by the time a synchronous `sweep` RETURNS was ordered by the
+        # fiber that called it. The later sweeps are the other half: with
+        # `release: false` the notification stays blocked and its handle stays
+        # in flight, so only the handle's own "no longer on screen" mark can
+        # stop a 50ms poll re-issuing `-C` twenty times a second.
+        it "orders the withdrawal from the sweeping fiber, and orders it exactly once" do
+          dunst = withdrawable_dunstify("one", release: false)
+          approval = parked("one")
+          notifier = described_class.new(shell_out_factory: dunst.factory)
+
+          Sync do
+            notifier.sweep([approval])
+            dunst.raised.pop(timeout: 2)
+            approval.deny(surface: "tty")
+            notifier.sweep([approval])
+
+            expect(dunst.withdrawn.pop(timeout: 2)).to eq(dunst.ids.fetch("one"))
+
+            3.times { notifier.sweep([approval]) }
+            expect(dunst.withdrawn.pop(timeout: 0.2)).to be_nil
+          end
+        ensure
+          dunst.replies.fetch("one").push("2")
+        end
+
+        it "withdraws nothing for a pending its own Approve action answered" do
+          dunst = withdrawable_dunstify("one")
+          approval = parked("one")
+          notifier = described_class.new(shell_out_factory: dunst.factory)
+
+          Sync do
+            notifier.sweep([approval])
+            dunst.raised.pop(timeout: 2)
+            dunst.replies.fetch("one").push("approve")
+            until_true do
+              notifier.sweep([approval])
+              approval.decided?
+            end
+            2.times { notifier.sweep([approval]) }
+          end
+
+          expect(approval).to have_attributes(decision: :approve, surface: "dunst")
+          expect(dunst.withdrawn.pop(timeout: 0.2)).to be_nil
+        end
+
+        # This example was written the other way round and INVERTED under
+        # review, which is worth recording because the original rested on a
+        # measured-false fact. It excluded the queue's own clock on the ground
+        # that "the timeout path already reaps itself" -- {SHELLOUT_GRACE_MS}
+        # collecting the orphaned dunstify. Re-measured: that backstop reaps the
+        # PROCESS, not the POPUP. A notification survives SIGTERM and SIGKILL of
+        # the dunstify that raised it.
+        #
+        # What actually retires a popup is dunstify's own `-t`, which
+        # {Notify#approval_args} always passes (`-u critical` is exempt from
+        # auto-expiry only when no expiry is REQUESTED: with dunstrc's
+        # `[urgency_critical] timeout = 0` and no `-t` a popup outlived a 6s
+        # watch, while `-t 2000` lasted 2022ms and `-t 5000` lasted 5057ms).
+        # So the popup's life is bounded by the SURFACE's clock and the denial
+        # by the QUEUE's, and those coincide only because
+        # {Notify::DEFAULT_TIMEOUT_MS} derives from the queue's window. A queue
+        # built with a shorter timeout -- a caller's choice, and every spec's --
+        # denies while this surface's popup stays lit for the rest of its own
+        # window, naming a command already refused. That is the gap.
+        #
+        # Withdrawing here races nothing, which is what the old exclusion was
+        # really worried about: `decided?` is the precondition, so the verdict is
+        # already in. This closes a popup; it decides nothing.
+        it "withdraws the popup for a pending the queue's own clock denied too" do
+          dunst = withdrawable_dunstify("one", release: false)
+          approval = parked("one")
+          notifier = described_class.new(shell_out_factory: dunst.factory)
+
+          Sync do
+            notifier.sweep([approval])
+            dunst.raised.pop(timeout: 2)
+            approval.deny(surface: Lain::Approval::Queue::TIMEOUT_SURFACE)
+            notifier.sweep([approval])
+
+            expect(dunst.withdrawn.pop(timeout: 2)).to eq(dunst.ids.fetch("one"))
+
+            3.times { notifier.sweep([approval]) }
+            expect(dunst.withdrawn.pop(timeout: 0.2)).to be_nil
+          end
+        ensure
+          dunst.replies.fetch("one").push("2")
+        end
+
+        # The other half of the same correction. A dunstify that was KILLED
+        # rather than answered leaves its popup on screen -- measured: process
+        # dead, `dunstctl count displayed` still 1 -- so an answer can arrive
+        # while the notification is still lit, and nothing else will ever close
+        # it. {Notify#settle_closed} is the only place that can see this,
+        # because by then the handle has already left the map.
+        it "withdraws a popup left lit by a shellout that was killed, not answered" do
+          attempts = []
+          dunst = withdrawable_dunstify("one", release: false)
+          approval = spying_pending("one", attempts)
+          notifier = described_class.new(shell_out_factory: dunst.factory)
+
+          Sync do
+            notifier.sweep([approval])
+            dunst.raised.pop(timeout: 2)
+            # The killed shellout reports its empty non-answer while its popup
+            # is still lit, and `delivered` is the happens-before that says so.
+            dunst.replies.fetch("one").push("")
+            dunst.delivered.pop(timeout: 2)
+            # Only NOW does a sibling win it -- so no sweep has run between the
+            # decision and the answer, which is the window only #settle_closed
+            # can see.
+            approval.deny(surface: "tty")
+
+            notifier.sweep([approval])
+          end
+
+          # ONE sweep did both, which is what makes this #settle_closed and not
+          # #withdraw_settled: the latter withdraws without settling, and the
+          # losing "dunst" attempt below could only have been recorded by the
+          # drain. If the answer had not yet landed this fails loudly rather
+          # than passing by the other path.
+          expect(dunst.withdrawn.pop(timeout: 2)).to eq(dunst.ids.fetch("one"))
+          expect(attempts.map { |attempt| attempt.values_at(:surface, :won) })
+            .to eq([%w[tty].push(true), %w[dunst].push(false)])
+          expect(approval).to have_attributes(decision: :deny, surface: "tty")
+        end
+
+        # A withdrawal and an approval are owed very different clocks, and the
+        # difference is not cosmetic. An approval's shellout must outlive
+        # dunstify's own `-t` so a real close reason arrives first, which is
+        # 305s. `dunstify -C` asks nothing of a human and returned instantly in
+        # every measurement -- so reusing the approval's backstop would let a
+        # WEDGED dunst park one thread per stale popup for five minutes.
+        it "gives a withdrawal its own short clock, not the approval backstop" do
+          dunst = withdrawable_dunstify("one", release: false)
+          approval = parked("one")
+          notifier = described_class.new(shell_out_factory: dunst.factory, timeout_ms: 300_000)
+
+          Sync do
+            notifier.sweep([approval])
+            dunst.raised.pop(timeout: 2)
+            approval.deny(surface: "tty")
+            until_true do
+              notifier.sweep([approval])
+              !dunst.withdrawn.empty?
+            end
+          end
+
+          clocks = dunst.lock.synchronize { dunst.clocks.dup }
+          expect(clocks.fetch("-C")).to eq(described_class::WITHDRAW_TIMEOUT_SECONDS)
+          expect(clocks.fetch("-C")).to be < clocks.fetch("-A")
+          expect(clocks.fetch("-A")).to eq(305.0)
+        ensure
+          dunst.replies.fetch("one").push("2")
+        end
+
+        # Best-effort must not mean INVISIBLE. A desktop where `-C` is
+        # unsupported would otherwise fail silently for the whole session --
+        # the exact "a surface quietly stopped working" failure
+        # {Notify#journal_fault} exists to surface, which dropping the result
+        # queue on the floor opted out of. Journaled ONCE per distinct failure,
+        # {QueueSurface}'s own rule, or a 50ms poll would flood the record.
+        #
+        # The journal is a REAL Lain::Channel for the reason the sibling example
+        # below gives: "the record reaches that channel" is what makes the seam
+        # witnessed rather than merely present.
+        it "journals a withdrawal that fails, once, rather than failing silently" do
+          journal = Lain::Channel.new
+          dunst = withdrawable_dunstify("one", "two", release: false)
+          first, second = %w[one two].map { |command| parked(command) }
+          refusing = lambda do |*args, **kwargs|
+            raise Errno::ENOENT, "dunstify" if args.include?("-C")
+
+            dunst.factory.call(*args, **kwargs)
+          end
+          notifier = described_class.new(shell_out_factory: refusing, journal:)
+
+          faults = []
+          Sync do
+            notifier.sweep([first, second])
+            2.times { dunst.raised.pop(timeout: 2) }
+            first.deny(surface: "tty")
+            second.deny(surface: "tty")
+            # `drain` is destructive, so it is accumulated rather than re-asked.
+            # The refused `-C` never reaches the scripted desk -- it raises
+            # first -- so the fault record is the only thing there is to wait on.
+            until_true do
+              notifier.sweep([first, second])
+              faults.concat(journal.drain)
+              faults.any?
+            end
+            # Both pendings were settled and both withdrawals refused, and the
+            # poll goes on running: this is where a per-poll flood would show up.
+            5.times do
+              notifier.sweep([first, second])
+              faults.concat(journal.drain)
+            end
+          end
+
+          expect(faults.map { |fault| fault["type"] }).to eq([Lain::Approval::QueueSurface::FAULT_TYPE])
+          expect(faults.first).to include("surface" => described_class::SURFACE)
+          expect(faults.first["error"]).to include("dunstify")
+        ensure
+          dunst.replies.each_value { |reply| reply.push("2") }
+        end
+
+        # Degrade, never wedge. A desktop whose withdrawal fails leaves the
+        # surface exactly as T4 left it -- a stale popup, the state this card
+        # improves on and never a worse one. A notifier that RAISED out of a
+        # withdrawal would be a session with no desktop approvals at all, which
+        # is the failure class T4's own guard exists to prevent.
+        it "keeps approving and denying when the withdrawal command itself fails" do
+          dunst = withdrawable_dunstify("one", "two")
+          first, second = %w[one two].map { |command| parked(command) }
+          refusing = lambda do |*args, **kwargs|
+            raise Errno::ENOENT, "dunstify" if args.include?("-C")
+
+            dunst.factory.call(*args, **kwargs)
+          end
+
+          watching([first, second], refusing) do
+            2.times { dunst.raised.pop(timeout: 2) }
+            first.deny(surface: "tty")
+            dunst.replies.fetch("two").push("approve")
+            second.await
+          end
+
+          expect(first).to have_attributes(decision: :deny, surface: "tty")
+          expect(second).to have_attributes(decision: :approve, surface: "dunst")
+        ensure
+          dunst.replies.fetch("one").push("2")
+        end
+
+        # Non-consumption, asked of the whole withdrawal cycle rather than of
+        # the raise alone, and driven through the REAL queue because "consumed
+        # neither" is a claim about {Approval::Queue#dequeue} and nothing else
+        # can make it. The reader drains both arrivals BEFORE the sibling
+        # settles one, which is the queue's own order of business: `#dequeue`
+        # skips a pending that is already decided, so a settle first would leave
+        # the human's surface waiting on an arrival that will never come.
+        it "consumes nothing from the queue across a raise, a sibling settle and a withdrawal" do
+          dunst = withdrawable_dunstify("one", "two")
+          queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 10.0)
+          consumed = []
+          notifier = described_class.new(shell_out_factory: dunst.factory)
+
+          Sync do |task|
+            gated = %w[one two].map { |command| task.async { queue.call(gated_call(command), nil) } }
+            reader = task.async { 2.times { consumed << queue.dequeue.input.fetch("command") } }
+            until_true { consumed.size == 2 }
+
+            notifier.sweep(queue)
+            2.times { dunst.raised.pop(timeout: 2) }
+            queue.find { |pending| pending.input.fetch("command") == "one" }.deny(surface: "tty")
+            notifier.sweep(queue)
+
+            expect(dunst.withdrawn.pop(timeout: 2)).to eq(dunst.ids.fetch("one"))
+          ensure
+            dunst.replies.each_value { |reply| reply.push("2") }
+            [*gated, reader].each { |fiber| fiber&.stop }
+          end
+
+          expect(consumed).to contain_exactly("one", "two")
+        end
+      end
     end
 
     # {QueueSurface#swept}'s guard, and the reason it is not optional here any
