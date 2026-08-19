@@ -90,3 +90,13 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
 - **A tripped tool bound leaves no journal record.** The bounds are checkable, but only through the
   `tool_result` text — so nothing here can answer "did a bound fire during ordinary use", which is
   the question that would say whether a ceiling is set too low.
+- **Subagent structure — no scenario covers it because no surface renders it.** `Buffers::TimelineView`
+  walks only `render_parent` (`Timeline#ancestors`), a linear chain from one head; no frontend file
+  references `child_turn` or a `:spawn` event; and `StatusFeed#observed` publishes the fleet as
+  `@fleet.keys` off a `{spawn_digest => true}` map (`status_feed.rb:388,457`), which every reader
+  (`prompt_composer.rb:409`, `cli/command/status.rb:53`) immediately collapses to `.size` — an
+  integer count, with no parent/child edge reaching any display. Round 5 journaled 29 `child_turn`
+  and 10 `message` records in one `fleet 2` session and none of it showed anywhere outside the
+  journal. A scenario cannot drive this until a surface exists to project the causal edges
+  (`spawn`/`child_turn`/`message` parent-child structure) rather than just their count; that surface
+  is deferred, not scheduled (`planning/specs/chunk-qa-round5-causal-fold-and-surfaces.md`, T13).

@@ -632,8 +632,11 @@ on tmux-native placement, with the desktop-config findings kept as a historical 
   `@resurrect-processes 'lain'` revives the bench after a reboot (TODO 3) `[exp]`.
 
 **Neovim buffer surface** `[exp]` (plan Interface §; TODO 41–42)
-- `lain://timeline` (the DAG) · `lain://request` (**editable** — `:LainResend`) · `lain://workspace` ·
-  `lain://diff`. The **cache-annotated full-prompt transparency view** (prompt-slots arm) renders here.
+- `lain://timeline` (the linear first-parent chain from one head — **not** the causal DAG; no
+  surface projects `spawn`/`child_turn` parent-child edges today, deferred not scheduled — see
+  `planning/qa/README.md`'s known-gaps entry) · `lain://request` (**editable** — `:LainResend`) ·
+  `lain://workspace` · `lain://diff`. The **cache-annotated full-prompt transparency view**
+  (prompt-slots arm) renders here.
 - Markdown-rendered planning docs with inline annotation → the diff-driven plan-iteration loop
   (`planning/crdt-exploration.md` for the co-editing substrate).
 - **Mermaid renders inline via `snacks.image`, pending a terminal switch.** snacks.nvim (installed)
