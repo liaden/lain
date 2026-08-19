@@ -791,13 +791,13 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
-    # C2 review FIX 1, end to end. An assistant turn can cite an answered
-    # ask_human question (ToolRunner#delivery's causal edge -- ask_human is in
-    # the LIVE toolset), and the `message` record replaying that event is a
-    # separate pass the turn fold has not run. So the fold cannot resolve the
-    # parent, and Store::MissingObject is rescued nowhere -- exactly the
-    # named-refusal-into-raw-backtrace regression journaling causal_parents
-    # would otherwise have introduced here.
+    # C2 review FIX 1, end to end -- and STILL legitimate after the Loader's
+    # fixpoint. This journal writes no `message` record at all, so the cited
+    # event is genuinely dangling rather than merely not-landed-yet, and no
+    # amount of alternation between the two folds can resolve it. An assistant
+    # turn can cite an answered ask_human question (ToolRunner#delivery's causal
+    # edge -- ask_human is in the LIVE toolset), so the refusal has to be the
+    # named one Resume builds a Refusal from, never a raw MissingObject.
     it "refuses a session whose turn cites a causal parent the fold cannot resolve" do
       store = Lain::Store.new
       payload = Lain::Event::Payload.new(kind: :message, body: { "text" => "81 mg" })
@@ -856,6 +856,52 @@ RSpec.describe Lain::CLI::Resume do
       expect { resume.call }.to raise_error(described_class::Refusal) do |error|
         expect(error.message).to include("20260101T000000-1.ndjson", "tool", "re-ask")
       end
+    end
+  end
+
+  # F23, at the door a user actually walks through. A session that spawned
+  # writes its child's turns as `child_turn` records and the lineage message
+  # that cites them as a `message` record -- and the parent's OWN next turn
+  # cites that message back, so the flat records and the render chain cite each
+  # other across the spawn boundary. Neither pass can run first, which stranded
+  # every spawned session from both `--fork` and `--resume`; the Loader's
+  # fixpoint is what re-opens them.
+  describe "a session that spawned a subagent" do
+    let(:spawn_store) { Lain::Store.new }
+    let(:parent) { Lain::Timeline.empty(store: spawn_store).commit(role: :user, content: text("spawn a helper")) }
+    let(:child) { Lain::Timeline.empty(store: spawn_store).commit(role: :user, content: text("helper brief")) }
+
+    let(:lineage) do
+      Lain::Event::ChainWriter.new.put(parent, kind: :message, from: "child", to: "agent",
+                                               causal_parents: [child.head_digest, parent.head_digest],
+                                               body: { "summary" => "helper finished" })
+    end
+
+    let(:continued) do
+      parent.commit(role: :assistant, content: text("helper finished"), causal_parents: [lineage.digest])
+    end
+
+    before do
+      write_session("20260101T000000-1.ndjson",
+                    [open_header, Lain::SessionRecord.turn(parent.head),
+                     Lain::Telemetry::ChildTurn.from_event(child.head).to_journal,
+                     Lain::Telemetry::Message.from_event(lineage).to_journal,
+                     Lain::SessionRecord.turn(continued.head),
+                     closed_record(continued.head_digest)])
+    end
+
+    it "resumes onto the parent's own recorded head" do
+      result = resume.call
+
+      expect(result.timeline.to_a.map(&:digest)).to eq(continued.to_a.map(&:digest))
+      expect(result.open?).to be(false)
+    end
+
+    it "forks at that same head" do
+      forked = resume.fork(selector: "20260101@#{continued.head_digest.delete_prefix("blake3:")[0, 12]}")
+
+      expect(forked.timeline.head_digest).to eq(continued.head_digest)
+      expect(forked.resumed_from).to eq("file" => "20260101T000000-1.ndjson", "head" => continued.head_digest)
     end
   end
 end

@@ -27,26 +27,82 @@ module Lain
         def initialize(records:, base:)
           @records = records.select { |record| TYPES.include?(record["type"].to_s) }
           @base = base
+          @chain = base
+          @position = 0
         end
+
+        # Fold every record from the current position whose cited parents the
+        # Store already holds, stopping at the first one it does not; answer
+        # whether the position MOVED. That answer is what lets {Loader}
+        # alternate this fold with {MessageReplay} to a fixpoint: a turn's
+        # `causal_parents` can name a :message only that replay can land, and
+        # that replay's records can name a turn only this fold can land, so
+        # neither pass can run first.
+        #
+        # PRE-CHECKED, never speculative, and the reason is mechanical:
+        # {Timeline#commit} puts the payload BEFORE the envelope and only the
+        # envelope's put validates the causal edge, so discovering a blocked
+        # turn by attempting the commit and rescuing strands an
+        # {Event::Payload} in the Store -- once per sweep, in a loop.
+        #
+        # rubocop:disable Naming/PredicateMethod -- a COMMAND whose Boolean
+        # reports whether it moved, not a query. `advance?` would name the
+        # question and hide the fold, which is {Timeline#commit}'s lesson.
+        def advance
+          members
+          before = @position
+          step while resolvable?(@position)
+          @position > before
+        end
+        # rubocop:enable Naming/PredicateMethod
 
         # Memoized like {Loader#timeline}: the rebuild is pure, and
         # {#member?} needs the fold to have run.
+        #
+        # Whatever {#advance} left blocked is FORCED here, so a causal parent
+        # no record in the file carries still reaches {#recommitted}'s
+        # translation rather than being quietly dropped from the chain.
         def timeline
-          @timeline ||= fold
+          @timeline ||= forced
         end
 
         # True for any digest VERIFIED while folding: the base's own
         # ancestors plus every turn record folded here, at its fold position.
         def member?(digest)
           timeline
-          @members.include?(digest)
+          members.include?(digest)
         end
 
         private
 
-        def fold
-          @members = Set.new(@base.ancestor_digests)
-          @records.each_with_index.inject(@base) { |acc, (record, i)| folded(acc, record, i) }
+        def forced
+          advance
+          step until @position == @records.size
+          @chain
+        end
+
+        def step
+          @chain = folded(@chain, @records[@position], @position)
+          @position += 1
+        end
+
+        # Takes the INDEX and looks the record up itself, so the record and the
+        # index it is reported under cannot disagree at some future call site.
+        # A nil record is the end of the file, which resolves to nothing left to
+        # fold. A `rewound` record cites no causal parent, so it is always
+        # reachable -- its own target check is against {#member?}, never the
+        # Store.
+        def resolvable?(index)
+          record = @records[index]
+          !record.nil? && cited_parents(record, index).all? { |digest| @chain.store.key?(digest) }
+        end
+
+        # The verified set, seeded from the base's own ancestors the first time
+        # the fold is asked to move; {#verified_turn} adds to it as it proves
+        # each record. Seeded lazily rather than in the constructor so a
+        # ChainFold that is built and never folded touches its base not at all.
+        def members
+          @members ||= Set.new(@base.ancestor_digests)
         end
 
         def folded(chain, record, index)
@@ -71,11 +127,14 @@ module Lain
         #
         # The parents must already be in the store this chain builds on --
         # {Store#put} enforces the causal edge like any other, which is what
-        # keeps the fold from vouching for an event nothing recorded. Its
-        # refusal is TRANSLATED here rather than left to escape: {Corrupt} is
-        # the one error this format's readers rescue ({CLI::Resume} builds its
-        # Refusal out of it), so a bare {Store::MissingObject} would reach the
-        # exe as a backtrace instead of a named refusal.
+        # keeps the fold from vouching for an event nothing recorded. The
+        # rescue below is reached only from {#forced}, since {#advance}
+        # pre-checks the same edges; it is what a genuinely dangling parent
+        # ends at. TRANSLATED rather than left to escape: {Corrupt} is the one
+        # error this format's readers rescue ({CLI::Resume} builds its Refusal
+        # out of it), so a bare {Store::MissingObject} would reach the exe as a
+        # backtrace instead of a named refusal. {MessageReplay#forced_put}
+        # translates the same edge for flat events, in the same currency.
         def recommitted(chain, record, index)
           chain.commit(role: record.fetch("role"), content: record.fetch("content"),
                        meta: record.fetch("meta", {}), causal_parents: cited_parents(record, index))
@@ -106,7 +165,7 @@ module Lain
                            "re-commits to #{chain.head_digest}; its content no longer matches its content address"
           end
 
-          @members.add(chain.head_digest)
+          members.add(chain.head_digest)
           chain
         end
 
@@ -133,7 +192,7 @@ module Lain
         # write-strictness, this fold owns read-tolerance.
         def verified_target(record, index)
           to = record.fetch("to")
-          return to if to.nil? || @members.include?(to)
+          return to if to.nil? || members.include?(to)
 
           raise Corrupt, "rewound record #{index} names target #{to.inspect}, which this fold never " \
                          "verified; a rewind can only check out a turn the chain already proved"

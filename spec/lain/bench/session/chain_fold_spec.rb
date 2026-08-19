@@ -101,8 +101,8 @@ RSpec.describe Lain::Bench::Session::ChainFold do
                     .to_a.map { |turn| Lain::SessionRecord.turn(turn) }
     end
 
-    # The fresh store IS the scenario: the message is in the journal, but this
-    # fold has not replayed it into the store the chain rebuilds against.
+    # The fresh store IS the scenario, and `records` above is turn records ONLY:
+    # the cited message is in no record here, so the edge is genuinely dangling.
     let(:fold) { described_class.new(records:, base: Lain::Timeline.empty(store: Lain::Store.new)) }
 
     it "raises Corrupt naming the record and the digest it cannot resolve" do

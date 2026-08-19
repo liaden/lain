@@ -74,10 +74,10 @@ module Lain
           @resolve = resolve
         end
 
-        # {#timeline} must build (and so populate {#store}) before {#messages}
-        # re-puts a single message: a `message` record's causal_parents can
-        # name a turn, and keyword arguments evaluate left to right, so
-        # `timeline:` stays the FIRST keyword naming either.
+        # Keyword order no longer sequences the two folds, and must not be read
+        # as if it did: {#converged} runs the fixpoint before either answers.
+        # All the order still decides is WHICH refusal a doubly-damaged journal
+        # names first, and both are {Corrupt}.
         #
         # @return [Recording]
         def recording
@@ -111,6 +111,16 @@ module Lain
         # Memoized because {#on_chain?} needs the fold to have run and every
         # caller may ask more than once; the rebuild is pure, so this is
         # caching, not state.
+        #
+        # Verified with respect to the TURN CHAIN ONLY, and deliberately so: a
+        # journal whose only damage is a flat record still answers here, because
+        # the chain this question is about is sound. {#converged} sweeps without
+        # forcing, which is what leaves that damage unraised until something
+        # actually depends on it -- and it is what keeps {ResumeChain#prior_timeline}
+        # from rejecting a whole chain over damage in a half of the predecessor
+        # that the seam never consults. A caller wanting the WHOLE journal's
+        # integrity asks {#recording}, which asks both halves; every production
+        # door does.
         def timeline = @timeline ||= anchor.verify(chain_fold.timeline)
 
         # T3: fold membership -- true for any digest VERIFIED while rebuilding
@@ -159,9 +169,55 @@ module Lain
         # session that spawned anything was unloadable while they were missing.
         # `@flat_events` rather than the type partition, because file order
         # across the two types is what {MessageReplay} preserves.
-        def replayed
-          @replayed ||= MessageReplay.new(records: @flat_events, store:,
-                                          prior: resume_chain.prior_messages).messages
+        def replayed = @replayed ||= message_replay.messages
+
+        # The fixpoint over the two folds, and the reason there is one.
+        #
+        # The dependency runs BOTH ways: a `message` record's causal_parents can
+        # name a turn ({Agent} stamps a turn with the mailbox messages it
+        # folded), and a turn's can name a message ({Agent::ToolRunner}'s
+        # delivery edge cites the answered `ask_human` question). That is a
+        # cycle, and no ordering of two whole passes satisfies a cycle -- which
+        # is why a session that spawned, or that answered a question, used to
+        # refuse from every door. So neither pass runs first: each advances as
+        # far as the Store lets it and unblocks the other, until a round moves
+        # nothing. Each fold then forces its own remainder, so a causal parent
+        # no record carries still refuses -- as {Corrupt}, from both.
+        #
+        # Terminating because both halves are monotone: {ChainFold#advance}
+        # only moves its position forward and {MessageReplay#sweep} only
+        # shrinks its pending set, so a round that moves neither is a fixpoint
+        # and there are at most (turns + flat events) rounds before one.
+        #
+        # The precondition lives on {#chain_fold} and {#message_replay} rather
+        # than on the three public methods that need it, and that placement is
+        # the whole point: a precondition three callers must REMEMBER is one
+        # that a fourth will forget. {#on_chain?} did forget, and the bug it
+        # left was order-dependence -- the same defect, one layer up, that this
+        # card exists to delete. Nothing but those two readers hands out a
+        # fold, so no path can reach an unconverged one.
+        def converged
+          @converged ||= fixpoint
+        end
+
+        # Builds both folds, then alternates them. Building HERE, rather than
+        # in the readers, is what keeps the readers free to gate without
+        # recursing back through themselves -- and it makes duplicate
+        # construction unrepresentable: {#converged} runs once, so each fold
+        # exists once, which the sweep/drain split in {MessageReplay} requires.
+        #
+        # Both halves must RUN in every round, so their answers are collected
+        # into an Array before being asked -- `||` would skip the sweep in any
+        # round the chain advanced. Answers `self`, never a Boolean: "did it
+        # move" is a question about a ROUND, and a fixpoint is settled by
+        # definition.
+        def fixpoint
+          @chain_fold = ChainFold.new(records: @records, base: fold_base)
+          @message_replay = MessageReplay.new(records: @flat_events, store:,
+                                              prior: resume_chain.prior_messages)
+          moved = true
+          moved = [@chain_fold.advance, @message_replay.sweep].any? while moved
+          self
         end
 
         def of_type(type) = @by_type.fetch(type.to_s, NO_RECORDS)
@@ -206,17 +262,27 @@ module Lain
         end
 
         # {ChainFold} owns the file-order turn+rewound fold and the member
-        # set it proves (see its class comment); the base is either a fresh
-        # empty Timeline (no resume chain) or the prior file's own verified
-        # head -- either way built on the ONE shared {#store}, so a `message`
-        # record on either side of the file boundary can name a causal_parent
-        # that crosses it. Memoized because {#timeline} and {#on_chain?} must
-        # consult the SAME fold.
+        # set it proves (see its class comment). This and {#message_replay} are
+        # the ONE door to either fold, and they converge before opening it --
+        # see {#converged} for why the gate belongs here and not on the callers.
         def chain_fold
-          @chain_fold ||= ChainFold.new(
-            records: @records,
-            base: resume_chain.present? ? resume_chain.prior_timeline : Timeline.empty(store:)
-          )
+          converged
+          @chain_fold
+        end
+
+        # {MessageReplay} owns the flat-event replay (see its class comment).
+        # Gated exactly as {#chain_fold} is, and for the same reason.
+        def message_replay
+          converged
+          @message_replay
+        end
+
+        # A fresh empty Timeline (no resume chain) or the prior file's own
+        # verified head -- either way built on the ONE shared {#store}, so a
+        # `message` record on either side of the file boundary can name a
+        # causal_parent that crosses it.
+        def fold_base
+          resume_chain.present? ? resume_chain.prior_timeline : Timeline.empty(store:)
         end
 
         # {Anchor} owns the open/closed classification and the verify-or-raise

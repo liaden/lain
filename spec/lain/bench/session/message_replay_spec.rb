@@ -85,6 +85,43 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
     end
   end
 
+  # The half of this class the Loader's fixpoint drives. `sweep` lands what it
+  # can and REPORTS whether it moved -- that answer, and not an exception, is
+  # what lets the Loader alternate this replay with the turn fold until neither
+  # moves. It must also leave a record it could not land pending rather than
+  # forcing it, or the fold would never get the chance to unblock it.
+  describe "#sweep, the fixpoint's half-step" do
+    # A message citing a TURN, which only the chain fold can land -- the exact
+    # blocked shape the Loader alternates the two folds to unblock.
+    def citing_a_turn
+      root = Lain::Timeline.empty(store:).commit(role: :user, content: text("root"))
+      cited = Lain::Event::ChainWriter.new.put(root, kind: :message, from: "a", to: "b",
+                                                     causal_parents: [root.head_digest], body: { "n" => 1 })
+      [root.head, as_record(Lain::Telemetry::Message.from_event(cited))]
+    end
+
+    it "answers true while it is landing records, and false once it has stalled" do
+      replay = replay(linked_messages(3))
+
+      expect(replay.sweep).to be(true)
+      expect(replay.sweep).to be(false)
+    end
+
+    it "leaves a record whose cited turn is not landed YET pending, and takes it once it appears" do
+      turn, record = citing_a_turn
+      into = Lain::Store.new
+      replay = replay([record], into:)
+
+      expect(replay.sweep).to be(false)
+
+      into.put(turn.carried_payload)
+      into.put(turn)
+
+      expect(replay.sweep).to be(true)
+      expect(replay.messages.map(&:digest)).to eq([record["digest"]])
+    end
+  end
+
   describe "records whose edges cross" do
     # The cycle T2 could not order away: a question cites the turn it was asked
     # from, and the turn that delivers the answer cites the question back.
@@ -101,11 +138,39 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
   end
 
   describe "what it still refuses" do
-    it "raises the Store's own MissingObject for an edge nothing in the file provides" do
+    # The Store still ENFORCES the edge; what changed is the currency the
+    # refusal reaches a reader in. Which exception a damaged journal raises
+    # cannot be an accident of whether the stuck record was a turn or a message
+    # -- ChainFold has always translated the identical edge, and CLI::Resume,
+    # Bench::CLI and Supervisor::Restart rescue different sets. The Store's own
+    # sentence is carried through rather than reworded, so the digest a reader
+    # needs is still in the message.
+    it "raises Corrupt, carrying the Store's own sentence, for an edge nothing in the file provides" do
       records = linked_messages(3)
       records.last["causal_parents"] = ["blake3:#{"ab" * 32}"]
 
-      expect { replay(records).messages }.to raise_error(Lain::Store::MissingObject, /ababab/)
+      expect { replay(records).messages }
+        .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+          expect(error).not_to be_a(Lain::Store::MissingObject)
+          expect(error.message).to include("message record 2", "ababab")
+        }
+    end
+
+    # Panel fix round. Two record types share this index space, and the refusal
+    # named the EVENT's kind -- so a damaged child_turn read "(turn)", a record
+    # type the journal does not contain, in the one case this whole card exists
+    # to re-open. The journal's own `type` is the honest label.
+    it "names a damaged child_turn by its record type, not by the :turn kind it carries" do
+      child = Lain::Timeline.empty(store:).commit(role: :user, content: text("brief"))
+      stranded = Lain::Event.new(kind: :turn, carried_payload: child.head.carried_payload,
+                                 from: nil, to: nil, render_parent: nil,
+                                 causal_parents: ["blake3:#{"cd" * 32}"])
+
+      expect { replay([as_record(Lain::Telemetry::ChildTurn.from_event(stranded))]).messages }
+        .to raise_error(Lain::Bench::Session::Corrupt) { |error|
+          expect(error.message).to include("record 0", "child_turn", "cdcdcd")
+          expect(error.message).not_to include("(turn)")
+        }
     end
 
     it "raises Corrupt for a record whose payload no longer re-derives its digest" do

@@ -11,8 +11,9 @@ module Lain
       # same verify-by-recommit idiom {Loader#verified_turn} follows for a
       # :turn: payload first, then the envelope (the same edge {Store#put}
       # enforces for a :turn), each landing on the digest recorded beside it
-      # -- causal edges are the Store's own job (a dangling one raises
-      # {Store::MissingObject}, not a {Corrupt} this class manufactures).
+      # -- causal edges stay the Store's own job to ENFORCE, and {#forced_put}
+      # only re-dresses its refusal as the {Corrupt} every reader of this
+      # format already rescues.
       #
       # `prior` is an earlier file's own already-verified messages in a
       # resume chain (empty for a file with none) -- prepended so a LATER
@@ -48,63 +49,92 @@ module Lain
           @records = records
           @store = store
           @prior = prior
+          @pending = records.each_with_index.to_a
+          @landed = []
         end
 
-        # @return [Array<Event>] every event this file (and any earlier one in
-        #   its chain) carries, root/prior-file-first, in FILE order
-        # @raise [Corrupt] on a record whose envelope no longer re-derives to
-        #   its recorded digest
-        def messages
-          @prior + landed.sort_by(&:last).map(&:first)
-        end
-
-        private
-
-        # Puts in DEPENDENCY order, returns in FILE order. The split is forced by
-        # a real cycle across the spawn boundary (see the class note), and the
-        # SHAPE of the solver is forced by journal size: a sweep lands each
-        # record as it is REACHED, so a file already in dependency order -- which
-        # is every file a writer produces -- lands whole in the first sweep and
-        # this stays linear. Evaluating the whole pending set before landing any
-        # of it costs one sweep per link instead, and a child chain IS such a
-        # link chain (each turn's render_parent is the one before it).
+        # Land every record the Store can already take, repeating until a pass
+        # moves nothing; answer whether anything landed. That answer is what
+        # lets {Loader} alternate this replay with {ChainFold} to a fixpoint:
+        # a flat record's edges can name a turn only that fold can land, and
+        # its turns' `causal_parents` can name a :message only this replay can.
+        #
+        # Puts in DEPENDENCY order, returns (from {#messages}) in FILE order.
+        # The split is forced by a real cycle across the spawn boundary (see
+        # the class note), and the SHAPE of the solver is forced by journal
+        # size: a sweep lands each record as it is REACHED, so a file already
+        # in dependency order -- which is every file a writer produces -- lands
+        # whole in the first sweep and this stays linear. Evaluating the whole
+        # pending set before landing any of it costs one sweep per link
+        # instead, and a child chain IS such a link chain (each turn's
+        # render_parent is the one before it).
         #
         # Iterative, not recursive, for the reason {Event::Projection#causal_closure}
         # already records: a long chain is a log shape, not an error, and one
         # frame per link turns it into a SystemStackError.
         #
-        # A sweep that moves NOTHING has only genuinely dangling records left, so
-        # {#forced} puts them and the refusal is the Store's own
-        # {Store::MissingObject} rather than one this class manufactures -- the
-        # currency the class note pins. Verification is untouched: every record
-        # re-derives its own digest, in whatever order it lands.
-        def landed
-          pending = @records.each_with_index.to_a
-          done = []
+        # rubocop:disable Naming/PredicateMethod -- a COMMAND whose Boolean
+        # reports whether it landed anything, not a query. `sweep?` would name
+        # the question and hide the puts, which is {Timeline#commit}'s lesson.
+        def sweep
+          before = @pending.size
           stalled = false
-          until pending.empty? || stalled
-            remaining = swept(pending, done)
-            stalled = remaining.size == pending.size
-            pending = remaining
+          until @pending.empty? || stalled
+            remaining = swept(@pending)
+            stalled = remaining.size == @pending.size
+            @pending = remaining
           end
-          done + forced(pending)
+          @pending.size < before
         end
+        # rubocop:enable Naming/PredicateMethod
+
+        # @return [Array<Event>] every event this file (and any earlier one in
+        #   its chain) carries, root/prior-file-first, in FILE order
+        # @raise [Corrupt] on a record whose envelope no longer re-derives to
+        #   its recorded digest, or whose edges name nothing the file provides
+        def messages
+          sweep
+          force
+          @prior + @landed.sort_by(&:last).map(&:first)
+        end
+
+        private
 
         # One greedy pass: land what the Store can take at the moment it is
         # reached, and answer what is still blocked.
-        def swept(pending, done)
+        def swept(pending)
           pending.each_with_object([]) do |entry, blocked|
             record, index = entry
             if resolvable?(record)
-              done << [verified(record, index), index]
+              @landed << [verified(record, index), index]
             else
               blocked << entry
             end
           end
         end
 
-        def forced(pending)
-          pending.map { |record, index| [verified(record, index), index] }
+        # A sweep that moves NOTHING has only genuinely dangling records left,
+        # so this puts them and the Store raises the honest refusal.
+        # Verification is untouched: every record re-derives its own digest, in
+        # whatever order it lands.
+        def force
+          remainder = @pending.map { |record, index| [forced_put(record, index), index] }
+          @pending = []
+          @landed.concat(remainder)
+        end
+
+        # ONE refusal currency. The Store's own {Store::MissingObject} is the
+        # honest refusal, but which exception a damaged journal raises must not
+        # become an accident of whether the stuck record happened to be a turn
+        # or a message: {CLI::Resume}, {Bench::CLI} and {Supervisor::Restart}
+        # rescue different sets, and {ChainFold#recommitted} already translates
+        # the identical edge for turns. So it is translated here too, and the
+        # Store's own message is carried through rather than reworded.
+        def forced_put(record, index)
+          verified(record, index)
+        rescue Store::MissingObject => e
+          raise Corrupt, "message record #{index} (#{labelled(record)}) cites a causal parent this " \
+                         "replay never landed: #{e.message}"
         end
 
         def resolvable?(record)
@@ -116,9 +146,18 @@ module Lain
           recorded = record.fetch("digest")
           return event if event.digest == recorded
 
-          raise Corrupt, "message record #{index} (#{record.fetch("kind")}) recorded as #{recorded} " \
+          raise Corrupt, "message record #{index} (#{labelled(record)}) recorded as #{recorded} " \
                          "re-commits to #{event.digest}; its content no longer matches its content address"
         end
+
+        # The JOURNAL's record type, never the event's `kind`. Two record types
+        # share this index space and a {Telemetry::ChildTurn} carries kind
+        # :turn, so naming the kind made a damaged child turn refuse as
+        # "(turn)" -- a record type the file does not contain, in exactly the
+        # spawned session this fold exists to re-open. The noun stays "message
+        # record": it names the INDEX SPACE, which is this replay's own and
+        # deliberately not {ChainFold}'s "turn record".
+        def labelled(record) = record["type"] || record.fetch("kind")
 
         def rebuilt(record)
           payload = Event::Payload.new(kind: record.fetch("kind"), body: record.fetch("payload"))
