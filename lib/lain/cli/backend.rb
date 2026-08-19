@@ -190,11 +190,16 @@ module Lain
       #   operator what is happening instead of a blank screen. An earlier
       #   edition of this note said the opposite, and called leaving it
       #   unpainted a decision rather than a gap; T4 reversed the decision.
-      def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance)
+      # @param queue [Boolean] the caller's willingness to WAIT for
+      #   {Provider::Admission} to free a slot; not a property of the endpoint.
+      #   Not forwarded to the bedrock arm, which does not take it: bedrock
+      #   resolves a hosted endpoint, so its gate is {Provider::Admission::Null}
+      #   and there is never a slot to wait for.
+      def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance, queue: true)
         case name
-        when "ollama" then Provider::Ollama.new(api_base: @options[:api_base], channel:)
+        when "ollama" then Provider::Ollama.new(api_base: @options[:api_base], channel:, queue:)
         when "bedrock" then Provider::Bedrock.new(channel:)
-        else anthropic_provider(spool, channel)
+        else anthropic_provider(spool, channel, queue:)
         end
       end
 
@@ -202,7 +207,14 @@ module Lain
       # set. Deliberately handed neither the chat's spool nor its channel: an
       # oracle round trip is not a turn, so it belongs in neither the response
       # WAL a replay reads back as turns nor the live stream the frontend paints.
-      def summarizer_provider = provider(name: summarizer_name)
+      # `queue:` is passed THROUGH rather than decided here, because this one
+      # method serves two callers that need opposite answers:
+      # {Backend::Summarizer} builds the tier {Oracle::Eager} fires through, and
+      # its contract is that the turn never waits (`oracle/eager.rb:45-47`);
+      # {Backend::SpanSummarizer} answers on the RENDER path, where the summary
+      # is worth waiting for. They are separate objects with separate `#tier`
+      # methods, which is what makes one keyword enough to tell them apart.
+      def summarizer_provider(queue: true) = provider(name: summarizer_name, queue:)
 
       # `--summarizer-model`, defaulting to the CHAT's model when both tiers
       # name one provider and to the summarizer provider's own default when they
@@ -426,11 +438,11 @@ module Lain
       # the exe's clean Thor::Error mapping. Checking here keeps that mapping
       # intact for the one refusal an anthropic chat run can hit before any
       # request goes out.
-      def anthropic_provider(spool, channel)
+      def anthropic_provider(spool, channel, queue: true)
         raise MissingAPIKey, "ANTHROPIC_API_KEY is not set; --provider anthropic needs it to build a client" \
           if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
-        Provider::Anthropic.new(spool:, channel:)
+        Provider::Anthropic.new(spool:, channel:, queue:)
       end
 
       # Validated once, so #provider and #default_model both key off a name

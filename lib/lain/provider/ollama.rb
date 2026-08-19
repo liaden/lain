@@ -76,6 +76,8 @@ module Lain
       include Encoding
       # APIError / APIStatusError, nested here and rooted at Lain::Error.
       include ErrorWrapping.under(Lain::Error)
+      # #admitted, over #resolved_endpoint and #queue_for_capacity? below.
+      include Admitted
 
       DEFAULT_MODEL = "qwen3:4b"
 
@@ -109,9 +111,25 @@ module Lain
       # @param sink [Lain::Sink] where the transport's debug/log lines go
       # @param api_base [String, nil] overrides `ollama_api_base` (default
       #   http://localhost:11434); no api key -- Ollama is local.
+      # @param queue [Boolean] whether this provider may WAIT for {Admission} to
+      #   free a slot. Capacity is a property of the server; willingness to wait
+      #   is a property of the caller, and that is the whole reason this is a
+      #   constructor keyword rather than an argument to {#complete}: it belongs
+      #   to whoever built the client, not to one round trip.
+      #
+      #   `false` is {Oracle::Eager}'s, and only its: `eager.rb:45-47` promises
+      #   the turn that produced a tool result never waits on its summary, so a
+      #   busy endpoint must SKIP the summary rather than queue it. Queueing
+      #   there is the worse degradation -- a fire reaped at teardown burns its
+      #   digest for the whole session -- while a skip is a miss
+      #   {Compaction::SummarySnapshot} already reads as ordinary. The span
+      #   summarizer shares this provider's construction path and keeps the
+      #   default, because it answers on the render path where the summary is
+      #   worth waiting for.
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, retries: nil,
-                     sink: Sink::Null.new, api_base: nil)
+                     sink: Sink::Null.new, api_base: nil, queue: true)
         super()
+        @queue = queue
         @retries = retries || RetryTap.new(channel:)
         @config = journaled_retries(config || build_config(api_base:))
         @transport = transport || Transport.new(@config, sink:)
@@ -137,8 +155,37 @@ module Lain
       # span summarizer answers on the RENDER path a leak takes out the turn
       # rather than one summary. {#stream_body}'s JSON::ParserError arm sits
       # inside the block and passes through it untouched.
+      #
+      # == Why {Admission} is taken HERE, and why it may not move
+      #
+      # This is the ONE boundary every round trip crosses, and taking capacity
+      # anywhere else means enumerating callers. There are six provider
+      # construction sites on the chat path and {Oracle::SecretRead.tier}
+      # (`oracle/secret_read.rb:134`) builds this class bare and accepts no
+      # injected collaborator on purpose -- that seam is the disclosure the whole
+      # rung exists to prevent -- so a gate handed in by {CLI::Backend} could
+      # never cover it. Keyed by the endpoint this provider resolved for itself,
+      # capacity is a property of the SERVER, and the enumeration is unnecessary.
+      #
+      # It may not move DOWN, into {#stream_body} or the transport: the stall
+      # clock arms on the first body chunk with a 30s grace
+      # (`http/streaming/faraday_handlers.rb:397`), so a request queued below that
+      # point would hold an armed clock while no server was sending it anything
+      # and be killed for a silence admission itself caused. `#complete` encloses
+      # the whole stream, so a queued caller has no clock installed at all.
+      #
+      # It may not move UP either, into `Agent#call_model` or {ModelCaller}:
+      # `Compaction::Strategy::Summarizing#asked` awaits an oracle inside
+      # `Agent#render_request`, which runs BEFORE `#complete` -- above this seam
+      # that await is outside the slot, and above `call_model` it would re-enter
+      # a non-reentrant gate from inside the held region and hang the session.
+      #
+      # The wrapping is INSIDE the slot so a retrying round trip -- faraday-retry
+      # sits within the connection -- holds its slot for all four attempts rather
+      # than freeing it between them. {Admission::Busy} is not an API failure and
+      # deliberately passes {ErrorWrapping} by, naming the saturated endpoint.
       def complete(request)
-        wrapping_errors { build_response(request.stream ? stream_body(request) : sync_body(request)) }
+        admitted { wrapping_errors { build_response(request.stream ? stream_body(request) : sync_body(request)) } }
       end
 
       # The window this server is actually serving `model` with, or nil.
@@ -286,6 +333,18 @@ module Lain
       end
 
       private
+
+      # {Admitted}'s two collaborators. Whether this caller may WAIT for a slot
+      # is the constructor's `queue:`; where it would wait is the endpoint below.
+      def queue_for_capacity? = @queue
+
+      # The endpoint THIS provider will really talk to, which is the only honest
+      # key: `@options[:api_base]` is one flag shared by every tier
+      # (`exe/lain:416`), so it reads nil for a bare construction and for a
+      # hosted one alike. Read off the same Configuration {Transport#api_base}
+      # reads, with the same fallback, and `admission_spec.rb` pins the two
+      # answers equal because they live in different files.
+      def resolved_endpoint = @config.ollama_api_base || Transport::DEFAULT_API_BASE
 
       # `model_info` is the GGUF KV table handed back nearly verbatim
       # (`routes.go`'s GetModelInfo), so the key is derived, not fixed.

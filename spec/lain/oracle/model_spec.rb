@@ -76,8 +76,13 @@ RSpec.describe Lain::Oracle::Model do
     # plausible model id looks like, and an ollama id sent to Provider::Anthropic
     # reads as a mistake even where it is inert.
     def summarizer_oracle(provider, model:)
-      backend = Struct.new(:summarizer_provider, :summarizer_model, :summarizer_max_tokens, :journal)
-                      .new(provider, model, max_tokens, Lain::Channel::Null::INSTANCE)
+      # {CLI::Backend#summarizer_provider} takes the caller's willingness to
+      # QUEUE for provider capacity (open decision 4), and a bare Struct member
+      # reader takes no arguments -- so the double has to speak the real message
+      # or it has stopped standing in for the thing it doubles.
+      backend = Struct.new(:summarizer_provider, :summarizer_model, :summarizer_max_tokens, :journal) do
+        def summarizer_provider(queue: true) = self[:summarizer_provider] # rubocop:disable Lint/UnusedMethodArgument
+      end.new(provider, model, max_tokens, Lain::Channel::Null::INSTANCE)
       Lain::CLI::Backend::Summarizer.new(backend:).oracle
     end
 

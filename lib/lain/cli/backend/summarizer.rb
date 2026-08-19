@@ -38,8 +38,19 @@ module Lain
 
         private
 
+        # `queue: false` is open decision 4, and this is the ONLY place it is
+        # asked for. This tier is the one {Oracle::Eager} fires through, and
+        # `oracle/eager.rb:45-47` promises the turn that produced a tool result
+        # never waits on its summary -- so when the endpoint is busy the summary
+        # is SKIPPED rather than queued. A queued fire is the worse failure: it
+        # is reaped at teardown having burnt its digest for the whole session,
+        # while a skip is a miss {Compaction::SummarySnapshot} already models.
+        #
+        # {Backend::SpanSummarizer#tier} calls the same `#summarizer_provider`
+        # and deliberately does NOT pass this: it answers on the render path,
+        # where the summary is worth waiting for.
         def tier(definition)
-          Oracle::Model.new(definition:, provider: @backend.summarizer_provider,
+          Oracle::Model.new(definition:, provider: @backend.summarizer_provider(queue: false),
                             model: @backend.summarizer_model, max_tokens: @backend.summarizer_max_tokens)
         end
 

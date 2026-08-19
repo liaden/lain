@@ -43,9 +43,24 @@ module Lain
       # catches an SDK-oracle failure, or vice versa.
       include ErrorWrapping.under(Lain::Error)
       include StreamStartedSignal
+      # #admitted, over #resolved_endpoint and #queue_for_capacity? below.
+      include Admitted
 
       DEFAULT_MODEL = "claude-opus-4-8"
       CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use].freeze
+
+      # The endpoint a bare construction resolves to, and so the {Admission} key
+      # it contends on. It restates the literal inside the vendored
+      # {Provider::HTTP::Providers::Anthropic#api_base}, which has no constant to
+      # borrow -- unlike {Ollama::Transport::DEFAULT_API_BASE}, which this
+      # class's counterpart reuses directly.
+      #
+      # A RESTATEMENT IS A DRIFT HAZARD, so it is pinned rather than trusted:
+      # `admission_spec.rb` asserts a real {Transport} over an empty config
+      # resolves exactly this string. Two providers agreeing on a key neither of
+      # them dials would satisfy every other example in that file while gating
+      # nothing, which is the failure the pin exists to make loud.
+      DEFAULT_API_BASE = "https://api.anthropic.com"
 
       # @param transport [#sync_post, #stream] injected in specs; a real
       #   {Transport} over the vendored connection otherwise.
@@ -60,9 +75,17 @@ module Lain
       #   is given directly
       # @param api_base [String, nil] overrides `anthropic_api_base`; ignored when `config:` is
       #   given directly
+      # @param queue [Boolean] whether this provider may WAIT for {Admission} to
+      #   free a slot -- see {Provider::Ollama#initialize}, which documents the
+      #   keyword and why it belongs to the caller rather than to a round trip.
+      #   It is a no-op against the hosted default, which resolves NOT LOCAL and
+      #   so takes {Admission::Null}; it starts mattering the moment `api_base:`
+      #   points at a loopback proxy, and carrying it here rather than only on
+      #   the local arm is what keeps the two providers one shape.
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, sink: Sink::Null.new,
-                     spool: Spool::Null.new, api_key: nil, api_base: nil)
+                     spool: Spool::Null.new, api_key: nil, api_base: nil, queue: true)
         super()
+        @queue = queue
         @channel = channel
         @retries = RetryTap.new(spool:, channel:)
         @config = config || build_config(api_key:, api_base:)
@@ -79,11 +102,28 @@ module Lain
       # renders `stream: true`); both paths converge on the full block list and
       # parsed tool inputs. `on_stream_started` is CE-5's signal -- see
       # {StreamStartedSignal} -- never called on the non-streaming path.
+      #
+      # {Admission} wraps the WHOLE of this, for the reasons
+      # {Provider::Ollama#complete} sets out at length: it is the one boundary
+      # every round trip crosses, the stall clock arms below it, and the
+      # compaction oracle awaits above it. Against the hosted default the gate is
+      # {Admission::Null} and this costs a Hash lookup -- concurrent subagents
+      # must not serialise on one hosted endpoint -- but the seam is here so an
+      # `api_base:` aimed at a loopback proxy is gated like any other local
+      # server, rather than by which class happened to build the client.
       def complete(request, on_stream_started: nil)
-        wrapping_errors { build_response(dispatch(request, on_stream_started)) }
+        admitted { wrapping_errors { build_response(dispatch(request, on_stream_started)) } }
       end
 
       private
+
+      # {Admitted}'s two collaborators. The endpoint is read off the same
+      # Configuration {Transport#api_base} reads, with the same fallback -- see
+      # {DEFAULT_API_BASE} for why that fallback is restated and how the
+      # restatement is pinned.
+      def queue_for_capacity? = @queue
+
+      def resolved_endpoint = @config.anthropic_api_base || DEFAULT_API_BASE
 
       def build_config(api_key:, api_base:)
         config = Provider::HTTP::Configuration.new

@@ -412,6 +412,38 @@ RSpec.describe Lain::Provider::Ollama do
       end
     end
 
+    # ADMISSION IS GLOBALLY VISIBLE PROCESS STATE, and any spec that deliberately
+    # overlaps two round trips on ONE LOCAL ENDPOINT will meet it. Read that as
+    # the general statement, not as a note about the one example below:
+    # {Provider::Admission} gates every local endpoint at one round trip in
+    # flight, `.for` memoises a gate per endpoint in a process-global registry,
+    # and the default `http://localhost:11434` is the endpoint most of this file
+    # resolves. Two concurrent round trips through one provider therefore
+    # SERIALISE rather than overlap -- and a spec whose overlap is coordinated by
+    # a latch does not merely serialise, it DEADLOCKS until the acquire deadline,
+    # because the second arrival the latch waits for is itself queued behind the
+    # first. That is what happened to the example below when admission landed.
+    #
+    # So a spec that needs a genuine overlap asks for the documented off switch,
+    # rather than working around the gate. Its subject here is the retry tap's
+    # per-round-trip attempt state, and a real overlap is the only shape that
+    # tells that apart from instance state.
+    #
+    # THE RESETS ARE LOAD-BEARING, NOT DECORATION. `.for` pins whatever
+    # {Provider::Admission::ENV_KEY} said at an endpoint's FIRST resolution, so
+    # setting the variable is not enough on its own: another example will already
+    # have resolved this endpoint and memoised a real gate. Hence a reset on the
+    # way in, to force the value to be re-read, and another on the way out, to
+    # put the real gate back for whatever runs next. Removing either one leaves
+    # a Null gate leaking into unrelated examples, or this helper silently not
+    # working at all.
+    def without_admission(&block)
+      Lain::Provider::Admission.reset!
+      with_env("LAIN_PROVIDER_CONCURRENCY" => "0", &block)
+    ensure
+      Lain::Provider::Admission.reset!
+    end
+
     # The reentrancy contract T10 builds on, and the ONLY shape here that
     # distinguishes a per-round-trip attempt from instance state: two round
     # trips overlap through ONE Provider, each retries, and each must abandon
@@ -432,12 +464,14 @@ RSpec.describe Lain::Provider::Ollama do
       retries = TracingRetryTap.new(arrivals: 2)
       provider = described_class.new(retries:, config: zero_retry_config)
 
-      texts = %w[alpha beta].map do |marker|
-        Thread.new do
-          Thread.current[:lain_spec_round_trip] = marker
-          provider.complete(request(stream: false, model: marker)).text
-        end
-      end.map(&:value)
+      texts = without_admission do
+        %w[alpha beta].map do |marker|
+          Thread.new do
+            Thread.current[:lain_spec_round_trip] = marker
+            provider.complete(request(stream: false, model: marker)).text
+          end
+        end.map(&:value)
+      end
 
       expect(texts.sort).to eq(%w[ok-alpha ok-beta])
       expect(retries.abandoned.tally).to eq({ "alpha" => 1, "beta" => 1 })

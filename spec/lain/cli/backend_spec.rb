@@ -1176,6 +1176,52 @@ RSpec.describe Lain::CLI::Backend do
       expect(catalog).to be_empty
     end
 
+    # Open decision 4, wired. The eager tier and the span summarizer call the
+    # SAME `#summarizer_provider`, so the only thing that can tell them apart is
+    # what each asks for -- and they need opposite answers. {Oracle::Eager}
+    # promises the turn never waits on a summary (`oracle/eager.rb:45-47`), so a
+    # busy endpoint must skip it; {Backend::SpanSummarizer} answers on the render
+    # path, where the summary is worth waiting for.
+    describe "willingness to queue for provider capacity" do
+      def queue_flags_asked_of(backend)
+        asked = []
+        allow(backend).to receive(:summarizer_provider).and_wrap_original do |original, **kwargs|
+          asked << kwargs.fetch(:queue, :not_passed)
+          original.call(**kwargs)
+        end
+        yield backend
+        asked
+      end
+
+      it "builds the eager tier's provider unwilling to queue" do
+        backend = summarizer_for
+
+        expect(queue_flags_asked_of(backend) { |b| tier_of(b) }).to eq([false])
+      end
+
+      it "leaves the span summarizer's provider willing to wait" do
+        backend = summarizer_for
+        span = Lain::CLI::Backend::SpanSummarizer.new(backend:, name: "summarize", sink: Lain::Sink::Null.new)
+
+        flags = queue_flags_asked_of(backend) do
+          span.send(:tier, Lain::Oracle::Summarize.definition)
+        end
+
+        expect(flags).to eq([:not_passed])
+      end
+
+      # The keyword has to reach the constructed provider, not merely be
+      # accepted: a `#summarizer_provider` that swallowed it would satisfy the
+      # two examples above and gate the eager oracle anyway.
+      it "carries the flag into the provider it builds" do
+        backend = summarizer_for
+        impatient = backend.summarizer_provider(queue: false)
+
+        expect(impatient.instance_variable_get(:@queue)).to be(false)
+        expect(backend.summarizer_provider.instance_variable_get(:@queue)).to be(true)
+      end
+    end
+
     # The point of the flag: compressing a tool result is a different job from
     # answering the conversation, so it gets its own tier. A local chat can buy
     # a better summarizer, and a frontier chat can keep summarizing for free.

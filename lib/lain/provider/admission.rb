@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "admission/endpoint"
+
 module Lain
   class Provider
     # A provider's CAPACITY, as one object: at most `width` callers inside one
@@ -54,11 +56,12 @@ module Lain
     # hooked (`Async::Scheduler#kernel_sleep`) and yields the fiber, so sibling
     # fibers keep running (measured: 20 ticks of a 10ms ticker across one 200ms
     # sleep), and off a reactor it blocks only the calling thread. That is why
-    # this file requires nothing: it is correct on and off a reactor, which a
-    # gate reached from two of them has to be. Note the precise claim: yielding
-    # rather than blocking is a property of ASYNC's scheduler, which implements
-    # `kernel_sleep`. Any other fiber scheduler that did not would block the
-    # thread here, and nothing in this file enforces that it does.
+    # this file requires no ASYNC machinery at all: it is correct on and off a
+    # reactor, which a gate reached from two of them has to be. Note
+    # the precise claim: yielding rather than blocking is a property of ASYNC's
+    # scheduler, which implements `kernel_sleep`. Any other fiber scheduler that
+    # did not would block the thread here, and nothing in this file enforces
+    # that it does.
     #
     # == There is no fairness, and that is worth stating
     #
@@ -80,9 +83,40 @@ module Lain
       # and a caller must be able to tell "refused" from "ran, gave nothing".
       REFUSED = :"lain.admission.refused"
 
-      # One in flight per endpoint. Not probed: reading a server's real
+      # One in flight per LOCAL endpoint. Not probed: reading a server's real
       # parallelism is a provider-specific probe on a path that must stay
       # synchronous, and 1 is correct for every local server this bench runs.
+      #
+      # Read the qualifier as load-bearing. The justification has always been a
+      # LOCAL-SERVER one, and F26 is a one-slot local server being handed two
+      # requests; applying the same 1 to a hosted endpoint would serialise
+      # concurrent SUBAGENTS, which run at once over the ONE shared
+      # `Subagent::Seam` provider `cli/wiring.rb:475` -> `toolset_build.rb:316`
+      # builds for every child. (One provider, N concurrent callers, one endpoint
+      # key -- the sharing does not soften the argument, since the gate keys on
+      # the server rather than on the client.) That is a
+      # throughput regression nobody asked for, and it is the same harm as
+      # serialising a hosted turn behind a local summary -- the case the
+      # endpoint key already exists to prevent -- merely wearing the hosted
+      # endpoint's own face. So {.build} applies this width only where
+      # {.local?} holds, and hands everything else the unbounded {Null}.
+      #
+      # == What this costs a LOCAL subagent fan-out, which is a real cost
+      #
+      # Local children no longer overlap: N siblings over one ollama now queue,
+      # each against its own {DEFAULT_DEADLINE} acquire clock. So a fan-out that
+      # used to run slow can now RAISE {Busy} at sibling N -- a behaviour change,
+      # not merely a slowdown, and the thing to recognise if a `Busy` turns up
+      # under a wide local spawn.
+      #
+      # Two of the three places that can meet it already contain it: the render
+      # path rescues {Lain::Error} (`compaction/strategy/summarizing.rb:213`) and
+      # {Oracle::Eager} contains anything a fire raises inside its task boundary.
+      # A SUBAGENT'S OWN TURN IS NEITHER. It has no such rescue, so the refusal
+      # surfaces as that child's failure. That is the honest trade -- the
+      # alternative is the overlap F26 is about -- but it is why the deadline is
+      # 300s rather than something a busy fan-out would trip casually, and why
+      # {ENV_KEY} exists.
       DEFAULT_WIDTH = 1
 
       # Between polls for a free slot. {Approval::QueueSurface::DEFAULT_POLL_INTERVAL}'s
@@ -116,8 +150,11 @@ module Lain
       # not a bug to fix here.
       NO_WAIT = 0.0
 
-      # `0` selects the Null arm; a positive `N` sets the width. The env-only
-      # shape (no CLI flag) is `provider/http/configuration.rb:127-131`'s.
+      # `0` selects the Null arm; a positive `N` sets the width. Either way it
+      # overrides the locality rule in BOTH directions -- `0` unbounds a local
+      # endpoint, `N` gates a hosted one -- so it is also how a hosted endpoint
+      # gets a ceiling when someone wants one. The env-only shape (no CLI flag)
+      # is `provider/http/configuration.rb:127-131`'s.
       #
       # It is a PROCESS-START switch, not a rescue. {.for} memoises per endpoint
       # and pins whatever the env said at that endpoint's first resolution, so
@@ -156,11 +193,28 @@ module Lain
 
       # The admission for one resolved endpoint, built once and shared.
       #
+      # KEYED ON {.canonical}, NOT ON THE STRING IT WAS HANDED, and that is what
+      # makes the whole object work rather than a nicety. A raw-string key
+      # defeats {DEFAULT_WIDTH}'s own argument -- that every loopback spelling
+      # must count local *because they are one server* -- by handing each
+      # spelling its own slot. Measured before it was fixed: a chat provider on
+      # `--api-base http://127.0.0.1:11434` and the BARE `Provider::Ollama.new`
+      # that {Oracle::SecretRead.tier} constructs (the one site that can never
+      # take an injected gate, and the reason admission lives in the provider at
+      # all) overlapped two round trips on one ollama. F26, still live, through
+      # the exact construction sites this card exists to cover.
+      #
       # @param endpoint [String] the endpoint the provider resolved for itself
       # @return [Admission, Admission::Null]
       def self.for(endpoint:)
-        @registry_lock.synchronize { @registry[endpoint] ||= build(endpoint) }
+        key = canonical(endpoint)
+        @registry_lock.synchronize { @registry[key] ||= build(key) }
       end
+
+      # The SERVER identity `endpoint` names, delegated to {Endpoint.canonical}.
+      # @param endpoint [String]
+      # @return [String]
+      def self.canonical(endpoint) = Endpoint.canonical(endpoint)
 
       # Forget every memoised admission, so the next {.for} rebuilds from the
       # env. The registry pins {ENV_KEY} at an endpoint's FIRST resolution, so
@@ -171,18 +225,44 @@ module Lain
       # It does NOT free a wedged session: existing holders keep the admission
       # they entered, and a rebuilt gate simply does not know about them. It is
       # for re-reading configuration, not for recovery.
+      #
+      # Nor is it per-example hygiene, which is the other thing it looks like
+      # from a spec. The registry is process-global, so a suite that overlaps two
+      # round trips on one LOCAL endpoint meets a real gate -- see
+      # `spec/lain/provider/ollama_spec.rb`'s `without_admission`, which pairs a
+      # reset with {ENV_KEY} to ask for the off switch and resets again on the
+      # way out. Reaching for a blanket reset between every example would hide
+      # that coupling rather than state it, and would quietly widen this method's
+      # meaning; it is deliberately not done.
       # @return [void]
       def self.reset!
         @registry_lock.synchronize { @registry = {} }
         nil
       end
 
-      # @return [Admission, Admission::Null] Null when the off switch is set
+      # Three-way, and the ORDER is the policy: an explicit {ENV_KEY} wins in
+      # BOTH directions -- `0` unbounds a local endpoint, a positive `N` gates a
+      # hosted one -- and only an unset variable lets {.local?} decide. An
+      # operator who has said a number has said it about this process, not about
+      # this half of it.
+      #
+      # @return [Admission, Admission::Null] Null when the off switch is set, or
+      #   when the endpoint is not local and nothing overrode that
       def self.build(endpoint)
         configured = width_from_env
-        configured.zero? ? Null.new(endpoint:) : new(endpoint:, width: configured)
+        return new(endpoint:, width: configured) if configured&.positive?
+        return Null.new(endpoint:) unless configured.nil?
+
+        local?(endpoint) ? new(endpoint:, width: DEFAULT_WIDTH) : Null.new(endpoint:)
       end
       private_class_method :build
+
+      # Whether `endpoint` is a server on this machine, delegated to
+      # {Endpoint.local?} -- which is also where BOTH directions of
+      # misclassification are spelled out, and they are not symmetric.
+      # @param endpoint [String]
+      # @return [Boolean]
+      def self.local?(endpoint) = Endpoint.local?(endpoint)
 
       # Loud on a typo, per the house rule that unknown values fail rather than
       # degrade: a misspelt width that silently meant 1 would look exactly like
@@ -195,10 +275,15 @@ module Lain
       # failure mode is a hung session produced by trying to turn admission OFF.
       # `0` is the way to do that, and it is the only non-positive value that
       # means anything here.
-      # @return [Integer]
+      #
+      # UNSET ANSWERS nil, NOT {DEFAULT_WIDTH}, and the distinction is what makes
+      # the locality rule expressible: {.build} has to tell "the operator asked
+      # for 1" from "nobody said", because the first gates a hosted endpoint and
+      # the second does not.
+      # @return [Integer, nil] nil when the variable is unset or empty
       def self.width_from_env
         raw = ENV.fetch(ENV_KEY, nil)
-        return DEFAULT_WIDTH if raw.nil? || raw.empty?
+        return nil if raw.nil? || raw.empty?
 
         parsed = Integer(raw)
         raise ArgumentError if parsed.negative?
@@ -310,9 +395,17 @@ module Lain
 
       def now = @clock.call
 
+      # The endpoint here is the CANONICAL one, which is not necessarily the
+      # string the operator typed: `--api-base http://127.0.0.1:11434` refuses by
+      # the name `http://localhost:11434`, a server they never named. The gate
+      # cannot say their spelling back to them -- it keys on the server and by
+      # design does not keep the several spellings that reached it -- so the
+      # clause says the thing that resolves the confusion instead, at the moment
+      # someone is already debugging a stall.
       def refusal
         "#{@endpoint} is busy: no slot for this request within #{@deadline}s " \
-          "(width #{@width}, #{in_flight} in flight; #{ENV_KEY}=0 disables admission)"
+          "(width #{@width}, #{in_flight} in flight; one gate per server, whatever the spelling; " \
+          "#{ENV_KEY}=0 disables admission)"
       end
 
       # Admission that admits everyone: the unbounded arm, selected by
