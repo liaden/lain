@@ -35,19 +35,36 @@ module Lain
         # @param journal_view [JournalView] the append projection
         # @param buffers [Buffers] the read-only view set
         # @param request_buffer [RequestBuffer] the one editable projection
+        # @param approval_view [ApprovalView] the parked-approval list, primed
+        #   here and rendered from its own watch fiber thereafter. REQUIRED --
+        #   see below.
         #
-        # The three views are INJECTED and merely defaulted, the house rule
+        # The other three views are INJECTED and merely defaulted, the house rule
         # {Buffers} already follows with `inbox:`/`timeline:`: `store:`,
         # `session:`, `journal:` and `questions:` exist only to build those
         # defaults, and a caller with a view of its own hands it over instead of
         # reaching in for the one this constructed.
-        def initialize(rpc:, store: Buffers::DetachedStore.instance, session: Session::Null.instance,
-                       journal: Channel::Null.instance, questions: InboxView::Unwired,
-                       journal_view: JournalView.new, buffers: nil, request_buffer: nil)
+        #
+        # `approval_view:` is REQUIRED where the other three are defaulted, and
+        # the asymmetry is the point rather than an oversight. The object the
+        # editor's `y` resolves through is the one {CLI::Repl} bound -- the
+        # frontend's own -- so the hand-over is the whole of UX4's fix, and a
+        # DEFAULT here would make forgetting it silent: {#prime} would prime
+        # some other view and every live attach assertion would still pass,
+        # because priming and handing-over are different claims. A panel probe
+        # demonstrated exactly that. Requiring it makes the mis-wire fail at
+        # construction instead, the way {Sensitivity::Policy} makes a
+        # disagreeing classifier unconstructable rather than merely untested.
+        # The one production call site already passes it, so this costs nothing.
+        def initialize(rpc:, approval_view:, store: Buffers::DetachedStore.instance,
+                       session: Session::Null.instance, journal: Channel::Null.instance,
+                       questions: InboxView::Unwired, journal_view: JournalView.new, buffers: nil,
+                       request_buffer: nil)
           @rpc = rpc
           @journal_view = journal_view
           @buffers = buffers || Buffers.new(store:, session:, questions:)
           @request_buffer = request_buffer || RequestBuffer.new(journal:)
+          @approval_view = approval_view
         end
 
         # The read-only view set, and the line -> digest indexes the editor's
@@ -66,14 +83,22 @@ module Lain
 
         # Post every projection's at-rest state so the full lain:// buffer set is
         # in `:buffers` from attach -- an idle session that shows no buffers reads
-        # as "broken" (the first manual verification pass stumbled exactly there).
+        # as "broken" (the first manual verification pass stumbled exactly there,
+        # and manual QA round 5 found lain://approval still missing from it).
         # Runs FIRST on the drain thread ({Neovim#drain}), so priming strictly
         # precedes every event render. The rescue mirrors {#post}'s: an RPC
         # thread dead this early is already loud through
         # {Neovim::FrontendListener#died} and {Neovim#run}'s re-raise.
+        # lain://approval primes LAST and through its OWN inlet ({#post_views}
+        # would not do): the runtime writes `b:lain_approval_rows` from
+        # `set_approval` alone, so a list primed through `set_view` would render
+        # rows the editor's `y` and `n` are inert on. It carries no rows, which
+        # is why priming it costs no screen -- `runtime/62_approval.lua` opens a
+        # window only `if rows > 0`.
         def prime
           [@journal_view, @buffers].each { |view| post_views(view.initial) }
           @request_buffer.initial.each { |name, lines| @rpc.post_view(name, lines, editable: true) }
+          @approval_view.prime
         rescue ClosedQueueError
           nil
         end

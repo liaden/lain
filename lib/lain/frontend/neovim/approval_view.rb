@@ -61,9 +61,14 @@ module Lain
       class ApprovalView
         # The one lain:// buffer that lists parked approvals. Absent from the
         # runtime's BUFFERS set (00_constants.lua) like {Compose::BUFFER} and
-        # {QuestionView::BUFFER}: it is created by the first pending, so a
-        # session that is never gated never grows the buffer -- and priming it
-        # at attach would put an empty window on screen at every attach.
+        # {QuestionView::BUFFER}, because that set is what the User LainAttach
+        # payload publishes for a human's own config to iterate and the runtime
+        # creates this one itself -- but UNLIKE those two it IS primed at attach
+        # ({#prime}), and the earlier argument against that ("it would put an
+        # empty window on screen at every attach") was wrong about this buffer.
+        # `runtime/62_approval.lua` opens a window only `if rows > 0`, so a
+        # prime carrying no rows creates the buffer and takes no screen; compose
+        # and question have no such guard and would each open on nothing.
         BUFFER = "lain://approval"
 
         # The name this surface signs its decisions with in the Journal.
@@ -135,15 +140,31 @@ module Lain
         # not a rendering this view still identifies; the line names no row in
         # it; the word sent is not a verdict lain has; or the call on that row
         # was answered by somebody else first.
-        UNSHOWN = "#{BUFFER} is showing rendering %<generation>s, which is not one this view still holds -- " \
-                  "it has re-rendered since, so line %<line>s could name two different calls and this will " \
-                  "not guess between them".freeze
+        #
+        # EACH IS ONE MESSAGE LINE, and that is a hard constraint rather than a
+        # style. All four come back as a {Decided#report} and are echoed by
+        # {CLI::HumanReplies::Gestures} through `review_refused`, which is one
+        # `nvim_echo` into the MESSAGE AREA -- `&columns` wide over `&cmdheight`
+        # lines, never the window a cockpit split narrows (see
+        # {Review::Surface::Neovim::MARKED} for the measurement against a real
+        # embedded UI). A sentence that does not fit raises `Press ENTER or type
+        # command to continue`, which blocks RPC on the very gesture it is
+        # refusing. The bar is 80 columns INCLUDING `65_review.lua`'s `"lain: "`
+        # prefix: inside the cockpit nvim pane's 110 and inside an ordinary
+        # terminal too.
+        #
+        # MEASURED RENDERED, NEVER AS THE TEMPLATE. `%<verdicts>s` expands to
+        # "approve/deny" and `%<generation>s` to digits, so a bar checked against
+        # the format string measures something far shorter than what the editor
+        # receives -- these four ran to 145, 196 and 241 characters rendered
+        # before they were cut. What the cut had to keep is the CONDITION and
+        # the REMEDY; the reasoning each dropped (why an ambiguous line is not
+        # guessed at, why an unknown word cannot fall toward approve) is
+        # explained where reasoning belongs, in {#decide}'s own comments.
+        UNSHOWN = "#{BUFFER} has re-rendered since rendering %<generation>s -- press again".freeze
         NO_ROW = "no parked approval on #{BUFFER} line %s".freeze
-        UNKNOWN = "%<given>s is not a verdict lain has -- an approval is answered %<verdicts>s, and a word " \
-                  "this surface does not recognise decides nothing rather than falling toward approve. " \
-                  "The call is still parked, and still refuses when its window closes."
-        SETTLED = "the approval on #{BUFFER} line %<line>s was already answered -- %<surface>s %<decision>s " \
-                  "it first, and the first answer is the one that stands".freeze
+        UNKNOWN = "%<given>s is not a verdict lain has -- answer %<verdicts>s; still parked"
+        SETTLED = "%<surface>s %<decision>s #{BUFFER} line %<line>s first, and that stands".freeze
 
         # @param rpc [#set_approval] the editor's render inlet ({RpcThread}):
         #   takes the lines, the stamp to write onto the buffer, and how many
@@ -182,6 +203,29 @@ module Lain
           sweep(queue)
         end
 
+        # The at-rest projection, posted at attach by {Surfaces#prime} (UX4).
+        # {EMPTY} was always this view's rendering of nothing; it was simply
+        # unreachable until a call was gated, so a human looking for the
+        # approval surface on an idle cockpit found no buffer at all and
+        # `:buffer lain://approval` answered E94.
+        #
+        # IT DOES NOT TOUCH `@shown`, and that is the whole of the care this
+        # needs: the nil {#initialize} leaves there is what makes the FIRST
+        # sweep render even an empty queue, and recording the empty list here as
+        # "what the screen shows" would make that sweep skip -- putting the
+        # buffer back to being one only a gated session ever gets. The cost is
+        # one extra whole-buffer replace of the same line, once, at attach.
+        #
+        # It is safe on the drain thread where the sweeps are on the reactor
+        # (the class doc's thread contract), because it runs strictly BEFORE
+        # either fiber exists: {Neovim#initialize} builds this view, then
+        # {Surfaces}, and only {Neovim#run} starts the thread that primes.
+        # @return [void]
+        def prime
+          posted([])
+          nil
+        end
+
         # One pass over the parked set. The snapshot is taken with NO yield
         # point (the block reads a flag), so the enumeration cannot mutate
         # under a concurrent park or settle -- {AutoSurface#sweep}'s rule.
@@ -216,8 +260,12 @@ module Lain
         #   at (b:lain_view_generation)
         # @return [Decided]
         def decide(line, verdict, generation:)
-          return undecided(format(UNSHOWN, generation: generation.inspect, line: line.inspect)) unless
-            @renderings.key?(generation)
+          # It does not guess: the list has moved since that rendering was
+          # drawn, so this line could name two different calls and both values
+          # are legal. The sentence says "press again" because that is the whole
+          # of what the human has to do -- the rows under their cursor now are a
+          # rendering this view does hold.
+          return undecided(format(UNSHOWN, generation: generation.inspect)) unless @renderings.key?(generation)
 
           pending = row_at(line, generation)
           return undecided(format(NO_ROW, line.inspect)) if pending.nil?
@@ -255,6 +303,10 @@ module Lain
         # sentence is about something that already happened.
         def outcome(pending) = pending.approved? ? "approved" : "denied"
 
+        # A word this surface does not recognise decides NOTHING rather than
+        # falling toward approve, and the pending it leaves alone is still the
+        # clock's -- which is what "still parked" is telling the human: nothing
+        # was spent, and the call refuses itself when its window closes.
         def unknown(verdict)
           format(UNKNOWN, given: verdict.inspect, verdicts: VERDICTS.keys.join("/"))
         end
@@ -271,23 +323,33 @@ module Lain
           index&.positive? ? @renderings.fetch(generation)[index - 1] : nil
         end
 
-        # The rendering, and the ONE rule that keeping it needs: a stamp is
-        # handed out only once the editor has TAKEN the lines it names.
-        #
-        # A refused post (a dead RPC thread, an editor that stopped draining,
-        # no editor at all) is a rendering nobody can see, so remembering one
-        # would let a gesture citing a number nothing ever wrote resolve
-        # against rows the human is not looking at. It also leaves `@shown`
-        # alone, which is what makes the next sweep RETRY rather than treat the
-        # lost rendering as the state of the screen.
+        # What the screen shows, recorded only for a rendering that reached the
+        # screen -- so a refused post leaves `@shown` alone, which is what makes
+        # the next sweep RETRY rather than treat the lost rendering as the state
+        # of the editor.
         def render(parked)
+          @shown = parked if posted(parked)
+        end
+
+        # The post, and the ONE rule that keeping a rendering needs: a stamp is
+        # handed out only once the editor has TAKEN the lines it names. A
+        # refused post (a dead RPC thread, an editor that stopped draining, no
+        # editor at all) is a rendering nobody can see, so remembering one would
+        # let a gesture citing a number nothing ever wrote resolve against rows
+        # the human is not looking at.
+        #
+        # Separate from {#render} because {#prime} needs exactly this half and
+        # must not have the other (see its own note on `@shown`).
+        # @return [Integer, nil] the stamp the editor took, or nothing when it
+        #   refused the post
+        def posted(parked)
           generation = @generation + 1
-          return unless @rpc.set_approval(lines_of(parked), generation, parked.size).nil?
+          return nil unless @rpc.set_approval(lines_of(parked), generation, parked.size).nil?
 
           @generation = generation
           @renderings[generation] = parked
           @renderings.shift if @renderings.size > HELD
-          @shown = parked
+          generation
         end
 
         # Rows FIRST and nothing above them, which is what lets the editor's

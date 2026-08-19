@@ -21,6 +21,11 @@ local QUESTION = "lain://question"
 -- lain://compose exists only while the human is composing, lain://question only
 -- while a set is open, each is created by a gesture, and each takes focus --
 -- priming either would open an empty editor window at every attach.
+--
+-- The converse does NOT hold since T7: lain://approval is primed at attach too
+-- and is still not in this set. It is created by 62_approval's own set_approval
+-- rather than by set_view, so nothing here needs its name, and its prime takes
+-- no window because that function opens one only `if rows > 0`.
 local BUFFERS = { JOURNAL, TIMELINE, WORKSPACE, DIFF, INBOX, REQUEST }
 
 -- I7: filetype attached at buffer CREATION (see `named_buf`/`editable_buf`

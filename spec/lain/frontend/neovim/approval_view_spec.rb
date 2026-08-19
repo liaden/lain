@@ -407,6 +407,121 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
   end
 
+  # F25's width bar, on this view's OWN sentences. Every refusal here comes back
+  # as a {Decided#report} and is echoed by {Lain::CLI::HumanReplies::Gestures}
+  # through `review_refused`, which is one `nvim_echo` into the MESSAGE AREA --
+  # `&columns` wide over `&cmdheight` lines, never the window a cockpit split
+  # narrows ({Lain::Review::Surface::Neovim::MARKED}'s measurement). A sentence
+  # that does not fit one line raises `Press ENTER or type command to continue`,
+  # which blocks RPC on the very gesture it is refusing.
+  #
+  # MEASURED RENDERED, NEVER AS THE TEMPLATE, which is the trap this block
+  # exists to avoid: `%<verdicts>s` expands to "approve/deny" and
+  # `%<generation>s` to digits, so a bar checked against the format string
+  # measures something a good deal shorter than what the editor receives.
+  #
+  # The substitutions are driven through {ApprovalView#decide} at the WIDE end
+  # of what each really carries -- a six-digit stamp, a four-digit line, the
+  # longest surface name in `lib/` ("secret_oracle") -- so the bar holds for
+  # hour six of a session rather than only for its first rendering.
+  #
+  # Each example also pins the REMEDY clause, deliberately: the cheap way to
+  # pass a width bar is to delete the half of the sentence that says what to do
+  # next, and a refusal that names a condition without its remedy is the loop
+  # this rail exists to break.
+  describe "the refusals this view puts on the message rail" do
+    # The rail's own prefix, added by `65_review.lua` before the echo, so the
+    # bar is measured against what nvim actually renders.
+    let(:prefix) { "lain: " }
+
+    # Comfortably inside the cockpit nvim pane's 110-column message area, and
+    # inside an ordinary 80-column terminal too -- the same narrow-safe choice
+    # `Review::Surface::Neovim`'s own `< 60` and `< 40` pins already make.
+    let(:bar) { 80 }
+
+    let(:window) { 0.1 }
+
+    def refusal_for(&block) = gated(timeout: window, &block)[:outcome].report
+
+    def width_of(report) = (prefix + report).length
+
+    it "keeps the stale-rendering refusal inside the message area, six-digit stamp and all" do
+      report = refusal_for { |_queue| view.decide(1, "approve", generation: 123_456) }
+
+      expect(width_of(report)).to be <= bar
+      expect(report).to include(described_class::BUFFER, "press again")
+    end
+
+    it "keeps the no-such-row refusal inside the message area, four-digit line and all" do
+      report = refusal_for { |_queue| view.decide(1234, "approve", generation:) }
+
+      expect(width_of(report)).to be <= bar
+      expect(report).to include(described_class::BUFFER, "1234")
+    end
+
+    it "keeps the unknown-verdict refusal inside the message area, both verdicts named" do
+      report = refusal_for { |_queue| view.decide(1, "yes", generation:) }
+
+      expect(width_of(report)).to be <= bar
+      expect(report).to include('"yes"', "approve/deny")
+    end
+
+    it "keeps the lost-the-race refusal inside the message area, longest surface name and all" do
+      report = refusal_for do |queue|
+        queue.first.approve(surface: "secret_oracle")
+        view.decide(1, "deny", generation:)
+      end
+
+      expect(width_of(report)).to be <= bar
+      expect(report).to include("secret_oracle", "approved", "stands")
+    end
+  end
+
+  # UX4. The buffer a gated agent is waiting on was the one lain:// surface that
+  # did not exist until the first pending, so a human looking for it at rest
+  # found nothing -- and `:buffer lain://approval` answered `E94`.
+  describe "#prime" do
+    it "posts the at-rest projection, so the buffer exists before anything is parked" do
+      view.prime
+
+      expect(rpc.last[:lines]).to eq(described_class::EMPTY)
+    end
+
+    # `runtime/62_approval.lua`'s `if rows > 0` guard is the whole reason this
+    # is safe to do at attach: zero rows creates the buffer and opens no window.
+    it "carries no rows, so the runtime creates the buffer and takes no window" do
+      view.prime
+
+      expect(rpc.last[:rows]).to eq(0)
+    end
+
+    # The escalation trigger this card was given, pinned so it cannot rot: the
+    # `@shown = nil` in {#initialize} is what makes the FIRST sweep render even
+    # an empty queue, and a prime that recorded the empty list as "what the
+    # screen shows" would make that sweep skip -- putting the surface back to
+    # being one a session only ever gets by being gated.
+    it "leaves the first sweep still rendering, even of a queue with nothing in it" do
+      view.prime
+
+      Sync do
+        queue = Lain::Approval::Queue.new(journal:, timeout: 0.1)
+        view.sweep(queue)
+      end
+
+      expect(rpc.posts.size).to eq(2)
+    end
+
+    # The stamp is handed out only for lines the editor TOOK ({#render}'s rule),
+    # and the prime is no exception -- so a gesture citing a rendering nothing
+    # ever wrote is still refused.
+    it "hands out no stamp when the editor refuses the primed post" do
+      rpc.refusal = described_class::DETACHED
+      view.prime
+
+      expect(view.decide(1, "approve", generation: rpc.last[:generation])).not_to be_decided
+    end
+  end
+
   describe "the surface nobody wired" do
     it "refuses the render honestly rather than reporting one that never happened" do
       expect(described_class::Detached.set_approval([], 1, 0)).to eq(described_class::DETACHED)

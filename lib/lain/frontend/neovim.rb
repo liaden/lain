@@ -220,7 +220,22 @@ module Lain
         # `questions:` is what makes the inbox's `<CR>` a real gesture rather
         # than a refusal: the view that resolves the line needs the surface the
         # set opens in, and it is built above (it takes the RPC thread).
-        @surfaces = Surfaces.new(rpc: @rpc, store:, session:, journal:, questions: @question_view)
+        #
+        # `approval_view:` hands over the SAME object {#approval_view} exposes,
+        # and that hand-over IS UX4's fix -- priming a lain://approval buffer is
+        # only half of it. {Surfaces#prime} draws the buffer; the `y` on one of
+        # its rows resolves through whichever view {CLI::Repl} bound, which is
+        # this one. Two views would not draw an unanswerable list (an unwatched
+        # second view posts one zero-row placeholder and no rows at all) -- they
+        # would simply mean the buffer on screen and the object answering
+        # gestures had drifted apart, silently, with every live assertion still
+        # passing. {Surfaces} takes it WITHOUT a default for that reason, so
+        # deleting this argument fails at construction rather than at QA.
+        #
+        # It is built one line above by {#build_round_trips}, and priming
+        # happens later still, on the drain thread {#run} starts.
+        @surfaces = Surfaces.new(rpc: @rpc, store:, session:, journal:, questions: @question_view,
+                                 approval_view: @approval_view)
         @resender = Resender.new(channel:, rpc: @rpc, bridge: resend_bridge,
                                  request_buffer: @surfaces.request_buffer)
       end

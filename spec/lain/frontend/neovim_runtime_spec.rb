@@ -47,6 +47,13 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     %w[lain://journal lain://timeline lain://workspace lain://diff lain://inbox lain://request]
   end
 
+  # What is on SCREEN at attach, which since the approval prime is one more than
+  # the set above: lain://approval is primed by Surfaces#prime but is deliberately
+  # NOT in the runtime's BUFFERS table, because that table is the User LainAttach
+  # payload a human's config iterates and the runtime creates this buffer itself.
+  # It carries zero rows, so it takes no window.
+  def primed_views = all_views + [Lain::Frontend::Neovim::ApprovalView::BUFFER]
+
   # The six documented lain* groups (T5's AC): tool attribution, digests,
   # roles, event kinds, ages, sender attribution.
   def syntax_groups
@@ -141,10 +148,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
             end
             return out
           LUA
-          found if found.size == all_views.size && found.values.none?(&:nil?)
+          found if found.size == primed_views.size && found.values.none?(&:nil?)
         end
 
-        expect(views.keys).to match_array(all_views)
+        expect(views.keys).to match_array(primed_views)
         views.each { |name, view| expect(view).to eq(name) }
       end
     end

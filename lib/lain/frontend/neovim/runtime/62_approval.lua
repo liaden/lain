@@ -148,8 +148,11 @@ define("LainDeny", function()
 end)
 
 -- Bound from a BufEnter autocmd (in a cleared augroup, so re-attach redefines
--- rather than stacks) because the buffer is created lazily by the first render,
--- not at attach. <Cmd> rather than ":", the inbox and sidebar maps' reason: it
+-- rather than stacks) rather than at load: the buffer is created by a render,
+-- and since T7 the earliest of those is Surfaces#prime's zero-row placeholder
+-- at attach -- still later than this file runs, and still not something to
+-- assume, since a re-attach reuses whatever buffer is already there.
+-- <Cmd> rather than ":", the inbox and sidebar maps' reason: it
 -- runs the command without leaving normal mode, so the cursor the command is
 -- about does not move out from under it.
 vim.api.nvim_create_autocmd("BufEnter", {

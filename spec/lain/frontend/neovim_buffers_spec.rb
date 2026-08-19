@@ -1,10 +1,22 @@
 # frozen_string_literal: true
 
+require "async"
 require "fileutils"
 require "neovim"
 require "socket"
 require "timeout"
 require "tmpdir"
+
+# Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
+module ApprovalPrimeSupport
+  # The gated call the editor is asked about. A Struct rather than a real
+  # {Lain::Effect} for {Lain::Approval::Queue::Pending}'s own reason: it reads a
+  # name, an input and a tool_use_id, and nothing else. Named apart from
+  # neovim_runtime_spec's identical fixture on purpose -- both files load into
+  # one process, and a shared top-level constant would make whichever loaded
+  # second silently reopen the first.
+  Effect = Struct.new(:name, :input, :tool_use_id)
+end
 
 # 4-2.2: read-only lain:// state views (lain://timeline, lain://workspace,
 # lain://diff), driven through {Lain::Frontend::Neovim}'s public surface exactly
@@ -59,6 +71,111 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     inspector.exec_lua("return vim.api.nvim_buf_get_name(vim.api.nvim_win_get_buf(0))", [])
   end
 
+  # How many of the primed lines the editor believes are answerable rows. nil
+  # when the buffer exists but nothing ever wrote the variable -- which is the
+  # `set_view` mis-prime this asserts against, and why the expectation is `0`
+  # rather than a falsy check.
+  def buffer_approval_rows(name)
+    inspector.exec_lua(<<~LUA, [name])
+      local buf = vim.fn.bufnr(...)
+      if buf == -1 then return nil end
+      return vim.b[buf].lain_approval_rows
+    LUA
+  end
+
+  def buffer_view_var(name)
+    inspector.exec_lua(<<~LUA, [name])
+      local buf = vim.fn.bufnr(...)
+      if buf == -1 then return nil end
+      return vim.b[buf].lain_view
+    LUA
+  end
+
+  # How much SCREEN a buffer is taking, which is the question the objection to
+  # priming lain://approval was really about. -1 distinguishes "no such buffer"
+  # from "a buffer nothing is showing", so a prime that never happened cannot
+  # pass as a prime that took no window.
+  def windows_showing(name)
+    inspector.exec_lua(<<~LUA, [name])
+      local buf = vim.fn.bufnr(...)
+      if buf == -1 then return -1 end
+      return #vim.fn.win_findbuf(buf)
+    LUA
+  end
+
+  # Feeds keys through nvim's OWN mapping resolution (feedkeys, never
+  # `:normal!`, which bypasses mappings), so the buffer-local `y` map
+  # 62_approval.lua installs is what runs.
+  def press(bufname, keys, cursor: [])
+    inspector.exec_lua(<<~LUA, [bufname, keys, cursor])
+      local bufname, keys, cursor = ...
+      vim.cmd("buffer " .. bufname)
+      if cursor[1] then
+        vim.api.nvim_win_set_cursor(0, cursor)
+      end
+      vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "x", false)
+      return true
+    LUA
+  end
+
+  # A REAL gated call parked in a REAL {Lain::Approval::Queue}, with the REAL
+  # consumer bound the way {Lain::CLI::Repl} binds it -- neovim_runtime_spec's
+  # harness, trimmed to the one question this file asks: does the buffer the
+  # attach primed still take the first real approval and still answer it.
+  #
+  # It is a THREAD rather than a task on the example's own fiber for the reason
+  # that file records at length: a neovim gem call issued from inside an Async
+  # task takes the gem's fiber-yielding branch and raises FiberError. The
+  # inspector stays on the main thread; everything reactor-shaped stays in here.
+  def with_parked_approval(frontend, grace: 8)
+    settled = Thread::Queue.new
+    worker = Thread.new { serve_approval(frontend, settled, grace) }
+    yield
+    Timeout.timeout(20) { settled.pop }
+  ensure
+    raise "the approval consumer thread never stopped" unless worker&.join(20)
+  end
+
+  # `:unsettled` is a THIRD answer on purpose: a fail-closed denial answers
+  # `false`, which is also what a working deny answers, so a run that hung must
+  # be distinguishable from one that decided. The queue's own clock is set far
+  # beyond the grace for the same reason.
+  def serve_approval(frontend, settled, grace)
+    Sync do |task|
+      queue = Lain::Approval::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 60)
+      surfaces = approval_surfaces(task, frontend, queue)
+      effect = ApprovalPrimeSupport::Effect.new("bash", { "command" => "pwd" }, "tu_1")
+      gated = task.async { queue.call(effect, nil) }
+      settled.push(within(task, grace) { gated.finished? } ? gated.wait : :unsettled)
+      (surfaces + [gated]).each(&:stop)
+    end
+  end
+
+  # Whether the condition held before the window ran out. Running out the clock
+  # is a legitimate outcome here and it is the one `:unsettled` reports, so this
+  # answers rather than raising at its deadline.
+  def within(task, grace)
+    deadline = Async::Clock.now + grace
+    task.sleep(0.02) until yield || Async::Clock.now > deadline
+    yield
+  end
+
+  # Exactly what `Repl#run` binds and what `Repl#respond` spawns: the editor's
+  # gesture consumer over the frontend's rail and views, plus the approval
+  # view's own watch fiber over the same queue the gated call parks in.
+  def approval_surfaces(task, frontend, queue)
+    replies = Lain::CLI::HumanReplies.new(tty: null_tty, conductor: instance_double(Lain::CLI::Conductor),
+                                          ask_human: Lain::Tools::AskHuman::Directory.new,
+                                          questions: Async::Queue.new)
+    replies.bind_editor(frontend.command_inbox, views: frontend.buffers, approvals: frontend.approval_view)
+    replies.session_surfaces(task) + [task.async { frontend.approval_view.watch(queue) }]
+  end
+
+  def null_tty
+    Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: StringIO.new, input: StringIO.new,
+                            history_path: File.join(Dir.tmpdir, "lain-approval-prime-history"))
+  end
+
   # Same poll-until helper as neovim_spec.rb: editor effects arrive on the RPC
   # thread, never synchronously with the push that caused them.
   def wait_until(timeout: 8)
@@ -100,6 +217,72 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         expect(buffer_lines("lain://diff")).to eq(["(no requests yet)"])
         expect(buffer_lines("lain://workspace")).to eq(["(no reminders)"])
         expect(buffer_modifiable("lain://timeline")).to be(false)
+      end
+    end
+
+    # UX4, and it is a WIRING claim, which is why it is here and not in
+    # surfaces_spec: the cause was that {Lain::Frontend::Neovim::Surfaces} did
+    # not hold the {Lain::Frontend::Neovim::ApprovalView} at all -- the view
+    # hung off the frontend and rendered only from its own watch fiber, which
+    # nothing spawns until a call is gated. A doubled Surfaces handed an
+    # approval view primes happily whether or not `#attach` ever wires one, so
+    # only the real attach path can witness this.
+    it "primes lain://approval too, so the surface a gated agent waits on exists at rest" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do
+        wait_until { buffer_lines("lain://approval").any? }
+        expect(buffer_lines("lain://approval")).to eq(["(no approvals pending)"])
+        # A primed buffer must be a lain VIEW, not an orphan: `named_buf`
+        # attaches a filetype from READONLY_FILETYPES, which does not name this
+        # buffer, so 62_approval.lua joins the shared "lain" filetype itself and
+        # b:lain_view is what says which view it is. It is also what
+        # neovim_runtime_spec's "sets b:lain_view on every lain:// buffer" reads.
+        expect(buffer_view_var("lain://approval")).to eq("lain://approval")
+        # PANEL FIX 2, and it is what separates priming through `set_approval`
+        # from priming through `set_view`: only `set_approval` writes
+        # b:lain_approval_rows, and 62_approval.lua's `submit_approval` reads it
+        # (`line <= (vim.b[buf].lain_approval_rows or 0)`) to decide whether the
+        # cursor is on an answerable row at all. A buffer primed through the
+        # wrong inlet passes every other assertion in this block -- it has the
+        # name, the lines and b:lain_view -- and leaves the variable nil, which
+        # is indistinguishable from zero here and is NOT indistinguishable once
+        # rows exist. Zero is also exactly why this prime takes no window.
+        expect(buffer_approval_rows("lain://approval")).to eq(0)
+      end
+    end
+
+    # The recorded objection to priming this buffer -- "it would put an empty
+    # window on screen at every attach" -- and the runtime's own answer to it:
+    # `runtime/62_approval.lua` opens a window only `if rows > 0`, so a prime
+    # carrying zero rows creates the buffer and takes no screen.
+    it "takes no window for the primed approval list, so an empty surface costs no screen" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do
+        wait_until { buffer_lines("lain://approval").any? }
+        expect(windows_showing("lain://approval")).to eq(0)
+        expect(current_win_buf).not_to eq("lain://approval")
+      end
+    end
+
+    # The other half of the same claim: priming must not change what the first
+    # REAL approval does. A prime that recorded the empty list as "what the
+    # screen shows" would make the first sweep skip, and a prime that skipped
+    # `set_approval` would leave the buffer without b:lain_approval_rows -- in
+    # which case the row renders and `y` on it is inert.
+    it "still renders the first real approval into the primed buffer, and still answers it with y" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        wait_until { buffer_lines("lain://approval") == ["(no approvals pending)"] }
+
+        settled = with_parked_approval(handle) do
+          wait_until { buffer_lines("lain://approval").join.include?("pwd") }
+          press("lain://approval", "y", cursor: [1, 0])
+        end
+
+        expect(settled).to be(true)
       end
     end
   end

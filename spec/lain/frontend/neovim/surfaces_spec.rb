@@ -10,19 +10,32 @@
 RSpec.describe Lain::Frontend::Neovim::Surfaces do
   # The render inlet as these views address it ({RpcThread}'s outbound duck),
   # recorded rather than driven: nothing here touches nvim.
-  subject(:surfaces) { described_class.new(rpc:) }
+  subject(:surfaces) { described_class.new(rpc:, approval_view:) }
+
+  # The frontend's own approval surface, handed over exactly as
+  # {Lain::Frontend::Neovim} hands over the one the repl binds. There is no
+  # default for it (see the constructor), so every example states it.
+  let(:approval_view) { Lain::Frontend::Neovim::ApprovalView.new(rpc:) }
 
   let(:rpc) do
     Class.new do
-      attr_reader :views, :renders
+      attr_reader :views, :renders, :approvals
 
       def initialize
         @views = []
         @renders = []
+        @approvals = []
       end
 
       def post_view(name, lines, editable: false, generation: nil) = @views << [name, lines, editable, generation]
       def post_render(lines) = @renders << lines
+
+      # lain://approval's own inlet, and the reason it is a SEPARATE method
+      # rather than a fourth `post_view`: the runtime writes b:lain_approval_rows
+      # from it, and a buffer primed through `set_view` would have no row count
+      # at all -- so its `y`/`n` gestures would be inert on a list that looks
+      # answerable ({Lain::Frontend::Neovim::ApprovalView}'s own note).
+      def set_approval(lines, generation, rows) = @approvals << { lines:, generation:, rows: }
 
       def names = @views.map(&:first)
       def stamps = @views.to_h { |posted| [posted.first, posted.last] }
@@ -32,6 +45,10 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
   def tool_output(bytes) = Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes:)
 
   describe "#prime" do
+    # The six views that ride `post_view`. lain://approval is primed too (see
+    # below) and is deliberately NOT in this list: it goes out through
+    # `set_approval`, so a seventh name here would mean the buffer had been
+    # created without its row count.
     it "posts every projection's at-rest state, so an idle session shows the whole buffer set" do
       surfaces.prime
 
@@ -41,6 +58,60 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
                                            Lain::Frontend::Neovim::Buffers::DIFF,
                                            Lain::Frontend::Neovim::InboxView::NAME,
                                            Lain::Frontend::Neovim::RequestBuffer::REQUEST)
+    end
+
+    # UX4. A human who went looking for the approval surface at rest found no
+    # buffer at all, because this collaborator did not hold the view that draws
+    # it -- the view hung off {Lain::Frontend::Neovim} and only ever rendered
+    # from its own watch fiber, which nothing spawns until a call is gated.
+    it "primes lain://approval through its own inlet, so the surface exists before anything is parked" do
+      surfaces.prime
+
+      expect(rpc.approvals.last[:lines]).to eq(Lain::Frontend::Neovim::ApprovalView::EMPTY)
+    end
+
+    it "primes it with no rows, so the runtime's `if rows > 0` guard takes no window" do
+      surfaces.prime
+
+      expect(rpc.approvals.last[:rows]).to eq(0)
+    end
+
+    # PANEL FIX 1, and it is the defect the panel's revert probe found rather
+    # than a tightening for its own sake: with `approval_view:` DEFAULTED, the
+    # `approval_view: @approval_view` argument could be deleted from
+    # {Lain::Frontend::Neovim}'s one call site and all four live `:nvim`
+    # examples stayed GREEN -- Surfaces would build a second view of its own,
+    # prime it, and put a buffer on screen that the repl's bound view knows
+    # nothing about. That is UX4 again, one level in, and the live specs cannot
+    # see it because priming and handing-over are different claims.
+    #
+    # So the hand-over is UNREPRESENTABLE-IF-MISSING rather than merely
+    # untested, which is the doctrine {Lain::Sensitivity::Policy} already
+    # follows by building its own Filter so that a disagreeing pair cannot be
+    # constructed at all. The one production call site already passes it.
+    it "cannot be built without the approval view, so the mis-wire fails at construction" do
+      expect { described_class.new(rpc:) }.to raise_error(ArgumentError, /approval_view/)
+    end
+
+    # The other half of the constructor's promise: required is not enough on
+    # its own, because a constructor could take the view and prime something
+    # else. The object the editor's `y` resolves through is the one
+    # {Lain::CLI::Repl} bound -- {Lain::Frontend::Neovim}'s own -- and a
+    # Surfaces that primed a view of its own would leave the buffer on screen
+    # and the object answering gestures as two different objects, drifting
+    # apart in silence.
+    it "primes the view it was HANDED rather than one of its own" do
+      approval_view = Class.new do
+        attr_reader :primes
+
+        def initialize = @primes = 0
+        def prime = @primes += 1
+      end.new
+
+      described_class.new(rpc:, approval_view:).prime
+
+      expect(approval_view.primes).to eq(1)
+      expect(rpc.approvals).to be_empty
     end
 
     it "primes the one editable view as editable, so the human's edit is not locked out" do
@@ -77,12 +148,14 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
         def pinned?(_digest) = false
       end.new(reminders)
 
-      expect { described_class.new(rpc:, session:).prime }.not_to raise_error
+      expect { described_class.new(rpc:, approval_view:, session:).prime }.not_to raise_error
       expect(rpc.views.flat_map { |view| view[1] }).to include(/reminder caf\?* here/)
     end
 
     it "swallows a render queue closed under it -- an RPC thread dead this early is loud elsewhere" do
-      expect { described_class.new(rpc: closed_rpc).prime }.not_to raise_error
+      dead = closed_rpc
+
+      expect { over(dead).prime }.not_to raise_error
     end
   end
 
@@ -147,7 +220,9 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
     end
 
     it "swallows a render queue closed under it, so a last render racing the death is not a second failure" do
-      expect { described_class.new(rpc: closed_rpc).post(tool_output("hello")) }.not_to raise_error
+      dead = closed_rpc
+
+      expect { over(dead).post(tool_output("hello")) }.not_to raise_error
     end
   end
 
@@ -159,6 +234,12 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
       expect(surfaces.resend(["{}"])).to be_nil
     end
   end
+
+  # Every view over ONE inlet, which is what the two closed-queue examples
+  # need: an approval view built over a LIVE double while the rest posted into
+  # a dead one would leave the last thing {Surfaces#prime} does still working,
+  # and the rescue under test is the one covering all of them.
+  def over(inlet) = described_class.new(rpc: inlet, approval_view: Lain::Frontend::Neovim::ApprovalView.new(rpc: inlet))
 
   # What the queue would send to `nvim_exec_lua`, drained through a client
   # double: the argument LIST is the wire contract, so it is what is asserted.
@@ -178,6 +259,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
     Class.new do
       def post_view(*, **) = raise(ClosedQueueError)
       def post_render(*) = raise(ClosedQueueError)
+      def set_approval(*) = raise(ClosedQueueError)
     end.new
   end
 end
