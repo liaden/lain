@@ -201,15 +201,22 @@ end, {
 -- site and keeps the same shape.
 --
 -- BE EXACT ABOUT WHAT THAT BUYS, because the first draft of this comment
--- overclaimed and a doc sentence went out with it. The TRACEBACK is gone; the
--- hit-enter prompt is not always. `nvim_echo` of a message longer than the
--- window still pages -- measured with a UI attached at 80 columns,
--- `NoReviewWrites::UNOPENED` (134 chars with the `lain: ` prefix) leaves
--- `nvim_get_mode` reading `{mode = "r", blocking = true}`, while the same
--- message at width 200, and a short one at width 80, do not. So this trades a
--- CRASH for a long MESSAGE, which is the whole of the claim: the traceback and
--- the raise are gone, and a narrow window can still ask for a keypress to read
--- lain's own sentence.
+-- overclaimed and a doc sentence went out with it. What it bought at the time
+-- was the TRACEBACK: the hit-enter prompt stayed, because `nvim_echo` of a
+-- message longer than the message area pages -- measured with a UI attached at
+-- 80 columns, `NoReviewWrites::UNOPENED` (134 chars with the `lain: ` prefix)
+-- left `nvim_get_mode` reading `{mode = "r", blocking = true}`, while the same
+-- message at width 200, and a short one at width 80, did not.
+--
+-- THAT RESIDUAL IS NOW GONE TOO, and this paragraph is kept rather than deleted
+-- because the measurement above is still the reason the rail is shaped the way
+-- it is. `__lain.review_refused` (`65_review.lua`) records the whole sentence in
+-- `:messages` and displays one line that fits `v:echospace`, folding line breaks
+-- and eliding the middle -- and it suppresses `-- More --` around the recording
+-- echo, which is a SEPARATE prompt under a separate option that the width fix
+-- did not touch. Its own comment carries the three-axis checklist and what was
+-- measured against it. A `blocking = true` after a refusal is a REGRESSION now,
+-- not a known cost -- on any of the three.
 define("LainReviewVerdict", function(opts)
   local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_verdict", { opts.args })
   if not taken then

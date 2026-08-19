@@ -163,6 +163,7 @@ Measured, this round:
 |---|---|
 | tmux server / window | 220 |
 | **nvim pane** (`lain up` splits it with chat) | **110** |
+| **the message area — `v:echospace` at that pane width** | **98** |
 | the `:LainReviewVerdict approve` partial refusal | **225 characters** |
 
 **Corrected after grounding (2026-08-18, post-filing):** the first edition of this finding also
@@ -172,6 +173,60 @@ embedded UI, that `nvim_echo` writes the MESSAGE AREA (`&columns` wide, `&cmdhei
 **never reads the window**. The binding number is therefore the nvim PANE's 110 columns, not the
 40-column sidebar. The finding stands unchanged — 225 characters at 110 columns still pages every
 time — but the mechanism is `&columns`, and a fix aimed at window width would miss.
+
+**Sharpened while fixing it (T5, 2026-08-19), measured against a real embedded UI on nvim 0.12.**
+Three corrections to the mechanism, each of which changes what a fix has to do:
+
+- **The ceiling is `v:echospace`, not `&columns`.** 'showcmd' reserves eleven cells plus one in the
+  last screen line, so the pane's 110 columns hold **98**. A fix that fitted to `&columns` would
+  still page on a sentence between 99 and 110 characters.
+- **No UI, no prompt.** A headless nvim with nothing attached reads `blocking = false` for a
+  300-character echo at any width, so this defect is invisible to any test that does not
+  `nvim_ui_attach`. That is why it survived a suite with live-nvim coverage of this exact rail.
+- **The obvious fix does not work.** `nvim_echo(chunks, true, {})` is the ONLY route into
+  `:messages`, and the flag that records is the flag that displays — so writing the sentence to
+  history IS what pages. Every "record quietly" spelling records nothing at all: `:silent echomsg`,
+  `:silent! echomsg`, `vim.fn.execute(…, "silent")` and `nvim_exec2(…, { output = true })` each
+  suppress the HISTORY along with the display. `'shortmess'` is no help either — `T` (truncate in
+  the middle) is already in the default and `nvim_echo` ignores it. What does work is
+  `'messagesopt'`: its `hit-enter` item *is* the prompt, and swapping it for `wait:0` around the
+  one recording call lets nvim record and carry on. `65_review.lua` does that, restores the option,
+  redraws, and then displays a separately fitted line — history holds the whole sentence exactly
+  once, the screen holds one line that fits.
+
+- **The message area has TWO dimensions, and the cell count only sees one.** `nvim_echo` renders a
+  newline as a LINE BREAK, so a two-line, 53-cell refusal at 110 columns measured as fitting and
+  paged every time; eliding did not save it either, because a head-and-tail cut of a many-lined
+  sentence still carries breaks in both halves. This is a production path, not a corner case:
+  `CLI::HumanReplies#serve_editor_command` rescues `StandardError, ScriptError` and puts
+  `e.message` straight onto this rail, and a `ScriptError#message` from Ruby 4's error formatter
+  is **five lines**. The rail now folds line breaks onto the displayed line (` / ` between them)
+  before measuring cells; `:messages` still gets the original, unfolded.
+- **Any fix here touches a GLOBAL option, so it has to be exception-safe.** The `'messagesopt'`
+  swap left `wait:0` in place for the rest of the session if anything raised inside the echo it
+  wrapped — and with `hit-enter` gone, nvim stops prompting for **any** over-long message from
+  **any** source, so every one of them silently vanishes thereafter. That is a strictly worse
+  failure than F25 itself. The swap is wrapped and the restore unconditional.
+
+- **There is a THIRD axis, and it is a different prompt under a different option.** A sentence with
+  more lines than the editor has rows raises `-- More --` (`mode == "rm"`), which is governed by
+  `'more'` — not by `'messagesopt'`, so neither of the two fixes above touched it. The recorded copy
+  is deliberately the *unfolded* original, which is exactly the copy that can be tall, so it went on
+  paging. Measured: clean at 19 lines in a 20-row pane and blocking at 20; clean at 49 in a 50-row
+  pane and blocking at 50; `nomore` makes it vanish. At 60 lines in a 20-row pane, twenty `<CR>`s
+  did not clear it. The real five-line `ScriptError` blocks in any pane under six rows.
+
+**Status: FIXED by T5, on all three axes.** A refusal can fail to fit by CELLS (too wide for one
+message line), by BREAKS (a newline renders as a line), or by HEIGHT (more lines than the editor
+has). The first two raise the hit-enter prompt and answer to `'messagesopt'`; the third raises
+`-- More --` and answers to `'more'`. The rail folds breaks and elides the middle for the displayed
+line, and suppresses both prompts around the recording echo, restoring both options unconditionally.
+
+What "all three" is worth is what was measured, rather than an adjective: eleven shapes crossing the
+axes together — 2000 lines in a ten-row pane, 20 000 cells on one line, 200 lines × 400 cells, CJK
+and emoji in a six-row pane, a one-ROW pane, a 10×2 pane, 500 bare newlines, the real five-line
+`ScriptError` in a three-row pane — every one `blocking = false`, with a non-fast RPC round trip
+answering afterwards and both options back as found.
 
 **The operational consequence is the part worth fixing:** the modal blocks the **nvim RPC**,
 not just the keyboard. `nvim --server … --remote-expr "execute('messages')"` hung for the

@@ -148,32 +148,64 @@ three things, in this order:
 3. the editor is not blocked: `nvim --server "$S" --remote-expr "nvim_get_mode()"` must not report
    `blocking = true`.
 
-**The residual is exact and measured. It is NOT avoided by the bench's sizing -- round 5
-corrected that.** The traceback and the raise are gone; the hit-enter prompt is not, because
-`nvim_echo` pages a message longer than the window.
+**The residual was exact and measured, and it is NOT avoided by the bench's sizing -- round 5
+corrected that.** T5 has since made the rail itself width-aware, so step 3 above is now a real
+assertion rather than a known-failing one: `_G.__lain.review_refused` records the whole sentence in
+`:messages` and displays one line that fits. **A `blocking = true` here is now a finding, not a
+residual.**
+
+**Three axes, not one**, and the two beyond width are what to remember when driving this by hand.
+A refusal can outgrow the message area by CELLS (too wide for one line), by BREAKS (`nvim_echo`
+renders a newline as a line break, so a 53-cell two-liner paged just as reliably as a 225-character
+sentence), or by HEIGHT (more lines than the editor has rows). The first two raise the hit-enter
+prompt; the third raises `-- More --`, which reports `mode = "rm"` and is a *different* prompt under
+a *different* option, so a check that only looks for the first will miss it.
+
+All three are reachable the same way: `CLI::HumanReplies` puts a rescued exception's message straight
+onto this rail, and a Ruby `ScriptError#message` is five lines. The rail folds breaks onto one
+displayed line (` / ` between them) before measuring cells, and suppresses both prompts while it
+writes the unfolded original to `:messages`. **So drive a multi-line and a TALL refusal too**, not
+only a long one:
+
+```bash
+nvim --server "$S" --remote-expr "luaeval('_G.__lain.review_refused(\"a\nb\")')"
+nvim --server "$S" --remote-expr "nvim_get_mode()"     # must not report blocking = true
+nvim --server "$S" --remote-expr "execute('messages')" # must hold BOTH lines, unfolded
+
+# the tall one -- more lines than the pane has rows, so `-- More --` would fire
+nvim --server "$S" --remote-expr \
+  "luaeval('_G.__lain.review_refused(table.concat(vim.fn.range(1, 60), \"\\n\"))')"
+nvim --server "$S" --remote-expr "nvim_get_mode()"     # must report neither "r" nor "rm"
+```
+
+If `nvim_get_mode` ever reports `mode = "rm"` here, read the pane with tmux (it works while
+blocked) and note that Enter may not clear it -- at 60 lines in a 20-row pane, twenty `<CR>`s
+did not.
 
 An earlier edition of this section said `method.md` "sizes the QA server at 220x50 precisely so
 this does not fire", and concluded that a blocking read here meant the window had been resized.
 **That premise was wrong: nvim never gets 220 columns.** Measured round 5, on a correctly-sized
-bench with no resize:
+bench with no resize, and the row that binds is the one in bold:
 
-| | width |
-|---|---|
-| tmux server / window | 220 |
-| **the nvim pane** -- `lain up` splits the window with chat | **110** |
-| the review tab's three windows | **40 / 32 / 36** |
-| the `:LainReviewVerdict approve` partial refusal | **225 characters** |
+| | width | binds? |
+|---|---|---|
+| tmux server / window | 220 | no -- nvim never gets it |
+| the nvim pane -- `lain up` splits the window with chat | 110 | it sets the one below |
+| **the message area, `v:echospace` at that pane width** | **98** | **yes** |
+| the review tab's three windows | 40 / 32 / 36 | **no** -- `nvim_echo` never reads a window |
+| the `:LainReviewVerdict approve` partial refusal | 225 characters | |
 
-So the modal fires on that refusal EVERY time, in this bench, unresized. The contrast confirms the
-mechanism is width and not sizing policy: the short refusal (`lain: no hunk on lain://review line
-1 ...`) does not block.
+`v:echospace` and not `&columns` is the exact ceiling: 'showcmd' reserves eleven cells plus one in
+the last screen line, so 110 columns hold 98. Below that a message is echoed and nothing happens;
+above it, before T5, the modal fired EVERY time. The contrast confirmed the mechanism is width and
+not sizing policy: the short refusal (`lain: no hunk on lain://review line 1 ...`) never blocked.
 
-**And the modal blocks the RPC, not just the keyboard** -- the part that matters for anyone driving
-this bench. `nvim --server "$S" --remote-expr "execute('messages')"` HANGS while the prompt is up
-(round 5 measured a full 2-minute timeout), so the documented recovery paths -- reading
-`lain://approval`, driving `:LainApprove` -- are unavailable exactly when a refusal is on screen.
-Read the pane with tmux instead, which works while blocked, and clear it by sending Enter to the
-nvim PANE:
+**And the modal blocks the RPC, not just the keyboard** -- which is why it was worth fixing, and is
+the recovery to know if one ever fires again. `nvim --server "$S" --remote-expr "execute('messages')"`
+HANGS while the prompt is up (round 5 measured a full 2-minute timeout), so the documented recovery
+paths -- reading `lain://approval`, driving `:LainApprove` -- are unavailable exactly when a refusal
+is on screen. Read the pane with tmux instead, which works while blocked, and clear it by sending
+Enter to the nvim PANE:
 
 ```bash
 tmux -L "$QA_SOCK" capture-pane -p -t "$NVPANE" | grep -v '^$' | tail -4   # reads while blocked
