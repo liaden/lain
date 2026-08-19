@@ -717,7 +717,7 @@ RSpec.describe Lain::CLI::Up do
       env = { "ANTHROPIC_API_KEY" => "sk-ant-secret", "AWS_SECRET_ACCESS_KEY" => "shh" }
 
       expect(pane_command_class.lain_exports(env)).to eq("")
-      expect(pane_command_class::PANE_ENV).to all(start_with("LAIN_"))
+      expect(pane_command_class::PANE_ENV + pane_command_class::CONSENT_ENV).to all(start_with("LAIN_"))
     end
 
     # PANE_ENV is a hand-maintained list against a set that grows in ANOTHER
@@ -730,6 +730,87 @@ RSpec.describe Lain::CLI::Up do
 
       expect(declared).not_to be_empty
       expect(pane_command_class::PANE_ENV).to match_array(declared)
+    end
+
+    # T7. The desktop is CONSENT, not a flag default, and that is why it needs
+    # its own list rather than a twelfth entry above: `Notify.consented?`
+    # reads LAIN_DESKTOP straight from ENV with a hard three-valued OVERRIDE,
+    # no `EnvDefaults` call declares it, and the drift example above is an
+    # EXACT match against exe/lain -- so a name added to PANE_ENV to make this
+    # work would have to be excused there, turning that check into a list of
+    # exceptions.
+    #
+    # The loss it closes: an agent (or a human at a quiet desk) exports
+    # LAIN_DESKTOP=0 to silence a whole shell, `lain up` then hands the chat
+    # pane the tmux SERVER's environment -- which never saw it, the measured
+    # trap this whole preamble exists for -- and the pane's own `--desktop`,
+    # ON by default, fires dunstify at a screen the shell said no to. `lain up
+    # PATH -- --no-desktop` reaches the same pane, but only on the runs
+    # somebody remembers to type it, and it cannot say the other direction.
+    describe "the desktop consent a pane cannot re-derive" do
+      it "carries a muted shell's answer into the cockpit it launches" do
+        expect(pane_command_class.lain_exports({ "LAIN_DESKTOP" => "0" })).to eq("export LAIN_DESKTOP=0; ")
+      end
+
+      it "carries a forced-on answer too, since the override binds in both directions" do
+        expect(pane_command_class.lain_exports({ "LAIN_DESKTOP" => "1" })).to eq("export LAIN_DESKTOP=1; ")
+      end
+
+      it "mentions no desktop name at all when the shell said nothing" do
+        expect(pane_command_class.lain_exports({ "LAIN_MODEL" => "qwen3:4b" })).not_to include("LAIN_DESKTOP")
+      end
+
+      # Blank is absence, the same as unset -- `export LAIN_DESKTOP=` would say
+      # something the launching shell did not. It holds today through the guard
+      # {PANE_ENV} shares, which is pinned only for a FLAG DEFAULT one example
+      # above; this card's whole thesis is that the two lists follow different
+      # rules, so a later per-list filter is exactly the change that would drop
+      # this in silence.
+      it "treats a blank consent as absence, not as an export of the empty string" do
+        expect(pane_command_class.lain_exports({ "LAIN_DESKTOP" => "" })).to eq("")
+        expect(pane_command_class.lain_exports({ "LAIN_DESKTOP" => "   " })).to eq("")
+      end
+
+      # Verbatim, never filtered through the OVERRIDE table: what must hold is
+      # that the pane's {Notify.for} reaches the verdict the LAUNCHING shell's
+      # would have, and `consented?` already reads anything but 1/0 as absence.
+      # A copy of the grammar here would be a second place to keep in step,
+      # whose drift would silently change a pane's consent.
+      it "hands the value over uninterpreted, rather than keeping a second copy of the grammar" do
+        expect(Lain::Notify::OVERRIDE.fetch("yes please", :the_callers_own_answer)).to eq(:the_callers_own_answer)
+
+        expect(pane_command_class.lain_exports({ "LAIN_DESKTOP" => "yes please" }))
+          .to eq('export LAIN_DESKTOP=yes\ please; ')
+      end
+
+      # Through the real seam, not just the helper: the exports preamble is
+      # built once, for every pane `lain up`, /fork and /btw spawn.
+      it "reaches the composed pane command, ahead of the exec that replaces the shell" do
+        allow(ENV).to receive(:[]).and_call_original
+        allow(ENV).to receive(:[]).with("LAIN_DESKTOP").and_return("0")
+
+        command = described_class.pane_command("chat")
+
+        expect(command).to include("export LAIN_DESKTOP=0; ")
+        expect(command.index("export LAIN_DESKTOP=0; ")).to be < command.index("exec ")
+      end
+
+      it "keeps the name out of PANE_ENV, whose exactness against exe/lain is the drift check" do
+        expect(pane_command_class::PANE_ENV).not_to include("LAIN_DESKTOP")
+        expect(pane_command_class::CONSENT_ENV).to eq(%w[LAIN_DESKTOP])
+      end
+
+      # A second list beats an exception in the first one only if it says WHY
+      # it is second -- the bar {PaneCommand.scrubbed}'s own comment sets. So
+      # the reason has to name both readers: the one that makes this list
+      # necessary, and the one that makes it a different question.
+      it "states its own reason where a reader finds the list" do
+        source = File.read(File.expand_path("../../../lib/lain/cli/up/pane_command.rb", __dir__))
+        reason = source[/((?:^\s*#.*\n)+)\s*CONSENT_ENV\s*=/, 1].to_s
+
+        expect(reason.lines.count).to be > 3
+        expect(reason).to include("Notify").and include("EnvDefaults")
+      end
     end
   end
 
