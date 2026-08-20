@@ -255,8 +255,19 @@ function review_notes.assert_saved()
       -- one. Spelling it here too reached the human as `lain: lain: save ...`.
       -- `error(_, 0)` for the neighbouring reason -- level 0 keeps the file and
       -- line off the front of a sentence a human is meant to read.
-      error("save " .. vim.api.nvim_buf_get_name(buf) .. " before settling its notes -- an unsaved " ..
-        "edit would be measured as the changeset drifting under your notes, which it did not", 0)
+      --
+      -- THE PATH GOES LAST, AND THE FRAME IS 77 COLUMNS WITH THAT PREFIX. A
+      -- buffer name is unbounded, so `refusal_width_discipline_spec.rb`'s rule
+      -- for an unbounded field applies: lain's own words -- the condition and the
+      -- remedy -- come FIRST, so a shortened echo truncates the path and not the
+      -- instruction. This sentence used to interpolate the path mid-clause and
+      -- ran to 135 columns with an EMPTY path, 149 with the spec's own fixture,
+      -- against a bar of 80 -- a live exceedance that shipped because that spec
+      -- walks `lib/` RUBY through Ripper and cannot see a lua literal. Nothing
+      -- mechanical guards this number; it was measured by hand and has to be
+      -- again if the words change.
+      error("save before settling its notes -- an unsaved edit would read as drift: " ..
+        vim.api.nvim_buf_get_name(buf), 0)
     end
   end
 end
@@ -286,6 +297,43 @@ function review_notes.settled()
     payload[#payload + 1] = note.wire
   end
   return payload
+end
+
+-- The receipt for a hand-off that lands, and the sentence for one with nothing
+-- to hand.
+--
+-- WHAT THE HUMAN SEES OTHERWISE IS MARKERS DISAPPEARING, and that is ambiguous
+-- in the worst direction: it looks exactly the same whether lain took every note
+-- or dropped the lot. So the count is the substance -- it is the one fact they
+-- can check against what they remember placing -- and the singular is spelled
+-- rather than left as `1 notes`, because a receipt is read by somebody counting.
+--
+-- NOTHING PENDING IS THE EDITOR'S CALL, and it is answered HERE rather than
+-- being sent and refused. Ruby cannot tell a review nobody had anything to say
+-- about from one whose notes were already handed back -- both arrive as the same
+-- empty array, and `ReviewWrite.notes` takes it deliberately (its `unbatched`
+-- refusal promises the array "even when there is one of them or none"). This
+-- module holds the notes, so it is the only side that can answer, and a refusal
+-- written into the wire protocol would be a guess dressed as a verdict.
+--
+-- Both ride `__lain.review_refused`, which is the rail rather than the mood:
+-- `Review::Surface::Neovim::MARKED` -- an acknowledgement, not a refusal -- is
+-- posted through it too, and a second echo path would be a second place a
+-- sentence can page over the human's editor. Both carry NO `lain: ` prefix, for
+-- `assert_saved`'s reason one screen up: the rail prepends exactly one.
+--
+-- Both also sit inside `spec/refusal_width_discipline_spec.rb`'s 80-column
+-- budget, prefix included (73 and 53) -- applied by hand, because that spec
+-- reads `lib/` RUBY through Ripper and cannot see a lua string.
+--
+-- "nothing pending" names the REMEDY rather than the history, because one
+-- sentence covers two situations -- a human who placed nothing, and one who
+-- settled a moment ago -- and telling the second of them to "place one first"
+-- would be telling them they had not.
+review_notes.NOTHING_PENDING = "no notes are pending -- :LainNote places one on the line you are on"
+
+function review_notes.receipt(count)
+  return "handed " .. count .. (count == 1 and " note" or " notes") .. " back; their markers go with them"
 end
 
 -- Handed back means handed back: the markers go with the notes, so a second
@@ -428,6 +476,47 @@ end, {
 -- `:messages` and `:LainApprove` were then unavailable exactly while a refusal
 -- was on screen, which is to say the recovery it named could not be taken (F30,
 -- the shape F25 measured on the sidebar's rail).
+--
+-- THREE LEGS ANSWER AND ONE HANDS OVER, and the emptiness check sits between
+-- the two `pcall`s rather than before them. NOT because an earlier count would
+-- MISS a dead buffer's notes -- it would not, and that reason does not survive
+-- inspection: `reap` is what moves them out of `by_buf`, so before `settled`
+-- runs they are still there under the dead bufnr, where any hand-rolled count
+-- would find them.
+--
+-- The reason is AUTHORITY. `settled` resolves the two stores into one ordered
+-- payload, and its return is the only statement of what is about to be sent; a
+-- check upstream of it would be a second, independent tally, free to disagree
+-- with the first -- the same defect a second copy of the wire key list would be,
+-- one file over. Placed here it also inherits `assert_saved`: "nothing pending"
+-- is only ever said about a settle that was otherwise legal.
+--
+-- THE RECEIPT IS ECHOED ON THE RETURN LEG, AND BEFORE `forget`, in that order
+-- for two separate reasons. Lain's answer to the request is what ADMITS the
+-- batch, so a receipt sent any earlier would be the editor reporting a hand-off
+-- the record had not agreed to. And clearing the markers is what makes the
+-- gesture irreversible, so the human has to have been told first -- markers that
+-- vanish with nothing said is the ambiguity the receipt exists to close.
+--
+-- THE ECHO IS UNGUARDED, AND THE STRONGER ARGUMENT RUNS AGAINST THAT, which is
+-- why both halves are written down rather than the convenient one. This is a
+-- call that can raise, sitting between a write lain has ALREADY taken and the
+-- `forget` that retires it. Forced to raise: the traceback escapes into the very
+-- callback this rail exists to keep clean, the markers survive notes lain is
+-- holding, and the human's retry hands the same notes over a SECOND time -- the
+-- double journal `forget`'s own comment exists to prevent. Reachability is
+-- near-nil, but that is the shape.
+--
+-- Against it: a `pcall` that cleared anyway would buy a SILENT clear -- markers
+-- gone, nothing said, which is the defect the receipt was added for -- and it
+-- would swallow the only evidence that the RAIL broke. If `review_refused` can
+-- raise, it can raise for the two refusal legs above too, neither of which
+-- guards it either, and a runtime that half-trusts it in three places is harder
+-- to reason about than one that treats it as total in all three. So: total, and
+-- the near-nil path stays loud. That the rail is unguarded is a measured fact
+-- rather than an assumption -- `review_refused` does not `pcall` its own
+-- `nvim_echo` (`65_review.lua:245`, `:256`, `:261`); only `recorded()` at `:186`
+-- does.
 define("LainNoteDone", function()
   -- `pcall`'s second return is the VALUE or the ERROR, so `batch` is the
   -- refusal on one leg and the payload on the other. Lua's convention, spelled
@@ -438,11 +527,17 @@ define("LainNoteDone", function()
     return
   end
 
+  if #batch == 0 then
+    _G.__lain.review_refused(review_notes.NOTHING_PENDING)
+    return
+  end
+
   local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_notes", { batch })
   if not taken then
     _G.__lain.review_refused(refusal)
     return
   end
+  _G.__lain.review_refused(review_notes.receipt(#batch))
   review_notes.forget()
 end)
 

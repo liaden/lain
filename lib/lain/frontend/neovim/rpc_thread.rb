@@ -588,6 +588,16 @@ module Lain
         # order the payload carried. That trade holds precisely as long as the
         # paragraph above does.
         #
+        # AN EMPTY BATCH IS TAKEN HERE, AND "NOTHING PENDING" IS NOT THIS
+        # BOUNDARY'S QUESTION. Both readings arrive as the same zero notes: a
+        # review the human had nothing to say about, and one whose notes were
+        # handed back a moment ago. Only the EDITOR can tell them apart, because
+        # only the editor holds the notes -- so `48_annotate.lua` answers it
+        # there and does not call this verb at all when it has nothing, and
+        # {unbatched}'s promise of the array "even when there is one of them or
+        # none" stays true. A refusal written in here would be a guess dressed as
+        # a verdict, and it would refuse the one shape the wire contract names.
+        #
         # @param args [Array, nil] the verb's ONE array of arguments; the batch is
         #   its sole member, an Array of notes
         # @yieldparam note [Hash] each note, NORMALIZED, in placement order

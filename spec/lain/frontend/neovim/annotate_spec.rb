@@ -169,6 +169,13 @@ RSpec.describe "the review annotation runtime", :nvim do
   # both halves of "a refusal is not a crash".
   def messages = lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
 
+  # The same history as LINES, because what the receipt examples assert is where
+  # a sentence STARTS. A matcher that looks anywhere in one blob cannot see a
+  # doubled `lain: ` prefix, which is exactly how one reached a human for a whole
+  # card before it was caught -- the example above pins its absence by name, and
+  # every assertion added since is anchored rather than merely containing.
+  def echoed = messages.lines.map(&:chomp)
+
   # The refusal rail's OPERATIONAL half, which `messages` alone cannot state.
   # F25 measured the mechanism and `neovim_runtime_spec.rb` pins it: a message
   # the area cannot hold raises a hit-enter prompt, and every non-fast RPC
@@ -219,9 +226,19 @@ RSpec.describe "the review annotation runtime", :nvim do
   def round_trip(timeout: 2) = Timeout.timeout(timeout) { lua("return 1 + 1") }
 
   # The notes as they crossed the wire, in wire order.
+  #
+  # BOTH WAYS OF SENDING NOTHING ARE REFUSED HERE, BY NAME. `ok` false is lain
+  # turning the batch down; `calls` zero is `:LainNoteDone` deciding there was
+  # nothing to hand over and never reaching the wire at all. Neither has a wire
+  # payload, and without this second guard the empty path dies three lines down
+  # on a missing `sent` key -- a nil value drops its key from a lua table
+  # entirely, which is this runtime's oldest trap wearing a spec helper. An
+  # example that means to assert nothing was sent asks `settle` and reads
+  # `calls`; reaching for `settled` there is the mistake this names.
   def settled(refuse: nil)
     answer = settle(refuse:)
     raise "LainNoteDone refused: #{answer["err"]}" unless answer["ok"]
+    raise "LainNoteDone sent nothing: #{answer.inspect}" if answer["calls"].zero?
 
     answer.fetch("sent").fetch(2).fetch(0)
   end
@@ -412,12 +429,6 @@ RSpec.describe "the review annotation runtime", :nvim do
       sent = settled.first
       expect(sent.keys).to match_array(%w[path side line anchor_text text kind revision drifted])
       expect(sent["drifted"]).to be(false)
-    end
-
-    it "settles an empty review rather than refusing it" do
-      open_changeset("docs/guide.txt", guide_old_lines)
-
-      expect(settled).to eq([])
     end
   end
 
@@ -728,7 +739,10 @@ RSpec.describe "the review annotation runtime", :nvim do
       note("new", 12, "note", "off by one here")
 
       expect(settled.size).to eq(1)
-      expect(settled).to eq([])
+      # The second gesture finds nothing left to send, and that is now a sentence
+      # to the human rather than an empty batch on the wire -- see "says nothing
+      # was pending" below for which side owns that question.
+      expect(settle["calls"]).to eq(0)
       expect(marks_on(buf_in(slots.fetch("new")))).to be_empty
     end
 
@@ -774,6 +788,92 @@ RSpec.describe "the review annotation runtime", :nvim do
       expect(messages).to include("lain:").and include("no review is open in this editor")
       expect(messages).not_to include("stack traceback")
       expect(messages).not_to include("lain: lain:")
+    end
+
+    # THE GESTURE'S ONLY VISIBLE EFFECT IS MARKERS DISAPPEARING, and that on its
+    # own is ambiguous in the worst direction: it looks identical whether lain
+    # took every note or dropped the lot. The receipt is the whole record of a
+    # hand-off nothing else on screen reports, so it names the COUNT -- the one
+    # fact a human can check against what they remember placing.
+    it "tells the human how many notes it handed back" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+      note("new", 3, "note", "first")
+      note("new", 4, "question", "second")
+      note("new", 5, "blocker", "third")
+      note("old", 6, "note", "fourth")
+
+      settle
+
+      expect(echoed).to include(a_string_starting_with("lain: handed 4 notes back"))
+    end
+
+    # `1 notes` is the kind of thing that ships, and this sentence is a receipt:
+    # a human reading it is counting.
+    it "counts a single note in the singular" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+      note("new", 3, "note", "first")
+
+      settle
+
+      expect(echoed).to include(a_string_starting_with("lain: handed 1 note back"))
+    end
+
+    # THE ORDER, ASSERTED WHERE IT IS DECIDED. Clearing the markers is what makes
+    # the hand-off irreversible, so the human has to have been told BEFORE it
+    # happens -- otherwise a receipt that never arrives leaves them staring at a
+    # diff whose marks vanished for no stated reason. Read by asking nvim for its
+    # message history from INSIDE the clear itself: if the receipt were echoed
+    # afterwards, the history the clear sees would not hold it. A `forget` that
+    # cleared nothing answers nil here, which fails rather than passing vacuously.
+    it "clears the markers only once it has said so" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+      note("new", 12, "note", "off by one here")
+
+      history = lua(<<~LUA, [])
+        local seen = nil
+        local clear = vim.api.nvim_buf_clear_namespace
+        vim.api.nvim_buf_clear_namespace = function(...)
+          seen = seen or vim.api.nvim_exec2("messages", { output = true }).output
+          return clear(...)
+        end
+        local request = vim.rpcrequest
+        vim.rpcrequest = function() end
+        pcall(vim.cmd, "LainNoteDone")
+        vim.rpcrequest = request
+        vim.api.nvim_buf_clear_namespace = clear
+        return seen
+      LUA
+
+      expect(history).to include("handed 1 note back")
+    end
+
+    # WHICH SIDE OWNS "NOTHING PENDING". The wire still TAKES an empty batch --
+    # `rpc_thread_spec.rb`'s "takes an empty batch rather than refusing it" pins
+    # that, and `ReviewWrite.unbatched` promises the array "even when there is one
+    # of them or none" -- because Ruby cannot tell a review nobody had anything to
+    # say about from one whose notes were already handed back. The EDITOR can: it
+    # holds the notes. So it answers here, and never calls the verb at all.
+    it "says nothing was pending rather than settling an empty review" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+
+      answer = settle
+
+      expect(answer["ok"]).to be(true)
+      expect(answer["calls"]).to eq(0)
+      expect(echoed).to include(a_string_starting_with("lain: no notes are pending"))
+    end
+
+    # A refused write must leave the human with their notes AND with no receipt
+    # for a hand-off that did not happen -- the refusal is the only sentence
+    # owed. A guard rather than a discovery: it is what fails if a later change
+    # hoists the receipt above the `pcall`.
+    it "issues no receipt for a batch lain refused" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+      note("new", 12, "note", "off by one here")
+
+      settle(refuse: "no review is open in this editor")
+
+      expect(echoed).not_to include(a_string_starting_with("lain: handed"))
     end
   end
 
