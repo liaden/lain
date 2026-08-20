@@ -181,6 +181,32 @@ module Lain
       # per-ask coordinator pipe and prompt breaker is already disposed, so
       # nothing races a torn-down pipe.
       #
+      # == The second Break rescue, and why {#read_prompt}'s is not enough
+      #
+      # {PromptBreaker} delivers with `Thread#raise`, and the thread it targets
+      # is running an Async reactor while the prompt read happens on a FIBER
+      # inside it. `Thread#raise` against a thread under a fiber scheduler is
+      # delivered at the SCHEDULER's next interrupt checkpoint, not inside the
+      # fiber -- measured on async 2.42.0, where the Break surfaced at
+      # `Repl#run`'s `Sync` boundary with `Async::Scheduler#handle_interrupt` at
+      # the top of the backtrace, sailing clean past {#read_prompt}'s rescue.
+      #
+      # The consequence was not cosmetic. The process died OF SIGNAL 2 with a
+      # Ruby backtrace where it had meant to exit 0, so `lain up`'s
+      # `remain-on-exit failed` held the corpse -- and a chat pane that will not
+      # go away is a tmux session that will not go away either. The banner is
+      # for a chat that CRASHED; a human pressing Ctrl-C at an idle prompt has
+      # crashed nothing.
+      #
+      # Rescuing here rather than moving the delivery is what the meaning
+      # supports: a Break exists only while {#read_breakable} has the breaker
+      # routed, so one arriving ANYWHERE means the same thing -- the human
+      # interrupted an idle prompt -- and where it lands is a scheduler
+      # implementation detail that has already changed once. {#close} is
+      # idempotent, so the two rescues cannot double-close, and this is the
+      # outermost place that still knows what a Break means: above it the
+      # exception is an Interrupt like any other.
+      #
       # Delegates to {Signals#guarding} on the ALREADY-INJECTED @signals rather
       # than reimplementing install/yield/ensure-uninstall (there is exactly one
       # such implementation) or calling the {Signals.guarding} class method
@@ -189,6 +215,9 @@ module Lain
       # THIS @signals across the ask).
       def guard(&block)
         @signals.guarding(&block)
+      rescue PromptBreaker::Break
+        close(reason: :exit)
+        nil
       end
 
       private

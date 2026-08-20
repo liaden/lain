@@ -387,6 +387,40 @@ RSpec.describe Lain::CLI::Conductor do
 
       expect(sink.received).to eq([:sigint])
     end
+
+    # MEASURED, not deduced: `PromptBreaker` delivers with `Thread#raise`, and
+    # under a fiber scheduler that lands at the SCHEDULER's checkpoint rather
+    # than inside the fiber sitting in the prompt read. On async 2.42.0 the
+    # Break surfaced at `Repl#run`'s `Sync` boundary -- past `#read_prompt`'s
+    # rescue entirely -- so `lain chat` died OF SIGNAL 2 with a backtrace where
+    # it meant to exit 0, and `lain up`'s `remain-on-exit failed` then held the
+    # corpse: a chat pane that would not go away, and a tmux session that would
+    # not either.
+    #
+    # A Break exists only while a breaker is routed, so one arriving ANYWHERE
+    # means "the human interrupted an idle prompt". Where it lands is a
+    # scheduler detail that has already changed once.
+    it "closes cleanly on a Break that surfaced above #read_prompt, rather than propagating" do
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals: Lain::CLI::Signals.new)
+      answer = :unset
+
+      expect { answer = conductor.guard { raise Lain::CLI::PromptBreaker::Break, :sigint } }.not_to raise_error
+
+      expect(answer).to be_nil
+      expect(conductor).to be_closed
+      expect(chronicle.events).to eq([%i[close exit]])
+    end
+
+    # The two rescues cannot double-close, which is what makes rescuing in both
+    # places safe rather than merely redundant.
+    it "does not write a second session_closed when #read_prompt already closed" do
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals: Lain::CLI::Signals.new)
+      conductor.close(reason: :exit)
+
+      conductor.guard { raise Lain::CLI::PromptBreaker::Break, :sigint }
+
+      expect(chronicle.events).to eq([%i[close exit]])
+    end
   end
 
   describe "the guarded closer" do
