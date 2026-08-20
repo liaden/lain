@@ -5,7 +5,7 @@ require "active_support/core_ext/module/delegation"
 
 module Lain
   module CLI
-    # The live switches a session's commands flip (T14), lifted out of {Wiring}
+    # The live switches a session's commands flip, lifted out of {Wiring}
     # because "which switches exist, what they start as, and what a flip
     # re-binds" is its own responsibility (the Metrics trip said so: extract, do
     # not loosen):
@@ -22,7 +22,7 @@ module Lain
     # * ONE {Mode::Switch} holding the session's posture and layers -- `/mode`
     #   writes it, the prompt and the HUD read it. `--yolo` starts it on `auto`.
     # * ONE {LiveToolset} the Agent and its executor are BUILT with -- the
-    #   capability set a posture attenuates, re-bound in place (T10).
+    #   capability set a posture attenuates, re-bound in place.
     #
     # == The flag is read once, and the ladder says the rest
     #
@@ -95,7 +95,8 @@ module Lain
       # @return [Switchboard]
       def self.for(chronicle:, options:, model:, toolset:, rules: [],
                    sensitivity: Sensitivity::Policy::Null.instance)
-        new(journal: chronicle.record_journal, model:, yolo: options[:yolo], toolset:, rules:, sensitivity:)
+        new(journal: chronicle.record_journal, model:, yolo: options[:yolo], toolset:, rules:, sensitivity:,
+            attended: !options[:non_interactive])
       end
 
       # @param journal [#record] where flips and approval decisions land
@@ -116,8 +117,17 @@ module Lain
       #   the tool's own tier. {Sensitivity::Policy::Null} by default, so a
       #   session that resolved no project root behaves byte-for-byte as it did
       #   before this axis existed.
+      # @param attended [Boolean] whether a human is at this session's terminal
+      #   at all. `--non-interactive` says no, and that is the OPPOSITE end of
+      #   the axis `--yolo` sits at: both answer "who decides a gated call".
+      #   `--yolo` says "nobody needs to, approve"; false here says "nobody
+      #   can, so refuse" -- see {#asking_policy} for why refusing beats the
+      #   two alternatives. Spelled positively all the way down the chain
+      #   ({CLI::Wiring#attended?}, {Repl}, {Wiring::Askers}), so no reader has
+      #   to un-negate it twice to find out what it means.
       def initialize(journal:, yolo:, model:, toolset:, rules: [],
-                     sensitivity: Sensitivity::Policy::Null.instance)
+                     sensitivity: Sensitivity::Policy::Null.instance, attended: true)
+        @attended = attended
         @sensitivity = sensitivity
         @rules = rules.to_a.freeze
         @ledger = Sensitivity::Ledger.new
@@ -127,7 +137,12 @@ module Lain
         # device on EVERY call, which is the leak this class was extracted to
         # stop happening once.
         @journal = journal
-        @approvals = yolo ? nil : Approval::Queue.new(journal:)
+        # No queue for either end of the axis, and for the same reason stated
+        # twice: a parked call has to be answered by somebody. `--yolo`
+        # answered every one of them in advance; an unattended run has nobody
+        # to answer any of them, and a queue with no drain is a wait, not a
+        # decision.
+        @approvals = Approval::Queue.new(journal:) if @attended && !yolo
         @base = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
         seed(Mode.new(posture: yolo ? :auto : :accept_edits), journal:)
@@ -154,8 +169,34 @@ module Lain
       def gate(inner:)
         Effect::Handler::Sensitivity.new(
           sensitivity:, journal: @journal,
-          inner: Effect::Handler::Gate.new(policy: policy_switch, inner:, sensitivity:)
+          inner: Effect::Handler::Gate.new(policy: policy_switch, inner:, sensitivity:, denial:)
         )
+      end
+
+      # What a refused call is REPORTED as, which is a different question from
+      # who refused it and is why it is not the policy's to answer.
+      #
+      # PUBLIC, and read from two places for one reason: {#gate} builds the
+      # parent's own gate, and {CLI::Wiring::ToolsetBuild::spawn_seam} threads
+      # this same value onto every child's seam. A String and nothing else --
+      # the reading, never any authority -- on {#ladder}'s terms.
+      #
+      # An attended session keeps the default, and the default is right there:
+      # a human was asked and said no, so trying again later, or differently,
+      # is a real move. An UNATTENDED one must not borrow that sentence.
+      # `approval denied for tool "bash"` is byte-identical to the human's no,
+      # and a model that reads it as one will retry a call that cannot be
+      # approved by anybody, for the whole run. So the unattended denial says
+      # what is actually true -- nobody was asked, nobody can be, and this will
+      # not change -- and then says what to do instead, on {Tools::AskHuman::Unattended}'s
+      # rule: a refusal that only says "no" invites the same call again.
+      def denial
+        return Effect::Handler::Gate::DENIAL if @attended
+
+        "no approval is possible for tool %<name>s: this session was started with --non-interactive, " \
+          "so no human is attached and nothing can approve a gated call. This is not somebody answering " \
+          "no -- retrying will fail the same way every time. Do what you can without this tool, or stop " \
+          "and say what it was for."
       end
 
       # This board's contribution to the {Command::Surface}: the three switches,
@@ -193,7 +234,7 @@ module Lain
                                        resolve: method(:resolve), apply: method(:apply))
       end
 
-      # T21: what an asking posture actually resolves to is the LADDER, not the
+      # What an asking posture actually resolves to is the LADDER, not the
       # bare queue. The queue is still the parked list `/approve` drains and is
       # still the bottom rung -- the deterministic rungs simply get asked first,
       # so a call the session has already decided about never reaches a human,
@@ -221,9 +262,35 @@ module Lain
       # resolution handed it back reads no table at all: whatever the ladder
       # grows, "this rung wanted the queue" is exactly "the queue arm fired".
       def resolve(mode)
-        resolution = Mode::Resolution.for(mode:, base: @base, queue: @ladder || NO_QUEUE)
+        resolution = Mode::Resolution.for(mode:, base: @base, queue: asking_policy)
         refuse_queueless(mode.posture) if resolution.gate_policy.equal?(NO_QUEUE)
         resolution
+      end
+
+      # What an ASKING posture (`manual`, `accept_edits`) resolves its gate to.
+      # Normally the ladder over the queue; for a session with nobody to ask,
+      # a flat denial.
+      #
+      # DENY, and the two rejected alternatives are why. Approving would be
+      # `--yolo` under another name, granted to a run the operator never said
+      # that about -- the one answer this may not silently be. Parking is worse
+      # than it looks: the call waits on a queue no surface drains until the
+      # fail-closed timeout denies it anyway, so the outcome is identical and
+      # the run spends the wait first. {Effect::Handler::Gate::DenyAll} already
+      # names this case in its own words -- "correct when no interactive
+      # frontend is attached to answer for a human" -- so the third option is
+      # the one that was already written down.
+      #
+      # It is NOT a quiet demotion to `plan`, which {Mode::Resolution} warns a
+      # missing queue would be: the posture stays what it says, the capability
+      # set is untouched, and only the gate's answer changes. `--non-interactive`
+      # is a declared arm, so its record is honest by construction, where an
+      # accidentally queueless `manual` would not have been.
+      def asking_policy
+        return @ladder if @ladder
+        return Effect::Handler::Gate::DenyAll.new unless @attended
+
+        NO_QUEUE
       end
 
       # `/yolo off`'s doctrine one rung up, and for a sharper reason than that
@@ -314,7 +381,7 @@ module Lain
       end
 
       # The {Mode::Switch} the command surface writes, decorated so a flip does
-      # something. T5 established WHERE the live mode lives and left the doing
+      # something. An earlier card established WHERE the live mode lives and left the doing
       # to this card; the doing is one ordering, and the order is the contract:
       #
       #   resolve  -- pure, and raises here if the mode cannot be bound at all

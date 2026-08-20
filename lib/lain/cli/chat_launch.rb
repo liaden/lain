@@ -98,6 +98,7 @@ module Lain
         return preflight(&notice) if self.class.preflight?
 
         refuse_windows_without_journal!
+        refuse_headless_without_prompt!
         resumed = resumed_run(backend)
         resolve_project!
         open_chronicle
@@ -147,6 +148,7 @@ module Lain
       # @return [nil]
       def preflight(&notice)
         refuse_windows_without_journal!
+        refuse_headless_without_prompt!
         resolve_project!
         constructed
         # A mode that says nothing looks exactly like a hang, and this one is
@@ -190,7 +192,7 @@ module Lain
       # --no-nvim builds no tee), so /status still answers its honest zeros.
       def status_feed = @status_feed ||= @status_feed_factory.call(run_clock:, context_window: backend.context_window)
 
-      # The ONE {Backend} for the run (T10), resolved on first read and shared
+      # The ONE {Backend} for the run, resolved on first read and shared
       # exactly as {#run_clock} and {#project} are. It was a local in {#call}
       # until the window book made it a THIRD thing two halves of the launch
       # need: the feed built in {#open_chronicle} divides occupancy by
@@ -200,7 +202,7 @@ module Lain
       # possibly two answers across an ollama runner reload.
       def backend = @backend ||= Backend.new(@options)
 
-      # The ONE RunClock for the run (T7). Its three measures are WRITTEN in
+      # The ONE RunClock for the run. Its three measures are WRITTEN in
       # two places and READ in a third: the Conductor records a user prompt on
       # it, the tee's Telemetry::Compaction moves its compaction age, and the
       # StatusFeed publishes all three. Two instances would publish an `idle`
@@ -208,7 +210,7 @@ module Lain
       # and threaded down, exactly as the status feed is.
       def run_clock = @run_clock ||= @run_clock_factory.call
 
-      # The ONE {Lain::Project} for the run (T5), resolved on first read and
+      # The ONE {Lain::Project} for the run, resolved on first read and
       # threaded into the wiring exactly as {#run_clock} and {#status_feed} are.
       # Five collaborators down there take a root off it -- the isolation
       # backend, the command surface, the epic mount, the review seams -- and
@@ -229,6 +231,18 @@ module Lain
       # so a directly-constructed instance records nothing and checks nothing
       # for nil; #call replaces it per the --journal flag before any wiring runs.
       def chronicle = @chronicle ||= Chronicle::Null.new
+
+      # What the process should exit with, for the one caller entitled to ask:
+      # `lain chat --non-interactive`. Every other chat exits 0 whatever
+      # happened, because a human watched the refusal go past on their own
+      # screen -- read the `if` in the exe's #chat for that restraint.
+      #
+      # Zero when no conversation was wired at all (a pre-flight, a refusal
+      # raised before {#converse}): those paths report through a raise or a
+      # notice, and a status invented here would be a second, quieter answer.
+      #
+      # @return [Integer]
+      def exit_status = @wiring ? @wiring.exit_status : Repl::Outcome::COMPLETED
 
       private
 
@@ -261,12 +275,24 @@ module Lain
 
       # --windows observes the live-view tee, which --no-journal never builds;
       # refuse loudly up front rather than opening a chat whose flag is silently
-      # dead (T20).
+      # dead.
       def refuse_windows_without_journal!
         return unless @options[:windows] && !@options[:journal]
 
         raise Lain::Error, "--windows needs the session journal: the fleet sink observes " \
                            "the live-view tee, which --no-journal disables"
+      end
+
+      # A headless chat reads no line, so a run with nothing seeded has nothing
+      # to do and no way to find out -- it would sit on the terminal read the
+      # flag exists to remove, looking exactly like a hang. Refused up front,
+      # ahead of the chronicle, on #call's own ordering rule: a refusal must
+      # never orphan a fresh journal.
+      def refuse_headless_without_prompt!
+        return unless @options[:non_interactive] && Blankness.blank?(@options[:prompt])
+
+        raise Lain::Error, "--non-interactive needs --prompt: it reads no line from the terminal, " \
+                           "so a run with no question seeded has nothing to ask"
       end
 
       # Resolved BEFORE open_chronicle (see #call) so a resume/fork refusal

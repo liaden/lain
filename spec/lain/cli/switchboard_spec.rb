@@ -25,7 +25,7 @@ RSpec.describe Lain::CLI::Switchboard do
   def policy_records = Lain::Journal.records(journal_io.string.lines, type: "policy_switch").to_a
 
   describe "the approval side" do
-    # T21: the queue is still the parked list, but what the gate holds is the
+    # The queue is still the parked list, but what the gate holds is the
     # LADDER over it -- the deterministic rungs answer first, and the queue is
     # where a call lands when they abstain.
     it "wires the queue as the parked list and the ladder over it as the gate's starting policy" do
@@ -52,7 +52,7 @@ RSpec.describe Lain::CLI::Switchboard do
       end
     end
 
-    # T18: the rules rung was wired EMPTY, because the remembered answers need a
+    # The rules rung was wired EMPTY, because the remembered answers need a
     # project root this board does not hold. It takes them as `rules:` now, and
     # what decides whether a root's `[approval]` table may fill that list is
     # {Lain::Project::Consent} -- not this class, which only carries them.
@@ -71,7 +71,7 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     # The default is what every caller gets until one passes a consented
-    # project's answers, and it has to be the pre-T18 behaviour exactly: an
+    # project's answers, and it has to be the behaviour from before that rung existed, exactly: an
     # empty rung abstains, and the call goes on parking on the queue.
     it "wires no rules by default, so the rung abstains and the call still parks" do
       board = switchboard
@@ -96,8 +96,8 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
-  # The card that built the ledger owns this: T15 (masking) reads it and T16 (the
-  # prompt) writes it, through different files in different waves, so two
+  # The card that built the ledger owns this: the masking arm reads it and the
+  # prompt arm writes it, through different files in different waves, so two
   # half-wirings would give the run two ledgers and a release control that
   # silently releases nothing. One board, one ledger, and it is exposed for that
   # reason alone.
@@ -147,7 +147,7 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
-  # T10. T5 established WHERE the live mode lives; these are the examples that
+  # An earlier card established WHERE the live mode lives; these are the examples that
   # say a flip DOES something -- it re-binds the gate policy the construction-
   # fixed Gate reads and the capability set the construction-fixed Agent renders.
   describe "the mode side, bound to the live gate and the live toolset" do
@@ -176,6 +176,76 @@ RSpec.describe Lain::CLI::Switchboard do
 
         expect(mode_records).to be_empty
         expect(policy_records).to be_empty
+      end
+    end
+
+    # `--non-interactive`, which is the OPPOSITE end of the same axis --yolo
+    # sits at, and the choice this card had to make in the open. A gated call
+    # asks a human; a headless run has none, so the honest answer is no.
+    # DenyAll is what Effect::Handler::Gate already calls "correct when no
+    # interactive frontend is attached", and the alternative -- a queue nobody
+    # drains -- parks the call until a fail-closed timeout denies it anyway,
+    # after a wait no one is there to end.
+    describe "--non-interactive, where the gate has nobody to ask" do
+      it "denies a tier-3 call instead of parking it" do
+        board = switchboard(attended: false)
+
+        expect(board.policy_switch.call(gated_call, nil)).to be(false)
+      end
+
+      it "wires no approval queue, because nothing could drain one" do
+        expect(switchboard(attended: false).approvals).to be_nil
+      end
+
+      # The capability set is untouched: this flag answers "who approves", not
+      # "what may be called". A headless run that quietly lost `edit_file`
+      # would be a third policy nobody chose.
+      it "leaves the session holding every tool it was built with" do
+        board = switchboard(attended: false)
+
+        expect(board.mode_switch.posture.name).to eq(:accept_edits)
+        expect(board.toolset.names).to match_array(base.names)
+      end
+
+      it "journals no flip for the mode it was constructed in" do
+        switchboard(attended: false)
+
+        expect(policy_records).to be_empty
+      end
+
+      # The other half of the same policy, and the half that reaches the model.
+      # A denial that reads byte-for-byte like a human answering "no" is a
+      # decision that could have gone the other way, so a model retries it --
+      # for the whole run, against a gate nobody can open. The refusal has to
+      # say that nobody was asked and nobody can be.
+      describe "what the model is told when the gate refuses" do
+        # The REAL chain a session dispatches through -- Sensitivity over Gate
+        # over Live -- because the sentence under test is produced by the Gate
+        # and read by the model off a tool_result, and a double anywhere in
+        # that chain would be asserting on the double.
+        def refusal(board)
+          call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
+          board.gate(inner: Lain::Effect::Handler::Live.new(toolset: board.toolset.current))
+               .call(call, Lain::Session.new).content
+        end
+
+        it "says no approval is possible, rather than that approval was denied" do
+          told = refusal(switchboard(attended: false))
+
+          expect(told).to include("no approval is possible", "--non-interactive")
+          expect(told).not_to include("approval denied")
+        end
+
+        it "says retrying cannot help, and what to do instead" do
+          told = refusal(switchboard(attended: false))
+
+          expect(told).to include("retrying will fail the same way")
+          expect(told).to include("without this tool")
+        end
+
+        it "leaves an attended session's denial exactly as it was" do
+          expect(refusal(switchboard)).to include("approval denied for tool \"bash\"")
+        end
       end
     end
 

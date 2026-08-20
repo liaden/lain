@@ -28,7 +28,7 @@ module Lain
       # honest projection of what the call did. `nil` until a spawn happens (and
       # after a depth refusal, which emits nothing).
       #
-      # OM-2-ONLY statefulness (T19 panel #4): the seam's live parent handle and
+      # OM-2-ONLY statefulness (a review panel note): the seam's live parent handle and
       # these `@last_*` ivars are safe here because a Subagent instance belongs
       # to exactly one agent's toolset and a one-shot spawn runs synchronously
       # inside a single tool dispatch -- no interleaving writer can exist.
@@ -61,7 +61,7 @@ module Lain
       # OWN axes -- the union, the policy, the budget, and the config triple
       # {#seed_config} closes over.
       # `announces_as` is what a HUMAN is told is asking when this spawn's
-      # child puts a question to them (T10), and it defaults to `name` because
+      # child puts a question to them, and it defaults to `name` because
       # for most spawns they are the same word. They come apart on the one
       # child path that ships: the chat's `research_subagent` is NAMED
       # "subagent" because that is what the model calls, and IS a researcher,
@@ -167,7 +167,7 @@ module Lain
         # The actor holds its child's asker registration because it holds the
         # child's LIFETIME: `Supervisor#stop` farewells every row through
         # `registration.actor.stop`, so a `deregister` there rides the same
-        # lease teardown that reaps the fiber (T10). {ChildBuilder::Child}
+        # lease teardown that reaps the fiber. {ChildBuilder::Child}
         # owns what happens when no actor comes out of the launch at all.
         build_child(parent, worker_env).launched do |agent, registration|
           Actor.new(agent:, registration:, lineage:, parent:, journal:).launch(prompt)
@@ -191,7 +191,7 @@ module Lain
       protected
 
       # A model-dispatched `:actor` is refused UNLESS a running {Supervisor} is
-      # wired (T23 panel #1, unrefused by OM-6): Agent#ask's per-call Sync owns
+      # wired (a review panel note, unrefused by OM-6): Agent#ask's per-call Sync owns
       # any fiber a tool dispatch spawns, so a bare perform-launched actor
       # would park as ask's own child and structured concurrency would never
       # let ask return -- the loop wedges, outer reactor or not. The
@@ -412,6 +412,25 @@ module Lain
       # eagerly in the class body.
       UNJUDGED = Sensitivity::Policy::Null.instance
 
+      # The refusal SENTENCE a seam was never taught about: whatever
+      # {Effect::Handler::Gate} says on its own, which is what every child was
+      # told before this member existed.
+      #
+      # A THUNK, like `context_factory` and unlike the three Null objects
+      # above, and for that member's exact reason: the live one has to read a
+      # {CLI::Switchboard} that does not exist when the seam is built (see
+      # {CLI::Wiring::ToolsetBuild::spawn_seam}'s board thunk). Resolved once
+      # per child chain in {ChildBuilder#gated}, not per call -- the sentence
+      # turns on whether a human is attached, which is fixed for a session's
+      # whole life, where the policy beside it flips with `/mode` and `/yolo`.
+      #
+      # ⚠️ NOT `Sensitivity#denial`, which is a different message about a
+      # different axis ({ToolsetBuild::LiveSensitivity} answers
+      # `denial(effect)` for a path that may not be touched at all). This one
+      # is the gate's: a call that COULD have been approved, by a human who is
+      # not there. The word is taken twice; read which object is being asked.
+      GENERIC_DENIAL = -> { Effect::Handler::Gate::DENIAL }
+
       # The ask-the-human seam a spawn was never taught about -- {Seam}'s
       # `askers` default, answering the one message a spawn sends it.
       #
@@ -451,9 +470,9 @@ module Lain
       # and no single spawn chooses -- the run's provider, a child-Context
       # factory, the live parent handle, the journal, the {Supervisor} a
       # model-dispatched actor adopts onto, the lineage observer, and the two
-      # axes the SESSION's posture governs (T11): the approval policy a tier-3
+      # axes the SESSION's posture governs: the approval policy a tier-3
       # call must pass, and which capabilities a child may hold at all -- plus
-      # the run's ask-the-human seam (T10), which is where a child gets an
+      # the run's ask-the-human seam, which is where a child gets an
       # asker OF ITS OWN rather than inheriting the parent's, and the session's
       # sensitivity policy, which is the PATH half of the same gate.
       #
@@ -482,15 +501,20 @@ module Lain
       # client, and `parent` is a thunk or a Timeline (measured: neither is
       # shareable). The journal is NOT among the reasons: its default here is
       # `Channel::Null.instance`, which IS shareable. Neither is `askers`, whose
-      # default is a module: T10 added a ninth member and moved that claim in
+      # default is a module: the askers member was the ninth and moved that claim in
       # NEITHER direction, which is the thing a new member has to say out loud.
       # The tenth, `sensitivity`, moves it in NEITHER direction either: its
       # default is a frozen {Sensitivity::Policy::Null} instance, which IS
       # shareable, and the live one holds a frozen classifier.
+      # The eleventh, `denial`, is the first member that moves it in the SAME
+      # direction `context_factory` already did -- a proc, and a proc is not
+      # shareable -- so it changes nothing here only because that claim was
+      # already false and already stated. Said out loud rather than passed over,
+      # because that is what this paragraph asks of a new member.
       # This bundles collaborators; it is not a value in the {Event}/{Canonical}
       # sense.
       Seam = Data.define(:provider, :context_factory, :parent, :journal, :supervisor, :observer,
-                         :gate_policy, :permits, :askers, :sensitivity) do
+                         :gate_policy, :permits, :askers, :sensitivity, :denial) do
         # Everything after `parent` defaults to its Null object, so a caller who
         # wires none of them gets byte-identically what the pre-seam constructors'
         # own defaults gave -- {UNGATED} and {Mode::Posture::Permits::All} are the
@@ -500,7 +524,7 @@ module Lain
         def initialize(provider:, context_factory:, parent:, journal: Channel::Null.instance,
                        supervisor: Supervisor::Null, observer: NO_OBSERVER,
                        gate_policy: UNGATED, permits: Mode::Posture::Permits::All, askers: NoAskers,
-                       sensitivity: UNJUDGED)
+                       sensitivity: UNJUDGED, denial: GENERIC_DENIAL)
           super
         end
 
@@ -607,7 +631,7 @@ module Lain
 
         # A fresh child Agent over the base Timeline the prefix strategy chose,
         # rendering the toolset the posture chose, enforced by the handler the
-        # posture chose -- and the asker enrolled for it (T10). `child` is
+        # posture chose -- and the asker enrolled for it. `child` is
         # late-bound through the thunk EXACTLY as the exe wires the tool
         # itself: the union must exist before the Agent, but a grandchild's
         # lineage must name the child's LIVE head at its own spawn instant, and
@@ -725,7 +749,7 @@ module Lain
         end
 
         # The child's union: the injected one, with every Subagent in it
-        # replaced by a descended copy -- the transitive-ceiling fix (T19
+        # replaced by a descended copy -- the transitive-ceiling fix (from the
         # panel). Handing the SAME instances down would let a nested spawn keep
         # its constructing ceiling, and recursion would never terminate via the
         # cap. The copy's schema bytes are identical (same name/description/
@@ -741,7 +765,7 @@ module Lain
         # write-capable child (read_file + edit_file in its `only`-set) can
         # satisfy EditFile's read-before-write contract against its OWN
         # read-set. Built here, not memoized: a builder is reused across
-        # sibling spawns (T19's re-entrancy contract), so a memoized Session
+        # sibling spawns (the re-entrancy contract), so a memoized Session
         # would leak one sibling's reads into the next. `Session.new` never
         # sees the parent's Session -- this builder was never handed a
         # reference to it -- so the child's read-set starts empty by
@@ -816,7 +840,7 @@ module Lain
 
         # The session's approval gate, in front of the child's executor: a child
         # holding a tier-3 tool asks the SAME policy its parent asks, so `bash`
-        # is not ungated merely because a subagent is the one calling it (T11).
+        # is not ungated merely because a subagent is the one calling it.
         # A denial arrives as an is_error {Tool::Result}, never a raise -- that
         # is {Effect::Handler::Gate}'s own contract, and it is what keeps the
         # child's loop running rather than wedging on a refusal.
@@ -833,7 +857,15 @@ module Lain
         # inversion, since the child is the LESS supervised of the two. It is
         # read per call through the same board thunk `gate_policy` travels, so
         # the two can never resolve to different sessions.
-        # Ahead of that gate sits the DENIAL half (T12), over the same seam and
+        # What a refusal SAYS travels the same seam, and it has to for the
+        # reason the sensitivity axis does: a child gated by its parent's
+        # policy but told the generic sentence reads "approval denied" -- which
+        # is a human's no, and invites a retry -- in a session where nobody can
+        # ever answer. It would retry for the life of the run. Resolved HERE,
+        # once per child chain, because the board the thunk reads exists by
+        # spawn time and the answer cannot change afterwards.
+        #
+        # Ahead of that gate sits the path-denial half, over the same seam and
         # the same board thunk, and it is here rather than only in
         # {CLI::Switchboard#gate} for the reason the sensitivity axis itself is:
         # a child gated only by its parent's chain reads what its parent may
@@ -843,7 +875,8 @@ module Lain
         def gated(inner)
           Effect::Handler::Sensitivity.new(
             sensitivity: @seam.sensitivity, journal: @seam.journal,
-            inner: Effect::Handler::Gate.new(policy: @seam.gate_policy, sensitivity: @seam.sensitivity, inner:)
+            inner: Effect::Handler::Gate.new(policy: @seam.gate_policy, sensitivity: @seam.sensitivity, inner:,
+                                             denial: @seam.denial.call)
           )
         end
       end

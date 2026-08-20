@@ -26,24 +26,24 @@ module Lain
     # room for a feature: EXTRACT FIRST.
     #
     # It has been through that twice. It sat a year at 109, reached 110 exactly,
-    # and that is what forced {ToolsetBuild} out of it (T1 review): "what
+    # and that is what forced {ToolsetBuild} out of it (its first review): "what
     # capabilities this run holds, and how a child inherits them" was never this
     # object's question, and the tell was a `(backend:, parent:, journal:)`
     # triple threaded verbatim through three private methods -- a repeated
     # parameter list is the state of an object that has not been named yet. The
-    # same tell then appeared on the `(catalog:, slots:)` pair T15 threaded into
-    # {Command::Surface} and {ToolsetBuild}, and T40 named it {Skill::Library}:
+    # same tell then appeared on the `(catalog:, slots:)` pair later threaded into
+    # {Command::Surface} and {ToolsetBuild}, and the extraction that followed named it {Skill::Library}:
     # one `.lain/` read, owned by {Backend#library} because {Backend#context}
     # renders the slots half into the system prompt. This class now loads
     # neither half and threads one keyword.
     #
-    # T27 was the third time and spent the last of it. "Which epic is this chat
+    # The EpicMount extraction was the third time and spent the last of it. "Which epic is this chat
     # in, and who holds the baton for its documents" is {EpicMount}'s question,
     # not this one's, and the tell was the tell again: the
     # `(home:, review:, notes:)` triple {Lain::Tools::RequestReview} takes, three
     # collaborators that travel together AND carry an invariant between them.
     # What is left here is one keyword at one call site. That left no room for a
-    # fourth, so T4 was the extraction the previous edition of this comment
+    # fourth, so {AgentBuild} was the extraction the previous edition of this comment
     # demanded of whatever card came next -- and, unlike the three above, it was
     # spent on nothing: it added no feature and moved {AgentBuild} out. Its tell
     # was a different one, worth naming because the next reader will meet it
@@ -56,7 +56,7 @@ module Lain
     # is where that is written down -- not repeated here, because it is a fact
     # about the extracted module rather than about this list.
     #
-    # T5 is what T4's headroom was made for, and it spent six of the fourteen
+    # The Project extraction is what that headroom was made for, and it spent six of the fourteen
     # lines: the run's {Lain::Project} arrives as one keyword and replaces the
     # five independent `Dir.pwd` reads that used to answer "where is this
     # project" five times. It also spent the last of #build_toolset's AbcSize
@@ -68,7 +68,7 @@ module Lain
     # 110, so the rule applied to a one-liner exactly as it applies to a feature.
     # Two things moved: {Askers} to `wiring/askers.rb` -- this comment had
     # ALREADY called it a second responsibility, and the only reason it was
-    # nested was that T11 scoped that chunk to this file, so once that reason was
+    # nested was that an earlier chunk scoped itself to this file, so once that reason was
     # spent the file was simply where it had not moved from yet -- and
     # {RunState}, whose recorder/Session pair carries an invariant of its own.
     #
@@ -116,7 +116,20 @@ module Lain
       # kept as a Wiring accessor because the Repl and exe read it here.
       def approvals = @switchboard&.approvals
 
-      # T17's opt-in local-model triage surface for parked reads carrying
+      # Whether a human is at the terminal this run was started from. ONE
+      # reading of `--non-interactive`, threaded to the three collaborators it
+      # changes -- the Repl (which stops reading lines), the askers (whose
+      # questions nobody would answer) and the Switchboard (whose gate has
+      # nobody to ask) -- so those three cannot come to disagree about it the
+      # way `--yolo` once did when it was read twice.
+      def attended? = !options[:non_interactive]
+
+      # The conversation's answer to "did it finish what it was asked", as a
+      # process exit status. Complete before a Repl exists: a run that refused
+      # during assembly reports through the raise, not through this.
+      def exit_status = @repl ? @repl.exit_status : Repl::Outcome::COMPLETED
+
+      # The opt-in local-model triage surface for parked reads carrying
       # sensitive regions -- nil without `--secret-oracle`, so the Repl wires
       # nothing extra by default and the fan-out spawns no extra fiber. A
       # Wiring accessor beside {#approvals} for the same reason: the Repl reads
@@ -143,13 +156,13 @@ module Lain
       # The frozen {Command::Env} the run's {Command::Surface} assembled once.
       def command_env = @command_surface.env
 
-      # `tty_factory:`/`conductor_opener:` are #run's construction seams (T9,
-      # from the T1 panel note): the exe takes the real defaults; a spec hands
+      # `tty_factory:`/`conductor_opener:` are #run's construction seams (added
+      # on a panel note): the exe takes the real defaults; a spec hands
       # in a StringIO-backed TTY factory or a recording opener and drives #run
       # itself -- no send(:build_repl), no instance_variable_set.
       # `run_clock:` is the RUN's clock, built by {ChatLaunch} beside the
       # StatusFeed that publishes its readings and passed straight through to
-      # the Conductor, which is the one place a user prompt is answered (T7).
+      # the Conductor, which is the one place a user prompt is answered.
       #
       # Every argument is tagged because ONE of them had to be: `@option` is what
       # yard-lint wants beside an options hash, and rubocop-yard then demands a
@@ -201,7 +214,7 @@ module Lain
         end
       end
 
-      # The run's shutdown coordinator. `run_clock:` is the T7 thread: the
+      # The run's shutdown coordinator. `run_clock:` is the clock thread: the
       # Conductor is the ONE place a user prompt is answered, so it is where
       # {RunClock#record_input} is called -- and the clock it records on has to
       # be the instance the StatusFeed publishes, or the published `idle` never
@@ -244,7 +257,7 @@ module Lain
         # unchanged; a directly-constructed Wiring passes no such option and gets
         # the Null. Pinned by spec/desktop_discipline_spec.rb.
         #
-        # `journal:` is the run's own Channel, and it is what makes T15's fault
+        # `journal:` is the run's own Channel, and it is what makes the fault
         # guard WITNESSED rather than merely present: a surface fiber that dies
         # inside its sweep stops notifying for the rest of the session, and the
         # whole finding this guard came out of is that such a death is silent.
@@ -294,7 +307,7 @@ module Lain
       # so a run from a subdirectory declares the services its PROJECT declares.
       def fleet_isolation(journal) = IsolationBackend.resolve(options[:isolation], root: project.root, journal:)
 
-      # T13: the prompt's state reader is assembled HERE because this is the
+      # The prompt's state reader is assembled HERE because this is the
       # only object holding the live Agent, the run's RunClock and the
       # StatusFeed at once -- the three things a prompt format writes against.
       # A malformed config reports through the SAME startup-notice seam a
@@ -332,7 +345,7 @@ module Lain
       # the lease that reaps it -- {Askers::Enrolled} is where that card reads
       # both halves.
       def wire_askers(parent)
-        @askers = Askers.new(notifier: @notifier, observer: chronicle.observer)
+        @askers = Askers.new(notifier: @notifier, observer: chronicle.observer, attended: attended?)
         @askers.enrol(parent, agent: MAIN_AGENT).asker
       end
 
@@ -346,8 +359,8 @@ module Lain
       # `epic:` is WHICH epic this chat is in and the review baton over it --
       # {EpicMount}, or its NoEpic when none resolves, which is why nothing here
       # or in the build asks whether there is one. It stood at this call site
-      # until T5, on the measured ground that the class was two lines under its
-      # ClassLength budget and a named method would buy nothing; T5 threaded the
+      # until the Project extraction, on the measured ground that the class was two lines under its
+      # ClassLength budget and a named method would buy nothing; that card threaded the
       # project ROOT into it and into the review seams, which put #build_toolset
       # over Metrics/AbcSize, so it is #epic_mount below now. The rule the class
       # comment states applied, one cop over: extract, do not loosen.
@@ -355,7 +368,7 @@ module Lain
       # `bindings:` is the same late-binding the `parent` thunk above uses, for a
       # sharper reason: {HumanReplies} is built in #build_repl, strictly AFTER
       # this, so the tool reads the thunk at CALL time. It closes over an IVAR
-      # rather than a local, which is what makes it actually late -- see the T27
+      # rather than a local, which is what makes it actually late -- see the EpicMount
       # hand-back for the sibling thunk that captures a local and stays nil.
       # `notice:` is DEFAULTED where `epic:` upstream is required, and the two
       # are not the same kind of argument: forgetting the startup seam loses a
@@ -393,9 +406,9 @@ module Lain
       # so the review tool, the surface a changeset is drawn on and the view its
       # gestures resolve through all read it at CALL time. It closes over an
       # IVAR rather than a local, which is what makes it actually late -- see the
-      # T27 hand-back for the sibling thunk that captured a local and stayed nil.
+      # hand-back for the sibling thunk that captured a local and stayed nil.
       #
-      # T31a: `**ReviewSeams.for` above is what turned the changeset half of
+      # `**ReviewSeams.for` above is what turned the changeset half of
       # `request_review` on. This mount passed `notify:` and `bindings:` only, so
       # `changesets:` and `surface:` stayed nil, `Implementation#hold` answered
       # `Refusals.no_changeset` on every call in every real process, and the
@@ -405,7 +418,7 @@ module Lain
       # could see it.
       def replies = -> { @replies }
 
-      # I4/T14: the {Switchboard} owns Gate's policy now -- the queue (or
+      # I4: the {Switchboard} owns Gate's policy now -- the queue (or
       # ApproveAll under --yolo) behind the ONE PolicySwitch /yolo flips; Gate
       # itself stays construction-fixed. It resolves its own journal from the
       # chronicle (the null device under --no-journal). Memoized because
@@ -420,14 +433,14 @@ module Lain
       # record on disk for a chat that never ran. {#fleet_isolation} keeps the
       # same refusal-before-journal ordering, for the same reason.
       #
-      # T10: it owns the run's CAPABILITY set on the same terms. `toolset:` is
+      # It owns the run's CAPABILITY set on the same terms. `toolset:` is
       # the BASE set every posture resolves from -- attenuation is monotone, so
       # leaving `plan` has to rebuild from what the session was built with and
       # never from what the previous posture left behind -- and what comes back
       # as `board.toolset` is the live slot the Agent and its executor hold, so
       # a `/mode` flip changes the rendered schema without rebuilding either.
       #
-      # T23: it owns the run's PATH boundary on the same terms. What that
+      # It owns the run's PATH boundary on the same terms. What that
       # boundary is built FROM -- the consented root's remembered answers and
       # this project's `[sensitivity]` table -- is {BoardBuild}'s question, not
       # this assembler's: the class comment's rule bit here first, at
@@ -445,11 +458,11 @@ module Lain
       # through exe-instance state. What the drain is handed is the DIRECTORY,
       # not the run's one asker: "which asker holds the set this answer names"
       # is a question only the directory can answer, and asking the parent's
-      # asker instead is how a child's question becomes unanswerable (T11). The
+      # asker instead is how a child's question becomes unanswerable. The
       # {HumanReplies} drain is built HERE (not inside Repl) so the Env's
       # replies reader and the Repl's collaborator are one object; everything a
       # typed line dispatches through -- command registry, frozen Env, skill
-      # middleware, the run's one skill library -- is {Command::Surface}'s (T9).
+      # middleware, the run's one skill library -- is {Command::Surface}'s.
       def build_repl(tty:, agent:, backend:)
         @replies = HumanReplies.new(tty:, conductor: @conductor, ask_human: directory, questions:)
         @command_surface = assemble_surface(agent:, library: backend.library, tty:)
@@ -459,13 +472,27 @@ module Lain
         # through the one bound registry over the one Env, which is what makes a
         # command behave the same at `you> ` and at `human> `.
         @replies.bind_commands(@command_surface.commands)
-        Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:, notifier:,
-                 supervisor:, middleware: @command_surface.middleware, commands: @command_surface.commands,
-                 auto_surface:, secret_surface:, goal_driver:)
+        # HELD, where it used to be merely returned: #exit_status asks the Repl
+        # what the conversation reached, and the exe reads that through
+        # {ChatLaunch} after #run has already returned.
+        @repl = repl_over(tty:, agent:)
       end
 
-      # The surface assembly, its own method because T15's ABC trip said so when
-      # it threaded the run's catalog and slots through here -- which the T40
+      # The construction itself, split off the assembly above -- which is the
+      # extraction the {#assemble_surface} note predicts, taken one step: the
+      # ABC number that method records was already at the limit, and reading
+      # `--non-interactive` was one send more than it had room for. What is
+      # named here is genuinely a different sentence from build_repl's ("bind
+      # the surfaces this run answers through"): it is the Repl over the
+      # collaborators those two lines just settled.
+      def repl_over(tty:, agent:)
+        Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:,
+                 notifier:, supervisor:, middleware: @command_surface.middleware, attended: attended?,
+                 commands: @command_surface.commands, auto_surface:, secret_surface:, goal_driver:)
+      end
+
+      # The surface assembly, its own method because an ABC trip said so when
+      # it threaded the run's catalog and slots through here -- which the next
       # panel read as silencing the cop rather than answering it. Naming the pair
       # MOVED that number without clearing it, and the measurements are worth
       # keeping because the next reader will otherwise re-derive them: this
@@ -490,14 +517,14 @@ module Lain
                              **@switchboard.surface_kwargs(conductor: @conductor, tty:))
       end
 
-      # The T21 standing-goal driver (memoized, so the surface and the Repl poll
+      # The standing-goal driver (memoized, so the surface and the Repl poll
       # ONE instance), over the session's live journal -- the null device under
       # --no-journal, the same resolution the Switchboard uses.
       def goal_driver = @goal_driver ||= GoalDriver.new(journal: goal_journal, quiescent: -> { quiescent? })
 
       # Asked INSIDE the memo, not above it: under --no-journal the answer OPENS
       # /dev/null ({Chronicle::Null#record_journal}), so hoisting this out (as it
-      # was until T15's review caught it) leaks one File per extra #goal_driver
+      # was until review caught it) leaks one File per extra #goal_driver
       # call -- opened, discarded unread, never closed. Two readers poll the
       # driver, so that was a real leak, not a hypothetical one.
       def goal_journal = chronicle.record_journal
@@ -505,7 +532,7 @@ module Lain
       # Both OBSERVABLE halves of "do not drive while the fleet is unquiet": a
       # parked approval, and a human question waiting for an answer. The inbox
       # half reads HumanReplies#pending? (built in build_repl before the driver,
-      # so @replies is set by the time a poll can run) -- the T21 review's owed
+      # so @replies is set by the time a poll can run) -- that review's owed
       # completion of the escalated seam, no longer a follow-up.
       def quiescent?
         (approvals.nil? || approvals.each.all?(&:decided?)) && !@replies.pending?

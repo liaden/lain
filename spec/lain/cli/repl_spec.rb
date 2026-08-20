@@ -78,7 +78,7 @@ class AttachedReplies < SimpleDelegator
   def bind_review_editor(_editor) = nil
 end
 
-# A provider with a BUG in it, for T16's "a crash is not a refusal" example. Not
+# A provider with a BUG in it, for the "a crash is not a refusal" example. Not
 # a tool that raises: `Effect::Handler::Live#dispatch` contains those as
 # `Tool::Result.error` (correctness gate 3), so a tool cannot crash an ask by
 # design. The provider is the nearest thing to a real bug that reaches one.
@@ -86,11 +86,21 @@ class ExplodingProvider < Lain::Provider::Mock
   def complete(_request) = raise(TypeError, "genuinely broken")
 end
 
+# An endpoint with nothing behind it, for the headless exit-status examples.
+# What a live run gets is Lain's OWN error -- Provider::Ollama::APIError, rooted
+# at Lain::Error by ErrorWrapping -- which {Lain::CLI::Repl::Ask} deliberately
+# carries out of the ask as a VALUE. So the conversation ends cleanly, the
+# refusal is rendered in one line, and the exit status is the only place the
+# failure can still be read.
+class UnreachableProvider < Lain::Provider::Mock
+  def complete(_request, **) = raise(Lain::Provider::Ollama::APIError, "nothing is listening on 127.0.0.1:11434")
+end
+
 RSpec.describe Lain::CLI::Repl do
-  # The T1 AC round trip: a Provider::Mock, a Channel, and a Frontend::TTY over
+  # The AC round trip: a Provider::Mock, a Channel, and a Frontend::TTY over
   # StringIO stand in for the live edges; the Repl is constructed AND run
   # through Lain::CLI::Wiring#run -- the exe's own assembly path, minus the exe
-  # -- via the injected tty seam (T9: no send(:build_repl), no ivar pokes).
+  # -- via the injected tty seam (no send(:build_repl), no ivar pokes).
   let(:offline_backend_class) do
     Class.new(Lain::CLI::Backend) do
       def initialize(options, mock:)
@@ -112,7 +122,7 @@ RSpec.describe Lain::CLI::Repl do
 
   def run_chat(input, dir:, chronicle: Lain::CLI::Chronicle::Null.new, options: { grace: 5 })
     output = StringIO.new
-    # `**` swallows T13's `prompt_renderer:` -- this spec is about the chat
+    # `**` swallows the `prompt_renderer:` keyword -- this spec is about the chat
     # round trip, and its StringIO input never reaches the composing path.
     tty_factory = lambda do |channel:, **|
       Lain::Frontend::TTY.new(channel:, output:, input: StringIO.new(input),
@@ -123,6 +133,184 @@ RSpec.describe Lain::CLI::Repl do
     wiring.run(backend:, resumed: nil, nvim: nil)
     wiring.conductor.close(reason: :exit)
     output.string
+  end
+
+  # The headless arm. `--non-interactive` is what makes a chat honest about a
+  # machine at the other end: it runs the seeded question and stops, it never
+  # reads a line nobody is there to type, and what it could not finish comes
+  # back as an exit status instead of as a clean 0 over a rendered refusal
+  # (round 7's FG1). `--prompt` is untouched by it -- that flag still seeds and
+  # still continues, which is what the `/btw` child chat depends on.
+  #
+  # Driven through the real Wiring#run, like the round trip below it: the whole
+  # question here is what an assembled chat does with a terminal nobody is at,
+  # and a doubled Repl would answer that by construction.
+  describe "a conversation with no human at the other end" do
+    # Every example leaves a SECOND line sitting in stdin. An attended chat
+    # takes it; a headless one must not, so its absence from the record is what
+    # the reading-again example asserts on. The timeout is the "does not block"
+    # half of the ask_human criterion -- a parked question would hang here
+    # rather than fail.
+    def waiting_terminal(output, dir:)
+      lambda do |channel:, **|
+        Lain::Frontend::TTY.new(channel:, output:, input: StringIO.new("and another thing\n"),
+                                history_path: File.join(dir, "history"))
+      end
+    end
+
+    def run_headless(prompt, dir:, provider: mock_provider)
+      output = StringIO.new
+      headless = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: provider)
+      wiring = Lain::CLI::Wiring.new(options: { grace: 5, prompt:, non_interactive: true },
+                                     chronicle: Lain::CLI::Chronicle::Null.new,
+                                     tty_factory: waiting_terminal(output, dir:),
+                                     status_feed: instance_double(Lain::StatusFeed))
+      Timeout.timeout(20) { wiring.run(backend: headless, resumed: nil, nvim: nil) }
+      wiring.conductor.close(reason: :exit)
+      [wiring, output.string]
+    end
+
+    # Never calls downstream and never sets :response -- the contract breach
+    # {Lain::CLI::Repl#render_missing_response} exists to name.
+    def silent_middleware
+      Lain::Middleware::Stack.new([Class.new(Lain::Middleware::Base) do
+        def call(env, &_app) = env
+      end.new])
+    end
+
+    # A conductor whose prompt never answers ends the loop after one line, the
+    # same way an unattended one does -- so this drives the fault and nothing
+    # else. `attended: false` keeps it honest about which arm is under test.
+    # A command surface that claims nothing, so every line falls through to the
+    # middleware phase -- which is the phase under test.
+    def falls_through
+      Struct.new(:nothing) do
+        def dispatch(_text) = yield
+        def serves_replies?(_text) = false
+      end.new(nil)
+    end
+
+    def repl_over_middleware(middleware, output:, dir:)
+      Lain::CLI::Repl.new(
+        agent: instance_double(Lain::Agent, timeline: nil), middleware:, attended: false,
+        commands: falls_through, chronicle: Lain::CLI::Chronicle::Null.new,
+        tty: Lain::Frontend::TTY.new(channel: Lain::Channel.new, output:, input: StringIO.new,
+                                     history_path: File.join(dir, "history")),
+        replies: instance_double(Lain::CLI::HumanReplies, surfaces: []),
+        conductor: instance_double(Lain::CLI::Conductor, closed?: false)
+      )
+    end
+
+    def stopping_at(stop_reason)
+      Lain::Provider::Mock.new(responses: [
+                                 Lain::Response.new(content: [{ "type" => "text", "text" => "half a sen" }],
+                                                    stop_reason:)
+                               ])
+    end
+
+    # The tool's own answer off the committed timeline, which is where a
+    # refusal the model was shown has to be if it was shown at all.
+    def tool_results(agent)
+      agent.timeline.to_a.map(&:content).grep(Array).flatten.grep(Hash)
+           .select { |block| block["type"] == "tool_result" }.map { |block| block["content"] }.join("\n")
+    end
+
+    it "exits zero when the ask completed" do
+      Dir.mktmpdir do |dir|
+        wiring, output = run_headless("hello?", dir:)
+
+        expect(output).to include("hello from the mock")
+        expect(wiring.exit_status).to eq(0)
+      end
+    end
+
+    it "reads no second line: the question it was given is the whole conversation" do
+      Dir.mktmpdir do |dir|
+        run_headless("hello?", dir:)
+
+        expect(mock_provider.call_count).to eq(1)
+      end
+    end
+
+    it "reports a turn that could not finish in the exit status" do
+      Dir.mktmpdir do |dir|
+        wiring, output = run_headless("hello?", dir:, provider: UnreachableProvider.new)
+
+        expect(output).to include("nothing is listening")
+        expect(wiring.exit_status).not_to eq(0)
+      end
+    end
+
+    # A refusal is the obvious torn turn and not the only one. These two render
+    # text -- an attended human SEES the half-sentence and the decline -- so
+    # they used to exit 0 and tell a script the run was clean, which is the one
+    # thing this flag exists to stop. The rules live on {Repl::Outcome} and are
+    # spec'd exhaustively there; these two go through the real Wiring, because
+    # a rule nothing consults is worth nothing.
+    it "reports an answer cut off at max_tokens, though the words reached the terminal" do
+      Dir.mktmpdir do |dir|
+        wiring, output = run_headless("hello?", dir:, provider: stopping_at(:max_tokens))
+
+        expect(output).to include("half a sen")
+        expect(wiring.exit_status).not_to eq(0)
+      end
+    end
+
+    it "reports the model refusing" do
+      Dir.mktmpdir do |dir|
+        wiring, = run_headless("hello?", dir:, provider: stopping_at(:refusal))
+
+        expect(wiring.exit_status).not_to eq(0)
+      end
+    end
+
+    # The third torn shape, and the only one with no VALUE to describe it: a
+    # middleware that short-circuits without setting :response. repl.rb calls
+    # that a bug in its own words and renders it loudly -- so it must not also
+    # report a clean run. Built directly rather than through Wiring because the
+    # repl phase is assembled from the command surface there, and this fault is
+    # a middleware's, not a command's.
+    it "reports a middleware that broke its own contract, which it already names loudly" do
+      Dir.mktmpdir do |dir|
+        output = StringIO.new
+        repl = repl_over_middleware(silent_middleware, output:, dir:)
+
+        repl.converse(first_prompt: "hello?")
+
+        expect(output.string).to include("short-circuited without setting :response")
+        expect(repl.exit_status).not_to eq(0)
+      end
+    end
+
+    describe "when the model asks the human anyway" do
+      let(:asking_provider) do
+        Lain::Provider::Mock.new(responses: [
+                                   Lain::Response.new(
+                                     content: [{ "type" => "tool_use", "id" => "tu_ask", "name" => "ask_human",
+                                                 "input" => { "question" => "which branch?" } }],
+                                     stop_reason: :tool_use
+                                   ),
+                                   Lain::Response.new(content: [{ "type" => "text", "text" => "settled alone" }],
+                                                      stop_reason: :end_turn)
+                                 ])
+      end
+
+      it "refuses by name rather than parking on a reply nobody will type" do
+        Dir.mktmpdir do |dir|
+          wiring, = run_headless("ask me something", dir:, provider: asking_provider)
+
+          expect(tool_results(wiring.command_env.agent)).to include("ask_human", "no human")
+        end
+      end
+
+      it "lets the turn carry on to its own conclusion" do
+        Dir.mktmpdir do |dir|
+          _wiring, output = run_headless("ask me something", dir:, provider: asking_provider)
+
+          expect(output).to include("settled alone")
+        end
+      end
+    end
   end
 
   it "settles one converse round-trip built through Wiring, and the journal records it" do
@@ -144,7 +332,7 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
-  # T31a: the ONE line in any process that puts an editor's review rig within a
+  # The ONE line in any process that puts an editor's review rig within a
   # tool's reach. Everything downstream of it -- the changeset drawn in nvim, the
   # sidebar gestures, the verdict a `:w` writes -- is unreachable without it, and
   # nothing else in the suite runs `Repl#run` with an editor attached at all.
@@ -245,7 +433,7 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
-  # T9: what a command may hand the Repl back. A String stays a first-class
+  # What a command may hand the Repl back. A String stays a first-class
   # return forever; a {Lain::Renderable} is the second, structured one. Driven
   # through the PUBLIC #converse (a conductor whose next read is nil ends the
   # loop), never a send(:settle_command) -- the same no-ivar-pokes discipline
@@ -262,14 +450,14 @@ RSpec.describe Lain::CLI::Repl do
     end
 
     def settle(outcome, tty:)
-      # The command surface's duck is two messages now (T1): the Repl asks
+      # The command surface's duck is two messages now: the Repl asks
       # whether the LINE is itself a reply surface before it brackets it.
       commands = Struct.new(:outcome) do
         def dispatch(_text) = outcome
         def serves_replies?(_text) = false
       end.new(outcome)
       # `surfaces: []` because the reply surfaces are bracketed around the whole
-      # DISPATCHED LINE now (T1), not around the ask -- so a command that never
+      # DISPATCHED LINE now, not around the ask -- so a command that never
       # reaches #respond still asks this collaborator for them.
       Lain::CLI::Repl.new(agent: instance_double(Lain::Agent, timeline: nil), tty:,
                           replies: instance_double(Lain::CLI::HumanReplies, surfaces: []), commands:,
@@ -324,7 +512,7 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
-  # T33: the editor's gesture rail is consumed for the SESSION, not for one ask.
+  # The editor's gesture rail is consumed for the SESSION, not for one ask.
   # A code review is a long stretch of reading and marking with no model turns
   # in it at all, and the sidebar deliberately draws no glyph for a mark
   # ({Lain::Review::Surface::Neovim}'s class doc says why it cannot) -- so the
@@ -355,7 +543,7 @@ RSpec.describe Lain::CLI::Repl do
     # reactor is a second lifetime {Repl::ConversationScope} opens beside it.
     # The double once stood in for a real gap: {Lain::Supervisor::Null} answered
     # neither `run` nor `stop`, so {Repl}'s own default could not survive the
-    # conversation's first line. It answers both since T35, and the last example
+    # conversation's first line. It answers both now, and the last example
     # in this group drives that default instead of this double.
     let(:supervisor) { instance_double(Lain::Supervisor, run: nil, stop: nil) }
 
@@ -475,7 +663,7 @@ RSpec.describe Lain::CLI::Repl do
       end
     end
 
-    # T35, and the only example in the file that omits `supervisor:`. A default
+    # The only example in the file that omits `supervisor:`. A default
     # nothing ever exercises is a default nobody knows is broken: this one was,
     # for as long as {Lain::Supervisor::Null} answered five of the duck's seven
     # messages, and it stayed invisible because {CLI::Wiring} passes a real
@@ -497,7 +685,7 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
-  # T16, manual-QA round 4's F22. A budget ceiling is the HARNESS deciding to
+  # Manual-QA round 4's F22. A budget ceiling is the HARNESS deciding to
   # halt ({Agent::Budget}'s class doc), and {Repl#respond} already renders it as
   # the one line a human needs: `error: loop ran 2 iterations, ceiling is 2`.
   # What the human actually met was that line preceded by
@@ -531,7 +719,7 @@ RSpec.describe Lain::CLI::Repl do
     let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
 
     # The ceiling that stops one ask driven into a tool loop -- the
-    # reproduction T14 left standing, since the ceiling now bounds one ask.
+    # reproduction an earlier card left standing, since the ceiling now bounds one ask.
     let(:ceiling) { Lain::Agent::Budget.new(max_iterations: 2) }
     let(:looping_thrice) { [looping] * 3 }
 
@@ -656,7 +844,7 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
-  # T1: the reply surfaces' lifetime is one DISPATCHED LINE, not one ask.
+  # The reply surfaces' lifetime is one DISPATCHED LINE, not one ask.
   # A human question can now be raised from a frame {Repl#respond} never enters
   # -- a registered command runs lib-side with zero model turns, and a
   # `@role[/skill]` line folds a whole subagent run into the repl phase's short
@@ -791,7 +979,7 @@ RSpec.describe Lain::CLI::Repl do
       expect(output.string).not_to include("human> ")
     end
 
-    # T1 review, BLOCKER 2 (probe 1). The fleet outlives any one ask (OM-6), so a
+    # Review BLOCKER 2 (probe 1). The fleet outlives any one ask (OM-6), so a
     # background subagent can enqueue while the human runs a SHORT command line
     # -- `/help`, `/status`, `/models`. The reply loop is live for that line: it
     # dequeues, renders the note, and parks on a read nobody is looking at. The
@@ -817,7 +1005,7 @@ RSpec.describe Lain::CLI::Repl do
       expect(replies.pending?).to be(true)
     end
 
-    # T1 review round 2. The re-queue keeps it reachable, which is right -- but
+    # Review round 2. The re-queue keeps it reachable, which is right -- but
     # every later line re-opens a loop that dequeues it at once. An ARRIVAL note
     # says "this just arrived", and on the third `/fast` line that is simply
     # false; worse, the read it opens is torn down before a human could type into
@@ -834,7 +1022,7 @@ RSpec.describe Lain::CLI::Repl do
       expect(output.string.scan("which file").size).to eq(1)
     end
 
-    # T1 review, BLOCKER 1 (probe 2c). `/inbox` is a REGISTERED command, so the
+    # Review BLOCKER 1 (probe 2c). `/inbox` is a REGISTERED command, so the
     # widening puts it inside the bracket -- and `Async::Queue#dequeue` on a
     # non-empty queue returns WITHOUT suspending, so the reply loop takes the
     # head item and opens a `human> ` read while `drain_at_prompt` opens a SECOND
@@ -875,7 +1063,7 @@ RSpec.describe Lain::CLI::Repl do
         expect(output.string).to include("which file")
       end
 
-      # T1 review round 2, BLOCKER A. The APPROVAL watcher is a different QUEUE
+      # Review round 2, BLOCKER A. The APPROVAL watcher is a different QUEUE
       # and NOT a different terminal: {Repl::ApprovalSurfaces#approval_surface}
       # reads through `conductor.read_reply(tty, prompt)`, byte-for-byte the
       # stdin the drain is parked on. An adopted actor can park a tier-3 call at

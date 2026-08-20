@@ -576,7 +576,7 @@ class LainCLI < Thor
   # already owns the whole resolution ({Lain::CLI::Backend}), so this band and
   # that object have the same boundary.
   #
-  # Extracted by T27, and by the same pressure that produced {CompactionFlags}:
+  # Extracted by the same pressure that produced {CompactionFlags}:
   # this class reached its Metrics/ClassLength budget, and the rule is extract,
   # never loosen. A nested module's body does not count toward the enclosing
   # class's length, so a band moved here is a band the exe stops paying for.
@@ -749,6 +749,40 @@ class LainCLI < Thor
     end
   end
 
+  # WHAT this chat is asked, and whether anyone is there to be asked back --
+  # two flags naming one idea, so a declarer of their own on {SurfaceFlags}'
+  # rule (the second one pushed the Thor class past Metrics/ClassLength, and
+  # the rule is extract, never loosen).
+  #
+  # They are ORTHOGONAL and the pairing is not a coupling: `--prompt` alone
+  # seeds a chat that then reads the terminal exactly as an unseeded one does,
+  # which is what the `/btw` child is built on, and its exit status is
+  # deliberately unchanged. `--non-interactive` is what says nobody will type
+  # the next line -- so it NEEDS a seeded question ({CLI::ChatLaunch} refuses
+  # the pair up front) and, having no human, it denies every gated call,
+  # refuses `ask_human` by name, and finally makes the process exit status mean
+  # something.
+  module AskingFlags
+    # The description is data, not computation, and hoisting it out of the
+    # method is what keeps the paragraph an operator needs from arguing with
+    # Metrics/MethodLength -- {Lain::Tools::AskHuman::DESCRIPTION}'s idiom, for
+    # the same reason.
+    HEADLESS = "Run --prompt's question and stop, reading nothing from the terminal: gated tool calls " \
+               "are denied and ask_human refuses by name (no human is attached to answer either), and " \
+               "the process exits non-zero when a turn could not finish. Needs --prompt. Run it " \
+               "DIRECTLY, not through `lain up` -- that puts the chat in a tmux pane whose exit status " \
+               "nothing reads, which is the whole of what this flag adds"
+
+    # @param thor [Class] the Thor class to declare on
+    # @return [void]
+    def self.declare(thor)
+      thor.method_option :prompt, type: :string,
+                                  desc: "Seed the first question (the /btw child's side-question); the chat " \
+                                        "then reads the terminal as usual"
+      thor.method_option :non_interactive, type: :boolean, default: false, desc: HEADLESS
+    end
+  end
+
   # The opt-in surfaces that answer a PARKED approval ahead of the human, both
   # of them meta-agents racing the person the queue is already asking. Grouped
   # into a declarer of their own on {ModelFlags}' rule -- the second one pushed
@@ -789,9 +823,7 @@ class LainCLI < Thor
                        desc: "Fork a recorded session at <session>@<digest-prefix>; the parent is opened read-only"
   method_option :btw, type: :boolean, default: false,
                       desc: "Ephemeral session (<ts>-<pid>.btw.ndjson), reaped on clean exit unless promoted"
-  method_option :prompt, type: :string,
-                         desc: "Seed the first question (the /btw child's side-question); the chat then reads " \
-                               "the terminal as usual"
+  AskingFlags.declare(self)
   SurfaceFlags.declare(self)
   method_option :nvim, type: :string,
                        desc: "Attach a Neovim frontend to this --listen socket (live lain:// views)"
@@ -840,8 +872,16 @@ class LainCLI < Thor
   # conversation, always close -- refusal-before-journal ordering included)
   # lives in Lain::CLI::ChatLaunch, where it carries specs; this method stays
   # the flag-parse + error-mapping shell, `say` the one output seam lent in.
+  # `--non-interactive` is the ONLY chat that owns a process exit status, and
+  # the `if` is the whole of that restraint: an attended chat, and a `--prompt`
+  # chat, still exit 0 whatever the conversation reached, because a human read
+  # the refusal on their own screen and the status is nobody's signal. A
+  # scripted one has no such reader, so the status is the only place a torn
+  # turn can still be seen.
   def chat
-    Lain::CLI::ChatLaunch.new(options, **project_override).call { |notice| say notice }
+    launch = Lain::CLI::ChatLaunch.new(options, **project_override)
+    launch.call { |notice| say notice }
+    exit launch.exit_status if options[:non_interactive]
   rescue Lain::Error => e
     raise Thor::Error, e.message
   end

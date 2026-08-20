@@ -171,6 +171,40 @@ RSpec.describe "lain chat's flag surface" do
     end
   end
 
+  # The exe's half of the headless arm: `chat` has never owned a process exit
+  # status, and exactly one flag changes that. Driven through the Thor command
+  # OBJECT rather than `.start`, so the only SystemExit an example can see is
+  # the one under test -- Thor's own refusal path exits too, and a stray one
+  # would truncate this file while still reporting a clean pass.
+  describe "--non-interactive and the process exit status" do
+    let(:launch) { instance_double(Lain::CLI::ChatLaunch, exit_status: 3) }
+
+    before do
+      allow(launch).to receive(:call)
+      allow(Lain::CLI::ChatLaunch).to receive(:new).and_return(launch)
+    end
+
+    it "is declared, so the flag the launch reads is a flag an operator can type" do
+      expect(parse("--non-interactive")[:non_interactive]).to be(true)
+    end
+
+    it "is off unless it is asked for" do
+      expect(parse[:non_interactive]).to be(false)
+    end
+
+    it "exits with whatever the conversation reached" do
+      expect { LainCLI.new([], { non_interactive: true, prompt: "why is it red?" }).chat }
+        .to raise_error(SystemExit) { |exit| expect(exit.status).to eq(3) }
+    end
+
+    # The escalation this card was told to hold: `--prompt` seeds and continues,
+    # and its exit status is not this flag's to change -- the `/btw` child chat
+    # depends on both.
+    it "leaves a plain --prompt chat exiting as it always has" do
+      expect { LainCLI.new([], { prompt: "why is it red?" }).chat }.not_to raise_error
+    end
+  end
+
   describe "--isolation" do
     it "defaults to the resolver's own DEFAULT rather than a second copy of it" do
       expect(parse[:isolation]).to eq(Lain::CLI::IsolationBackend::DEFAULT)
@@ -343,7 +377,7 @@ RSpec.describe "lain chat's flag surface" do
     end
   end
 
-  # T11. The sampler set is read DYNAMICALLY (see DYNAMIC above), so this
+  # The sampler set is read DYNAMICALLY (see DYNAMIC above), so this
   # file's read-implies-declared guard is blind to these two by construction --
   # it can only see literal keys. That blind spot is exactly why the wiring
   # needs an assertion of its own: without these declarations `--num-batch` is

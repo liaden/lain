@@ -9,7 +9,7 @@ class ToolsetBuildChronicle < Lain::CLI::Chronicle::Null
 end
 
 # The capability half of the chat assembly, extracted from {Lain::CLI::Wiring}
-# (T1 review, Fix 4) once that class hit its ClassLength budget with two more
+# (a review fix) once that class hit its ClassLength budget with two more
 # cards queued against it. Driven here as the standalone object the extraction
 # claims it is: a real Backend, a real recorder, no Wiring anywhere.
 RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
@@ -28,7 +28,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   let(:provider) { backend.provider(spool: chronicle.spool) }
   let(:parent) { -> { Lain::Timeline.new } }
 
-  # The session's ONE library, injected -- what T40 replaced the `catalog:`
+  # The session's ONE library, injected -- what {Skill::Library} replaced the `catalog:`
   # keyword and the `backend.slots` reach-through with. The live path hands in
   # the Backend's, which is where the run's single load lives.
   let(:library) { backend.library }
@@ -39,7 +39,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   let(:epic) { Lain::CLI::EpicMount::NoEpic }
 
   # The run's real switches, not a double: `/mode` and `/yolo` write these, and
-  # the whole T11 claim is that a child reads them LIVE. A stub with a fixed
+  # the whole claim is that a child reads them LIVE. A stub with a fixed
   # posture would pass whether or not the read is live, which is the one thing
   # worth asserting here.
   # Its own journal, not this file's `RecordingChannel`: a switch flip goes
@@ -49,7 +49,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   # base would raise {Toolset::UnknownTool} on the flip rather than attenuate.
   #
   # `sensitivity:` is a REAL policy gating a real path, for the same reason the
-  # switches are real: the T11 claim about that third axis is that whatever the
+  # switches are real: the claim about that third axis is that whatever the
   # board holds is what a child consults, and the Null default would make every
   # identity assertion below pass against a build that forgot the axis entirely
   # -- both sides would be the one shared Null.
@@ -79,7 +79,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # not inherit the seam that asks the human a question, nor the one that
     # renders a skill back into a conversation that is not the child's.
     #
-    # Read through {Lain::Tools::Subagent#attenuates_from} (T23), not through the
+    # Read through {Lain::Tools::Subagent#attenuates_from}, not through the
     # two-deep `@builder` / `@toolset` reach-through this used to use: that pinned
     # the {ChildBuilder} extraction's private shape, so the extraction could not
     # be reshaped without touching a spec about capability layering.
@@ -96,7 +96,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(inherited).not_to include("ask_human", "run_skill", "subagent")
     end
 
-    # T27: a chat outside an epic offers no review tool at all, and the way it
+    # A chat outside an epic offers no review tool at all, and the way it
     # says so is an empty collection rather than a nil this build has to test
     # for. `include` on its own would be vacuous here, so the floor is pinned
     # too: the set must be the ordinary one, minus nothing.
@@ -133,11 +133,11 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
-    # T23: the six collaborators BOTH child seams attenuate over are one value,
+    # The six collaborators BOTH child seams attenuate over are one value,
     # built once. The identity is what makes "adding a seam member is a one-place
     # change" checkable -- two seams cannot drift when there is only one object.
     #
-    # T9 made the chat's own subagent a `with` COPY differing in exactly one
+    # The chat's own subagent became a `with` COPY differing in exactly one
     # member: its gate policy names the actor a human is TOLD is asking, and the
     # researcher is not every role. The no-drift property the object identity
     # stood in for is unharmed -- `with` copies rather than constructs, so a new
@@ -178,10 +178,10 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         .to eq(["qwen3:4b", 64, library.slots.render])
     end
 
-    # T15: run_skill's renderer used to call ReplMiddleware.renderer with NO
+    # run_skill's renderer used to call ReplMiddleware.renderer with NO
     # arguments, which loaded a catalog AND a slots of its own off `Dir.pwd`.
     # The comment above it claimed "loaded once from the project root"; it was
-    # the third Slots of the session. T40 made the pair ONE injected library, so
+    # the third Slots of the session. {Skill::Library} made the pair ONE injected library, so
     # this object no longer reaches through the Backend for the other half.
     it "renders run_skill through the injected library's catalog and slots" do
       toolset = toolset_build.build(recorder, ask_human:)
@@ -197,11 +197,11 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(toolset_build.role_spawn.instance_variable_get(:@slots)).to be(library.slots)
     end
 
-    # T11: the two axes the session's posture governs reach a child through the
+    # The two axes the session's posture governs reach a child through the
     # ONE spawn seam, read LIVE off the run's switches.
     describe "the session posture the children inherit" do
       # A THUNK, exactly as `wiring.rb` passes one: the board requires the
-      # session's base `toolset:` (T10) and that toolset is what #build
+      # session's base `toolset:` and that toolset is what #build
       # RETURNS, so a board cannot exist when this seam is constructed. Both
       # axes are therefore delegators that read through it at call time.
       subject(:toolset_build) { build_with(options, switchboard: -> { switchboard }) }
@@ -223,7 +223,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
       def reads(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
 
-      # T11's third axis, and the privilege-inversion guard. Asserted by
+      # The third axis, and the privilege-inversion guard. Asserted by
       # IDENTITY rather than by agreement on a sample: two independently built
       # policies over the same rules answer the same way today and drift the
       # moment a project config differs, so "the child gates what the parent
@@ -244,7 +244,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       # `gates?` must reach that policy, not a Null it was quietly built with.
       # The parent's own gate is driven beside it, over the same effect, so the
       # claim is a comparison rather than two separate readings.
-      # `#gate` returns T12's denial handler with the Gate one step in, so the
+      # `#gate` returns the path-denial handler with the Gate one step in, so the
       # GATING axis is read off that Gate: the outer handler answers the
       # denial question, and `.env` is gated rather than denied.
       it "gates a child's read of .env exactly as the parent's own gate does" do
@@ -257,6 +257,58 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
         expect(child_sensitivity.gates?(reads("README.md"))).to be(false)
         expect(parent_gate.handles?(reads("README.md"))).to be(false)
+      end
+
+      # The sentence a refused call is REPORTED as travels the same thunk, for
+      # the same privilege-inversion reason one axis over: a child gated by its
+      # parent's policy but told its parent's OLD words is a child that reads
+      # "approval denied" -- a human's no, which invites a retry -- in a session
+      # started with --non-interactive, where nobody can ever answer. It would
+      # retry for the life of the run.
+      describe "what a child is told when its gate refuses" do
+        # The sentence a child's OWN seam carries, read the way its chain reads
+        # it. A REAL inner, because Gate reads the tier off whatever its inner
+        # resolves the name to -- over a Mock, `bash` resolves to nothing and
+        # the call is never gated at all. DenyAll means it is never run.
+        def child_refusal(board)
+          Lain::Effect::Handler::Gate.new(policy: Lain::Effect::Handler::Gate::DenyAll.new,
+                                          denial: child_seam(board).denial.call,
+                                          inner: Lain::Effect::Handler::Live.new(toolset: board.toolset.current))
+                                     .call(runs_ls, Lain::Session.new).content
+        end
+
+        def child_seam(board)
+          build = build_with(options, switchboard: -> { board })
+          build.build(recorder, ask_human:)
+          build.role_spawn.seam
+        end
+
+        def runs_ls
+          Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" })
+        end
+
+        let(:headless) do
+          Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), yolo: false, model: "test-model",
+                                     attended: false, sensitivity:,
+                                     toolset: Lain::Toolset.new(ToolRegistry.names.map { |n| ToolRegistry.build(n) }))
+        end
+
+        it "reads its parent's unattended words, not a human's no" do
+          told = child_refusal(headless)
+
+          expect(told).to include("no approval is possible", "--non-interactive")
+          expect(told).not_to include("approval denied")
+        end
+
+        it "is told, as its parent is, that retrying cannot help" do
+          expect(child_refusal(headless)).to include("retrying will fail the same way")
+        end
+
+        # The byte-identity that must not move: an attended run's child keeps
+        # the sentence this handler has produced since before the flag existed.
+        it "keeps the generic sentence for an attended session" do
+          expect(child_refusal(switchboard)).to eq(%(approval denied for tool "bash"))
+        end
       end
 
       # The two properties the THUNK exists for, driven directly on the
@@ -364,7 +416,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
           expect(rendered).to include("read_file", "grep")
         end
 
-        # T10: the capability this chunk grants, end to end through the
+        # The capability this seam grants, end to end through the
         # assembly the exe runs. `:dev`'s `only`-set never names ask_human
         # (`role/catalog.rb:22`) and neither does the capability floor a child
         # attenuates from, so the tool can only be there because the SPAWN
@@ -389,7 +441,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
-    # T10: who a child asks the human THROUGH. The run has ONE
+    # Who a child asks the human THROUGH. The run has ONE
     # {Wiring::Askers} -- one queue the human drains, one directory an answer
     # is routed back through -- and it reaches a child on the spawn seam, for
     # `provider:`'s exact reason: a second one built down there would be a
@@ -557,7 +609,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(toolset_build.docent.instance_variable_get(:@spawn)).to be(toolset_build.role_spawn)
     end
 
-    # T12's invariant, now assertable directly: the third approval surface
+    # The secret-surface invariant, now assertable directly: the third approval surface
     # folds through the SAME seam a `@role/skill` line does.
     it "wires an AutoSurface over its own role_spawn seam under --auto-approve" do
       build = build_with({ auto_approve: true })

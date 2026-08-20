@@ -45,6 +45,47 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
+  # `--non-interactive` is the only chat that OWNS a process exit status, and
+  # this object is where the conversation's answer becomes one. Everything else
+  # -- a pre-flight, an attended chat -- keeps the exit 0 it has always had.
+  describe "#exit_status" do
+    it "answers zero when no conversation was ever wired" do
+      expect(launch.exit_status).to eq(0)
+    end
+
+    it "answers whatever the conversation reached, once one has run" do
+      wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 1)
+      allow(wiring).to receive(:run)
+      instance = launch({ journal: false }, wiring_factory: ->(**) { wiring })
+
+      instance.call { |_notice| nil }
+
+      expect(instance.exit_status).to eq(1)
+    end
+  end
+
+  describe "--non-interactive" do
+    # A headless chat with nothing seeded would sit on a terminal read forever,
+    # which is exactly the hang the flag exists to remove -- so the combination
+    # is refused before anything opens, on the resume rule's reasoning: a
+    # refusal must never orphan a fresh journal.
+    it "is refused with no --prompt to run, before any journal is opened" do
+      chronicle_factory = spy("chronicle_factory")
+      instance = launch({ non_interactive: true, journal: true, provider: "ollama" }, chronicle_factory:)
+
+      expect { instance.call { |_notice| nil } }.to raise_error(Lain::Error, /--non-interactive needs --prompt/)
+      expect(chronicle_factory).not_to have_received(:call)
+    end
+
+    it "leaves --prompt on its own alone: that chat still seeds and carries on" do
+      wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+      allow(wiring).to receive(:run)
+
+      expect { launch({ journal: false, prompt: "why is it red?" }, wiring_factory: ->(**) { wiring }).call { nil } }
+        .not_to raise_error
+    end
+  end
+
   describe "the ensure-close bracket" do
     let(:conductor) { instance_spy(Lain::CLI::Conductor) }
     let(:wiring) { instance_double(Lain::CLI::Wiring, conductor:).tap { |double| allow(double).to receive(:run) } }
@@ -225,7 +266,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
-  # T7: elapsed/idle/since_compaction are published by the StatusFeed but
+  # elapsed/idle/since_compaction are published by the StatusFeed but
   # WRITTEN elsewhere -- Conductor#read_prompt records input on the clock, the
   # tee's Telemetry::Compaction moves it. Two RunClocks would publish an idle
   # that never resets, so the run builds exactly one and both halves get it.
@@ -252,7 +293,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
-  # T10: the run's ONE window book, built from what the provider says it is
+  # The run's ONE window book, built from what the provider says it is
   # SERVING rather than from {ContextWindow}'s conservative fallback. The
   # launcher is where the capability becomes live -- a book nothing constructs
   # on the real path is a capability that stayed dormant, which is what the POC
@@ -298,7 +339,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
       expect(seen.last).to be(instance.backend.context_window)
     end
 
-    # T11's flag, and T9's `min` constraint, met on the real launch path: the
+    # The flag and the `min` constraint, met on the real launch path: the
     # runner resident at 32,768 is reloaded at 16,384 by the very next request.
     it "lets an explicit --num-ctx outrank the window the server currently reports" do
       serving(32_768)
@@ -324,7 +365,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
   end
 
-  # T5: the run's ONE {Lain::Project}, resolved here -- the point above both
+  # The run's ONE {Lain::Project}, resolved here -- the point above both
   # the chronicle and the wiring -- and threaded down, exactly as the RunClock
   # and the StatusFeed above are. Five collaborators read a root off it, and
   # two resolutions could hand them two different projects.
@@ -401,7 +442,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
 end
 
 RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
-  # T10: a launch on `--provider ollama` asks its server which window it is
+  # A launch on `--provider ollama` asks its server which window it is
   # serving before the status feed is built. Nothing here is about that number.
   before do
     stub_request(:get, %r{/api/ps})
@@ -409,7 +450,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
                  body: JSON.generate("models" => []))
   end
 
-  # --fork routes through Resume#fork (read-only parent, T3) and, like
+  # --fork routes through Resume#fork (read-only parent) and, like
   # --resume, must refuse BEFORE any journal opens; --btw threads to
   # Chronicle.for so the journal is born ephemeral.
   it "routes --fork through the resolver's fork method, winning over --resume" do
@@ -440,7 +481,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
   end
 end
 
-# T9: the construction-only run `lain up` asks for before it creates a tmux
+# The construction-only run `lain up` asks for before it creates a tmux
 # session. A refusal a chat raises at construction -- a missing API key, a bad
 # --num-ctx, an unknown --compact-strategy -- used to reach the operator only
 # from inside a dying pane, where tmux's dead-pane banner eats its first line
@@ -525,6 +566,13 @@ RSpec.describe Lain::CLI::ChatLaunch, "the construction-only pre-flight" do
     it "refuses --windows without --journal" do
       expect { preflighting(offline(windows: true, journal: false)) }
         .to raise_error(Lain::Error, /--windows needs the session journal/)
+    end
+
+    # The pre-flight refuses a SUBSET of what chat refuses, so a refusal chat
+    # makes has to be here too or `lain up` loses it into the dead pane.
+    it "refuses --non-interactive with nothing to ask" do
+      expect { preflighting(offline(non_interactive: true)) }
+        .to raise_error(Lain::Error, /--non-interactive needs --prompt/)
     end
 
     it "refuses a missing ANTHROPIC_API_KEY by name" do

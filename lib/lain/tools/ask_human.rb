@@ -236,12 +236,12 @@ module Lain
       # {#summary} is the other rendering: one clamped line, and what every
       # ONE-LINE surface shows -- the event body's `"question"` key (which is
       # what {Frontend::Neovim::InboxView} reads, and its `sender  age  text`
-      # row is pinned), and, since T14, the TTY's arrival note and `/inbox`
+      # row is pinned), and the TTY's arrival note and `/inbox`
       # row too. Those two read the summary rather than the bytes because a
       # lone question's body is exactly where the bytes are not one line: the
       # verbatim body belongs in the DOCUMENT the drain prints beneath the
       # row, not in the row. That last clause is now the TTY drain's alone: since
-      # T12 lain://inbox still SHOWS this summary on the one line it keeps open at
+      # lain://inbox still SHOWS this summary on the one line it keeps open at
       # rest, but folds the verbatim body under it, read off this event body's own
       # `"questions"` rather than off either rendering derived here
       # ({Frontend::Neovim::InboxView::Row}). Clamped rather than refused, unlike
@@ -366,7 +366,7 @@ module Lain
       # the corresponding half happens.
       attr_reader :name, :last_question, :last_answer
 
-      # `observer` rides the ChainWriter this tool builds (T13): Q and A are
+      # `observer` rides the ChainWriter this tool builds: Q and A are
       # exactly the events a Timeline walk can never find, so the session
       # scribe attaches here or not at all. Null default, same as Lineage's --
       # nothing about the unobserved path changes.
@@ -446,7 +446,7 @@ module Lain
       # "whichever set was asked last".
       #
       # `digest` is REQUIRED, and the default it replaced was the transitional
-      # one T7 left for its callers to convert (T11 converted them). The
+      # one an earlier card left for its callers to convert, since converted. The
       # default answered "which set is outstanding", which is a different
       # question from "which set was this answer written for": withdraw a set
       # (a stopped run, see {#awaited}), ask another, and an answer typed for
@@ -625,3 +625,4 @@ end
 # Requires).
 require_relative "ask_human/directory"
 require_relative "ask_human/notifying"
+require_relative "ask_human/unattended"

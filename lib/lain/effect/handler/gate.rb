@@ -48,6 +48,11 @@ module Lain
           def call(_effect, _context) = false
         end
 
+        # What a refused call is reported as when nothing more specific was
+        # wired. Byte-for-byte the sentence this handler has always produced,
+        # so a session that says nothing about itself reads exactly as before.
+        DENIAL = "approval denied for tool %<name>s"
+
         # @param policy [#call] `(effect, context) -> Boolean`, the approval
         #   decision; receives the inner ToolCall even when wrapped in an Approval
         # @param inner [Lain::Effect::Handler, nil] performs the effect once
@@ -61,14 +66,27 @@ module Lain
         #   defers the same way.
         #
         #   ROOT-QUALIFIED, and it has to be: {Effect::Handler::Sensitivity}
-        #   (T12) is a sibling under this very namespace, so a bare
+        #   is a sibling under this very namespace, so a bare
         #   `Sensitivity` resolves through `Module.nesting` to the HANDLER and
         #   this expression dies on `Handler::Sensitivity::Policy`. It failed
         #   only when a caller omitted `sensitivity:`, which is most of them.
-        def initialize(policy: DenyAll.new, inner: nil, sensitivity: Lain::Sensitivity::Policy::Null.instance)
+        #
+        # @param denial [String] the sentence a refused call is reported as,
+        #   with `%<name>s` standing in for the tool. Injected rather than
+        #   fixed because the DEFAULT one is only honest when a human was
+        #   actually asked and said no -- which reads to a model as a decision
+        #   that could go the other way, so it tries again. A session where
+        #   nobody was asked, and nobody can be, has to say so or it invites
+        #   exactly that retry (see {CLI::Switchboard#denial} for the one
+        #   caller that overrides it). The reason cannot travel on the policy:
+        #   the policy duck answers a Boolean, and a Boolean has no room for a
+        #   why.
+        def initialize(policy: DenyAll.new, inner: nil, sensitivity: Lain::Sensitivity::Policy::Null.instance,
+                       denial: DENIAL)
           super(inner:)
           @policy = policy
           @sensitivity = sensitivity
+          @denial = denial
         end
 
         def handles?(effect) = effect.approval? || gated_tool_call?(effect)
@@ -81,7 +99,7 @@ module Lain
 
           # Correctness gate 3's analog for approval: a denial is reported, never
           # raised, so the loop continues instead of wedging on a refused call.
-          Tool::Result.error("approval denied for tool #{inner_effect.name.inspect}")
+          Tool::Result.error(format(@denial, name: inner_effect.name.inspect))
         end
 
         private

@@ -11,7 +11,7 @@ module Lain
       # identically at every call is state an object is missing, not
       # arguments. It is injected once, here, and the seam methods read it.
       #
-      # T23 took the argument one step further, where it had always pointed: the
+      # A later card took the argument one step further, where it had always pointed: the
       # six a child spawn is built over used to be assembled into a Hash by a
       # private `#child_seam_kwargs` and splatted into both child seams. They are
       # now one {Lain::Tools::Subagent::Seam}, built in the constructor, which is
@@ -29,7 +29,7 @@ module Lain
       # child must not render a skill scaffold back into a conversation that is
       # not the one the human is having, and {Tools::RequestReview} PARKS
       # holding an artifact's baton, which belongs to the epic the human is
-      # watching. `ask_human` was on that list for a third reason, and T10
+      # watching. `ask_human` was on that list for a third reason, and the {Askers}
       # reversed it: a child may now ask the human. What it must not inherit is
       # the PARENT's asker -- whose questions would be attributed to the
       # parent's chain and whose promise the parent's {AskHuman::Outstanding}
@@ -47,7 +47,7 @@ module Lain
         #
         # {Tools::Subagent::Seam} is a frozen `Data` built ONCE, here, and the
         # run's {Switchboard} does not exist yet when it is built: the board
-        # requires the session's base `toolset:` (T10), and that toolset is what
+        # requires the session's base `toolset:`, and that toolset is what
         # {#build} RETURNS. Asking for the board here is a construction cycle,
         # not an argument that was forgotten. So the board arrives as a thunk
         # read at call time, and each axis reads its own switch through it.
@@ -91,7 +91,7 @@ module Lain
         # parent's.
         #
         # It is also the one object on a child's gate path that knows WHICH
-        # child it is gating, so it is where the requester is bound (T9): the
+        # child it is gating, so it is where the requester is bound: the
         # board, the switch and the ladder are all session-wide and cannot tell
         # a fleet apart. The name rides the context
         # ({Approval::PolicySwitch::Requested}) rather than a new parameter,
@@ -132,7 +132,7 @@ module Lain
 
         # The board a directly-constructed build runs under: children are
         # ungated and unattenuated, byte-for-byte what every spawn did before
-        # T11 gated them.
+        # children were first gated.
         #
         # This is for the direct-construction seams the specs drive, and it is
         # NOT a sanctioned production state: the exe always passes a thunk over
@@ -147,6 +147,12 @@ module Lain
           def policy_switch = Lain::Tools::Subagent::UNGATED
           def mode_switch = UNSWITCHED
           def sensitivity = Lain::Sensitivity::Policy::Null.instance
+          # A board that was never wired knows nothing about who is attached,
+          # so a child gated by {UNGATED} is refused by nobody and reads the
+          # sentence {Effect::Handler::Gate} produces on its own -- which is
+          # what every child read before this member existed. Resolved in the
+          # body for `policy_switch`'s load-order reason.
+          def denial = Lain::Effect::Handler::Gate::DENIAL
 
           def inspect = "Lain::CLI::Wiring::ToolsetBuild::NoSwitchboard"
           alias_method :to_s, :inspect
@@ -161,7 +167,7 @@ module Lain
         # The repl-phase role-spawn seam a `@role/skill` line folds through
         # (nil until {#build}), the opt-in third approval surface over it (nil
         # without --auto-approve, so the Repl wires nothing extra by default),
-        # and T24's docent ANSWERER.
+        # and the docent ANSWERER.
         #
         # The answerer and not a {Review::Docent}: a docent is keyed to a
         # changeset and a thread pane, and neither exists at toolset-build time
@@ -182,7 +188,7 @@ module Lain
         # defaulted: the run has ONE {Skill::Library}, and a default here would
         # be a second read of the same tree that nothing would ever notice
         # disagreeing with /help's. It arrived as a `catalog:` keyword beside a
-        # `backend.slots` reach-through until T40 named the pair -- one keyword
+        # `backend.slots` reach-through until {Skill::Library} named the pair -- one keyword
         # cannot be half-forgotten, which two could.
         #
         # `epic:` is injected for the third time on the same rule, and it is
@@ -195,7 +201,7 @@ module Lain
         # {EpicMount::NoEpic} and no line below asks whether there is an epic.
         #
         # `switchboard:` is a THUNK over the run's live switches, and the seam
-        # reads two of them (T11): the {Approval::PolicySwitch} a child's tier-3
+        # reads two of them: the {Approval::PolicySwitch} a child's tier-3
         # call must pass, and the {Mode::Switch} that says which capabilities a
         # child may hold at all. A thunk and not the board itself, because the
         # board does not exist yet -- see the two delegators above for the
@@ -220,7 +226,7 @@ module Lain
         #
         # `askers:` is the run's ONE {Wiring::Askers} -- who may ask the human,
         # where an arrival goes, and the directory an answer is routed back
-        # through (T11) -- and it rides the spawn seam, because T10 is what
+        # through -- and it rides the spawn seam, because the {Seam} extraction is what
         # made a CHILD able to ask. One object for the whole run, for
         # `provider:`'s exact reason: a second one built for children would be
         # a second answer to "who is holding this question", and the human
@@ -312,12 +318,22 @@ module Lain
         # line landed. Both posture axes arrive as delegators over the
         # switchboard thunk; see the class comment for why neither may be a
         # captured value.
+        #
+        # `denial:` -- what a refused call is REPORTED as -- is a bare thunk
+        # rather than a fourth delegator Data, and `context_factory` below is
+        # the precedent: what a child needs back is a String, not an object
+        # answering a duck, so there is no message for a delegator to forward.
+        # It rides the same board thunk for the same privilege-inversion reason
+        # the other three do -- a child told the generic "approval denied" in
+        # an unattended session reads a human'''s no and retries a call nobody
+        # can ever approve, for the life of the run.
         def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, observer:)
           Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
                                           journal:, supervisor:, observer:, askers:,
                                           gate_policy: LivePolicy.new(board: switchboard),
                                           permits: PosturePermits.new(board: switchboard),
-                                          sensitivity: LiveSensitivity.new(board: switchboard))
+                                          sensitivity: LiveSensitivity.new(board: switchboard),
+                                          denial: -> { switchboard.call.denial })
         end
 
         # One seam serves every role: the role, policy, and persona are chosen
@@ -332,7 +348,7 @@ module Lain
         # back to the SAME agent as a tool_result -- a continuation, not a
         # spawn. Built off the run's ONE library, so it and the repl's
         # ReplMiddleware compose the same pair #role_spawn_seam frames children
-        # with. It called `ReplMiddleware.renderer` argument-less until T15,
+        # with. It called `ReplMiddleware.renderer` argument-less until the library landed,
         # which read the project tree twice more -- a claim of "loaded once"
         # that the loads did not keep; the shared composition seam that fixed
         # then lives on the library now ({Skill::Library#renderer}).
@@ -342,7 +358,7 @@ module Lain
         # depth 1). The observer routes its :spawn/:message lineage events
         # into the session record, exactly as ask_human's Q/A goes.
         #
-        # `announces_as:` is the human-facing half of the same name (T10): the
+        # `announces_as:` is the human-facing half of the same name: the
         # tool stays "subagent" because that is what the model calls, and its
         # child is announced as the role it IS, so an arrival note and a
         # desktop notification say "researcher" rather than the tool's name.
@@ -352,7 +368,7 @@ module Lain
                                     max_depth: 1, announces_as: RESEARCHER.to_s)
         end
 
-        # The same name one rail over (T9). `announces_as:` already says what a
+        # The same name one rail over. `announces_as:` already says what a
         # human is TOLD is asking when this child puts a QUESTION to them; an
         # approval is the same question, so both halves are read off the one
         # word rather than from two literals that could drift. Only the gate

@@ -12,7 +12,7 @@ module Lain
       # "assemble a chat" does not include "route an answer back to whoever
       # asked" -- and that is why it was extracted when {Wiring} had one line of
       # ClassLength headroom left. It spent a while NESTED in wiring.rb, because
-      # T11 scoped the CLI half of the question chunk to that file; a file of its
+      # an earlier chunk scoped the CLI half of the question work to that file; a file of its
       # own is where the same rule points once that scope is spent, and it is
       # where its four siblings under `wiring/` already live. Nothing named it
       # differently: the constant is unchanged.
@@ -49,9 +49,17 @@ module Lain
         # @param observer [#call] the chronicle's -- Q and A are exactly the
         #   events a Timeline walk can never find, so a missing observer is
         #   silent record loss; required for that reason, not defaulted.
-        def initialize(notifier:, observer:)
+        # @param attended [Boolean] whether a human is at the terminal at all.
+        #   `--non-interactive` says no, and then the announcement half of this
+        #   object has nothing to reach: the arrival would go onto a queue with
+        #   no drain and the ask would park forever. So the asker itself
+        #   refuses -- see {Lain::Tools::AskHuman::Unattended} -- and this is
+        #   the one place that decides, because it is the one place that builds
+        #   an asker.
+        def initialize(notifier:, observer:, attended: true)
           @notifier = notifier
           @observer = observer
+          @attended = attended
           @questions = Async::Queue.new
           @directory = Lain::Tools::AskHuman::Directory.new
         end
@@ -78,23 +86,30 @@ module Lain
         #   hardcoded `"lain"` this widening removed. Absent, the correlation
         #   stands in, clamped -- see {#desktop_name}.
         #
-        #   It is handed to the ASKER as well as to the announcement (T15), so
+        #   It is handed to the ASKER as well as to the announcement, so
         #   it rides the Q event ({Tools::AskHuman::ASKED_BY}) and the surfaces
         #   that never see an arrival -- {Frontend::Neovim::InboxView} folds the
         #   record stream -- name the asker the same way this one does.
         def enrol(parent, agent: nil)
           registration = nil
-          asker = Lain::Tools::AskHuman::Notifying.new(
-            parent:, observer: @observer, agent:,
-            notify: ->(question) { announce(question, asker:, registration:, agent:) }
-          )
+          asker = asker_over(parent, agent:) { |question| announce(question, asker:, registration:, agent:) }
           registration = @directory.register(asker)
           Enrolled.new(asker:, registration:)
         end
 
         private
 
-        # I5, widened (T11): ONE arrival, three surfaces. What rides the queue
+        # Which asker this run may enrol. Registration happens either way: the
+        # directory is what a `/inbox` answer routes through, and an unattended
+        # run holding a half-built one would differ from an attended one in a
+        # second place for no reason.
+        def asker_over(parent, agent:, &notify)
+          return Lain::Tools::AskHuman::Unattended.new(parent:, observer: @observer, agent:) unless @attended
+
+          Lain::Tools::AskHuman::Notifying.new(parent:, observer: @observer, agent:, notify:)
+        end
+
+        # I5, widened: ONE arrival, three surfaces. What rides the queue
         # is the inbox item itself, not the question's bytes -- the digest an
         # answer must cite, and the asker that asked it -- and both are read
         # HERE, at the instant the Q event was written, because that is the
