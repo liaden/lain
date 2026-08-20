@@ -127,12 +127,12 @@ module Lain
       # (typically by ending its own loop); {#run} closes it too, defensively, so
       # the background thread is guaranteed to observe the close and exit rather
       # than leak past `run`'s return.
-      # Claiming the completion key sits beside {History#load} on purpose: both
-      # mutate process-global Reline state, and this is the moment lain is
-      # entitled to -- the terminal is ours from here (T16).
+      # Claiming the completion key happens HERE and not in #initialize because
+      # it mutates process-global Reline state, and this is the moment lain is
+      # entitled to -- the terminal is ours from here (T16). Nothing is read
+      # back off {History}: see its comment for why recall is this session's.
       def run
         enter_alternate_screen
-        @history.load
         Completion.install(@completion, notify: method(:render_warning))
         renderer = Thread.new { render_until_closed }
         yield self
@@ -411,11 +411,29 @@ module Lain
         @history = History.new(path: history_path, notify: method(:render_warning))
       end
 
-      # Durable reline history (T12): loaded into `Reline::HISTORY` at {#run}
-      # entry so history round-trips a process, write-through on each accepted
-      # line rather than dump-at-exit, so a SIGKILL between prompts loses at
-      # most nothing. Durable means close()-durable (the process dying), not
-      # fsync-durable -- shell history does not warrant an fsync per line.
+      # Durable reline history (T12): write-through on each accepted line rather
+      # than dump-at-exit, so a SIGKILL between prompts loses at most nothing.
+      # Durable means close()-durable (the process dying), not fsync-durable --
+      # shell history does not warrant an fsync per line.
+      #
+      # WRITE-ONLY, and that is the whole of what changed: nothing reads this
+      # file back. Up-arrow walks `Reline::HISTORY`, which Reline fills from the
+      # lines THIS process accepted, so recall is scoped to the session the
+      # human is sitting in.
+      #
+      # The file was loaded at {#run} entry until it was measured against how
+      # lain is actually run. One path (`Paths#state_home`) is shared by every
+      # session of every project, and `lain up` puts several chat panes on it at
+      # once, so the ring a human walked was a merge of other projects, other
+      # days, and the pane next door -- and it was ordered by whichever process
+      # happened to flush first, which is not an order anybody types in.
+      #
+      # It keeps being written because the record is worth having and the write
+      # is what a project-scoped recall would later read: {Paths#sessions_dir}
+      # already partitions by project, so scoping the RECALL is a path argument
+      # at one call site rather than a rewrite of this class. What is refused is
+      # narrower than "durable history" -- it is one undifferentiated pool
+      # standing in for a session's own lines.
       class History
         # @param path [String] the durable history file
         # @param notify [#call] renders a degraded-path warning line
@@ -425,17 +443,6 @@ module Lain
           @notify = notify
           @writable = true
           @warned = false
-        end
-
-        # A missing file is the ordinary first-run case, not a failure --
-        # rescued rather than pre-checked with File.exist?, which would be a
-        # TOCTOU stat for nothing. Any other read error warns.
-        def load
-          File.readlines(@path, chomp: true).each { |line| Reline::HISTORY.push(line) }
-        rescue Errno::ENOENT
-          nil
-        rescue SystemCallError => e
-          warn_unavailable(e)
         end
 
         # Append-only, 0600 -- history is a secret-adjacent surface (pasted
@@ -504,8 +511,8 @@ module Lain
         # a missing file (StatusFeed never ran), a syntactically-malformed
         # one, and a syntactically-VALID-but-semantically-wrong one (a bad
         # timestamp string, a non-Hash top level such as a bare Array once
-        # parsed) are all the same "no warmth to report" case, matching
-        # {History#load}'s missing-file-is-ordinary precedent. Split into two
+        # parsed) are all the same "no warmth to report" case, the
+        # missing-file-is-ordinary precedent. Split into two
         # narrow rescues -- reading bytes vs. coercing them -- so the
         # coverage each guards is self-evident rather than one broad catch.
         def read_deadline

@@ -393,12 +393,29 @@ RSpec.describe Lain::Frontend::TTY do
       described_class.new(channel:, output:, input:, history_path:)
     end
 
-    it "loads an existing history file into Reline::HISTORY, in order, when TTY starts" do
+    # Up-arrow walks THIS session's lines. The file is one undifferentiated pool
+    # across every project and every concurrent `lain up` pane, so loading it
+    # made recall a merge of other people's panes ordered by whoever flushed
+    # first -- see {Lain::Frontend::TTY::History}'s comment.
+    it "does not load the history file into Reline::HISTORY, so recall is this session's" do
       File.write(history_path, "first command\nsecond command\n")
 
       tty_with_history.run { channel.close }
 
-      expect(Reline::HISTORY.to_a).to eq(["first command", "second command"])
+      expect(Reline::HISTORY.to_a).to be_empty
+    end
+
+    # The other half of the same rule: the file is still WRITTEN, and appended to
+    # rather than started fresh, so a project-scoped recall has something to read
+    # later. A prior session's line is the fixture precisely because it is what
+    # this class no longer hands to the prompt.
+    it "appends past an earlier session's lines rather than replacing them" do
+      File.write(history_path, "from an earlier session\n")
+      allow(Reline).to receive(:readmultiline).and_return("this session's line")
+
+      tty_with_history.prompt
+
+      expect(File.read(history_path)).to eq("from an earlier session\nthis session's line\n")
     end
 
     it "writes an accepted line to disk before the next prompt" do

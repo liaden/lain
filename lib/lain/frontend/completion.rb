@@ -73,9 +73,8 @@ module Lain
         # Takes an already-built completion rather than building one: {.new} is
         # pure and this is the process-global act, and keeping them separate is
         # what lets a caller construct a {TTY} without silently rebinding the
-        # human's C-x. {TTY} installs when it TAKES the terminal (in `#run`,
-        # beside `History#load`, which mutates process-global `Reline::HISTORY`
-        # for the same reason at the same moment), never when it is built.
+        # human's C-x. {TTY} installs when it TAKES the terminal (in `#run`),
+        # never when it is built.
         #
         # @param completion [Completion] the built instance to make {.current} and bind the key to
         # @param notify [#call] renders a warning line ({TTY#render_warning})
