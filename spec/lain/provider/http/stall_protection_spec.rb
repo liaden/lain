@@ -49,6 +49,12 @@ RSpec.describe "stalled-stream protection", :seam do
 
   def ollama_payload = { "model" => "qwen3:4b", "messages" => [{ "role" => "user", "content" => "hi" }] }
 
+  # A clock is installed on a REQUEST, so an example that drives one directly
+  # needs an env of its own -- shaped the way `Faraday::Env#stream_response`
+  # hands one to `on_data`. `Env.from` copies the options it is given, so the
+  # env is what gets passed around rather than the RequestOptions.
+  def stream_env = Faraday::Env.from(status: 200, request: Faraday::RequestOptions.new)
+
   # @return [Hash] what ended the stream, how long it took, and the chunks that
   #   reached the caller. All three matter: a stall is a claim about WHEN an
   #   error arrives, and an error with no chunks behind it is a different defect
@@ -341,7 +347,7 @@ RSpec.describe "stalled-stream protection", :seam do
       clock = clock_class.new(0.05)
 
       outcome = capture do
-        clock.watch do
+        clock.watch(stream_env) do
           clock.receiving do
             clock.receiving { nil }
             sleep(0.2)
@@ -382,17 +388,18 @@ RSpec.describe "stalled-stream protection", :seam do
       release.pop
     end
 
-    # Returns [what #watch answered, what the fiber's storage holds afterwards].
+    # Returns [what #watch answered, what its REQUEST holds afterwards].
     def race_outcome
       parked = Queue.new
       release = Queue.new
+      request = stream_env
       clock = clock_class.new(1.0, clock: gated_clock(parked, release))
-      answer = capture_value(clock, parked, release)
-      [answer, Fiber[clock_class::KEY]]
+      answer = capture_value(clock, request, parked, release)
+      [answer, clock_class.for(request)]
     end
 
-    def capture_value(clock, parked, release)
-      clock.watch do
+    def capture_value(clock, request, parked, release)
+      clock.watch(request) do
         clock.receiving { nil }
         parked.pop
         release_once_the_request_is_in_stop(release)
@@ -416,15 +423,19 @@ RSpec.describe "stalled-stream protection", :seam do
     end
 
     # The mechanical half, and the one that must not regress: #stop raising
-    # would otherwise abort #watch's ensure before the restore, leaking this
-    # clock into fiber storage for the life of the fiber -- and
-    # Streaming#flush_stream calls on_data AFTER connection.post returns, so it
-    # would tick a finished request's clock.
-    it "restores the fiber's storage even when the teardown is what raised" do
-      leaked = race_outcome.last
-      unprotected = clock_class.watching(nil) { clock_class.current }
+    # would otherwise abort #watch's ensure before the restore, leaving this
+    # clock in the request's context -- and Faraday::Response#finish keeps the
+    # very Env the stack ran on, so Streaming#flush_stream would find it there
+    # and tick a finished request's clock after connection.post returned.
+    #
+    # The second leg is the off switch: a nil grace still has to leave the
+    # request as clean as a watch that ended does, or protection being disabled
+    # would be observable to whatever reads the context next.
+    it "empties the request's context even when the teardown is what raised" do
+      request = stream_env
+      unprotected = clock_class.watching(nil, request) { clock_class.for(request) }
 
-      expect([leaked, unprotected]).to eq([nil, clock_class::Null])
+      expect([race_outcome.last, unprotected]).to eq([clock_class::Null, clock_class::Null])
     end
   end
 
@@ -481,7 +492,7 @@ RSpec.describe "stalled-stream protection", :seam do
     def monitor_name
       observed = Queue.new
       clock = clock_class.new(0.1, clock: reporting_clock(observed))
-      clock.watch do
+      clock.watch(stream_env) do
         clock.receiving { nil }
         observed.pop
       end

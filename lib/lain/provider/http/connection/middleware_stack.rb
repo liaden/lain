@@ -29,9 +29,17 @@ module Lain
           # split falls exactly there -- this owns the scope, the handler owns
           # the ticks, and the clock arms itself on the first byte so that a
           # long prompt evaluation is still bounded only by `request_timeout`.
+          #
+          # `env` is passed rather than merely wrapped, and that is what joins
+          # the two halves: the clock parks itself on `env.request.context`, the
+          # per-request carrier the transports already thread `retry_attempt` and
+          # `wal_frame` through, and `Faraday::Env#stream_response` hands the very
+          # same env to `on_data` with every chunk. So the handler finds this
+          # request's clock without either side sharing anything ambient -- see
+          # {Streaming::StallClock} for the two slots that came before.
           class StallProtection < Faraday::Middleware
             def call(env)
-              Streaming::StallClock.watching(options[:grace]) { @app.call(env) }
+              Streaming::StallClock.watching(options[:grace], env) { @app.call(env) }
             end
           end
 

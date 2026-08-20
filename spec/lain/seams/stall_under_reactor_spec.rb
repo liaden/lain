@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "async"
+require "faraday"
 
 # F10, and its two halves are one defect: the stall clock was installed in a
 # THREAD variable and raised into a THREAD, while the unit of work is a FIBER.
@@ -14,6 +15,15 @@ require "async"
 #
 # Fixing only the delivery leaves the displacement, and fixing only the scoping
 # leaves the session kill, which is why both are pinned here together.
+#
+# The SLOT has moved once more since, off fiber storage and onto the Faraday
+# request context, and the two describes below about WHOSE clock a chunk ticks
+# are re-aimed at that. The reactor-shaped hazards are unchanged and are still
+# pinned by the same real sockets -- what changed is that they are now
+# structural. A clock is reached through the request its bytes belong to, so
+# neither the reactor's scheduling nor the adapter's choice of dispatch fiber
+# can decide which stream a tick belongs to, and an ownership check is no longer
+# what stands between the two.
 #
 # Every example drives a REAL socket through {StreamingUpstream}, for the reason
 # spec/lain/provider/http/stall_protection_spec.rb states: WebMock hands a
@@ -47,6 +57,11 @@ RSpec.describe "a stalled stream under an Async reactor", :seam do
   def transport(upstream, **) = Lain::Provider::Ollama::Transport.new(ollama_config(upstream.url, **))
 
   def payload = { "model" => "qwen3:4b", "messages" => [{ "role" => "user", "content" => "hi" }] }
+
+  # A clock is installed on a REQUEST, so the examples that drive one directly
+  # rather than through a socket need an env of their own -- shaped the way
+  # `Faraday::Env#stream_response` hands one to `on_data`.
+  def stream_env = Faraday::Env.from(status: 200, request: Faraday::RequestOptions.new)
 
   def streaming_request
     Lain::Request.new(model: "qwen3:4b", max_tokens: 16,
@@ -164,55 +179,69 @@ RSpec.describe "a stalled stream under an Async reactor", :seam do
     end
   end
 
-  # Fiber storage is INHERITED, copy-on-write, by every fiber and thread created
-  # while a watch is live -- `Fiber.new`, `task.async` and `Thread.new` alike. So
-  # a child starts life holding its parent's clock without ever having watched
-  # it, and the SLOT alone cannot say whose clock it is. Two things follow, and
-  # both were live once the storage moved off the thread: a child streaming with
-  # protection OFF ticked the parent's clock, because `watching(nil)` neither
-  # installs nor clears; and a child that watched and finished restored its
-  # parent's clock into its own storage, so `.current` answered a live clock
-  # where the invariant `Streaming#flush_stream` depends on says {Null}.
+  # A body callback does not have to arrive on the fiber that made the request,
+  # and this is the pair of examples that used to say so the other way round.
+  # While the clock lived in fiber storage the slot was INHERITED copy-on-write
+  # by every fiber and thread born under a live watch, so a child held its
+  # parent's clock without ever having watched it -- and the fix for that, an
+  # ownership check keyed on the watching fiber, made the ADAPTER's choice of
+  # dispatch fiber load-bearing. `faraday_adapter` is a configuration option, and
+  # an adapter running the body callback somewhere of its own then answered Null
+  # on every chunk: stall protection silently off, with a green suite, measured
+  # at 0.4s of silence against a 0.15s grace and undetected.
   #
-  # Latent rather than reachable today -- the only per-turn fan-out is
-  # `Agent::ToolRunner#gather`, which runs after the parent's stream is torn down
-  # -- and reachable the moment anything spawns a task from inside a streaming
-  # consumer callback. The answer is ownership: a clock answers to the fiber that
-  # watched it and to no other, so an inherited copy is a stranger's.
-  describe "a fiber spawned inside a live watch" do
-    # All three creation paths, because storage is inherited by each of them and
-    # only one is the reachable one: `Thread.new` is the route the clock's own
-    # monitor takes, and `Fiber.new` is what an adapter would use. A rule pinned
-    # through `task.async` alone would be coverage of today's fan-out rather than
-    # of the rule. `clock_class` is resolved before the reactor, for the reason
-    # the ⚠️ above gives.
-    def through_every_child(klass, &block)
+  # On the request context neither half is a question. A clock is found by the
+  # request a caller HOLDS, so a child that holds the request finds it wherever
+  # it is running, and a child that holds a different one finds nothing without
+  # anybody having to check who watched what.
+  describe "a clock reached from a fiber that never watched it" do
+    # All three creation paths, because each is a real route rather than a
+    # variation: `Thread.new` is the one the clock's own monitor takes,
+    # `Fiber.new` is what an adapter would use, and `task.async` is the reactor's
+    # own. `clock_class` is resolved before the reactor, for the reason the ⚠️
+    # above gives.
+    def through_every_child(klass)
       Sync do |task|
-        klass.new(5).watch do
-          [task.async(&block).wait, Fiber.new(&block).resume, Thread.new(&block).value]
+        request = stream_env
+        child = -> { yield(klass, request) }
+        klass.new(5).watch(request) do
+          [task.async { child.call }.wait, Fiber.new { child.call }.resume, Thread.new { child.call }.value]
         end
       end
     end
 
-    def child_view = through_every_child(clock_class) { unwatched_child(clock_class) }
+    # Holding the streaming request, which is what an adapter dispatching
+    # `on_data` elsewhere would be handed along with the chunk.
+    def child_holding_the_request = through_every_child(clock_class) { |klass, request| klass.for(request) }
 
-    def child_view_after_its_own_watch = through_every_child(clock_class) { finished_child(clock_class) }
+    # Holding somebody else's, which is every other fiber in the process.
+    def child_holding_another = through_every_child(clock_class) { |klass, _request| klass.for(stream_env) }
 
-    # Watching or not, a child holds a slot it never filled.
-    def unwatched_child(klass) = [klass.current, klass.watching(nil) { klass.current }]
-
-    # And after its own watch, `#unwatch` puts the INHERITED value back.
-    def finished_child(klass)
-      klass.new(5).watch { nil }
-      klass.current
+    it "hands every child the watching clock, wherever the adapter ran it" do
+      expect(child_holding_the_request).to all(be_a(clock_class))
     end
 
-    it "does not hand a child its parent's clock, whether or not the child watches" do
-      expect(child_view).to all(eq([clock_class::Null, clock_class::Null]))
+    it "hands a child carrying another request nothing at all" do
+      expect(child_holding_another).to all(eq(clock_class::Null))
+    end
+  end
+
+  # The property the two wrong slots were both getting wrong, stated where it is
+  # real: two live streams whose chunks genuinely interleave on one reactor
+  # thread. Neither clock fires, and neither stream is short of its own content
+  # -- which together are "each stream ticked its own clock" as an observation of
+  # the streams rather than as a peek at the storage holding their clocks.
+  #
+  # Every gap is well inside the grace, so nothing here is a race about time.
+  describe "two healthy streams interleaving" do
+    let(:grace) { 0.5 }
+    let(:trickle) { StreamingUpstream.script.chunk(alpha).pause(0.15).chunk(beta).pause(0.15).chunk(done).close }
+    let(:offset) do
+      StreamingUpstream.script.pause(0.1).chunk(beta).pause(0.15).chunk(alpha).pause(0.15).chunk(done).close
     end
 
-    it "leaves a child whose own watch has ended looking at nothing" do
-      expect(child_view_after_its_own_watch).to all(eq(clock_class::Null))
+    it "lets both finish, each with its own content" do
+      expect(siblings(trickle, offset)).to eq([[nil, "alphabeta"], [nil, "betaalpha"]])
     end
   end
 
@@ -282,7 +311,7 @@ RSpec.describe "a stalled stream under an Async reactor", :seam do
     end
 
     def raced_watch(clock, monitor)
-      clock.watch do
+      clock.watch(stream_env) do
         clock.receiving { nil }
         spin_until_fired(monitor)
         :stream_completed_normally

@@ -423,7 +423,7 @@ RSpec.describe Lain::Provider::Admission do
     end
   end
 
-  # T2. The gate above is only worth having if EVERY round trip goes through it,
+  # The gate above is only worth having if EVERY round trip goes through it,
   # and the enumeration that would guarantee that cannot be written: there are six
   # provider construction sites on the chat path and {Oracle::SecretRead.tier}
   # (`oracle/secret_read.rb:134`) is structurally forbidden from accepting an
@@ -436,8 +436,6 @@ RSpec.describe Lain::Provider::Admission do
   # does -- separately, with no shared object between them -- and assert they
   # still contend.
   describe "taken by the provider, so no construction site can miss it" do
-    let(:clock_class) { Lain::Provider::HTTP::Streaming::StallClock }
-
     # Never the real default here except where an example is ABOUT the default:
     # `.for` memoises in a process-global registry, so an example sharing a key
     # with the rest of the suite leaks its width into whatever runs next. The
@@ -602,20 +600,26 @@ RSpec.describe Lain::Provider::Admission do
 
     # THE POSITION OF THE SEAM, and the reason it may never drift downward.
     #
-    # The stall clock arms on the FIRST TICK inside the transport
-    # (`http/streaming/faraday_handlers.rb:397`, reached per body chunk), and its
-    # grace is 30s. Admission taken below that -- inside `#stream`, or around
-    # `#watch` -- would leave a queued request holding an armed clock with no
-    # server sending it anything, and the 30s would fire against a stream that
-    # was merely waiting its turn. Wrapping `#complete` instead means a queued
-    # caller has not entered its transport at all, which is the observable here:
-    # `no transport call yet` IS `no clock installed`, from outside a fiber whose
-    # storage nothing else may read.
-    it "keeps a queued caller outside the stream, so nothing arms a clock while it waits" do
+    # {Provider::HTTP::Streaming::StallClock} arms on the FIRST TICK inside the
+    # transport, reached per body chunk, and its grace is 30s. Admission taken
+    # below that -- inside `#stream`, or around the clock's own watch -- would
+    # leave a queued request holding an armed clock with no server sending it
+    # anything, and the 30s would fire against a stream that was merely waiting
+    # its turn. Wrapping `#complete` instead means a queued caller has not
+    # entered its transport at all, which is what the count below observes.
+    #
+    # It observes ONLY that, and deliberately. This example used to carry a
+    # second probe reading the clock the waiter could see; the clock now lives on
+    # `env.request.context`, installed by a Faraday middleware, so a caller that
+    # has not reached its transport has not built a request and there is no
+    # ambient storage left for such a probe to read. Against these doubled
+    # transports it could only ever have answered Null, which is a vacuous
+    # assertion wearing the shape of a real one. The transport-entry count is the
+    # stronger witness anyway: it watches the SEAM rather than the storage.
+    it "keeps a queued caller out of its transport entirely until the endpoint frees up" do
       base = unique_base
       waiter_entries = []
       waiter_touches_during_hold = nil
-      clock_seen_by_waiter = nil
 
       holder = Lain::Provider::Ollama.new(api_base: base, transport: ollama_transport do
         sleep(0.1)
@@ -625,7 +629,6 @@ RSpec.describe Lain::Provider::Admission do
       end)
       waiter = Lain::Provider::Ollama.new(api_base: base, transport: ollama_transport do
         waiter_entries << :in
-        clock_seen_by_waiter = clock_class.current
         {}
       end)
 
@@ -635,8 +638,7 @@ RSpec.describe Lain::Provider::Admission do
         [held, task.async { waiter.complete(ollama_request) }].each(&:wait)
       end
 
-      expect(waiter_touches_during_hold).to eq(0)
-      expect(clock_seen_by_waiter).to be(clock_class::Null)
+      expect([waiter_touches_during_hold, waiter_entries.size]).to eq([0, 1])
     end
 
     # Open decision 4. `Oracle::Eager` promises the turn that produced a tool
