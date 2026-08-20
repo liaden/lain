@@ -415,14 +415,22 @@ module Lain
       # needed at exactly this one message. The answer is discarded either way:
       # it is a fact about the editor, not about the round.
       #
+      # THE NOTES GO TOO, and they are not decoration on the call: `blocker` is
+      # the one {Review::ANNOTATION_KINDS} member documented as readable by a
+      # verdict policy, and until it was passed here no policy could read it --
+      # a human's own "not this" was journaled, drawn as a marker, and refused
+      # nothing. What counts as RESOLVED is the policy's answer, not this
+      # object's ({Verdict::Policy.unresolved}); this round only holds them.
+      #
       # @param verdict [String, Symbol] a member of {Review::VERDICTS}
       # @return [String] the verdict, in the vocabulary's own spelling
       # @raise [AlreadySettled] if this round already has one
       # @raise [Verdict::Policy::Incomplete] if the policy refuses
+      # @raise [Verdict::Policy::Blocked] if the policy refuses over a blocker
       def submit(verdict)
         refuse_second_verdict!
         judged = ReviewVerdict.new(verdict:, changeset_digest: digest)
-        @policy.admit!(judged.verdict, changeset: @changeset, marks: @marks)
+        @policy.admit!(judged.verdict, changeset: @changeset, marks: @marks, annotations:)
         @journal << judged
         @judgement = judged
         Surface.acknowledge(@surface, judged.verdict)

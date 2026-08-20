@@ -350,6 +350,93 @@ RSpec.describe Lain::Review::Handover do
     end
   end
 
+  # A blocker is the one annotation kind `Review::ANNOTATION_KINDS` documents as
+  # readable by a verdict policy, and until this card nothing read it: the notes
+  # were not among `Verdict::Policy#admit!`'s arguments at all. Driven from THIS
+  # end as well as the policy's, because the claim is about the gesture PAIR a
+  # human makes on the rail -- `:LainNote blocker ...`, then
+  # `:LainReviewVerdict approve` -- rather than about one method's arithmetic.
+  describe "a verdict over a blocker" do
+    let(:strict_session) do
+      Lain::Review::Session.open(changeset:, journal:, source: "local_branch", surface:,
+                                 policy: Lain::Review::Verdict::Policy.default)
+    end
+    let(:strict_baton) { RecordingBaton.new(session: strict_session) }
+    let(:strict) { described_class.new(session: strict_session, baton: strict_baton) }
+
+    # Every hunk marked, so the note is the ONLY thing left that can refuse the
+    # approve. Over a partially reviewed changeset the default policy refuses
+    # either way, and an example that cannot tell the two refusals apart proves
+    # nothing about the blocker.
+    before { (keys_for("a.rb") + keys_for("b.rb")).each { |key| strict_session.mark(key, "reviewed") } }
+
+    it "refuses the approve, naming the file and the line the blocker sits on" do
+      strict.wrote_annotation(note(kind: "blocker"))
+
+      expect(strict.wrote_verdict("approve")).to include("a.rb").and include("3")
+    end
+
+    # The refusal has to leave the round OPEN, or a blocker would cost the human
+    # the review rather than the verdict.
+    it "leaves the round unsettled, with nothing on the journal and the baton unpassed" do
+      strict.wrote_annotation(note(kind: "blocker"))
+      strict.wrote_verdict("approve")
+
+      expect(strict_baton.settles).to be_zero
+      expect(strict_session.verdict).to be(Lain::Review::Verdict::None)
+      expect(records_of("review_verdict")).to be_empty
+    end
+
+    it "settles when the only note placed claims nothing about admissibility" do
+      strict.wrote_annotation(note(kind: "note"))
+
+      expect(strict.wrote_verdict("approve")).to be_nil
+      expect(strict_baton.settles).to eq(1)
+    end
+
+    # THE way out, end to end. There is no `resolved` record and no gesture that
+    # deletes a note, so what resolves a blocker is the human saying something
+    # else at the same position: cursor back on that line, `n`, and a sentence.
+    # Without this example the card ships a review nobody can ever approve.
+    it "settles once a later note on that same line has answered the blocker" do
+      strict.wrote_annotation(note(kind: "blocker"))
+      strict.wrote_annotation(note(kind: "note", text: "answered: renamed in the follow-up"))
+
+      expect(strict.wrote_verdict("approve")).to be_nil
+      expect(strict_baton.settles).to eq(1)
+    end
+
+    # One answer, one objection. Two blockers on one line are two objections --
+    # the surface draws both, by id -- so one note leaves the older one
+    # standing rather than clearing the line.
+    it "still refuses when one note answers only one of the two blockers on a line" do
+      strict.wrote_annotation(note(kind: "blocker"))
+      strict.wrote_annotation(note(kind: "blocker", text: "and this one too"))
+      strict.wrote_annotation(note(kind: "note", text: "answered: the first one"))
+
+      expect(strict.wrote_verdict("approve")).to include("a.rb:3")
+      expect(strict_baton.settles).to be_zero
+    end
+
+    it "settles once the second blocker has an answer of its own" do
+      strict.wrote_annotation(note(kind: "blocker"))
+      strict.wrote_annotation(note(kind: "blocker", text: "and this one too"))
+      strict.wrote_annotation(note(kind: "note", text: "answered: the first one"))
+      strict.wrote_annotation(note(kind: "note", text: "answered: the second one"))
+
+      expect(strict.wrote_verdict("approve")).to be_nil
+    end
+
+    # The other escape, and the one an unattended run needs: a permissive policy
+    # reads none of its arguments, so a blocker does not wedge it either.
+    it "settles over a blocker under the permissive policy this spec's session carries" do
+      handover.wrote_annotation(note(kind: "blocker"))
+
+      expect(handover.wrote_verdict("approve")).to be_nil
+      expect(baton.settles).to eq(1)
+    end
+  end
+
   describe "a note written in the editor" do
     it "journals it as an annotation at the position the wire named" do
       handover.wrote_annotation(note)
@@ -615,7 +702,7 @@ RSpec.describe Lain::Review::Handover do
   # {Lain::Review::Changeset}, a real {Lain::Review::Session}, a real
   # {Lain::Frontend::Neovim::ReviewView} and a real
   # {Lain::Frontend::Neovim::ChangesetDiff} -- no double between any two of them,
-  # because the defect lived in the join rather than in any one of them. B8's
+  # because the defect lived in the join rather than in any one of them. The
   # `chunker:` seam counts at the chunker's own `#call`, so what is asserted is
   # work that happened rather than a flag a subject set about itself.
   #

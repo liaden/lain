@@ -153,7 +153,7 @@ RSpec.describe Lain::Review::Session do
       expect(described_class.digest(changeset)).to eq(described_class.digest(changeset_over))
     end
 
-    # The address moved OFF this class and onto the source (B2), and the whole
+    # The address moved OFF this class and onto the source, and the whole
     # requirement was that it not move a byte in doing so: `/review` addresses are
     # journalled, and a `changeset_digest` that stopped joining would silently
     # orphan every verdict ever recorded.
@@ -901,13 +901,26 @@ RSpec.describe Lain::Review::Session do
         expect(session.verdict).to be(Lain::Review::Verdict::None)
       end
 
-      it "asks the policy with the changeset and the marks, and takes no admissibility decision itself" do
+      it "asks the policy with the changeset, the marks and the notes, deciding admissibility itself in none" do
         policy = instance_spy(Lain::Review::Verdict::Policy::Permissive)
         session = open_session(policy:)
 
         session.submit("approve")
 
-        expect(policy).to have_received(:admit!).with("approve", changeset:, marks: session.marks)
+        expect(policy).to have_received(:admit!)
+          .with("approve", changeset:, marks: session.marks, annotations: session.annotations)
+      end
+
+      # The notes reach the policy from HERE, and a session that kept them to
+      # itself is the whole of why `blocker` was a kind nothing could read.
+      it "hands over the annotations it is holding, rather than an empty list" do
+        policy = instance_spy(Lain::Review::Verdict::Policy::Permissive)
+        session = open_session(policy:)
+        placed = session.annotate(anchor_on("a.rb", 2, "TWO"), "not this", kind: :blocker, drifted: false)
+
+        session.submit("approve")
+
+        expect(policy).to have_received(:admit!).with("approve", hash_including(annotations: [placed]))
       end
     end
   end
@@ -1053,8 +1066,13 @@ RSpec.describe Lain::Review::Session do
   end
 
   describe "rebuilding from the journal" do
-    def live_round
-      session = open_session
+    # The round this group replays carries a BLOCKER, deliberately -- it is what
+    # pins `kind` and `drifted` surviving the round trip. That makes the default
+    # policy refuse its approve, which is the point of `blocker` and not a
+    # defect here: this group is about what replay restores, so the examples
+    # that submit swap the policy rather than water the fixture down.
+    def live_round(policy: Lain::Review::Verdict::Policy.default)
+      session = open_session(policy:)
       keys = every_key
       keys.each { |key| session.mark(key, "reviewed") }
       session.annotate(anchor_on("a.rb", 2, "TWO"), "first note", kind: :note, drifted: false)
@@ -1098,14 +1116,14 @@ RSpec.describe Lain::Review::Session do
     end
 
     it "restores a submitted verdict" do
-      session = live_round
+      session = live_round(policy: Lain::Review::Verdict::Policy::Permissive.new)
       session.submit("approve")
 
       expect(replayed.verdict).to eq("approve")
     end
 
     it "restores the changeset that verdict judged, which a position in the journal cannot imply" do
-      session = live_round
+      session = live_round(policy: Lain::Review::Verdict::Policy::Permissive.new)
       session.submit("approve")
 
       expect(replayed.judgement.changeset_digest).to eq(session.digest)
@@ -1122,7 +1140,7 @@ RSpec.describe Lain::Review::Session do
     # one member -- which is exactly why the rule has to be pinned now rather
     # than when a second value makes it visible in the word itself.
     it "keeps the FIRST judgement when two writers judged one round, as submit's refusal implies" do
-      session = live_round
+      session = live_round(policy: Lain::Review::Verdict::Policy::Permissive.new)
       session.submit("approve")
       journal << Lain::Review::ReviewVerdict.new(verdict: "approve",
                                                  changeset_digest: "review-changeset-v1:written-by-somebody-else")
@@ -1134,7 +1152,7 @@ RSpec.describe Lain::Review::Session do
     end
 
     it "refuses a further verdict on the round it rebuilt, exactly as the live session did" do
-      session = live_round
+      session = live_round(policy: Lain::Review::Verdict::Policy::Permissive.new)
       session.submit("approve")
 
       expect { replayed.submit("approve") }.to raise_error(described_class::AlreadySettled)
@@ -1236,7 +1254,7 @@ RSpec.describe Lain::Review::Session do
   describe "replay against the live session" do
     # The card's third escalation trigger, as an assertion rather than a hope:
     # if these two sets ever differ for one journal, the content-addressing is
-    # not holding and T8 is invalid.
+    # not holding and replay from the journal is invalid.
     it "produces the identical mark set, key for key, for the same journal and changeset" do
       live = open_session
       every_key.each { |key| live.mark(key, "reviewed") }
@@ -1269,12 +1287,13 @@ RSpec.describe Lain::Review::Session do
     end
   end
 
-  # A green T7 and a green T9 still do not render a table: until this card,
-  # nothing joined a changeset's structure to marks' tri-state, so neither
-  # spec could drive a real renderer over a real changeset -- T9's own doubles
-  # are anonymous Structs. These two do it end to end, which is the only place
-  # the row object's shape is checked against a consumer rather than against
-  # an expectation written to match it.
+  # A green changeset spec and a green text-surface spec still do not render a
+  # table: until this card, nothing joined a changeset's structure to marks'
+  # tri-state, so neither spec could drive a real renderer over a real
+  # changeset -- the surface spec's own doubles are anonymous Structs. These
+  # two do it end to end, which is the only place the row object's shape is
+  # checked against a consumer rather than against an expectation written to
+  # match it.
   describe "composed with a real text surface" do
     let(:sink) { StringIO.new }
 
@@ -1317,7 +1336,7 @@ RSpec.describe Lain::Review::Session do
   # is the MECHANICAL statement of "no reachable mutable state" -- it broke once
   # already because `Symbol#to_s` and interpolation both answer mutable Strings.
   # Every value this card added is spec'd against it, including the row graph,
-  # whose leaves are T7's ChangedFile, a Review::Partition and T2's Hunk.
+  # whose leaves are a ChangedFile, a Review::Partition and a Hunk.
   describe "the values this card adds are shareable" do
     it "holds for the whole marked-changeset graph, rows, files and commits alike" do
       session = open_session
@@ -1477,8 +1496,9 @@ RSpec.describe Lain::Review::Session do
       expect(states).to eq([Lain::Review::Session::MarkedChangeset::HUNKLESS] * corpus_size)
     end
 
-    # The card's second scenario, and the one B15's shortcut could not reach: a
-    # single mark took the derivation and {Marks#states} then walked all fifty.
+    # The card's second scenario, and the one {Marks#reconcile}'s empty-set
+    # shortcut could not reach: a single mark took the derivation and
+    # {Marks#states} then walked all fifty.
     it "costs one file when one file has been marked, not fifty" do
       log = []
       session = corpus_session(log)
