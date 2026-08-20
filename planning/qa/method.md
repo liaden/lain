@@ -300,9 +300,10 @@ displays one fitted line and records the complete, unfolded sentence to `:messag
 is now where the full text lives **by design**, not a workaround for a prompt. Read it whenever a
 refusal looks truncated on the message line; that truncation is the mechanism working.
 
-(One version caveat: recording the unfolded copy needs `'messagesopt'`, which is nvim 0.11+. On 0.10
-the rail degrades to echoing the fitted line into history instead, so `:messages` holds what was
-shown and not more. `cockpit-surfaces.md` §4 has the detail; record `nvim --version`.)
+(Recording the unfolded copy needs `'messagesopt'`, which is nvim 0.11+ — the stated minimum, so
+there is no fallback path and a truncated `:messages` is a regression rather than a degrade.
+`cockpit-surfaces.md` §4 has the detail; record `nvim --version` anyway, because an editor below the
+minimum makes every reading in a round untrustworthy.)
 
 ### Making a session with `message` and `child_turn` records
 

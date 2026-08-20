@@ -363,6 +363,10 @@ posture and its measurements are in [`docs/concurrency.md`](docs/concurrency.md)
 `lain up --nvim` is the full setup. One tmux window, split into an editor pane and a chat pane
 pinned to the same cwd and the same socket, with a status HUD along the bottom.
 
+**Requires nvim 0.11+.** Below that, lain does not degrade gracefully: the review rail's refusal
+delivery reads `'messagesopt'`, an option that does not exist yet, and a refusal either arrives as
+nvim's own `stack traceback:` or does not arrive at all.
+
 ```
 ┌─ nvim ──────────────────┬─ chat ──────────────────┐
 │ lain://journal          │ you> refactor the Store │

@@ -160,25 +160,20 @@ end
 -- With two options the live hazard is a PARTIAL restore, which is why both are
 -- read back in the spec rather than only the one a given blocker named.
 --
--- The error is deliberately not re-raised. Anything escaping a `define`d
--- callback gets nvim's own `stack traceback:` appended (the paragraph on
--- `:LainReviewDone` below carries that measurement), and a refusal that reads
--- as a plugin crash is the thing this rail exists to avoid. The DISPLAY half
--- still runs after this returns, so the human still gets their answer; what a
--- failure here costs is the copy in `:messages`, and nothing else.
+-- An echo failure inside the `pcall` is deliberately not re-raised, so the
+-- DISPLAY half below still runs and the human still gets their answer; what
+-- THAT failure costs is the copy in `:messages`, and nothing else.
 --
--- ASKED FOR, NEVER ASSUMED: 'messagesopt' arrived in nvim 0.11 and is the only
--- option this runtime reads that a supported editor can be too old to have
--- ('more' and 'columns' predate nvim entirely). An absent option is not a nil
--- here -- `vim.o.messagesopt` RAISES `Unknown option`, out of a `define`d
--- callback, where nvim appends the `stack traceback:` this whole rail exists to
--- keep off a human's screen. Before the shortening path existed a long refusal
--- merely PAGED, so erroring here would be a strict regression for anyone on
--- 0.10 rather than a missing improvement.
-local function records_quietly()
-  return vim.fn.exists("&messagesopt") == 1
-end
-
+-- That invariant rests on nvim 0.11+, the runtime's stated minimum (see
+-- README.md's cockpit section). `vim.o.messagesopt` is read OUTSIDE the
+-- `pcall`, at the top of `recorded`, so on an older editor the READ ITSELF
+-- raises `Unknown option` -- escaping `recorded` before the `pcall` is ever
+-- reached, and skipping the display echo below it entirely. Below the floor,
+-- a refusal either escapes a `define`d callback and surfaces as nvim's own
+-- `stack traceback:` (the paragraph on `:LainReviewDone` below carries that
+-- measurement -- exactly the plugin-crash shape this rail exists to avoid) or,
+-- over `notify`, vanishes without a trace: `:messages` empty, nothing echoed,
+-- no error anything downstream ever sees.
 local function recorded(full)
   local messagesopt, more = vim.o.messagesopt, vim.o.more
   vim.o.messagesopt = messagesopt:gsub("hit%-enter", "wait:0")
@@ -244,17 +239,6 @@ function _G.__lain.review_refused(message)
   if shown == full then
     vim.api.nvim_echo({ { full, "WarningMsg" } }, true, {})
     return full
-  end
-  -- Too old to record quietly: echo the FITTED line WITH history instead of
-  -- recording the unfolded original beside it. A fitted line cannot raise
-  -- either prompt -- that is what `fitted` guarantees -- so this costs no
-  -- paging and no error, and `:messages` still holds what the human was shown.
-  -- What it gives up is the untruncated tail, and every refusal lain ships is
-  -- already inside the bar (`spec/refusal_width_discipline_spec.rb`), so that
-  -- is reachable only through an unbounded interpolated field.
-  if not records_quietly() then
-    vim.api.nvim_echo({ { shown, "WarningMsg" } }, true, {})
-    return shown
   end
 
   recorded(full)

@@ -206,27 +206,25 @@ If `nvim_get_mode` ever reports `mode = "rm"` here, read the pane with tmux (it 
 blocked) and note that Enter may not clear it -- at 60 lines in a 20-row pane, twenty `<CR>`s
 did not.
 
-**Record the nvim version beside this result, because one axis of the fix needs 0.11.** The rail
-suppresses the hit-enter prompt by swapping `'messagesopt'`'s `hit-enter` item for `wait:0` while it
-writes the unfolded sentence to `:messages`, and `'messagesopt'` arrived in nvim **0.11**. It is
-asked for rather than assumed (`vim.fn.exists("&messagesopt")`) — reading `vim.o.messagesopt` on an
-older editor does not return nil, it **raises** `Unknown option`, out of a callback where nvim
-appends the very `stack traceback:` this rail exists to keep off a human's screen.
+**nvim 0.11 is the stated minimum, so all three checks apply unconditionally.** The rail suppresses
+the hit-enter prompt by swapping `'messagesopt'`'s `hit-enter` item for `wait:0` while it writes the
+unfolded sentence to `:messages`, and `'messagesopt'` arrived in nvim **0.11**. That used to be
+probed for (`vim.fn.exists("&messagesopt")`) with a documented degrade on 0.10; the probe and the
+degrade are both gone, and `README.md` states the requirement instead.
 
-So on nvim 0.10 the rail **degrades rather than errors**: it echoes the fitted line *with* history
-instead of recording the unfolded original beside it. What that costs is the untruncated tail in
-`:messages`, and nothing else — no paging, no traceback, and `:messages` still holds what the human
-was shown. Two consequences for driving this section:
+Two consequences for driving this section:
 
-- the no-paging and no-traceback checks apply on **every** supported nvim, and a failure of either
-  is a finding regardless of version;
-- the "**the full sentence survives in `:messages`**" check applies only on **0.11+**. On 0.10 the
-  truncated form in `:messages` is the documented degrade, not a regression — so `nvim --version`
-  belongs in the record, or that reading cannot be interpreted.
+- the no-paging and no-traceback checks apply on every supported nvim, and a failure of either is a
+  finding;
+- the "**the full sentence survives in `:messages`**" check now applies too, with no version caveat.
+  A truncated `:messages` here is a **regression**, not a documented degrade.
+
+`nvim --version` still belongs in the record — not to interpret this reading, but because an editor
+below the stated minimum makes every reading in this file untrustworthy rather than just this one.
 
 Every refusal lain itself ships is inside the 80-column bar
-(`spec/refusal_width_discipline_spec.rb`), so the degrade is reachable in practice only through a
-sentence carrying an unbounded interpolated field — a quoted `Lain::Error#message`, a path, a
+(`spec/refusal_width_discipline_spec.rb`), so the folding path is reachable in practice only through
+a sentence carrying an unbounded interpolated field — a quoted `Lain::Error#message`, a path, a
 docent's exception. Which is exactly what the `:LainReviewVerdict` partial refusal below is.
 
 An earlier edition of this section said `method.md` "sizes the QA server at 220x50 precisely so
