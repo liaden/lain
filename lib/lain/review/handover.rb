@@ -103,10 +103,13 @@ module Lain
         def self.reviewing(_changeset) = nil
       end
 
-      # No docent, so a question about a hunk reaches nobody. A docent is
-      # constructed by no wiring in this tree -- it needs an answerer, which
-      # needs the run's role spawn -- so this is what `ask` honestly answers
-      # until one is.
+      # No docent, so a question about a hunk reaches nobody. Both review
+      # commands wire a real one off the editor's surface now; what still
+      # reaches this is a review drawn somewhere with no thread pane to render
+      # an answer into -- a text surface, or the null one an epic's
+      # `implementation` stage opens headless -- and there a refusal is the
+      # honest answer rather than a docent that would spend a provider call and
+      # draw nowhere.
       #
       # It answers that capability's SHAPE and never its class, and that is a
       # deletability requirement rather than taste: the docent is one of this
@@ -128,6 +131,11 @@ module Lain
         end
 
         def self.ask(_anchor_id, _question) = Unasked
+
+        # A thread nobody will answer in is still a thread the human may place
+        # a note at, so this takes the anchor and does nothing with it rather
+        # than making {Handover#wrote_annotation} ask whether a docent exists.
+        def self.hold(_anchor) = nil
       end
 
       # Nothing is drawing this review, so no row of it is on a screen and there
@@ -236,7 +244,8 @@ module Lain
       #   issued it
       # @param baton [#settle] what a verdict hands back, when anybody is
       #   holding one
-      # @param docent [#ask] who answers a question about a hunk
+      # @param docent [#ask, #hold] who answers a question about a hunk, and
+      #   what is told about the anchor a note just opened a thread at
       # @param redraw [#present] how the sidebar is drawn again once a gesture
       #   has changed what one of its rows says ({Redraw}), which needs the
       #   scope the round is being read at and so comes from whoever drew it
@@ -305,10 +314,43 @@ module Lain
       # THIS review can take it, which only the session holding the changeset
       # knows.
       #
+      # THE NOTE IS WHAT OPENS THE THREAD, which is why the docent is told
+      # about one. A thread pane exists at an anchor only once something has
+      # posted that anchor's id, and a note is the only thing that ever does --
+      # `:LainThread` merely reveals a buffer the note already created. So a
+      # docent that was not told would answer every question with
+      # {Docent::NO_THREAD} while being perfectly well wired, which is the
+      # not-actually-reachable shape one layer below the one nobody wiring a
+      # docent went looking for.
+      #
+      # AFTER the session, and {Docent#hold} rather than `#open`, and those two
+      # facts are the same correctness rather than two preferences. The docent is
+      # told only about a note that LANDED -- a kind the session refuses journals
+      # nothing, and a thread opened over it would invite a question at an anchor
+      # no note is recorded at, which the docent would answer with a real
+      # provider call. And `hold` does not draw, so the note's own render is the
+      # only payload this rail posts: the thread carries one payload per anchor,
+      # and a docent drawing its own empty conversation beside the note would put
+      # write order in charge of which the human reads.
+      #
+      # ONE KNOWN LOSS REMAINS, recorded rather than smoothed over, and it runs
+      # the other way: a SECOND note at a line whose thread has already been
+      # answered mints a second anchor (an id is per-{Anchor}, not per position),
+      # so the pane the cursor finds on that line becomes the note's and the
+      # answered thread is no longer the one on screen. Nothing is destroyed --
+      # both threads are held, the exchange is still reachable by its own id, and
+      # `docent_answered` is on the record for {Docent#replay} -- but the human
+      # has to reopen it. Closing that means an anchor identified by its POSITION
+      # rather than by a fresh uuid, which is a change to {Anchor}'s identity and
+      # not a line of wiring. There is an example pinning it, so the trade cannot
+      # move in silence.
+      #
       # @param note [Hash{String=>Object}] {ReviewWrite::KEYS}, normalized
       # @return [String, nil] a refusal in words, or nothing when it landed
       def wrote_annotation(note)
-        @session.annotate(anchor(note), note["text"], kind: note["kind"], drifted: note["drifted"])
+        placed = anchor(note)
+        @session.annotate(placed, note["text"], kind: note["kind"], drifted: note["drifted"])
+        @docent.hold(placed)
         nil
       rescue Lain::Error, ArgumentError => e
         e.message

@@ -5,7 +5,7 @@ require "mixlib/shellout"
 module Lain
   module CLI
     module Command
-      # `/review <pull-request|branch>` at `you>` (T31b): draw a colleague's
+      # `/review <pull-request|branch>` at `you>`: draw a colleague's
       # changeset in the editor this chat is ALREADY attached to, and bind its
       # gesture rails to the review it opened.
       #
@@ -192,7 +192,7 @@ module Lain
           scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
           resolved = targets.resolve(parsed.target, base: parsed.base)
           session = round(resolved, surface, env)
-          wired(resolved, session, env, scope)
+          wired(resolved, session, env, scope, surface)
           drawn(resolved, session, scope).tap { surface.focus }
         end
 
@@ -219,8 +219,8 @@ module Lain
         # held at all -- {Review::Submit::Outbox::Nowhere} is what turns that
         # into a refusal naming the branch, and a round that was never held
         # would answer "no changeset review is open" about one that plainly is.
-        def wired(resolved, session, env, scope)
-          env.replies.bind_changeset_review(handover(session, env, scope))
+        def wired(resolved, session, env, scope, surface)
+          env.replies.bind_changeset_review(handover(session, env, scope, surface))
           @outbox.hold(session:, number: resolved.number, label: resolved.label)
         end
 
@@ -236,13 +236,15 @@ module Lain
         # than an error. {Frontend::Neovim} owns one pair for the life of the
         # session precisely so this is one read rather than an assembly.
         #
-        # No `baton:` and no `docent:`: nobody is holding a baton for a review
-        # opened outside an epic ({Review::Handover::Unheld} is genuinely
-        # nothing), and no wiring in this tree constructs a
-        # {Review::Docent} -- so `ask` answers {Review::Handover::Unattended}'s
-        # sentence rather than a silence.
+        # No `baton:`: nobody is holding one for a review opened outside an epic
+        # ({Review::Handover::Unheld} is genuinely nothing). The DOCENT is here,
+        # though, off the same editor and on the same line of wiring, assembled
+        # from the three things only this object holds -- the round's changeset,
+        # the run's role spawn and the chat's own journal. Whether there is a
+        # docent at all is {Review::Docent.for}'s decision, and its comment
+        # carries the reason.
         #
-        # `reviewing` is what makes `<CR>` open anything (T32a): the view's diff
+        # `reviewing` is what makes `<CR>` open anything: the view's diff
         # surface is built with the editor and holds no round, so the changeset
         # has to arrive from whoever opened one. Sent HERE, beside the bind, for
         # the bind's own reason -- both are wiring that must be complete before
@@ -252,10 +254,12 @@ module Lain
         # that changed a row has to draw the sidebar again, and which grouping is
         # on screen is the one thing that rail cannot ask anybody for -- a session
         # takes it and forgets it. This is the caller that chose it.
-        def handover(session, env, scope)
+        def handover(session, env, scope, surface)
           view = env.replies.review_view
           view.reviewing(session.changeset)
-          Lain::Review::Handover.new(session:, view:, redraw: Lain::Review::Handover::Redraw.new(scope:))
+          docent = Lain::Review::Docent.for(changeset: session.changeset, surface:, spawn: env.role_spawn,
+                                            journal: env.chronicle.record_journal)
+          Lain::Review::Handover.new(session:, view:, docent:, redraw: Lain::Review::Handover::Redraw.new(scope:))
         end
 
         # A String answer is the surface's REFUSAL (`spec/support/shared_examples/
@@ -270,7 +274,7 @@ module Lain
         # refused stays open with its rails bound. That is the honest state --
         # the next `/review` rebinds them, and there is an example for it -- and
         # narrowing it would mean checking the ceiling here too, which is the
-        # second caller T31c deleted.
+        # second caller the move of that guard onto `Session#present` deleted.
         def drawn(resolved, session, scope)
           refusal = session.present(scope:)
           [Lain::Review::OpenedBanner.call(headline(resolved, session, scope)),

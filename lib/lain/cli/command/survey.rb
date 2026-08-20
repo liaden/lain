@@ -259,10 +259,15 @@ module Lain
           surface = env.replies.review_surface or raise Error, NO_EDITOR
           refuse_second_surface!
           Lain::Review::Surface.check!(surface)
-          scope = Lain::Review::Session.scope!(parsed.scope || default_scope)
+          # The flag's absence, not a second declaration of the vocabulary: the
+          # default is read out of the strategy registry, so a scope that stops
+          # shipping stops being the default, and it goes through `scope!` on
+          # this one line whether the human named it or not.
+          scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
           walk = Lain::Survey::Walk.new(root: parsed.path, sensitivity: classifier)
           session = round(walk, ceilings_for(parsed), surface, env)
-          bound(session, env, scope)
+          # The gesture rails, complete before a human can touch the sidebar.
+          env.replies.bind_changeset_review(handover(session, env, scope, surface))
           shown(walk, session, scope, surface)
         end
 
@@ -295,13 +300,6 @@ module Lain
           raise Error, format(ALREADY_OPEN, target: @outbox.target)
         end
 
-        # The flag's absence, not a second declaration of the vocabulary: the
-        # word comes off {Lain::Review::Partition::DEFAULT_SCOPE}, which is read
-        # out of the registry, and it still goes through
-        # {Lain::Review::Session.scope!} on the same line every explicit scope
-        # does.
-        def default_scope = Lain::Review::Partition::DEFAULT_SCOPE
-
         # Anchored where the human is STANDING and not at the surveyed tree:
         # {Lain::Sensitivity} resolves a project's relative rules against a
         # working directory, and the table in force is the one belonging to the
@@ -323,14 +321,9 @@ module Lain
         def round(walk, ceilings, surface, env)
           source = Lain::Review::Source::Corpus.new(walk:, projection: @projection, bounds: ceilings, named_from: @cwd)
           Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source:),
-                                     journal: env.chronicle.record_journal, source: source_name, surface:,
-                                     bounds: ceilings)
+                                     journal: env.chronicle.record_journal, source: self.class.source_name,
+                                     surface:, bounds: ceilings)
         end
-
-        def source_name = self.class.source_name
-
-        # The gesture rails, complete before a human can touch the sidebar.
-        def bound(session, env, scope) = env.replies.bind_changeset_review(handover(session, env, scope))
 
         # The round, where the rest of the chat can see it -- taken only once
         # something was drawn, per {#opened}.
@@ -352,10 +345,20 @@ module Lain
         # screen is the one thing the gesture rail cannot ask anybody for: a
         # session takes it and forgets it. This is the caller that chose it, on
         # the same line of wiring as the bind.
-        def handover(session, env, scope)
+        #
+        # The DOCENT rides the same line of wiring, off the same editor, and it
+        # is assembled here because this is the one place holding all three
+        # things it needs and cannot ask anybody for: the round's changeset, the
+        # run's role spawn (the same seam a `@role/skill` line folds through)
+        # and the chat's own journal, so the exchange lands in the session's own
+        # record and replays with it. {Lain::Review::Docent.for} decides whether
+        # there is a docent at all, and its own comment carries that reason.
+        def handover(session, env, scope, surface)
           view = env.replies.review_view
           view.reviewing(session.changeset)
-          Lain::Review::Handover.new(session:, view:, redraw: Lain::Review::Handover::Redraw.new(scope:))
+          docent = Lain::Review::Docent.for(changeset: session.changeset, surface:, spawn: env.role_spawn,
+                                            journal: env.chronicle.record_journal)
+          Lain::Review::Handover.new(session:, view:, docent:, redraw: Lain::Review::Handover::Redraw.new(scope:))
         end
 
         def drawn(walk, session, scope)

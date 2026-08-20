@@ -1311,7 +1311,14 @@ RSpec.describe "the thread pane's deletability" do
   #      entry point that no longer exists -- a silent nil call inside a notify,
   #      not a LoadError, which is exactly the failure this row exists to make
   #      impossible.
-  #   3. the two specs that drive the rail.
+  #   3. `lib/lain/review/docent.rb` -- the docent asks a review surface whether
+  #      it has a pane to draw an answer into, and takes the one it finds. It
+  #      costs T25 nothing extra: the deletion map already records that removing
+  #      the pane forces the docent out with it, so this reference goes with the
+  #      file it lives in. It is listed because THIS sweep is a flat allowlist
+  #      and knows nothing about that nesting. Its own spec is here for the same
+  #      reason: it stands a surface in that answers `#thread_view`.
+  #   4. the two specs that drive the rail.
   def names_it_in_code?(path)
     comment = path.end_with?(".lua") ? /^\s*--/ : /^\s*#/
     File.readlines(path).grep_v(comment).join.match?(/ThreadView|thread_view|51_thread/)
@@ -1321,7 +1328,8 @@ RSpec.describe "the thread pane's deletability" do
     root = File.expand_path("../../../..", __dir__)
     own = ["lib/lain/frontend/neovim/thread_view.rb", "lib/lain/frontend/neovim/runtime/51_thread.lua",
            "spec/lain/frontend/neovim/thread_view_spec.rb"]
-    consumers = ["lib/lain/frontend/neovim.rb", "lib/lain/review/surface/neovim.rb",
+    consumers = ["lib/lain/frontend/neovim.rb", "lib/lain/review/docent.rb",
+                 "lib/lain/review/surface/neovim.rb", "spec/lain/review/docent_spec.rb",
                  "spec/lain/review/surface/neovim_spec.rb"]
     # T25's `deletability_spec.rb` is the MAP, so it names every deletable
     # capability by construction and exempts itself from its own sweep for the

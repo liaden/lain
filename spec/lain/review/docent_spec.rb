@@ -1038,4 +1038,55 @@ RSpec.describe Lain::Review::Docent do
       expect(result.content).to include("no docent")
     end
   end
+
+  # What a review command builds one THROUGH, and the reason it is a factory
+  # rather than a `new` at each call site: `new` with a changeset and a view is
+  # already a fully constructed docent that refuses every question and records
+  # nothing, so "a docent was built" is not a property worth having. These pin
+  # the two things that make it one -- an answer that comes back, and a surface
+  # honest about having nowhere to draw.
+  describe ".for" do
+    # The editor's surface, at the ONE message this factory asks of a surface.
+    # Not {Lain::Review::Surface::Neovim} itself: that would pull the thread
+    # pane's own capability into this file, and both are separately deletable.
+    def surface_with_pane(pane)
+      Object.new.tap { |surface| surface.define_singleton_method(:thread_view) { pane } }
+    end
+
+    it "answers a docent that reaches the spawn and renders what comes back" do
+      spawned = []
+      spawn = ->(role, mode, brief) { spawned << [role, mode, brief] and Lain::Tool::Result.ok("because beta") }
+
+      Sync do
+        subject = described_class.for(changeset:, surface: surface_with_pane(view), spawn:, journal:)
+        subject.open(anchor)
+        subject.ask("a-42", "why this way?").task.wait
+      end
+
+      expect(spawned.map { |call| call.first(2) }).to eq([[described_class::ROLE, described_class::MODE]])
+      expect(view.text).to include("because beta")
+    end
+
+    it "records the exchange in the journal it was handed" do
+      spawn = ->(_role, _mode, _brief) { Lain::Tool::Result.ok("because beta") }
+
+      Sync do
+        subject = described_class.for(changeset:, surface: surface_with_pane(view), spawn:, journal:)
+        subject.open(anchor)
+        subject.ask("a-42", "why this way?").task.wait
+      end
+
+      expect(journal.map(&:journal_type)).to eq(%w[docent_asked docent_answered])
+    end
+
+    # A surface with no pane is not a docent with a null view: an answer nobody
+    # can see is not worth a provider call, so the refusal is the one the
+    # gesture rail already knows how to render.
+    it "answers the unattended refusal for a surface with no thread pane" do
+      built = described_class.for(changeset:, surface: Object.new, spawn: ->(*) { raise "must not spawn" },
+                                  journal:)
+
+      expect(built.ask("a-42", "why this way?").report).to eq(Lain::Review::Handover::Unattended::NO_DOCENT)
+    end
+  end
 end

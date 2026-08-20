@@ -269,6 +269,38 @@ module Lain
         end
       end
 
+      # A docent for the round a review command just opened, or the refusal that
+      # honestly stands in for one -- the whole of the "is a docent reachable
+      # here" question, in the one place a reader looking for it will look.
+      #
+      # THE PANE IS THE CONSTRAINT, not the answerer. Every answer is drawn by
+      # this object itself, on its own task, long after the gesture that asked
+      # returned -- so a surface with nowhere to draw cannot carry a docent at
+      # all, and one that spent a provider call and rendered nowhere is worse
+      # than one that refuses. Only the editor's surface has a thread pane, and
+      # it is asked as a DUCK rather than by type, the way {#arm_role} asks its
+      # answerer whether it can name itself.
+      #
+      # CONSTRUCTION IS NOT THE POINT, which is why this takes the answerer's
+      # spawn and the journal rather than defaulting them: `new` with a changeset
+      # and a view alone is a fully built docent that refuses every question
+      # ({Unanswerable}) and records nothing ({Channel::Null}), and it would
+      # satisfy every test of "a docent exists" while being the same silence one
+      # object deeper.
+      #
+      # @param changeset [Review::Changeset] the round's diff
+      # @param surface [#thread_view, Object] the review surface the round is
+      #   drawn on; anything without a thread pane answers the refusal
+      # @param spawn [#call] `(role, context_mode, prompt) -> Tool::Result`
+      # @param journal [#<<] the round's own journal, so an exchange replays
+      #   with the review it belongs to
+      # @return [Docent, Object] a docent, or {Handover::Unattended}
+      def self.for(changeset:, surface:, spawn:, journal:)
+        return Handover::Unattended unless surface.respond_to?(:thread_view)
+
+        new(changeset:, view: surface.thread_view, answerer: Answerer.new(spawn:), journal:)
+      end
+
       # @param changeset [Review::Changeset] the diff every question is about;
       #   read for its hunks and its two revisions, never held open past a render
       # @param view [#show] T18's thread pane: takes `(anchor, entries)` and
@@ -304,9 +336,41 @@ module Lain
       # @return [Conversation, nil] nil when no hunk of this changeset covers the
       #   anchor, which is the one case there is nothing to open
       def open(anchor)
-        conversation = @threads.hold(anchor)
+        conversation = hold(anchor)
         render(conversation) unless conversation.nil?
         conversation
+      end
+
+      # The same thread, WITHOUT drawing it -- for the caller that has already
+      # put something else in that pane and must not have it overwritten.
+      #
+      # {Review::Handover#wrote_annotation} is that caller, and the split is
+      # what makes the note win BY CONSTRUCTION rather than by write order: the
+      # thread rail carries one payload per anchor, so a docent rendering its own
+      # (empty) conversation beside the note that opened the thread posts twice
+      # and lets microseconds decide which the human reads.
+      #
+      # IT SWALLOWS, and that is the point rather than laziness. Locating the
+      # hunk an anchor sits in walks the changeset lazily, so it reaches the
+      # FILESYSTEM -- a surveyed file deleted since the round opened raises
+      # `Errno::ENOENT` from here, and this is called from inside the human's
+      # `:w`, on a rail whose rescue is this project's own refusals and whose
+      # law is that it refuses uniformly or not at all. A raise there would lose
+      # the note. What it costs is that the thread is simply not held, and a
+      # question at that anchor then refuses with {NO_THREAD} -- which is the
+      # sentence for "no hunk of this changeset covers it", already true of a
+      # file that is gone.
+      #
+      # `{Async::Stop}` is not among what is caught, {Delivery#call}'s rule: a
+      # cancelled task must stay cancelled.
+      #
+      # @param anchor [Review::Anchor]
+      # @return [Conversation, nil] nil when no hunk covers the anchor, and nil
+      #   when the changeset could not be read to find out
+      def hold(anchor)
+        @threads.hold(anchor)
+      rescue StandardError, ScriptError
+        nil
       end
 
       # Take one question and return -- see the class doc on why returning is the

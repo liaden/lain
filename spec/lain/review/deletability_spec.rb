@@ -109,11 +109,18 @@ module DeletionMap
       forces: %w[docent], untestable: nil
     ),
     Capability.new(
-      key: "docent",
-      constants: %w[Docent],
+      key: "docent", constants: %w[Docent],
       files: ["lib/lain/review/docent.rb", "lib/lain/prompt/templates/role/diff-docent.md",
               "spec/lain/review/docent_spec.rb"],
-      consumers: ["lib/lain/cli/wiring/toolset_build.rb", "spec/lain/cli/wiring/toolset_build_spec.rb"],
+      # The two review COMMANDS joined the row when the capability stopped being
+      # unreachable: each builds the docent off the editor's own surface, its
+      # answerer off the run's role spawn and its journal off the chat's
+      # chronicle, and each falls back to `Handover::Unattended` where the
+      # surface has no thread pane. Their specs come with them -- both drive the
+      # docent by name.
+      consumers: ["lib/lain/cli/command/review.rb", "lib/lain/cli/command/survey.rb",
+                  "lib/lain/cli/wiring/toolset_build.rb", "spec/lain/cli/command/survey_spec.rb",
+                  "spec/lain/cli/wiring/toolset_build_spec.rb"],
       edits: {
         "lib/lain/review.rb" => ['require_relative "review/docent"'],
         # The catalog and the shipped templates are pinned equal in BOTH
@@ -121,8 +128,7 @@ module DeletionMap
         # a catalog entry without its roll-call name is another.
         "lib/lain/role/catalog.rb" => ["Role.new(name: :diff_docent"],
         "spec/lain/role_spec.rb" => [":merge_resolver, :diff_docent"]
-      },
-      forces: [], untestable: nil
+      }, forces: [], untestable: nil
     ),
     Capability.new(
       key: "submit",

@@ -392,6 +392,30 @@ RSpec.describe Lain::Review::Handover do
       expect(records_of("annotation_placed").first["revision"]).to eq("e" * 40)
     end
 
+    # THE DOCENT IS TOLD ONLY ABOUT A NOTE THAT LANDED, and the order of those
+    # two lines is what says so. A note is the only thing that ever opens a
+    # thread at an anchor, so the docent has to be told -- but a kind this
+    # session refuses journals nothing, and a docent told anyway would hold a
+    # thread for a note the record denies. Telling it AFTER the session returns
+    # makes that unrepresentable rather than merely unlikely.
+    #
+    # The docent stands in as a RECORDER answering the two messages the handover
+    # sends it, never a double of the class: the docent is a deletable
+    # capability and `spec/lain/review/deletability_spec.rb` owns the map, so
+    # neither the subject nor this file may name it in code.
+    it "tells the docent about a note the session took, and not about one it refused" do
+      held = []
+      docent = Object.new
+      docent.define_singleton_method(:hold) { |anchor| held << anchor.id }
+      docent.define_singleton_method(:ask) { |_anchor_id, _question| nil }
+      subject = handover(docent:)
+
+      subject.wrote_annotation(note(kind: "nitpick", text: "refused"))
+      subject.wrote_annotation(note(text: "took"))
+
+      expect(held).to eq(session.annotations.map(&:id))
+    end
+
     it "keeps the note in the session's own annotations, in placement order" do
       handover.wrote_annotation(note(text: "first"))
       handover.wrote_annotation(note(text: "second"))

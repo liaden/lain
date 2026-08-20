@@ -12,7 +12,7 @@ module Lain
       # changeset, and not even the scope last presented. That is the port's own
       # promise (see {Review::Surface}'s class doc) and it is what lets the
       # editor half be rebuilt, swapped for a second frontend, or dropped
-      # mid-review with nothing lost: the session (T13) is the aggregate, and
+      # mid-review with nothing lost: the session is the aggregate, and
       # every message here is a translation with no memory. Its instance
       # variables are exactly its four collaborators, and a spec asserts that
       # by name rather than by inspection of what happens to be in them.
@@ -34,8 +34,8 @@ module Lain
       # history to replay -- {Surface::Text#thread} makes the same honest
       # reading of "open"), so the view renders its own invitation to ask;
       # `annotate` sends the note as one message. The extmark rail a note would
-      # ALSO ride is T16's and does not exist yet, so a note is visible in the
-      # pane and nowhere else until it does.
+      # ALSO ride does not exist yet, so a note is visible in the pane and
+      # nowhere else until it does.
       #
       # THE VIEW IS THE ONE OWNER OF THAT PAYLOAD, and this object may not
       # build one itself. It used to: both messages posted `@rpc.set_thread(
@@ -82,7 +82,7 @@ module Lain
       # {Surface::Text#verdict}.
       #
       # A NULL VERDICT VALUE DOES NOT CLOSE THIS, and saying so is the point of
-      # the paragraph -- an earlier draft here pointed at T13's `Verdict::None`
+      # the paragraph -- an earlier draft here pointed at `Verdict::None`
       # as the fix and a review panel was right that it is not one. A null
       # verdict says "no verdict"; it still cannot tell the caller that the
       # HUMAN DECLINED from that the EDITOR WAS DETACHED, which are different
@@ -112,9 +112,9 @@ module Lain
       # object's to compute nor the session's. Drift is the anchor text against
       # the line the number NOW names, and that line lives in the EDITOR
       # BUFFER -- which is neither the diff the session holds nor anything this
-      # object may hold. So the comparison is made where the buffer is, in
-      # T16's lua half at settle time, content against content, and arrives
-      # INBOUND as a field on the `review_annotate` payload. This surface
+      # object may hold. So the comparison is made where the buffer is, in the
+      # note rail's lua half at settle time, content against content, and
+      # arrives INBOUND as a field on the `review_annotate` payload. This surface
       # FORWARDS it, the session receives it, and nobody computes it from state
       # they do not have. That is also exactly what the extmark contract
       # requires: a mark inside a rewritten span MOVES rather than
@@ -123,8 +123,8 @@ module Lain
       # carries neither `drifted` nor the buffer's revision in this tree.
       #
       # THAT LEG REFUSES UNIFORMLY OR NOT AT ALL, and that is a rule rather
-      # than a description of what it happens to do. T16's notes arrive ONE AT
-      # A TIME, and the editor forgets the batch only after the last one lands
+      # than a description of what it happens to do. Notes arrive ONE AT A
+      # TIME, and the editor forgets the batch only after the last one lands
       # -- so a `wrote_annotation` that takes note 1 and refuses note 2 leaves
       # note 1 recorded while the editor still holds every note, and the
       # human's retry records note 1 a SECOND time. A note-by-note rail is safe
@@ -213,10 +213,15 @@ module Lain
         # `spec/refusal_width_discipline_spec.rb`'s bar in service.
         PARTLY_MARKED = "marked %<landed>d of %<total>d hunks on that row; the rest were refused -- %<refusal>s"
 
-        # The ask, naming the vocabulary rather than a command: the changeset
-        # review's `review_verdict` verb has no lua caller yet (T18/T20), and a
-        # sentence naming a command nobody has written is worse than one
-        # naming the words the human may answer with.
+        # The ask, naming the vocabulary rather than the command. An earlier
+        # edition of this comment said the verb had no lua caller; it has one --
+        # `46_sidebar.lua`'s `:LainReviewVerdict` rpcrequests `review_verdict`,
+        # which `Frontend::Neovim::RpcThread` routes -- so what is left is the
+        # reason the wording did not follow: the COMMAND is taught once, in
+        # {Review::OpenedBanner}, at the moment the round opens, and what this
+        # ask supplies is the part the human still has to choose. Repeating the
+        # verb here would also lengthen a notice that must fit one `nvim_echo`
+        # line, for {MARKED}'s reason.
         ASK_VERDICT = "this review is waiting for a verdict -- one of %s"
 
         # The answer to that ask, once a policy admitted it and the journal
@@ -262,6 +267,30 @@ module Lain
           @session = session
           @thread_view = thread_view
         end
+
+        # The thread pane, for a collaborator that renders a CONVERSATION into
+        # it rather than one message. {Review::Docent} is that collaborator and
+        # the only one: its answers arrive on a task of their own, seconds after
+        # the gesture that asked, so it draws them itself and cannot go through
+        # {#annotate} -- which posts exactly one entry and is the note rail.
+        #
+        # IT HANDS OVER THE HELD INSTANCE and never builds a second, which is
+        # the whole of the safety argument. The class doc's rule is that there
+        # is ONE owner of a `set_thread` payload; a caller that assembled its own
+        # view over some other inlet would be a second, drawing an answer into a
+        # pane keyed by the same anchor from a different rail. So the reader
+        # exists precisely so nobody has to.
+        #
+        # NOT one of {Review::Surface}'s messages, and it must not become one: a
+        # text surface has no pane, the port's promise is what the two adapters
+        # SHARE, and a docent is a capability only the editor's surface can
+        # carry. A caller wanting one therefore asks whether this collaborator
+        # plays that role, the way {Review::Docent#arm_role} asks its answerer
+        # and {Tools::RequestReview::Implementation::Seams} asks its seams.
+        #
+        # @return [#show] takes `(anchor, entries)` and answers the notice
+        #   saying why the render did not land, or nil
+        attr_reader :thread_view
 
         # @param changeset [#files, #partitions] see {Review::Surface}'s class
         #   doc for the one place this duck is stated; {Frontend::Neovim::ReviewView}

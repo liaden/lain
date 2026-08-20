@@ -546,7 +546,14 @@ RSpec.describe Lain::CLI::Command::Review do
       expect(editor.inlet.posted).to be_empty
     end
 
-    it "refuses an ask gesture in words, because no docent is wired to this review yet" do
+    # RE-AIMED, and deliberately rather than deleted. It used to read "no docent
+    # is wired to this review yet", which was true of every review in the tree
+    # and is the defect F32 filed; the command wires one off the editor's surface
+    # now. What this pins is the case that KEEPS the refusal: the editor here
+    # draws on {Lain::Review::Surface::Text}, which has no thread pane, and a
+    # docent that spent a provider call and drew nowhere is worse than one that
+    # refuses. The sentence is unchanged because the human's situation is.
+    it "refuses an ask gesture in words where the surface has no thread pane to draw an answer in" do
       attached
       command.call("feature", env)
 

@@ -62,6 +62,22 @@ class SurveyOrderSurface
   def refuse(message) = message
 end
 
+# The editor's render inlet at the four rails a review surface posts on, keeping
+# every `set_thread` payload. The thread rail is the whole of the assertion in
+# the docent examples below: a question's answer arrives there and nowhere else,
+# long after the gesture that asked, so a recording of that rail is the only
+# thing that can tell an answer that was DRAWN from one that was merely computed.
+class SurveyDocentInlet
+  def initialize = (@threads = [])
+
+  attr_reader :threads
+
+  def set_review(_lines, _generation) = nil
+  def review_focus = nil
+  def review_refused(_message) = nil
+  def set_thread(anchor, lines) = @threads << [anchor, lines]
+end
+
 # The frontend, reduced to the three messages {Lain::CLI::HumanReplies} asks of
 # one. The surface is the REAL text surface and the view the REAL sidebar view,
 # for `command/review_spec.rb`'s reason: what is under test is whether the
@@ -701,6 +717,239 @@ RSpec.describe Lain::CLI::Command::Survey do
 
       expect(editor.bound).to be_a(Lain::Review::Handover)
       expect(editor.bound).not_to equal(first)
+    end
+  end
+
+  # F32: the thread pane's model half, which no shipped path constructed. The
+  # examples here are deliberately NOT "a docent was built" -- `Docent.new` with
+  # only a changeset and a view is a fully constructed docent whose answerer is
+  # `Unanswerable` and whose journal is `Channel::Null`, and it refuses every
+  # question while satisfying any assertion about construction. So each one below
+  # drives the human's own route -- `/survey`, a note, a question typed into the
+  # pane that note opened -- and asserts an ANSWER came back, was DRAWN, and is
+  # ON THE RECORD.
+  describe "the docent a survey wires, and the question that reaches it" do
+    let(:inlet) { SurveyDocentInlet.new }
+    let(:surface) { Lain::Review::Surface::Neovim.new(rpc: inlet) }
+    let(:editor) { SurveyCommandEditor.new(sink, surface:) }
+    let(:asks) { [] }
+    let(:answer) { "the last unit is real, so the range is inclusive" }
+    let(:result) { Lain::Tool::Result.ok(answer) }
+    let(:env) { build_command_env(replies:, chronicle:, role_spawn: recording_spawn) }
+
+    before { two_documents }
+
+    # The run's role spawn, at the arity {Lain::Review::Docent::Answerer} sends:
+    # `(role, context_mode, prompt)`. A recorder rather than a double, because
+    # what has to be true is that the docent's OWN role and mode reach it -- an
+    # `instance_double` that accepted anything would pass on a docent wired to
+    # the wrong arm.
+    def recording_spawn
+      lambda do |role, mode, brief|
+        asks << [role, mode, brief]
+        result
+      end
+    end
+
+    # A note at line 3 of `notes.md`, in the shape
+    # {Lain::Frontend::Neovim::ReviewWrite} normalizes off the wire. It is what
+    # OPENS the thread: the pane is keyed by anchor id, and the id only exists
+    # once something has posted one.
+    def note(**overrides)
+      { "path" => "notes.md", "side" => "new", "line" => 3, "anchor_text" => "One line of prose.",
+        "text" => "why this way?", "kind" => "note", "revision" => "corpus",
+        "drifted" => false }.merge(overrides.transform_keys(&:to_s))
+    end
+
+    # The id the editor would cite back, read off the rail the editor reads it
+    # off: `set_thread`'s own payload. Nothing here invents one.
+    def anchor_id = inlet.threads.last.first["id"]
+
+    def records = record.string.lines.map { |line| JSON.parse(line) }
+
+    def records_at(id) = records.select { |entry| entry["anchor_id"] == id }
+
+    # `/survey`, drawn, with the gesture rails bound -- the state every example
+    # below starts from.
+    def opened_survey
+      attached
+      command.call(@root, env)
+      editor.bound
+    end
+
+    # The whole human route, in the order a human takes it, and the await is
+    # part of it: a docent RETURNS from the gesture and answers on a task of its
+    # own, so a spec that did not wait would assert over a pending marker.
+    def asked(question)
+      handover = opened_survey
+      handover.wrote_annotation(note)
+      Sync { handover.ask(anchor_id, question).tap { |outcome| outcome.task&.wait } }
+    end
+
+    it "reaches the run's role spawn with the docent's own role and mode" do
+      asked("why is the range inclusive?")
+
+      expect(asks.map { |ask| ask.first(2) })
+        .to eq([[Lain::Review::Docent::ROLE, Lain::Review::Docent::MODE]])
+    end
+
+    # The brief is the whole of what the child sees, so the question and the
+    # hunk it is about both have to be in it -- a spawn reached with an empty
+    # prompt is a docent that cost money and read nothing.
+    it "hands it a brief carrying the question and the hunk it is about" do
+      asked("why is the range inclusive?")
+
+      expect(asks.first.last).to include("why is the range inclusive?").and include("One line of prose.")
+    end
+
+    it "takes the question rather than refusing it" do
+      outcome = asked("why is the range inclusive?")
+      taken = format(Lain::Review::Docent::TAKEN, "why is the range inclusive?")
+
+      expect([outcome.asked?, outcome.report]).to eq([true, taken])
+    end
+
+    # THE ANSWER IS DRAWN, which is the half a construction assertion cannot
+    # see: it arrives on the thread rail, at the anchor the question was asked
+    # against, and it is the docent speaking rather than lain refusing.
+    it "draws the answer into the thread pane, on the anchor the question was asked at" do
+      asked("why is the range inclusive?")
+      anchor, lines = inlet.threads.last
+
+      expect(anchor["id"]).to eq(anchor_id)
+      expect(lines.join("\n")).to include(answer).and include(Lain::Review::Docent::SPEAKER_DOCENT)
+    end
+
+    # AND IT IS ON THE RECORD. Both records, because an ask with no terminal
+    # record after it is a question a bench counts as outstanding forever.
+    it "journals the ask and the answer against that anchor" do
+      asked("why is the range inclusive?")
+
+      expect(records_at(anchor_id).map { |entry| entry["type"] })
+        .to eq(%w[docent_asked docent_answered])
+    end
+
+    it "journals what was asked and what came back, not merely that something happened" do
+      asked("why is the range inclusive?")
+      answered = records_at(anchor_id).find { |entry| entry["type"] == "docent_answered" }
+
+      expect(answered).to include("question" => "why is the range inclusive?", "answer" => answer)
+    end
+
+    # The arm names itself on the record, which is what makes two docents
+    # comparable at all -- a run that journaled the shipped role for every arm
+    # answers one bucket for every arm.
+    it "records which arm answered" do
+      asked("why is the range inclusive?")
+      recorded = records_at(anchor_id).find { |entry| entry["type"] == "docent_asked" }
+
+      expect(recorded["role"]).to eq(Lain::Review::Docent::ROLE.to_s)
+    end
+
+    # A survey opened, then the tree moved under it -- ordinary, because a
+    # corpus is read from disk and a human goes on working in the tree they are
+    # surveying. Locating the hunk an anchor sits in walks the changeset LAZILY,
+    # so it reaches the filesystem at the moment the note arrives.
+    #
+    # THE NOTE MUST STILL LAND. This rail's own rule is that it refuses
+    # uniformly or not at all (`Lain::Review::Surface::Neovim`'s class doc), and
+    # its rescue catches this project's own refusals -- never an Errno. So a
+    # docent that let one out would lose the human's note, and take the editor's
+    # reply loop down with it.
+    it "records a note whose surveyed file has since been deleted, instead of losing it to a raise" do
+      handover = opened_survey
+      FileUtils.rm(File.join(@root, "notes.md"))
+
+      expect(handover.wrote_annotation(note)).to be_nil
+      expect(records.map { |entry| entry["type"] }).to include("annotation_placed")
+    end
+
+    # THE PANE MAY NOT ASSERT A THREAD THE RECORD DENIES. `nitpick` is not one
+    # of `Review::ANNOTATION_KINDS`, so the session refuses the note and journals
+    # nothing -- and a thread opened anyway would invite a question at an anchor
+    # no note ever landed at, which the docent would answer with a real provider
+    # call.
+    it "opens no thread for a note the session refused" do
+      handover = opened_survey
+
+      refusal = handover.wrote_annotation(note(kind: "nitpick"))
+
+      expect(refusal).to be_a(String)
+      expect(inlet.threads).to be_empty
+      expect(records.map { |entry| entry["type"] }).not_to include("annotation_placed")
+    end
+
+    # ONE payload per note. The thread rail carries a single payload per anchor,
+    # so a docent that rendered its own empty conversation beside the note would
+    # post twice and let write order decide which the human sees. Holding the
+    # thread WITHOUT drawing it is what makes the note win by construction.
+    it "posts the thread pane once for a note that landed, not once per owner of the rail" do
+      handover = opened_survey
+
+      handover.wrote_annotation(note)
+
+      expect(inlet.threads.size).to eq(1)
+      expect(inlet.threads.last.last.join("\n")).to include("why this way?")
+    end
+
+    # THE ACCEPTED LOSS, pinned so it cannot move in silence. A second note on a
+    # line whose thread has already been answered mints a SECOND anchor -- an id
+    # belongs to an {Lain::Review::Anchor}, not to a position -- so the pane the
+    # cursor finds on that line becomes the note's, and the answered thread is no
+    # longer the one on screen.
+    #
+    # ACCEPTED rather than preserved or refused, and measured rather than
+    # assumed. Refusing a legitimate note because a docent once answered nearby
+    # is plainly wrong. Preserving means rendering the exchange instead, which
+    # loses the NOTE from the pane -- trading one loss for the other, over the
+    # single payload this rail carries per anchor. What makes accepting bearable
+    # is the two assertions below: nothing is destroyed. The exchange is still
+    # held under its own id and still answers there, and `docent_answered` is on
+    # the record for {Lain::Review::Docent#replay}. The human reopens it; they do
+    # not lose what they paid for.
+    #
+    # The real fix is an anchor identified by its POSITION rather than by a fresh
+    # uuid, which is a change to {Lain::Review::Anchor}'s identity and not a line
+    # of wiring.
+    it "displaces an answered thread when a second note lands on its line, without destroying it" do
+      asked("why is the range inclusive?")
+      first = anchor_id
+
+      editor.bound.wrote_annotation(note(text: "second thought"))
+
+      expect(anchor_id).not_to eq(first)
+      displaced = inlet.threads.last.last.join("\n")
+      expect(displaced).to include("second thought")
+      expect(displaced).not_to include(answer)
+      expect(records_at(first).map { |entry| entry["type"] }).to include("docent_answered")
+    end
+
+    it "goes on answering in the displaced thread, so reopening it is all the human has to do" do
+      asked("why is the range inclusive?")
+      first = anchor_id
+      editor.bound.wrote_annotation(note(text: "second thought"))
+
+      Sync { editor.bound.ask(first, "and why not the other way?").tap { |asked| asked.task&.wait } }
+
+      expect(inlet.threads.last.first["id"]).to eq(first)
+      expect(inlet.threads.last.last.join("\n")).to include("and why not the other way?")
+    end
+  end
+
+  # The other half of the same wiring, and it must stay honest: a docent draws
+  # every answer itself, on its own task, long after the gesture that asked --
+  # so a surface with no thread pane has nowhere to put one, and a docent that
+  # spent a provider call and drew nowhere is worse than one that refuses.
+  describe "a survey drawn on a surface with no thread pane" do
+    it "keeps refusing by name rather than wiring a docent that cannot render" do
+      two_documents
+      attached
+      command.call(@root, env)
+
+      outcome = editor.bound.ask("anchor-nobody-minted", "why this way?")
+
+      expect([outcome.asked?, outcome.report])
+        .to eq([false, Lain::Review::Handover::Unattended::NO_DOCENT])
     end
   end
 
