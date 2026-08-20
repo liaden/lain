@@ -400,21 +400,86 @@ buffers exist:
 | `lain://diff` | pending edits, in nvim's own diff filetype | no |
 
 `:LainStart` lays them out: journal down the left, timeline over inbox over request on the right.
-`]]` and `[[` jump record to record in any of them.
 
-Two gestures matter. On a question in `lain://inbox`, `r` or `<CR>` prompts for your answer and
-submits it (`:LainReply <answer>` does the same from anywhere). And `lain://request` is the one
-editable buffer: change the prompt by hand, then `:LainResend` sends *your* bytes to the provider
-instead of the rendered ones. That is the fastest way to test whether a context tactic was the
-thing that mattered.
+`lain://request` is the one editable buffer, and it is the gesture that matters most: change the
+prompt by hand, then `:LainResend` sends *your* bytes to the provider instead of the rendered ones.
+That is the fastest way to test whether a context tactic was the thing that mattered.
+
+**Keys.** Everything below is bound by the injected runtime, so it works with the plugin
+uninstalled. `:help lain-runtime-commands` is the full contract; this is the index.
+
+At `you>` in the chat pane:
+
+| Key | Does |
+|---|---|
+| `↑` / `↓` | walk **this session's** lines. The durable file at `$XDG_STATE_HOME/lain/history` is still appended per accepted line, but it is never read back: it is one pool shared by every project and every concurrent `lain up` pane, so recalling from it merged panes you were not sitting in |
+| `C-g` | hand the draft to `lain://compose` in the editor; `:w` there puts the composed text back at the prompt, where you press `<CR>` to send it |
+| `C-x` | completion menu for the token under the cursor |
+| `\` at end of line | continue onto another line instead of submitting. Emacs and vi *insert* mode only — vi command mode submits on `<CR>` regardless, a Reline limitation |
+| `C-c` | open the grace window; a second `C-c` interrupts now |
+| `c` / `w` / `r` | inside that window: cancel, extend, wait for responses |
+| `C-d` | EOF — end the session |
+
+`C-g` and `C-x` are the only two control keys free across all three keymaps lain binds (emacs,
+vi_insert, vi_command), which is why there is no third.
+
+In the editor, one key is global, because a survey grows from whatever file you are reading and
+there is no buffer name to scope it to:
+
+| Key | Runs | Where |
+|---|---|---|
+| `<leader>Lsa` | `:LainSurveyAdd` | any real file buffer — adds it to the survey open in this chat. Refuses from an unnamed buffer or one of lain's own |
+
+`<leader>L` is the prefix every *global* lain key hangs off, and `vim.g.lain_prefix` moves it. Only
+global keys wear it: they fire in your own editable file, where every bare letter is already yours.
+
+Every other key is buffer-local, bound on `BufEnter` in that view's own augroup. The ones on
+buffers lain built and holds `nomodifiable` are bare letters — `x` on a sidebar row can collide with
+nothing. The ones on a **review diff** wear the prefix, because its new side is your real editable
+file, and they are bound off the review stamp rather than a buffer name, so they exist exactly where
+a note may be left:
+
+| Buffer | Key | Does |
+|---|---|---|
+| any record view (`journal`, `timeline`, `inbox`, `question`, `approval`, a review thread) | `]]` / `[[` | next / previous record. `lain://diff` and `lain://workspace` have neither: they are projections of live state, not logs of records |
+| `lain://inbox` | `r`, `<CR>` | `:LainOpen` — open the question set under the cursor in `lain://question` |
+| `lain://question` | `x` | tick the option under the cursor; on any other line it is still vim's `x` |
+| `lain://question` | `:w` | submit the set. `:w!` declines the whole set |
+| `lain://compose` | `:w` | send the draft back to the prompt |
+| `lain://timeline` | `p` | `:LainPin` — pin the turn under the cursor so compaction may not elide it |
+| `lain://approval` | `y` / `n` | `:LainApprove` / `:LainDeny` for the call under the cursor |
+| `lain://review` (the sidebar) | `<CR>` | `:LainReviewOpen` — open the file under the cursor at its first hunk |
+| `lain://review` (the sidebar) | `x` / `u` | `:LainReviewMark reviewed` / `unreviewed`. Two keys and never a toggle: a toggle would have to be computed from rows that may already have moved |
+| a review thread | `:w` | send what you typed under the conversation to the docent as a question |
+| a review diff (either side) | `<leader>Ln` / `<leader>Lq` / `<leader>Lb` | pre-fill `:LainNote note ` / `question ` / `blocker ` on the cmdline — type your words, press `<CR>` |
+| a review diff (either side) | `<leader>LN` | `:LainNoteDone` — hand every note back, in placement order |
+| a review diff (either side) | `<leader>Lt` | `:LainThread` — open the thread on this line |
+
+The rest are commands with no key on them. All are global, and each refuses outside the buffer it is
+about rather than acting on whatever sits on that line somewhere else:
+
+| Command | Does |
+|---|---|
+| `:LainResend` | send `lain://request` as *you* edited it, instead of the rendered bytes |
+| `:LainReply {answer}` | answer the *oldest* pending question as a one-liner, from anywhere |
+| `:LainNote {kind} {text}` | in a changeset diff, place a note on the line under the cursor. `{kind}` is `note`, `question` or `blocker` |
+| `:LainNoteDone` | hand every note back, in placement order |
+| `:LainThread` | open the thread on the line under the cursor |
+| `:LainReviewVerdict {verdict}` | conclude a changeset review or a survey. Reads no cursor, so there is no wrong window to type it in |
+| `:LainAnnotate` | in an epic review document, prompt for a note and attach it to the current line |
+| `:LainReviewDone` | hand an epic review document back. Refuses while the buffer is modified |
+| `:LainVersion` | the runtime protocol version |
+| `:LainStart` | (the plugin, not the runtime) lay the buffers out in a new tab |
+
+In tmux, the [plugin](plugin/tmux/README.md) binds `prefix + b` for a `/btw` popup and `prefix + F`
+to fork the session into a new window — `@lain_btw_key` and `@lain_fork_key` change them.
 
 For your own config, the plugin fires `User LainAttach` and `User LainRender`, marks every buffer
 with `b:lain_view`, and ships `lain*` highlight groups. `:help lain` has the full contract.
 
 **Without `lain up`.** The [tmux plugin](plugin/tmux/README.md) puts the same `#{lain_status}`
-segment in any status bar and binds `prefix + b` for a `/btw` popup and `prefix + F` to fork the
-session into a new window, with no managed session involved. The [Neovim
-plugin](plugin/nvim/README.md) owns only the per-project socket convention
+segment in any status bar and binds the two prefix keys above, with no managed session involved.
+The [Neovim plugin](plugin/nvim/README.md) owns only the per-project socket convention
 (`$XDG_RUNTIME_DIR/lain/nvim-<hash>.sock`, or `.lain/nvim.sock` when the project has a `.lain/`)
 and the `:LainStart` layout.
 

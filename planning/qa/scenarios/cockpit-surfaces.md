@@ -7,9 +7,11 @@ automated coverage of anything in the system: a spec can assert a buffer's *cont
 driver can notice that the buffer disagrees with the pane beside it.
 
 **What it exercises:** `Frontend::Neovim` and its `Surfaces`/`Buffers`/`JournalView`/`RequestBuffer`
-projections, the review flow (`/survey` → `<CR>` → `x` → `:LainReviewVerdict`), the approval
-surfaces (chat prompt, `lain://approval`, `:LainApprove`, and the desktop notifier that shares their
-queue), the RPC transport's one-line-per-record contract, and the prompt composer's HUD segments.
+projections, the review flow (`/survey` → `<CR>` → `x` → `:LainReviewVerdict`), the **note rail** on
+a survey of a dummy app the round writes itself (§4b — kinds, placement order, the keys, the
+thread), the approval surfaces (chat prompt, `lain://approval`, `:LainApprove`, and the desktop
+notifier that shares their queue), the RPC transport's one-line-per-record contract, and the prompt
+composer's HUD segments.
 
 **All four of round 4's surface defects were fixed in the 2026-08-18 chunk, and every one of them
 was fixed somewhere other than where it appeared** — the frozen timeline in the RPC transport, the
@@ -257,6 +259,118 @@ A traceback, by contrast, is always a finding.
 **The stale-stamp step can no longer be driven by hand.** Back-to-back `x` presses both land; the
 redraw is prompt enough that the window is unreachable from tmux. Drive it through the RPC with a
 stale `lain_view_generation`, or drop the step — do not record "could not reproduce" as a pass.
+
+## 4b — Notes on a survey, on a tree you control
+
+**Why this is separate from §4, and why it is not `./lib`.** §4 surveys lain's own subtree, which is
+right for what it asks — refusals, marks, the verdict — and wrong for this: a note is anchored to
+`(side, revision, path, line)` and its whole worth is that the anchor still names the same code when
+it comes back. Against a tree that changes under you, "the note landed on line 12" is not a check
+anybody can repeat. So this section owns a **dummy app** small enough to state in full, and the
+assertions are exact line numbers and exact text.
+
+**It is also the only place the note rail is driven at all.** §4 mentions `:LainNote` in the banner
+and `:LainNoteDone` in the delivery check, and never places one. Everything below — the kinds, the
+placement ORDER, the keys, the thread — has specs on both sides and no driver.
+
+### The subject
+
+Four files, no build step, no dependencies. Write it fresh per round, outside the project, so
+nothing in it is a fixture another scenario has already moved:
+
+```bash
+APP="$(mktemp -d)/tally"; mkdir -p "$APP/lib" "$APP/bin"
+cat > "$APP/lib/tally.rb" <<'RB'
+class Tally
+  def initialize = @counts = Hash.new(0)
+
+  def add(word)
+    @counts[word.downcase] += 1
+  end
+
+  def top(n = 3)
+    @counts.sort_by { |word, count| [-count, word] }.first(n)
+  end
+end
+RB
+printf 'require_relative "../lib/tally"
+' > "$APP/bin/tally"
+printf '# tally
+
+Counts words.
+' > "$APP/README.md"
+printf 'source "https://rubygems.org"
+' > "$APP/Gemfile"
+```
+
+`lib/tally.rb` is 11 lines and every one of them is addressable, which is the point: an anchor
+assertion here is a line number a reader can check against this document.
+
+### Driving it
+
+`/survey <app>` from the chat pane — an ABSOLUTE path, so this exercises the case `/survey .` does
+not: `named_from:` is the chat's cwd, not the surveyed tree, and a row named from the wrong root
+opens an empty buffer for a file that exists. **A row that opens empty is the finding**, not a
+missing file.
+
+Expected: four files at cumulative scope, and the banner naming `lain://review`.
+
+Then, from the sidebar (window 1 of the review tab, per §4's focus discipline):
+
+```bash
+nvim --server "$S" --remote-send ':1wincmd w<CR>'
+nvim --server "$S" --remote-expr 'search("tally.rb")'   # the row, by name, never by line
+nvim --server "$S" --remote-send '<CR>'                 # opens sidebar | OLD | NEW
+```
+
+**The OLD window is empty and that is correct here** — a corpus has no base (`old_start`/`old_count`
+are fixed at `0,0`, every line carries its `+`), so there is nothing to diff against. Note it and
+move on; it is §4b's expected state, not a defect. Whether it should be *drawn* that way is a
+separate question and a separate finding.
+
+### The checks
+
+Place notes from the NEW side, with the cursor on a stated line, and check the anchor that comes
+back — not just that something came back:
+
+- `<leader>Ln` on line 5 (`@counts[word.downcase] += 1`) pre-fills `:LainNote note ` on the cmdline
+  and **leaves it open**. The cmdline is the assertion: `nvim_get_mode()` reports `c`. A key that
+  fired the command outright would have filed an empty note, which `:LainNote` refuses — so a pass
+  here looks like a refusal and is not one.
+- Finish it (`downcase loses the original`, `<CR>`). An inline marker `● note` appears
+  **right-aligned**, and the words are NOT in the margin.
+- `<leader>Lq` on line 9 (`sort_by`), text `is the tie-break intentional?` — marker reads
+  `● question`.
+- `<leader>Lb` on line 2, text `no frozen_string_literal` — marker reads `● blocker`. Check this
+  kind specifically: it is the only one a verdict policy reads, and a `blocker` that arrived as a
+  `note` is the silent failure the kind-is-required rule exists to prevent.
+- **Then place a fourth on line 3, and hand back.** `<leader>LN` (`:LainNoteDone`). The payload must
+  arrive in **PLACEMENT** order — 5, 9, 2, 3 — and not in positional order (2, 3, 5, 9). Positional
+  is what `nvim_buf_get_extmarks` answers natively; it is tidy, plausible and wrong, and no
+  assertion about a note's *content* would catch it. **This is the check this section exists for.**
+- A second `<leader>LN` sends **nothing** rather than filing the notes twice, and says so.
+
+### The thread, and the question that reaches the model
+
+`<leader>Lt` on an anchored line opens the thread pane. Type a question below the conversation and
+`:w`:
+
+- the question reaches the docent and the answer renders **in the thread pane**, not in the chat;
+- a second `:w` with nothing new typed refuses in words — the watermark advanced, so an identical
+  question is not sent twice (which would be a second docent spawn and a second provider call);
+- text typed *after* the answer still sends.
+
+**Cost note:** this is the one part of §4b that spends a model call. Everything above is RPC and
+free. Run the note checks even when the bench has no model up.
+
+### What wrong looks like
+
+| Symptom | Where it actually is |
+|---|---|
+| a note comes back on the line it was placed, but `drifted` is absent from the payload | a nil value drops its key from a Lua table entirely, and `AnnotationPlaced` gives `drifted` no default — the hole is refused rather than journaled as "did not drift" |
+| notes arrive in line order | the per-buffer store went back to a `[buf][id]` map; `pairs` has no order at all |
+| `<leader>Ln` does nothing in the NEW window | the keys bind off the review STAMP, not a buffer name. If the stamp was withdrawn (you moved to another file and back) the keys are removed on purpose — reopen the row from the sidebar |
+| the refusal arrives with `stack traceback:` | §4's delivery rule, one rail over |
 
 ## 5 — The approval surfaces must agree
 
