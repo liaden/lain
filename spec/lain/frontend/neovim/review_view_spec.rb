@@ -7,7 +7,7 @@ require "stringio"
 require "timeout"
 require "tmpdir"
 
-# T14: `lain://review`, the changeset review's navigator -- the scopes it
+# `lain://review`, the changeset review's navigator -- the scopes it
 # renders, the line -> target map it builds in the same pass, and the gesture it
 # resolves against the rendering the human is actually looking at.
 #
@@ -117,7 +117,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
                                     "  [ ] lib/d.rb", "  [ ] lib/e.rb"])
     end
 
-    # The T7 panel's measurement: with a merge in the range, the commit walk
+    # A review panel's measurement: with a merge in the range, the commit walk
     # attributes at FILE granularity and the merge absorbs every file it
     # re-reports, so the authoring commits come back with `files: []`. Two of
     # three scopes blank is what that looks like, and a walk that renders them
@@ -389,6 +389,47 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     end
   end
 
+  # A file with no hunks (binary, mode-only, a pure rename, or a genuinely
+  # empty file) reads `Marks#state_of([])` -> `:unreviewed` by
+  # {Lain::Review::Session::MarkedChangeset::HUNKLESS}'s documented rule
+  # (`review/marks.rb:203-205`), and that rule is untouched here -- only the
+  # glyph a row with no hunks to review is drawn with. Told apart from an
+  # UNREAD row (a survey entry nothing has opened yet, `chunked?` false) the
+  # same way {NO_HUNK}/{UNREAD} already tell the two refusals apart: a row is
+  # hunkless only once it has actually been read and produced zero hunks,
+  # never merely because it has not been opened.
+  describe "the hunkless marker" do
+    it "gives a chunked file with no hunks a marker of its own" do
+      rendered = view.render(changeset(files: [file_entry(path: "assets/empty.txt", hunks: [])]), scope: :cumulative)
+
+      expect(rendered.lines.first).to start_with(described_class::HUNKLESS_MARKER)
+    end
+
+    it "is distinguishable from every tri-state marker, not just reviewed and unreviewed" do
+      expect(described_class::STATE_MARKERS.values).not_to include(described_class::HUNKLESS_MARKER)
+    end
+
+    it "does not mark an unopened survey row hunkless just because it has no keys yet" do
+      rendered = view.render(changeset(files: [unread_entry(path: "docs/1.md")]), scope: :cumulative)
+
+      expect(rendered.lines.first).to start_with(described_class::STATE_MARKERS.fetch("unreviewed"))
+    end
+
+    it "shows no row reading unreviewed once every hunk-bearing file is reviewed" do
+      files = [file_entry(path: "lib/done.rb", state: "reviewed"), file_entry(path: "assets/empty.txt", hunks: [])]
+
+      lines = view.render(changeset(files:), scope: :cumulative).lines
+
+      expect(lines).not_to include(a_string_starting_with(described_class::STATE_MARKERS.fetch("unreviewed")))
+    end
+
+    it "still marks a hunkless row's identity so a gesture on it resolves the same as before" do
+      rendered = view.render(changeset(files: [file_entry(path: "assets/empty.txt", hunks: [])]), scope: :cumulative)
+
+      expect(view.marks(1, generation: rendered.generation)).to have_attributes(marked?: false, hunk_keys: [])
+    end
+  end
+
   # The sidebar is a NAVIGATOR at `41_layout`'s 40 columns, so a caveat that
   # wraps to four screen rows spends its most valuable space on prose. The width
   # is read out of the lua module rather than written down here, which is
@@ -492,8 +533,8 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     end
   end
 
-  # T32a's wiring, from this side. The diff surface holds the round and this
-  # view holds the renderings, so the changeset has to cross once per round --
+  # The diff-surface wiring, from this side. The diff surface holds the round
+  # and this view holds the renderings, so the changeset has to cross once per round --
   # and it is FORWARDED rather than kept here, because a changeset beside the
   # rendering history would be a second answer to "what is under review".
   describe "which changeset the rows belong to" do
@@ -524,7 +565,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     end
   end
 
-  # The OTHER direction of T32a's acceptance test, and the reason this group
+  # The OTHER direction of the diff-surface wiring's acceptance test, and the reason this group
   # exists at all: {Lain::Frontend::Neovim#review_view} now supplies a
   # {Lain::Frontend::Neovim::ChangesetDiff}, so this sentence must be
   # unreachable from a review drawn in a real editor -- and it must still be
@@ -546,7 +587,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     end
   end
 
-  # T19: a row's OTHER identity. The editor sends a line, because a sidebar row
+  # A row's OTHER identity. The editor sends a line, because a sidebar row
   # renders no hunk key and a key is a content digest that never crosses the
   # wire -- so this view is the only object that can say which hunks a marked
   # row named.
@@ -750,7 +791,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
 end
 
 # The lua half: `runtime/46_sidebar.lua` -- `_G.__lain.set_review`, which is the
-# FIRST caller of T26's `review_place`, and `:LainReviewOpen`, which sends the
+# FIRST caller of `review_place`, and `:LainReviewOpen`, which sends the
 # cursor line with the stamp the buffer carries.
 #
 # `layout_spec.rb`'s harness, driving the injected chunk DIRECTLY: what is under
@@ -866,7 +907,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
 
     # 00_constants' READONLY_FILETYPES is a shared table this module does not
     # edit, so the lookup misses and the option would land unset -- exactly the
-    # orphan-buffer defect T5 fixed for lain://workspace ("filetype '', no
+    # orphan-buffer defect fixed for lain://workspace ("filetype '', no
     # syntax, outside the lain contract").
     it "joins the one shared lain filetype rather than landing as an orphan buffer" do
       set_review(%w[one], 1)
@@ -926,8 +967,8 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
     end
   end
 
-  # T32b: the MARK gesture, which had been wired all the way to
-  # {Review::Handover#mark} since T13 with no key able to send it.
+  # The MARK gesture, which had already been wired all the way to
+  # {Review::Handover#mark} with no key able to send it.
   describe "the mark keys" do
     # Read off the LIVE editor rather than off the runtime's source, because
     # what a human presses is what nvim has bound, not what a file says. Each
@@ -1028,7 +1069,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
   end
 end
 
-# T32b's two gestures, crossing the WIRE into a real Ruby process. The block
+# The changeset review's two gestures, crossing the WIRE into a real Ruby process. The block
 # above stubs `vim.rpcrequest` and can therefore only say what lua ATTEMPTED;
 # that is the shape of assertion this chunk has repeatedly shipped green over a
 # subject nobody was talking to. Here a real {Frontend::Neovim} serves the
@@ -1242,7 +1283,7 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
       end
     end
 
-    # T11's stamp, on the mark rail: two renderings of EQUAL HEIGHT, which is
+    # The stamp, on the mark rail: two renderings of EQUAL HEIGHT, which is
     # the case a line count cannot tell apart and the reason protocol 8 replaced
     # one with the other. A payload carrying the count, the first generation, or
     # nothing at all all read alike against a single render.
@@ -1304,7 +1345,7 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
     # is the example that says so from both sides: nothing reaches the review,
     # and the sentence the human gets is the one the ONE declaration produced.
     #
-    # READ OFF THE MESSAGE RAIL SINCE T16, not off `pcall`'s `ok`. The command
+    # READ OFF THE MESSAGE RAIL now, not off `pcall`'s `ok`. The command
     # used to re-raise the refusal that crossed the wire, so the human met a
     # `stack traceback:` under lain's own sentence; it
     # now answers through `__lain.review_refused` and returns, so the command
