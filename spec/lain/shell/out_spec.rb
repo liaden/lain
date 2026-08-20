@@ -156,11 +156,27 @@ RSpec.describe Lain::Shell::Out do
     # A killed child still has to be REAPED. Without it the raise leaves a
     # zombie per timeout, which a long-lived agent accumulates until it cannot
     # fork at all -- and nothing else here would notice.
+    #
+    # Asked of the pid the SUBJECT spawned, never of `waitpid(-1)`. The global
+    # form answers for every child in the process, so it is not this subject's
+    # property at all -- it fails whenever anything ELSE in the suite has a reap
+    # still outstanding, an Open3 wait thread {Shell::Pipeline} left pending past
+    # its join grace being the one that bit. That can only overlap when the whole
+    # suite shares one process, which is the CI shape and not the local one
+    # (`spec_workers` is `physical_cores - 1`, and the runner has two), so it read
+    # green on every dev box and red in CI. ECHILD is the whole assertion: the
+    # child is GONE rather than waiting to be collected.
     it "leaves no zombie behind" do
+      spawned = nil
+      allow(Process).to receive(:spawn).and_wrap_original do |spawn, *argv, **options|
+        spawned = spawn.call(*argv, **options)
+      end
+
       expect { described_class.new("sleep", "30", timeout: 0.2).run_command }
         .to raise_error(described_class::Timeout)
 
-      expect(reapable).to be_nil
+      expect(spawned).to be_positive
+      expect { Process.waitpid(spawned, Process::WNOHANG) }.to raise_error(Errno::ECHILD)
     end
 
     # The bound is measured against the injected clock, which is what lets an
@@ -199,14 +215,5 @@ RSpec.describe Lain::Shell::Out do
     true
   rescue Errno::ESRCH, Errno::EPERM
     false
-  end
-
-  # The pid of any child still waiting to be collected, or nil. ECHILD is "no
-  # children at all", which is the same answer as "none outstanding" here and
-  # not an error to report.
-  def reapable
-    Process.waitpid(-1, Process::WNOHANG)
-  rescue Errno::ECHILD
-    nil
   end
 end
