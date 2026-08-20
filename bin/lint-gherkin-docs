@@ -23,7 +23,13 @@
 #
 # Usage: bin/lint-gherkin-docs [FILE...]   (pre-commit passes staged matches)
 
-$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+# `bundler/setup`, not a bare $LOAD_PATH unshift: lain's own lib is only half the
+# answer, and the half that works everywhere. Its dependencies are the other half,
+# and they are only findable through the bundle -- CI installs gems under a path
+# no default GEM_HOME covers, so an unshift alone reaches `lain.rb` and dies one
+# require deeper on `active_support/concern`. A dev machine hides this, having the
+# gems installed globally too. The Gemfile's `gemspec` line puts lib/ on the path.
+require "bundler/setup"
 require "lain"
 
 docs = ARGV.reject { |path| path.strip.empty? }
