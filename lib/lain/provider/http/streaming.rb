@@ -154,15 +154,7 @@ module Lain
         end
 
         def assign_on_data(req, handler)
-          if faraday_1?
-            req.options[:on_data] = handler
-          else
-            req.options.on_data = handler
-          end
-        end
-
-        def faraday_1?
-          Faraday::VERSION.start_with?("1")
+          req.options.on_data = handler
         end
 
         def build_on_data_handler(&handler)
@@ -170,7 +162,6 @@ module Lain
           parser = EventStreamParser::Parser.new
 
           FaradayHandlers.build(
-            faraday_v1: faraday_1?,
             on_chunk: ->(chunk, env) { process_stream_chunk(chunk, parser, env, &handler) },
             on_failed_response: ->(chunk, env) { handle_failed_response(chunk, buffer, env) }
           )

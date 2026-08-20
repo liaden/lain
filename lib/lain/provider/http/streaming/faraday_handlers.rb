@@ -1,12 +1,14 @@
 # frozen_string_literal: true
 
 # Split from streaming.rb -- see that file's header. A real, separate module:
-# Faraday's `on_data` callback arity differs between major versions
-# (`|chunk, size|` on 1, `|chunk, bytes, env|` on 2), and picking the right
-# proc shape is a distinct concern from the SSE parsing the engine does with
-# the bytes once they arrive. Extracting it also keeps `Streaming` itself
-# under the default `Metrics/ModuleLength` without loosening the cop. Vendored
-# verbatim from upstream's nested `RubyLLM::Streaming::FaradayHandlers`.
+# building the `on_data` proc Faraday calls is a distinct concern from the SSE
+# parsing the engine does with the bytes once they arrive. Extracting it also
+# keeps `Streaming` itself under the default `Metrics/ModuleLength` without
+# loosening the cop. Originally vendored from upstream's nested
+# `RubyLLM::Streaming::FaradayHandlers`, which built this proc two ways --
+# Faraday 1's `on_data` callback took `|chunk, size|`, Faraday 2's takes
+# `|chunk, bytes, env|` -- until the v1 leg was deleted as dead code once the
+# gemspec pinned `faraday "~> 2.14"`.
 #
 # {StallClock} and {StalledStreamError} are Lain's, not upstream's, and they
 # live here because this file is the one place in the stack that learns a body
@@ -474,31 +476,41 @@ module Lain
           end
         end
 
-        # Builds Faraday `on_data` procs for Faraday 1 vs 2.
+        # Builds the Faraday `on_data` proc.
         module FaradayHandlers
           module_function
 
-          def build(faraday_v1:, on_chunk:, on_failed_response:)
-            if faraday_v1
-              v1_on_data(on_chunk)
-            else
-              v2_on_data(on_chunk, on_failed_response)
-            end
+          def build(on_chunk:, on_failed_response:)
+            v2_on_data(on_chunk, on_failed_response)
           end
 
           # {StallClock#receiving} wraps the whole delivery -- including the
           # status branch on purpose, since a failed response's body is bytes
-          # too and a slow error body is not a stall.
-          def v1_on_data(on_chunk)
-            proc do |chunk, _size|
-              StallClock.current.receiving { on_chunk.call(chunk, nil) }
-            end
-          end
-
+          # too and a slow error body is not a stall. Named `v2_on_data` rather
+          # than the version-neutral `on_data` because {Provider::HTTP::Providers::Anthropic}'s
+          # transport comment still points at it by that name (out of this
+          # card's scope to rename).
+          #
+          # `env.status` (not `env&.status`): this proc has TWO callers, and
+          # only one of them is Faraday itself. Faraday 2's `stream_response`
+          # always passes a real `env` to `on_data`, at both its call sites --
+          # that made the old safe-nav dead FOR THAT CALLER, v1 arity-padding
+          # defensiveness (a non-lambda proc pads a missing third argument with
+          # nil). The second caller is Lain's own {Streaming#flush_stream},
+          # which hands this proc `response.env` rather than an env Faraday
+          # built -- and `Faraday::Response#env` is nil until `#finish` runs,
+          # so a response that reached here unfinished would crash on `env.status`
+          # where the deleted safe-nav used to route it (nil != 200) to
+          # `on_failed_response` instead. Production-safe today: the net_http
+          # adapter finishes the env before `connection.post` returns, so
+          # `flush_stream` never actually sees an unfinished one -- pinned by
+          # `streaming_spec.rb`'s "raises if flush_stream is ever handed a
+          # response that never finished" so a future adapter or refactor that
+          # CAN reach this hits a named spec, not a bare crash.
           def v2_on_data(on_chunk, on_failed_response)
             proc do |chunk, _bytes, env|
               StallClock.current.receiving do
-                if env&.status == 200
+                if env.status == 200
                   on_chunk.call(chunk, env)
                 else
                   on_failed_response.call(chunk, env)

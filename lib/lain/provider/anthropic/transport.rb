@@ -72,8 +72,8 @@ module Lain
         end
 
         # Wraps the SSE on_data handler so the verbatim wire chunk reaches the WAL
-        # before it is parsed; the splat forwards Faraday's version-specific arity
-        # (`|chunk, size|` on 1, `|chunk, bytes, env|` on 2) through untouched.
+        # before it is parsed; the splat forwards the rest of `on_data`'s
+        # arguments (`bytes, env`) through untouched.
         def tee_chunks(handler, frame)
           proc do |chunk, *rest|
             frame.append(chunk)

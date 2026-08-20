@@ -41,7 +41,7 @@ RSpec.describe Lain::Provider::Ollama do
   end
 
   describe "#capabilities" do
-    # :streaming is honest now that the NDJSON path exists (T17); :thinking is
+    # :streaming is honest now that the NDJSON path exists; :thinking is
     # honest now that `think` rides Request#extra onto the wire and the decode
     # path (already built) turns message.thinking into a thinking block (R5).
     # The remaining capabilities stay off deliberately -- declaring one the
@@ -229,6 +229,29 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
+  # The Faraday v1 branch was deleted (dead since the gemspec pinned `~>
+  # 2.14`), so FaradayHandlers.build has one leg now. This drives that ONE
+  # surviving handler directly -- not a double standing in for it -- so the
+  # deletion is checked against real behaviour rather than trusted by
+  # inspection: three NDJSON chunks fed through the real v2 on_data proc, in
+  # order, must still assemble into one Response.
+  describe "streaming through FaradayHandlers' v2 handler" do
+    it "assembles three NDJSON chunks in order" do
+      chunks = [
+        %({"model":"qwen3:4b","message":{"role":"assistant","content":"Hel"},"done":false}\n),
+        %({"model":"qwen3:4b","message":{"role":"assistant","content":"lo "},"done":false}\n),
+        %({"model":"qwen3:4b","message":{"role":"assistant","content":"world"},"done":true,) +
+          %("done_reason":"stop","prompt_eval_count":1,"eval_count":3}\n)
+      ]
+      provider = described_class.new(transport: v2_handler_stream_transport(chunks))
+
+      response = provider.complete(request(stream: true))
+
+      expect(response.text).to eq("Hello world")
+      expect(response).to stop_with(:end_turn)
+    end
+  end
+
   describe "done_reason -> stop_reason" do
     it "maps length to :max_tokens" do
       body = { "message" => { "role" => "assistant", "content" => "x" }, "done_reason" => "length" }
@@ -286,7 +309,7 @@ RSpec.describe Lain::Provider::Ollama do
     # it and nothing above the Provider rescues a transport class either.
     #
     # It matters here more than anywhere: ollama is the DEFAULT summarizer
-    # provider, so "ollama is not running" is the ordinary case, and since T9
+    # provider, so "ollama is not running" is the ordinary case, and now that
     # the span summarizer answers on the RENDER path rather than behind
     # {Oracle::Eager}'s task boundary. Uncontained, it takes out the whole turn:
     # {Compaction::Strategy::Summarizing} rescues {Lain::Error} on purpose (a
@@ -308,7 +331,7 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
-  # T2/F7. Retries on this arm used to be invisible on purpose -- see the
+  # Retry journaling (F7). Retries on this arm used to be invisible on purpose -- see the
   # reversed "deliberately absent" note in ollama.rb. The QA run priced that
   # silence: four attempts at the 300s `request_timeout` is a >400s hang that
   # prints NOTHING, indistinguishable from one slow local model.
@@ -392,11 +415,12 @@ RSpec.describe Lain::Provider::Ollama do
       expect(channel.events.grep(Lain::Telemetry::ProviderRetry).map(&:attempt)).to eq([1, 2, 1])
     end
 
-    # THE LINK T10 STANDS ON, and nothing else in the suite touches it: the body
-    # path must open the attempt, {Transport} must put it on the request
-    # context, and #retry_block must find it THERE. Nothing in lib/ registers a
-    # rollback yet -- T10 is what will -- so a tracing tap registers one, and
-    # each of those three lines can be deleted independently to see this go red.
+    # THE LINK THE RETRY ROLLBACK STANDS ON, and nothing else in the suite
+    # touches it: the body path must open the attempt, {Transport} must put it
+    # on the request context, and #retry_block must find it THERE. Nothing in
+    # lib/ registers a rollback yet -- the retry rollback is what will -- so a
+    # tracing tap registers one, and each of those three lines can be deleted
+    # independently to see this go red.
     # A dropped attempt is a reset that never runs, which is F7b returning
     # spliced content under `done_reason: "stop"`.
     %i[sync stream].each do |path|
@@ -444,15 +468,15 @@ RSpec.describe Lain::Provider::Ollama do
       Lain::Provider::Admission.reset!
     end
 
-    # The reentrancy contract T10 builds on, and the ONLY shape here that
-    # distinguishes a per-round-trip attempt from instance state: two round
-    # trips overlap through ONE Provider, each retries, and each must abandon
-    # its OWN attempt. `@live = Attempt.new(...)` held on the tap would have the
-    # first round trip's retry abandon whichever sibling opened last -- which
-    # for T10 means discarding a healthy stream's bytes and splicing the broken
-    # one anyway. {TracingRetryTap::Latch} is what makes the overlap
-    # deterministic; over the loopback socket T0 will open, the same shape needs
-    # no latch.
+    # The reentrancy contract the retry rollback builds on, and the ONLY shape
+    # here that distinguishes a per-round-trip attempt from instance state: two
+    # round trips overlap through ONE Provider, each retries, and each must
+    # abandon its OWN attempt. `@live = Attempt.new(...)` held on the tap would
+    # have the first round trip's retry abandon whichever sibling opened last
+    # -- which for the rollback means discarding a healthy stream's bytes and
+    # splicing the broken one anyway. {TracingRetryTap::Latch} is what makes
+    # the overlap deterministic; over a real loopback socket, the same shape
+    # needs no latch.
     it "abandons only its own attempt when two round trips overlap in one provider" do
       %w[alpha beta].each do |marker|
         stub_chat.with { |r| JSON.parse(r.body)["model"] == marker }
@@ -478,7 +502,7 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
-  # T9. The TRAINED window and the SERVED window are different numbers, and
+  # The TRAINED window and the SERVED window are different numbers, and
   # only the served one is a denominator anything may divide by. `/api/show`
   # reports the trained maximum out of the GGUF metadata (262,144 for
   # qwen3-coder:30b); the served figure is min(trained, OLLAMA_CONTEXT_LENGTH,
@@ -571,7 +595,7 @@ RSpec.describe Lain::Provider::Ollama do
       expect(described_class.new(transport:).context_window_tokens("qwen3-coder:30b")).to be_nil
     end
 
-    # T10 put this on the LAUNCH path (CLI::Backend::WindowBook), where an
+    # This sits on the LAUNCH path (CLI::Backend::WindowBook), where an
     # escape is a backtrace instead of a chat. A malformed `--api-base` fails
     # while Faraday BUILDS the request, above its own error middleware, so
     # `wrapping_errors` -- which catches Provider::HTTP::Error and
@@ -777,9 +801,10 @@ RSpec.describe Lain::Provider::Ollama do
   # The OTHER number, behind a deliberately different name. `/api/show`'s
   # `model_info.<arch>.context_length` is the GGUF's trained maximum, and the
   # describe above spends most of its length refusing to let it near a
-  # denominator. T6 needs it anyway, for the one question it can honestly
-  # answer: is an operator's `--num-ctx` above what this model could ever be
-  # served? So it arrives through its own accessor, and the pair of files
+  # denominator. An operator-facing `--num-ctx` ceiling check needs it anyway,
+  # for the one question it can honestly answer: is the requested value above
+  # what this model could ever be served? So it arrives through its own
+  # accessor, and the pair of files
   # asserts BOTH halves -- that this one answers the trained figure, and that
   # the served one still never does.
   describe "#trained_context_tokens" do
@@ -911,6 +936,26 @@ RSpec.describe Lain::Provider::Ollama do
         expect(a_request(:post, "http://localhost:11434/api/show")).to have_been_made.once
       end
     end
+  end
+
+  # A transport double whose #stream wires the SAME on_data proc production
+  # code builds -- `Provider::HTTP::Streaming::FaradayHandlers.build`'s v2
+  # handler, with a real `Faraday::Env` -- rather than replaying chunks
+  # straight to the block. That is the difference between a double that
+  # exercises the surviving handler and one that bypasses it entirely.
+  def v2_handler_stream_transport(chunks)
+    Class.new do
+      # rubocop:disable Lint/UnusedBlockArgument -- see #transport_sync
+      define_method(:stream) do |_payload, _headers = {}, attempt: nil, &on_chunk|
+        handler = Lain::Provider::HTTP::Streaming::FaradayHandlers.build(
+          on_chunk: ->(chunk, _env) { on_chunk.call(chunk) },
+          on_failed_response: ->(*_args) { raise "on_failed_response must not be called for a 200 response" }
+        )
+        env = Faraday::Env.from(status: 200)
+        chunks.each { |chunk| handler.call(chunk, 0, env) }
+      end
+      # rubocop:enable Lint/UnusedBlockArgument
+    end.new
   end
 
   # A transport double that captures the payload it was handed.

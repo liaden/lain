@@ -80,7 +80,7 @@ http/
   streaming.rb                       # base SSE engine; not in the original file list
   streaming/
     error_handling.rb                # split out: Metrics/ModuleLength (separate responsibility)
-    faraday_handlers.rb              # split out: Metrics/ModuleLength (Faraday 1/2 on_data)
+    faraday_handlers.rb              # split out: Metrics/ModuleLength (on_data proc + StallClock)
   provider.rb
   provider/
     registry.rb                      # split out: Metrics/ClassLength

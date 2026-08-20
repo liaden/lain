@@ -132,10 +132,10 @@ module Lain
           end
         end
 
-        # Reuses the version-correct `on_data` proc (Faraday 1 vs 2 arity differ)
-        # from the vendored FaradayHandlers, feeding raw chunks straight to the
-        # NDJSON assembler. `faraday_1?` resolves through the mixed-in `Streaming`
-        # engine on the provider base.
+        # Reuses the vendored FaradayHandlers' `on_data` proc, feeding raw
+        # chunks straight to the NDJSON assembler. `assign_on_data` resolves
+        # through the mixed-in `Streaming` engine on the provider base -- this
+        # class has no override of its own.
         #
         # The failed arm deliberately does NOT call the vendored
         # `handle_failed_response`, which raises from inside this callback off a
@@ -151,20 +151,10 @@ module Lain
         # in #stream, where the real status is what maps it.
         def install_on_data(req, failure, &on_chunk)
           handler = Provider::HTTP::Streaming::FaradayHandlers.build(
-            faraday_v1: faraday_1?,
             on_chunk: ->(chunk, _env) { yield(chunk) },
             on_failed_response: ->(chunk, _env) { failure.feed(chunk) }
           )
           assign_on_data(req, handler)
-        end
-
-        # Faraday 1 takes `on_data` as a Hash key, Faraday 2 as an accessor.
-        def assign_on_data(req, handler)
-          if faraday_1?
-            req.options[:on_data] = handler
-          else
-            req.options.on_data = handler
-          end
         end
 
         class << self

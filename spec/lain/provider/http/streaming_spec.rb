@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "pathname"
+require "ripper"
+
 # New spec, not a port -- upstream's streaming coverage is entirely VCR
 # cassettes (which this branch does not add) plus the accumulator spec (ported
 # separately). This proves the base SSE engine (streaming.rb) is wired into
@@ -185,6 +188,58 @@ RSpec.describe Lain::Provider::HTTP::Streaming do
       post_through(recording_wrapper(recorded))
 
       expect(recorded).to eq(["\n\n"])
+    end
+
+    # `v2_on_data` (faraday_handlers.rb) has a SECOND caller
+    # besides Faraday itself -- {Streaming#flush_stream} above, which hands it
+    # `response.env` rather than an env Faraday produced. `Faraday::Response#env`
+    # is nil until `#finish` runs, so a response reaching flush_stream
+    # unfinished crashes on the bare `env.status` this card's deletion left
+    # behind, where the deleted `env&.status` used to route it (nil != 200) to
+    # `on_failed_response` instead. Production-safe today -- the net_http
+    # adapter finishes the env before `connection.post` returns, so
+    # flush_stream never actually sees this -- but pinned so a future adapter
+    # or refactor that CAN reach it hits a named spec, not a bare
+    # NoMethodError three frames from here.
+    it "raises if flush_stream is ever handed a response that never finished" do
+      handler = streaming_host.send(:build_on_data_handler) { |_chunk| nil }
+
+      expect { streaming_host.send(:flush_stream, handler, Faraday::Response.new) }
+        .to raise_error(NoMethodError, /status/)
+    end
+  end
+
+  # The Faraday v1 branch was dead code -- `faraday_1?` was
+  # `Faraday::VERSION.start_with?("1")` and the gemspec pins `~> 2.14` -- and is
+  # deleted along with it. A grep-shaped assertion rather than an exercised
+  # behaviour, because there is no live code path left to drive that would
+  # prove the predicate gone; the absence itself is the fact under test.
+  #
+  # Scans CODE, not raw text: comments are stripped via Ripper.lex before the
+  # substring search, so prose explaining why the predicate is gone (this very
+  # file's neighbours needed exactly that) does not trip its own guard, and a
+  # legitimate future `Faraday::VERSION` in, say, a diagnostics command is not
+  # banned from ever being named in a comment either. A real code reference --
+  # a method def, a call, even a bare `:faraday_1?` symbol -- still counts,
+  # because those tokens are untouched.
+  describe "the Faraday version predicate" do
+    def source_without_comments(file)
+      Ripper.lex(file.read).each_with_object(+"") do |(_pos, type, tok, _state), stripped|
+        stripped << (type == :on_comment ? tok.tr("^\n", " ") : tok)
+      end
+    end
+
+    it "is gone from every file under lib/, outside the gemspec" do
+      lib_root = Pathname(__dir__).join("..", "..", "..", "..", "lib").expand_path
+      needles = ["Faraday::VERSION", "faraday_v1", "faraday_1?"]
+
+      offenders = lib_root.glob("**/*.rb").filter_map do |file|
+        source = source_without_comments(file)
+        hits = needles.select { |needle| source.include?(needle) }
+        "#{file.relative_path_from(lib_root)}: #{hits.join(", ")}" unless hits.empty?
+      end
+
+      expect(offenders).to be_empty
     end
   end
 end

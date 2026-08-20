@@ -13,8 +13,8 @@
 # {ErrorMiddleware}.parse_error is called with `provider: self`. That is the
 # ActiveSupport::Concern-style composition of orthogonal behavior CLAUDE.md
 # endorses -- two distinct modules mixed into one class -- not one oversized
-# module reopened across files. `stream_debug` / `faraday_1?` resolve back
-# through `self` onto {Streaming}, which is mixed into the same provider.
+# module reopened across files. `stream_debug` resolves back through `self`
+# onto {Streaming}, which is mixed into the same provider.
 #
 # Changed from upstream: `error_chunk?`/`handle_error_chunk` are deleted. They
 # read a raw `on_data` fragment and crashed on an error event split across two
@@ -74,13 +74,9 @@ module Lain
           end
 
           def build_stream_error_response(parsed_data, env, status)
-            error_status = status || env&.status || 500
+            error_status = status || env.status || 500
 
-            if faraday_1?
-              Struct.new(:body, :status).new(parsed_data, error_status)
-            else
-              env.merge(body: parsed_data, status: error_status)
-            end
+            env.merge(body: parsed_data, status: error_status)
           end
         end
       end
