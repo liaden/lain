@@ -178,6 +178,33 @@ loop do
 end
 EOF
 
+# --- a PATH-LOGGING RST listener: which endpoint did each connection hit? ---
+# counter.rb answers "how many"; this answers "how many of WHICH", which is
+# usually the real question. A bare count cannot separate a retry from a
+# window probe -- round 7 read 6 connections against 4 rendered retry
+# ordinals and nearly filed the gap; the attribution resolved it at once as
+# 2x GET /api/ps + 4x POST /api/chat, i.e. four attempts and no hidden ones.
+cat > "$QA/pathcount.rb" <<'EOF'
+# ruby pathcount.rb <log-file> [port]  -- accept, log the request line, hard-RST.
+require "socket"
+srv = TCPServer.new("127.0.0.1", (ARGV[1] || 21435).to_i)
+log = File.open(ARGV[0], "a"); log.sync = true
+n = 0
+loop do
+  c = srv.accept
+  n += 1
+  line = ""
+  begin
+    line = c.recv(200) if IO.select([c], nil, nil, 1.0)
+  rescue StandardError
+    line = ""
+  end
+  log.puts "#{n} #{line.to_s[/\A[A-Z]+ \S+/] || '<no request line>'}"
+  c.setsockopt(Socket::SOL_SOCKET, Socket::SO_LINGER, [1, 0].pack("ii"))
+  c.close
+end
+EOF
+
 # --- a LOGGING pass-through proxy: makes concurrency measurable -------------
 # The counting listener answers "how many attempts"; this answers "were two
 # requests in flight at once, and how long did the loser wait" -- which is the
@@ -258,5 +285,5 @@ verify isolation BEFORE act 1:
 PIN THE JOURNAL before driving anything -- drive.sh refuses without it:
   export LAIN_QA_JOURNAL=\$(ls -t "\$XDG_STATE_HOME/lain/sessions"/*/*.ndjson | head -1)
 
-helpers: \$QA/drive.sh  \$QA/peek.sh  \$QA/nv.sh  \$QA/counter.rb  \$QA/proxy.rb
+helpers: \$QA/drive.sh  \$QA/peek.sh  \$QA/nv.sh  \$QA/counter.rb  \$QA/pathcount.rb  \$QA/proxy.rb
 EOF

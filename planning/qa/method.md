@@ -72,7 +72,7 @@ for p in $(tmux -L lain-qa list-panes -a -F '#{pane_pid}'); do
 done
 
 # 3. VERIFY THE NEGATIVE at close-out. This is the proof the sandbox held:
-find ~/.local/state/lain -newermt '<run start time>'    # must be empty
+find ~/.local/state/lain -newermt '2026-08-20T10:55:13Z'    # must be empty -- keep the Z
 ```
 
 3. **`PANE_ENV` forwards `LAIN_*` and nothing else.** Anything else the run depends on must be
@@ -88,6 +88,27 @@ Two more, both verified:
 - **Check `~/.lain` does not exist before act 1.** A stray `~/.lain/state.json` makes every directory
   under `$HOME` resolve `$HOME` as the project root, silently invalidating a sandbox living there.
   It is currently at `~/.lain.bak`.
+
+**That check passes VACUOUSLY on this box in two independent ways, and it is the one check whose
+false pass costs the most** -- both were live in round 7.
+
+- **`find` here is `bfs`, not GNU findutils**, and it *rejects* `-newermt 'yesterday'` (and any
+  non-ISO-8601 timestamp) with an error on **stderr**, matching nothing. The recipe habitually
+  pipes stderr to `/dev/null`, so it prints `0` and reads as a pass.
+- **`records/round-start` is stamped in UTC with a `Z`.** Spelling it `-newermt
+  '2026-08-20T10:55:13'` -- no `Z` -- makes `find` read it as **local** time; at UTC-4 that is
+  four hours in the FUTURE, so it returns 0 unconditionally.
+
+So keep the `Z`, and **always run a positive control beside it**, or the zero means nothing:
+
+```bash
+find ~/.local/state/lain -newermt '2026-08-20T10:55:13Z' | wc -l   # the assertion: 0
+find ~/.local/state/lain -newermt '2026-08-19'          | wc -l   # the control: MUST be > 0
+```
+
+Round 7 read 0 against 286 and 24 on the controls, which is what made the 0 evidence rather than a
+spelling accident.
+
 
 ## The approval gate is the point, not the paperwork
 
@@ -177,7 +198,9 @@ The rule above bounds how many times you send; this one bounds *when*. At an `[y
 newline a driver sends to submit its next PROMPT is consumed as the approval's answer, and the
 default is **deny**. Round 6 lost a `bash` call that way and then spent three turns watching the
 model recover from a denial nobody intended -- which reads exactly like a model failure and is the
-driver's. `drive.sh` now refuses to send while `lain://approval` holds anything, and a driver
+driver's. **The rule governs HAND-TYPED sends too, not only `drive.sh` ones** -- round 7 sent a
+`/mode` by raw `send-keys` without checking, and had to discard the probe as invalid.
+`drive.sh` now refuses to send while `lain://approval` holds anything, and a driver
 sending keys by hand should make the same check:
 
 ```bash
@@ -559,7 +582,9 @@ contaminant here**, not other people's jobs.
 agent shell's command line contains the pattern you are grepping for, so `pgrep -f 'pre-commit'`
 matches the `echo "=== pre-commit ==="` in the very command asking the question. Round 6 hit this
 **four** times in one round -- orphan spinners, `pre-commit`, the ollama runner, and a
-`bench arms` run it declared still-running two minutes after it had finished. CLAUDE.md records the
+`bench arms` run it declared still-running two minutes after it had finished. Round 7 hit it a
+FIFTH time, and destructively: `pkill -f 'counter.rb'` matched the agent shell's own command line
+and **killed the command issuing it** (exit 144), losing a heredoc mid-write. CLAUDE.md records the
 trap for `parallel_rspec`; it generalises to every `pgrep -f` here. The reliable forms:
 
 ```bash
@@ -573,6 +598,19 @@ ls -l /proc/<pid>/exe                                 # what it really is
 - **A counting TCP listener** — ~12 lines (accept, `SO_LINGER 0`, close, count to a file) — turns
   "how many attempts did it really make" into a number. It is what made round 4's F16 a finding
   rather than a suspicion, and it generalises the severing-proxy idea to any attempt/retry question.
+
+  **`$QA/counter.rb` is CUMULATIVE and a driver cannot reset it.** It writes `"0"` once at startup
+  and thereafter overwrites the file with its own running in-process total, so zeroing the file
+  between probes reads garbage. Round 7 got 10, 11, 12, 18, 24, 30 out of it and briefly had
+  construction-only appearing to make MORE connections than a full run. **Read DELTAS, or restart
+  the listener per probe.**
+
+- **A path-logging RST listener** (`$QA/pathcount.rb`) — the counter plus the request line, which
+  is usually the question you actually have. A bare count cannot tell a retry from a window probe:
+  round 7 measured **6 connections against 4 rendered attempts** and nearly filed the gap, when the
+  attribution settled it instantly as `2 × GET /api/ps` + `4 × POST /api/chat` — four chat POSTs,
+  four rendered ordinals, no hidden retries. Prefer it to `counter.rb` for anything phrased "how
+  many of WHICH".
 - **A severing proxy** — the same listener, but forwarding to the real endpoint and RST-ing after N
   bytes of response. Deterministic where killing a service is a timing race, and it leaves the
   operator's model server untouched. This is how F7 was found (control 1.9s vs >400s hung).

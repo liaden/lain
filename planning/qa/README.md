@@ -67,6 +67,11 @@ call per turn.
 
 Written per round, kept in `planning/` alongside the chunk specs that discharge them:
 
+- [`../qa-findings-round7-2026-08-20.md`](../qa-findings-round7-2026-08-20.md) — round 7
+- [`../qa-findings-round7-survey-2026-08-20.md`](../qa-findings-round7-survey-2026-08-20.md) — round 7,
+  the `/survey` supplement: `cockpit-surfaces` §4 and §4b, the first time §4b was ever driven
+- [`../specs/chunk-qa-round7-constructed-and-consistent.md`](../specs/chunk-qa-round7-constructed-and-consistent.md)
+  — the chunk that discharges both round-7 documents
 - [`../qa-findings-round6-2026-08-19.md`](../qa-findings-round6-2026-08-19.md) — round 6
 - [`../qa-findings-round5-2026-08-18.md`](../qa-findings-round5-2026-08-18.md) — round 5
 - [`../qa-findings-round4-2026-08-18.md`](../qa-findings-round4-2026-08-18.md) — round 4
