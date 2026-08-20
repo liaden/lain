@@ -150,6 +150,9 @@ embarrasses itself.
   unbounded on precisely the idle desktop an unanswered approval creates; and a hand-counted twelve
   over-bar refusals was really eighteen. Each looked like a complete answer until someone measured
   again. If a step turns on a number, take the number yourself.
+  **The same discipline applies to a CLAIM or a diagnosis, not only a number — round 7 (2026-08-20)
+  overturned two this way: `cockpit-surfaces.md`'s NEW-window claim (F34) and the F27 diagnosis
+  (`method.md` has both).** Re-verify a claim in these documents the same way you re-verify a number.
 - **Separate MODEL findings from LAIN findings.** The local model failing to drive `/create-plan` is
   not a defect in lain. Record it under model behaviour so the next round does not re-derive it.
 

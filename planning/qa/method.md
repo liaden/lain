@@ -75,6 +75,20 @@ done
 find ~/.local/state/lain -newermt '2026-08-20T10:55:13Z'    # must be empty -- keep the Z
 ```
 
+**A trailing `=` on that grep pattern is a silent self-defeat, and it reads exactly like a real
+leak.** Writing the alternation as `'^(XDG_|TMPDIR)='` instead of `'^(XDG_|TMPDIR)'` anchors the
+`=` to the alternation, so it matches no `XDG_*` variable at all — only a literal `TMPDIR=` line —
+and the truncated output (round 7 survey: it printed only `TMPDIR`) reads like the documented
+"`PANE_ENV` forwards `LAIN_*` and nothing else" failure. The sandbox was fine; the grep was
+mistyped. Same family as the `-newermt` traps above — copy the pattern's parentheses literally
+rather than respelling it.
+
+**The check needs a positive control, because step 2's existing "an empty result means re-check"
+guard cannot catch this one — the mistyped grep's whole danger is that it DOES return output.** A
+correctly-spelled pass shows **several** `XDG_*` lines per pane (`XDG_CONFIG_HOME`, `XDG_STATE_HOME`,
+`XDG_CACHE_HOME`, `XDG_RUNTIME_DIR`) plus `TMPDIR`; one line back — `TMPDIR` alone — means the
+pattern is wrong, not that the sandbox leaked.
+
 3. **`PANE_ENV` forwards `LAIN_*` and nothing else.** Anything else the run depends on must be
    exported into the shell that *starts the tmux server*, and a variable changed mid-run does not
    reach a pane at all. This is why `LAIN_NUM_BATCH=2048` is the right lever rather than
@@ -313,17 +327,36 @@ ruby -rjson -e 'c=Hash.new(0); File.foreach(ARGV[0]){|l| r=JSON.parse(l) rescue 
 Expect the HUD to gain a `fleet N` segment and the prompt to become `human>`. **Answering there is
 its own hazard — see the `human>` note below.**
 
-### At the `human>` prompt, only `/inbox` is a command
+### At the `human>` prompt: commands run, but `/inbox` opens a drain where the next line is an answer
 
-Round 6 (F27): with a subagent's question parked, every other session command — `/ruby`, `/mode`,
-`/status` — is **silently delivered to the subagent as a prose answer**, and appears in the journal
-as `payload={"answer" => "/ruby …"}`. Nothing refuses and nothing renders.
+**Round 6's F27 ("every command but `/inbox` is silently delivered to the subagent as a prose
+answer") is WITHDRAWN — round 7 re-tested it and it does not reproduce.** With a subagent's question
+freshly parked, `/status`, `/mode` and `/ruby 6*7` all rendered normally at a plain `human>` prompt —
+journal unchanged, question still parked. `Wiring#build_repl` binds the command registry
+(`wiring.rb:460`) and `Reply#typed` dispatches through it (`human_replies.rb`); the
+mechanism works.
 
-Two consequences for driving. **A `/ruby` reading taken at `human>` is not a reading** — it is a
-message to a subagent, and the value you wanted was never computed; several of round 6's inspection
-reads were lost this way before the cause was understood. And **the operator has no command-level
-way out** of a subagent that loops on questions, which is exactly when one is wanted. So: check the
-prompt before every `/` command, and clear the inbox before taking any inspection reading.
+**The real trap is narrower, and is what round 6 actually hit: `/inbox` itself opens a
+drain, and the very next line typed — even a registered `/command` — was read as the answer to the
+parked question, not dispatched. The round-7 chunk fixes it by giving the drain the same
+classification the outer prompt uses; the reproduction below is the PRE-FIX behaviour, kept so a
+round-8 driver can tell a regression from a pass.** `Reply#drained` (`human_replies.rb`) builds a bare
+reader lambda with no registry and no `prose?` check, so the classification the outer prompt applies
+is simply absent for the one line typed right after `/inbox`. Reproduction, journal-verified (F29):
+
+```bash
+send '/status'   # -> renders status, journal UNCHANGED, still parked        (registry consulted)
+send '/inbox'    # -> renders the question document, journal UNCHANGED       (opens its drain)
+send '/mode'     # -> PRE-FIX: journal GROWS, model answers "/mode" as the reply (bypassed)
+                 # -> POST-FIX: /mode RENDERS, journal unchanged, question still parked
+```
+
+**The lesson for the method:** `/inbox` changes what the next line means without changing the
+prompt — `human>` reads identically either way, and a `/ruby` reading taken as that next line is not
+a reading, it is a message to a subagent. Treat "typed right after `/inbox`" as its own state, and
+confirm from the journal (did it grow? did the parked count drop?) rather than from the prompt
+string. Check the prompt before every `/` command, and clear the inbox before taking any inspection
+reading:
 
 ```bash
 $QA/peek.sh 2 | tail -1        # `you>` or `human>`?

@@ -132,8 +132,13 @@ nvim --server "$S" --remote-send '2G'
 nvim --server "$S" --remote-send '<CR>'              # opens sidebar | OLD | NEW
 ```
 
-After `<CR>` the tab holds **three** windows and **focus lands in NEW**, where `x` silently does
-nothing because the buffer is `nomodifiable`. Go back to window 1 before every gesture.
+After `<CR>` the tab holds **three** windows and **focus is TAKEN to the sidebar** (T10, round-7 fix
+for F34), even from another tab — it does not follow the cursor into NEW. **The NEW window is
+modifiable**, not a `nomodifiable` copy: `47_diff.lua:188` sets its `buftype` conditionally
+(`filereadable(absolute) == 1 and "" or "nowrite"`) — `""` when reviewing a live file, so LSP and
+treesitter attach, or `nowrite` when the file was deleted, which blocks `:w` but not editing. Either
+way `x` there is vim's delete-character and will edit the human's source, not mark the row. Stay on
+window 1 to press `x`.
 
 Check, in order:
 
@@ -465,36 +470,57 @@ Also read the guard's own record: a notifier that dies mid-sweep now journals a 
 rather than signing a denial as though a person typed `n`. A `denied` decision with no human at the
 keyboard is the shape to watch for in the journal.
 
-## 5b — Command dispatch at the `human>` prompt
+## 5b — Command dispatch at the `human>` prompt, and inside `/inbox`'s own drain
 
-**New in round 6 (F27), and uncovered before it.** Every other section here drives the `you>`
-prompt; this one drives the *other* prompt, which appears whenever a subagent parks a question.
+**Superseded in round 7: F27 is WITHDRAWN, replaced by the narrower F29, which this chunk fixes.** Round 6
+filed this section as "only `/inbox` is honoured at `human>`; every other command is silently
+delivered to the subagent as the answer." Round 7 re-tested it and it does not reproduce: a plain
+`human>` prompt dispatches through the same command registry `you>` uses —
+`Wiring#build_repl` binds it (`wiring.rb:460`) and `Reply#typed` dispatches through it
+(`human_replies.rb`). **Do not drive this section as a reproduction of that table** — it
+is not a defect. The real trap is narrower and lives one command later: `/inbox` opens its own
+drain, and `Reply#drained` (`human_replies.rb`) used to read with no registry of its own,
+so the *very next line typed* — even a registered `/command` — was swallowed as the answer to the
+parked question rather than dispatched. The round-7 chunk gives the drain the same classification the
+outer prompt uses. Drive this section to confirm that fix holds, not to re-file the withdrawn finding.
 
 Spawn a subagent (`method.md`, "Making a session with `message` and `child_turn` records") and wait
-for the prompt to become `human>`. Then, at that prompt:
+for the prompt to become `human>`. Then, at that prompt, in order:
 
-| input | expected |
-|---|---|
-| `/inbox` | renders the parked question and its reply affordance |
-| `/mode` | renders the posture, exactly as at `you>` |
-| `/status` | renders status |
-| `/ruby 1+1` | prints `2` |
-| ordinary prose | delivered to the subagent as the answer |
+| step | input | expected |
+|---|---|---|
+| 1 | `/status` | renders status, exactly as at `you>` — journal unchanged, question still parked (confirms F27 stays withdrawn) |
+| 2 | `/inbox` | renders the parked question and its reply affordance — opens the drain |
+| 3 | `/status` (the line right after `/inbox`) | status renders, and is **not** recorded as an answer — the drain now classifies like the outer prompt; before that, this exact line silently became the reply |
+| 4 | `/nonsense` (an unregistered `/word`, still inside the drain) | refused **by name**, naming the unknown command — never sent to the subagent as prose |
+| 5 | ordinary prose | recorded as the answer to the parked question |
 
-**What round 6 actually found: only `/inbox` is honoured.** The rest are packaged as the human's
-answer and shipped to the subagent, silently — no refusal, nothing rendered. The journal is where
-this is unambiguous, so read it rather than the pane:
+> ⚠️ **The bare prompt and the drain deliberately disagree about an UNREGISTERED word, and a driver
+> who does not know that will re-file the withdrawn finding.** Step 1's registry dispatch is true of
+> *registered* commands only: at a plain `human>` prompt, outside any drain, an unregistered `/word`
+> is still delivered to the subagent as the answer — `Reply#typed` routes an unmatched line to
+> `[line, item]` on purpose. Only **inside the drain** is it refused (step 4). So trying `/nonsense`
+> at step 1 shows F27's exact signature and is NOT a defect. The asymmetry is deliberate and the
+> reason is recorded beside the code.
+>
+> The same classification bites step 5: `prose?` is `Skill::Invocation.parse(...).inline?`, so a
+> reply that merely *opens* with a slash — `/tmp is fine` — is classified as a command attempt and
+> refused inside the drain rather than answered. Pick prose that does not start with `/`, or the
+> control fails for a reason that is not the drain.
+
+Read the journal, not the pane, for the fact of the matter:
 
 ```bash
 ruby -rjson -e 'File.foreach(ARGV[0]){|l| r=JSON.parse(l) rescue next; next unless r["type"]=="message"
   puts "#{r["ts"]} from=#{r["from"].inspect} payload=#{r["payload"].to_s[0,120]}"}' "$LAIN_QA_JOURNAL"
 ```
 
-A `payload={"answer" => "/ruby …"}` line is the defect, reproduced. **A refusal naming the command
-is an acceptable outcome too** — the requirement is that a command is either dispatched or refused,
-never forwarded as content. Forwarding is what makes it a silent failure in a codebase whose stated
-premise is that unknown values fail loudly, and what puts operator text into a subagent's context,
-which on a study bench corrupts the record being studied.
+**What wrong looks like now.** A `payload={"answer" => "/status"}` (or any registered command's own
+text) record at step 3 or 4 means that fix regressed — the drain is back to swallowing a command as
+content, F29's exact shape. A step-4 line with no refusal on the pane and no `message` record at all
+is the "unregistered word forwarded silently" variant of the same failure — check both surfaces, not
+just one, before calling step 4 a pass. Step 5 is the control: prose must still reach the subagent as
+its answer, or the drain has stopped answering questions at all, which is a different defect.
 
 ## 6 — `lain://timeline` follows the session, and a bad row says so
 

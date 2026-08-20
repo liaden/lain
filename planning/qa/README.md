@@ -78,6 +78,15 @@ Written per round, kept in `planning/` alongside the chunk specs that discharge 
 - [`../qa-findings-round2-2026-08-18.md`](../qa-findings-round2-2026-08-18.md) — rounds 2–3
 - [`../qa-findings-research-2026-08.md`](../qa-findings-research-2026-08.md) — the research pass
 
+## Coverage notes
+
+Per-section coverage a scenario file cannot state about itself, because it is about which round
+first exercised the section rather than what the section asks for:
+
+- **`cockpit-surfaces.md` §4b (notes on a survey) was first driven on 2026-08-20**, in round 7's
+  `/survey` supplement (`../qa-findings-round7-survey-2026-08-20.md`). Rounds 4, 5, 6 and round 7's
+  own main pass had all skipped it — nobody had placed a note on a survey before that round.
+
 ## The two rules that outrank everything else here
 
 1. **Success is not "nothing went wrong."** It is: every defect the previous round found behaves
@@ -91,6 +100,11 @@ Written per round, kept in `planning/` alongside the chunk specs that discharge 
 
 Worth stating plainly, because "every defect behaves differently now" reads as coverage:
 
+- **`:LainReviewDone` is the rail still undriven.** It is the third rail `cockpit-surfaces.md` §4's
+  delivery discussion names, alongside `:LainNoteDone` and the thread pane's `:w` — and round 7 found
+  both of *those* raising a Lua traceback (F30, F31) rather than delivering cleanly. Given that,
+  `:LainReviewDone` is the first thing the next round should check, not an assumed pass by
+  association.
 - **The plain, non-cockpit path.** Almost every scenario runs under `lain up --nvim`. The REPL/stdin
   concerns exist on a bare `lain chat` too — and round 4 found that the approval surface is *worse*
   there, with no `:LainApprove` to recover through. `cockpit-surfaces.md` §5 now forces one
