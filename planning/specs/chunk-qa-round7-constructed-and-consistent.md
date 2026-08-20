@@ -81,8 +81,11 @@ Verified against the working tree on **2026-08-20**, by reading the code rather 
 - **Should a skipped oracle journal anything?** `Admission::Journal`'s docstring records that
   `#try_enter` forwards untouched and that a busy endpoint there is a *skip, not a wait*, so it is
   deliberately unjournaled. `Oracle::Eager` is the `try_enter` caller. T5 wires the decorator and does
-  **not** change that: an oracle skipped for capacity still leaves no record. Deciding otherwise is a
-  follow-up, not this chunk.
+  **not** change that: an oracle skipped for capacity still leaves no `provider_wait` record.
+  **AMENDED DURING EXECUTION:** it no longer leaves *no record at all*. `Provider::Journaled#complete`
+  (T3) pushes `request_sent` **before** dispatch, and the admission gate lives inside
+  `Ollama#complete`, so an eager summary refused by a busy gate now leaves a `request_sent` with no
+  `oracle_answer`. That shape is pinned by an example rather than left to be rediscovered.
 - **`Provider::Mock` and `Provider::Recorded` never touch HTTP**, so T4's detector cannot see them.
   Benches and mock-backed specs are guarded by T3's emission only. Deliberate; recorded so a future
   round does not read a clean mock run as proof.
@@ -92,6 +95,10 @@ Verified against the working tree on **2026-08-20**, by reading the code rather 
   is visible, not so a card waits on it.
 
 ## Waves
+
+**Wave 1 is LANDED** (12 commits, `fbd36771`..`7909cf2e`, plus a comment sweep). Suite 14679 ->
+14841 examples, 0 failures. Every card took a panel pass; not one returned a clean APPROVE on the
+first pass, and T10, T11, T16 and T6 reached APPROVE only on re-review.
 
 ```
 Wave 1: T1, T3, T5, T6, T7, T10, T11, T14, T15, T16, T17, T20   (no unmet deps)
@@ -934,6 +941,166 @@ Scenario: the method records the traps round 7 hit
   the old — this card and T10 must agree; escalate if T10 is deferred.
 - If T15 changes the `edit_file` refusal wording, `failure-injection.md` §9's verbatim expected
   string must change in the same commit or the next round will file a false regression.
+
+## Follow-ups discovered during execution
+
+Recorded here rather than in a hand-back, because a hand-back is deleted with its worktree and
+the next round reads this file.
+
+- **A hunkless row renders differently in the two surfaces.** T14 put the fourth state in the nvim
+  renderer alone (`review_view.rb`'s `HUNKLESS_MARKER`), which the Open decision above delegated to
+  it and which its scope argument supports. The consequence is live and user-visible: `cli/review.rb`
+  defaults to `Surface::Text`, so the same binary file now reads `[-]` in the cockpit and `[ ]` in the
+  CLI and tool transcript. The Grounding above says "a fourth state must not be added to one alone",
+  and this is that, accepted deliberately and once. The missing object the panel named is a
+  `FileRow#hunkless?` — one owner of the fact (`Session::MarkedChangeset` already distinguishes it
+  structurally at `marked_changeset.rb:212`) asked rather than re-derived per surface. **A follow-up
+  card should give the fact an owner and make the text surface agree.**
+
+- **`buftype` on the review's NEW side is conditional, and two documents state it as a constant.**
+  `47_diff.lua:188` is `filereadable(absolute) == 1 and "" or "nowrite"` — so a **deleted** file's new
+  side is `nowrite`, not `""`. `47_diff.lua:8`'s comment asserts the intent without the condition.
+  T20 corrected the QA scenario to stop pinning the claim to `buftype`; whether any spec asserts the
+  unconditional form is a question for the deleted-file path, which no card in this chunk drives.
+
+- **The same unregistered `/word` means two things depending on which prompt is live.** T17 implemented
+  its AC as written — an unregistered `/word` is refused in the `/inbox` drain — while an earlier card's
+  regression guard pins the opposite at the inline prompt, where it still answers the question. The
+  split is documented in the code and was not unified, because permissive deletes the safety property
+  and strict deletes the other card's guard. **Whoever unifies these owns retiring one of the two
+  pinned behaviours deliberately.**
+
+- **`Tool::Contract#message` is now sometimes a String and sometimes a thunk.** T15 folded template
+  and subject-supplier into a single member, which the panel judged "defensible economy at five call
+  sites" and which is what shipped. The alternative it named — `Contract.new(message:, subject:,
+  predicate:)` with `Contract#sentence(tool, input, invocation)` — keeps `#message` a String for every
+  contract and removes the `respond_to?(:call)` type-test. Revisit if a sixth call site appears, or if
+  anything outside `lib/` starts reading `#message` expecting data.
+
+- **The Grounding above is WRONG about `env&.status`.** It records the safe-navigation in
+  `build_stream_error_response` as Faraday-v1 arity-padding made dead by T1's deletion. It is not: the
+  chain guards a nil **status**, and status is genuinely nil for a gateway-shaped error body, because
+  `Providers::Anthropic::Streaming#parse_streaming_error` returns `nil` unless the payload's top-level
+  `type == "error"`. `env.status` is the live fallback. Only the `&.` was redundant. Recorded because a
+  future round reading the Grounding would delete a live fallback.
+
+- **"Resolved" is derived from position, not stated — and annotations are a LOG, not a MAP.** T11
+  made a later annotation at the same `(path, side, line)` supersede a blocker, because removal is
+  unreachable at every layer and the alternative was shipping a review a human cannot leave. The panel
+  accepted it and named the root cause precisely: `Marks#mark` is `@marks.merge(key => state)`, a map
+  whose key *means* "this hunk's state", so last-wins is the key's meaning; `Session#annotations` is
+  append-only and every entry renders, so a second note is an *additive* act, not a state transition.
+  A state rule was applied to a log. **A follow-up card must own three things**: (a) a stated
+  representation of resolved — a fourth `ANNOTATION_KIND` or an `AnnotationRemoved` record — so it is
+  declared rather than derived; (b) the identity split, since the fold keys by position while the
+  surface renders by `anchor.id`; and (c) whether a `question` resolves a blocker. It should also move
+  the fold off `Verdict::Policy`, which is the class that admits verdicts: `Review::Annotations`
+  already owns "the notes, judged", and leaving it on the policy makes a *surface* depend on a
+  *verdict policy* the moment a resolved glyph is wanted.
+
+- **`CLI::Backend` sits at exactly `Metrics/ClassLength` 110/110 with zero headroom.** T5 needed two
+  lines there for its AC and bought them by reflowing `COMPACTION_PRICES` from three lines to two —
+  flagged honestly at the time as cop-headroom accounting rather than design. The panel proved the
+  class is back at the limit (appending one endless method yields `[111/110]`). Nothing in this chunk
+  or in wave 2 touches the file again, so it is not urgent — but the next card that needs a line there
+  has no room. The missing object T5 itself named is `Backend::Providers`, over `PROVIDERS`,
+  `#provider`, `#anthropic_provider`, `#provider_name` and the summarizer arms. CLAUDE.md's rule is
+  that a tripped `Metrics` cop means an object is missing; this is the third independent reading of
+  the same signal.
+
+- **`Repl` AND `Wiring` are both at 110/110 too** (T16). Its `#repl_over` extraction bought **zero**
+  `ClassLength` — it is a private method in the same class, so it relieved an ABC trip only. The object
+  the panel named is out of `Wiring`, not `Repl`: a `ConversationAssembly` over `#wire_askers`,
+  `#repl_over`, `#assemble_surface` and `attended?` — the run's answer-surfaces, a different sentence
+  from "resolve the flags into collaborators". Failing that, a `LineSource` in `Repl` over
+  `#continue?`/`#farewell?`/`#reads_a_line?`/`#next_text`.
+
+  **That makes five classes at the cap in one chunk** — `CLI::Backend`, `Repl`, `Wiring`,
+  `Provider::Ollama`, `Command::Survey` (109/110, and wave-2's T12 adds a flag to it). CLAUDE.md says a
+  tripped `Metrics` cop usually means an object is missing; five in one chunk says the CLI layer has
+  outgrown its objects, which is a bigger statement than any single card should answer.
+
+- **The secret-read oracle's WAIT is still unjournaled**, so F26's contention is recorded from one side
+  only. T5 decided it *should* be recorded and handed over an exact diff, but correctly refused to edit
+  `oracle/secret_read.rb`, which belongs to T3 — and the diff depends on the `journal:` keyword T5 adds
+  to `Provider::Ollama`, so it cannot land before T5 does. It lands as its own change once T5 and T3
+  are both on main. Until then F28 is closed for oracle *requests* and half-closed for oracle *waits*.
+
+- **`Channel::Null.instance` vs `Channel::Null::INSTANCE`** are both spelled in `lib/` for the same
+  frozen object. Pre-existing; worth one sweep rather than widening further.
+
+- **Retiring the `T<n>` comment convention: the rule that actually works keys on AUDIENCE, not syntax.**
+  The owner asked mid-chunk that historical task-card ids be deleted from comments as files are
+  touched, because an id resolves to nothing a reader can open. The first rule given to the cards was
+  "comments only, never a string literal" — safe, but wrong at the edges in both directions. T10 found
+  the better formulation: **a literal that is only matched or compared keeps its text; a literal
+  PRINTED TO A HUMAN — a spec's failure message, a refusal sentence — is prose and gets treated like a
+  comment.** Two ids in `diff_mode_spec.rb`'s failure text were the case that proved it. Also worth
+  keeping: the naive `\bT[0-9]+\b` pattern **misses `T31a`** (T17 hit it twice), and `F<n>` findings
+  ids were deliberately KEPT throughout — they resolve to real documents under `planning/`. Other
+  opaque schemes were left alone as a separate question: `B4`, `I6`, `OM-4`, `OM-6`, `M6`, `CE-5`,
+  `CAC-2`, `R5`, `D2`.
+
+- **A `rescue StandardError` can convert a silent failure into a looping one, and the fix instruction
+  missed it.** T17 was asked to close a non-exhaustive `case` with an `else raise`. Its `#typed` also
+  carried a `rescue StandardError`, which would have caught that very raise and turned a swallowed
+  reply into a swallowed-and-retried one — strictly worse than the defect being fixed. It removed the
+  rescue rather than special-casing the new error, moving the guard's documented purpose into
+  `#classify`, and that also cleared a `Metrics/MethodLength` without loosening it. Recorded because
+  "add an `else raise`" is a common instruction and a live rescue silently defeats it.
+
+- **F30 is only PARTLY discharged, and round 8 must re-file rather than read it as closed.** T7 made
+  every review-rail refusal answer on `_G.__lain.review_refused` instead of raising — verified across
+  nine legs against a real UI-attached nvim. But `51_thread.lua:616` deliberately still raises, because
+  a `BufWriteCmd` must fail for `:w` to report failure on the leg where a typed question reached
+  nobody. The panel measured what that costs: `{"mode"=>"r","blocking"=>true}` and a round-trip
+  timeout. So *"a subsequent RPC call answers within the timeout"* holds for the nothing-typed leg and
+  **F30's mechanism is still live in the thread pane on the rarer one**. Leaving `:616` is correct —
+  a re-raise carries the traceback and the hit-enter prompt back with it, which is mutually exclusive
+  with the AC. Closing it properly needs a way to fail a write without raising out of the callback,
+  which is a card, not a line.
+
+- **`a_string_matching` is how a bug rides in front of a correct sentence for a whole card.** The
+  durable fix for the doubled `lain: lain:` prefix was not the negative assertion and not the prefix
+  edit — it was changing the producer-side specs from `a_string_matching` to
+  `a_string_starting_with`. A matcher that looks for the sentence *anywhere* in the message cannot
+  see anything prepended to it, which is precisely the defect. T7 proved the new assertion
+  non-vacuous by re-introducing the prefix, capturing the failure, and restoring. Generalises past
+  this card: **assert the whole message, or assert its start — never merely that the right words
+  appear somewhere in it.**
+
+- **A fixture that quietly stopped representing production is why a doubled prefix survived the card
+  about prefixes.** `AnnotateFixture::CAPTURE` raises locally with `error(msg, 0)`, so the spec's error
+  shape is not the wire's — and `lain: lain: …` reached the human from the Ruby refusal leg while an
+  example named "refuses … without a Lua stack traceback" stayed green. **Measured afterwards, and the
+  diagnosis needed narrowing:** a peer's error crosses `vim.rpcrequest` *bare*, so `error(msg, 0)` is a
+  faithful reproduction of the wire's raise SHAPE. What was unfaithful was the fixture's **content** —
+  it only ever passed unprefixed sentences. Changing the raise would have bought nothing; the guard had
+  to move to the producer.
+
+- **F32 is 2-of-3 discharged: `tools/request_review.rb` still builds a Handover with no docent.** T6
+  wired the two CLI command paths and deliberately left the tool path, because threading an answerer
+  there needs three files outside the card plus a shared wiring line, and shipping an unwired
+  `docent:` keyword would re-commit the very defect. The panel confirmed that path *does* refuse by
+  name rather than failing silently (`Handover.new`'s default reaches `Unattended::NO_DOCENT`). But the
+  plan's Grounding names all three sites, so this needs **a filed card, not a hand-back paragraph** —
+  a hand-back dies with its worktree, which is how a capability comes to be built and never
+  constructed in the first place.
+
+  Fold in a second finding while doing it: `toolset_build.rb:299` builds a `Docent::Answerer`
+  **nobody reads**, and that dead construction sits on the deletability spec's row as a "consumer" —
+  so the deletability map is partly satisfied by dead code, and would not notice the real consumer
+  going missing.
+
+- **Opening a thread pane from the note rail is ordering-sensitive in a way that loses data.** Two
+  defects found by probe, both introduced by wiring the docent, both fixed by splitting a
+  non-rendering `hold` out of `Docent#open` and calling it *after* `Session#annotate` returns: an
+  unguarded `open` let `Errno::ENOENT` escape `Handover#wrote_annotation` and **lose the note** when a
+  surveyed file was deleted after the survey; and a note the session *refused* still rendered a thread,
+  so the pane asserted an exchange the record denied — and a question asked there then spawned a real
+  provider call at an anchor no note ever landed at. Recorded because "render the pane, then write the
+  record" reads as harmless and is not: the record is the thing that decides whether the pane is
+  telling the truth.
 
 ## Integration checks
 
