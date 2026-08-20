@@ -564,7 +564,11 @@ RSpec.describe Lain::CLI::Command::Review do
       end
 
       expect(editor.bound.session.marks.to_h.values).to all(eq("reviewed"))
-      expect(rail.refusals).to be_empty
+      # NOT `be_empty`: a landed mark now says so, once, naming the row. The
+      # collection is called `refusals` because the rail is -- it carries every
+      # sentence the review surface sends, acknowledgements among them, which is
+      # why the assertion has to name what it expects rather than assert silence.
+      expect(rail.refusals).to eq(["marked reviewed: 1 hunk(s) of README"])
     end
 
     # THE COUNTER-EXAMPLE. A stamp the view no longer holds names a row in a

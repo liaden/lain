@@ -619,6 +619,27 @@ RSpec.describe Lain::Review::Handover do
       expect(records_of("hunk_marked").map { |record| record["state"] }.uniq).to eq(["unreviewed"])
     end
 
+    # The defect this card exists to close: N calls to Session#mark posted N
+    # notices, each naming a truncated content hash because that is all a bare
+    # hunk key ever lets Surface::Neovim#mark say. The row's own name --
+    # already computed by the view that resolved it -- is what a human is
+    # owed instead, in ONE sentence.
+    it "names the row, not a hunk key, when a single-unit row lands whole" do
+      rendering = rendered
+
+      marked = handover(view:).mark(row_of(rendering, "b.rb"), "reviewed", generation: rendering.generation)
+
+      expect(marked.report).to eq("marked reviewed: 1 hunk(s) of b.rb")
+    end
+
+    it "posts one report naming every unit when a multi-unit row lands whole" do
+      rendering = rendered
+
+      marked = handover(view:).mark(row_of(rendering, "a.rb"), "reviewed", generation: rendering.generation)
+
+      expect(marked.report).to eq("marked reviewed: 2 hunk(s) of a.rb")
+    end
+
     it "refuses a stamp the view never issued, and marks nothing" do
       rendering = rendered
 

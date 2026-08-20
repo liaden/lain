@@ -281,6 +281,130 @@ RSpec.describe Lain::Review::Session do
     end
   end
 
+  # {#mark_row} is what {Review::Handover#mark} calls for a WHOLE row's gesture
+  # instead of N calls to {#mark} -- the N calls each notify `@surface.mark`
+  # once, which is right for {#mark}'s own caller (a single hunk, marked in
+  # isolation) and wrong for a row: it posted N sentences, each naming a
+  # truncated content hash because that is all a bare hunk key ever lets
+  # `Surface::Neovim#mark` say. This group pins the two halves of the fix:
+  # recording is unchanged, and the per-key surface notice is gone so a
+  # row-level caller can compose its OWN acknowledgement once, from the row's
+  # name rather than a key.
+  describe "marking a whole row" do
+    # The block is genuinely optional -- {#mark_row}'s own doc says so, and a
+    # cheap nit a panel review named is worth pinning rather than trusting the
+    # doc alone: without one this must not raise LocalJumpError, and nothing
+    # may be recorded until the Enumerator it hands back is actually driven.
+    it "returns an Enumerator that does nothing until driven, when no block is given" do
+      session = open_session
+      keys = keys_for("a.rb")
+
+      enum = session.mark_row(keys, "reviewed")
+
+      expect(records_of("hunk_marked")).to be_empty
+      expect(enum.map(&:hunk_key)).to eq(keys)
+      expect(records_of("hunk_marked").map { |record| record["hunk_key"] }).to eq(keys)
+    end
+
+    it "records every hunk exactly as N calls to #mark would" do
+      session = open_session
+      keys = keys_for("a.rb")
+
+      session.mark_row(keys, "reviewed") { |_key| nil }
+
+      expect(records_of("hunk_marked").map { |record| record["hunk_key"] }).to eq(keys)
+      expect(session.marks.to_h).to eq(keys.to_h { |key| [key, "reviewed"] })
+    end
+
+    # THE fix, pinned directly: a row's hunks landing must not turn into N
+    # per-key notices, which is exactly what N calls to #mark did.
+    it "does NOT tell the surface per key -- that would be N notices for one row" do
+      spy = instance_spy(Lain::Review::Surface::Null)
+      keys = keys_for("a.rb")
+
+      open_session(surface: spy).mark_row(keys, "reviewed") { |_key| nil }
+
+      expect(spy).not_to have_received(:mark)
+    end
+
+    # The RECORD, not merely its key -- #mark's own delegation (below) reads
+    # `#state` off it to notify the surface, and a caller that only got the
+    # key back would have to re-derive the state it already told this method.
+    it "yields each RECORD as it lands, so a caller can read state as well as key" do
+      session = open_session
+      keys = keys_for("a.rb")
+      landed = []
+
+      session.mark_row(keys, "reviewed") { |marked| landed << marked }
+
+      expect(landed.map(&:hunk_key)).to eq(keys)
+      expect(landed.map(&:state).uniq).to eq(["reviewed"])
+    end
+
+    it "raises on an unknown key after journaling every key before it, same as N calls to #mark would" do
+      session = open_session
+      real_key = keys_for("a.rb").first
+      landed = []
+
+      expect do
+        session.mark_row([real_key, "hunk-content-v1:deadbeef"], "reviewed") { |marked| landed << marked.hunk_key }
+      end.to raise_error(described_class::UnknownHunk, /deadbeef/)
+      expect([landed, records_of("hunk_marked").size]).to eq([[real_key], 1])
+    end
+
+    # {#mark}'s own delegation, pinned directly: a single hunk marked through
+    # #mark must notify the surface with the NORMALIZED key {Wire.token}
+    # produces (from the record #mark_row yields back), not with the raw
+    # argument #mark was originally called with -- a mutant that forwarded
+    # the raw `hunk_key` straight to `@surface.mark` instead of reading the
+    # yielded record would still pass every OTHER #mark example (they never
+    # pad the key) and only this one, over a whitespace-padded key, would
+    # catch it.
+    it "delegates to #mark_row for a single key, notifying with the record's normalized key" do
+      spy = instance_spy(Lain::Review::Surface::Null)
+      key = keys_for("a.rb").first
+
+      open_session(surface: spy).mark("  #{key}  ", "reviewed")
+
+      expect(spy).to have_received(:mark).with(key, "reviewed")
+    end
+
+    # A missing block would silently do NOTHING under #mark_row's own
+    # `enum_for` fallback (see that method's doc) rather than raise -- #mark
+    # supplies one unconditionally, so this pins that the delegation itself
+    # is what makes #mark's per-call promise ("this call notifies the
+    # surface") true, not an accident of #mark_row's default.
+    it "cannot silently no-op the way a caller of #mark_row without a block would" do
+      spy = instance_spy(Lain::Review::Surface::Null)
+
+      open_session(surface: spy).mark(keys_for("a.rb").first, "reviewed")
+
+      expect(spy).to have_received(:mark).once
+    end
+
+    it "refuses a state outside MARK_STATES before anything is journaled, same as #mark" do
+      session = open_session
+
+      expect { session.mark_row(keys_for("a.rb"), "skimmed") { |_key| nil } }.to raise_error(Lain::Review::Marks::UnknownState)
+      expect(records_of("hunk_marked")).to be_empty
+    end
+
+    # The port contract {#mark} owes every OTHER caller is unaffected by this
+    # method existing beside it -- {#mark_row} shares its recording step but
+    # not its notice, and a direct #mark call after a batch must still tell
+    # the surface exactly as it always did.
+    it "leaves #mark's own per-call notice to the surface untouched" do
+      spy = instance_spy(Lain::Review::Surface::Null)
+      keys = keys_for("a.rb")
+      session = open_session(surface: spy)
+      session.mark_row(keys, "reviewed") { |_key| nil }
+
+      session.mark(keys_for("b.rb").first, "unreviewed")
+
+      expect(spy).to have_received(:mark).once.with(keys_for("b.rb").first, "unreviewed")
+    end
+  end
+
   describe "annotating" do
     it "journals the note and reports it back" do
       session = open_session

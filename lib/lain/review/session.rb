@@ -340,7 +340,11 @@ module Lain
         @surface.present(marked(strategy: at.strategy), scope: at.name)
       end
 
-      # Set one hunk's reviewed state.
+      # Set one hunk's reviewed state -- {#mark_row} of one, so the two can
+      # never drift: {#mark} used to carry its own copy of the validate,
+      # journal and `@marks`-merge steps, and a panel measured that as a
+      # SECOND place those three steps could disagree with {#mark_row}'s,
+      # which is worse than the duplicate lines it cost to avoid.
       #
       # @param hunk_key [String] one of this changeset's own keys
       # @param state [String, Symbol] a member of {Review::MARK_STATES}
@@ -348,12 +352,48 @@ module Lain
       # @raise [UnknownHunk] for a key this changeset does not produce
       # @raise [Marks::UnknownState] for a state outside the vocabulary
       def mark(hunk_key, state)
-        key = Wire.token(hunk_key)
-        refuse_unknown_hunk!(key)
-        marked = HunkMarked.new(hunk_key: key, state: Marks.state!(state))
-        @journal << marked
-        @marks = @marks.mark(marked.hunk_key, marked.state)
-        @surface.mark(marked.hunk_key, marked.state)
+        mark_row([hunk_key], state) { |marked| @surface.mark(marked.hunk_key, marked.state) }
+        self
+      end
+
+      # {#mark}'s batch: every key a whole ROW names, recorded together.
+      # Validation, the journal record and the `@marks` merge are identical to
+      # calling {#mark} once per key -- {#mark} is now built ON this method
+      # for exactly that reason -- but the per-key `@surface.mark` notice is
+      # left to the CALLER rather than sent here automatically, which is what
+      # a row-level caller needs and {#mark} does not: a single hunk key
+      # carries no row name to notify with, so a batch that notified per key
+      # would post N separate per-key notices -- each naming a truncated
+      # content hash, because that is all a bare hunk key ever lets
+      # `Surface::Neovim#mark` say -- which is both wrong (a hash is not a
+      # row) and redundant (a human reading a row gesture wants one
+      # acknowledgement, not N). {#mark}'s own block above is what restores
+      # the per-key notice for a single hunk marked in isolation.
+      #
+      # Yields each RECORD as it lands (not merely its key), so a caller can
+      # both count how many landed before an unmarkable one raised and
+      # stopped the rest -- {Handover#mark} reports a row the session took
+      # only half of, and needs that count to say so honestly -- and read
+      # what state each key landed at, which {#mark}'s own block needs to
+      # notify the surface correctly.
+      #
+      # @param hunk_keys [Enumerable<String>] every key the row names
+      # @param state [String, Symbol] a member of {Review::MARK_STATES}
+      # @yieldparam marked [HunkMarked] the record just journaled
+      # @return [self, Enumerator] `self` when a block was given; otherwise an
+      #   {Enumerator} over `[:mark_row, hunk_keys, state]` that does nothing
+      #   until driven -- the block is genuinely optional, unlike {#mark}'s
+      # @raise [UnknownHunk] for a key this changeset does not produce
+      # @raise [Marks::UnknownState] for a state outside the vocabulary
+      def mark_row(hunk_keys, state)
+        return enum_for(:mark_row, hunk_keys, state) unless block_given?
+
+        recorder = marking
+        hunk_keys.each do |hunk_key|
+          marked = recorder.call(hunk_key, state)
+          @marks = @marks.mark(marked.hunk_key, marked.state)
+          yield marked
+        end
         self
       end
 
@@ -439,6 +479,12 @@ module Lain
 
       private
 
+      # {Marking}, built fresh for every gesture -- see its own doc for why one
+      # may never be held across two. {#mark} and {#mark_row} share it for the
+      # validate-and-journal step; each still applies the result to `@marks`
+      # itself, because that merge is this object's own state to hold.
+      def marking = Marking.new(journal: @journal, known_hunks: hunk_keys)
+
       # NOT memoized, and the memo that used to be here was the reason
       # {#present} chunked a corpus it had been handed lazily. The table names
       # the files something has READ ({MarkedChangeset.keys_by_path}), and a
@@ -463,13 +509,6 @@ module Lain
       def keys_by_path = MarkedChangeset.keys_by_path(@changeset)
 
       def hunk_keys = keys_by_path.values.flatten.to_set
-
-      def refuse_unknown_hunk!(key)
-        return if hunk_keys.include?(key)
-
-        raise UnknownHunk, "#{key.inspect} is not a hunk key this changeset produces -- a mark under it " \
-                           "could never be reconciled onto anything, and the next replay would prune it unread"
-      end
 
       def refuse_second_verdict!
         return if verdict.empty?
@@ -496,9 +535,10 @@ module Lain
   end
 end
 
-# All four are reached from method bodies only, so this placement is free; it
+# All five are reached from method bodies only, so this placement is free; it
 # reads in the order a reader meets them.
 require_relative "session/scope"
 require_relative "session/marked_changeset"
 require_relative "session/replay"
 require_relative "session/widening"
+require_relative "session/marking"

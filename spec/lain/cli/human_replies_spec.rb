@@ -86,6 +86,18 @@ class RecordingChangesetReview
     def asked? = landed
   end
 
+  # LANDED and REFUSED are deliberately DIFFERENT sentences, and that
+  # difference is the whole point of this double: a fixture that answers the
+  # same `#report` regardless of `#landed` cannot tell an example that pins
+  # an ACKNOWLEDGEMENT apart from one that pins a REFUSAL -- both would read
+  # the identical string back, and an assertion comparing that string to
+  # itself passes for the wrong reason. A panel review caught exactly this:
+  # forcing `landed: false` everywhere left every "acknowledges a mark that
+  # landed" example green, because the double never distinguished the two
+  # things a human can be told.
+  LANDED = "marked reviewed: 1 hunk(s) of a.rb"
+  REFUSED = "the sidebar has re-rendered since you looked"
+
   def initialize(landed: true, raising: nil)
     @landed = landed
     @raising = raising
@@ -104,7 +116,7 @@ class RecordingChangesetReview
     raise @raising if @raising
 
     @gestures << gesture
-    Outcome.new(@landed, "the sidebar has re-rendered since you looked")
+    Outcome.new(@landed, @landed ? LANDED : REFUSED)
   end
 end
 
@@ -1393,7 +1405,12 @@ RSpec.describe Lain::CLI::HumanReplies do
       end
 
       expect(review.gestures).to eq([[:mark, 4, "reviewed", 3]])
-      expect(editor.refusals).to be_empty
+      # A mark speaks on landing (see "acknowledges a mark that landed..."
+      # below), so `editor.refusals` is not empty here -- what this example
+      # pins is that it carries the OUTCOME'S own LANDED report (never the
+      # refusal sentence) and nothing about the ask that was stopped before
+      # the gesture arrived.
+      expect(editor.refusals).to eq([RecordingChangesetReview::LANDED])
     end
 
     # No stamp, and the difference is real: an anchor id is one Ruby minted and
@@ -1414,6 +1431,35 @@ RSpec.describe Lain::CLI::HumanReplies do
       with_surfaces { editor.refusals.any? }
 
       expect(editor.refusals).to contain_exactly(a_string_matching(/re-rendered/))
+    end
+
+    # A mark is the ONE exception to "silent when it lands": every other
+    # gesture on this rail has something else that tells a human it landed (a
+    # cursor moves, a row closes), and the "opens the row..." example above
+    # is where that silence is pinned. A mark redraws a sidebar glyph the
+    # human is not necessarily looking at, so it speaks its outcome's own
+    # `#report` unconditionally -- `eq` on a one-element Array pins BOTH
+    # halves of the defect this closes: the wording, and that there is
+    # exactly one acknowledgement, not one per hunk the row named.
+    it "acknowledges a mark that landed, unlike every other gesture on this rail" do
+      editor.push(["review_mark", [4, "reviewed", 3]])
+
+      with_surfaces { editor.refusals.any? }
+
+      expect(editor.refusals).to eq([RecordingChangesetReview::LANDED])
+    end
+
+    # The failure leg is the example just above, over `review_open`; this pins
+    # that a mark's own failure is still exactly ONE post, not doubled by the
+    # change above -- `announce: true` REPLACES the predicate, it does not add
+    # to it.
+    it "still reports a mark that did not land, exactly once" do
+      replies.bind_changeset_review(RecordingChangesetReview.new(landed: false))
+      editor.push(["review_mark", [4, "reviewed", 3]])
+
+      with_surfaces { editor.refusals.any? }
+
+      expect(editor.refusals).to eq([RecordingChangesetReview::REFUSED])
     end
 
     # Null over a nil check, one surface further: no review open is an object

@@ -236,6 +236,21 @@ module Lain
       # here -- so the ordering is the whole of the mitigation available.
       PARTLY_MARKED = "marked %<landed>d of %<total>d hunks on that row; the rest were refused -- %<refusal>s"
 
+      # A mark that reached the session for EVERY hunk a row names -- the
+      # counterpart {PARTLY_MARKED} implies but did not have until now.
+      # `Surface::Neovim#mark`'s per-key notice cannot speak for a row: a hunk
+      # key is a content digest with no path in it, and Session#mark's
+      # per-call acknowledgement is a port law shared with Surface::Text, so it
+      # cannot go silent for a batch and speak once at the end either. So the
+      # row's own acknowledgement is composed HERE, from the one thing that
+      # already names it: `%<path>s` carries
+      # {Frontend::Neovim::ReviewView::Marked#report} verbatim (already "N
+      # hunk(s) of <path>", from the SAME view that resolved the row, not a
+      # bare path -- see {#recorded}), quoted LAST for {PARTLY_MARKED}'s
+      # reason: lain's own words first, so a narrow pane truncates the
+      # quotation and not the instruction.
+      MARKED_ROW = "marked %<state>s: %<path>s"
+
       # @param session [Review::Session] the aggregate every gesture records
       #   against
       # @param view [#open, #marks] the rendering a row number is resolved
@@ -429,13 +444,20 @@ module Lain
       # did reach the session is not thrown away, it is NAMED: a session that
       # takes one key and refuses the next leaves the row partly marked, and
       # saying so is what keeps that visible instead of silent.
+      #
+      # {Review::Session#mark_row}, not N calls to {Review::Session#mark}: the
+      # per-key surface notice those calls would each send is what named a
+      # content digest instead of a row -- see {MARKED_ROW}'s own doc. This
+      # method composes the row's ONE acknowledgement itself, from
+      # `resolved.report` (already the row's name, from the same view that
+      # resolved `resolved.hunk_keys`) plus the state the gesture carried, and
+      # hands back a NEW {Frontend::Neovim::ReviewView::Marked} carrying it --
+      # `resolved` itself is never sent to a human; only its fields are read.
       def recorded(resolved, state)
         landed = 0
-        resolved.hunk_keys.each do |hunk_key|
-          @session.mark(hunk_key, state)
-          landed += 1
-        end
-        resolved
+        @session.mark_row(resolved.hunk_keys, state) { landed += 1 }
+        Frontend::Neovim::ReviewView::Marked.new(hunk_keys: resolved.hunk_keys,
+                                                 report: format(MARKED_ROW, state:, path: resolved.report))
       rescue Lain::Error, ArgumentError => e
         unrecorded(e.message, landed, resolved.hunk_keys.size)
       end

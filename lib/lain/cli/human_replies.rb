@@ -819,9 +819,26 @@ module Lain
         # the human pressed is what they meant, and a toggle computed from a
         # rendering that has since moved flips the wrong hunk -- silently, since
         # both values are legal.
+        #
+        # `announce: true`, unlike every other gesture on this rail: a mark has
+        # nothing else that tells the human it landed -- opening a row moves the
+        # cursor, answering an approval closes its row, both visible without a
+        # word -- while a mark redraws a sidebar glyph the human is not
+        # necessarily looking at. `outcome.report` is a sentence worth reading
+        # on EVERY path through {Review::Handover#mark} -- success, a stamp or
+        # row the view itself refused, and a batch the session took only half
+        # of all carry one, each in its own words (see
+        # {Frontend::Neovim::ReviewView}'s `NO_STAMP`/`UNISSUED`/`UNSHOWN`/
+        # `NO_HUNK`/`UNREAD` for the refusal legs, {Handover::MARKED_ROW} for
+        # the row name on success). It is NEVER a bare hunk key on any of
+        # them -- that defect lived one layer down, in
+        # `Surface::Neovim#mark`'s per-key notice, and `Session#mark_row` (not
+        # this rail) is what stopped it firing per hunk -- which is the one
+        # property that makes speaking `#report` unconditionally correct
+        # rather than merely convenient.
         def mark_hunk(args)
           line, state, generation = args
-          gestured(@review.call.mark(line, state, generation:), &:marked?)
+          gestured(@review.call.mark(line, state, generation:), announce: true)
         end
 
         # `["review_ask", [anchor_id, question]]` -- the docent question, and the
@@ -838,8 +855,17 @@ module Lain
         # :LainReviewDone answers on. The predicate rides as a block because the
         # gestures name their own success ("opened", "pinned", "marked", "asked")
         # and none should be renamed to share a word with another.
-        def gestured(outcome)
-          @editor.call.review_refused(outcome.report) unless yield(outcome)
+        #
+        # `announce:` is `false` for every gesture but {#mark_hunk}'s, which is
+        # what keeps this method's meaning for the other five: a gesture that
+        # DID land stays silent here, because landing already has a visible
+        # trace (a cursor moved, a row closed) that speaks for it. `announce:
+        # true` skips the predicate entirely rather than inverting it, because
+        # {#mark_hunk} wants `outcome.report` spoken on EVERY path through
+        # {Review::Handover#mark} -- success and refusal read the same field --
+        # not a duplicate of the refusal branch with the sense flipped.
+        def gestured(outcome, announce: false)
+          @editor.call.review_refused(outcome.report) if announce || !yield(outcome)
         rescue NoMethodError => e
           @editor.call.review_refused(format(UNANSWERED_OUTCOME, e.message))
         end
