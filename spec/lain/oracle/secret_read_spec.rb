@@ -42,6 +42,14 @@ RSpec.describe Lain::Oracle::SecretRead do
   # this file would have read as green while asserting nothing.
   def provider_built(**opts) = terminal(model_provider(**opts))
 
+  # Depth is peeled here deliberately, but peeling is not what makes the security claim safe: a
+  # decorator that LIES about #inner defeats every assertion in this describe, since they all reach
+  # the judge through `terminal`. Two other things cover that, and neither is this walk.
+  # spec/provider_construction_discipline_spec.rb pins statically that this file may construct only
+  # Provider::Ollama -- at any depth, without running anything. The `not_to receive(:new)`
+  # expectations below catch a hosted provider CONSTRUCTED during the call, though not one handed in
+  # from elsewhere. What this walk is for is the other half: the claim has to survive an honest extra
+  # decorator instead of going vacuous the moment one is added.
   def terminal(provider) = provider.respond_to?(:inner) ? terminal(provider.inner) : provider
 
   def inputs(path: '"/repo/Gemfile.lock"', tool: "read", region_count: "2")
