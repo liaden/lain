@@ -1,6 +1,6 @@
 # Wire what was built, and make the next gap loud
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -95,6 +95,22 @@ Verified against the working tree on **2026-08-20**, by reading the code rather 
   is visible, not so a card waits on it.
 
 ## Waves
+
+**ALL THREE WAVES ARE LANDED** — 20 cards, 24 commits (`fbd36771`..`6ecd2883`). Suite **14679 ->
+14926 examples, 0 failures, 15 pendings**; `rubocop` clean over 1355 files; `pre-commit run
+--all-files` clean including cargo. Integration checks 1, 2, 3, 4 and 6 pass. **Check 5 — the live
+`/manual-qa` pass — is NOT done and cannot be done by any card**; it is the only outstanding item.
+
+Every card took a panel pass and **not one returned a clean APPROVE on its first review**. Four
+needed a re-review (T6, T10, T11, T12, T16). The panels found, among other things: a fix that
+silently restored the defect it removed, a `case` with no `else` that swallowed every reply, a
+`--permissive` flag that forgave objections rather than unread rows, a spec double that could not
+tell an acknowledgement from a refusal, and two comments that were false rather than merely opaque.
+
+**Wave 2 is LANDED** (7 commits, `1ed4693a`..`498a8b68`). Suite 14841 -> **14921 examples, 0
+failures, 15 pendings**. Every card took a panel pass; T12 needed a re-review after a BLOCKER
+(`--permissive` admitted an approve over an unanswered blocker), and T9's persisted worktree was
+briefly *worse than HEAD* until its handed-back `handover.rb` diff landed in the same commit.
 
 **Wave 1 is LANDED** (12 commits, `fbd36771`..`7909cf2e`, plus a comment sweep). Suite 14679 ->
 14841 examples, 0 failures. Every card took a panel pass; not one returned a clean APPROVE on the
@@ -503,7 +519,14 @@ Scenario: an empty handback says there was nothing to send
 
 **Depends on:** T6 as a **file-ordering** dep — both edit `lib/lain/review/surface/neovim.rb`
 (T6 exposes the thread view for the docent; this card changes the mark acknowledgement)
-**Files:** `lib/lain/review/surface/neovim.rb`
+**Files:** `lib/lain/review/surface/neovim.rb`, and — **scope expanded during execution, by the
+orchestrator** — `lib/lain/review/session.rb`, `lib/lain/cli/human_replies.rb`, plus a handed-back
+diff for `lib/lain/review/handover.rb` (a sibling held that file, so it is applied at merge).
+The card as written could not close AC2: `#mark` takes a hunk key and cannot recover a path,
+`Handover#recorded` calls it once per key with no signal distinguishing one hunk from many, and
+`review_surface.rb`'s port contract requires every direct `#mark` call to leave evidence — so a
+per-call acknowledgement cannot go conditional on batch position. The redundant-notices bug and
+the name-the-row bug are one defect whose CALLER decides cardinality.
 **Reuse:** `PARTLY_MARKED` (`surface/neovim.rb:214`) already aggregates a multi-unit row into ONE
 sentence — the same shape this card needs for the success path.
 **Shared-file wiring:** none
@@ -1015,10 +1038,19 @@ the next round reads this file.
   from "resolve the flags into collaborators". Failing that, a `LineSource` in `Repl` over
   `#continue?`/`#farewell?`/`#reads_a_line?`/`#next_text`.
 
-  **That makes five classes at the cap in one chunk** — `CLI::Backend`, `Repl`, `Wiring`,
-  `Provider::Ollama`, `Command::Survey` (109/110, and wave-2's T12 adds a flag to it). CLAUDE.md says a
-  tripped `Metrics` cop usually means an object is missing; five in one chunk says the CLI layer has
-  outgrown its objects, which is a bigger statement than any single card should answer.
+  **Measured, it is SEVEN classes sitting at exactly 110/110** — not five, and not only in the CLI
+  layer. A `Max: 109` overlay names them: `agent.rb:33`, `cli/backend.rb:23`, `cli/up.rb:29`,
+  `cli/wiring.rb:96`, `frontend/neovim/review_view.rb:130`, `isolation/worktree/handback.rb:59`,
+  `tools/ast_search.rb:23`. (`Repl` and `Command::Survey` hovered there during this chunk too.)
+
+  **Seven classes landing on the cap to the line is code being fitted to a number, not a limit doing
+  design work.** CLAUDE.md's rule — never loosen a `Metrics/*` limit, extract the object the cop is
+  pointing at — is right, and it is being satisfied in the letter while the intent leaks: three cards
+  in this chunk bought their lines by reflowing a constant, inlining into a line already changing, or
+  extracting a file-split rather than a responsibility. Each was defensible alone. Seven at once is
+  the signal. **The follow-up is not a bigger `Max:` and not seven extractions — it is one pass that
+  asks, per class, which object is missing**, and accepts that some of the seven are simply large and
+  should say so with a scoped, reasoned exclusion rather than by shedding a line.
 
 - **The secret-read oracle's WAIT is still unjournaled**, so F26's contention is recorded from one side
   only. T5 decided it *should* be recorded and handed over an exact diff, but correctly refused to edit
@@ -1101,6 +1133,113 @@ the next round reads this file.
   provider call at an anchor no note ever landed at. Recorded because "render the pane, then write the
   record" reads as harmless and is not: the record is the thing that decides whether the pane is
   telling the truth.
+
+- **A worktree branches from `origin/<default>`, not from local `main` — and a stale remote makes that
+  silent.** Every wave-2 worktree came up at `origin/main` (`36aa11a4`), **15 commits behind** local
+  `main`, so no card had its own dependency present. Wave 1 survived only because no wave-1 card had a
+  landed dep. The failure mode is the dangerous kind: specs go green against a tree missing the code
+  the card sits beside, and merging that work silently reverts the dependency. Check
+  `git -C <worktree> rev-parse HEAD` against local `main` before a card starts, not after it reports.
+
+- **A card cannot confirm its dependency landed by recognising the shape the dependency was meant to
+  produce.** The sharpest statement of why the card ids had to go, found independently while diagnosing
+  the staleness above: a card looked at `:LainNoteDone`, saw a comment reading "THE REFUSAL IS ANSWERED,
+  NOT RE-RAISED", and read that as its dependency having landed. It had not — that comment was from an
+  **earlier chunk's card, also numbered T16**, on the same function. Two chunks numbering cards from
+  T1 is all it takes for a stale base to read as a fresh one. Confirm a dependency by its *behaviour*,
+  never by prose that describes it.
+
+- **`direnv exec .` alone puts a card back on the SHARED `TMPDIR`.** The multi-line
+  `eval "$(mise env -s bash ruby@4.0.6)"` form is refused by the worktree-isolation checker as "too
+  complex to verify", so cards fall back to `direnv exec .` — which sets `TMPDIR=$HOME/tmp/lain`, the
+  one every sibling is using, reintroducing exactly the fixture collision the per-card TMPDIR exists to
+  prevent. The form that isolates is
+  `direnv exec . env TMPDIR=$HOME/tmp/lain-<card> XDG_STATE_HOME=... XDG_CACHE_HOME=... <cmd>`.
+
+- **`refusal_width_discipline_spec` cannot see a Lua string, and its silence reads as coverage.** It
+  walks `lib/` Ruby through Ripper, so every refusal and acknowledgement authored in a `runtime/*.lua`
+  file is unmeasured by it — the widths for the note-handback receipt and its nothing-pending sentence
+  had to be measured by hand. A discipline spec that is *structurally blind* to a whole class of its
+  subject is the same shape as the capabilities this chunk exists to find: it passes, and its passing
+  means less than a reader assumes. The fact is now recorded in a comment at the Lua site so the
+  silence is not mistaken for coverage, but the real answer is to extend the walk to Lua literals.
+
+  **It is already hiding a live exceedance, which is what makes this a card rather than a note.**
+  `assert_saved`'s sentence in `48_annotate.lua` measures **135 columns with an empty path** against a
+  bar of 80 — on the same rail, in the same file, one screen above the two sentences that were measured
+  by hand. The spec is green and has been all along. A follow-up should extend the Ripper walk to Lua
+  string literals; while there, note that `review_refused` now carries three *acknowledgements*
+  (`MARKED`, `SETTLED`, the note receipt) as well as refusals, so the rail wants **renaming and
+  recolouring together** — an optional trailing `highlight` defaulting to `WarningMsg` is
+  source-compatible in both languages, so no existing caller changes.
+
+- **`Provider::Bedrock` needs NO `journal:` keyword — do not add one.** It records no wait, and that is correct, not a gap. T4's
+  discipline spec flagged it as the one provider `CLI::Backend` builds that has no `journal:` keyword,
+  while `Ollama` and `Anthropic` both gained one. Checked: Bedrock does not `include Admitted` — only
+  those two do — so it has no admission gate and therefore no wait to record. `Admission.build` answers
+  a Null for any non-local endpoint anyway, and Bedrock is hosted. The `UNJOURNALED` row T4 left for it
+  should say *that*, rather than implying a missing feature; the row is still worth keeping, because
+  the day Bedrock gains a gate the row is where someone will look. Request journaling is unaffected —
+  `Provider::Journaled` wraps any provider duck. **This bullet exists to stop the fix, not to request
+  it**: an earlier draft filed it as a follow-up, and a reader acting on that would add a keyword that
+  feeds nothing.
+
+- **Deleting the nvim capability probe removed a guard and left no gate — a follow-up card owes one.**
+  Measured on a real editor: below nvim 0.11, `:LainNoteDone` now yields nvim's own `stack traceback:`
+  (`in function 'recorded' / in function 'review_refused'`) — the exact shape the refusal rail exists
+  to keep off a human's screen — and on the **production** path (`RpcThread`'s `notify` of
+  `REVIEW_REFUSED`) the refusal **vanishes entirely**: nothing echoed, `:messages` empty,
+  `blocking=false`. A human who made a deliberate gesture gets silence.
+
+  A stated README requirement is not a gate. The object that should answer is already built and
+  already holds the answer: `Binaries#present?` (`cli/up.rb:615`) spawns `nvim --version` and
+  **discards the output**, and `cockpit_wanted?` (`:836`) already owns the "degraded is never silent"
+  warning. So the one object built to answer *"can this editor run the cockpit?"* now answers yes to
+  an editor that cannot, for the price of parsing a string it already has. **The follow-up is a
+  version gate there**, not a wider fallback — bringing the probe back would undo the card.
+
+- **The flag parser duplicated across `Command::Survey` and `Command::Review` is a card, and this chunk
+  made the case twice.** T6 first noted `Command::Survey` sitting one line under the cap; T12 then wrote
+  `#switched` into **both** command files, so five of six members — `Parsed`, `#parse`, `#flagged`,
+  `#switched`, `#refuse_unreadable!`, `#refuse!` — are now duplicated verbatim between them. Survey has
+  zero room left. Extracting it needs `lib/lain/cli/command.rb`, which no card in this chunk owned, so
+  it is a card rather than a paragraph.
+
+  The duplication already cost something real: `unbounded: words.intersect?(SWITCHES)` meant "any
+  switch is present", so adding `--permissive` would have silently lifted the survey's ceilings. T12
+  found and fixed it by reading each switch by its own name, and pinned it with an example that fails
+  against the old parse — but a single owner of "what did the human ask for" is what stops the next one.
+
+- **Fiber storage made the stall protection silently optional, and nothing could have caught it.** The
+  clock lived in `Fiber[KEY]`, which carries an assumption the code could only assert in a ⚠️ comment:
+  *the adapter dispatches `on_data` on the fiber that called it*. An adapter running the callback on
+  any other fiber got `Null` back on every chunk — **protection off, suite green**. Moving the clock
+  onto `env.request.context` (the carrier the transports already thread `retry_attempt` and
+  `wal_frame` through) retires the assumption rather than documenting it, and two examples now state
+  the inverse. Worth keeping as the general shape: *an invariant that can only be written as a comment
+  is an invariant nothing enforces.*
+
+- **`yard-lint` misreports when handed an explicit path — run it bare, exactly like `rubocop`.**
+  CLAUDE.md already records that naming a `.toml` on a `rubocop` command line makes it parse the file
+  as Ruby and "correct" it. `yard-lint` has the same shape: given an explicit path it reports offences
+  that a bare run does not. Both tools are safe bare and misleading when aimed, so aim neither.
+
+- **An absent stall clock at tick time answers `Null`, not an error — and the loud half is still owed.**
+  This was a recorded open item in `faraday_handlers.rb`; T2's rewrite deleted it and it survived
+  nowhere in `lib/` or `planning/` until the panel noticed. It is carried here because **a comment was
+  the wrong sole home, which is exactly how it was lost.** The move made it *more* live rather than
+  less: under fiber storage it took a misconfigured adapter to reach, and now it needs only a stack
+  assembled without `StallProtection` — such a request gets `Null` on every chunk, forever, silently.
+  The fix is for the absent case to be loud; the reason it has not been done is that no caller has yet
+  been shown to assemble such a stack in production.
+
+- **`Faraday::Options` overrides `deep_dup` but NOT `dup`.** So `Connection#build_request`'s
+  `options.dup` is Struct's *shallow* copy, and `env.request.context` **is** the connection's own
+  object. Writing a key in place leaks it onto the connection and into every later request on it;
+  merge-and-replace does not. Anything storing per-request state in that hash depends on this, and the
+  dependency is invisible at the call site — it now has a comment and an example driving a real Faraday
+  stack over two requests on one connection, plus a filed `Slot` that would own the fact once instead
+  of making each caller carry it.
 
 ## Integration checks
 
