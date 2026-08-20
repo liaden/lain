@@ -20,7 +20,16 @@ module Lain
     # {verdict}` (`runtime/46_sidebar.lua:188`, protocol 10) is the command
     # that actually exists for these two surfaces.
     class OpenedBanner
-      TEMPLATE = "%<headline>s\nwalk it in lain://review; <CR> opens a row, :LainNote annotates, " \
+      # The WALK is named because `<CR>` lands in the sidebar, not in the file:
+      # a review is drawn beside the human rather than under their cursor, so
+      # the marking keys the sidebar owns are the keys that work where they
+      # land. `:LainNote` reads the current buffer and wants a stamped review
+      # side, so it correctly refuses from the sidebar -- and a banner that
+      # named the command without the two motions taught a sequence whose
+      # second step fails. Two `<C-w>l`, not one: the slots are sidebar, OLD,
+      # NEW, so one motion reaches the history side.
+      TEMPLATE = "%<headline>s\nwalk it in lain://review; <CR> opens a row beside you, " \
+                 "<C-w>l<C-w>l reaches the file where :LainNote annotates, " \
                  ":LainReviewVerdict %<verdict>s hands it back"
 
       # `.first`, not the whole vocabulary: the banner shows ONE exemplar a

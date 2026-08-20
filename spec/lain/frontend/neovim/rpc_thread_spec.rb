@@ -1032,6 +1032,30 @@ module ThreadWriteFixture
     return nil
   LUA
 
+  # Where a human stands to read the file, and the precondition `set_thread`
+  # renders against. `open_changeset` draws the pair and then lands the human in
+  # the SIDEBAR (`47_diff.lua`'s `landing`), which is a navigator and carries no
+  # `lain_review_side` -- so `review_thread.refresh` bails on its first line and
+  # the conversation is built into a buffer that is in no window. That is the
+  # editor behaving correctly: the pane is cursor-driven and shows the thread for
+  # the anchor the cursor is on, so a cursor in neither diff has no thread to
+  # show. This spec is about the WRITE, not about where `<CR>` lands, so it walks
+  # to the new side itself rather than inheriting whatever focus the open left --
+  # the `<C-w>l<C-w>l` a human makes before typing into their file.
+  #
+  # Returns the cursor's LINE so the walk is checkable: landing in the right
+  # window on the wrong line reproduces the very defect `open_counter` warns
+  # about, and would do it silently.
+  ENTER_NEW_SIDE = <<~LUA
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.b[vim.api.nvim_win_get_buf(win)].lain_review_side == "new" then
+        vim.api.nvim_set_current_win(win)
+        return vim.api.nvim_win_get_cursor(win)[1]
+      end
+    end
+    return nil
+  LUA
+
   at_exit { FileUtils.remove_entry(PROJECT) if File.directory?(PROJECT) }
 end
 
@@ -1063,16 +1087,24 @@ RSpec.describe Lain::Frontend::Neovim, "the thread pane's write refusal", :nvim 
 
   def lua(source, args = []) = @editor.exec_lua(source, args)
 
-  # Opened ON the anchor line, and that is not a detail: the pane is
-  # cursor-driven, so a changeset opened anywhere else leaves the thread buffer
-  # alive but in no window, and `:w` would then be typed at whatever buffer
-  # happened to be current -- the real file on the new side, which `:w` writes
-  # perfectly happily. Measured while writing this: line 1 gave a green run
-  # against a defect that was still there.
+  # Opened ON the anchor line AND STOOD ON, and neither half is a detail: the
+  # pane is cursor-driven, so a cursor anywhere else -- the wrong line, or the
+  # sidebar `open_changeset` now lands in -- leaves the thread buffer alive but
+  # in no window, and `:w` would then be typed at whatever buffer happened to be
+  # current. Both misses have been measured, and they fail differently, which is
+  # why the guards below are separate: the wrong LINE leaves the real file on the
+  # new side current, and `:w` writes it perfectly happily -- line 1 gave a green
+  # run against a defect that was still there. The wrong WINDOW leaves the
+  # sidebar current, and `:w` there is refused by nvim itself with E382 before
+  # any lain autocommand runs -- a red run, but one that indicts the rail for a
+  # refusal the rail never made.
+  #
+  # Returns the line the cursor actually ends on, so a caller can say so.
   def open_counter(line = 20)
     lua("_G.__lain.open_changeset(...)",
         ["docs/counter.txt", (1..40).map { |i| i == 20 ? "was line 20" : "line #{i}" }, line,
          { "old" => "base0ff", "new" => "head1ff" }])
+    lua(ThreadWriteFixture::ENTER_NEW_SIDE, [])
   end
 
   def set_thread(id, line, lines)
@@ -1133,7 +1165,11 @@ RSpec.describe Lain::Frontend::Neovim, "the thread pane's write refusal", :nvim 
   # for the leg that matters -- a question that reached nobody. This is about
   # what the human is told and whether the editor survives telling them.
   it "delivers a nothing-typed write refusal on the review rail" do
-    open_counter
+    # ASSERTED, not assumed, and BEFORE the render: `set_thread` renders from
+    # wherever the cursor is, so standing off the anchor -- or outside the diff
+    # entirely -- builds the conversation into a buffer no window holds. See
+    # `open_counter` for both misses and how they fail apart.
+    expect(open_counter).to eq(20)
     set_thread("a-20", 20, ["## you", "why this way?"])
     # ASSERTED, not assumed: `focus_thread` answering nil would leave `:w` typed
     # at the real file on the new side, which nvim writes without complaint --

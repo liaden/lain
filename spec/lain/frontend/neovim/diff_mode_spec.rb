@@ -6,8 +6,8 @@ require "socket"
 require "timeout"
 require "tmpdir"
 
-# T15: `runtime/47_diff.lua` -- the reading surface. One changed file drawn into
-# T26's two diff slots: the real file on the new side, `git show <base>:<path>`
+# `runtime/47_diff.lua` -- the reading surface. One changed file drawn into the
+# layout's two diff slots: the real file on the new side, `git show <base>:<path>`
 # on the old side, both in nvim's native diff mode.
 #
 # Its OWN nvim harness rather than an append to `neovim_runtime_spec.rb`, for
@@ -27,7 +27,7 @@ require "tmpdir"
 # adding an example here: the first `bufload` of a `.rb` file costs **213ms** in
 # a fresh editor and every later load costs 0.01ms, because nvim is loading its
 # ruby ftplugin, indent and syntax runtime once per process. The same first load
-# of a `.txt` file is 4.6ms. So the two examples that assert `filetype == "ruby"`
+# of a `.txt` file is 4.6ms. So the three examples that assert `filetype == "ruby"`
 # -- the AC's own words, and the reason the new side is a real buffer at all --
 # open the Ruby fixture and pay it; every other example is about buffer wiring,
 # slots, folds, stamps and wipes, none of which the filetype touches, and opens a
@@ -80,7 +80,9 @@ module DiffModeFixture
           for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
             local slot = vim.w[w].lain_review_slot
             if slot then
-              world.slots[slot] = { vim.api.nvim_win_get_buf(w), vim.wo[w].diff }
+              world.slots[slot] = {
+                vim.api.nvim_win_get_buf(w), vim.wo[w].diff, vim.api.nvim_win_get_cursor(w)[1],
+              }
             end
           end
         end
@@ -123,8 +125,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   def lua(source, args = []) = @editor.exec_lua(source, args)
 
-  # Both revisions, always: only Ruby knows them and T16 stamps a note with the
-  # one its side was authored against.
+  # Both revisions, always: only Ruby knows them and the note rail stamps a note
+  # with the one its side was authored against.
   def revisions = { "old" => "base0ff", "new" => "head1ff" }
 
   # The card's entry point. `old_lines` is `git show <base>:<path>` ALREADY READ
@@ -146,9 +148,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   def windows(tab) = lua("return vim.api.nvim_tabpage_list_wins(...)", [tab])
 
-  # slot -> window, read off the window variables T26 stamps, so this never has
-  # to call `review_layout` -- which would TAKE FOCUS and destroy the very fact
-  # half these examples assert.
+  # slot -> window, read off the window variables the layout stamps, so this
+  # never has to call `review_layout` -- which would TAKE FOCUS and destroy the
+  # very fact half these examples assert.
   def slots
     lua(<<~LUA, [review_tab])
       local found = {}
@@ -219,10 +221,15 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # SEQUENCE rather than over the state that happens to be left at the end.
   #
   # A WinEnter additionally carries a SNAPSHOT of the review at the instant focus
-  # landed -- what each slot held, whether it was in diff mode, and where the
-  # cursor was. Counting WinEnters says which windows were entered but nothing
-  # about WHEN, and "focus is taken last" is a claim about when: focusing the new
-  # pane early and then never again is indistinguishable by count.
+  # landed -- what each slot held, whether it was in diff mode, and where every
+  # slot's cursor was. Counting WinEnters says which windows were entered but
+  # nothing about WHEN, and "focus is taken last" is a claim about when: focusing
+  # early and then never again is indistinguishable by count.
+  #
+  # PER SLOT rather than only the entered window, because focus now lands in the
+  # SIDEBAR: the fact that has to be true at that instant is about a window the
+  # human is not in -- the new side's cursor is already on the resolved line --
+  # and the entered window's own cursor cannot say it.
   def watch_windows
     lua("_G.__diff_probe = {}\n#{DiffModeFixture::PROBE_AUTOCMD}")
   end
@@ -329,7 +336,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   # BLOCKER 1. Every wave-4 card anchors extmarks in these buffers, and the old
   # side is the one this module REWRITES -- so what a whole-buffer replace does
-  # to a mark is this card's problem, not T16's.
+  # to a mark is this module's problem, not the note rail's.
   describe "extmarks in the old side, across a re-open" do
     def mark_at(buf, row)
       lua(<<~LUA, [buf, row])
@@ -365,8 +372,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       # And NOTHING was told the buffer changed. A zero-length `set_lines` at the
       # buffer end leaves every mark in place too, but still bumps 'changedtick'
       # and fires `on_lines` -- so an unchanged re-open would announce a change to
-      # exactly the listeners T16's drift detection is built on. Not moving a mark
-      # is half of it; not raising the signal is the other half.
+      # exactly the listeners the note rail's drift detection is built on. Not
+      # moving a mark is half of it; not raising the signal is the other half.
       expect(changedtick(buf)).to eq(tick)
     end
 
@@ -389,8 +396,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # When the content genuinely differs -- the base moved under a re-review --
     # only the differing span is rewritten. A mark BEFORE it keeps its row, which
     # is what makes the write minimal rather than merely idempotent; a mark
-    # inside it moves, and that is drift for T16 to report rather than something
-    # this module should hide.
+    # inside it moves, and that is drift for the note rail to report rather than
+    # something this module should hide.
     it "leaves marks outside the changed span alone when the old side really changes" do
       open_changeset("docs/counter.txt", counter_old_lines, 20)
       buf = buf_in(slots["old"])
@@ -429,14 +436,14 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     # §3.4's expand-context affordance, asserted as lines the editor is actually
-    # HIDING. T26's panel found a fold example that passed on two empty
-    # placeholders because identical buffers fold completely -- so the changed
+    # HIDING. The layout's own panel found a fold example that passed on two
+    # empty placeholders because identical buffers fold completely -- so the changed
     # line being VISIBLE is half the assertion, and it is the half that fails
     # when the two sides are the same bytes.
-    # Opened on the CHANGED line, which is where T14's gesture resolves: a target
-    # inside an unchanged region legitimately opens the fold around it (the
-    # example below), so landing on line 1 here would measure `zv` rather than
-    # the fold set.
+    # Opened on the CHANGED line, which is where the sidebar's gesture resolves:
+    # a target inside an unchanged region legitimately opens the fold around it
+    # (the example below), so landing on line 1 here would measure `zv` rather
+    # than the fold set.
     it "folds the unchanged regions away on both sides and leaves the change visible" do
       open_changeset("docs/counter.txt", counter_old_lines, 20)
 
@@ -454,9 +461,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     # `foldmethod=diff` has just closed every unchanged region, so a target
     # inside one arrives on a CLOSED FOLD -- the human is shown a one-line
-    # summary instead of the line they asked for. T14 resolves to hunk lines,
-    # which are never folded; T16 and T17 navigate to arbitrary anchors, so this
-    # is theirs.
+    # summary instead of the line they asked for. The sidebar's gesture resolves
+    # to hunk lines, which are never folded; the note and diagnostic rails
+    # navigate to arbitrary anchors, so this is theirs.
     it "opens just enough fold to show a target inside an unchanged region" do
       open_changeset("docs/counter.txt", counter_old_lines, 5)
 
@@ -497,10 +504,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     # The REPOSITORY-RELATIVE path, on both sides, as a variable rather than as
-    # something T16 recovers by parsing the old side's `lain://` name -- that
-    # parser would be a second spelling of the prefix with nothing pinning it
-    # here. The new side cannot supply it by name at all: its name is the
-    # absolute path the editor resolved, and Ruby keys on what it sent.
+    # something the note rail recovers by parsing the old side's `lain://` name
+    # -- that parser would be a second spelling of the prefix with nothing
+    # pinning it here. The new side cannot supply it by name at all: its name is
+    # the absolute path the editor resolved, and Ruby keys on what it sent.
     it "stamps both sides with the path Ruby sent, not the one the editor resolved" do
       open_changeset("docs/guide.txt", guide_old_lines)
 
@@ -515,8 +522,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     # A revision that never arrives is a note recorded against no diff at all,
-    # and T16 would journal it silently. Loud, and naming what was missing --
-    # `review_place`'s own refusal shape one module over.
+    # and the note rail would journal it silently. Loud, and naming what was
+    # missing -- `review_place`'s own refusal shape one module over.
     it "refuses a changeset whose revisions are incomplete, naming what is missing" do
       ok, message = lua(<<~LUA, ["docs/guide.txt", guide_old_lines, 1, { "old" => "base0ff" }])
         local ok, err = pcall(_G.__lain.open_changeset, ...)
@@ -601,50 +608,53 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
 
     # Focus is a flash too, and COUNTING the windows entered does not catch it:
-    # focusing the new pane early and never again enters exactly the same window
+    # focusing the sidebar early and never again enters exactly the same window
     # exactly once. What distinguishes early from late is the state of the review
     # AT THE INSTANT focus lands, so that is what is asserted -- when the human
     # arrives, both sides are already placed, both windows are already in diff
-    # mode, and the cursor is already on the target.
+    # mode, and the new side's cursor is already on the target.
     #
-    # `nvim_win_call` (how `diffthis` runs) fires no WinEnter, so a real focus
-    # change is the only thing that can produce one of these snapshots.
+    # The human is parked on the NEW side first, so that landing in the sidebar
+    # is a real move and produces a WinEnter to read. `nvim_win_call` (how
+    # `diffthis` runs) fires no WinEnter, so a real focus change is the only
+    # thing that can produce one of these snapshots.
     it "does not take focus until the pair is completely built" do
       open_changeset("docs/guide.txt", guide_old_lines)
-      lua("vim.api.nvim_set_current_win(...)", [slots["sidebar"]])
+      lua("vim.api.nvim_set_current_win(...)", [slots["new"]])
       watch_windows
 
       open_changeset("docs/counter.txt", counter_old_lines, 20)
 
       pair = slots
       entered = watched.select { |(event, _, _, _)| event == "WinEnter" }
-      expect(entered.map { |(_, win, _, _)| win }).to eq([pair["new"]])
-      expect(entered.first.last).to eq(
-        "cursor" => 20,
-        "slots" => { "sidebar" => [buf_in(pair["sidebar"]), false],
-                     "old" => [buf_in(pair["old"]), true],
-                     "new" => [buf_in(pair["new"]), true] }
+      expect(entered.map { |(_, win, _, _)| win }).to eq([pair["sidebar"]])
+      expect(entered.first.last["slots"]).to eq(
+        "sidebar" => [buf_in(pair["sidebar"]), false, 1],
+        "old" => [buf_in(pair["old"]), true, 20],
+        "new" => [buf_in(pair["new"]), true, 20]
       )
     end
 
     # "Exactly one WinEnter" is not the invariant either: a human already sitting
-    # on the new side is not moved at all, and zero is the right answer there.
-    # What is always true is where they END UP, which is why that is the pin and
-    # the snapshot above is the one that talks about ordering.
-    it "moves nobody who is already on the new side, and still lands them complete" do
+    # in the sidebar -- which is where the previous open left them -- is not moved
+    # at all, and zero is the right answer there. What is always true is where
+    # they END UP, which is why that is the pin and the snapshot above is the one
+    # that talks about ordering.
+    it "moves nobody who is already on the sidebar, and still lands the pair complete" do
       open_changeset("docs/guide.txt", guide_old_lines)
       watch_windows
 
       open_changeset("docs/counter.txt", counter_old_lines, 20)
 
       expect(watched.select { |(event, _, _, _)| event == "WinEnter" }).to be_empty
-      expect(here).to eq([review_tab, slots["new"]])
+      expect(here).to eq([review_tab, slots["sidebar"]])
       expect(cursor_in(slots["new"]).first).to eq(20)
       expect(window_options(slots["new"])).to include(diff: true)
     end
 
-    # T26 spec's the human closing a pane, and `buf_for` restores what the slot
-    # last held -- so a rebuilt window is born holding the PREVIOUS file. Nothing
+    # The layout's own spec covers the human closing a pane, and `buf_for`
+    # restores what the slot last held -- so a rebuilt window is born holding the
+    # PREVIOUS file. Nothing
     # drove that path here. It is not a visible flash (the whole open is one
     # synchronous call, so no redraw lands inside it -- which is what the
     # no-async guard below is really protecting), but the pane must end up
@@ -692,7 +702,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(lines_of(buf_in(pair["old"]))).to eq(other_old_lines)
     end
 
-    # T26's `buf_for` guards `nvim_buf_is_valid` BECAUSE this happens: the old
+    # The layout's `buf_for` guards `nvim_buf_is_valid` BECAUSE this happens: the old
     # side is a per-file scratch buffer, so the previous file's is wiped rather
     # than left to accumulate one hidden buffer per file across a review.
     it "wipes the old side it is replacing" do
@@ -722,22 +732,111 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   describe "where the human ends up" do
     # `open_changeset` exists ONLY as the answer to a human asking for a file --
-    # nothing else calls it -- so it lands them on the new side. That is the
+    # nothing else calls it -- so it PRESENTS the review, and that is the
     # distinction `review_place`'s "moves nobody" draws rather than a violation
     # of it: the rule is about a render arriving unbidden while the human reads
-    # something else, and a navigator whose <CR> leaves you in the navigator
-    # reads as broken (diffview and octo both focus).
-    it "lands the human on the new side, from wherever they were" do
+    # something else.
+    #
+    # It lands them in the SIDEBAR rather than on the new side, and the reason is
+    # the one below it in this file: the new side is the real file, `buftype = ""`
+    # and modifiable on purpose, while the gesture the sidebar's banner teaches
+    # next is `x` -- which in a real file is delete-character, silently editing
+    # the source the human came to read. The navigator is the surface the review's
+    # own keys are bound on, so leaving the human there is not "leaving them in
+    # the navigator", it is leaving them where the next gesture works.
+    it "lands the human in the sidebar, from wherever they were" do
       layout
       session_tab = lua("return vim.api.nvim_list_tabpages()").first
       lua("vim.api.nvim_set_current_tabpage(...)", [session_tab])
 
       open_changeset("docs/guide.txt", guide_old_lines, 2)
 
-      expect(here).to eq([review_tab, slots["new"]])
-      # ON the resolved line, not merely in the window: arriving in the right
-      # pane at the top of the file is the gesture half-honoured.
+      expect(here).to eq([review_tab, slots["sidebar"]])
+      # The tabpage still holds the whole review, drawn and waiting: landing in
+      # the sidebar is a focus decision, not a smaller layout.
+      expect(slots.keys).to contain_exactly("sidebar", "old", "new")
+      expect(windows(review_tab).size).to eq(3)
+      # ON the resolved line, not merely drawn: the human reaches the file with
+      # `<C-w>l<C-w>l` -- slot order is sidebar, old, new, so one motion lands on
+      # the history side -- and arrives where the gesture pointed. A pane parked
+      # at the top of the file is the gesture half-honoured.
       expect(cursor_in(slots["new"]).first).to eq(2)
+    end
+
+    # The trap this card closes, stated as the thing that must NOT be true: the
+    # cursor is not in a file on disk when the human's next keystroke arrives.
+    it "does not leave the cursor in the file the review is of" do
+      open_changeset("docs/guide.txt", guide_old_lines, 2)
+
+      expect(here.last).not_to eq(slots["new"])
+      expect(buf_in(here.last)).not_to eq(buf_in(slots["new"]))
+      expect(buffer_options(buf_in(here.last))).to include(buftype: "nofile")
+    end
+
+    # The same fact, against the case the slot marker gets WRONG -- and the
+    # reason `landing` reads the buffer rather than trusting `lain_review_slot`.
+    # The marker lives on the WINDOW and the buffer inside it is the human's to
+    # change: `gf` on a sidebar row, a `:b#`, a quickfix jump or the plain
+    # `:edit` used here all leave the window still marked `sidebar` while it
+    # displays a real, writable file. Focusing it by its marker is F34 returning
+    # under the sidebar's own name, and every other example in this block stays
+    # green while it does.
+    it "does not land in a real file the human left in the sidebar's window" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+      lua(<<~LUA, [slots["sidebar"], File.join(project, "docs/counter.txt")])
+        local win, path = ...
+        vim.api.nvim_win_call(win, function() vim.cmd("edit " .. vim.fn.fnameescape(path)) end)
+      LUA
+
+      open_changeset("docs/other.txt", other_old_lines)
+
+      expect(buffer_options(buf_in(here.last))).to include(buftype: "nofile", modifiable: false)
+      expect(name_of(buf_in(here.last))).not_to eq(File.join(project, "docs/counter.txt"))
+    end
+
+    # The narrow half of the same door, and the reason `inert` is not simply
+    # "not a file buffer". `acwrite` is modifiable and its `:w` runs a
+    # BufWriteCmd that performs real file operations -- it is what oil.nvim,
+    # fugitive and netrw put in a window -- so a stray keystroke there reaches
+    # the filesystem exactly as it would in a `buftype = ""` buffer. Narrower
+    # than F34 (it needs a wandered sidebar window AND a `<CR>` fired from
+    # somewhere else), and narrow is how F34 itself survived a full round.
+    it "does not land in a write-capable plugin buffer left in the sidebar's window" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+      wandered = lua(<<~LUA, [slots["sidebar"]])
+        local win = ...
+        local buf = vim.api.nvim_create_buf(true, false)
+        vim.api.nvim_buf_set_name(buf, "oil://" .. vim.fn.getcwd())
+        vim.bo[buf].buftype = "acwrite"
+        vim.api.nvim_win_set_buf(win, buf)
+        return buf
+      LUA
+
+      open_changeset("docs/other.txt", other_old_lines)
+
+      expect(buf_in(here.last)).not_to eq(wandered)
+      expect(buffer_options(buf_in(here.last))).to include(buftype: "nofile", modifiable: false)
+    end
+
+    # And the fix that was NOT taken, pinned so a later card cannot take it by
+    # accident: the new side stays the real file, and stays REACHABLE -- drawn in
+    # the review's own tabpage beside the human rather than under their cursor.
+    # `47_diff.lua`'s header argues `buftype = ""` at length -- it is what makes
+    # the language server and treesitter attach -- so making the window safe by
+    # making the buffer inert would trade every reading tool for a focus decision
+    # that already suffices.
+    #
+    # The Ruby fixture, and one of only three examples in this file that pays the
+    # ~213ms ftplugin load: `filetype` is half of what is being protected here,
+    # and a text fixture cannot say the language tooling still has something to
+    # attach to.
+    it "keeps the new side a real editable file, drawn beside the human not under them" do
+      open_changeset("lib/widget.rb", widget_old_lines, 2)
+
+      expect(buffer_options(buf_in(slots["new"])))
+        .to include(buftype: "", filetype: "ruby", modifiable: true, listed: true)
+      expect(windows(review_tab)).to include(slots["new"])
+      expect(here.last).not_to eq(slots["new"])
     end
 
     # The other half, and the one that keeps the move HONEST: focus is this entry
@@ -812,7 +911,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     # The old side's name embeds the path verbatim, so an absolute one spells
     # `lain://review/OLD//abs/path` -- a doubled separator and a name outside the
-    # contract T16 reads the side and the path back out of.
+    # contract the note rail reads the side and the path back out of.
     it "refuses an absolute path rather than embedding it in the old side's name" do
       before = buffer_count
 
@@ -838,7 +937,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # SHOULD-FIX 6, and T7's ruling one language out: git hands the old side its
+  # SHOULD-FIX 6, and the ruling one language out: git hands the old side its
   # CRs, nvim strips them from a `fileformat=dos` new side, so left alone every
   # single line differs from its twin -- the diff calls the whole file changed
   # and `foldmethod=diff` folds nothing at all.
@@ -865,7 +964,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
   # SHOULD-FIX 7. A stamp is a claim that this buffer IS the review. The new side
   # is a real file buffer that is never wiped, stays listed and outlives the
-  # review, so a stamp left behind tells T16 and T17 to anchor into a file nobody
+  # review, so a stamp left behind tells the note and diagnostic rails to anchor
+  # into a file nobody
   # is reviewing -- a wrong answer rather than a missing one.
   describe "stamps as the review moves on" do
     it "withdraws the stamps from the file the human has left" do
@@ -1007,16 +1107,17 @@ end
 # ⚠️ WHAT IT CATCHES: this module itself acquiring an asynchronous call site, in
 # any of the spellings below. That is the change that would make every nvim call
 # beneath it need `vim.schedule`, and it is the change a later card is actually
-# likely to make (T16's drift detection reaching for `nvim_buf_attach` is the
-# concrete one).
+# likely to make (the note rail's drift detection reaching for `nvim_buf_attach`
+# is the concrete one).
 #
 # ⚠️ WHAT IT CANNOT CATCH, stated so nobody reads it as a proof:
 #
 #   1. It scans the CALLEE, while #466's real shape is `open_changeset` being
 #      CALLED FROM a libuv context. `open_changeset` is a public global and
-#      T16/T17/T18 all call it; if one of them calls it from a timer or an
-#      `on_lines`, nothing here fires. That obligation belongs to the caller, and
-#      is why the module header states the constraint in prose as well.
+#      the note, diagnostic and thread rails all call it; if one of them calls
+#      it from a timer or an `on_lines`, nothing here fires. That obligation
+#      belongs to the caller, and is why the module header states the constraint
+#      in prose as well.
 #   2. It does not follow callees. `named_buf` and `set_lines` live in
 #      20_buffers.lua; if either gained a `vim.uv` call, this stays green.
 #   3. It is textual, so it loses to aliasing (`local L = vim; L.uv.new_timer()`).
@@ -1032,7 +1133,7 @@ RSpec.describe "the diff module's call sites" do
   # explanation as the violation.
   let(:code) do
     path = Lain::Frontend::Neovim::RuntimeLoader.new.module_paths.find { |name| name.end_with?("_diff.lua") }
-    raise "no runtime diff module found -- T15's module is gone" if path.nil?
+    raise "no runtime diff module found -- the review diff module is gone" if path.nil?
 
     File.readlines(path).grep_v(/\A\s*--/).join
   end
@@ -1048,7 +1149,7 @@ RSpec.describe "the diff module's call sites" do
       /vim[.\[]\s*["']?system\b/ => "an async subprocess; Ruby runs git and sends old_lines already read",
       /vim\.(defer_fn|schedule|schedule_wrap)\b/ => "deferral, which only exists to serve an async call site",
       /vim\.wait\b/ => "a yield to the event loop mid-render, which lets a callback run inside open_changeset",
-      /nvim_buf_attach/ => "an on_lines callback -- the textlock family T16's drift detection will reach for",
+      /nvim_buf_attach/ => "an on_lines callback -- the textlock family the note rail's drift detection will reach for",
       /vim\.ui\.\w+/ => "a callback the dressing plugins make asynchronous (65_review's :LainAnnotate note)",
       /=\s*vim\s*$/ => "an alias for `vim`, which defeats every pattern above"
     }

@@ -1012,6 +1012,31 @@ RSpec.describe Lain::CLI::Command::Survey do
 
       expect(refusal).to be_nil, "opening a survey's own row refused: #{refusal}"
 
+      # STOOD ON EXPLICITLY, because opening no longer leaves the cursor here:
+      # `open_changeset` draws the pair and then lands the human in the SIDEBAR
+      # (`runtime/47_diff.lua`'s `landing`), so that the review's own keys are
+      # under the cursor and the `x` its banner teaches cannot reach the real
+      # file on disk. The banner's claim below is about the BUFFER the row
+      # opened, not about where `<CR>` parks the cursor, so this walks to that
+      # buffer the way a human does -- `<C-w>l<C-w>l`, slot order sidebar, old,
+      # new -- rather than inheriting whatever focus the open happened to leave.
+      #
+      # The stamp is returned and CHECKED, because both commands below read
+      # `nvim_get_current_buf`: arriving in the wrong window would test them
+      # against a buffer this example never opened, and `:LainNote`'s refusal
+      # there reads exactly like the one AC4 exists to rule out.
+      opened = @nvim.exec_lua(<<~LUA, [])
+        for _, win in ipairs(vim.api.nvim_list_wins()) do
+          local buf = vim.api.nvim_win_get_buf(win)
+          if vim.b[buf].lain_review_side == "new" then
+            vim.api.nvim_set_current_win(win)
+            return vim.b[buf].lain_review_path
+          end
+        end
+        return nil
+      LUA
+      expect(opened).to eq("guide.md"), "the walk to the opened row landed on #{opened.inspect}"
+
       # THE FIRST HALF OF THE BANNER'S CLAIM: the row `<CR>` opened is a
       # buffer `:LainNote` accepts, because `open_changeset` stamped it
       # (`runtime/47_diff.lua`'s `review_diff.stamp`) whether or not the file

@@ -1,4 +1,4 @@
--- One changed file, drawn into the review's two diff slots (T15): the REAL file
+-- One changed file, drawn into the review's two diff slots: the REAL file
 -- on the new side, `git show <base>:<path>` on the old, both in nvim's native
 -- diff mode. This is the surface a review is actually read on, and native diff
 -- is the whole design -- folds, `]c`, `do`/`dp` and the human's own colorscheme
@@ -17,9 +17,9 @@
 -- nothing to sniff and both halves of a diff have to be presented the same way
 -- to be comparable at all (see `as_shown` for the CRLF half of that).
 --
--- THESE BUFFERS CARRY EXTMARKS -- T16's notes, T17's diagnostics and T18's
--- threads all anchor in them -- so the two rules that protect a mark are stated
--- once, here, and enforced below:
+-- THESE BUFFERS CARRY EXTMARKS -- the note rail's annotations, the diagnostics
+-- rail and the thread rail all anchor in them -- so the two rules that protect
+-- a mark are stated once, here, and enforced below:
 --
 --   1. The old side is REFILLED IN PLACE, never wholesale (`refill`). A
 --      whole-buffer replace moves every mark in the buffer to its end.
@@ -71,9 +71,9 @@ end
 -- The path must be repository-relative, and an absolute one is REFUSED rather
 -- than quietly accommodated: the old side's buffer name embeds it verbatim, so
 -- `/abs/path` spells `lain://review/OLD//abs/path` -- a doubled separator, and a
--- name outside the contract T16 reads the side and the path back out of.
--- Refusing also says which end is wrong; everything Ruby-side already keys on
--- the relative path it sent.
+-- name outside the contract the note rail reads the side and the path back out
+-- of. Refusing also says which end is wrong; everything Ruby-side already keys
+-- on the relative path it sent.
 function review_diff.relative_path(path)
   if type(path) ~= "string" or path == "" or path:sub(1, 1) == "/" then
     error("lain: open_changeset needs a repository-relative path, not " .. tostring(path) ..
@@ -83,9 +83,10 @@ function review_diff.relative_path(path)
 end
 
 -- Only Ruby knows which two commits this diff is between, so a missing one is a
--- render that cannot be repaired here -- and T16 would journal every note on it
--- anchored to nothing, which reads as a note about no diff at all rather than as
--- the wiring slip it is. Refused by NAME, `review_place`'s shape one module down.
+-- render that cannot be repaired here -- and the note rail would journal every
+-- note on it anchored to nothing, which reads as a note about no diff at all
+-- rather than as the wiring slip it is. Refused by NAME, `review_place`'s shape
+-- one module down.
 function review_diff.revision_for(revisions, side)
   local revision = type(revisions) == "table" and revisions[side] or nil
   if type(revision) ~= "string" or revision == "" then
@@ -123,7 +124,7 @@ end
 -- the diff reports the whole file changed and `foldmethod=diff` folds nothing,
 -- which is the expand-context affordance simply gone.
 --
--- This is the editor-side counterpart of T7's ruling that the diff wins and
+-- This is the editor-side counterpart of the ruling that the diff wins and
 -- `Anchor` yields. A file whose line endings the changeset actually CONVERTED is
 -- the case this deliberately does not hide: the new side is then `unix`, nothing
 -- is stripped, and the stray CRs render as `^M` exactly as vim renders them in
@@ -230,9 +231,9 @@ end
 
 -- Write only what actually CHANGED, never the whole buffer.
 --
--- This is the rule that protects every mark T16, T17 and T18 will place here. A
--- whole-buffer `set_lines(buf, 0, -1, …)` moves every extmark in the buffer to
--- its end -- measured: a mark at row 19 reports row 40 after a refill of a
+-- This is the rule that protects every mark the note, diagnostic and thread
+-- rails place here. A whole-buffer `set_lines(buf, 0, -1, …)` moves every
+-- extmark in the buffer to its end -- measured: a mark at row 19 reports row 40 after a refill of a
 -- 40-line file -- and re-opening the file you are already reading is a supported
 -- gesture, so a human's notes would silently pile up at the bottom of the buffer
 -- the moment they came back to a file.
@@ -242,12 +243,13 @@ end
 -- than falling through: the fall-through is a zero-length `set_lines` at the
 -- buffer end, and that still BUMPS 'changedtick' and fires `on_lines` -- so a
 -- re-open of an unchanged file would announce a change to exactly the listeners
--- T16's drift detection is built on. Writing nothing means telling nobody.
+-- the note rail's drift detection is built on. Writing nothing means telling
+-- nobody.
 --
 -- When the content genuinely differs (the base moved under a re-review) only the
 -- differing span is rewritten, so marks outside it keep their rows and marks
--- inside it move -- which is drift, and drift is T16's to report rather than
--- this module's to hide.
+-- inside it move -- which is drift, and drift is the note rail's to report
+-- rather than this module's to hide.
 --
 -- The shared-prefix half is `set_view`'s idiom (45_views); the shared-SUFFIX
 -- half is this one's own, because a diff's changed span is as often in the
@@ -288,15 +290,15 @@ function review_diff.old_side(path, lines, filetype, fileformat)
   return buf
 end
 
--- Which side, which commit that side is, and which file -- the three facts T16
--- needs off the buffer a note was placed in. The side decides whether a line is
+-- Which side, which commit that side is, and which file -- the three facts the
+-- note rail needs off the buffer a note was placed in. The side decides whether a line is
 -- an old-side or a new-side anchor, and the revision is what makes the anchor
 -- mean anything a year later.
 --
 -- The PATH is stamped even though the old side's buffer NAME already ends in it,
--- because the alternative is T16 parsing a URI back apart to recover it -- and
--- that parser would be a second, silent spelling of `OLD_PREFIX` with nothing
--- pinning it to this one. The new side could not answer it anyway: its name is
+-- because the alternative is the note rail parsing a URI back apart to recover
+-- it -- and that parser would be a second, silent spelling of `OLD_PREFIX` with
+-- nothing pinning it to this one. The new side could not answer it anyway: its name is
 -- the ABSOLUTE path the editor resolved, while everything Ruby-side keys on the
 -- repository-relative path it sent. One variable, both sides, no string surgery.
 function review_diff.stamp(buf, side, revision, path)
@@ -308,9 +310,9 @@ end
 -- A stamp is a claim that this buffer IS the review, so it has to be withdrawn
 -- when it stops being true. The new side is a real file buffer: it is not wiped
 -- when the human moves to the next file, it stays listed, and it outlives the
--- review entirely -- so a stamp left on it tells T16 and T17 to anchor a note
--- into a file nobody is reviewing any more, which is a wrong answer rather than
--- a missing one.
+-- review entirely -- so a stamp left on it tells the note and diagnostic rails
+-- to anchor a note into a file nobody is reviewing any more, which is a wrong
+-- answer rather than a missing one.
 --
 -- Derived from the live buffer list, like `drop_stale`, so there is no registry
 -- to go stale.
@@ -337,9 +339,9 @@ end
 -- `:saveas` renames a buffer in place. It succeeds even here -- measured, with
 -- 'buftype' nowrite AND nomodifiable, both of which stop `:w` and neither of
 -- which stops a rename -- so the buffer would go on carrying
--- `lain_review_path` while naming a different file, and T16 would anchor a note
--- into it. Withdrawing the stamp says what is true: this is no longer the file
--- under review.
+-- `lain_review_path` while naming a different file, and the note rail would
+-- anchor a note into it. Withdrawing the stamp says what is true: this is no
+-- longer the file under review.
 --
 -- `BufFilePost` fires after the rename, on the main loop (no `vim.schedule`
 -- needed -- see this module's header on E5560), in a CLEARED augroup, which is
@@ -394,9 +396,9 @@ end
 --
 -- `zv` because 'foldmethod=diff' has just closed every unchanged region, and a
 -- target inside one lands the human on a CLOSED FOLD showing a summary line
--- instead of their file. T14 resolves to hunk lines, which are never folded, but
--- T16 and T17 both navigate to arbitrary anchors. `zv` opens exactly enough to
--- show the line and nothing more.
+-- instead of their file. The sidebar's gesture resolves to hunk lines, which
+-- are never folded, but the note and diagnostic rails both navigate to arbitrary
+-- anchors. `zv` opens exactly enough to show the line and nothing more.
 --
 -- Only the new side is positioned; the old side follows through diff mode's own
 -- scroll binding, and setting it by hand would put it on a line number that
@@ -408,21 +410,100 @@ function review_diff.focus_line(win, buf, line)
   vim.api.nvim_win_call(win, function() vim.cmd("normal! zv") end)
 end
 
+-- Whether a window is somewhere a stray keystroke cannot reach a file on disk.
+--
+-- TWO values, not one. `buftype = ""` is the file-backed case F34 was measured
+-- on, and `acwrite` is the same defect one door along: it is modifiable, and its
+-- `:w` runs a BufWriteCmd that performs real file operations. It is what
+-- oil.nvim, fugitive and netrw leave in a window, so it is not a hypothetical.
+-- Every OTHER value (`nofile`, `nowrite`, `quickfix`, `help`, `terminal`,
+-- `prompt`) refuses to write the path it names, which makes `x` there a no-op at
+-- worst -- so this is a deny-list of the two that write, not an allow-list that
+-- would have to grow with nvim.
+function review_diff.inert(win)
+  local buftype = vim.bo[vim.api.nvim_win_get_buf(win)].buftype
+  return buftype ~= "" and buftype ~= "acwrite"
+end
+
+-- Where the human lands: the review's navigator, or the old side if the
+-- navigator is not currently safe to land in.
+--
+-- THE SLOT MARKER ALONE IS NOT ENOUGH, and that is F34 returning by a side door.
+-- `vim.w[win].lain_review_slot` lives on the WINDOW, and the buffer inside it is
+-- the human's to change: a `gf` on a row, a `:b#`, a quickfix jump or a plain
+-- `:edit` all leave the window still marked `sidebar` while it displays a real,
+-- writable file. Focusing it by its marker would then land the cursor in exactly
+-- the kind of buffer this whole focus decision exists to keep it out of, wearing
+-- the sidebar's name. So the BUFFER is what is checked.
+--
+-- Identity against `review_sidebar.buf()` would be the tighter test and is the
+-- wrong one, twice over. It is a CONSTRUCTOR (`named_buf`), so asking the
+-- question would materialise a `lain://review` buffer as a side effect; and the
+-- layout's own placeholder (`review_panes.buf_for`, a `nofile` scratch buffer
+-- held by a slot whose view has not rendered yet) is a legitimate occupant that
+-- it would reject. Inertness accepts both honest occupants and rejects only the
+-- dangerous one.
+--
+-- THE OLD SIDE IS THE FALLBACK because it is the one window in the layout that
+-- cannot be a file: `nofile` and `nomodifiable`, rebuilt by `old_side` two
+-- statements before this is called. So the chain always ends somewhere safe --
+-- there is no branch here whose behaviour is the bug, and none that raises over
+-- a review which is already correctly drawn. A sidebar the human has wandered
+-- off repairs itself on the next `set_review`, which re-places it every render.
+--
+-- FIRST match rather than last, which is where this differs from
+-- `review_panes.map`'s reading of the same marker: that one answers "which
+-- window IS the sidebar" and lets a later claimant win, while this one answers
+-- "where is it safe to land" and any inert claimant will do.
+function review_diff.landing(old_win, new_win)
+  local tab = vim.api.nvim_win_get_tabpage(new_win)
+  for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+    if vim.w[win].lain_review_slot == "sidebar" and review_diff.inert(win) then
+      return win
+    end
+  end
+  return old_win
+end
+
 -- Open one changed file as the diff pair.
 --
--- TAKES FOCUS, landing the human on the new side, and that is not a violation of
--- `review_place`'s "moves nobody" -- it is the distinction that rule draws. The
--- rule is about a RENDER arriving unbidden while the human reads something else;
--- this entry point exists ONLY as the answer to a human asking for a file, and
--- nothing else calls it. A navigator whose `<CR>` leaves you sitting in the
--- navigator reads as broken, and both surveyed projects (diffview, octo) focus.
--- The sidebar's own re-render still moves nobody, because it goes through
+-- TAKES FOCUS, and that is not a violation of `review_place`'s "moves nobody" --
+-- it is the distinction that rule draws. The rule is about a RENDER arriving
+-- unbidden while the human reads something else; this entry point exists ONLY as
+-- the answer to a human asking for a file, and nothing else calls it. The
+-- sidebar's own re-render still moves nobody, because it goes through
 -- `review_place` and this is the only entry point that adds the move.
 --
+-- IT LANDS THEM IN THE SIDEBAR, not on the new side, and that reverses what this
+-- module first shipped. The new side is the real file whenever there is one on
+-- disk -- `buftype = ""` and modifiable, argued at the top of this file and
+-- still right; `new_side` falls back to `nowrite` only for a path
+-- `filereadable` cannot find -- and the next gesture the sidebar's banner
+-- teaches is `x`, which in a real file is delete-character. A human who pressed
+-- `<CR>` and then `x` silently edited the source they came to read (measured: QA
+-- round 7, F34). The alternative fixes are worse: making the new side inert
+-- trades the language server and treesitter for a focus decision, and
+-- documenting the trap leaves it armed. Landing in the navigator is not "leaving
+-- you in the navigator" -- the review's own keys are bound there, and the pair
+-- is drawn and positioned beside it, two windows to the right (slot order is
+-- sidebar, old, new, so `<C-w>l` reaches the history side and `<C-w>l<C-w>l` the
+-- file).
+--
 -- Focus is taken LAST, after both sides have landed, the pair is in diff mode
--- and the cursor is on its target: arriving in a window that is still being
--- assembled is #509 one level up. `nvim_set_current_win` crosses the tabpage for
--- free, so the human lands in the review from wherever they were.
+-- and the new side's cursor is on its target: presenting a review that is still
+-- being assembled is #509 one level up. `nvim_set_current_win` crosses the
+-- tabpage without a separate tabpage call, so the human lands in the review from
+-- wherever they were -- though not for free in WinEnter terms: crossing enters
+-- the target tabpage's current window before landing, so a human arriving from
+-- the session tab sees two, whichever way this is spelled.
+--
+-- `landing` rather than `_G.__lain.review_layout().sidebar`, which reads like the
+-- seam for this and is not: `review_layout` is the layout's PRESENTATION entry
+-- point, so it re-runs `ensure` for a question the two `review_place` calls above
+-- have already answered, and it takes focus itself. Measured, the two spellings
+-- fire the SAME WinEnters -- so the reason is the duplicated work and the
+-- borrowed semantics, not a flash. `landing` also answers a question
+-- `review_layout` cannot: whether the sidebar is somewhere safe to land at all.
 --
 -- The window ids come back from `review_place` and are used inside this one
 -- synchronous call. That does not break the do-not-cache-an-id rule: nothing
@@ -455,5 +536,5 @@ function _G.__lain.open_changeset(path, old_lines, line, revisions)
   review_diff.drop_stale(old_buf)
   review_diff.pair({ old_win, new_win })
   review_diff.focus_line(new_win, new_buf, line)
-  vim.api.nvim_set_current_win(new_win)
+  vim.api.nvim_set_current_win(review_diff.landing(old_win, new_win))
 end
