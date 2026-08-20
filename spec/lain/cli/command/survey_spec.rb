@@ -611,6 +611,104 @@ RSpec.describe Lain::CLI::Command::Survey do
     end
   end
 
+  # THE REMEDY A REFUSAL OFFERS HAS TO BE ONE THE READER CAN PERFORM. The
+  # partial-review refusal used to end "open the session with
+  # Lain::Review::Verdict::Policy::Permissive.new" -- a Ruby constructor, in a
+  # sentence echoed to a human holding an editor. It now names a flag, and a
+  # flag no command declares would be the same defect wearing different words,
+  # so the sentence and the switch are pinned against each other HERE, on a
+  # command that offers it.
+  describe "the flag the partial-review refusal names" do
+    before { two_documents }
+
+    it "offers it in its usage, beside the switch it already had" do
+      expect(command.usage).to include("--permissive", "--unbounded")
+    end
+
+    # Nothing marked, so the default policy refuses -- and what it refuses WITH
+    # has to be reachable from the same line the human just typed.
+    it "refuses an approve over an unreviewed survey without it, naming it as the way past" do
+      attached
+      command.call(@root, env)
+
+      expect(editor.bound.wrote_verdict("approve")).to include("--permissive")
+    end
+
+    it "admits that same approve when the survey was opened with it" do
+      attached
+      command.call("#{@root} --permissive", env)
+
+      expect(editor.bound.wrote_verdict("approve")).to be_nil
+    end
+
+    # `wrote_verdict` answering nil is "nothing refused it", which a verdict
+    # that quietly went nowhere would also satisfy. The record is the claim.
+    it "journals the verdict it admitted, rather than merely not refusing it" do
+      attached
+      command.call("#{@root} --permissive", env)
+      editor.bound.wrote_verdict("approve")
+
+      expect(record.string.lines.map { |line| JSON.parse(line)["type"] }).to include("review_verdict")
+    end
+
+    # A `blocker` in the shape {Lain::Frontend::Neovim::ReviewWrite} normalizes
+    # off the wire, at a line `notes.md` actually has.
+    def blocker
+      { "path" => "notes.md", "side" => "new", "line" => 3, "anchor_text" => "One line of prose.",
+        "text" => "this is wrong", "kind" => "blocker", "revision" => "corpus", "drifted" => false }
+    end
+
+    # THE LINE THE FLAG MUST NOT CROSS. Its own sentence offers it as a way past
+    # ROWS nobody read; an unanswered blocker is somebody who read the work and
+    # said no, and no flag advertised in `usage` may forgive one. Driven from
+    # the human's end -- a typed `/survey ... --permissive`, a blocker placed on
+    # the rail, then approve -- because the whole defect is that the escape
+    # became TYPEABLE.
+    it "still refuses an approve over an unanswered blocker, in the blocker's own words" do
+      attached
+      command.call("#{@root} --permissive", env)
+      handover = editor.bound
+      handover.wrote_annotation(blocker)
+
+      expect(handover.wrote_verdict("approve")).to include("notes.md:3").and include("nobody has answered")
+    end
+
+    it "leaves that review unsettled, so the flag cost the verdict and not the round" do
+      attached
+      command.call("#{@root} --permissive", env)
+      handover = editor.bound
+      handover.wrote_annotation(blocker)
+      handover.wrote_verdict("approve")
+
+      expect(handover.session.verdict).to be(Lain::Review::Verdict::None)
+      expect(record.string.lines.map { |line| JSON.parse(line)["type"] }).not_to include("review_verdict")
+    end
+
+    # The escape still escapes: a plain note claims nothing about
+    # admissibility, so the flag does what its sentence promises.
+    it "admits over an unreviewed changeset carrying only a plain note" do
+      attached
+      command.call("#{@root} --permissive", env)
+      handover = editor.bound
+      handover.wrote_annotation(blocker.merge("kind" => "note"))
+
+      expect(handover.wrote_verdict("approve")).to be_nil
+    end
+
+    # BOTH SWITCHES COME OFF ONE LIST, so neither can turn the other on. The
+    # parse read `words.intersect?(SWITCHES)` for `unbounded`, which answers
+    # "any switch present" and was correct only while the list held one member
+    # -- adding a second is exactly what arms it, and the ceiling is what
+    # notices.
+    it "does not lift the ceilings that the other switch lifts" do
+      bounded = described_class.new(root: @root, cwd: @root, outbox:, paths:, ledger:,
+                                    bounds: Lain::Review::Bounds.new(max_files: 1))
+      attached
+
+      expect { bounded.call("#{@root} --permissive", env) }.to raise_error(Lain::Review::Bounds::TooLarge)
+    end
+  end
+
   # ONE OPEN REVIEW PER CHAT (the plan's Open decisions). The chat holds one
   # `outbox:` across both review commands, and one set of gesture rails: a second
   # SURFACE opened over the first would rebind those rails to a sidebar the first

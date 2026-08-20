@@ -297,6 +297,24 @@ RSpec.describe Lain::Review::Handover do
       expect([baton.settles, records_of("review_verdict")]).to eq([0, []])
     end
 
+    # THE SENTENCE, AS A HUMAN RECEIVES IT. `wrote_verdict`'s return value is
+    # what the lua half echoes on the review rail, so this is the end where
+    # "can the reader do what it says" is a real question -- and the answer
+    # used to be no: it offered `Verdict::Policy::Permissive.new`, a Ruby
+    # constructor, to somebody holding an editor. Both halves of the
+    # replacement are checked for reachability elsewhere and pinned as text
+    # here: `x` is `46_sidebar.lua`'s reviewed mark key, `--permissive` is a
+    # flag `/survey` and `/review` both declare.
+    it "offers only remedies a human at the editor can perform, and names no Ruby constructor" do
+      refusing = handover(session: Lain::Review::Session.open(changeset:, journal:, source: "local_branch",
+                                                              surface:, policy: Lain::Review::Verdict::Policy.default))
+
+      refusal = refusing.wrote_verdict("approve")
+
+      expect(refusal).to include("a.rb").and include("`x`").and include("--permissive")
+      expect(refusal).not_to match(/::|\.new\b/)
+    end
+
     # First-answer-wins ({Approval::Queue::Pending#decide}'s rule), and it is
     # the SESSION's refusal rather than a flag here.
     it "answers a second verdict with a sentence rather than judging twice" do

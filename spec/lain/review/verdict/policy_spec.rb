@@ -56,10 +56,11 @@ RSpec.describe Lain::Review::Verdict::Policy do
     # THE defect this card fixes, stated mechanically. A blocker could not block
     # because the notes were not among the arguments the question is asked with,
     # so no implementation -- present or future -- was able to read one. Pinned
-    # on all three, because a policy that quietly kept the old arity would go on
+    # on all FOUR, because a policy that quietly kept the old arity would go on
     # admitting over a blocker and look wired.
     it "asks every implementation about the annotations, not only the marks" do
-      [described_class, described_class::EveryHunk, described_class::Permissive].each do |implementation|
+      [described_class, described_class::EveryHunk, described_class::BlockersOnly,
+       described_class::Permissive].each do |implementation|
         expect(implementation.instance_method(:admit!).parameters).to include(%i[keyreq annotations])
       end
     end
@@ -200,9 +201,18 @@ RSpec.describe Lain::Review::Verdict::Policy do
     # The escape the `deferred` gate needs has to be REACHABLE from the refusal
     # itself: an unattended run that hits this wall gets one sentence, and the
     # sentence has to say what to swap.
-    it "points at the swap rather than only at the wall" do
+    #
+    # It names the FLAG and not this class. The sentence is echoed to a human
+    # holding an editor -- `Handover#wrote_verdict` returns it and the lua half
+    # puts it on the review rail -- and `Permissive.new` is a remedy only
+    # somebody editing Ruby can perform. The negative is half the assertion:
+    # a constructor reads as an instruction to whoever cannot tell it from one.
+    it "points at the swap rather than only at the wall, in words its reader can act on" do
       expect { policy.admit!("approve", changeset: subject_changeset, marks: marked([]), annotations: []) }
-        .to raise_error(Lain::Review::Verdict::Policy::Incomplete, /Permissive/)
+        .to raise_error(Lain::Review::Verdict::Policy::Incomplete) do |error|
+          expect(error.message).to include("--permissive")
+          expect(error.message).not_to match(/::|\.new\b/)
+        end
     end
 
     # A work-scale changeset is thousands of files (research 3.7). Naming every
@@ -311,6 +321,57 @@ RSpec.describe Lain::Review::Verdict::Policy do
             expect(error.message).to match(/\b#{20 - described_class::NAMED_LIMIT} more\b/)
           end
       end
+    end
+  end
+
+  # WHAT `--permissive` ACTUALLY BUYS, and the distinction the flag's own
+  # sentence draws. The refusal offers the flag as a way past ROWS nobody has
+  # read; an unanswered blocker is not an unread row, it is somebody who read
+  # the work and said no. So the typed escape skips Incomplete and keeps
+  # Blocked, and `Permissive` -- which reads nothing at all -- stays where it
+  # was, on the injected path with no way to type it.
+  describe described_class::BlockersOnly do
+    subject(:policy) { described_class.new }
+
+    it "admits an approve over a changeset nobody has marked, which is what the flag is for" do
+      expect { policy.admit!("approve", changeset: subject_changeset, marks: marked([]), annotations: []) }
+        .not_to raise_error
+    end
+
+    # THE ONE THIS FLAG MUST NOT LET THROUGH. An escape that forgave an
+    # objection would make `blocker` a kind nothing reads again, one layer up
+    # from where it was already found to be exactly that.
+    it "still refuses over an unanswered blocker, in the blocker's own words" do
+      expect { policy.admit!("approve", changeset: subject_changeset, marks: marked([]), annotations: [blocker]) }
+        .to raise_error(Lain::Review::Verdict::Policy::Blocked, /a\.rb:3/)
+    end
+
+    # Resolution is the SAME gesture the strict policy takes, because it is the
+    # same rule read from one place: a later note at that position answers it.
+    it "admits once a later note on that line has answered the blocker" do
+      answered = [blocker, annotation(kind: "note", text: "answered: renamed in the follow-up")]
+
+      expect { policy.admit!("approve", changeset: subject_changeset, marks: marked([]), annotations: answered) }
+        .not_to raise_error
+    end
+
+    it "is a Policy, so a session wired with one is wired with the same duck" do
+      expect(policy).to be_a(Lain::Review::Verdict::Policy)
+    end
+
+    # The flag resolves HERE and nowhere else, and the negative is the half that
+    # matters: `Permissive` reads nothing, so resolving to it would hand a typed
+    # line the power to forgive an objection.
+    it "is what the flag resolves to, and Permissive is not" do
+      resolved = Lain::Review::Verdict::Policy.strict_unless(permissive: true)
+
+      expect(resolved).to be_an_instance_of(described_class)
+      expect(resolved).not_to be_a(Lain::Review::Verdict::Policy::Permissive)
+    end
+
+    it "resolves to the strict rule when the flag was not typed" do
+      expect(Lain::Review::Verdict::Policy.strict_unless(permissive: false))
+        .to be_a(Lain::Review::Verdict::Policy::EveryHunk)
     end
   end
 

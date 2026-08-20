@@ -13,9 +13,12 @@ module Lain
       # == It is not a thinner {Lain::CLI::Survey}
       #
       # The editor is where a survey is read and marked, so this is the surface
-      # the human actually works in and it carries the same two flags the
+      # the human actually works in and it carries both of the flags the
       # one-shot command does -- a cockpit that cannot open what the command line
-      # can is a parity bug waiting to be filed. What differs is entirely what it
+      # can is a parity bug waiting to be filed. It carries a THIRD the one-shot
+      # has no use for: `--permissive` chooses the rule a VERDICT is judged
+      # under, and `lain survey` renders a tree and submits nothing. What
+      # differs otherwise is entirely what it
       # is wired TO: the chat's own journal rather than a fresh one, the editor's
       # own surface rather than a buffer, and the gesture rails a `<CR>` arrives
       # on, which a one-shot process has none of.
@@ -68,13 +71,21 @@ module Lain
         # drops TWO words for one and ONE word for the other, and reading
         # `--scope --unbounded` as "scope is --unbounded" would refuse a flag the
         # human spelled correctly.
-        SWITCHES = %w[--unbounded].freeze
+        #
+        # `--permissive` is spelled here rather than read from
+        # {Lain::Review::Verdict::Policy::FLAG}, which is what OWNS the word:
+        # `lain.rb` loads `lain/cli` before `lain/review`, so a class-body
+        # constant naming it is a load-time NameError. The class doc above
+        # records the same hazard for `Survey::Walk`. {#policy_for} is where
+        # this class asks what the word MEANS, and that read is from a method
+        # body, where the constant exists.
+        SWITCHES = %w[--unbounded --permissive].freeze
 
         # A FORMAT rather than the sentence: the scopes it offers come off
         # {Lain::Review::Partition::STRATEGIES} and this class body cannot name
         # anything under `Lain::Review`. {#usage} fills it in from a method body,
         # where the registry exists.
-        USAGE = "/survey <path> [--scope %<scopes>s] [--unbounded] -- " \
+        USAGE = "/survey <path> [--scope %<scopes>s] [--unbounded] [--permissive] -- " \
                 "open a survey of a directory in the attached editor"
 
         # The refusal a headless chat gets. It names the flag that attaches an
@@ -162,7 +173,20 @@ module Lain
         # stops being advertised.
         def usage = format(USAGE, scopes: Lain::Review::Partition::STRATEGIES.each_key.to_a.join("|"))
 
-        # @param args [String] the path, and this command's two flags
+        # The SWITCHES are resolved here rather than inside {#opened}, and the
+        # two halves of this method are why: reading the line and answering what
+        # it asked for is one sentence, and {#opened} performs the seven steps
+        # its own note enumerates, none of which is "decide the ceilings" or
+        # "decide the verdict rule". Both are one read off `Parsed`, and having
+        # them at one place is what keeps them symmetric.
+        #
+        # It sits ABOVE the tags deliberately: YARD reads a tag's text as
+        # running to the next tag or to the end of the comment, so a paragraph
+        # written under `@raise` becomes part of that exception's description
+        # and this rationale would be published as a note about `Lain::Error`.
+        # `yard-lint` does not catch it.
+        #
+        # @param args [String] the path, and this command's three flags
         # @param env [Env] read for the run's {HumanReplies} (the editor, and
         #   both rails) and its {Chronicle} (the journal this round lands in)
         # @return [String] the headline, whatever the walk would not hand over,
@@ -175,7 +199,7 @@ module Lain
           parsed = parse(args.to_s.split)
           return usage if parsed.path.nil?
 
-          opened(parsed, env)
+          opened(parsed, env, ceilings: ceilings_for(parsed), policy: policy_for(parsed))
         end
 
         private
@@ -183,7 +207,7 @@ module Lain
         # One `/survey` line, read. Its own value because "what did they type"
         # and "open a survey of it" are separate questions, and because the
         # flag/switch/positional split is the only arithmetic here.
-        Parsed = Data.define(:path, :scope, :unbounded)
+        Parsed = Data.define(:path, :scope, :unbounded, :permissive)
         private_constant :Parsed
 
         def parse(words)
@@ -193,8 +217,17 @@ module Lain
           end
           values = flags.values.to_h
           refuse_unreadable!(values, rest)
-          Parsed.new(path: rest.first, scope: values["scope"], unbounded: words.intersect?(SWITCHES))
+          Parsed.new(path: rest.first, scope: values["scope"], **switched(words))
         end
+
+        # Each switch by the name it declares, so no switch can answer for
+        # another. This read `words.intersect?(SWITCHES)`, which says only "any
+        # switch present" -- true of a one-member list and false the moment
+        # there are two, at which point `--permissive` would have silently
+        # lifted the ceilings `--unbounded` lifts. The `delete_prefix("--")` is
+        # {#flagged}'s, one method down, for the same reason: the declaration is
+        # the vocabulary, and a second spelling is a second thing to rename.
+        def switched(words) = SWITCHES.to_h { |switch| [switch.delete_prefix("--").to_sym, words.include?(switch)] }
 
         # The flag words, by the INDEX each sits at, carrying the word after it.
         # Keyed by position rather than by name because the rejection above has
@@ -255,7 +288,7 @@ module Lain
         # for the rest of the session over a survey the human never saw. Rails
         # left bound to it are harmless and honest; a claim that the review is
         # OPEN is neither.
-        def opened(parsed, env)
+        def opened(parsed, env, ceilings:, policy:)
           surface = env.replies.review_surface or raise Error, NO_EDITOR
           refuse_second_surface!
           Lain::Review::Surface.check!(surface)
@@ -265,7 +298,7 @@ module Lain
           # this one line whether the human named it or not.
           scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
           walk = Lain::Survey::Walk.new(root: parsed.path, sensitivity: classifier)
-          session = round(walk, ceilings_for(parsed), surface, env)
+          session = round(walk, ceilings, surface, env, policy:)
           # The gesture rails, complete before a human can touch the sidebar.
           env.replies.bind_changeset_review(handover(session, env, scope, surface))
           shown(walk, session, scope, surface)
@@ -286,6 +319,13 @@ module Lain
         # is carried through, and a second statement of that rule is a second
         # place for it to drift.
         def ceilings_for(parsed) = parsed.unbounded ? Lain::CLI::Survey.unbounded(@bounds) : @bounds
+
+        # What `--permissive` means, asked of the class that owns both the word
+        # and the rule it swaps. This command declares the switch (see
+        # {SWITCHES}) and never decides what it buys, because the sentence that
+        # OFFERS the flag is on that same class -- a survey that resolved the
+        # word itself would be free to disagree with the refusal that named it.
+        def policy_for(parsed) = Lain::Review::Verdict::Policy.strict_unless(permissive: parsed.permissive)
 
         # Asked about the KIND and not merely `open?`, per the class doc: a
         # survey reopened over a survey rebinds, which is how a human takes a
@@ -318,11 +358,11 @@ module Lain
         # not `@root` either -- that is the authority boundary, which sits at the
         # repository top while a monorepo chat stands in a subtree, and naming
         # from it would break the `/survey .` that works today.
-        def round(walk, ceilings, surface, env)
+        def round(walk, ceilings, surface, env, policy:)
           source = Lain::Review::Source::Corpus.new(walk:, projection: @projection, bounds: ceilings, named_from: @cwd)
           Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source:),
                                      journal: env.chronicle.record_journal, source: self.class.source_name,
-                                     surface:, bounds: ceilings)
+                                     surface:, bounds: ceilings, policy:)
         end
 
         # The round, where the rest of the chat can see it -- taken only once

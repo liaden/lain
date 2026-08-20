@@ -242,6 +242,18 @@ RSpec.describe Lain::CLI::Command::Review do
       expect { command.call("feature --base", env) }.to raise_error(Lain::Error, /--base/)
     end
 
+    # {Command::Survey#refuse_unreadable!}'s guard, which this command lacked
+    # until it had a switch for the guard to matter to. A flag FOLLOWED BY A
+    # SWITCH has that switch for its value: `--base --permissive` would review
+    # against a ref named `--permissive` AND silently enable the escape, then
+    # fail late as an unresolvable ref -- two wrong things for one typo, and
+    # neither of them the missing word.
+    it "refuses a flag whose value is itself a flag, rather than reviewing against a ref named --permissive" do
+      attached
+
+      expect { command.call("feature --base --permissive", env) }.to raise_error(Lain::Error, /--base/)
+    end
+
     # {Lain::CLI::Review::Target}'s own refusals, reached rather than restated:
     # this command resolves through that object unchanged, which is what makes
     # the card cheap, and an unresolvable ref must say so in ITS words.
@@ -384,6 +396,88 @@ RSpec.describe Lain::CLI::Command::Review do
       attached
 
       expect(command.call("feature", env)).to include(Lain::Review::Partition::DEFAULT_SCOPE)
+    end
+
+    # THE PARTIAL-REVIEW REFUSAL NAMES A FLAG, and it is one sentence for both
+    # review commands -- so a `/review` that could not read it would name a
+    # remedy unreachable from the very round that refused, which is the defect
+    # the wording change exists to end, moved one command over. Read off the
+    # POLICY that reaches `Session.open`: a survey-shaped end-to-end approve
+    # needs a repository this group's source double does not have, and nothing
+    # downstream of the policy is what this example is about.
+    # The negative is the load-bearing half. `Permissive` reads nothing, so a
+    # command that resolved the flag to one would let a typed line forgive an
+    # objection -- and it would still pass an assertion phrased "the escape was
+    # wired".
+    it "opens the round under the blocker-respecting escape when --permissive is on the line" do
+      attached
+      seen = []
+      allow(Lain::Review::Session).to receive(:open).and_wrap_original do |original, **kwargs|
+        seen << kwargs.fetch(:policy)
+        original.call(**kwargs)
+      end
+
+      command.call("feature --permissive", env)
+
+      expect(seen.last).to be_an_instance_of(Lain::Review::Verdict::Policy::BlockersOnly)
+      expect(seen.last).not_to be_a(Lain::Review::Verdict::Policy::Permissive)
+    end
+
+    it "keeps the strict policy when nobody asked for the escape" do
+      attached
+      seen = []
+      allow(Lain::Review::Session).to receive(:open).and_wrap_original do |original, **kwargs|
+        seen << kwargs.fetch(:policy)
+        original.call(**kwargs)
+      end
+
+      command.call("feature", env)
+
+      expect(seen.last).to be_a(Lain::Review::Verdict::Policy::EveryHunk)
+    end
+
+    it "offers the flag in its usage, so the refusal's remedy is discoverable before the refusal" do
+      expect(command.usage).to include("--permissive")
+    end
+
+    # AC 2 ON THIS COMMAND, end to end and against the real repository this
+    # group already builds -- not the policy object, the VERDICT. An earlier
+    # draft of this card claimed the round could not be driven this far here.
+    # It can: the `around` hook above is a real git tree.
+    it "settles an approve over a changeset nobody marked, when --permissive opened it" do
+      attached
+      command.call("feature --permissive", env)
+
+      expect(editor.bound.wrote_verdict("approve")).to be_nil
+    end
+
+    it "refuses that same approve without the flag, naming it as the way past" do
+      attached
+      command.call("feature", env)
+
+      expect(editor.bound.wrote_verdict("approve")).to include("--permissive")
+    end
+
+    # A `blocker` at the line `feature`'s first commit added, in the shape
+    # {Lain::Frontend::Neovim::ReviewWrite} normalizes off the wire. The
+    # revision is read off the changeset rather than spelled, because an anchor
+    # naming another revision is a different refusal entirely.
+    def blocker(handover)
+      { "path" => "README", "side" => "new", "line" => 2, "anchor_text" => "the line under review",
+        "text" => "this is wrong", "kind" => "blocker", "drifted" => false,
+        "revision" => handover.session.changeset.head_ref }
+    end
+
+    # THE LINE THE FLAG MUST NOT CROSS, on this command too. `/review` advertises
+    # the same word in the same `usage`, so an escape that forgave an objection
+    # here would forgive it for every reader of the help text.
+    it "still refuses an approve over an unanswered blocker, in the blocker's own words" do
+      attached
+      command.call("feature --permissive", env)
+      handover = editor.bound
+      handover.wrote_annotation(blocker(handover))
+
+      expect(handover.wrote_verdict("approve")).to include("README:2").and include("nobody has answered")
     end
   end
 

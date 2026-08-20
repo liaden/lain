@@ -52,12 +52,26 @@ module Lain
         # it would answer a confusing UnknownRef instead of naming the typo.
         FLAGS = %w[--base --scope].freeze
 
+        # The flags that take nothing, held apart from {FLAGS} because the parse
+        # drops TWO words for one and ONE word for the other --
+        # {Command::Survey::SWITCHES}' rule, and this command's first switch.
+        #
+        # It is here so the partial-review refusal is honest from a `/review`
+        # round as well as a `/survey` one: that sentence
+        # ({Review::Verdict::Policy::EveryHunk#refusal}) offers the word as the
+        # way past a changeset nobody finished reading, and a command that could
+        # not read it would name a remedy unreachable from the very review that
+        # refused. Spelled rather than read from
+        # {Review::Verdict::Policy::FLAG}, for the load-order reason the class
+        # doc gives; {#policy_for} asks that constant what it MEANS.
+        SWITCHES = %w[--permissive].freeze
+
         # A FORMAT rather than the sentence, because the scopes it offers come
         # off {Review::Partition::STRATEGIES} and this class body cannot name
         # anything under `Lain::Review` (see the class doc: `lain.rb` loads
         # `lain/cli` first). {#usage} fills it in from a method body, where the
         # registry exists.
-        USAGE = "/review <pull-request|branch> [--base <ref>] [--scope %<scopes>s] -- " \
+        USAGE = "/review <pull-request|branch> [--base <ref>] [--scope %<scopes>s] [--permissive] -- " \
                 "open a changeset review in the attached editor"
 
         # The refusal a headless chat gets. It names the flag that attaches an
@@ -114,7 +128,7 @@ module Lain
         # shipping stops being advertised.
         def usage = format(USAGE, scopes: Lain::Review::Partition::STRATEGIES.each_key.to_a.join("|"))
 
-        # @param args [String] the target, and this command's two flags
+        # @param args [String] the target, and this command's three flags
         # @param env [Env] read for the run's {HumanReplies} (the editor, and
         #   both rails) and its {Chronicle} (the journal this round lands in)
         # @return [String] the headline and where to read the review
@@ -125,7 +139,7 @@ module Lain
           parsed = parse(args.to_s.split)
           return usage if parsed.target.nil?
 
-          opened(parsed, env)
+          opened(parsed, env, policy: policy_for(parsed))
         end
 
         private
@@ -133,16 +147,24 @@ module Lain
         # One `/review` line, read. Its own value because "what did they type"
         # and "open a review of it" are separate questions, and because the
         # flag/positional split is the only arithmetic here.
-        Parsed = Data.define(:target, :base, :scope)
+        Parsed = Data.define(:target, :base, :scope, :permissive)
         private_constant :Parsed
 
         def parse(words)
           flags = flagged(words)
-          rest = words.reject.with_index { |_, index| flags.key?(index) || flags.key?(index - 1) }
+          rest = words.reject.with_index do |word, index|
+            flags.key?(index) || flags.key?(index - 1) || SWITCHES.include?(word)
+          end
           values = flags.values.to_h
           refuse_unreadable!(values, rest)
-          Parsed.new(target: rest.first, base: values["base"], scope: values["scope"])
+          Parsed.new(target: rest.first, base: values["base"], scope: values["scope"], **switched(words))
         end
+
+        # Each switch by the name it declares, {Command::Survey#switched}'s
+        # method and its reason: a membership test against the whole list says
+        # only "some switch was typed", which stops being the same question as
+        # soon as there are two of them.
+        def switched(words) = SWITCHES.to_h { |switch| [switch.delete_prefix("--").to_sym, words.include?(switch)] }
 
         # The flag words, by the INDEX each sits at, carrying the word after it.
         # Keyed by position rather than by name because the rejection above has
@@ -158,9 +180,16 @@ module Lain
         # "absent" would silently review against the default base the human just
         # tried to override. Refused with the usage, which is the whole of what
         # they need.
+        #
+        # A flag FOLLOWED BY A SWITCH has that switch for its value, which is
+        # {Command::Survey#refuse_unreadable!}'s guard and became reachable here
+        # the moment this command had a switch. `--base --permissive` would
+        # otherwise resolve against a ref named `--permissive` AND quietly
+        # enable the escape -- two wrong things from one typo, neither of them
+        # the word that is actually missing.
         def refuse_unreadable!(values, rest)
-          unreadable = values.select { |_, value| value.nil? }.keys.map { |flag| "--#{flag}" } +
-                       rest.grep(/\A--/)
+          unreadable = values.select { |_, value| value.nil? || value.start_with?("--") }
+                             .keys.map { |flag| "--#{flag}" } + rest.grep(/\A--/)
           return if unreadable.empty?
 
           raise Error, "#{unreadable.join(", ")} is not a flag /review can read -- #{usage}"
@@ -185,13 +214,18 @@ module Lain
         # and would move the human each time they marked a hunk. Its refusal is
         # discarded for {Command::Survey#drawn_and_held}'s reason: nothing was
         # lost, and the banner already says where the review is.
-        def opened(parsed, env)
+        #
+        # The verdict rule arrives already resolved, {Command::Survey#call}'s
+        # split: reading the line and answering what it asked for is one
+        # sentence, and none of the six steps above is "decide the rule this
+        # review is judged under".
+        def opened(parsed, env, policy:)
           surface = env.replies.review_surface or raise Error, NO_EDITOR
           refuse_over_survey!
           Lain::Review::Surface.check!(surface)
           scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
           resolved = targets.resolve(parsed.target, base: parsed.base)
-          session = round(resolved, surface, env)
+          session = round(resolved, surface, env, policy:)
           wired(resolved, session, env, scope, surface)
           drawn(resolved, session, scope).tap { surface.focus }
         end
@@ -224,11 +258,16 @@ module Lain
           @outbox.hold(session:, number: resolved.number, label: resolved.label)
         end
 
-        def round(resolved, surface, env)
+        def round(resolved, surface, env, policy:)
           Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source: resolved.source),
                                      journal: env.chronicle.record_journal, source: resolved.name, surface:,
-                                     bounds: @bounds)
+                                     bounds: @bounds, policy:)
         end
+
+        # What `--permissive` means, asked of the class that owns both the word
+        # and the rule it swaps -- {Command::Survey#policy_for}'s reason, which
+        # is that the sentence offering the flag lives on that same class.
+        def policy_for(parsed) = Lain::Review::Verdict::Policy.strict_unless(permissive: parsed.permissive)
 
         # The view comes off the SAME editor the surface did, and it has to: a
         # rendering stamp is only resolvable by the view that issued it, so a

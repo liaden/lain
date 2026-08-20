@@ -10,8 +10,13 @@ module Lain
       # `deferred` approval gate is an open question, and a rule you cannot swap
       # is a rule you cannot experiment with on a bench -- so {Session} takes one
       # of these as a collaborator and takes no admissibility decision itself.
-      # {EveryHunk} is what it takes when nobody says otherwise; {Permissive} is
-      # the designed escape for an unattended run.
+      # THREE RULES, and which of them a caller can TYPE is as much of the
+      # design as what each one admits. {EveryHunk} is what a session takes when
+      # nobody says otherwise. {BlockersOnly} is the escape a human asks for by
+      # name ({FLAG}): it forgives rows nobody read and still refuses an
+      # objection nobody answered. {Permissive} forgives everything, which is
+      # right for a run with nobody at a keyboard and is why it has no typed
+      # construction site -- it arrives only as an injected `policy:`.
       #
       # It judges ADMISSIBILITY only. The vocabulary -- that `approve` is a
       # verdict and `looks-fine` is not -- belongs to {Review::VERDICTS} and is
@@ -43,8 +48,42 @@ module Lain
         BLOCKER = "blocker"
         ANSWER = "note"
 
+        # The word a human types to swap this rule out, and the ONE place it is
+        # written down. {EveryHunk#refusal} names it in the sentence it refuses
+        # with, and `/survey` and `/review` both declare it as a switch -- so a
+        # rename that missed one of the three would leave a refusal pointing at
+        # a flag nothing reads, which is the defect that wording change exists
+        # to end. It cannot be read from either command's CLASS BODY (`lain.rb`
+        # loads `lain/cli` before `lain/review`, so a constant there naming this
+        # one is a load-time NameError), which is why those two declare the word
+        # and this file owns what it MEANS.
+        FLAG = "--permissive"
+
         # @return [Policy] the policy a session takes when nobody names one
         def self.default = EveryHunk.new
+
+        # The flag, resolved. Here rather than in each command because the
+        # sentence that offers {FLAG} and the object that flag asks for are one
+        # question, and answering it twice is how the two come to disagree.
+        #
+        # ⚠️ IT DOES NOT ANSWER {Permissive}, AND THAT IS THE POINT OF THE
+        # METHOD. The flag's own sentence ({EveryHunk#refusal}) offers it as a
+        # way past ROWS nobody has read. An unanswered `blocker` is not an
+        # unread row -- it is somebody who read the work and said no -- so
+        # forgiving one is outside what the sentence promises, and a flag named
+        # in both commands' `usage` would put that power in front of every
+        # reader of the help text. {Permissive} keeps its own semantics for the
+        # injected path; what the human can type resolves to {BlockersOnly}.
+        #
+        # An earlier draft of this method DID answer `Permissive`, which made an
+        # objection forgivable by a typed line for the first time -- the escape
+        # is old, its reachability was new, and reachability is what made it a
+        # defect.
+        #
+        # @param permissive [Boolean] whether the caller's line carried {FLAG}
+        # @return [Policy] the escape a human may ask for, or the rule that
+        #   applies when nobody asked
+        def self.strict_unless(permissive:) = permissive ? BlockersOnly.new : default
 
         # The blockers still standing, and so also the definition of RESOLVED --
         # in one place, on the port, because a second policy deriving its own
@@ -127,7 +166,96 @@ module Lain
                 "forgetting to implement it look like a deliberate permissive rule"
         end
 
+        # Approve over anything except an objection nobody answered.
+        #
+        # THE ESCAPE A HUMAN MAY ASK FOR BY NAME. {FLAG} resolves here, and the
+        # rule is the one that flag's sentence promises: rows nobody read stop
+        # refusing, and an unanswered `blocker` still does. Those are different
+        # claims -- an unread row says nobody looked, a blocker says somebody
+        # looked and said no -- and a single escape that collapsed them would
+        # make `blocker` a kind nothing reads again, which is the exact defect
+        # {Policy.unresolved} was written to end.
+        #
+        # It is {EveryHunk}'s SUPERCLASS rather than its sibling, so the blocker
+        # refusal and its sentence exist once. The strict rule is this rule plus
+        # one more, which is what the inheritance says out loud.
+        #
+        # {Marks#states} is called for its PRECONDITION and its answer
+        # discarded: a base mismatch means the blockers' own line numbers were
+        # recorded against another diff, so nothing below is evidence about the
+        # changeset in hand. {EveryHunk} needs that same walk's RESULT, which is
+        # why it re-states the call rather than taking this one through `super`
+        # -- two walks of a work-scale corpus for one submission is a real cost,
+        # and the note on {EveryHunk#admit!} is about paying it once.
+        class BlockersOnly < Policy
+          # How many positions a refusal names before it summarizes the rest. A
+          # work-scale changeset is thousands of files (research 3.7), and a
+          # refusal that names every one of them is a wall a human reads none
+          # of; the COUNT is the part they act on.
+          NAMED_LIMIT = 5
+
+          # @param verdict [String] a member of {Review::VERDICTS}
+          # @param changeset [#base_ref, #hunks] the whole, unfiltered changeset
+          # @param marks [Review::Marks] the mark set recorded against it
+          # @param annotations [Enumerable<AnnotationPlaced>] the round's notes
+          # @return [void]
+          # @raise [Marks::BaseMismatch] if the marks were recorded against
+          #   another base -- raised by {Marks#states}, ahead of the refusal
+          #   below and for the reason the class doc gives
+          # @raise [Blocked] naming the positions still carrying a blocker
+          def admit!(verdict, changeset:, marks:, annotations:)
+            marks.states(changeset)
+            refuse_blocked!(verdict, Policy.unresolved(annotations))
+          end
+
+          private
+
+          def refuse_blocked!(verdict, blockers)
+            raise Blocked, blocked(verdict, blockers) unless blockers.empty?
+          end
+
+          # Names the ADDRESS rather than the note's words: the words are on
+          # screen where the human left them, and the address is what they have
+          # to navigate back to in order to answer it. The way out is in the
+          # sentence for the reason {EveryHunk#refusal} puts the swap in its own
+          # -- a wall that does not carry one is a review nobody can settle, and
+          # this is the only place the gesture is written down for someone who
+          # has not read {Policy.unresolved}.
+          #
+          # It offers no flag, and no flag may ever be added to it: {FLAG} is
+          # advertised in both review commands' `usage`, and a sentence that
+          # named one here would tell every reader of the help text how to
+          # approve over an objection.
+          #
+          # It COUNTS them, because two objections that drifted onto one line
+          # name the same address twice and would otherwise read as one entry
+          # repeated by mistake.
+          def blocked(verdict, blockers)
+            named = blockers.first(NAMED_LIMIT).map { |placed| at(placed) }
+            rest = blockers.size - named.size
+            named << "and #{rest} more" unless rest.zero?
+            "#{verdict} is refused over #{tally(blockers.size)} nobody has answered: #{named.join(", ")} -- " \
+              "answer each one with a note on that same line, which is what resolves it"
+          end
+
+          def tally(size) = "#{size} #{size == 1 ? "blocker" : "blockers"}"
+
+          # Says when the anchor DRIFTED, which is free -- the measurement is on
+          # the record ({AnnotationPlaced}) -- and is the difference between a
+          # line a human pointed at and a line that has since become something
+          # else. Without it the refusal names a position with confidence it has
+          # not got.
+          def at(placed)
+            drift = placed.drifted ? ", drifted" : ""
+            "#{placed.path}:#{placed.line} (#{placed.side}#{drift})"
+          end
+        end
+
         # Approve only over a changeset whose every hunk is marked reviewed.
+        #
+        # {BlockersOnly} plus one rule, which is what the superclass says: an
+        # unanswered objection refuses either way, and this adds that a row
+        # nobody has read refuses too. {FLAG} drops exactly this addition.
         #
         # It reads the tri-state through {Marks#states} -- one total pass, and
         # the one place that derivation lives -- rather than deriving anything
@@ -141,17 +269,11 @@ module Lain
         # renders `unreviewed`, because no hunk of it is marked reviewed, and
         # those two statements are consistent rather than in tension -- one is
         # about hunks, the other about a file with none.
-        class EveryHunk < Policy
+        class EveryHunk < BlockersOnly
           # The one {MARK_STATES} member that counts, in the Symbol form
           # {Marks#states} answers in. Derived from {Marks::REVIEWED} rather
           # than restated, the rule `Anchor::SIDES` follows for `Review::SIDES`.
           REVIEWED = Marks::REVIEWED.to_sym
-
-          # How many files a refusal names before it summarizes the rest. A
-          # work-scale changeset is thousands of files (research 3.7), and a
-          # refusal that names every one of them is a wall a human reads none
-          # of; the COUNT is the part they act on.
-          NAMED_LIMIT = 5
 
           # THE ORDER OF THE THREE REFUSALS IS A DECISION, and only one of them
           # is about taste. {Marks#states} raises {Marks::BaseMismatch} first
@@ -191,52 +313,34 @@ module Lain
 
           private
 
-          def refuse_blocked!(verdict, blockers)
-            raise Blocked, blocked(verdict, blockers) unless blockers.empty?
-          end
-
-          # Names the ADDRESS rather than the note's words: the words are on
-          # screen where the human left them, and the address is what they have
-          # to navigate back to in order to answer it. The way out is in the
-          # sentence for the reason {#refusal} puts the swap in its own -- a wall
-          # that does not carry one is a review nobody can settle, and this is
-          # the only place the gesture is written down for someone who has not
-          # read {Policy.unresolved}.
-          #
-          # It COUNTS them, because two objections that drifted onto one line
-          # name the same address twice and would otherwise read as one entry
-          # repeated by mistake.
-          def blocked(verdict, blockers)
-            named = blockers.first(NAMED_LIMIT).map { |placed| at(placed) }
-            rest = blockers.size - named.size
-            named << "and #{rest} more" unless rest.zero?
-            "#{verdict} is refused over #{tally(blockers.size)} nobody has answered: #{named.join(", ")} -- " \
-              "answer each one with a note on that same line, which is what resolves it"
-          end
-
-          def tally(size) = "#{size} #{size == 1 ? "blocker" : "blockers"}"
-
-          # Says when the anchor DRIFTED, which is free -- the measurement is on
-          # the record ({AnnotationPlaced}) -- and is the difference between a
-          # line a human pointed at and a line that has since become something
-          # else. Without it the refusal names a position with confidence it has
-          # not got.
-          def at(placed)
-            drift = placed.drifted ? ", drifted" : ""
-            "#{placed.path}:#{placed.line} (#{placed.side}#{drift})"
-          end
-
           # Says WHICH way each file falls short, because partial and unreviewed
           # call for different work, and points at the swap as well as the wall
           # -- an unattended run that hits this gets one sentence, and that
           # sentence has to carry its own escape.
+          #
+          # BOTH REMEDIES ARE GESTURES, and that is the correction this sentence
+          # carries. It used to end `Verdict::Policy::Permissive.new`, which is
+          # a Ruby constructor offered to somebody holding an editor: this
+          # message is {Handover#wrote_verdict}'s return value, and the lua half
+          # echoes it on the review rail. `x` is the sidebar's own reviewed-mark
+          # key (`46_sidebar.lua`'s `MARK_KEYS`) and {FLAG} is a switch both
+          # review commands declare, so a reader can perform either without
+          # leaving the review.
+          #
+          # It says nothing about a blocker, and must not: {BlockersOnly#blocked}
+          # outranks this refusal, so a human reading THIS one has none
+          # standing. The escape it offers is mechanically incapable of
+          # forgiving one -- {FLAG} resolves to {BlockersOnly}, which keeps that
+          # refusal -- and the two statements have to stay true together: a
+          # sentence that offered a flag which DID forgive an objection would be
+          # a promise the flag broke.
           def refusal(verdict, outstanding)
             named = outstanding.first(NAMED_LIMIT).map { |path, state| "#{path} is #{state}" }
             rest = outstanding.size - named.size
             named << "and #{rest} more" unless rest.zero?
             "#{verdict} is refused over a changeset that is not fully reviewed: #{named.join(", ")} -- " \
-              "mark every hunk, or open the session with #{Permissive.name}.new if this run means to " \
-              "judge regardless"
+              "mark each row reviewed with `x` in lain://review, or re-open it with `#{FLAG}` if this " \
+              "run means to judge regardless"
           end
         end
 
@@ -246,8 +350,15 @@ module Lain
         # rule rather than to weaken it for everyone.
         #
         # It is a real class rather than a `->(...) {}` so that a caller wiring
-        # it says the name out loud in the code and in the journal-adjacent
-        # refusal message above.
+        # it says the name out loud in the code.
+        #
+        # ⚠️ IT HAS NO TYPED CONSTRUCTION SITE, and that is a property to keep.
+        # Nothing a human can put on a `/survey` or `/review` line resolves
+        # here: {FLAG} answers {BlockersOnly}, and this class arrives only as an
+        # injected `policy:` (`tools/request_review.rb`). The reason is in
+        # {Policy.strict_unless}, and it is about REACHABILITY rather than about
+        # these semantics -- forgiving everything is right for a run with nobody
+        # at a keyboard and wrong for a word advertised in a `usage` string.
         class Permissive < Policy
           # Every argument is kept and named, and none is read: the port's shape
           # is what a reader needs from this file, and `(*, **)` would hide it.
