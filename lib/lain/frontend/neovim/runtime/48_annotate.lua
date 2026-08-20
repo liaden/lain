@@ -1,8 +1,8 @@
--- The notes a human leaves on the diff T15 draws (T16): `:LainNote` places one
--- against the line under the cursor, `:LainNoteDone` hands every one of them
+-- The notes a human leaves on the diff `47_diff.lua` draws: `:LainNote` places
+-- one against the line under the cursor, `:LainNoteDone` hands every one of them
 -- back. What renders inline is a MARKER and never the words -- right-aligned, so
 -- it cannot collide with the code being read, which is octo's shape and the
--- reason the note's text lives in the thread pane (T18) instead.
+-- reason the note's text lives in the thread pane (`51_thread.lua`) instead.
 --
 -- ORDER IS THE OUTPUT. The journal records notes in placement order, and nothing
 -- else records which one the human wrote first, so every note carries a
@@ -15,7 +15,7 @@
 -- this module's central requirement.
 --
 -- DRIFT IS MEASURED HERE, AND IT IS NEVER A QUESTION ABOUT WHETHER A MARK
--- SURVIVED. T15's panel measured that a mark inside a rewritten span MOVES
+-- SURVIVED. A panel measured that a mark inside a rewritten span MOVES
 -- rather than invalidates -- `get_extmark_by_id` still answers a position and
 -- never reports invalid -- so "is the mark still there" reads YES for a mark
 -- that now names a different line. Nothing here asks it. What `resolved` does
@@ -57,9 +57,9 @@ local review_notes = {
   -- `Review::SIDES` -- so a fourth kind added on one side and not the other
   -- fails there rather than being refused, silently, at the far end of a wire.
   --
-  -- ONE highlight group for all three rather than a severity map: T17 projects
-  -- these into diagnostics and owns that map, and a second copy here would be
-  -- free to disagree with it.
+  -- ONE highlight group for all three rather than a severity map:
+  -- `49_diagnostics.lua` projects these into nvim's diagnostic layer and owns
+  -- that map, and a second copy here would be free to disagree with it.
   MARKERS = { note = "● note", question = "● question", blocker = "● blocker" },
 
   -- buf -> the notes placed in it, IN PLACEMENT ORDER, each holding the extmark
@@ -95,7 +95,7 @@ end
 -- The three facts a note needs off the buffer it is placed in, READ AT
 -- PLACEMENT and copied into the note.
 --
--- Reading them again at settle time would be wrong, and quietly so: T15
+-- Reading them again at settle time would be wrong, and quietly so: `47_diff.lua`
 -- WITHDRAWS these stamps when the human opens the next file, so by the time
 -- `:LainNoteDone` runs, the buffer a note is on carries no side, no revision and
 -- no path. Navigating is what a review IS, so the settle-time read is wrong for
@@ -250,7 +250,12 @@ function review_notes.assert_saved()
   table.sort(bufs)
   for _, buf in ipairs(bufs) do
     if vim.bo[buf].modified then
-      error("lain: save " .. vim.api.nvim_buf_get_name(buf) .. " before settling its notes -- an unsaved " ..
+      -- NO `lain: ` PREFIX, and that is not a style choice: this is caught by
+      -- `:LainNoteDone` and handed to `__lain.review_refused`, which prepends
+      -- one. Spelling it here too reached the human as `lain: lain: save ...`.
+      -- `error(_, 0)` for the neighbouring reason -- level 0 keeps the file and
+      -- line off the front of a sentence a human is meant to read.
+      error("save " .. vim.api.nvim_buf_get_name(buf) .. " before settling its notes -- an unsaved " ..
         "edit would be measured as the changeset drifting under your notes, which it did not", 0)
     end
   end
@@ -412,9 +417,28 @@ end, {
 -- and what `46_sidebar.lua`'s `:LainReviewVerdict` now does too. It does NOT
 -- promise no hit-enter prompt -- a message longer than the window still pages;
 -- `46_sidebar.lua`'s comment carries the measurement.
+--
+-- TWO `pcall`s, because there are two refusals and only one of them has been
+-- anywhere. `settled` runs `assert_saved`, which refuses a modified buffer
+-- HERE, before a byte crosses the wire; the second is lain's own answer to a
+-- batch it received. `settled` used to sit OUTSIDE the pcall, so that first
+-- refusal escaped the callback and reached the human exactly as the paragraph
+-- above says it would -- wearing a `stack traceback:`, and, with a UI attached,
+-- raising the hit-enter prompt that leaves the editor answering no RPC at all.
+-- `:messages` and `:LainApprove` were then unavailable exactly while a refusal
+-- was on screen, which is to say the recovery it named could not be taken (F30,
+-- the shape F25 measured on the sidebar's rail).
 define("LainNoteDone", function()
-  local payload = review_notes.settled()
-  local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_notes", { payload })
+  -- `pcall`'s second return is the VALUE or the ERROR, so `batch` is the
+  -- refusal on one leg and the payload on the other. Lua's convention, spelled
+  -- out because one name cannot be right for both.
+  local gathered, batch = pcall(review_notes.settled)
+  if not gathered then
+    _G.__lain.review_refused(batch)
+    return
+  end
+
+  local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_notes", { batch })
   if not taken then
     _G.__lain.review_refused(refusal)
     return
@@ -441,8 +465,8 @@ vim.api.nvim_create_autocmd("BufUnload", {
 -- `:LainNote` itself asks before placing anything. Two answers to "may a note
 -- go here" cannot disagree, because there is one.
 --
--- It follows that the keys are REMOVED when the stamp is withdrawn (T15 does
--- that when the human opens the next file). A key left behind would still find
+-- It follows that the keys are REMOVED when the stamp is withdrawn (`47_diff.lua`
+-- does that when the human opens the next file). A key left behind would still find
 -- `:LainNote`, which would refuse correctly -- but a key that is present and
 -- refuses teaches the human that notes are broken, where a key that is absent
 -- teaches them they are somewhere else.

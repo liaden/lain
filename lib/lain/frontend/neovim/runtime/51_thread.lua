@@ -1,5 +1,5 @@
--- One anchor's conversation, shown in the diff pane the cursor is NOT in (T18),
--- and swapped as the cursor moves. Ported from octo.nvim's review thread panel
+-- One anchor's conversation, shown in the diff pane the cursor is NOT in, and
+-- swapped as the cursor moves. Ported from octo.nvim's review thread panel
 -- (MIT) -- `thread-panel.lua:62-88` for the buffer swap, `autocmds.lua:66-74`
 -- for the CursorMoved trigger with a buffer-variable bail-out, `layout.lua:246-295`
 -- for noticing a window arrangement the human has clobbered -- with its two
@@ -30,7 +30,7 @@
 -- a review whose file list vanished when the cursor crossed a note would be
 -- unusable.
 --
--- WHAT CROSSES THE WIRE, and the one place this reads T11's parameter more
+-- WHAT CROSSES THE WIRE, and the one place this reads the wire's parameter more
 -- richly than its name. `SET_THREAD` names its first argument `anchor_id`, and
 -- its reasoning -- key on an id Ruby minted, never on a line, because a line
 -- only names a position in the rendering that drew it -- is kept exactly. What
@@ -39,7 +39,7 @@
 -- carries the file, never its notes), the pane is cursor-driven, and only Ruby
 -- knows. So the anchor arrives whole -- `{ id, path, side, line }` -- and the
 -- id stays OPAQUE here: it is a key and a stamp, never parsed, which is the
--- half of T11's rule that binds. A bare id is refused BY NAME rather than
+-- half of `SET_THREAD`'s rule that binds. A bare id is refused BY NAME rather than
 -- accommodated, so a caller sending the old shape learns why in one sentence
 -- instead of watching a pane that never opens.
 --
@@ -52,7 +52,7 @@
 -- one row, and a comparison.
 --
 -- The bail-out for every OTHER buffer -- which is the cost a human pays for
--- having lain attached at all -- is a single buffer-variable read of T15's
+-- having lain attached at all -- is a single buffer-variable read of `47_diff`'s
 -- `b:lain_review_side`. Measured on a 20,000-line buffer: 0.47us for that read,
 -- 0.67us for the extmark query, against a redraw three orders of magnitude
 -- larger.
@@ -139,7 +139,7 @@ local review_thread = {
 
 -- Extmarks, not line numbers: the new side is a REAL file buffer the human can
 -- edit (`do`/`dp` in diff mode is the ordinary gesture), and 47_diff's header
--- states outright that T18's threads anchor in marks. A mark inside a rewritten
+-- states outright that this module's threads anchor in marks. A mark inside a rewritten
 -- span MOVES rather than invalidates, which is the extmark contract this rides
 -- and never tests.
 review_thread.NAMESPACE = vim.api.nvim_create_namespace("lain_thread_anchors")
@@ -148,7 +148,7 @@ review_thread.NAMESPACE = vim.api.nvim_create_namespace("lain_thread_anchors")
 -- its reason: a raise that had already made a buffer would leave a thread
 -- half-built on a wiring mistake.
 --
--- The `type(...) ~= "table"` arm is where a caller still sending T11's bare id
+-- The `type(...) ~= "table"` arm is where a caller still sending the older bare id
 -- lands, so it says what the pane needs and why, rather than "expected table".
 function review_thread.checked_anchor(anchor)
   if type(anchor) ~= "table" then
@@ -190,10 +190,10 @@ function review_thread.checked_lines(lines)
   return lines
 end
 
--- The diff buffer T15 stamped for this side of this file, or nil when the human
--- is looking at another file. Derived from the live buffer list rather than
+-- The diff buffer `47_diff` stamped for this side of this file, or nil when the
+-- human is looking at another file. Derived from the live buffer list rather than
 -- remembered (47_diff's `unstamp`/`drop_stale` discipline): a registry of
--- buffers is the thing that goes stale, and T15 withdraws a stamp the moment
+-- buffers is the thing that goes stale, and 47_diff withdraws a stamp the moment
 -- the human moves on, so at most one buffer answers.
 function review_thread.side_buf(path, side)
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
@@ -416,7 +416,7 @@ end
 -- Which thread the pane is showing, READ OFF THE PANE. This is the whole of the
 -- module's "state", and it is not state: nothing here can be stale, a pane
 -- holding a diff buffer answers nil for free, and anything else that re-places
--- the pane (T15 opening the next file) resets it without knowing this module
+-- the pane (47_diff opening the next file) resets it without knowing this module
 -- exists.
 function review_thread.shown(slot)
   local win = review_thread.pane(slot)
@@ -484,12 +484,12 @@ end
 -- for why only one of those two callers may build a layout.
 --
 -- MOVES NOBODY. `review_place` re-ensures the layout and takes no focus, and
--- nothing is added here -- including on the repair path, which is where T26's
+-- nothing is added here -- including on the repair path, which is where a
 -- panel found a focus theft that its intact-path example could not see.
 function review_thread.refresh(rebuild)
   -- THE BAIL-OUT: one buffer-variable read, in every buffer that is not a
   -- review diff. `vim.b.x` and not `vim.b[buf].x` -- the indexed form builds a
-  -- fresh accessor table per call and measures 0.489us against 0.061us. T15
+  -- fresh accessor table per call and measures 0.489us against 0.061us. 47_diff
   -- withdraws the stamp when the human moves on, so this is also what stops a
   -- thread following a file out of the review.
   local slot = review_thread.OPPOSITE[vim.b.lain_review_side]
@@ -517,7 +517,7 @@ function review_thread.refresh(rebuild)
   review_thread.rediff()
 end
 
--- Render one anchor's conversation (T18). See the header for why the anchor
+-- Render one anchor's conversation. See the header for why the anchor
 -- arrives whole.
 --
 -- A MODIFIED buffer is not overwritten: the human is mid-question, their text
@@ -588,7 +588,8 @@ function review_thread.typed(buf)
   return text ~= "" and text or nil
 end
 
--- The ask (T24's inbound leg, whose answer comes back as another `set_thread`).
+-- The ask -- the docent's inbound leg, whose answer comes back as another
+-- `set_thread`.
 -- `:w` is the gesture for compose's and question's reason: it is the one verb
 -- every vim user already reads as "I am done with this text".
 --
@@ -607,8 +608,30 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
   callback = function(ev)
     local question = review_thread.typed(ev.buf)
     if question == nil then
-      error("lain: nothing has been typed under the conversation, so there is no question to ask -- " ..
-        "write it below the last message and :w again", 0)
+      -- ANSWERED, NOT RAISED, and the two refusals in this callback are not the
+      -- same fact. Nothing was typed, so nothing is at risk: the buffer is
+      -- unmodified, `:w` has nothing to fail to write, and the whole cost of
+      -- raising here was nvim's `stack traceback:` under lain's sentence plus
+      -- the hit-enter prompt behind it -- which queues every non-fast RPC
+      -- request, `:messages` included, until a human presses a key. So it goes
+      -- out on `__lain.review_refused` (`65_review.lua`), which prepends the
+      -- `lain: ` this string therefore does not.
+      --
+      -- The refusal below STAYS a raise: there a question really was typed and
+      -- really did not reach anyone, and `:w` reporting success over that is
+      -- the one outcome worse than a traceback. Ruby can only answer; whether
+      -- the write fails is decided here (`thread_view_spec.rb` pins it).
+      --
+      -- AND IT STILL COSTS WHAT THIS ONE STOPPED COSTING, which is the half a
+      -- reader must not have to re-derive: a panel measured that leg at
+      -- `{mode = "r", blocking = true}` with the next round trip TIMING OUT, so
+      -- F30's mechanism is still live in this pane on the rarer path. Deliberate,
+      -- not missed -- losing the human's typed question is worse than a locked
+      -- editor they can clear with one keypress -- but it means F30 is only
+      -- PARTLY discharged here, and a later round must not read it as closed.
+      _G.__lain.review_refused("nothing has been typed under the conversation, so there is no question to ask -- " ..
+        "write it below the last message and :w again")
+      return
     end
     local ok, err = pcall(vim.rpcrequest, chan, "lain_command", "review_ask",
       { vim.b[ev.buf].lain_thread_anchor, question })

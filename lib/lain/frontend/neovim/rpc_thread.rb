@@ -1165,8 +1165,20 @@ module Lain
         # included -- so nothing here handles notifications and this thread's
         # single-owner discipline is untouched. What differs is WHEN the route
         # runs relative to the ack, and {Router} owns that distinction.
+        #
+        # NO `lain: ` PREFIX ON ANY REFUSAL THIS THREAD ANSWERS WITH, and it is a
+        # rule about the whole rail rather than a detail of one string. An
+        # answered verb's refusal comes back as the rpcrequest's ERROR, the lua
+        # caller catches it with `pcall` and hands it to
+        # `__lain.review_refused`, and that function prepends `"lain: "` itself
+        # (`65_review.lua`). Spelling it here too reached the human as
+        # `lain: lain: unknown request ...` -- measured against a faithful
+        # msgpack peer, on this site and on {#answer}'s below, and it survived a
+        # whole card about the prefix because nothing asserted its absence.
+        # `spec/lain/frontend/neovim/annotate_spec.rb` and `thread_view_spec.rb`
+        # now do.
         def dispatch(request)
-          return respond(request.id, nil, "lain: unknown request #{request.method_name}") unless
+          return respond(request.id, nil, "unknown request #{request.method_name}") unless
             request.method_name == "lain_command"
 
           @router.answers?(request.arguments.first) ? answer(request) : acknowledge(request)
@@ -1214,11 +1226,13 @@ module Lain
         # from an autoload inside a listener freezes the editor identically,
         # and `Exception` is still refused: `Interrupt` and `SignalException`
         # must keep climbing.
+        #
+        # No `lain: ` prefix, for {#dispatch}'s reason: the rail prepends one.
         def answer(request)
           failure = @router.answer(request.arguments)
           failure.nil? ? respond(request.id, true) : respond(request.id, nil, failure)
         rescue StandardError, ScriptError => e
-          respond(request.id, nil, "lain: #{e.class} answering this write, so nothing was submitted and your " \
+          respond(request.id, nil, "#{e.class} answering this write, so nothing was submitted and your " \
                                    "text is untouched (#{e.message})")
           raise
         end

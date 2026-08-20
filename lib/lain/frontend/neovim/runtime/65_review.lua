@@ -193,6 +193,16 @@ end
 -- file that moved, an annotation it could not read. Echoed rather than silent
 -- because the human made a deliberate gesture and is owed an answer to it.
 --
+-- WHAT THE ECHO GIVES UP THAT A RAISE DID NOT, stated because it is the one
+-- shape where this rail loses ground and a reader would look for it here. A
+-- raise survives `:silent`; `nvim_echo` does not, and neither does the history
+-- copy `recorded` writes -- so under `:silent LainNoteDone` or `:silent w` a
+-- refusal reaches NOTHING, screen and `:messages` alike. Not reachable today:
+-- no lain keymap sets `silent = true`, and both gestures are typed, so the
+-- refusals that ride this rail are all delivered under a human's own cmdline.
+-- It becomes reachable the moment a mapping, a script or a `<Cmd>` wrapper
+-- silences one of them, which is the cost to weigh before adding one.
+--
 -- SIZE-AWARE ON THREE AXES, and it has to be. `nvim_echo` writes the MESSAGE
 -- AREA and never reads a window (`Review::Surface::Neovim::MARKED` carries that
 -- measurement), and a message the area cannot hold blocks the RPC rather than

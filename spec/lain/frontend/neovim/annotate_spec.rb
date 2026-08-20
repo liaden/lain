@@ -168,6 +168,55 @@ RSpec.describe "the review annotation runtime", :nvim do
   # both halves of "a refusal is not a crash" (T16).
   def messages = lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
 
+  # The refusal rail's OPERATIONAL half, which `messages` alone cannot state.
+  # F25 measured the mechanism and `neovim_runtime_spec.rb` pins it: a message
+  # the area cannot hold raises a hit-enter prompt, and every non-fast RPC
+  # request queues behind that prompt -- so an editor showing one answers
+  # nothing at all until a human presses a key.
+  #
+  # ⚠️ THE UI ATTACH IS LOAD-BEARING. Measured on nvim 0.12 in
+  # `neovim_runtime_spec.rb`: with no UI attached nvim never raises the prompt,
+  # so the rest of this file -- headless, like every :nvim harness here -- cannot
+  # witness this defect, and the same assertion without an attach would be a
+  # pass taken over nothing. 60 columns rather than the cockpit's 110 so a
+  # refusal that is merely long is comfortably wider than the message area.
+  def attach_ui(columns: 60, lines: 20)
+    @editor.session.request(:nvim_ui_attach, columns, lines, { "rgb" => true, "ext_linegrid" => true })
+  end
+
+  # The command as a HUMAN runs it -- TYPED, and that is the whole of it.
+  # Measured on nvim 0.12 while writing this: an error escaping an
+  # `nvim_exec_lua` REQUEST comes back over RPC (the gem raises, this file's
+  # `pcall` swallows it), and an error escaping the same call sent as a NOTIFY
+  # is dropped on the floor -- `blocking = false`, and `:messages` empty, which is
+  # how the first draft of the example below PASSED on its red run. Only
+  # keys fed to the main loop put the error where a human sees it, so only
+  # `nvim_input` can witness the prompt. It is also one of the two calls nvim
+  # answers while blocked, so it returns whatever it raised.
+  def typed(keys) = @editor.session.request(:nvim_input, keys)
+
+  # Sampled across a window, and never exited early on a `false`: `nvim_get_mode`
+  # is one of the two calls nvim answers WHILE it is blocked, so it can be
+  # answered before the notify queued ahead of it has even run.
+  # `neovim_runtime_spec.rb` observed exactly that on its red run, in one example
+  # out of five, and half a second is orders of magnitude more than an
+  # `nvim_exec_lua` notify needs.
+  def settled_mode(window: 0.5)
+    deadline = Time.now + window
+    modes = [@editor.session.request(:nvim_get_mode)]
+    while Time.now < deadline
+      sleep 0.02
+      modes << @editor.session.request(:nvim_get_mode)
+    end
+    modes.find { |mode| mode["blocking"] } || modes.last
+  end
+
+  # The property the AC actually names, and it is not the same claim as
+  # `blocking = false`: this is a real round trip through the main loop, exactly
+  # as `:messages` and `:LainApprove` are, so it is what a human's recovery
+  # gesture would cost.
+  def round_trip(timeout: 2) = Timeout.timeout(timeout) { lua("return 1 + 1") }
+
   # The notes as they crossed the wire, in wire order.
   def settled(refuse: nil)
     answer = settle(refuse:)
@@ -601,6 +650,15 @@ RSpec.describe "the review annotation runtime", :nvim do
     # buffer would have lain report drift on lines nobody has -- and it refuses
     # BEFORE anything crosses the wire, so a refused settle is a settle that did
     # not happen rather than one that half did.
+    #
+    # THE MECHANISM CHANGED AND THE RULE DID NOT, the same correction the refused
+    # write below already carries: `review_notes.settled()` used to sit OUTSIDE
+    # the `pcall`, so `assert_saved`'s `error` escaped a `define`d callback and
+    # the human got nvim's `stack traceback:` under lain's sentence -- and, with
+    # a UI attached, a hit-enter prompt that stops the editor answering RPC at
+    # all. It is answered on `__lain.review_refused` now, so the command
+    # COMPLETES and the refusal is read off the message rail. What is asserted
+    # about the wire is untouched: nothing was sent, which is the rule.
     it "refuses while a buffer holding notes is modified, and sends nothing" do
       open_changeset("docs/guide.txt", guide_old_lines)
       note("new", 12, "note", "off by one here")
@@ -608,9 +666,55 @@ RSpec.describe "the review annotation runtime", :nvim do
 
       answer = settle
 
-      expect(answer["ok"]).to be(false)
-      expect(answer["err"]).to include("docs/guide.txt")
+      expect(answer["ok"]).to be(true)
       expect(answer["calls"]).to eq(0)
+      expect(messages).to include("docs/guide.txt").and include("before settling its notes")
+    end
+
+    # The half the assertion above cannot state, `refuses a settled batch
+    # without a Lua stack traceback`'s reason one refusal over: `ok` being true
+    # says the callback returned, not what the human was shown, and a refusal
+    # wearing a traceback reads as a plugin crash rather than as something to
+    # act on.
+    it "refuses an unsaved settle without a Lua stack traceback" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+      note("new", 12, "note", "off by one here")
+      lua("vim.api.nvim_buf_set_lines(vim.fn.bufnr(...), 0, 1, false, { 'edited' })", ["docs/guide.txt"])
+
+      settle
+
+      expect(messages).to include("lain:").and include("before settling its notes")
+      expect(messages).not_to include("stack traceback")
+      expect(messages).not_to include("lain: lain:")
+    end
+
+    # THE ACCEPTANCE TEST, and the reason this card is worth its risk: an
+    # unsaved settle is a refusal a human meets in the ordinary course of
+    # reviewing, and while its traceback stood on screen the editor answered no
+    # RPC -- so `:messages`, `:LainApprove` and every documented recovery were
+    # unavailable exactly when the refusal said to use them.
+    #
+    # The prompt is cleared in an `ensure` because one left standing outlives
+    # the expectation that failed and reads as a mystery timeout instead.
+    it "leaves the editor answering RPC after refusing an unsaved settle" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+      note("new", 12, "note", "off by one here")
+      lua("vim.api.nvim_buf_set_lines(vim.fn.bufnr(...), 0, 1, false, { 'edited' })", ["docs/guide.txt"])
+      attach_ui
+
+      typed(":LainNoteDone\r")
+      mode = settled_mode
+
+      # ORDER IS DELIBERATE. `nvim_get_mode` is answered while nvim is blocked
+      # and `round_trip` is not, so the mode assertion has to fail FIRST -- a
+      # round trip attempted against a prompted editor times out and leaves the
+      # gem's session matching responses to the wrong requests, which turns one
+      # readable failure into a file of unreadable ones.
+      expect(mode).to include("blocking" => false)
+      expect(mode["mode"]).not_to start_with("r")
+      expect(round_trip).to eq(2)
+    ensure
+      typed("\r")
     end
 
     # Handed back means handed back: the notes and their markers are cleared, so
@@ -665,6 +769,7 @@ RSpec.describe "the review annotation runtime", :nvim do
 
       expect(messages).to include("lain:").and include("no review is open in this editor")
       expect(messages).not_to include("stack traceback")
+      expect(messages).not_to include("lain: lain:")
     end
   end
 

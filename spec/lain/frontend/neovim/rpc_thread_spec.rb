@@ -1,6 +1,10 @@
 # frozen_string_literal: true
 
+require "fileutils"
+require "neovim"
+require "socket"
 require "timeout"
+require "tmpdir"
 
 # The changeset review as the EDITOR's two answering writes see it (T11): the
 # far side of {Lain::Frontend::Neovim#bind_changeset_review}, recording what
@@ -486,12 +490,31 @@ RSpec.describe Lain::Frontend::Neovim::RpcThread, "#dispatch" do
   # this rescue was written to prevent, reached by the one exception class the
   # rescue could not see. This card widened that surface from one abstract
   # listener method to three, all three on the answered path.
+  #
+  # STARTING_WITH, NOT MATCHING, and the difference is the whole finding. An
+  # answered verb's refusal leaves here as the rpcrequest's ERROR, the lua
+  # caller hands it to `__lain.review_refused`, and that prepends `"lain: "`
+  # itself -- so a prefix spelled on this side reached the human as
+  # `lain: lain: NotImplementedError answering this write ...`. It survived a
+  # whole card about the prefix because every assertion matched the SENTENCE and
+  # none of them looked at what sat in front of it. Anchoring the match is what
+  # makes the front of the string load-bearing.
+  #
+  # Measured on nvim 0.12 while restoring this: a peer's error string crosses
+  # `vim.rpcrequest` BARE -- `pcall` answers `Invalid method: nvim_totally_bogus`
+  # with no wrapper and no position -- so what this thread writes is verbatim
+  # what the rail is handed, and `annotate_spec.rb`'s `error(msg, 0)` capture is
+  # a faithful stand-in for the raise. What was NOT faithful was its content: it
+  # only ever passed unprefixed sentences, so no example there could produce the
+  # doubling. That is why the guard belongs here, at the producer.
   it "answers the editor even when the listener raises something that is not a StandardError" do
     expect(NotImplementedError.ancestors).not_to include(StandardError)
     allow(listener).to receive(:review_annotated).and_raise(NotImplementedError, "abstract")
 
     expect { dispatch("review_annotate", [annotation]) }.to raise_error(NotImplementedError)
 
+    expect(session).to have_received(:respond)
+      .with(7, nil, a_string_starting_with("NotImplementedError"))
     expect(session).to have_received(:respond).with(7, nil, a_string_matching(/NotImplementedError.*untouched/m))
   end
 
@@ -508,7 +531,7 @@ RSpec.describe Lain::Frontend::Neovim::RpcThread, "#dispatch" do
 
     rpc.send(:dispatch, other)
 
-    expect(session).to have_received(:respond).with(9, nil, /unknown request nvim_buf_attach/)
+    expect(session).to have_received(:respond).with(9, nil, a_string_starting_with("unknown request nvim_buf_attach"))
   end
 end
 
@@ -977,5 +1000,157 @@ RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
       expect { dispatch("review_verdict", ["approve"]) }.not_to raise_error
       expect(session).to have_received(:respond).with(7, nil, a_string_matching(/already judged/))
     end
+  end
+end
+
+# The OTHER end of this rail, and the only one a live editor can answer: what
+# `:w` in a thread pane costs the human when lain refuses it. Everything
+# above pins the Ruby side of a write -- what the frontend answers, what the
+# Router acks -- and none of it can see what round 7 actually found, which is
+# that the editor then stopped answering at all.
+#
+# ITS OWN HARNESS, and a small one on purpose. `thread_view_spec.rb` holds the
+# view half and `51_thread.lua`'s window bookkeeping; nothing here is about
+# windows, so nothing here builds them beyond the one pair a thread pane has to
+# be opposite of.
+module ThreadWriteFixture
+  PROJECT = Dir.mktmpdir("lain-rpc-thread-write-spec")
+  FileUtils.mkdir_p(File.join(PROJECT, "docs"))
+  File.write(File.join(PROJECT, "docs/counter.txt"), "#{(1..40).map { |i| "line #{i}" }.join("\n")}\n")
+
+  # In a constant for `ThreadFixture::COUNTING_SHIM`'s reason -- long lua belongs
+  # beside the fixture, not inside a helper.
+  FOCUS_THREAD = <<~LUA
+    local wanted = ...
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      local buf = vim.api.nvim_win_get_buf(win)
+      if vim.b[buf].lain_thread_anchor == wanted then
+        vim.api.nvim_set_current_win(win)
+        return buf
+      end
+    end
+    return nil
+  LUA
+
+  at_exit { FileUtils.remove_entry(PROJECT) if File.directory?(PROJECT) }
+end
+
+RSpec.describe Lain::Frontend::Neovim, "the thread pane's write refusal", :nvim do
+  around do |example|
+    socket = File.join(Dir.tmpdir, "lain-nvim-thread-write-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
+    # `-n`, `thread_view_spec.rb`'s reason: the new side is a REAL file buffer in
+    # a shared fixture, and an editor killed with a modified buffer leaves a swap
+    # file that answers the next example's `bufload` with E325.
+    pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket,
+                chdir: ThreadWriteFixture::PROJECT, out: File::NULL, err: File::NULL)
+    Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
+    @editor = Neovim.attach_unix(socket)
+    @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
+                     [Lain::VERSION, Lain::Frontend::Neovim::PROTOCOL, @editor.channel_id])
+    example.run
+  ensure
+    @editor = nil
+    if pid
+      begin
+        Process.kill("TERM", pid)
+        Process.wait(pid)
+      rescue Errno::ESRCH, Errno::ECHILD
+        nil
+      end
+    end
+    FileUtils.rm_f(socket)
+  end
+
+  def lua(source, args = []) = @editor.exec_lua(source, args)
+
+  # Opened ON the anchor line, and that is not a detail: the pane is
+  # cursor-driven, so a changeset opened anywhere else leaves the thread buffer
+  # alive but in no window, and `:w` would then be typed at whatever buffer
+  # happened to be current -- the real file on the new side, which `:w` writes
+  # perfectly happily. Measured while writing this: line 1 gave a green run
+  # against a defect that was still there.
+  def open_counter(line = 20)
+    lua("_G.__lain.open_changeset(...)",
+        ["docs/counter.txt", (1..40).map { |i| i == 20 ? "was line 20" : "line #{i}" }, line,
+         { "old" => "base0ff", "new" => "head1ff" }])
+  end
+
+  def set_thread(id, line, lines)
+    lua("_G.__lain.set_thread(...)",
+        [{ "id" => id, "path" => "docs/counter.txt", "side" => "new", "line" => line }, lines])
+  end
+
+  # The pane the human would be typing in. `set_thread` renders without taking
+  # focus -- a render must move nobody -- so a spec that means to run `:w` there
+  # has to go there itself, exactly as `:LainThread` does for a human.
+  def focus_thread(id) = lua(ThreadWriteFixture::FOCUS_THREAD, [id])
+
+  # BOUNDED, unlike every other `messages` helper in this suite, because reading
+  # the history is one of the requests the defect under test queues forever: an
+  # unguarded read costs the watchdog's full 30s and buries the two-line mode
+  # failure that already said everything. The bound is the finding, not tidiness.
+  def messages(timeout: 2)
+    Timeout.timeout(timeout) { lua("return vim.api.nvim_exec2('messages', { output = true }).output", []) }
+  end
+
+  # ⚠️ LOAD-BEARING, and `annotate_spec.rb` carries the measurement: with no UI
+  # attached nvim never raises the hit-enter prompt at all, so a headless editor
+  # cannot witness this defect and the assertion below would pass over nothing.
+  def attach_ui(columns: 60, lines: 20)
+    @editor.session.request(:nvim_ui_attach, columns, lines, { "rgb" => true, "ext_linegrid" => true })
+  end
+
+  # TYPED, because nothing else reproduces it: an error escaping an
+  # `nvim_exec_lua` request comes back over RPC, and the same error from a notify
+  # is dropped silently -- only keys fed to the main loop put it where a human
+  # sees it. `annotate_spec.rb` records the measurement.
+  def typed(keys) = @editor.session.request(:nvim_input, keys)
+
+  # Sampled across a window and never exited early on a `false`, for
+  # `neovim_runtime_spec.rb`'s reason: `nvim_get_mode` is answered WHILE nvim is
+  # blocked, so it can answer before the keys queued ahead of it have run.
+  def settled_mode(window: 0.5)
+    deadline = Time.now + window
+    modes = [@editor.session.request(:nvim_get_mode)]
+    while Time.now < deadline
+      sleep 0.02
+      modes << @editor.session.request(:nvim_get_mode)
+    end
+    modes.find { |mode| mode["blocking"] } || modes.last
+  end
+
+  def round_trip(timeout: 2) = Timeout.timeout(timeout) { lua("return 1 + 1") }
+
+  # `:w` with nothing typed is not a mistake a human makes once: the pane fires
+  # `BufWriteCmd` whether or not it is modified, so the SECOND `:w` after a
+  # question has been asked lands here too -- the watermark is what puts it
+  # there. It has to be a refusal in words, and it has to leave the editor
+  # answering, because while the traceback stood on screen every documented
+  # recovery, `:messages` included, was queued behind it.
+  #
+  # The write's own verdict is NOT asserted here and that is deliberate: whether
+  # `:w` reports failure is `thread_view_spec.rb`'s claim and it still makes it
+  # for the leg that matters -- a question that reached nobody. This is about
+  # what the human is told and whether the editor survives telling them.
+  it "delivers a nothing-typed write refusal on the review rail" do
+    open_counter
+    set_thread("a-20", 20, ["## you", "why this way?"])
+    # ASSERTED, not assumed: `focus_thread` answering nil would leave `:w` typed
+    # at the real file on the new side, which nvim writes without complaint --
+    # a green run over a defect that is still there. Observed exactly that.
+    expect(focus_thread("a-20")).to be_a(Integer)
+    attach_ui
+
+    typed(":w\r")
+    mode = settled_mode
+
+    expect(mode).to include("blocking" => false)
+    expect(mode["mode"]).not_to start_with("r")
+    expect(messages).to include("lain:").and include("nothing has been typed")
+    expect(messages).not_to include("stack traceback")
+    expect(messages).not_to include("lain: lain:")
+    expect(round_trip).to eq(2)
+  ensure
+    typed("\r")
   end
 end

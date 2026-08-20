@@ -262,6 +262,11 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
     lua("local b, l = ... vim.api.nvim_buf_set_lines(b, -1, -1, false, l)", [buf, lines])
   end
 
+  # nvim's own message history, which is where `__lain.review_refused` echoes
+  # and where a `stack traceback:` would land -- so one read answers both halves
+  # of "a refusal is not a crash".
+  def messages = lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+
   def notified
     lua(<<~LUA)
       local seen = {}
@@ -1032,7 +1037,9 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
 
       expect(first["seen"].last).to eq(["a-20", "and what breaks if I change it?"])
       expect(second["seen"]).to be_nil
-      expect(second["ok"]).to be(false)
+      expect(messages).to include("nothing has been typed")
+      expect(messages).not_to include("stack traceback")
+      expect(messages).not_to include("lain: lain:")
     end
 
     # The other half, and what keeps the watermark from meaning "one question
@@ -1051,6 +1058,19 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
       expect(second["seen"].last).to eq(["a-20", "and this?"])
     end
 
+    # THE MECHANISM CHANGED AND THE RULE DID NOT, and the two "refuses" in this
+    # block are no longer the same act. A write with nothing typed risks
+    # nothing -- the buffer is unmodified and there is no text to lose -- so it
+    # is refused IN WORDS on `__lain.review_refused` and the command completes.
+    # It used to raise, and a raise out of a `BufWriteCmd` reaches the human
+    # wearing nvim's `stack traceback:` with a hit-enter prompt behind it, which
+    # queues every non-fast RPC request until somebody presses a key; the
+    # editor-not-locked half of that is pinned in `rpc_thread_spec.rb`, which
+    # attaches a UI and can therefore witness the prompt.
+    #
+    # The refusal above it -- a question that reached nobody -- still RAISES,
+    # and must: there the human's words are in the buffer and `:w` reporting
+    # success would report them sent.
     it "refuses a write with nothing typed rather than asking an empty question" do
       open_counter
       set_thread(anchor(id: "a-20", line: 20), ["## you", "why this way?"])
@@ -1059,7 +1079,9 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
       wrote = written(buf)
 
       expect(wrote["seen"]).to be_nil
-      expect(wrote["ok"]).to be(false)
+      expect(messages).to include("lain:").and include("nothing has been typed")
+      expect(messages).not_to include("stack traceback")
+      expect(messages).not_to include("lain: lain:")
     end
 
     it "does not overwrite a half-typed reply when a render lands" do
