@@ -22,15 +22,34 @@ module Lain
     # its first cut proved less than its doc claimed, and both were fixed
     # together.
     #
-    # Seven messages, each a plain method a duck-typed surface answers:
+    # Eight messages, each a plain method a duck-typed surface answers:
     #
     #   present(changeset, scope:)    render this changeset, at this scope
+    #   focus                         put the human in front of what was drawn
     #   annotate(anchor, text, kind:) place a note at a position
     #   mark(hunk_key, state)         set a hunk's reviewed state
     #   thread(anchor)                open/return the conversation at a position
     #   verdict                       ask the human for their decision
     #   settle(verdict)               say the review has landed on this verdict
     #   refuse(message)               decline the review, naming why
+    #
+    # == Why `focus` is not part of `present`
+    #
+    # They differ in how often they are allowed to happen, which is the whole
+    # of it. `present` runs on EVERY redraw -- a mark redraws a row, a scope
+    # toggle redraws the sidebar, {Handover::Redraw} calls it after a gesture --
+    # and a redraw that moved the human would yank them out of the chat pane
+    # mid-sentence every time they marked a hunk. `focus` happens ONCE, when a
+    # round is opened, because that is the moment lain handed them something and
+    # asked them to work on it.
+    #
+    # The editor half already draws exactly this line and names it in those
+    # terms: `41_layout.lua` has `review_place` ("MOVES NOBODY, ever") and
+    # `review_layout` ("The ONLY entry point that takes focus"), with the second
+    # one reachable from Lua and called by nothing in Ruby -- so a `/survey`
+    # built the review tabpage, drew into it, and left the human in the session
+    # tab to go and find it. The port was where the distinction had nowhere to
+    # live.
     #
     # == Why `verdict` and `settle` are two messages and not one
     #
@@ -145,6 +164,7 @@ module Lain
       # the one shape `check!` and the shared example group both trust.
       MESSAGES = {
         present: [%i[req changeset], %i[keyreq scope]],
+        focus: [],
         annotate: [%i[req anchor], %i[req text], %i[keyreq kind]],
         mark: [%i[req hunk_key], %i[req state]],
         thread: [%i[req anchor]],

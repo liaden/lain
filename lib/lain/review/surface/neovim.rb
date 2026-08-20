@@ -276,6 +276,14 @@ module Lain
           @rpc.set_review(rendered.lines, rendered.generation)
         end
 
+        # Put the human in front of what {#present} drew, ONCE, when the round is
+        # opened -- see {Review::Surface}'s class doc for why this is not part of
+        # `present`. The editor decides where they land: this rail carries no
+        # arguments, because a layout is the one thing only the editor can see.
+        #
+        # @return [String, nil] the editor's refusal, or nothing
+        def focus = @rpc.review_focus
+
         # A note is ONE message in the anchor's conversation, and its `kind` is
         # what it has instead of a speaker: `Review::ANNOTATION_KINDS` is what
         # tells a blocker from a passing remark, which is the one member a

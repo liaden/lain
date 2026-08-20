@@ -229,6 +229,22 @@ module Lain
         # typed is work nobody asked for -- and a typo on an oversized tree must
         # answer the typo, not "narrow your tree".
         #
+        # FOCUS IS LAST, and only if the draw returned. Only a survey that was
+        # actually drawn is one to put a human in front of: `Session#present`
+        # can still raise on a ceiling, and somebody yanked into a tabpage
+        # holding nothing is worse off than somebody left where they were,
+        # reading the refusal. It happens ONCE, here, and never on the render
+        # path -- see {Lain::Review::Surface}'s class doc, which is where the
+        # port grew a second message rather than a flag on `present`: a redraw
+        # follows every gesture, and one that moved the human would take them
+        # out of the chat each time they marked a hunk.
+        #
+        # Its refusal is DISCARDED, alone among this command's editor calls. A
+        # survey that drew but could not be focused is one the human reaches
+        # with a single `gt`, and a second sentence under a banner that just
+        # said where the review is would be noise about a failure the banner
+        # already covers. Every refusal meaning work was LOST still travels.
+        #
         # BIND BEFORE DRAW, and HOLD AFTER, and the two orderings answer
         # different questions. The bind is early because a human fast enough to
         # press `<CR>` between the two would otherwise send a gesture nothing
@@ -247,12 +263,17 @@ module Lain
           walk = Lain::Survey::Walk.new(root: parsed.path, sensitivity: classifier)
           session = round(walk, ceilings_for(parsed), surface, env)
           bound(session, env, scope)
-          drawn_and_held(walk, session, scope)
+          shown(walk, session, scope, surface)
         end
 
-        # The order {#opened}'s note argues for, in one method so it cannot be
-        # read as two independent steps: the hold happens only if the draw
-        # returned.
+        # Everything that happens once a round EXISTS, in the order {#opened}'s
+        # note argues for. Its own name because the two halves answer different
+        # questions -- what lain keeps, and where the human ends up -- and only
+        # the first of them can fail.
+        def shown(walk, session, scope, surface) = drawn_and_held(walk, session, scope).tap { surface.focus }
+
+        # One method so it cannot be read as two independent steps: the hold
+        # happens only if the draw returned.
         def drawn_and_held(walk, session, scope) = drawn(walk, session, scope).tap { held(walk, session) }
 
         # What `--unbounded` means, asked of {Lain::CLI::Survey} rather than

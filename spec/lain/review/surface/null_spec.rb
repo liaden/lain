@@ -47,6 +47,7 @@ RSpec.describe Lain::Review::Surface::Null do
       # which is not what this example is meant to pin.
       incomplete = Class.new do
         def present(changeset, scope:) = nil # rubocop:disable Lint/UnusedMethodArgument
+        def focus = nil
         def annotate(anchor, text, kind:) = nil # rubocop:disable Lint/UnusedMethodArgument
         def mark(hunk_key, state) = nil # rubocop:disable Lint/UnusedMethodArgument
         def thread(anchor) = nil # rubocop:disable Lint/UnusedMethodArgument

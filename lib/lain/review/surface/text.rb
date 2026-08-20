@@ -129,6 +129,13 @@ module Lain
         # @return [nil]
         def verdict = nil
 
+        # A text transcript has no window to raise and nobody sitting at it, so
+        # this is the port's shape and nothing else. Not a no-op by oversight:
+        # {Surface::Null}'s method says the same thing for a different reason,
+        # and only one of the four adapters can actually move anybody.
+        # @return [nil]
+        def focus = nil
+
         # The COMMAND beside that query: a verdict the session admitted and
         # journaled, said out loud. A batch run has nobody at a keyboard to
         # answer `#verdict`, but it still has a transcript, and a round that

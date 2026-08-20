@@ -315,11 +315,12 @@ RSpec.describe Lain::CLI::Survey, :seam do
   describe "the surface it presents through" do
     before { two_documents }
 
-    # Seven messages at the port's own shapes, because `Surface.check!` refuses
+    # Every message at the port's own shapes, because `Surface.check!` refuses
     # anything else -- an `instance_spy` included.
     def refusing_surface(refusal)
       Class.new do
         define_method(:present) { |_changeset, scope:| "#{refusal} (#{scope})" }
+        def focus = nil
         def annotate(_anchor, _text, kind:) = kind
         def mark(_hunk_key, _state) = nil
         def thread(_anchor) = nil

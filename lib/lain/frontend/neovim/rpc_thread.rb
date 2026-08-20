@@ -84,6 +84,14 @@ module Lain
         # fix.
         SET_REVIEW = "local lines, gen = ...; if _G.__lain then _G.__lain.set_review(lines, gen) end"
 
+        # Go to the review's tabpage, building the layout first if the human
+        # closed it. The ONE entry point in `41_layout.lua` that takes focus,
+        # and the reason it is a separate rail rather than a flag on
+        # {SET_REVIEW}: that one lands on every redraw and must move nobody, so
+        # a flag would put "does this move the human" in the hands of whoever
+        # last called the render.
+        REVIEW_FOCUS = "if _G.__lain then _G.__lain.review_layout() end"
+
         # Open one changed file as the diff PAIR (T15): the new side is the real
         # file on disk, the old side a scratch buffer whose content rides in
         # this argument list. Ruby runs git, never the editor -- `old_lines` is
@@ -220,6 +228,11 @@ module Lain
           @queue.push(Command.new(args: [lines, generation], lua: SET_REVIEW), true)
         end
 
+        # No arguments at all, which is the one thing to notice: where the human
+        # is put is the editor's own question, and a Ruby-side answer would be a
+        # second opinion about a layout only the editor can see.
+        def post_review_focus = @queue.push(Command.new(args: [], lua: REVIEW_FOCUS), true)
+
         def post_changeset(path, old_lines, line, revisions)
           @queue.push(Command.new(args: [path, old_lines, line, revisions], lua: OPEN_CHANGESET), true)
         end
@@ -327,6 +340,7 @@ module Lain
         SIDEBAR_DETACHED = "rendering a changeset review needs an attached editor"
         CHANGESET_DETACHED = "opening a changed file for review needs an attached editor"
         THREAD_DETACHED = "showing a review thread needs an attached editor"
+        FOCUS_DETACHED = "putting you in front of a review needs an attached editor"
 
         # The one refusal nobody reads: this leg exists to carry a notice INTO
         # the editor, so its failure is "the notice did not land" and there is
@@ -405,6 +419,8 @@ module Lain
         end
 
         def set_thread(anchor_id, lines) = refusable(THREAD_DETACHED) { @queue.post_thread(anchor_id, lines) }
+
+        def review_focus = refusable(FOCUS_DETACHED) { @queue.post_review_focus }
 
         # T36's, and its refusal is READ rather than reported: {ApprovalView}
         # withholds the stamp of a rendering nothing took, so a keypress citing
@@ -1039,7 +1055,8 @@ module Lain
         # from any thread: they touch only the {RenderQueue} and the wake pipe,
         # never nvim.
         def_delegators :@inlet, :post_render, :post_view, :open_compose, :open_question, :open_review,
-                       :review_refused, :set_review, :open_changeset, :set_thread, :set_approval
+                       :review_refused, :set_review, :review_focus, :open_changeset, :set_thread,
+                       :set_approval
 
         # Stop the loop, wake it out of its select, join, and close the fds this
         # thread owns. Idempotent enough for a defensive double call.

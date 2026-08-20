@@ -100,6 +100,12 @@ class RecordingCockpitInlet < RecordingSurveyInlet
   def review_refused(_message) = nil
 
   def set_thread(*) = nil
+
+  # Counted rather than ignored, for the one law below that is about this rail
+  # NOT firing: a rail nobody records cannot be shown to have stayed quiet.
+  def review_focus = (@focused = (@focused || 0) + 1)
+
+  def focused = @focused || 0
 end
 
 # A sink that has already lost its destination. `IOError` and not a
@@ -821,6 +827,20 @@ RSpec.describe Lain::Review::Handover do
           gestures.open(line_of(path), generation: stamped)
           gestures.mark(line_of(path), "reviewed", generation: stamped)
         end
+      end
+
+      # `present` runs on EVERY redraw and `focus` must not. A gesture that moved
+      # the human into the review tabpage would yank them out of the chat pane
+      # each time they marked a hunk -- which is the distinction
+      # `41_layout.lua` draws between `review_place` and `review_layout`, and
+      # the reason {Review::Surface} carries them as two messages.
+      it "never focuses the editor while redrawing after a gesture" do
+        opened_round
+        worked_through
+        redraw.present(survey_session)
+
+        expect(inlet.drawn.size).to be > 1
+        expect(inlet.focused).to eq(0)
       end
 
       it "makes a row markable from the open gesture alone" do

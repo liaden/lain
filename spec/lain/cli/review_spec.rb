@@ -404,6 +404,7 @@ RSpec.describe Lain::CLI::Review, :seam do
     def recording_surface(log)
       Class.new do
         define_method(:present) { |_changeset, scope:| log << scope }
+        def focus = nil
         def annotate(_anchor, _text, kind:) = kind
         def mark(_hunk_key, _state) = nil
         def thread(_anchor) = nil
@@ -434,11 +435,12 @@ RSpec.describe Lain::CLI::Review, :seam do
   end
 
   describe "the surface it presents through" do
-    # Seven messages at the port's own shapes, because `Surface.check!` refuses
+    # Every message at the port's own shapes, because `Surface.check!` refuses
     # anything else -- including a `Forwardable`/`SimpleDelegator` adapter.
     def refusing_surface(refusal)
       Class.new do
         define_method(:present) { |_changeset, scope:| "#{refusal} (#{scope})" }
+        def focus = nil
         def annotate(_anchor, _text, kind:) = kind
         def mark(_hunk_key, _state) = nil
         def thread(_anchor) = nil

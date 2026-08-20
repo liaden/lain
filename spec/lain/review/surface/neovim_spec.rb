@@ -47,6 +47,13 @@ class RecordingReviewInlet
     @refusal
   end
 
+  # No arguments, so nothing goes in the transcript but the verb -- the whole
+  # rail is "go there", and where is the editor's own question.
+  def review_focus
+    @posted << [:review_focus]
+    @refusal
+  end
+
   # Everything that reached the editor, as text. Arrays are flattened because a
   # render posts lines and a notice posts a sentence, and the shared group's
   # laws ask one question of both: did this argument get out of the surface.
@@ -188,6 +195,7 @@ RSpec.describe Lain::Review::Surface::Neovim do
     it "accepts a surface whose positional arguments are underscore-named" do
       renamed = Class.new do
         def present(_changeset, scope:) = scope && nil
+        def focus = nil
         def annotate(_anchor, _text, kind:) = kind && nil
         def mark(_hunk_key, _state) = nil
         def thread(_anchor) = nil

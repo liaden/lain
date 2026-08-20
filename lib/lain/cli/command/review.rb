@@ -177,6 +177,14 @@ module Lain
         #
         # The HOLD is beside the bind and for the bind's own reason, which is
         # why {#wired} is one step and not two.
+        #
+        # The FOCUS is last, and only if the draw returned: a review that raised
+        # on a ceiling is not one to put anybody in front of. It happens ONCE,
+        # here, and never on the render path -- {Lain::Review::Surface}'s class
+        # doc carries the reason, which is that a redraw follows every gesture
+        # and would move the human each time they marked a hunk. Its refusal is
+        # discarded for {Command::Survey#drawn_and_held}'s reason: nothing was
+        # lost, and the banner already says where the review is.
         def opened(parsed, env)
           surface = env.replies.review_surface or raise Error, NO_EDITOR
           refuse_over_survey!
@@ -185,7 +193,7 @@ module Lain
           resolved = targets.resolve(parsed.target, base: parsed.base)
           session = round(resolved, surface, env)
           wired(resolved, session, env, scope)
-          drawn(resolved, session, scope)
+          drawn(resolved, session, scope).tap { surface.focus }
         end
 
         # The KIND is the question, not `open?`: a second `/review` over a

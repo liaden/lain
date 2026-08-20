@@ -156,6 +156,8 @@ class RecordingReviewSurface
     nil
   end
 
+  def focus = nil
+
   def annotate(anchor, text, kind:)
     @annotated << [anchor.id, text, kind]
     nil

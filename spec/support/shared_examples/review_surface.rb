@@ -268,13 +268,19 @@ RSpec.shared_examples "a review surface" do |config = {}|
   # not exist where this block body runs (see `resolve_review_fixture`'s own
   # note). Rebuilt per call so the `subject` each lambda closes over is the
   # example's own.
-  # Split along the line this file already draws elsewhere (`fixture_claims`):
-  # three messages need the RICH fixtures a real transcript obliges an
-  # including spec to supply -- a changeset answering #files/#partitions, an
-  # anchor answering #path/#line -- and the rest take a word, or nothing.
-  # Halves rather than one literal because seven lambdas in one method is an
-  # `AbcSize` a reader feels too, and CLAUDE.md's rule is to find the missing
-  # seam rather than raise the ceiling.
+  # Split by WHAT A MESSAGE NEEDS TO BE DRIVEN, which is three things and not
+  # one literal -- `AbcSize` is a reader's complaint too, and CLAUDE.md's rule
+  # is to find the missing seam rather than raise the ceiling.
+  #
+  # `over_structures` is the line this file already draws elsewhere
+  # (`fixture_claims`): three messages need the RICH fixtures a real transcript
+  # obliges an including spec to supply -- a changeset answering
+  # #files/#partitions, an anchor answering #path/#line.
+  #
+  # `over_words` takes a fixture that is a word. `over_nothing` takes no
+  # argument at all, so it reaches no fixture and can never fail for a reason
+  # to do with one -- which is why the two are not one method with some lambdas
+  # that happen to ignore their inputs.
   define_method(:review_surface_calls_over_structures) do
     { present: -> { subject.present(resolve_review_fixture(changeset), scope: :cumulative) },
       annotate: lambda {
@@ -286,13 +292,19 @@ RSpec.shared_examples "a review surface" do |config = {}|
 
   define_method(:review_surface_calls_over_words) do
     { mark: -> { subject.mark(resolve_review_fixture(hunk_key), resolve_review_fixture(state)) },
-      verdict: -> { subject.verdict },
       settle: -> { subject.settle(resolve_review_fixture(verdict)) },
       refuse: -> { subject.refuse(resolve_review_fixture(message)) } }
   end
 
+  define_method(:review_surface_calls_over_nothing) do
+    { focus: -> { subject.focus },
+      verdict: -> { subject.verdict } }
+  end
+
   define_method(:review_surface_calls) do
-    review_surface_calls_over_structures.merge(review_surface_calls_over_words)
+    review_surface_calls_over_structures
+      .merge(review_surface_calls_over_words)
+      .merge(review_surface_calls_over_nothing)
   end
 
   # The table is only a single source while it is COMPLETE, and this is what

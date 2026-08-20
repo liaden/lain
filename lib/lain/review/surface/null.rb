@@ -29,6 +29,9 @@ module Lain
         def present(_changeset, scope:) = nil # rubocop:disable Lint/UnusedMethodArgument
 
         # @return [nil]
+        def focus = nil
+
+        # @return [nil]
         def annotate(_anchor, _text, kind:) = nil # rubocop:disable Lint/UnusedMethodArgument
 
         # @return [nil]

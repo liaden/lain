@@ -36,19 +36,23 @@ class SurveyCommandRail
   def attached? = true
 end
 
-# The surface at the port's own seven messages, recording WHAT THE EDITOR HAD
+# The surface at the port's own eight messages, recording WHAT THE EDITOR HAD
 # ALREADY BEEN BOUND when it was told to present. That recording is the whole of
 # the bind-before-draw claim: a command that drew first and bound afterwards
 # renders identically and marks identically, and only the order tells them apart.
 class SurveyOrderSurface
   def initialize(editor) = (@editor = editor)
 
-  attr_reader :bound_when_drawn
+  attr_reader :bound_when_drawn, :focused
 
   def present(_changeset, scope:)
     @bound_when_drawn = @editor.bound
     scope && nil
   end
+
+  # Recorded, not discarded: `focus` must land AFTER the draw, and a stand-in
+  # that answered nil could not tell "focused once, last" from "never focused".
+  def focus = (@focused = (@focused || 0) + 1)
 
   def annotate(_anchor, _text, kind:) = kind
   def mark(_hunk_key, _state) = nil
@@ -381,6 +385,39 @@ RSpec.describe Lain::CLI::Command::Survey do
       command.call(@root, env)
 
       expect(surface.bound_when_drawn).to be_a(Lain::Review::Handover)
+    end
+
+    # `41_layout.lua` builds the review tabpage and draws into it without ever
+    # going there, because the ONE entry point that takes focus was reachable
+    # from Lua and called by nothing in Ruby. So a `/survey` drew a survey the
+    # human then had to go and find.
+    it "puts the human in front of the survey it drew" do
+      surface = SurveyOrderSurface.new(nil)
+      recording = SurveyCommandEditor.new(sink, surface:)
+      surface.instance_variable_set(:@editor, recording)
+      replies.bind_editor(rail)
+      replies.bind_review_editor(recording)
+
+      command.call(@root, env)
+
+      expect(surface.focused).to eq(1)
+    end
+
+    # ONCE, and only for a survey that DREW. A ceiling refusal raises out of
+    # `Session#present`, and a human yanked into a tabpage holding nothing is
+    # worse off than one left where they were reading the refusal.
+    it "does not focus a survey that refused before it drew" do
+      surface = SurveyOrderSurface.new(nil)
+      recording = SurveyCommandEditor.new(sink, surface:)
+      surface.instance_variable_set(:@editor, recording)
+      replies.bind_editor(rail)
+      replies.bind_review_editor(recording)
+      bounded = described_class.new(outbox:, root: @root, cwd: @root, ledger:,
+                                    bounds: Lain::Review::Bounds.new(max_files: 1))
+
+      expect { bounded.call(@root, env) }.to raise_error(Lain::Error)
+
+      expect(surface.focused).to be_nil
     end
 
     # A survey is a round with nowhere to post, which is not the same as no round

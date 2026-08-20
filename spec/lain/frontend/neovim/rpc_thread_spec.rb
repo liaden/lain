@@ -137,7 +137,8 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
     expect(inlet.set_review(["  M lib/lain/agent.rb"], 3)).to be_nil
     expect(inlet.open_changeset("lib/lain/agent.rb", ["was"], 12, revisions)).to be_nil
     expect(inlet.set_thread("anchor-1", ["why this way?"])).to be_nil
-    expect(wakes.size).to eq(9)
+    expect(inlet.review_focus).to be_nil
+    expect(wakes.size).to eq(10)
   end
 
   # An editor that stopped draining and an editor that died are ONE fact from a
@@ -153,7 +154,8 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
       refusal: inlet.review_refused("nobody will read this"),
       sidebar: inlet.set_review(["  M lib/lain/agent.rb"], 3),
       changeset: inlet.open_changeset("lib/lain/agent.rb", ["was"], 12, revisions),
-      thread: inlet.set_thread("anchor-1", ["why this way?"]) }
+      thread: inlet.set_thread("anchor-1", ["why this way?"]),
+      focus: inlet.review_focus }
   end
 
   def own_words
@@ -163,27 +165,33 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
       refusal: described_class::UNREPORTED,
       sidebar: described_class::SIDEBAR_DETACHED,
       changeset: described_class::CHANGESET_DETACHED,
-      thread: described_class::THREAD_DETACHED }
+      thread: described_class::THREAD_DETACHED,
+      focus: described_class::FOCUS_DETACHED }
   end
 
-  it "refuses all seven opens in their own words when the queue is full" do
+  it "refuses every open in its own words when the queue is full" do
     inlet = described_class.new(waker:, capacity: 1)
     inlet.post_render(["fills the one slot"])
 
     expect(refusals(inlet)).to eq(own_words)
   end
 
-  it "refuses all seven opens in their own words once the loop is gone" do
+  it "refuses every open in its own words once the loop is gone" do
     inlet = described_class.new(waker:, capacity: 8)
     inlet.close
 
     expect(refusals(inlet)).to eq(own_words)
   end
 
-  # The seven sentences are seven, and each names the surface the human was
-  # actually using -- which is the whole reason the refusal is a parameter.
+  # Each sentence names the surface the human was actually using, which is the
+  # whole reason the refusal is a parameter rather than one shared default.
+  #
+  # Counted AGAINST THE TABLE rather than against a literal: a rail added here
+  # joins the law by itself, where a hardcoded count is a number somebody has to
+  # remember to bump -- and one that was not bumped reads as "still distinct"
+  # while saying nothing about the sentence just added.
   it "gives every surface a distinct sentence" do
-    expect(own_words.values.uniq.size).to eq(7)
+    expect(own_words.values.uniq.size).to eq(own_words.size)
   end
 
   # {QuestionView} posts from INSIDE its own lock, so a blocking push here
