@@ -69,7 +69,14 @@ module AnnotateFixture
   at_exit { FileUtils.remove_entry(PROJECT) if File.directory?(PROJECT) }
 end
 
-RSpec.describe "the review annotation runtime", :nvim do
+# `:seam` as well as `:nvim`, because every example here drives a REAL editor
+# with no double between it and the runtime under test -- which is exactly what
+# `--tag '~seam'` exists to leave out of the tight edit-run loop
+# (`spec/support/tags.rb`). The tag was missing at file level long before the
+# marker example below; that example is merely what made the omission visible,
+# since a spec asserting where a marker lands cannot be doubled into meaning
+# anything.
+RSpec.describe "the review annotation runtime", :nvim, :seam do
   around do |example|
     socket = File.join(Dir.tmpdir, "lain-nvim-annotate-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
     # `noswapfile` because this file MODIFIES the new side (the refusal example
@@ -326,6 +333,25 @@ RSpec.describe "the review annotation runtime", :nvim do
       expect(lua('return vim.fn.getcompletion("LainNote ", "cmdline")')).to eq(%w[blocker note question])
       expect(lua('return vim.fn.getcompletion("LainNote b", "cmdline")')).to eq(["blocker"])
       expect(lua('return vim.fn.getcompletion("LainNote note some ", "cmdline")')).to eq([])
+    end
+
+    # A MARKER PER KIND, and the markers have to DIFFER. The kinds are pinned
+    # against `Lain::Review::ANNOTATION_KINDS` at the bottom of this file, but
+    # that guard reads the table's KEYS -- a table whose three keys all rendered
+    # `● note` would satisfy it, and the human reading the diff would have
+    # no way to tell a blocker from a passing remark without opening the thread
+    # pane. That is the whole reason a marker is rendered inline at all.
+    it "renders each kind's own marker, so a blocker does not read as a note" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+
+      note("new", 7, "note", "this reads oddly")
+      note("new", 12, "blocker", "this allocates per row")
+      note("new", 25, "question", "why is this here")
+
+      rendered = marks_on(buf_in(slots.fetch("new"))).to_h do |_id, row, _col, details|
+        [row, details.fetch("virt_text").flatten.first]
+      end
+      expect(rendered).to eq(6 => "● note", 11 => "● blocker", 24 => "● question")
     end
 
     it "renders one marker per note rather than one per line" do

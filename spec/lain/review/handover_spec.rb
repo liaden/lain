@@ -521,6 +521,21 @@ RSpec.describe Lain::Review::Handover do
       expect(held).to eq(session.annotations.map(&:id))
     end
 
+    # SIDE IS THE NOTE'S OWN, and it is the member most easily defaulted away:
+    # the new side is where nearly every note goes, so a rail that hardcoded it
+    # would pass every other example in this group. It is also the one member
+    # the survey group at the bottom of this file cannot state -- a corpus is
+    # every file ADDED, so its old side is empty by construction and a note
+    # there is not a gesture a human can make.
+    it "records a note on the old side against the old side, never the side the last note used" do
+      handover.wrote_annotation(note(side: "new", line: 3))
+      handover.wrote_annotation(note(side: "old", line: 2, anchor_text: "two"))
+
+      expect(records_of("annotation_placed").map { |record| record.slice("side", "path", "line") })
+        .to eq([{ "side" => "new", "path" => "a.rb", "line" => 3 },
+                { "side" => "old", "path" => "a.rb", "line" => 2 }])
+    end
+
     it "keeps the note in the session's own annotations, in placement order" do
       handover.wrote_annotation(note(text: "first"))
       handover.wrote_annotation(note(text: "second"))
@@ -1061,6 +1076,116 @@ RSpec.describe Lain::Review::Handover do
       it "draws nothing at all when nothing is drawing this review" do
         expect(described_class::Undrawn.present(survey_session)).to be_nil
         expect(inlet.drawn).to be_empty
+      end
+    end
+
+    # THE NOTE RAIL OF THE SAME SURVEY, WIRED THE WAY `/survey` WIRES IT.
+    # `CLI::Command::Survey` assembles its handover out of four collaborators and
+    # no fewer -- the round it has just opened, the view that drew it, a docent
+    # off the editor's own surface, and a redraw carrying the grouping on screen.
+    # A note handed back through a handover assembled any other way is a note
+    # handed back through a rail production does not have, which is the failure
+    # this whole group's chunk was written to end.
+    #
+    # The docent stands in as a RECORDER of the one message this group exercises
+    # -- never a double of the class, and never the class by name: it is a
+    # deletable capability, `spec/lain/review/deletability_spec.rb` owns the map
+    # of what may name it, and this file is not on that row.
+    context "when the human hands their notes back" do
+      let(:inlet) { RecordingCockpitInlet.new }
+      let(:surface) { Lain::Review::Surface::Neovim.new(rpc: inlet, view: survey_view) }
+      let(:held) { [] }
+      # `#hold` ALONE, because `#hold` alone is what this group exercises: a
+      # recorder advertising an `#ask` no example calls stops describing what it
+      # answers. The docent gesture has its own group at the bottom of this file.
+      let(:docent) do
+        recorded = held
+        Object.new.tap { |recorder| recorder.define_singleton_method(:hold) { |anchor| recorded << anchor } }
+      end
+      let(:notes) do
+        described_class.new(session: survey_session, view: survey_view, docent:,
+                            redraw: described_class::Redraw.new(scope: :cumulative))
+      end
+
+      # One note as {Lain::Frontend::Neovim::ReviewWrite} normalizes it off the
+      # wire, authored against the survey's OWN head revision -- a corpus answers
+      # a content digest where a branch answers a sha, and a note carries
+      # whatever the editor was stamped with.
+      def placed(line:, kind: "note", drifted: false, path: "alpha.md", anchor_text: "## alpha.md 1")
+        { "path" => path, "side" => "new", "line" => line, "anchor_text" => anchor_text,
+          "text" => "the note placed at #{path}:#{line}", "kind" => kind,
+          "revision" => survey.head_ref, "drifted" => drifted }
+      end
+
+      def anchored = records_of("annotation_placed")
+
+      # THE WHOLE BATCH, THROUGH THE VERB THAT CARRIES IT, rather than a loop
+      # this spec wrote. `:LainNoteDone` hands every note over in ONE call and
+      # `Frontend::Neovim::ReviewWrite.notes` is what unpacks it onto exactly this
+      # hand-off -- `rpc_thread.rb`'s `review_writes` binds the two together and
+      # its own doc says the deliveries happen in the order the payload carried.
+      # A spec that looped here would assert that its own `each` kept its order.
+      #
+      # NOT THE ONLY GUARD ON THAT BOUNDARY, and saying so is the point:
+      # `spec/lain/frontend/neovim/rpc_thread_spec.rb` already pins placement
+      # order at the verb itself. What is added here is that the order SURVIVES
+      # to the journal, across the boundary, the handover and the session -- so a
+      # regression in `rpc_thread.rb` reddens a `Review` spec, and that is why.
+      # @return [String, nil] the boundary's own refusal, or nothing once every
+      #   note is taken -- ASSERTED by each example below rather than discarded.
+      #   A payload this boundary turns down delivers nothing at all, so without
+      #   that assertion a regression in `ReviewWrite` reads as an empty journal
+      #   with no word about why it is empty.
+      def handed_back(batch)
+        Lain::Frontend::Neovim::ReviewWrite.notes([batch]) { |note| notes.wrote_annotation(note) }
+      end
+
+      # ORDER IS THE OUTPUT, and the order at risk is the tidy one. The editor
+      # holds each note's position as an extmark and `nvim_buf_get_extmarks`
+      # answers POSITIONALLY, so notes placed at 5, 9, 2 and 3 come back as 2,
+      # 3, 5, 9 -- sorted, plausible, and not what the human did. Nothing but
+      # this journal records which note was written first, so the sequence is
+      # the record's; `annotate_spec.rb` pins the editor's half of the same
+      # property, and this is the half that survives the wire.
+      it "journals the batch in the order the human placed it, not in the order of the lines" do
+        expect(handed_back([5, 9, 2, 3].map { |line| placed(line:) })).to be_nil
+
+        expect(anchored.map { |record| record["line"] }).to eq([5, 9, 2, 3])
+      end
+
+      # EVERY note of the batch, and not merely the first: a rail that anchored
+      # the first note and defaulted the rest passes every single-note example in
+      # this file. `drifted` differs between the two for the same reason -- the
+      # measurement is the EDITOR's, forwarded and never computed here, so both
+      # answers have to survive the trip.
+      #
+      # BOTH `anchor_text` VALUES ARE DELIBERATE AND NEITHER IS A TYPO. The first
+      # is exactly what alpha.md line 1 says while the note reports DRIFTED, so a
+      # rail that measured for itself would journal false. The second does NOT
+      # match beta.md line 9 (which reads "body 2 two.") while the note reports it
+      # did NOT drift, so the same rail would journal true. Together they close
+      # both directions; "correcting" either to match the document deletes half
+      # the guard and stays green.
+      it "carries each note's own anchor and the drift the editor measured for it" do
+        expect(handed_back([placed(line: 1, drifted: true),
+                            placed(line: 9, path: "beta.md", anchor_text: "## beta.md 3",
+                                   drifted: false)])).to be_nil
+
+        expect(anchored.map { |record| record.slice("side", "revision", "path", "line", "drifted") })
+          .to eq([{ "side" => "new", "revision" => survey.head_ref, "path" => "alpha.md",
+                    "line" => 1, "drifted" => true },
+                  { "side" => "new", "revision" => survey.head_ref, "path" => "beta.md",
+                    "line" => 9, "drifted" => false }])
+      end
+
+      # The docent is told about each note that LANDED, which is what opens the
+      # thread the human's next question is asked in -- and it is told in the
+      # same order, because a docent handed a batch it cannot sequence holds the
+      # threads of a conversation nobody had in that order.
+      it "tells the docent about every note it took, in that same order" do
+        expect(handed_back([5, 9, 2, 3].map { |line| placed(line:) })).to be_nil
+
+        expect(held.map(&:line)).to eq([5, 9, 2, 3])
       end
     end
   end
