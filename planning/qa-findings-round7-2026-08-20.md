@@ -88,6 +88,53 @@ ceiling — it fired, said so in one line, and the session survived), **T18/F16*
 **T12** (`bench arms` attribution header), **UX6** (`lain up` corpse banner — not re-driven; §11b not
 reached).
 
+## Discharged by the round-7 chunk
+
+Written after the fix chunk landed — 22 commits, `dcaae313..b13a246b`, planned in
+`planning/specs/chunk-qa-round7-constructed-and-consistent.md`. Every verdict below was
+established from the code and the commit messages, **not** from that plan's intent. Two of the
+four are not "FIXED", and the next round has to read those two rows before re-driving.
+
+**None of these was established by driving a cockpit.** The chunk's own integration check 5 — a
+`/manual-qa` pass over `cockpit-surfaces` §4/§4b and `failure-injection` §12 with the proxy — is
+still owed and must not be read as done because this table exists.
+
+| id | verdict | evidence |
+|---|---|---|
+| **F28** (the capacity gate's telemetry is unreachable from production) | **FIXED for every provider `CLI::Backend` builds — and still HALF-OPEN for the secret-read oracle's WAIT** | `Provider::Admitted#admitted` now builds the decorator on every call — `Admission::Journal.new(admission: Admission.for(endpoint: resolved_endpoint), journal: wait_journal)` (`lib/lain/provider/admitted.rb:65-66`) — so the `lib/` construction site F28 said did not exist now does. It is deliberately **not** in `Admission.build`, which is what F28's Fix shape proposed: `Admission.for` memoises one gate per endpoint for the life of the PROCESS while a journal belongs to one SESSION, so wrapping at the gate would hand the first session's journal every later caller's records (`admitted.rb:26-36`). Both includers answer the new third message (`ollama.rb:356`, `anthropic.rb:136`) and `CLI::Backend` threads the run journal into each (`backend.rb:199`, `:444`). `Provider::Bedrock` gets none, correctly — it does not `include Admitted`, so it has no gate and no wait. F28's "second, narrower half" is unchanged and deliberate: an oracle SKIPPED for capacity still journals no wait, because `try_enter` never queued — though it no longer leaves *no* record at all, since `Provider::Journaled` pushes `request_sent` before dispatch, so a skipped eager summary is now a `request_sent` with no `oracle_answer` beside it. **Still open:** `Oracle::SecretRead.tier` builds `Provider::Ollama.new` with no `journal:` (`oracle/secret_read.rb:142`), so that arm's *wait* still lands in `Channel::Null` while its *requests* are journaled on the same line. Guarded going forward by `spec/provider_construction_discipline_spec.rb` (new), which fails the build on a concrete Provider constructed where nothing can journal it. |
+| **F29** (after `/inbox`, a `/command` is silently sent to the model as prose) | **FIXED** | `Reply#typed`'s ladder became `#classify` (`human_replies.rb:1108-1119`) and the drain now reads through that same object: `#drained` hands `method(:replied)` to `drain_inbox` (`:1198-1201`) and `#replied` classifies every line (`:1220-1222`), replacing the bare `->(prompt) { @conductor.read_reply(@tty, prompt) }` the finding named at `:1131-1136`. One classification, so the two prompts cannot drift. Both `case`s over `#classify` close with `else raise`, and the `rescue StandardError` that used to wrap `#typed` was **removed** rather than excepted — it would have caught that raise and turned a swallowed reply into a swallowed-and-retried one, which is worse than the defect. **One asymmetry ships deliberately and a round-8 driver will meet it:** an unregistered `/word` is REFUSED inside the drain and still ANSWERED as prose at the bare prompt (`:1214-1219`), because a mistyped command reaching the model as a considered reply cannot be undone while a refusal costs one retype. `cockpit-surfaces.md` §5b was rewritten in the same chunk to drive the drain and to name that asymmetry, so a driver does not file it. |
+| **UX10** (`edit_file`'s windowed refusal names no file) | **FIXED, and the whole class with it** | `Tool::Contracts.requires`/`ensures` take an optional `subject:` supplier, handed the same `(input, invocation)` the predicate is, whose answer fills a `%<subject>s` slot (`lib/lain/tool/contracts.rb:26`, `:48`) — the call-time-subject shape `Tool::Bounds` already used, which is what UX10 asked for instead of a reword. **All five** preconditions on the two tools now name the resolved path: `edit_file.rb:68,91,98` and `write_file.rb:57,64`. (The finding counted four; `edit_file` carries three, not two.) Every way of getting a declaration wrong is now refused at class-definition time — a slot with no supplier, a supplier with no slot, a template `format` cannot render, a non-callable supplier, a supplier of the wrong arity — because each of those would otherwise fail only on the refusal path, in production and never in a green suite. A message declared without a supplier never reaches `format`, which keeps the remaining static declarations byte-identical (one contains a literal `%`). `failure-injection.md` §9's expected string moved in the same commit, so the doc that quoted the old sentence verbatim cannot report the rewording as a regression. |
+| **FG1** (`--prompt` exits 0 on a failed turn) | **NOT FIXED — discharged by REDIRECTION.** `--prompt` is untouched and still exits 0. | `lain chat --prompt` still seeds a REPL that reads the terminal, and still exits 0 whatever the conversation reached: `exe/lain:884` gates the exit on `options[:non_interactive]` alone, and `ChatLaunch#exit_status` exists for that one caller (`chat_launch.rb:234-244`). The honest status arrived on a **new** flag, `--non-interactive` (`exe/lain:782`), which refuses without `--prompt` (`chat_launch.rb:292-296`), denies every gated call in a sentence written for a model rather than a human (`switchboard.rb:196`), refuses `ask_human` by name and writes no Q event so nothing is left parked in the record (`tools/ask_human/unattended.rb:25`), and exits non-zero unless the turn SETTLED. That last is an ALLOW-list of two stop reasons — `end_turn`, `stop_sequence` (`Repl::Outcome::SETTLED`, `repl/outcome.rb:47`) — because the wire enum is non-exhaustive and a deny-list is precisely how `max_tokens`, `refusal` and `pause_turn` all came to exit 0. **So round 8 re-files against `--non-interactive` and must not read FG1 as fixed:** the sentence in this document, written about `--prompt`, is still true, and it is a decision rather than an oversight. Note the flag must be run directly — under `lain up` the chat sits in a tmux pane whose exit status nothing reads. |
+
+### What the chunk found that this round did not
+
+Three things worth carrying into round 8; the full list is the chunk spec's **Follow-ups**.
+
+- **Stall protection was silently OFF for any Faraday adapter that resumed `on_data` on another
+  fiber.** The clock lived in `Fiber[KEY]`, which made "the adapter dispatches `on_data` on the
+  fiber that called it" an assumption only a comment could state. Measured against a real stalling
+  socket: a subclass resuming in its own fiber took a **transport timeout after 12.2s** where the
+  protection should have fired at **0.36s** — reachable rather than theoretical, since the adapter
+  is a supported option. The clock now rides `env.request.context`, beside the retry attempt and the
+  WAL frame the transports already thread there (`0ce33f6b`). The general shape is worth keeping:
+  *an invariant that can only be written as a comment is an invariant nothing enforces.*
+- **`spec/refusal_width_discipline_spec.rb` is structurally blind to Lua.** It walks `lib/` **Ruby**
+  through Ripper (`@lib_root.glob("**/*.rb")`), so every refusal and acknowledgement authored in a
+  `frontend/neovim/runtime/*.lua` file is unmeasured by it. It was hiding a live exceedance on the
+  review rail: `assert_saved`'s sentence measured **135 columns with an empty path and 149 with the
+  spec's own fixture**, against a bar of 80, one screen above two sentences that had to be measured
+  by hand — and the suite was green throughout. The sentence now ends with the path and fits. A
+  discipline spec that cannot see a whole class of its subject passes, and its passing means less
+  than a reader assumes.
+- **An editor below nvim 0.11 now gets a traceback or SILENCE.** The rail's `exists("&messagesopt")`
+  capability probe was deleted and 0.11 stated as the minimum (`README.md:366`), but **no version
+  gate replaced it**. Measured on a real editor below 0.11: `:LainNoteDone` yields nvim's own
+  `stack traceback:` — the exact shape the refusal rail exists to keep off a screen — and on the
+  production notify path the refusal **vanishes entirely**, nothing echoed and `:messages` empty.
+  `CLI::Up::Binaries#present?` already spawns `nvim --version` and discards the output, so the one
+  object built to answer "can this editor run the cockpit?" already holds the answer. A stated
+  README requirement is not a gate.
+
 ---
 
 ## F28 — the capacity gate's telemetry is unreachable from production *(HIGH, new)*

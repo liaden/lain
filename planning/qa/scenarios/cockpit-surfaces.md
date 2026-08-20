@@ -119,8 +119,12 @@ only ever looks after attach will see a correct-looking screen either way. Look 
 `/survey ./lib` — a **subdirectory** survey specifically; the project-root case behaves differently
 and is what hid an earlier defect.
 
-Expected banner: `walk it in lain://review; <CR> opens a row, :LainNote annotates,
-:LainReviewVerdict approve hands it back`.
+Expected banner: `walk it in lain://review; <CR> opens a row beside you, <C-w>l<C-w>l reaches
+the file where :LainNote annotates, :LainReviewVerdict approve hands it back`.
+
+The walk is named in the banner because `<CR>` lands the cursor in the **sidebar**, not in the
+file -- and `:LainNote` reads the current buffer, so from the sidebar it correctly refuses. Two
+`<C-w>l`, not one: the slots are sidebar, OLD, NEW, so a single motion reaches the history side.
 
 Then, over RPC, verifying focus at every step:
 
