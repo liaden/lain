@@ -146,6 +146,33 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
     end
   end
 
+  # F28. The SPAN tier's half of the pair. Its sibling
+  # {Lain::CLI::Backend::Summarizer} is pinned in its own file, and the two are
+  # deliberately not collapsed into one: they call the same
+  # `#summarizer_provider` with opposite `queue:` answers, and an eager tier that
+  # started queueing would be F26's own mechanism -- the turn that produced a
+  # tool result waiting on its summary.
+  describe "the record a collapsed span leaves" do
+    it "journals the request_sent its round trip spent, over the summarizer's model" do
+      in_project_declaring(:nothing) { collapsed(wired_strategy(summarizing_backend)) }
+
+      sent = journal.events.grep(Lain::Telemetry::RequestSent)
+      expect(sent.size).to eq(1)
+      expect(sent.last.payload).to include("model" => "qwen3:4b")
+    end
+
+    # `no_args` IS the assertion: `#tier` here passes no `queue:` at all, taking
+    # {Lain::CLI::Backend#summarizer_provider}'s default of true. This tier
+    # answers on the RENDER path, where the summary is worth waiting for.
+    it "asks for a provider willing to WAIT for capacity, unlike the eager tier" do
+      backend = summarizing_backend
+
+      in_project_declaring(:nothing) { collapsed(wired_strategy(backend)) }
+
+      expect(backend).to have_received(:summarizer_provider).with(no_args)
+    end
+  end
+
   describe "collapsing a span through the model tier" do
     it "carries the model's summary into the replacement" do
       in_project_declaring(:nothing) do

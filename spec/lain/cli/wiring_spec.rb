@@ -402,7 +402,12 @@ RSpec.describe Lain::CLI::Wiring do
         built.wire_agent(channel:, recorder:, session:, backend:)
 
         tier = built.secret_surface.instance_variable_get(:@oracle)
-        provider = tier.instance_variable_get(:@inner).instance_variable_get(:@provider)
+        # `.inner` peels {Lain::Provider::Journaled}, which wraps this provider
+        # so the judge's own round trip reaches the Journal too. A
+        # decorator cannot move the endpoint -- what it wraps is still the bare
+        # local provider `SecretRead.tier` builds -- and this assertion is about
+        # the endpoint.
+        provider = tier.instance_variable_get(:@inner).instance_variable_get(:@provider).inner
         expect(provider).to be_a(Lain::Provider::Ollama)
       end
     end

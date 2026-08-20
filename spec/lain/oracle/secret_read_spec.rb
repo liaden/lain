@@ -2,7 +2,7 @@
 
 require "timeout"
 
-# T17. The oracle a parked SECRET read is judged by. Half of this file looks
+# The oracle a parked SECRET read is judged by. Half of this file looks
 # like plumbing and is not: WHICH endpoint answers is the security property this
 # whole rung exists for, so "it is built against the local ollama provider" is
 # the claim under test, and the questions about verdict shape are the smaller
@@ -21,8 +21,8 @@ end
 
 RSpec.describe Lain::Oracle::SecretRead do
   # The provider {Oracle::Model} was constructed over, captured at the one
-  # construction site.
-  def provider_built(**opts)
+  # construction site -- decorators and all.
+  def model_provider(**opts)
     captured = nil
     allow(Lain::Oracle::Model).to receive(:new).and_wrap_original do |original, **kwargs|
       captured = kwargs[:provider]
@@ -31,6 +31,18 @@ RSpec.describe Lain::Oracle::SecretRead do
     described_class.tier(**opts)
     captured
   end
+
+  # The same provider with every decorator peeled off: the object that finally
+  # makes the round trip.
+  #
+  # {Lain::Provider::Journaled} sits in that gap, and the WALK rather than one
+  # `#inner` hop is the point. "The judge is a LOCAL ollama" is a claim about
+  # what reaches the wire, so it has to survive the next decorator too instead
+  # of going quietly vacuous the moment one is added -- which is exactly how
+  # this file would have read as green while asserting nothing.
+  def provider_built(**opts) = terminal(model_provider(**opts))
+
+  def terminal(provider) = provider.respond_to?(:inner) ? terminal(provider.inner) : provider
 
   def inputs(path: '"/repo/Gemfile.lock"', tool: "read", region_count: "2")
     { path:, tool:, region_count: }
@@ -65,6 +77,14 @@ RSpec.describe Lain::Oracle::SecretRead do
         .to raise_error(Lain::CLI::UnknownProvider)
 
       expect(provider_built).to be_a(Lain::Provider::Ollama)
+    end
+
+    # F28. The wrap is INSIDE `.tier`, never injected -- see the parameter
+    # pin below, which is the security half of the same claim. A decorator built
+    # here cannot move the endpoint, because the thing it decorates is still the
+    # bare local Ollama constructed one line away.
+    it "hands the tier a journaled provider, wrapped around that local one" do
+      expect(model_provider).to be_a(Lain::Provider::Journaled)
     end
 
     # The upgrade-detection guard. A `provider:`, `backend:` or `router:` keyword
@@ -204,10 +224,44 @@ RSpec.describe Lain::Oracle::SecretRead do
     # double stubbed to say yes to everything: Oracle::Model asks #supports?
     # before it builds a request, and ollama declares three of the nine.
     let(:provider) do
-      Lain::Provider::Mock.new(responses: [response], capabilities: Lain::Provider::Ollama::CAPABILITIES)
+      Lain::Provider::Mock.new(responses: [response], capabilities: Lain::Provider::Ollama::CAPABILITIES,
+                               channel: frontend)
     end
 
+    # A raw provider's live stream -- the frontend's TTY channel on the chat
+    # path. Records must not reach it: an oracle round trip is not a turn, and
+    # routing one there would paint the arm's traffic onto the human's screen.
+    let(:frontend) { RecordingChannel.new }
+
     before { allow(Lain::Provider::Ollama).to receive(:new).and_return(provider) }
+
+    # F28. The verdict was already recorded; the QUESTION's own round trip
+    # was not, so a round of QA left zero request_sent records for the arm.
+    it "records the round trip on the journal it was handed, digest and all" do
+      described_class.tier(journal:).ask(**inputs).await
+
+      sent = journal.grep(Lain::Telemetry::RequestSent)
+      expect(sent.map(&:digest)).to eq([provider.last_request.digest])
+      expect(sent.last.payload).to eq(provider.last_request.cache_payload)
+    end
+
+    it "puts nothing on the provider's live channel" do
+      described_class.tier(journal:).ask(**inputs).await
+
+      expect(frontend.events).to be_empty
+    end
+
+    it "leaves the attempt before the answer it bought" do
+      described_class.tier(journal:).ask(**inputs).await
+
+      expect(journal.map(&:class)).to eq([Lain::Telemetry::RequestSent, Lain::Telemetry::OracleAnswer])
+    end
+
+    # Journaling to Channel::Null is what an unjournaled caller gets, and it
+    # must stay silent rather than raising for want of a destination.
+    it "asks happily when no journal was handed to it at all" do
+      expect { described_class.tier.ask(**inputs).await }.not_to raise_error
+    end
 
     it "records the verdict, the model that gave it and the wall clock it took" do
       described_class.tier(journal:).ask(**inputs).await

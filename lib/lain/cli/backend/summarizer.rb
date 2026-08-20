@@ -49,8 +49,19 @@ module Lain
         # {Backend::SpanSummarizer#tier} calls the same `#summarizer_provider`
         # and deliberately does NOT pass this: it answers on the render path,
         # where the summary is worth waiting for.
+        #
+        # The provider is {Provider::Journaled}-wrapped (F28) so the round
+        # trip this tier spends reaches the Journal at all. {Oracle::Recorded
+        # ::Journaling} above records the ANSWER; nothing recorded the question,
+        # because {Oracle::Model} calls `#complete` directly and no middleware
+        # stack sits between them. The wrap goes INSIDE, nearest the wire, so
+        # the record is cut from the Request the provider was actually handed.
+        # Its destination is the same late-bound {RunJournal} for the same
+        # reason {#oracle} uses one.
         def tier(definition)
-          Oracle::Model.new(definition:, provider: @backend.summarizer_provider(queue: false),
+          provider = Provider::Journaled.new(provider: @backend.summarizer_provider(queue: false),
+                                             journal: RunJournal.new(@backend))
+          Oracle::Model.new(definition:, provider:,
                             model: @backend.summarizer_model, max_tokens: @backend.summarizer_max_tokens)
         end
 

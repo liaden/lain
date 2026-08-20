@@ -105,8 +105,32 @@ module Lain
         # never one of this object's own. It answers the full
         # {Oracle::Model} duck, which is what {Oracle::Recorded::Journaling}
         # reads off its inner.
+        #
+        # `#summarizer_provider` is called with NO `queue:` at all, which is the
+        # distinction from {Backend::Summarizer#tier} and not an omission: this
+        # tier answers on the render path, where a summary is worth waiting for,
+        # while the eager one must never make a turn wait on its own summary.
+        # Passing `queue: false` here would be F26's mechanism.
+        #
+        # The provider is {Provider::Journaled}-wrapped for the reason that
+        # sibling records at length (F28): the tier's ANSWER is journaled and
+        # its QUESTION was not.
+        #
+        # `@backend.journal` is read here rather than captured at construction,
+        # and the reason is an ORDERING inside one method rather than lateness.
+        # This factory does NOT run at collapse time -- {CompactionStrategy
+        # .resolve} calls it while it builds, well before any span is offered --
+        # so what makes the read safe is that {Backend#pipeline_source} assigns
+        # `@journal` and only then calls `#compaction_source`, which is the call
+        # that reaches here. Two adjacent statements in one method.
+        #
+        # Adjacent, and unguarded: nothing asserts that order, exactly as the
+        # sibling's {Summarizer::RunJournal} warns about its own pair. Reading
+        # the message per call rather than holding the answer costs one hop and
+        # keeps a reordering from silently binding Channel::Null for the run.
         def tier(definition)
-          Oracle::Model.new(definition:, provider: @backend.summarizer_provider,
+          provider = Provider::Journaled.new(provider: @backend.summarizer_provider, journal: @backend.journal)
+          Oracle::Model.new(definition:, provider:,
                             model: @backend.summarizer_model, max_tokens: @backend.summarizer_max_tokens)
         end
       end

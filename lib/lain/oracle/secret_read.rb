@@ -2,7 +2,7 @@
 
 module Lain
   module Oracle
-    # T17, the secret-read arm: "may this parked read of a file holding
+    # The secret-read arm: "may this parked read of a file holding
     # sensitive regions be released?" -- asked of a LOCAL model, ahead of the
     # human, about a call that is already blocking.
     #
@@ -125,13 +125,23 @@ module Lain
       # `provider:`, `backend:` or `router:` keyword appearing here is the whole
       # failure this arm exists to prevent, arriving as an innocuous seam.
       #
+      # Recording the round trip (F28) gave the journal that was already here a
+      # second use: the question is recorded as well as the verdict, by wrapping
+      # the provider in {Provider::Journaled}. The wrap is built HERE, around the
+      # bare local provider constructed one line away, and takes no keyword of
+      # its own -- a decorator cannot move an endpoint it is handed, and the
+      # parameter list above is unchanged, so the loopback guarantee this
+      # module's header states is untouched.
+      #
       # @param model [String] which local model answers
-      # @param journal [#<<] where the {Telemetry::OracleAnswer} lands
+      # @param journal [#<<] where the {Telemetry::OracleAnswer} and the round
+      #   trip's own {Telemetry::RequestSent} land
       # @return [Oracle::Recorded::Journaling]
       def self.tier(model: Provider::Ollama::DEFAULT_MODEL, journal: Channel::Null::INSTANCE)
         oracle = definition(tier: :model)
+        provider = Provider::Journaled.new(provider: Provider::Ollama.new, journal:)
         Recorded::Journaling.new(definition: oracle, journal:,
-                                 inner: Model.new(definition: oracle, provider: Provider::Ollama.new, model:))
+                                 inner: Model.new(definition: oracle, provider:, model:))
       end
     end
   end

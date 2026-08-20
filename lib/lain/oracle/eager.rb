@@ -18,11 +18,20 @@ module Lain
     # one -- the same record/replay discipline the rest of the tier speaks.
     #
     # CONTAINMENT is the point of the task boundary. A fire that raises dies with
-    # its task: it journals nothing (a journaling tier never reached its write),
-    # holds nothing, and never surfaces at the reactor. Oracles have no rejection
-    # channel, so there is nowhere for the failure to go but away -- and a seam
-    # that later reads {#held} treats an absent summary as a miss and falls back to
-    # the deterministic record alone, never a blocking summarize.
+    # its task: it holds nothing and never surfaces at the reactor. Oracles have
+    # no rejection channel, so there is nowhere for the failure to go but away --
+    # and a seam that later reads {#held} treats an absent summary as a miss and
+    # falls back to the deterministic record alone, never a blocking summarize.
+    #
+    # It does NOT follow that a failed fire journals nothing, and this comment
+    # said so until F28. {Provider::Journaled} records the outbound request
+    # BEFORE dispatch, and the capacity gate sits INSIDE `Ollama#complete`
+    # (`ollama.rb:188`) -- so a summary the endpoint refuses leaves a
+    # {Telemetry::RequestSent} with no {Telemetry::OracleAnswer} following it.
+    # That pair IS the skip, and it is the shape to read the journal for: the
+    # answer's absence is the signal, not the record's. Only a fire that dies
+    # before the provider is reached -- a half-written `.lain/summarizers.rb`,
+    # say -- journals nothing at all.
     class Eager
       # The slot the summarizer template reads its source text from. The injected
       # oracle's {Definition} names the same slot; fixing it here keeps `#fire`'s
@@ -75,8 +84,10 @@ module Lain
         task.async(transient: true) do
           @held[digest] = @oracle.ask({ @slot => text }).await
         rescue ScriptError, StandardError, SystemStackError
-          # The task boundary is the containment: a failed fire holds nothing and
-          # journals nothing. Async::Stop is not a StandardError, so a stop still
+          # The task boundary is the containment: a failed fire holds nothing.
+          # It may still have journaled its ATTEMPT -- see the class header --
+          # because the record is cut before dispatch and the capacity refusal
+          # happens after it. Async::Stop is not a StandardError, so a stop still
           # flows past this rescue and cancels the task quietly rather than raising
           # out at the reactor.
           #

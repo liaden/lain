@@ -137,6 +137,7 @@ end
 
 require_relative "provider/admission"
 require_relative "provider/admitted"
+require_relative "provider/journaled"
 require_relative "provider/stream_started_signal"
 require_relative "provider/error_wrapping"
 require_relative "provider/anthropic_encoding"

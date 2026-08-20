@@ -1130,6 +1130,12 @@ RSpec.describe Lain::CLI::Backend do
     def journaling_of(backend) = backend.send(:summary_oracle).instance_variable_get(:@inner)
     def tier_of(backend) = journaling_of(backend).instance_variable_get(:@inner)
 
+    # The provider the tier will actually ASK, one decorator further in. It is
+    # wrapped in {Lain::Provider::Journaled} so the round trip an oracle spends
+    # reaches the Journal at all; WHICH arm answers is what these examples pin,
+    # and that is the wrapped one.
+    def provider_of(tier) = tier.instance_variable_get(:@provider).inner
+
     # A local reply the summarizer schema accepts, priced with a REAL usage so
     # the journaled cost is a genuine count rather than the zero identity.
     def answering_provider
@@ -1150,7 +1156,7 @@ RSpec.describe Lain::CLI::Backend do
     it "defaults to today's local tier -- Provider::Ollama, at the model the chat resolved" do
       tier = tier_of(summarizer_for)
 
-      expect(tier.instance_variable_get(:@provider)).to be_a(Lain::Provider::Ollama)
+      expect(provider_of(tier)).to be_a(Lain::Provider::Ollama)
       expect(tier.model).to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
     end
 
@@ -1230,7 +1236,7 @@ RSpec.describe Lain::CLI::Backend do
       chat, summary = with_env("ANTHROPIC_API_KEY" => "sk-test") { [backend.provider, tier_of(backend)] }
 
       expect(chat).to be_a(Lain::Provider::Ollama)
-      expect(summary.instance_variable_get(:@provider)).to be_a(Lain::Provider::Anthropic)
+      expect(provider_of(summary)).to be_a(Lain::Provider::Anthropic)
       expect(summary.model).to eq(Lain::Provider::Anthropic::DEFAULT_MODEL)
     end
 
