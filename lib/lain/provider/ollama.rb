@@ -2,6 +2,7 @@
 
 require "json"
 
+require_relative "ollama/decoding"
 require_relative "ollama/encoding"
 require_relative "ollama/retry_tap"
 require_relative "ollama/stream_assembler"
@@ -50,16 +51,17 @@ module Lain
     # 2026-08-17 QA run hit a stalled server and waited **over 400 seconds
     # printing nothing at all** (F7a), which on the one arm whose honest shape
     # is a model thinking for six minutes is unreadable. {RetryTap} now journals
-    # every attempt boundary, and -- the part T10 needs -- gives a retry
-    # somewhere to DISCARD what the attempt it replaced accumulated.
+    # every attempt boundary, and -- the part the retried-stream discard needs
+    # -- gives a retry somewhere to DISCARD what the attempt it replaced put
+    # together.
     #
     # What that fixed, and what it still does not: {Frontend::Decorators.for}
-    # now renders {Telemetry::ProviderRetry} live too (T4/F15), so a human
-    # watching a retrying request sees the attempt as it happens, not only in
-    # the Journal afterward -- but only on whichever Channel this Provider was
-    # built with, and a subagent's still defaults to {Channel::Null} (wiring
-    # that path is explicitly a different card's scope). Bounding the wait
-    # itself, rather than narrating it, is T12's stall detection.
+    # now renders {Telemetry::ProviderRetry} live too, so a human watching a
+    # retrying request sees the attempt as it happens, not only in the Journal
+    # afterward -- but only on whichever Channel this Provider was built with,
+    # and a subagent's still defaults to {Channel::Null} (wiring that path is
+    # explicitly out of this file's scope). Bounding the wait itself, rather
+    # than narrating it, is the stall clock's job, not this arm's.
     #
     # deliberately absent: a timeout/retry envelope of its own -- unlike
     # {Anthropic#build_config}, this leaves the vendored ruby_llm defaults
@@ -73,16 +75,19 @@ module Lain
     # deliberately absent: a `spool:` -- no response WAL, so nothing on this arm
     # is salvageable after a crash.
     class Ollama < Provider
+      # One mixin per wire direction: {Encoding} out, {Decoding} back.
       include Encoding
+      include Decoding
       # APIError / APIStatusError, nested here and rooted at Lain::Error.
       include ErrorWrapping.under(Lain::Error)
-      # #admitted, over #resolved_endpoint and #queue_for_capacity? below.
+      # #admitted, over #resolved_endpoint, #queue_for_capacity? and
+      # #wait_journal below.
       include Admitted
 
       DEFAULT_MODEL = "qwen3:4b"
 
       # The NDJSON streaming path (below) makes :streaming honest. :thinking is
-      # honest too (R5): `think` rides Request#extra onto its own top-level
+      # honest too: `think` rides Request#extra onto its own top-level
       # wire field (Encoding#encode), and #decode_content already turns
       # `message.thinking` into a thinking block on both the sync and streamed
       # paths. :prompt_caching and :strict_tools stay off deliberately --
@@ -126,10 +131,17 @@ module Lain
       #   summarizer shares this provider's construction path and keeps the
       #   default, because it answers on the render path where the summary is
       #   worth waiting for.
+      # @param journal [#<<] where a {Telemetry::ProviderWait} lands when this
+      #   provider QUEUES for capacity -- {Admitted}'s third collaborator, and
+      #   deliberately not `channel:`, which is the live frontend stream rather
+      #   than the session's record. The Null channel by default, so a caller
+      #   with no record (bench, a bare construction) journals nowhere and needs
+      #   no `if journal` guard.
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, retries: nil,
-                     sink: Sink::Null.new, api_base: nil, queue: true)
+                     sink: Sink::Null.new, api_base: nil, queue: true, journal: Channel::Null::INSTANCE)
         super()
         @queue = queue
+        @journal = journal
         @retries = retries || RetryTap.new(channel:)
         @config = journaled_retries(config || build_config(api_base:))
         @transport = transport || Transport.new(@config, sink:)
@@ -138,10 +150,10 @@ module Lain
       def capabilities = CAPABILITIES
 
       # No :prompt_caching capability, so no cache economics to report --
-      # {CacheProfile::NO_CACHING} is the honest, flat-cost Null Object
-      # answer, promoted off what used to be a per-provider
-      # `NO_CACHING_PROFILE` Hash constant here (CAC-2/F1) into the neutral
-      # {Lain::CacheProfile} home shared with every other provider.
+      # {CacheProfile::NO_CACHING} is the honest, flat-cost Null Object answer,
+      # promoted off what used to be a per-provider `NO_CACHING_PROFILE` Hash
+      # constant here into the neutral {Lain::CacheProfile} home shared with
+      # every other provider.
       def cache_profile = CacheProfile::NO_CACHING
 
       # One round trip into a neutral Response. Streaming and non-streaming
@@ -239,7 +251,7 @@ module Lain
       # BUILDING the request, above Faraday's own error middleware, so
       # neither arm of `wrapping_errors` is reached.
       #
-      # T5 moved that refusal a layer up: on the {CLI::Backend}-mediated
+      # That refusal has since moved a layer up: on the {CLI::Backend}-mediated
       # LAUNCH path, `--api-base` is now checked at {Backend}'s own
       # construction ({Backend::Endpoint}), so neither this method nor
       # {WindowBook} ever reaches a scheme-less or unparseable one anymore --
@@ -334,9 +346,14 @@ module Lain
 
       private
 
-      # {Admitted}'s two collaborators. Whether this caller may WAIT for a slot
-      # is the constructor's `queue:`; where it would wait is the endpoint below.
+      # {Admitted}'s three collaborators. Whether this caller may WAIT for a slot
+      # is the constructor's `queue:`; where it would wait is the endpoint below;
+      # where a wait it actually served gets recorded is the constructor's
+      # `journal:`. All three are the CALLER's properties, which is why they
+      # arrive at construction and not with a round trip.
       def queue_for_capacity? = @queue
+
+      def wait_journal = @journal
 
       # The endpoint THIS provider will really talk to, which is the only honest
       # key: `@options[:api_base]` is one flag shared by every tier
@@ -437,8 +454,9 @@ module Lain
       # the FIRST one's channel, because `||=` finds the first tap's block
       # already there. Nothing in production injects a config
       # (`cli/backend.rb`, `oracle/secret_read.rb`), so that was a trap laid for
-      # specs -- and T10 injects configs. `dup` is the same shallow copy
-      # {Transport#probe_config} already takes of this object.
+      # specs -- and the retried-stream discard's specs inject configs. `dup` is
+      # the same shallow copy {Transport#probe_config} already takes of this
+      # object.
       #
       # The two callbacks are wired DIFFERENTLY, and the asymmetry is the point.
       #
@@ -451,7 +469,7 @@ module Lain
       # its own `retry_block` (which `ollama_spec.rb` ships) brought the whole
       # F7b splice back, returned as `:end_turn`. `||=` was the right wiring
       # while this block was only telemetry; it stopped being right the moment
-      # T10 hung the discard on it.
+      # the retried-stream discard was hung on it.
       #
       # `exhausted_retries_block` keeps `||=`, because nothing but telemetry
       # hangs on it: exhaustion does not abandon -- the round trip raises and
@@ -464,67 +482,6 @@ module Lain
           wired.retry_block = @retries.retry_block(then_call: config.retry_block)
           wired.exhausted_retries_block ||= @retries.exhausted_block
         end
-      end
-
-      def build_response(body)
-        message = body["message"] || {}
-        Response.new(id: nil, model: body["model"], content: decode_content(message),
-                     stop_reason: decode_stop_reason(body, message), usage: build_usage(body), raw: body)
-      end
-
-      # Order mirrors what a mixed assistant turn carries: reasoning first, then
-      # visible text, then the calls -- thinking and text ride their own message
-      # fields, tool_calls its own array.
-      def decode_content(message)
-        blocks = []
-        blocks << { "type" => "thinking", "thinking" => message["thinking"] } unless blank?(message["thinking"])
-        blocks << { "type" => "text", "text" => message["content"] } unless blank?(message["content"])
-        Array(message["tool_calls"]).each_with_index { |call, index| blocks << tool_use_block(call, index) }
-        blocks
-      end
-
-      # Ollama has no tool-call id, so one is synthesized from the call's
-      # position -- deterministic and unique within the response, which is all
-      # ToolRunner's id-keyed result matching needs (a later turn reusing the
-      # same synthetic id is harmless: Encoding resolves tool_name in message
-      # order, so each result names the tool its own turn called). A wire-
-      # provided id is honored if one is ever present (forward-compat, and how
-      # the parity harness replays canned ids); synthesis is the fallback.
-      def tool_use_block(call, index)
-        function = call["function"] || {}
-        { "type" => "tool_use", "id" => call["id"] || "ollama-tool-#{index}",
-          "name" => function["name"], "input" => parse_arguments(function["arguments"]) }
-      end
-
-      # Belief (b): native `/api/chat` returns arguments as a parsed object. The
-      # String branch is belt-and-suspenders on Response#tool_uses' Hash
-      # contract -- a String must never reach the Timeline.
-      def parse_arguments(arguments)
-        return arguments unless arguments.is_a?(String)
-
-        JSON.parse(arguments)
-      end
-
-      # Presence of tool_calls forces :tool_use -- done_reason stays "stop" on a
-      # tool turn. Otherwise map the two enum values Ollama can express and let
-      # StopReason.normalize close the open enum ("" -> :unknown, and any
-      # load/unload edge string likewise), so gate 6 stays total.
-      def decode_stop_reason(body, message)
-        return StopReason::TOOL_USE unless Array(message["tool_calls"]).empty?
-
-        case body["done_reason"]
-        when "stop" then StopReason::END_TURN
-        when "length" then StopReason::MAX_TOKENS
-        else StopReason.normalize(body["done_reason"])
-        end
-      end
-
-      def build_usage(body)
-        Usage.new(input_tokens: body["prompt_eval_count"], output_tokens: body["eval_count"])
-      end
-
-      def blank?(value)
-        value.nil? || value == ""
       end
     end
   end

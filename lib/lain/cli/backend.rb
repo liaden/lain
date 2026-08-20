@@ -108,9 +108,8 @@ module Lain
       # neither covers: `priced?` is true and the figure was never measured.
       #
       # No `.freeze`: PriceBook freezes itself and its map at construction.
-      COMPACTION_PRICES = PriceBook.new(
-        fallback: Price.per_mtok(input: 0, output: 0, cache_creation: 0, cache_read: 0)
-      )
+      COMPACTION_PRICES =
+        PriceBook.new(fallback: Price.per_mtok(input: 0, output: 0, cache_creation: 0, cache_read: 0))
 
       # Both summarizer flags are refused HERE, at construction, rather than
       # where the tier is built. `--provider` refuses on every run because
@@ -197,7 +196,7 @@ module Lain
       #   and there is never a slot to wait for.
       def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance, queue: true)
         case name
-        when "ollama" then Provider::Ollama.new(api_base: @options[:api_base], channel:, queue:)
+        when "ollama" then Provider::Ollama.new(api_base: @options[:api_base], channel:, queue:, journal: run_journal)
         when "bedrock" then Provider::Bedrock.new(channel:)
         else anthropic_provider(spool, channel, queue:)
         end
@@ -442,8 +441,20 @@ module Lain
         raise MissingAPIKey, "ANTHROPIC_API_KEY is not set; --provider anthropic needs it to build a client" \
           if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
-        Provider::Anthropic.new(spool:, channel:, queue:)
+        Provider::Anthropic.new(spool:, channel:, queue:, journal: run_journal)
       end
+
+      # Where a provider's {Telemetry::ProviderWait} lands: this run's journal,
+      # resolved per EVENT rather than captured here.
+      #
+      # {Backend::Summarizer::RunJournal}'s own reason, and it binds harder on
+      # this path: `cli/wiring/agent_build.rb:96` builds the chat provider inside
+      # `#backing`, and {#pipeline_source} -- where {#journal} gets bound -- runs
+      # a line later, through {CompactionMount}. A provider handed `journal` by
+      # value would therefore hold {Channel::Null} for the whole session: every
+      # wait served, none recorded, nothing raised -- the same silent degrade
+      # {Rebound} above exists to prevent, one layer down.
+      def run_journal = Summarizer::RunJournal.new(self)
 
       # Validated once, so #provider and #default_model both key off a name
       # already known to be in PROVIDERS.

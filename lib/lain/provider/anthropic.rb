@@ -36,14 +36,15 @@ module Lain
       # UNRELATED to {Provider::AnthropicReference::APIError}: same name, same
       # shape, no shared ancestor besides {Lain::Error} -- verified nothing
       # above the Provider rescues either by name today (Backend can hand chat
-      # either backend depending on whether journaling is on, see T17w). A
-      # caller wanting "an Anthropic API error" regardless of which backend
-      # produced it must handle both explicitly, or a shared marker module must
-      # be introduced first -- do not assume `rescue Anthropic::APIError`
-      # catches an SDK-oracle failure, or vice versa.
+      # either backend depending on whether journaling is on). A caller wanting
+      # "an Anthropic API error" regardless of which backend produced it must
+      # handle both explicitly, or a shared marker module must be introduced
+      # first -- do not assume `rescue Anthropic::APIError` catches an
+      # SDK-oracle failure, or vice versa.
       include ErrorWrapping.under(Lain::Error)
       include StreamStartedSignal
-      # #admitted, over #resolved_endpoint and #queue_for_capacity? below.
+      # #admitted, over #resolved_endpoint, #queue_for_capacity? and
+      # #wait_journal below.
       include Admitted
 
       DEFAULT_MODEL = "claude-opus-4-8"
@@ -67,7 +68,7 @@ module Lain
       # @param config [Provider::HTTP::Configuration, nil] injected in specs; otherwise built by
       #   {#build_config}, which sets the 600s/2-retry envelope matching the old SDK client and
       #   wires `retry_block` to `@retries`.
-      # @param channel [Lain::Channel] where retry and stream_started (CE-5) events land
+      # @param channel [Lain::Channel] where retry and stream_started events land
       # @param sink [Lain::Sink] where the transport's debug/log lines go
       # @param spool [#open_frame] where the raw response bytes are teed; the Null
       #   spool by default, so no WAL file exists unless a session opts in
@@ -82,10 +83,17 @@ module Lain
       #   so takes {Admission::Null}; it starts mattering the moment `api_base:`
       #   points at a loopback proxy, and carrying it here rather than only on
       #   the local arm is what keeps the two providers one shape.
+      # @param journal [#<<] where a {Telemetry::ProviderWait} lands when this
+      #   provider QUEUES for capacity -- see {Provider::Ollama#initialize},
+      #   which documents why this is not `channel:`. It is a no-op against the
+      #   hosted default for the same reason `queue:` is, and starts mattering
+      #   at the same loopback proxy.
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, sink: Sink::Null.new,
-                     spool: Spool::Null.new, api_key: nil, api_base: nil, queue: true)
+                     spool: Spool::Null.new, api_key: nil, api_base: nil, queue: true,
+                     journal: Channel::Null::INSTANCE)
         super()
         @queue = queue
+        @journal = journal
         @channel = channel
         @retries = RetryTap.new(spool:, channel:)
         @config = config || build_config(api_key:, api_base:)
@@ -100,8 +108,8 @@ module Lain
 
       # One round trip into a neutral Response. Streaming by default (Context
       # renders `stream: true`); both paths converge on the full block list and
-      # parsed tool inputs. `on_stream_started` is CE-5's signal -- see
-      # {StreamStartedSignal} -- never called on the non-streaming path.
+      # parsed tool inputs. `on_stream_started` is the stream-started signal --
+      # see {StreamStartedSignal} -- never called on the non-streaming path.
       #
       # {Admission} wraps the WHOLE of this, for the reasons
       # {Provider::Ollama#complete} sets out at length: it is the one boundary
@@ -117,11 +125,15 @@ module Lain
 
       private
 
-      # {Admitted}'s two collaborators. The endpoint is read off the same
+      # {Admitted}'s three collaborators. The endpoint is read off the same
       # Configuration {Transport#api_base} reads, with the same fallback -- see
       # {DEFAULT_API_BASE} for why that fallback is restated and how the
-      # restatement is pinned.
+      # restatement is pinned. The journal is the session's record, not
+      # `@channel`: one is what a human watches, the other is what a round of QA
+      # reads back.
       def queue_for_capacity? = @queue
+
+      def wait_journal = @journal
 
       def resolved_endpoint = @config.anthropic_api_base || DEFAULT_API_BASE
 
@@ -130,9 +142,9 @@ module Lain
         config.anthropic_api_key = api_key || ENV.fetch("ANTHROPIC_API_KEY", nil)
         config.anthropic_api_base = api_base unless api_base.nil?
         # HTTP::Configuration's own request_timeout/max_retries (300 / 3) are
-        # vendored ruby_llm generic defaults, not Anthropic's -- T17w's fix round:
-        # Backend now hands this transport live --journal chat traffic where the
-        # SDK client (Anthropic::Client::DEFAULT_TIMEOUT_IN_SECONDS = 600,
+        # vendored ruby_llm generic defaults, not Anthropic's, and Backend now
+        # hands this transport live --journal chat traffic where the SDK client
+        # (Anthropic::Client::DEFAULT_TIMEOUT_IN_SECONDS = 600,
         # DEFAULT_MAX_RETRIES = 2) used to sit, so the effective envelope must
         # match those, not silently trade timeout/retry budget for a WAL. Set
         # HERE, not on Configuration's own default, so Ollama/Bedrock (their own
@@ -156,7 +168,7 @@ module Lain
         request.stream ? stream_dispatch(payload, frame, request, on_stream_started) : sync_dispatch(payload, frame)
       end
 
-      # CE-5: the FIRST data chunk the transport hands back is always the
+      # The FIRST data chunk the transport hands back is always the
       # response's own first SSE event (`message_start`, ahead of any
       # `content_block_start`), so signaling before handing it to the
       # assembler is signaling before any content_block event -- no need to
