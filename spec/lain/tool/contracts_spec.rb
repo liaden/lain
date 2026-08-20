@@ -85,4 +85,175 @@ RSpec.describe Lain::Tool::Contracts do
       end.to raise_error(ArgumentError, /a contract needs a predicate block/)
     end
   end
+
+  # A contract's message could only ever be a constant, so `edit_file` refused a
+  # real file by the placeholder word "path". {Lain::Tool::Bounds#message}
+  # already interpolates the subject at call time; these give contracts the same
+  # capability, and pin that a static message is untouched by it.
+  describe "a message that names its subject" do
+    let(:naming_tool_class) do
+      Class.new(Lain::Tool) do
+        def name = "naming"
+        def description = "names what it refused"
+        def input_schema = { type: :object, properties: { path: { type: :string } }, required: [:path] }
+
+        requires("%<subject>s was never read this session",
+                 subject: ->(input, _invocation) { "/abs/#{input["path"]}" }) { |_i, _c| false }
+
+        def perform(_input, _context) = Lain::Tool::Result.ok("never reached")
+      end
+    end
+
+    it "interpolates the real subject into the violation at call time" do
+      expect { naming_tool_class.new.call({ "path" => "a.txt" }, nil) }
+        .to raise_error(Lain::Tool::ContractViolation,
+                        "precondition failed for naming: /abs/a.txt was never read this session")
+    end
+
+    it "resolves the subject as the TOOL, so a private resolver is in reach" do
+      klass = Class.new(Lain::Tool) do
+        def name = "resolver"
+        def input_schema = { type: :object, properties: {} }
+        requires("%<subject>s is refused", subject: ->(_i, _c) { resolved }) { |_i, _c| false }
+        def perform(_input, _context) = Lain::Tool::Result.ok("never reached")
+
+        private
+
+        def resolved = "/from/the/tool"
+      end
+
+      expect { klass.new.call({}, nil) }
+        .to raise_error(Lain::Tool::ContractViolation, %r{/from/the/tool is refused})
+    end
+
+    it "gives a postcondition the same capability" do
+      klass = Class.new(Lain::Tool) do
+        def name = "post_naming"
+        def input_schema = { type: :object, properties: {} }
+        ensures("%<subject>s came back wrong", subject: ->(_i, _c) { "the answer" }) { |_i, _c, _r| false }
+        def perform(_input, _context) = Lain::Tool::Result.ok("fine")
+      end
+
+      expect { klass.new.call({}, nil) }
+        .to raise_error(Lain::Tool::ContractViolation,
+                        "postcondition failed for post_naming: the answer came back wrong")
+    end
+
+    # Backward compatibility is what keeps this change small: `requires` has
+    # callers beyond edit_file/write_file, and a static message must still read
+    # as exactly itself. The `%` is the sharp end -- `format("100% of ...")`
+    # reads `% o` as a conversion and RAISES, so routing every message through
+    # `format` would turn an ordinary sentence into a crash.
+    it "leaves a static message exactly as written, percent signs and all" do
+      klass = Class.new(Lain::Tool) do
+        def name = "static"
+        def input_schema = { type: :object, properties: {} }
+        requires("100% of the file must be read") { |_i, _c| false }
+        def perform(_input, _context) = Lain::Tool::Result.ok("never reached")
+      end
+
+      expect { klass.new.call({}, nil) }
+        .to raise_error(Lain::Tool::ContractViolation,
+                        "precondition failed for static: 100% of the file must be read")
+    end
+
+    # Contracts are kept as data so they are inspectable, and tool_spec reads
+    # `preconditions.map(&:message)`. A static contract keeps handing back the
+    # String rather than a thunk.
+    it "keeps a static contract's message inspectable as a String" do
+      klass = Class.new(Lain::Tool) do
+        def input_schema = { type: :object, properties: {} }
+        requires("plain") { |_i, _c| true }
+      end
+
+      expect(klass.preconditions.map(&:message)).to eq(["plain"])
+    end
+
+    # A subject supplier whose sentence has nowhere to put it silently drops the
+    # path -- the very defect this capability exists to fix, wearing a typo.
+    it "refuses a subject supplier the message has no slot for" do
+      expect do
+        Class.new(Lain::Tool) do
+          requires("no slot here", subject: ->(_i, _c) { "x" }) { |_i, _c| true }
+        end
+      end.to raise_error(ArgumentError, /slot/)
+    end
+  end
+
+  # Every check below runs at CLASS-DEFINITION time, and that timing is the
+  # point: the only code path that reads a message is the REFUSAL path, which a
+  # green suite almost never walks and production walks constantly. A defect
+  # parked there stays invisible until a model is already being refused.
+  describe "the message and its supplier are checked at declaration" do
+    # The likelier of the two mismatches, because it is what copying a working
+    # declaration and dropping the keyword produces. Left unchecked, the model
+    # reads "precondition failed for leaky: %<subject>s was never read this
+    # session" -- a raw placeholder exactly where the file's name belongs, which
+    # is the defect naming the subject exists to delete.
+    it "refuses a slot with no supplier" do
+      expect do
+        Class.new(Lain::Tool) do
+          requires("%<subject>s was never read this session") { |_i, _c| false }
+        end
+      end.to raise_error(ArgumentError, /needs a subject: supplier/)
+    end
+
+    # A slot's PRESENCE says nothing about whether the rest of the template
+    # survives `format`. This one declares clean and dies at the first violation
+    # with a TypeError -- a refusal turned into a crash.
+    it "refuses a template format cannot render" do
+      expect do
+        Class.new(Lain::Tool) do
+          requires("100% of %<subject>s must be read", subject: ->(_i, _c) { "x" }) { |_i, _c| false }
+        end
+      end.to raise_error(ArgumentError, /must survive format/)
+    end
+
+    it "refuses a template naming a slot nothing fills" do
+      expect do
+        Class.new(Lain::Tool) do
+          requires("%<subject>s at %<line>d", subject: ->(_i, _c) { "x" }) { |_i, _c| false }
+        end
+      end.to raise_error(ArgumentError, /must survive format/)
+    end
+
+    # `&` accepts far more than a supplier can actually be: a Symbol converts
+    # happily and then calls that method on the INPUT, so `subject: :upcase`
+    # declares clean and dies on the refusal path with
+    # "undefined method 'upcase' for an instance of Hash". Same
+    # declares-clean/dies-in-production shape as the two above.
+    it "refuses a supplier that is not callable" do
+      expect do
+        Class.new(Lain::Tool) do
+          requires("%<subject>s was never read", subject: :upcase) { |_i, _c| false }
+        end
+      end.to raise_error(ArgumentError, /must respond to #call/)
+    end
+
+    # A lambda is arity-strict, so one written for a single argument dies at the
+    # first violation with a bare "wrong number of arguments" in place of the
+    # sentence the model was owed.
+    it "refuses an arity-strict supplier that does not take (input, invocation)" do
+      expect do
+        Class.new(Lain::Tool) do
+          requires("%<subject>s is refused", subject: ->(input) { input }) { |_i, _c| false }
+        end
+      end.to raise_error(ArgumentError, /takes \(input, invocation\)/)
+    end
+
+    # A plain proc is arity-tolerant by design, so it is left alone: a constant
+    # subject wanting neither argument is a legitimate supplier.
+    it "allows a tolerant proc supplier" do
+      klass = Class.new(Lain::Tool) do
+        def name = "tolerant"
+        def input_schema = { type: :object, properties: {} }
+        requires("%<subject>s is refused", subject: proc { "a constant subject" }) { |_i, _c| false }
+        def perform(_input, _context) = Lain::Tool::Result.ok("never reached")
+      end
+
+      expect { klass.new.call({}, nil) }
+        .to raise_error(Lain::Tool::ContractViolation,
+                        "precondition failed for tolerant: a constant subject is refused")
+    end
+  end
 end

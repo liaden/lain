@@ -185,7 +185,7 @@ RSpec.describe Lain::Tools::EditFile do
     end
   end
 
-  # T3: a WINDOWED read is a third answer the session can give, and it had been
+  # A WINDOWED read is a third answer the session can give, and it had been
   # collapsed into "never read" -- a message that sends the model back to
   # re-read and be refused identically. Unlike the masked case, this one has a
   # remedy that actually works, because Lain::Session::ReadSet is monotone.
@@ -242,11 +242,66 @@ RSpec.describe Lain::Tools::EditFile do
     end
   end
 
-  # The pair T5 depends on, driven through the real ReadFile rather than a
-  # hand-recorded read: a window that covers the whole file must leave the file
-  # editable, or bounding the unwindowed read makes every large file
-  # permanently uneditable with no escape (write_file's overwrite contract asks
-  # Session#read? too, so it is not one).
+  # Every refusal above said the word "path" -- the placeholder from the
+  # declaration, not the file. A model juggling several files was told one of
+  # them was unreadable without being told WHICH, and the remedy names a
+  # re-read that has to name a file to be actionable. Tool::Bounds already
+  # interpolates its subject at call time; these pin that contracts now do too.
+  describe "AC: a refusal names the file it is about" do
+    def refusal_for(session, path)
+      tool.call({ path:, old_string: "hello", new_string: "goodbye" }, invocation_with(session))
+      nil
+    rescue Lain::Tool::ContractViolation => e
+      e.message
+    end
+
+    it "names the file's path in the windowed-read refusal, and keeps the remedy" do
+      path = write("hello.txt", "hello world")
+      session = Lain::Session.new
+      session.record_read(path, complete: false)
+
+      message = refusal_for(session, path)
+
+      expect(message).to include(path)
+      expect(message).not_to include("only a window of path was read")
+      expect(message).to include("Read it again with no offset and no limit, or with a window " \
+                                 "covering the whole file, then edit")
+    end
+
+    it "names the file's path in the never-read refusal" do
+      path = write("hello.txt", "hello world")
+
+      expect(refusal_for(Lain::Session.new, path)).to eq(
+        "precondition failed for edit_file: #{path} was never read this session"
+      )
+    end
+
+    it "names the file's path in the masked-read refusal" do
+      path = write("hello.txt", "hello world")
+      session = Lain::Session.new
+      session.record_read(path).record_masked_read(path)
+
+      message = refusal_for(session, path)
+
+      expect(message).to include("#{path} was read only in part this session")
+    end
+
+    # The RESOLVED path, not the spelling the model sent: #perform resolves a
+    # relative path against the WorkerEnv cwd, so a refusal naming the raw
+    # spelling would name a file that may not be the one being refused.
+    it "names the resolved path when the model sent a relative one" do
+      write("hello.txt", "hello world")
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: tmpdir, env: {}))
+
+      expect(refusal_for(session, "hello.txt")).to include(File.join(tmpdir, "hello.txt"))
+    end
+  end
+
+  # The pair the unwindowed-read bound depends on, driven through the real
+  # ReadFile rather than a hand-recorded read: a window that covers the whole
+  # file must leave the file editable, or bounding the unwindowed read makes
+  # every large file permanently uneditable with no escape (write_file's
+  # overwrite contract asks Session#read? too, so it is not one).
   describe "AC: paired with a real read_file", :seam do
     let(:hundred) { (1..100).map { |n| "line #{n}\n" }.join }
 

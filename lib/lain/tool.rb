@@ -30,8 +30,13 @@ module Lain
     class InvalidResult < Error; end
     class ContractViolation < Error; end
 
-    # A single design-by-contract predicate paired with the message shown when it
-    # is violated. Kept as data so contracts are inspectable, not just runnable.
+    # A single design-by-contract predicate paired with the message shown when
+    # it is violated -- either a String, or, when the declaration named a
+    # `subject:`, an `(input, invocation)` thunk that builds the sentence
+    # against the call that failed. {Tool::Contracts} resolves the two into one
+    # String at violation time; every contract in `lib/` is currently a thunk,
+    # because each one names the file it is refusing. Kept as data so contracts
+    # are inspectable, not just runnable.
     Contract = Data.define(:message, :predicate)
 
     include Contracts

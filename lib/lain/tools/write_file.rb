@@ -28,6 +28,11 @@ module Lain
 
       input_model Input
 
+      # The file a refusal is about, resolved as {#perform} resolves it -- see
+      # {Tools::EditFile::SUBJECT}, which this mirrors.
+      SUBJECT = ->(input, invocation) { resolved_path(input, invocation) }
+      private_constant :SUBJECT
+
       # Only an OVERWRITE (path already exists) is guarded. A nonexistent
       # path short-circuits the predicate to true so first-time creation is
       # never blocked on a read that was impossible to perform. The
@@ -49,17 +54,16 @@ module Lain
       # ordering the exist? test first would only hide that.
       # No remedy named, for {EditFile}'s reason: there is none within the
       # session, and a message that implies one produces a loop.
-      requires("path was read only in part this session -- sensitive regions were masked out of what " \
-               "you saw, so writing it back would replace them with their placeholders. Nothing in this " \
-               "session will lift that: report it and do something else") do |input, invocation|
-        session = session_of(invocation)
-        !session.masked_read?(File.expand_path(input.path, session.worker_env.cwd))
+      requires("%<subject>s was read only in part this session -- sensitive regions were masked out of " \
+               "what you saw, so writing it back would replace them with their placeholders. Nothing in " \
+               "this session will lift that: report it and do something else",
+               subject: SUBJECT) do |input, invocation|
+        !session_of(invocation).masked_read?(resolved_path(input, invocation))
       end
 
-      requires("path exists and was never read this session") do |input, invocation|
-        session = session_of(invocation)
-        path = File.expand_path(input.path, session.worker_env.cwd)
-        !File.exist?(path) || session.read?(path)
+      requires("%<subject>s exists and was never read this session", subject: SUBJECT) do |input, invocation|
+        path = resolved_path(input, invocation)
+        !File.exist?(path) || session_of(invocation).read?(path)
       end
 
       def name = "write_file"
@@ -75,21 +79,26 @@ module Lain
       protected
 
       def perform(input, invocation)
-        session = session_of(invocation)
-        # The RESOLVED path (a relative one lands under the WorkerEnv cwd, Dir.pwd
-        # by default) is what is written and recorded, so the contract above and
-        # this write agree on the same file.
-        path = File.expand_path(input.path, session.worker_env.cwd)
+        path = resolved_path(input, invocation)
         File.write(path, input.content)
         # A successful write means the session now KNOWS this file's
         # contents -- recording the read lets a following write_file or
         # edit_file call see it as read, exactly as a real read_file would.
         # The write-set mirrors edit_file's ({Workspace::Snapshot}: write-set
         # only, the documented bash gap).
-        session.record_read(path).record_write(path)
+        session_of(invocation).record_read(path).record_write(path)
         Tool::Result.ok("wrote #{input.content.bytesize} bytes to #{path}")
       rescue SystemCallError, IOError => e
         Tool::Result.error("could not write #{path}: #{e.message}")
+      end
+
+      private
+
+      # A relative path lands under the WorkerEnv cwd (Dir.pwd by default), and
+      # the RESOLVED path is what the contracts above, the write, the read-set
+      # and the refusals all agree on -- whatever spelling the model sent.
+      def resolved_path(input, invocation)
+        File.expand_path(input.path, session_of(invocation).worker_env.cwd)
       end
     end
   end

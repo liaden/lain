@@ -317,7 +317,7 @@ this order:
 2. `read_file offset: 1, limit: 50` → returns lines 1–50, and *only* those.
 3. `edit_file` on `mid.rb` → **must refuse, naming the window**:
 
-       only a window of path was read this session -- an offset/limit read showed you part of the
+       only a window of /abs/path/to/mid.rb was read this session -- an offset/limit read showed you part of the
        file, so editing it would clobber lines you never saw. Read it again with no offset and no
        limit, or with a window covering the whole file, then edit
 
@@ -337,7 +337,11 @@ $QA/peek.sh 6
 
 `[false, true]` after step 2; `[true, false]` after step 4.
 
-**The message the old behaviour gave is the thing to watch for**: `path was never read this session`
+**The refusals now name the file, by its RESOLVED ABSOLUTE PATH** -- they used to say the literal
+word `path`, which told a model nothing when several files were in play. Match on the remedy and the
+shape, not on a fixed string.
+
+**The message the old behaviour gave is the thing to watch for**: `<abs path> was never read this session`
 after a windowed read. That is not merely wrong, it is a loop generator — it sends the model back to
 read the file, get the same window, and be refused identically. The third refusal (a masked read,
 from the secret boundary) is a *different* sentence and says the situation is permanent for the

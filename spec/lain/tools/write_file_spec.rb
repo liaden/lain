@@ -74,7 +74,7 @@ RSpec.describe Lain::Tools::WriteFile do
     end
   end
 
-  # T15: a masked read is a read whose secrets the model never saw, and writing
+  # A masked read is a read whose secrets the model never saw, and writing
   # the file back is worse here than an edit is. An edit rewrites one span; a
   # write replaces the WHOLE file with what the model holds -- the projection,
   # placeholders included -- so the secret is not clobbered, it is destroyed and
@@ -112,6 +112,20 @@ RSpec.describe Lain::Tools::WriteFile do
       expect(message).not_to include("never read")
     end
 
+    # And it names WHICH file, not the placeholder word "path" the declaration
+    # used to carry -- the same capability edit_file's refusals gained.
+    it "names the file it is refusing" do
+      path = write(".env", secret)
+      message = begin
+        tool.call({ path:, content: "x" }, invocation_with(masked_session(path)))
+        nil
+      rescue Lain::Tool::ContractViolation => e
+        e.message
+      end
+
+      expect(message).to include("#{path} was read only in part this session")
+    end
+
     # The masked guard must not close the create case, and it cannot: a path
     # that was read is a path that exists.
     it "still lets a create through, since only a read path can carry a mask" do
@@ -137,7 +151,8 @@ RSpec.describe Lain::Tools::WriteFile do
 
       expect do
         tool.call({ path:, content: "y" }, invocation_with(session))
-      end.to raise_error(Lain::Tool::ContractViolation, /never read/)
+      end.to raise_error(Lain::Tool::ContractViolation,
+                         "precondition failed for write_file: #{path} exists and was never read this session")
 
       expect(File.read(path)).to eq("original")
     end

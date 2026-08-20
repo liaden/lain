@@ -27,6 +27,13 @@ module Lain
 
       input_model Input
 
+      # The file a refusal is about, resolved exactly as {#perform} resolves it,
+      # so a message names the path that would have been written rather than
+      # whatever spelling the model sent. {Tool::Contracts} asks this AS the
+      # tool, which is what puts the private resolver in its reach.
+      SUBJECT = ->(input, invocation) { resolved_path(input, invocation) }
+      private_constant :SUBJECT
+
       # THREE contracts, not one, because {Lain::Session} answers three
       # different refusals and a single message could only name one of them.
       # Order is declaration order, and it matters: a masked read is ALSO a
@@ -58,9 +65,10 @@ module Lain
       #
       # So it says the true thing: this is permanent for the session. A model
       # given any hint of a move takes it, and here every move is a loop.
-      requires("path was read only in part this session -- sensitive regions were masked out of what " \
-               "you saw, so editing it would clobber bytes you never read. Nothing in this session " \
-               "will lift that, and re-reading will not: report it and do something else") do |input, invocation|
+      requires("%<subject>s was read only in part this session -- sensitive regions were masked out of " \
+               "what you saw, so editing it would clobber bytes you never read. Nothing in this session " \
+               "will lift that, and re-reading will not: report it and do something else",
+               subject: SUBJECT) do |input, invocation|
         !session_of(invocation).masked_read?(resolved_path(input, invocation))
       end
 
@@ -80,13 +88,14 @@ module Lain
       # {Tools::ReadFile::Window}), so a file too large to read in one go is
       # still reachable and still editable. {Tools::WriteFile} is not the
       # escape hatch -- its overwrite contract asks {Lain::Session#read?} too.
-      requires("only a window of path was read this session -- an offset/limit read showed you part of " \
-               "the file, so editing it would clobber lines you never saw. Read it again with no offset " \
-               "and no limit, or with a window covering the whole file, then edit") do |input, invocation|
+      requires("only a window of %<subject>s was read this session -- an offset/limit read showed you " \
+               "part of the file, so editing it would clobber lines you never saw. Read it again with " \
+               "no offset and no limit, or with a window covering the whole file, then edit",
+               subject: SUBJECT) do |input, invocation|
         !session_of(invocation).partially_read?(resolved_path(input, invocation))
       end
 
-      requires("path was never read this session") do |input, invocation|
+      requires("%<subject>s was never read this session", subject: SUBJECT) do |input, invocation|
         session_of(invocation).read?(resolved_path(input, invocation))
       end
 
