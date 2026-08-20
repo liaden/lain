@@ -60,12 +60,12 @@ class WiringSpecWorker
   def dead? = @stopped
 end
 
-# Counts the calls to `#start` and is otherwise the chronicle it wraps. T23
-# needs an ORDERING claim -- that a config refusal lands before the session
-# record is opened -- and `#start` is the moment that record exists: it builds
-# the {Lain::SessionRecord::Scribe}, whose constructor writes the header. So
-# "start was never called" is exactly "no orphan header on disk", asserted
-# without parsing journal bytes.
+# Counts the calls to `#start` and is otherwise the chronicle it wraps. The
+# refusal group below needs an ORDERING claim -- that a config refusal lands
+# before the session record is opened -- and `#start` is the moment that record
+# exists: it builds the {Lain::SessionRecord::Scribe}, whose constructor writes
+# the header. So "start was never called" is exactly "no orphan header on
+# disk", asserted without parsing journal bytes.
 class WiringSpecStartSpy < SimpleDelegator
   attr_reader :starts
 
@@ -83,8 +83,8 @@ end
 RSpec.describe Lain::CLI::Wiring do
   # Provider resolution, context, slots, and spawn policies stay the real
   # Backend's; only the network edge swaps for Provider::Mock, so the whole
-  # chat assembly is exercised offline exactly as the exe wires it (T1 AC:
-  # the extracted Repl is constructible without the exe).
+  # chat assembly is exercised offline exactly as the exe wires it (the
+  # extracted Repl is constructible without the exe).
   let(:offline_backend_class) do
     Class.new(Lain::CLI::Backend) do
       def initialize(options, mock:)
@@ -104,9 +104,10 @@ RSpec.describe Lain::CLI::Wiring do
   end
   let(:backend) { offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider) }
 
-  # A provider that answers BOTH questions the T10 pin below needs of one: what
-  # window it is serving (`Provider#context_window_tokens`, which the base class
-  # answers nil for) and a turn whose usage gives `#occupancy` a numerator.
+  # A provider that answers BOTH questions the occupancy pin below needs of
+  # one: what window it is serving (`Provider#context_window_tokens`, which the
+  # base class answers nil for) and a turn whose usage gives `#occupancy` a
+  # numerator.
   # 7,079 tokens is the POC's own figure -- 21.6% of a served 32,768 and 86.4%
   # of the conservative fallback, so the two candidate denominators cannot be
   # confused for one another.
@@ -172,9 +173,9 @@ RSpec.describe Lain::CLI::Wiring do
       expect(notifier_for(desktop: true)).to be_a(Lain::Notify)
     end
 
-    # T15: the notifier's sweep is guarded so a raise cannot silently retire the
-    # fiber -- and post-T15 that fiber raises the notification for EVERY
-    # approval, so its silent death deletes desktop notification outright. A
+    # The notifier's sweep is guarded so a raise cannot silently retire the
+    # fiber -- and that fiber now raises the notification for EVERY approval, so
+    # its silent death deletes desktop notification outright. A
     # guard journalling into the Null channel is a guard nobody can prove fired,
     # which on a bench is most of its value; the whole finding it came out of is
     # that a surface dying quietly is invisible. So this asserts the record
@@ -220,8 +221,8 @@ RSpec.describe Lain::CLI::Wiring do
       expect(agent.toolset.fetch("subagent").seam.parent.call).to equal(agent.timeline)
     end
 
-    # T10, at the construction site the card calls "the third, the one a human
-    # actually reads". `Agent#occupancy` is asked with NO KEYWORD by
+    # The provider-reported window again, at the third construction site -- the
+    # one a human actually reads. `Agent#occupancy` is asked with NO KEYWORD by
     # Frontend::PromptComposer::RunState, so the book has to have arrived when
     # the Agent was BUILT -- and this is the only place that happens.
     #
@@ -252,15 +253,15 @@ RSpec.describe Lain::CLI::Wiring do
       expect(wiring.approvals).to be_a(Lain::Approval::Queue)
     end
 
-    # T16: the session Toolset is built ONCE (toolset_build.rb:61-64) and the
+    # The session Toolset is built ONCE (toolset_build.rb:61-64) and the
     # Agent holds it in an ivar for its whole life. This identity is what made a
     # #to_schema memo PLAUSIBLE -- Context#render (context.rb:162) calls
     # `toolset.to_schema` unconditionally every turn, against the same instance.
-    # T16 declined that memo on a measurement (~225us per call, orders of
-    # magnitude under a round trip) plus an objection: extra reachable mutable
-    # state on a value object CLAUDE.md says must be deeply frozen.
+    # An earlier round declined that memo on a measurement (~225us per call,
+    # orders of magnitude under a round trip) plus an objection: extra reachable
+    # mutable state on a value object CLAUDE.md says must be deeply frozen.
     #
-    # T1 shipped the memo anyway, and both halves of T16's objection have since
+    # The memo shipped anyway, and both halves of that objection have since
     # been answered rather than overruled. Toolset now has value equality over
     # its canonical schema bytes, so it must hold a digest; the digest REQUIRES
     # the normalized schema, so keeping it is a reordering of work already done,
@@ -285,7 +286,7 @@ RSpec.describe Lain::CLI::Wiring do
     # The chat's per-turn durability belt: {Lain::Middleware::JournalTurns} in
     # the turn phase, so every committed turn is on disk before the NEXT model
     # call. It reaches the Agent only through the run's one
-    # {Lain::Agent::Instrumentation}, and T22's mutation run found that dropping
+    # {Lain::Agent::Instrumentation}, and a mutation run found that dropping
     # it there left this whole file green -- every other example builds over
     # Chronicle::Null, whose turn phase is empty either way, so "empty" proved
     # nothing. This one records.
@@ -305,7 +306,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(turns.map { |record| record["digest"] }).to eq(agent.timeline.to_a.map(&:digest))
     end
 
-    # T13: the run negotiates its Context's `#requires` against the provider it
+    # The run negotiates its Context's `#requires` against the provider it
     # actually talks to, under `:degrade`, and journals what it lost. Before
     # this, `Capability::Policy.for` had ZERO call sites in lib/, exe/ and bin/
     # -- the record type, the emitter and the {Lain::Bench::Session::Loader}
@@ -351,13 +352,13 @@ RSpec.describe Lain::CLI::Wiring do
       expect(io.string).not_to include("capability_degraded")
     end
 
-    # T12 AC1: no --auto-approve, no third surface -- unchanged wiring.
+    # No --auto-approve, no third surface -- unchanged wiring.
     it "wires no auto surface without --auto-approve" do
       wire_agent
       expect(wiring.auto_surface).to be_nil
     end
 
-    # T12 AC1: --auto-approve constructs the surface over the SAME role_spawn
+    # --auto-approve constructs the surface over the SAME role_spawn
     # seam a `@role/skill` line folds through.
     it "wires an AutoSurface over its own role_spawn seam under --auto-approve" do
       wiring = described_class.new(options: { grace: 5, auto_approve: true }, chronicle:, status_feed:)
@@ -367,7 +368,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(wiring.auto_surface).to be_a(Lain::Approval::AutoSurface)
     end
 
-    # T17 AC1: no --secret-oracle, no surface. Asserted at the CONSTRUCTION
+    # No --secret-oracle, no surface. Asserted at the CONSTRUCTION
     # site as well as at the fan-out, because "a flag that wires nothing" and
     # "a capability with no reachable construction" are the same defect read
     # from opposite ends, and this chunk produced both.
@@ -577,7 +578,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
-  # T1: a streamed tool's bytes are a VIEW, not a record. Wiring hands
+  # A streamed tool's bytes are a VIEW, not a record. Wiring hands
   # Handler::Live a fan-out over the run's TTY Channel AND the editor's, so
   # nvim's lain://journal sees what the terminal sees -- while the durable
   # NDJSON keeps only the turn's tool_result (Tools::Bash.render_output),
@@ -729,7 +730,7 @@ RSpec.describe Lain::CLI::Wiring do
     # binds its journal on the FIRST call and now refuses a differing second
     # one, so a spec that re-asked with different arguments would be exercising
     # a wiring the run never performs. Through the Agent's one
-    # {Lain::Agent::Instrumentation} since T22 -- `fetch`, not `dig`, so a
+    # {Lain::Agent::Instrumentation} -- `fetch`, not `dig`, so a
     # renamed ivar is a KeyError here and never a silent nil.
     def source_of(agent) = instrumentation_of(agent).pipeline_source
 
@@ -983,7 +984,7 @@ RSpec.describe Lain::CLI::Wiring do
             .to raise_error(Lain::Error, /unknown isolation backend "docker".*none.*worktree/m)
 
           journaled.close(reason: :exit)
-          # T3: "no session record behind" is now literal. A journal that
+          # "No session record behind" is now literal. A journal that
           # closes with nothing ever recorded into it removes its own file, so
           # the zero-byte artifact never reaches the readers that pick the
           # newest session (--resume, --fork, watch, sessions).
@@ -997,14 +998,14 @@ RSpec.describe Lain::CLI::Wiring do
     require "stringio"
     require "tmpdir"
 
-    # The T9 injection seams: a spec assembles and runs the whole conversation
+    # The injection seams: a spec assembles and runs the whole conversation
     # through #run's own path -- no send(:build_repl), no instance_variable_set
     # -- by handing in a StringIO-backed TTY factory and a recording conductor
     # opener instead of the real-terminal defaults.
     let(:opened) { [] }
     let(:conductor_opener) { ->(**kwargs) { Lain::CLI::Conductor.open(**kwargs).tap { |c| opened << c } } }
 
-    # T13 hands the factory a `prompt_renderer:` too. It is swallowed rather
+    # Wiring hands the factory a `prompt_renderer:` too. It is swallowed rather
     # than forwarded: what this spec is about is the object WIRING composes and
     # passes on, not what the TTY then does with it (that is tty_spec's).
     def tty_factory(input, dir)
@@ -1030,7 +1031,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(opened).to eq([wiring.conductor])
     end
 
-    # T7: the Conductor is the ONE place a user prompt is answered, so it is
+    # The Conductor is the ONE place a user prompt is answered, so it is
     # where RunClock#record_input is called -- and the clock it records on has
     # to be the one the StatusFeed publishes, or the published idle never
     # resets. ChatLaunch builds it; this class only has to pass it on.
@@ -1052,10 +1053,10 @@ RSpec.describe Lain::CLI::Wiring do
     # {Lain::CLI::Wiring#goal_journal} (wiring.rb:334) resolves the standing-goal
     # driver's destination through {Lain::CLI::Chronicle#record_journal}. Nothing
     # asserted it: replacing the resolution with a fresh /dev/null Journal left
-    # the ENTIRE suite green (T22's M26), because every other example here runs
-    # over Chronicle::Null, whose record_journal IS a discard -- so a discard
-    # substituted for a discard changed nothing observable anywhere. This one
-    # records, and drives the real driver the run wired.
+    # the ENTIRE suite green (a mutant that survived), because every other
+    # example here runs over Chronicle::Null, whose record_journal IS a discard
+    # -- so a discard substituted for a discard changed nothing observable
+    # anywhere. This one records, and drives the real driver the run wired.
     context "with a recording chronicle" do
       let(:journal_io) { StringIO.new }
       let(:chronicle) do
@@ -1108,7 +1109,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(env.chronicle).to be(chronicle)
     end
 
-    # The load-bearing identity AC1/AC3 stand on (T14 panel probe 7): a dropped
+    # The load-bearing identity AC1/AC3 stand on (a review panel's probe): a dropped
     # surface_kwargs would leave these readers on their Nulls and silently
     # disconnect /yolo from the Gate and /model from the Agent's Context.
     it "hands the Env the SAME switches the Gate and the Agent's context hold" do
@@ -1116,7 +1117,7 @@ RSpec.describe Lain::CLI::Wiring do
       env = wiring.command_env
 
       expect(env.policy_switch).to be_a(Lain::Approval::PolicySwitch)
-      # T21: what the Gate holds is the LADDER, and the identity that matters is
+      # What the Gate holds is the LADDER, and the identity that matters is
       # one rung down -- its asking rung must park on the session's ONE queue,
       # the same object /approve drains.
       expect(env.policy_switch.current).to be_a(Lain::Approval::Escalation)
@@ -1128,8 +1129,8 @@ RSpec.describe Lain::CLI::Wiring do
       expect(env.agent.context.model).to eq("probe-model-x")
     end
 
-    # T15: BEFORE this card a wired session read the project tree FIVE times --
-    # two Skill::Catalog loads (the command Surface's, and the one
+    # BEFORE the threading below, a wired session read the project tree FIVE
+    # times -- two Skill::Catalog loads (the command Surface's, and the one
     # ReplMiddleware.renderer did for Tools::RunSkill) and three Prompt::Slots
     # loads (Backend's memoized one, the repl stack's, and RunSkill's). Same
     # tree, so the drift never showed in a test; it would show the moment a
@@ -1168,7 +1169,7 @@ RSpec.describe Lain::CLI::Wiring do
         expect(stack_renderer(wiring.command_surface).instance_variable_get(:@slots)).to be(slots)
       end
 
-      # T40: the pair had TWO owners -- Wiring loaded the catalog, Backend the
+      # The pair had TWO owners -- Wiring loaded the catalog, Backend the
       # slots -- and travelled onward as two keywords, which is the state of an
       # object nobody had named. It is one {Skill::Library} now, owned by the
       # Backend (the lowest point above every reader, since #context renders the
@@ -1184,9 +1185,10 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       # What the threading BUYS, stated as a count rather than as identity: five
-      # reads of the project tree before T15, two after it (one per owner), and
-      # one apiece now. Identity alone would still pass if some reader loaded a
-      # snapshot it then threw away, so the count is its own assertion.
+      # reads of the project tree originally, two after the threading (one per
+      # owner), and one apiece now. Identity alone would still pass if some
+      # reader loaded a snapshot it then threw away, so the count is its own
+      # assertion.
       it "loads the catalog exactly once and the slots exactly once for the whole session" do
         allow(Lain::Skill::Catalog).to receive(:load).and_call_original
         allow(Lain::Prompt::Slots).to receive(:load).and_call_original
@@ -1204,7 +1206,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(wiring.command_env.approvals).to be(Lain::CLI::Command::Env::YoloApprovals)
     end
 
-    # T13: this class is the only object holding the Agent, the RunClock and
+    # This class is the only object holding the Agent, the RunClock and
     # the StatusFeed at once, so composing the prompt's state reader is its
     # job -- and the TTY factory is where it hands it over.
     describe "the prompt renderer" do
@@ -1284,7 +1286,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    # T27: request_review is a capability, so it is the toolset build's to
+    # request_review is a capability, so it is the toolset build's to
     # append -- but WHICH epic a chat is in is a question the chat tier never
     # had to answer before, and the answer decides whether the tool exists at
     # all. {EpicMount} owns both; what these examples pin is the wiring.
@@ -1385,7 +1387,7 @@ RSpec.describe Lain::CLI::Wiring do
         end
       end
 
-      # T31a, AND THE REASON THIS GROUP NEEDED MORE THAN IT HAD. This wiring
+      # THE REASON THIS GROUP NEEDED MORE THAN IT HAD. This wiring
       # mounted the epic with `notify:` and `bindings:` only, so `changesets:`
       # and `surface:` stayed nil, `Implementation#hold` answered
       # `Refusals.no_changeset` on every call in every real process, and the
@@ -1517,7 +1519,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
-  # T5: the run's {Lain::Project}, threaded. Five collaborators used to reach
+  # The run's {Lain::Project}, threaded. Five collaborators used to reach
   # `Dir.pwd` for themselves, which made "where is this project" a question
   # five objects answered independently -- and answered WRONG from a
   # subdirectory, where the root is up the tree and the cwd is not it.
@@ -1665,9 +1667,9 @@ RSpec.describe Lain::CLI::Wiring do
       # THE EXAMPLE THAT MAKES THE TWO ABOVE MEAN SOMETHING. Both of them chdir
       # into a bare tmpdir that is its own root, so `root == cwd` holds by
       # construction and `Dir.pwd` would satisfy them exactly as the resolver
-      # does -- the T5 review demonstrated it: replacing #default_project's body
+      # does -- the review demonstrated it: replacing #default_project's body
       # with `Project.new(root: Dir.pwd, cwd: Dir.pwd, ...)` reverted the whole
-      # card at its one production entry point and left every delivered example
+      # change at its one production entry point and left every delivered example
       # green. This one WALKS: `.lain/` is two directories up, so the two fields
       # must differ, and only a resolution can tell them apart.
       #
@@ -1722,7 +1724,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
-  # T23. Every OTHER spec of this boundary passes by handing a classifier in,
+  # Every OTHER spec of this boundary passes by handing a classifier in,
   # and production handed one in nowhere -- `Switchboard.for` never passed
   # `sensitivity:`, so the constructor's Null default stood and `gates?`
   # answered false for every path in every real chat. So nothing here injects a
@@ -1758,7 +1760,7 @@ RSpec.describe Lain::CLI::Wiring do
     # classifier built to the same recipe, and it needs no reach past the Policy.
     def verdict_for(board, path) = board.sensitivity.filter.sift([path]) { |row| [row] }.withheld.first
 
-    # `HOME` is injected at the tmpdir base for the reason the T5 walk group
+    # `HOME` is injected at the tmpdir base for the reason the project-walk group
     # above injects it: the home-ANCHORED half of the classifier's denied table
     # is built from it, so a fixture reading this developer's real home would
     # assert against a directory nobody controls. {Lain::Paths} is where the

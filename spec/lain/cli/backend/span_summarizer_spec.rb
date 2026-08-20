@@ -42,7 +42,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
      { "role" => "assistant", "content" => [{ "type" => "text", "text" => "it tokenizes, then folds" }] }]
   end
 
-  # T10: a Backend on `--provider ollama` asks its server which window it is
+  # A Backend on `--provider ollama` asks its server which window it is
   # serving before it builds the run's book ({Backend#context_window}), so
   # wiring a source here now makes one GET. Nothing in this file is about that
   # number -- "nothing resident" is the answer that leaves the conservative
@@ -93,7 +93,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
 
   def collapsed(strategy) = Sync { strategy.blocks(messages) }.map { |block| block["text"] }
 
-  # T9: the flag's KEY lives here, so the pipeline that builds the run and the
+  # The flag's KEY lives here, so the pipeline that builds the run and the
   # construction check `lain up` makes before it creates a session resolve
   # `--compact-strategy` through one object. See {Lain::CLI::ChatLaunch
   # #preflight} for why that check cannot reach it through
@@ -189,7 +189,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
     end
   end
 
-  # == T5's GAP, recorded rather than fixed
+  # == THE GAP, recorded rather than fixed
   #
   # These pin what `--compact-strategy=summarizing` does NOT do, in the shape
   # {Lain::Compaction::Strategy::Summarizing}'s own refutations use: a negative
@@ -197,7 +197,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
   # reader tidies away. They are a DEFECT under glass, not a design being
   # blessed -- do not read a green run here as "the free tier is wired".
   #
-  # T5 set out to route this strategy through {Lain::Oracle::RoutedSummarizer},
+  # This strategy was meant to route through {Lain::Oracle::RoutedSummarizer},
   # so a project's own `.lain/summarizers.rb` could collapse a span for free.
   # It cannot, and the reason is one layer down rather than in the wiring:
   # {Lain::Compaction::Strategy::Summarizing#question} is `Canonical.dump`

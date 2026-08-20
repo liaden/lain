@@ -69,7 +69,7 @@ module Lain
 
     # The upfront-catalog-safe projection of {#description}: its first line
     # only. This is the SINGLE source both halves of deferred disclosure
-    # (T13) share -- {Toolset::Disclosure::Deferred} renders it, and
+    # share -- {Toolset::Disclosure::Deferred} renders it, and
     # {Tools::ToolSearch} both renders AND matches queries against it. A
     # search that matched the fuller `#description` while only ever
     # rendering this truncation would let a caller binary-search substrings

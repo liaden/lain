@@ -1,5 +1,5 @@
--- The annotation TEXT for every extmark, per review buffer: `buf -> id -> text`
--- (T16). The extmark itself carries only the position -- nvim moves it as the
+-- The annotation TEXT for every extmark, per review buffer: `buf -> id -> text`.
+-- The extmark itself carries only the position -- nvim moves it as the
 -- human edits, which is the whole reason to use one -- so the words live here,
 -- keyed by the id nvim answers with. The two are written together and MUST be
 -- cleared together: a stale entry, or a mark whose text is gone, produces an
@@ -7,7 +7,7 @@
 -- malformed review rather than as the bookkeeping slip it is.
 local review_annotations = {}
 
--- Open a real file on disk for review (T16), in a focused split -- the same
+-- Open a real file on disk for review, in a focused split -- the same
 -- deliberate focus-taking as set_compose, and for the same reason: lain is
 -- handing the human something and asking them to work on it. The stamps are
 -- what the `done` gesture sends back: `(generation, epic_slug)` is the review's
@@ -277,7 +277,7 @@ vim.api.nvim_create_autocmd("BufUnload", {
   callback = function(ev) review_annotations[ev.buf] = nil end,
 })
 
--- A note against the line the cursor is on (T16). The text is shown as virtual
+-- A note against the line the cursor is on. The text is shown as virtual
 -- text and remembered beside the extmark that holds its position, so it travels
 -- with the line as the human keeps editing. The cursor row is 1-based and
 -- extmarks are 0-based, which is the whole of the arithmetic here.
@@ -300,7 +300,7 @@ define("LainAnnotate", function()
   end)
 end)
 
--- Hand the review back (T16). The command refuses rather than sending on a
+-- Hand the review back. The command refuses rather than sending on a
 -- modified buffer: the Ruby side settles from what is ON DISK, so unsaved edits
 -- would be a review of bytes nobody has.
 --

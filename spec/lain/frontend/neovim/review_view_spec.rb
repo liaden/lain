@@ -887,7 +887,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       expect(buffer_var("lain_view_generation")).to eq(41)
     end
 
-    it "lands the sidebar in T26's sidebar slot, not in a split of the session tab" do
+    it "lands the sidebar in the review tabpage's sidebar slot, not in a split of the session tab" do
       set_review(%w[one], 1)
 
       expect(lua("return vim.api.nvim_win_get_buf(...)", [sidebar_window])).to eq(review_buf)

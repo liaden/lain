@@ -5,7 +5,7 @@ require "async"
 module Lain
   module Review
     # A question about ONE hunk, answered by a fresh role-scoped child and
-    # rendered back into the thread pane T18 owns.
+    # rendered back into the thread pane.
     #
     # == The answerer is a ROLE, and that is the whole design
     #
@@ -50,14 +50,14 @@ module Lain
     # gesture. An answer is a provider round trip, so computing one inside {#ask}
     # would stall :LainReply and every review gesture for seconds. {#ask}
     # therefore renders a pending marker, hands the work to {Reactor}, and
-    # returns; the answer arrives later on T18's own outbound render path. Every
-    # failure the answer can produce is contained inside that task, so a docent
-    # that raises costs one thread's answer and never the fiber.
+    # returns; the answer arrives later on the thread pane's own outbound render
+    # path. Every failure the answer can produce is contained inside that task, so
+    # a docent that raises costs one thread's answer and never the fiber.
     #
     # == A repeated question is not a repeated spawn
     #
-    # `review_ask` carries no stamp, and T18's editor half re-sends the
-    # identical payload when a human hits `:w` twice: its write autocommand
+    # `review_ask` carries no stamp, and the thread pane's editor half re-sends
+    # the identical payload when a human hits `:w` twice: its write autocommand
     # fires on an unmodified `acwrite` buffer, and the send does not advance the
     # buffer's record of what has already been rendered. A duplicate is
     # therefore ORDINARY, not exotic -- and a duplicate here is a duplicate
@@ -125,9 +125,9 @@ module Lain
       SPEAKER_LAIN = "lain"
 
       # What stands in for the answer while a child is thinking. It is a RENDERED
-      # message rather than a spinner or an empty pane, for the reason T18's own
-      # empty-thread placeholder gives: a pane that shows nothing reads as a
-      # rendering glitch, and this one has to say that a question was taken.
+      # message rather than a spinner or an empty pane, for the reason the thread
+      # pane's own empty-thread placeholder gives: a pane that shows nothing reads
+      # as a rendering glitch, and this one has to say that a question was taken.
       PENDING = "(thinking -- the answer will replace this line)"
 
       # What a question the session ended under is settled to. An answer nobody
@@ -303,7 +303,7 @@ module Lain
 
       # @param changeset [Review::Changeset] the diff every question is about;
       #   read for its hunks and its two revisions, never held open past a render
-      # @param view [#show] T18's thread pane: takes `(anchor, entries)` and
+      # @param view [#show] the thread pane: takes `(anchor, entries)` and
       #   answers the notice saying why the render did not land, or nil. A DUCK
       #   and never a named type, for {Entry}'s reason.
       # @param answerer [#call] `(brief) -> Tool::Result`; see {Answerer}

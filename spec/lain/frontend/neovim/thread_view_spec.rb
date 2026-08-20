@@ -6,7 +6,7 @@ require "socket"
 require "timeout"
 require "tmpdir"
 
-# T18: `runtime/51_thread.lua` and {Lain::Frontend::Neovim::ThreadView} -- one
+# `runtime/51_thread.lua` and {Lain::Frontend::Neovim::ThreadView} -- one
 # anchor's conversation, shown in the diff pane the cursor is NOT in, swapped as
 # the cursor moves.
 #
@@ -107,8 +107,8 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
 
   def counter_old_lines = (1..40).map { |i| i == 20 ? "was line 20" : "line #{i}" }
 
-  # The file under review, opened as T15's pair. Every example starts here
-  # because a thread pane with no diff pair has nothing to be opposite of.
+  # The file under review, opened as `47_diff.lua`'s pair. Every example starts
+  # here because a thread pane with no diff pair has nothing to be opposite of.
   def open_counter(line = 1, at: revisions)
     lua("_G.__lain.open_changeset(...)", ["docs/counter.txt", counter_old_lines, line, at])
   end
@@ -117,9 +117,10 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
     lua("_G.__lain.open_changeset(...)", ["docs/other.txt", (1..12).map { |i| "other #{i}" }, line, revisions])
   end
 
-  # T18's entry point. The anchor rides as a TABLE -- its id AND the position the
-  # pane has to watch -- because the pane is cursor-driven and Ruby is the only
-  # side that knows where an anchor sits (see `51_thread.lua`'s header).
+  # The thread pane's entry point. The anchor rides as a TABLE -- its id AND the
+  # position the pane has to watch -- because the pane is cursor-driven and Ruby
+  # is the only side that knows where an anchor sits (see `51_thread.lua`'s
+  # header).
   def anchor(id:, line:, side: "new", path: "docs/counter.txt")
     { "id" => id, "path" => path, "side" => side, "line" => line }
   end
@@ -130,7 +131,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
     lua("local ok, err = pcall(_G.__lain.set_thread, ...) return { ok, tostring(err) }", [anchor_table, lines])
   end
 
-  # slot -> window, read off T26's window variables so this never calls
+  # slot -> window, read off `41_layout.lua`'s window variables so this never calls
   # `review_layout`, which TAKES FOCUS and would destroy what half these
   # examples assert.
   def slots
@@ -528,7 +529,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
       expect(buffer_var(buf_in(rebuilt), "lain_thread_anchor")).to eq("a-20")
     end
 
-    # T26's panel found a repair that stole focus, invisible to the suite
+    # A review panel found a repair that stole focus, invisible to the suite
     # because the no-focus-theft example only exercised the INTACT path. This is
     # that example pinned on the repair path.
     it "leaves the human where they were while it rebuilds" do
@@ -1281,13 +1282,13 @@ RSpec.describe Lain::Frontend::Neovim::ThreadView do
     expect(held.map(&:class)).to eq([RecordingThreadInlet])
   end
 
-  # ⚠️ A CROSS-CARD SHAPE, pinned from the only side this tree can see. T24's
+  # ⚠️ A CROSS-CARD SHAPE, pinned from the only side this tree can see. The
   # docent renders its exchange into these two members from its own value
   # object, by duck rather than by construction, so renaming one here breaks it
   # at RUNTIME with nothing red. This is half a pin: it fails if this side
   # drifts, and it cannot see the other. The whole pin is one example asserting
   # the two member lists equal, and it belongs wherever both constants are
-  # loadable -- not here, where T24's is not.
+  # loadable -- not here, where the docent's is not.
   it "takes a message as a speaker and their text, in those names" do
     expect(described_class::Entry.members).to eq(%i[speaker text])
   end
@@ -1298,44 +1299,44 @@ RSpec.describe Lain::Frontend::Neovim::ThreadView do
   end
 end
 
-# `[deletable]`: T25 removes this capability by deleting its files, so nothing
+# `[deletable]`: removing this capability means deleting its files, so nothing
 # outside them may name it. Runs without an editor.
 RSpec.describe "the thread pane's deletability" do
-  it "is one runtime module, at the prefix T18 was given" do
+  it "is one runtime module, at the prefix the thread pane was given" do
     modules = Lain::Frontend::Neovim::RuntimeLoader.new.module_paths.map { |path| File.basename(path) }
 
     expect(modules).to include("51_thread.lua")
   end
 
   # ⚠️ REWRITTEN, because the first version proved the wrong thing. It asserted
-  # that NOTHING outside T18's own files names the capability -- which is not
-  # deletability, it is "this feature has no users", a property no shipped
-  # feature can satisfy and the very state that let this one ship broken (the
+  # that NOTHING outside the thread pane's own files names the capability --
+  # which is not deletability, it is "this feature has no users", a property no
+  # shipped feature can satisfy and the very state that let this one ship broken (the
   # port adapter posted a shape the editor refuses, and no spec reached the
-  # rail). It also made prose pay: a sibling card's comments had to say "T18's
-  # editor half" rather than cite {ThreadView::Entry}, because naming a thing
-  # failed a test.
+  # rail). It also made prose pay: a sibling card's comments had to say "the
+  # thread pane's editor half" rather than cite {ThreadView::Entry}, because
+  # naming a thing failed a test.
   #
   # So: CODE may name the capability only from an enumerated set of consumers,
   # and PROSE may name it anywhere. A whole-line comment is stripped before the
-  # scan; a new unlisted reference in code still fails, which is what keeps T25
-  # able to find everything by deleting and reading the reds.
+  # scan; a new unlisted reference in code still fails, which is what keeps a
+  # deletion able to find everything by deleting and reading the reds.
   #
-  # The row, and what T25 owes each entry:
+  # The row, and what a deletion owes each entry:
   #
   #   1. `lib/lain/frontend/neovim.rb` -- the require line. A dangling
   #      `require_relative` is a LoadError rather than a missing feature. (No
-  #      such line for the lua module: T6's loader globs the directory.)
+  #      such line for the lua module: the runtime loader globs the directory.)
   #   2. `lib/lain/review/surface/neovim.rb` -- the port adapter renders
   #      `#annotate` and `#thread` through {ThreadView}. Those two messages are
-  #      the PORT's, so deleting the pane does not delete them: T25 has to
-  #      decide what they become. Left as they are they would post to a lua
+  #      the PORT's, so deleting the pane does not delete them: a deletion has
+  #      to decide what they become. Left as they are they would post to a lua
   #      entry point that no longer exists -- a silent nil call inside a notify,
   #      not a LoadError, which is exactly the failure this row exists to make
   #      impossible.
   #   3. `lib/lain/review/docent.rb` -- the docent asks a review surface whether
   #      it has a pane to draw an answer into, and takes the one it finds. It
-  #      costs T25 nothing extra: the deletion map already records that removing
+  #      costs a deletion nothing extra: the deletion map already records that removing
   #      the pane forces the docent out with it, so this reference goes with the
   #      file it lives in. It is listed because THIS sweep is a flat allowlist
   #      and knows nothing about that nesting. Its own spec is here for the same
@@ -1353,7 +1354,7 @@ RSpec.describe "the thread pane's deletability" do
     consumers = ["lib/lain/frontend/neovim.rb", "lib/lain/review/docent.rb",
                  "lib/lain/review/surface/neovim.rb", "spec/lain/review/docent_spec.rb",
                  "spec/lain/review/surface/neovim_spec.rb"]
-    # T25's `deletability_spec.rb` is the MAP, so it names every deletable
+    # `deletability_spec.rb` is the MAP, so it names every deletable
     # capability by construction and exempts itself from its own sweep for the
     # same reason. It is not a consumer: the thread pane's deletion takes its
     # ROW there, which is an edit, not the file.
@@ -1362,8 +1363,8 @@ RSpec.describe "the thread pane's deletability" do
 
     unlisted = "a file outside the thread pane's deletion row now names it in CODE. If that is a " \
                "legitimate new consumer, add it to `consumers` above AND to the chunk's deletion map, so " \
-               "T25 removes it with the capability. If it is only a mention in prose, a whole-line comment " \
-               "is already exempt."
+               "a deletion removes it with the capability. If it is only a mention in prose, a " \
+               "whole-line comment is already exempt."
 
     naming = sources.select { |path| File.file?(path) && names_it_in_code?(path) }
                     .map { |path| path.delete_prefix("#{root}/") }
@@ -1377,7 +1378,7 @@ RSpec.describe "the thread pane's deletability" do
   # and `lain://thread` in prose, and `nvim_plugin_spec.rb`'s own check is
   # one-directional (a documented command must exist, never the reverse). So the
   # stanza would survive a deletion green, leaving a manual entry for a command
-  # that is gone. Named here, in the row, so T25 finds it by failing.
+  # that is gone. Named here, in the row, so a deletion finds it by failing.
   it "is documented in one stanza of the manual, which goes with it" do
     doc = File.read(File.expand_path("../../../../plugin/nvim/doc/lain.txt", __dir__))
 

@@ -521,7 +521,7 @@ RSpec.describe Lain::Review::Session do
     end
   end
 
-  # T31c. {Lain::Review::Bounds#check_presentation!} used to be called from
+  # {Lain::Review::Bounds#check_presentation!} used to be called from
   # {Lain::CLI::Review#present} and nowhere else -- so the ONE text command that
   # remembered to ask was bounded and every editor surface was not: `/review` of
   # an 800-file pull request drew all of it into the sidebar. The guard lives

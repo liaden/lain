@@ -6,7 +6,7 @@ require "socket"
 require "timeout"
 require "tmpdir"
 
-# The changeset review as the EDITOR's two answering writes see it (T11): the
+# The changeset review as the EDITOR's two answering writes see it: the
 # far side of {Lain::Frontend::Neovim#bind_changeset_review}, recording what
 # reached it and answering whatever verdict an example asked for. The same duck
 # {Lain::CLI::HumanReplies} binds for the acked gestures -- a wiring binds one
@@ -34,7 +34,7 @@ end
 # round trip that actually WIRES a listener into a live nvim session is the
 # :nvim group's job (neovim_spec.rb, neovim_request_spec.rb,
 # neovim_runtime_spec.rb); this file pins the abstract base's refusal and
-# {Listener::Null}'s no-op answers on their own (T34).
+# {Listener::Null}'s no-op answers on their own.
 RSpec.describe Lain::Frontend::Neovim::RpcThread::Listener do
   subject(:listener) { described_class.new }
 
@@ -125,7 +125,7 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
   let(:wakes) { [] }
   let(:waker) { -> { wakes << :woke } }
 
-  # T11's three review entry points are the same door, one capability wider:
+  # The three review entry points are the same door, one capability wider:
   # a queue push and a wake, answering nil when it landed.
   let(:revisions) { { "old" => "base0", "new" => "head1" } }
 
@@ -238,7 +238,7 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
 end
 
 RSpec.describe Lain::Frontend::Neovim::RenderQueue do
-  # T17/F17, and the lua-side `checked_lines` (47_diff, 51_thread) is the
+  # F17, and the lua-side `checked_lines` (47_diff, 51_thread) is the
   # convention this matches: `nvim_buf_set_lines` refuses an item containing a
   # newline, and every render here rides `nvim_exec_lua` as a NOTIFY, so the
   # refusal reaches nobody -- the buffer simply stops. A view that breaks the
@@ -438,9 +438,9 @@ RSpec.describe Lain::Frontend::Neovim::RpcThread, "#dispatch" do
     expect(session).to have_received(:respond).with(7, nil, a_string_matching(/NoMethodError.*nothing was submitted/m))
   end
 
-  # T11's acked half. A mark is a hand-off nothing on this thread answers, so it
-  # takes {#acknowledge}'s path exactly as `reply` does: the editor has its
-  # answer before any consumer has looked at the command.
+  # The review rail's acked half. A mark is a hand-off nothing on this thread
+  # answers, so it takes {#acknowledge}'s path exactly as `reply` does: the
+  # editor has its answer before any consumer has looked at the command.
   it "acks a review mark and only then routes it" do
     dispatch("review_mark", [4, "reviewed", 3])
 
@@ -456,9 +456,9 @@ RSpec.describe Lain::Frontend::Neovim::RpcThread, "#dispatch" do
     expect(rpc.command_inbox.pop(true)).to eq(["review_ask", ["anchor-1", "why this way?"]])
   end
 
-  # T11's answered half, and the reason it is answered: a note whose side lain
-  # cannot read must fail the `:w`, so the buffer stays modified and the human's
-  # words are still theirs to fix.
+  # The review rail's answered half, and the reason it is answered: a note whose
+  # side lain cannot read must fail the `:w`, so the buffer stays modified and
+  # the human's words are still theirs to fix.
   it "fails an annotate write naming the side it could not read, and never records it" do
     allow(listener).to receive(:review_annotated)
 
@@ -541,9 +541,10 @@ RSpec.describe Lain::Frontend::Neovim::Router do
 
   let(:listener) { Lain::Frontend::Neovim::RpcThread::Listener::Null.new }
 
-  # T11 made it three; T16's settled batch makes it four. The split is wire
-  # semantics, not routing convenience: these are the gestures lain can REFUSE,
-  # so their route's return value has to be the response.
+  # The changeset review's writes made it three; the settled note batch makes it
+  # four. The split is wire semantics, not routing convenience: these are the
+  # gestures lain can REFUSE, so their route's return value has to be the
+  # response.
   it "names the writes whose route answers the editor" do
     %w[question review_annotate review_verdict review_notes].each { |verb| expect(router).to be_answers(verb) }
     %w[reply resend compose compose_abandon question_abandon review_done
@@ -599,10 +600,10 @@ RSpec.describe Lain::Frontend::Neovim::Router do
 
     # THE FLAT-POSITIONAL SHAPE, which is what this guard is actually for.
     # `runtime/65_review.lua:75-79` records a verb sending flat positionals and
-    # everything after the first being dropped on the floor; T14, T15 and T18
-    # write the next three lua halves, so this is the mistake they are most
-    # likely to make. A bare String or Integer where the one array belongs used
-    # to raise NoMethodError INSIDE the guard whose whole purpose is that the
+    # everything after the first being dropped on the floor; the sidebar, diff
+    # and thread rails write their lua halves, so this is the mistake they are
+    # most likely to make. A bare String or Integer where the one array belongs
+    # used to raise NoMethodError INSIDE the guard whose whole purpose is that the
     # wire can never raise -- and {RpcThread#answer} answers that and re-raises,
     # ending the session over a lua typo.
     it "refuses flat positionals in every verb rather than raising inside the guard" do
@@ -618,7 +619,7 @@ RSpec.describe Lain::Frontend::Neovim::Router do
       expect(listener).not_to have_received(:review_verdict_given)
     end
 
-    # THE TWO MEMBERS THIS BOUNDARY USED TO DROP ON THE FLOOR (T16). It hands on
+    # THE TWO MEMBERS THIS BOUNDARY USED TO DROP ON THE FLOOR. It hands on
     # exactly {KEYS} -- which is right, and is why a member the editor sends and
     # the list does not name vanishes with no refusal and no warning. `revision`
     # is the diff the human was LOOKING at, and it is the only thing that makes
@@ -659,8 +660,9 @@ RSpec.describe Lain::Frontend::Neovim::Router do
     # was checked only for its key's presence. Downstream `WireInteger.read`
     # RAISES on each of these, from inside a listener, which the RPC thread
     # answers and then re-raises -- so leaving it open moved the obligation
-    # silently to T13/T19/T20 and turned it into a session death when they meet
-    # it. The domain is {Review::Anchor}'s, asked here rather than restated.
+    # silently downstream -- to the review session, the Neovim surface and the
+    # review CLI -- and turned it into a session death when they meet it. The
+    # domain is {Review::Anchor}'s, asked here rather than restated.
     it "refuses a line that names no position, and never hands it on" do
       allow(listener).to receive(:review_annotated)
 
@@ -702,8 +704,8 @@ RSpec.describe Lain::Frontend::Neovim::Router do
     end
   end
 
-  # T16's `:LainNoteDone`: one settling gesture carrying every note the human
-  # placed, answered once.
+  # The note rail's `:LainNoteDone`: one settling gesture carrying every note
+  # the human placed, answered once.
   describe "a settled review's wire shape" do
     def note(overrides = {})
       { "path" => "lib/lain/agent.rb", "side" => "new", "line" => 12,
@@ -824,8 +826,8 @@ end
 #
 # The frontend is never STARTED -- the socket does not exist -- so no editor is
 # spawned and nothing here reaches lua. That is deliberate: the lua half of
-# `set_review`/`open_changeset`/`set_thread` arrives in T14, T15 and T18, and a
-# spec that needed it would be reaching into their scope.
+# `set_review`/`open_changeset`/`set_thread` arrives in the sidebar, diff and
+# thread rails, and a spec that needed it would be reaching into their scope.
 RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
   subject(:frontend) { described_class.new(channel: Lain::Channel.new, socket_path: "/nonexistent.sock") }
 
@@ -929,9 +931,9 @@ RSpec.describe Lain::Frontend::Neovim, "the review write seam" do
     expect(Lain::Frontend::Neovim::NoReviewWrites::UNOPENED).to include("no review is open")
   end
 
-  # T31a: the same rail, with the object a production wiring actually binds to
+  # The same rail, with the object a production wiring actually binds to
   # it. Every example above proves the rail CARRIES a write; these prove what is
-  # at the end of it, because until this card the answer was
+  # at the end of it, because until it was wired the answer was
   # {Lain::Frontend::Neovim::NoReviewWrites} in every process that ever ran --
   # `bind_changeset_review` had no caller anywhere in `lib/` or `exe/`.
   describe "with the real Review::Handover bound to it" do

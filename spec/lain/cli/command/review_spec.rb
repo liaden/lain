@@ -8,7 +8,7 @@ require "stringio"
 require "timeout"
 require "tmpdir"
 
-# `/review <target>` (T31b): the repl command that puts a human in front of a
+# `/review <target>`: the repl command that puts a human in front of a
 # pull request inside the cockpit they already have open.
 #
 # EVERY GESTURE HERE ARRIVES ON THE COMMAND INBOX, and that is the whole point
@@ -62,7 +62,7 @@ end
 
 # The frontend, reduced to the three messages {Lain::CLI::HumanReplies} asks of
 # one. The surface is the REAL text surface, the view the REAL sidebar view and
-# its diff surface the REAL {Lain::Frontend::Neovim::ChangesetDiff} (T32a), for
+# its diff surface the REAL {Lain::Frontend::Neovim::ChangesetDiff}, for
 # `wiring_spec.rb`'s reason: what is under test is whether the command reaches
 # THESE, and a double answering the port would be indistinguishable from
 # {Lain::Review::Surface::Null}. Only the INLET is recorded, because its far
@@ -155,11 +155,11 @@ RSpec.describe Lain::CLI::Command::Review do
   def gestured(*commands, &settled)
     commands.each { |wire| rail.push(wire) }
     Sync do |task|
-      # The CONVERSATION's surfaces, not the ask's. T33 split the two, and the
+      # The CONVERSATION's surfaces, not the ask's. The two were split, and the
       # editor rail moved to the conversation-scoped one -- which is what a
       # gesture arriving while the human sits at `you>` is served by. Spinning
       # only these is therefore the stronger claim: it says a gesture needs no
-      # model turn in flight, which is the whole of the defect T33 closed.
+      # model turn in flight, which is the whole of the defect that split closed.
       surfaces = replies.session_surfaces(task)
       begin
         pumped_until(task, reason: "the gesture was served", &settled)
@@ -315,7 +315,7 @@ RSpec.describe Lain::CLI::Command::Review do
       expect(editor.bound.session.changeset.files.map { |file| file.path.to_s }).to include("README")
     end
 
-    # T34: the round has to be reachable from `/review-submit`, and the object
+    # The round has to be reachable from `/review-submit`, and the object
     # that reaches it is the outbox. Asserted through the SESSION rather than
     # through a `have_received(:hold)`, because what matters is that the round
     # the outbox would post is the round this command drew.
@@ -387,9 +387,9 @@ RSpec.describe Lain::CLI::Command::Review do
     end
   end
 
-  # T31c, AND THE REGRESSION THIS CARD EXISTS FOR. The size guard T29 shipped
-  # was called from {Lain::CLI::Review#present} and nowhere else -- the TEXT
-  # command -- so the editor path had no ceiling at all and `/review` of an
+  # THE REGRESSION THIS GROUP EXISTS FOR. The size guard was originally called
+  # from {Lain::CLI::Review#present} and nowhere else -- the TEXT command -- so
+  # the editor path had no ceiling at all and `/review` of an
   # 800-file pull request drew every row of it into the sidebar. The guard is on
   # {Lain::Review::Session#present} now, which is what both commands reach the
   # surface through.
@@ -502,7 +502,7 @@ RSpec.describe Lain::CLI::Command::Review do
       expect(rail.refusals.first).to include("no rendering stamp")
     end
 
-    # THE FIRST LINK OF THE WHOLE GESTURE CHAIN (T32a), and the one this rail
+    # THE FIRST LINK OF THE WHOLE GESTURE CHAIN, and the one this rail
     # was missing: `<CR>` -> `review_open` -> {Lain::Review::Handover#open} ->
     # the view -> the diff surface -> the editor. It used to end at
     # {Lain::Frontend::Neovim::ReviewView::Unwired}'s refusal, which meant no
@@ -532,7 +532,7 @@ RSpec.describe Lain::CLI::Command::Review do
 
     # The card's other half: a review whose diff surface nobody wired still says
     # so rather than dropping the gesture. Same command, same rail, an editor
-    # built the way every one in this tree was before T32a.
+    # built the way every one in this tree was before the diff opener was wired.
     it "refuses an open gesture in words when the editor has no diff surface at all" do
       unwired = Lain::Frontend::Neovim::ReviewView.new
       editor.define_singleton_method(:review_view) { unwired }

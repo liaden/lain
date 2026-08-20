@@ -34,7 +34,7 @@ module Lain
 
       # The outbound half of {RpcThread}'s work, split into its own object: the
       # backlog of not-yet-sent render commands and ITS backpressure (the
-      # T6-inherited fix). {RpcThread} owns attach, the select loop, and
+      # bounded queue below). {RpcThread} owns attach, the select loop, and
       # inbound dispatch; this owns nothing nvim-shaped except turning one
       # queued command into the right `nvim_exec_lua` call -- two
       # responsibilities that were, before the split, one class doing both.
@@ -46,7 +46,7 @@ module Lain
 
         # Whole-buffer replace for a named state view (4-2.2). Same
         # not-yet-injected guard as {APPEND}. The third argument is OPTIONAL and
-        # is the rendering stamp (T16): the one view that carries one is
+        # is the rendering stamp: the one view that carries one is
         # lain://inbox, whose gesture has to name the rendering it came from,
         # and every other view calls this with two arguments exactly as before.
         SET_VIEW = "local name, lines, gen = ...; if _G.__lain then _G.__lain.set_view(name, lines, gen) end"
@@ -56,13 +56,13 @@ module Lain
         # skips the nomodifiable flip); same not-yet-injected guard.
         SET_REQUEST = "local name, lines = ...; if _G.__lain then _G.__lain.set_request(name, lines) end"
 
-        # Open lain://compose on the human's draft (T15). A third entry point
+        # Open lain://compose on the human's draft. A third entry point
         # rather than a flag on {SET_REQUEST}: that buffer is `nofile` and
         # never written, this one is `acwrite`, named, and SHOWN -- the two
         # have nothing in common but the word "editable".
         SET_COMPOSE = "local name, lines, gen = ...; if _G.__lain then _G.__lain.set_compose(name, lines, gen) end"
 
-        # Open lain://question on a pending set's rendered document (T12).
+        # Open lain://question on a pending set's rendered document.
         # {SET_COMPOSE}'s shape with the set's content digest in place of the
         # counter -- one more entry point rather than a flag, because that
         # buffer folds per question, indents to the grammar's two spaces, and
@@ -74,7 +74,7 @@ module Lain
 
         REVIEW_REFUSED = "local message = ...; if _G.__lain then _G.__lain.review_refused(message) end"
 
-        # Whole-buffer replace for the changeset review's sidebar (T14). No
+        # Whole-buffer replace for the changeset review's sidebar. No
         # buffer NAME argument, which is the one difference from {SET_VIEW}:
         # that entry point serves five buffers and has to be told which, while
         # the sidebar is a singleton in the review's own tabpage, so the lua half
@@ -92,7 +92,7 @@ module Lain
         # last called the render.
         REVIEW_FOCUS = "if _G.__lain then _G.__lain.review_layout() end"
 
-        # Open one changed file as the diff PAIR (T15): the new side is the real
+        # Open one changed file as the diff PAIR: the new side is the real
         # file on disk, the old side a scratch buffer whose content rides in
         # this argument list. Ruby runs git, never the editor -- `old_lines` is
         # `git show <base>:<path>` already read, because the changeset source is
@@ -102,19 +102,19 @@ module Lain
         # `revisions` is a map rather than two more positionals: the pair is two
         # commit-ish Strings that look alike, adjacent, and mean opposite sides,
         # and named keys are what a lua table gives for free on the far side of
-        # msgpack. They are here at all because only Ruby knows them, and T16
-        # stamps each buffer with its own so a note records which diff it was
-        # authored against.
+        # msgpack. They are here at all because only Ruby knows them, and
+        # `47_diff.lua` stamps each buffer with its own so a note records which
+        # diff it was authored against.
         OPEN_CHANGESET = "local path, old_lines, line, revisions = ...; " \
                          "if _G.__lain then _G.__lain.open_changeset(path, old_lines, line, revisions) end"
 
-        # Show one anchor's conversation in the thread pane (T18), keyed by the
+        # Show one anchor's conversation in the thread pane, keyed by the
         # ANCHOR ID and not by a line: the pane's buffer is swapped as the cursor
         # moves, and a line only names a position in the rendering that drew it,
         # while an id is a stamp Ruby minted and can hand back unchanged.
         SET_THREAD = "local anchor_id, lines = ...; if _G.__lain then _G.__lain.set_thread(anchor_id, lines) end"
 
-        # Whole-buffer replace for lain://approval (T36). No buffer NAME, for
+        # Whole-buffer replace for lain://approval. No buffer NAME, for
         # {SET_REVIEW}'s reason -- the list is a singleton, so the lua half
         # names its own -- and a THIRD argument no other view sends: how many of
         # the lines are answerable rows. The keys bound in that buffer have to
@@ -140,8 +140,8 @@ module Lain
         private_constant :NEWLINE
 
         # Default cap on outstanding commands (journal appends AND view
-        # replacements share this one queue). T6-inherited fix: the queue was an
-        # unbounded Thread::Queue, so a producer outpacing nvim could pile up an
+        # replacements share this one queue). The queue used to be an unbounded
+        # Thread::Queue, so a producer outpacing nvim could pile up an
         # unbounded backlog -- an adversarial probe hit ~800K entries, and
         # draining it (which runs BEFORE the RPC thread's select gets a turn)
         # took 6.4s, starving inbound acks. A SizedQueue fixes both at once:
@@ -170,7 +170,7 @@ module Lain
         # @param name [String] the lain:// buffer name
         # @param lines [Array<String>]
         # @param editable [Boolean]
-        # @param generation [Integer, nil] stamps the buffer (T16) so a gesture
+        # @param generation [Integer, nil] stamps the buffer so a gesture
         #   from it can say WHICH rendering the human is looking at -- today
         #   lain://inbox alone. Its absence is ARITY, not a nil argument: a nil
         #   crosses msgpack and arrives in lua as `vim.NIL`, which is TRUTHY
@@ -183,7 +183,7 @@ module Lain
           @queue.push(Command.new(args:, lua: editable ? SET_REQUEST : SET_VIEW))
         end
 
-        # The ONE non-blocking post (T15). Every other producer is a background
+        # The ONE non-blocking post. Every other producer is a background
         # thread that can afford to be back-pressured; this one is queued from
         # Reline's INPUT LOOP, inside keypress dispatch, where a blocked push
         # would freeze the prompt's rendering with the human given no feedback
@@ -218,7 +218,7 @@ module Lain
           @queue.push(Command.new(args: [message], lua: REVIEW_REFUSED), true)
         end
 
-        # The three changeset-review posts (T11), non-blocking for
+        # The three changeset-review posts, non-blocking for
         # {#post_question}'s reason rather than {#post_render}'s: every one of
         # them is queued from the editor-command consumer's own fiber, serving a
         # gesture the human just made, so a blocking push against a full queue
@@ -330,7 +330,7 @@ module Lain
         # words live here beside the door that speaks them.
         REVIEW_DETACHED = "opening a review in the editor needs an attached editor"
 
-        # The changeset review's three (T11), here for {REVIEW_DETACHED}'s
+        # The changeset review's three, here for {REVIEW_DETACHED}'s
         # reason -- the objects that will own these surfaces arrive three waves
         # later, and the sentence has to exist the moment the door does. Three
         # sentences and not one shared one, because each names the surface the
@@ -406,7 +406,7 @@ module Lain
 
         def review_refused(message) = refusable(UNREPORTED) { @queue.post_review_refusal(message) }
 
-        # The changeset review's three (T11). Each answers a refusal rather than
+        # The changeset review's three. Each answers a refusal rather than
         # raising for the reason above AND one of its own: {Review::Surface} is
         # a port whose adapters DECLINE in words, so a detached editor has to be
         # a value the adapter can hand back, never an exception it has to catch.
@@ -422,9 +422,10 @@ module Lain
 
         def review_focus = refusable(FOCUS_DETACHED) { @queue.post_review_focus }
 
-        # T36's, and its refusal is READ rather than reported: {ApprovalView}
-        # withholds the stamp of a rendering nothing took, so a keypress citing
-        # one is refused instead of resolving against rows nobody can see.
+        # lain://approval's, and its refusal is READ rather than reported:
+        # {ApprovalView} withholds the stamp of a rendering nothing took, so a
+        # keypress citing one is refused instead of resolving against rows nobody
+        # can see.
         def set_approval(lines, generation, rows)
           refusable(ApprovalView::DETACHED) { @queue.post_approval(lines, generation, rows) }
         end
@@ -461,13 +462,13 @@ module Lain
       # thirds of that is now false, and the correction is the point rather than
       # a tidy-up. Only the anchor's `id` is minted here.
       #
-      # `revision` is the EDITOR's, off T15's `b:lain_review_revision` stamp, and
-      # it has to be: {Review::AnnotationPlaced} carries a revision precisely so
-      # that an annotation authored against one diff and submitted against
-      # another is DETECTABLE, and that only works if the diff the human was
-      # looking at is on the record rather than implied by whatever is on screen
-      # at submit time. Resolved here it would be the second thing, which is the
-      # live defect in tuicr that member exists to close.
+      # `revision` is the EDITOR's, off `47_diff.lua`'s `b:lain_review_revision`
+      # stamp, and it has to be: {Review::AnnotationPlaced} carries a revision
+      # precisely so that an annotation authored against one diff and submitted
+      # against another is DETECTABLE, and that only works if the diff the human
+      # was looking at is on the record rather than implied by whatever is on
+      # screen at submit time. Resolved here it would be the second thing, which
+      # is the live defect in tuicr that member exists to close.
       #
       # `drifted` is the EDITOR's for a harder reason: drift is the anchor text
       # against the line the number NOW names, and that line lives in the buffer
@@ -519,7 +520,7 @@ module Lain
         # THE ARGUMENTS THEMSELVES ARE A SHAPE, and checking it is not
         # paranoia. `runtime/65_review.lua:75-79` records a verb sending FLAT
         # POSITIONALS and everything after the first being dropped on the floor;
-        # T14, T15 and T18 write the next three lua halves against this
+        # the sidebar, diff and thread rails write their lua halves against this
         # contract. `args.first` on a bare String answers a CHARACTER and on an
         # Integer raises NoMethodError -- inside the one guard whose entire
         # purpose is that the wire can never raise, which {RpcThread#answer}
@@ -545,7 +546,7 @@ module Lain
           refused(note) || yield(normalized(note))
         end
 
-        # The batch `:LainNoteDone` settles (T16): one gesture carrying every note
+        # The batch `:LainNoteDone` settles: one gesture carrying every note
         # the human placed, across both sides and every file they visited, IN
         # PLACEMENT ORDER -- which is the output, since nothing else records
         # which note they wrote first.
@@ -727,7 +728,7 @@ module Lain
         # `line` is the one member with a DOMAIN rather than a vocabulary, and
         # the domain is {Review::Anchor}'s -- ASKED here, never restated, so
         # there is one definition of a position that cannot exist. 0 is the
-        # value that actually hurts: T2's hunk arithmetic makes `lines[-1]` out
+        # value that actually hurts: hunk arithmetic makes `lines[-1]` out
         # of it and answers "not drifted" for a position nobody named.
         #
         # It has to be asked HERE because downstream says the same thing by
@@ -765,11 +766,12 @@ module Lain
       # no route claims falls through silently -- the editor's commands are not
       # this object's to validate.
       #
-      # An ANSWERED command is the other kind, and there are three (T12, T11).
-      # Its route's RETURN VALUE is what the editor gets, so it must run BEFORE
-      # any ack -- a question `:w` is refused when the document does not parse,
-      # and a refusal that arrived after a `true` would be a buffer marked saved
-      # over text the grammar rejected. Two tables rather than a flag, because
+      # An ANSWERED command is the other kind, and there are four: the question
+      # write and the changeset review's three. Its route's RETURN VALUE is what
+      # the editor gets, so it must run BEFORE any ack -- a question `:w` is
+      # refused when the document does not parse, and a refusal that arrived
+      # after a `true` would be a buffer marked saved over text the grammar
+      # rejected. Two tables rather than a flag, because
       # the two kinds differ in every respect that matters: when the route runs,
       # what the editor is told, and whether the inbox ever sees it.
       #
@@ -831,10 +833,10 @@ module Lain
         # write never reaches the listener at all and "the annotation is not
         # recorded" is the shape of the code rather than a promise about it.
         #
-        # `review_notes` is T16's `:LainNoteDone` -- the whole settled batch,
-        # answered once. It is kept BESIDE `review_annotate` rather than
-        # replacing it (T22's prefill may want the per-note form), and the two
-        # land on the SAME hand-off, so a review binds one object and answers
+        # `review_notes` is the note rail's `:LainNoteDone` -- the whole settled
+        # batch, answered once. It is kept BESIDE `review_annotate` rather than
+        # replacing it (a critique prefill may want the per-note form), and the
+        # two land on the SAME hand-off, so a review binds one object and answers
         # both rails.
         def review_writes(listener)
           # Named once because it IS one hand-off: a note reaching lain alone and
@@ -903,7 +905,7 @@ module Lain
             raise NotImplementedError, "#{self.class} must implement #resend"
           end
 
-          # @param lines [Array<String>] the edited lain://compose lines (T15)
+          # @param lines [Array<String>] the edited lain://compose lines
           # @param generation [Integer] which compose the editor is answering
           def compose_written(lines, generation)
             raise NotImplementedError, "#{self.class} must implement #compose_written"
@@ -914,7 +916,7 @@ module Lain
             raise NotImplementedError, "#{self.class} must implement #compose_abandoned"
           end
 
-          # The ONE hand-off whose RETURN VALUE the editor waits on (T12): the
+          # The ONE hand-off whose RETURN VALUE the editor waits on: the
           # human wrote lain://question, and this answers whether the document
           # parsed. It runs before the ack and inside nvim's own `:w`, so it
           # must not block for the usual reason AND must not raise -- a raise
@@ -933,7 +935,7 @@ module Lain
             raise NotImplementedError, "#{self.class} must implement #question_abandoned"
           end
 
-          # The changeset review's two ANSWERING hand-offs (T11), under
+          # The changeset review's two ANSWERING hand-offs, under
           # {#question_written}'s whole contract: each runs before the ack and
           # inside nvim's own `:w`, so neither may block and neither may raise --
           # the refusal is a value. The note has already been read for SHAPE by
@@ -969,7 +971,7 @@ module Lain
             # answer here is a no-op because nothing downstream reads it.
             UNANSWERABLE = "no question surface is wired -- nothing submitted, your text is untouched"
 
-            # {UNANSWERABLE}'s reason for the review pair (T11), and it reaches
+            # {UNANSWERABLE}'s reason for the review pair, and it reaches
             # further: a `nofile` review buffer outlives its attach just as a
             # question buffer does, and both review writes ANSWER -- so nil here
             # would clear 'modified' and report a note recorded by a frontend
@@ -1192,7 +1194,7 @@ module Lain
           @router.call(request.arguments)
         end
 
-        # The answered path (T12), and the ONLY place a route runs before the
+        # The answered path, and the ONLY place a route runs before the
         # ack. A question `:w` is the one editor gesture lain can refuse, so its
         # answer IS the response: a failure comes back as the request's error,
         # which is what makes the write fail and leaves the buffer modified with

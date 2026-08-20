@@ -4,19 +4,19 @@ require "async"
 require "stringio"
 require "tmpdir"
 
-# T18's thread pane, recorded at the ONE message the docent sends it:
+# The thread pane, recorded at the ONE message the docent sends it:
 # `#show(anchor, entries)`, answering the notice that says the render did not
 # land, or nil.
 #
 # ⚠️ It is a RECORDING VIEW and not the real pane, and that is a considered
-# trade rather than a shortcut. T18's own deletability spec asserts that nothing
-# outside its three files names it -- so a spec that constructed the real pane
-# here would couple two capabilities that are each supposed to be removable
-# alone. What that costs is that the docent's half of the contract (which
+# trade rather than a shortcut. The thread pane's own deletability spec asserts
+# that nothing outside its three files names it -- so a spec that constructed
+# the real pane here would couple two capabilities that are each supposed to be
+# removable alone. What that costs is that the docent's half of the contract (which
 # entries, in which order, at which moment) is pinned here and the pane's half
-# (entries to buffer lines) is pinned in T18's own file; what binds them is
-# `#speaker`/`#text`, and "posts entries the pane's contract can render" below
-# is the example that pins those two names.
+# (entries to buffer lines) is pinned in the thread pane's own file; what binds
+# them is `#speaker`/`#text`, and "posts entries the pane's contract can
+# render" below is the example that pins those two names.
 class RecordingThreadPane
   def initialize(refusal: nil)
     @refusal = refusal
@@ -66,7 +66,7 @@ class DocentEditorRail
 end
 
 # The docent: a question about one hunk, answered by a fresh role-scoped child
-# and rendered back into T18's thread pane.
+# and rendered back into the thread pane.
 #
 # Two things in here are deliberately NOT doubled, because doubling either would
 # have made the property vacuous:
@@ -239,8 +239,9 @@ RSpec.describe Lain::Review::Docent do
                 [described_class::SPEAKER_DOCENT, "because beta needed the same shape"]])
     end
 
-    # The anchor rides WHOLE, which is T18's rule: the pane is cursor-driven and
-    # no other entry point on that rail carries an anchor's position.
+    # The anchor rides WHOLE, which is the thread pane's rule: the pane is
+    # cursor-driven and no other entry point on that rail carries an anchor's
+    # position.
     it "posts the anchor itself, not its id" do
       answerer, = recording_answerer
       placed = anchor
@@ -469,8 +470,9 @@ RSpec.describe Lain::Review::Docent do
   end
 
   describe "a repeated question is not a repeated spawn" do
-    # `review_ask` carries no stamp and T18's editor half re-sends the identical
-    # payload on a second `:w`, so the SAME question arrives twice. A spawn is a
+    # `review_ask` carries no stamp and the thread pane's editor half re-sends
+    # the identical payload on a second `:w`, so the SAME question arrives twice.
+    # A spawn is a
     # provider round trip and real money, so the second one must not happen --
     # and it must not happen here, in Ruby, whether or not the editor is ever
     # fixed.
@@ -646,7 +648,7 @@ RSpec.describe Lain::Review::Docent do
         subject.open(anchor)
         replies.bind_editor(editor)
         replies.bind_changeset_review(DocentGestureRail.new(subject))
-        # T33: the editor's consumer is the SESSION's surface, not an ask's --
+        # The editor's consumer is the SESSION's surface, not an ask's --
         # a docent question is asked while reading a diff, between turns.
         surfaces = replies.session_surfaces(task)
         begin

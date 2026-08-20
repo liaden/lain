@@ -42,7 +42,7 @@ require "tmpdir"
 # path or a line that has drifted fails by name rather than by silence.
 #
 # Note the asymmetry the rows record: a **lua** module has no require line at
-# all -- T6's loader globs the directory, so deleting the file is the whole edit
+# all -- the runtime loader globs the directory, so deleting the file is the whole edit
 # -- while every **Ruby** unit has exactly one.
 
 # One deletable capability, as one row of the map.
@@ -133,7 +133,7 @@ module DeletionMap
     Capability.new(
       key: "submit",
       constants: %w[Submit REVIEW_SUBMIT submit_review],
-      # T34 added the REACH -- the outbox, the verb and their specs; and
+      # The reach was added later -- the outbox, the verb and their specs; and
       # `endpoint.rb` builds only a review POST's own REST path, so it goes too.
       files: ["lib/lain/review/submit.rb", "lib/lain/review/submit/outbox.rb", "spec/lain/review/submit_spec.rb",
               "spec/lain/review/submit/outbox_spec.rb", "lib/lain/cli/command/review_submit.rb",
@@ -220,8 +220,9 @@ end
 
 # The tree, read once, with whole-line comments stripped: PROSE may name a
 # capability anywhere (a sibling's comment citing {ThreadView::Entry} is better
-# writing than one saying "T18's editor half"), CODE may not. T18's own
-# deletability row reached that conclusion first and this generalises it.
+# writing than one saying "the thread pane's editor half"), CODE may not. The
+# thread pane's own deletability row reached that conclusion first and this
+# generalises it.
 #
 # Read eagerly rather than memoised because six capabilities times three
 # examples over ~1400 files is eight seconds of re-reading the same bytes, and
@@ -389,7 +390,7 @@ RSpec.describe "the deletion map", :seam do
   end
 
   # The asymmetry, asserted rather than described: a lua module has NO require
-  # line (T6's loader globs the directory), every Ruby unit under `lib/` has
+  # line (the runtime loader globs the directory), every Ruby unit under `lib/` has
   # exactly one, and the row must name the file it lives in.
   it "records the one require site of every Ruby unit it deletes, and none for a lua one" do
     testable.each do |cap|
@@ -408,7 +409,7 @@ RSpec.describe "the deletion map", :seam do
 
       lua_requires = cap.own.grep(/\.lua$/).select { |lua| TreeSweep.requiring(lua).any? }
 
-      expect(lua_requires).to be_empty, "T6's loader globs the runtime directory: #{lua_requires.inspect}"
+      expect(lua_requires).to be_empty, "the runtime loader globs that directory: #{lua_requires.inspect}"
     end
   end
 

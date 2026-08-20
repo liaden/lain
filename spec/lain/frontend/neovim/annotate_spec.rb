@@ -6,7 +6,7 @@ require "socket"
 require "timeout"
 require "tmpdir"
 
-# T16: `runtime/48_annotate.lua` -- placing a note on the diff T15 draws, and
+# `runtime/48_annotate.lua` -- placing a note on the diff `47_diff.lua` draws, and
 # settling every note the human left. Its own nvim harness rather than an append
 # to `diff_mode_spec.rb`, for that file's own stated reason: what is under test
 # is what the editor does with marks, and it is also the file this chunk most
@@ -102,8 +102,9 @@ RSpec.describe "the review annotation runtime", :nvim do
 
   def lua(source, args = []) = @editor.exec_lua(source, args)
 
-  # The two commits the diff spans. T15 stamps each side with its own, and a
-  # note's whole worth a year later is which of them it was authored against.
+  # The two commits the diff spans. `47_diff.lua` stamps each side with its own,
+  # and a note's whole worth a year later is which of them it was authored
+  # against.
   def revisions = { "old" => "base0ff", "new" => "head1ff" }
 
   # 40 lines with exactly one of them different, which is §3.4's shape: it gives
@@ -118,9 +119,9 @@ RSpec.describe "the review annotation runtime", :nvim do
     lua("_G.__lain.open_changeset(...)", [path, old_lines, line, revisions])
   end
 
-  # slot -> window, off the window variables T26 stamps, so this never calls
-  # `review_layout` -- which would TAKE FOCUS and move the cursor these examples
-  # place notes with.
+  # slot -> window, off the window variables `41_layout.lua` stamps, so this
+  # never calls `review_layout` -- which would TAKE FOCUS and move the cursor
+  # these examples place notes with.
   def slots
     lua(<<~LUA)
       local found = {}
@@ -165,7 +166,7 @@ RSpec.describe "the review annotation runtime", :nvim do
 
   # nvim's own message history, which is where `__lain.review_refused` echoes a
   # refusal AND where a `stack traceback:` would land -- so one read answers
-  # both halves of "a refusal is not a crash" (T16).
+  # both halves of "a refusal is not a crash".
   def messages = lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
 
   # The refusal rail's OPERATIONAL half, which `messages` alone cannot state.
@@ -242,9 +243,10 @@ RSpec.describe "the review annotation runtime", :nvim do
   def changedtick(buf) = lua("return vim.api.nvim_buf_get_changedtick(...)", [buf])
 
   describe "placing a note" do
-    # T15 WITHDRAWS the stamps when the human moves on, so a stamped buffer is
-    # not a review buffer forever -- reading the variable IS the check, and there
-    # is no buffer-name parsing anywhere in this module for exactly that reason.
+    # `47_diff.lua` WITHDRAWS the stamps when the human moves on, so a stamped
+    # buffer is not a review buffer forever -- reading the variable IS the check,
+    # and there is no buffer-name parsing anywhere in this module for exactly
+    # that reason.
     it "refuses a buffer lain does not have open for review" do
       open_changeset("docs/guide.txt", guide_old_lines)
 
@@ -282,7 +284,7 @@ RSpec.describe "the review annotation runtime", :nvim do
     end
 
     # AC5. Right-aligned is what keeps the marker off the code -- the whole
-    # reason the note's TEXT lives in the thread pane (T18) and only a marker
+    # reason the note's TEXT lives in the thread pane and only a marker
     # renders inline, as octo does. `virt_text_pos` is read back off the mark
     # rather than assumed, because a `virt_text` with no position defaults to
     # `eol`, which sits immediately after the code it must not collide with.
@@ -420,10 +422,11 @@ RSpec.describe "the review annotation runtime", :nvim do
   end
 
   describe "a note whose review has moved on" do
-    # T15 UNSTAMPS a buffer when the human opens the next file, which is what
-    # makes reading the stamp at SETTLE time wrong: by then the new side of the
-    # file the note is on carries no side, no revision and no path. Capturing all
-    # three at PLACEMENT is the only shape that survives the human navigating,
+    # `47_diff.lua` UNSTAMPS a buffer when the human opens the next file, which
+    # is what makes reading the stamp at SETTLE time wrong: by then the new side
+    # of the file the note is on carries no side, no revision and no path.
+    # Capturing all three at PLACEMENT is the only shape that survives the human
+    # navigating,
     # and navigating is what a review IS.
     it "keeps the side, revision and path it was placed against" do
       open_changeset("docs/guide.txt", guide_old_lines)
@@ -522,9 +525,9 @@ RSpec.describe "the review annotation runtime", :nvim do
         .to eq([["old", "line 2", false], ["new", "line 3", false]])
     end
 
-    # The measured silence T15 hands over: two identical re-opens write NOTHING,
-    # bump no 'changedtick' and fire no `on_lines`, so a note survives the
-    # gesture a human makes most -- coming back to the file they are reading.
+    # The measured silence `47_diff.lua` hands over: two identical re-opens write
+    # NOTHING, bump no 'changedtick' and fire no `on_lines`, so a note survives
+    # the gesture a human makes most -- coming back to the file they are reading.
     it "is unmoved by a re-open of identical content, which writes nothing at all" do
       open_changeset("docs/guide.txt", guide_old_lines)
       note("old", 20, "note", "still here")
@@ -552,9 +555,10 @@ RSpec.describe "the review annotation runtime", :nvim do
 
   describe "a buffer that goes away" do
     # ESCALATION TRIGGER 1, and it cuts BOTH ways. The `BufUnload` GC must fire
-    # so no per-buffer entry outlives its buffer -- and T15's `drop_stale` wipes
-    # the previous file's old side the moment the human opens the next file, so a
-    # GC that merely DROPPED would lose every old-side note the instant the human
+    # so no per-buffer entry outlives its buffer -- and `47_diff.lua`'s
+    # `drop_stale` wipes the previous file's old side the moment the human opens
+    # the next file, so a GC that merely DROPPED would lose every old-side note
+    # the instant the human
     # navigated. The words are the part nobody can reconstruct, so the note is
     # HARVESTED at its last known row instead.
     it "harvests an old-side note when the next file wipes its buffer" do
@@ -734,7 +738,7 @@ RSpec.describe "the review annotation runtime", :nvim do
     # must leave every note AND every marker where the human left them: a
     # refusal they cannot retype from is worse than no refusal at all.
     #
-    # T16 CHANGED THE MECHANISM AND NOT THE RULE. The caught refusal used to be
+    # THE MECHANISM CHANGED AND THE RULE DID NOT. The caught refusal used to be
     # re-raised with `error(tostring(refusal), 0)`, so `ok` read false here --
     # and in the editor it read as nvim's `stack traceback:` under lain's own
     # sentence, because a `define`d callback's escape gets one HOWEVER it was
@@ -775,7 +779,8 @@ RSpec.describe "the review annotation runtime", :nvim do
 
   # The keys are bound on the STAMP and never on a buffer NAME, which is the one
   # thing that makes them correct: a stamped buffer is not a review buffer
-  # forever, and T15 withdraws the stamp when the human opens the next file.
+  # forever, and `47_diff.lua` withdraws the stamp when the human opens the next
+  # file.
   describe "the note keys" do
     # `maparg` per lhs rather than pressing anything: a press that finds no map
     # is not a no-op in normal mode (`\Lsa` is `L`, then `s`, which enters
@@ -835,7 +840,7 @@ end
 RSpec.describe "the annotation runtime's vocabulary" do
   let(:source) do
     path = Lain::Frontend::Neovim::RuntimeLoader.new.module_paths.find { |name| name.end_with?("_annotate.lua") }
-    raise "no runtime annotate module found -- T16's module is gone" if path.nil?
+    raise "no runtime annotate module found -- 48_annotate.lua is gone" if path.nil?
 
     File.read(path)
   end

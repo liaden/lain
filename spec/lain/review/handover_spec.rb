@@ -527,7 +527,7 @@ RSpec.describe Lain::Review::Handover do
 
   describe "the sidebar's open gesture" do
     # `review_view_spec.rb`'s own idiom for the diff pair: nothing here pretends
-    # to be the object that will one day answer it (T31b's), and the calls are
+    # to be the object that will one day answer it, and the calls are
     # recorded rather than asserted into place.
     let(:opener) do
       calls = []

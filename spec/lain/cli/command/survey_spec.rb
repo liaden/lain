@@ -323,8 +323,8 @@ RSpec.describe Lain::CLI::Command::Survey do
     # (`runtime/46_sidebar.lua:188`, protocol 10). Pinned by NAME and not just
     # by "does not say LainReviewDone", because a banner that dropped the
     # hand-back gesture entirely would pass a merely negative assertion.
-    # {Lain::Review::OpenedBanner} owns the wording now (T5 fix round); this
-    # example is what proves {Command::Survey} actually reads it.
+    # {Lain::Review::OpenedBanner} owns the wording now; this example is what
+    # proves {Command::Survey} actually reads it.
     it "names the command a survey's hand-back actually reaches, not the epic surface's" do
       attached
 
@@ -334,7 +334,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       expect(answer).not_to include("LainReviewDone")
     end
 
-    # The other half of the same sentence (T5's third clause): ":LainNote
+    # The other half of the same sentence: ":LainNote
     # annotates" is unchanged, because `:LainNote` is what a `<CR>` on a survey
     # row actually opens into -- {Lain::Frontend::Neovim::ChangesetDiff} draws
     # every corpus file as a diff whose old side is `[]` (an ADDED file, never
@@ -953,9 +953,9 @@ RSpec.describe Lain::CLI::Command::Survey do
     end
   end
 
-  # T5's third clause and its AC5, driven against a REAL editor: the banner's
-  # own claims, checked rather than argued for. `changeset_diff_spec.rb`'s
-  # pattern -- a real {Lain::Frontend::Neovim::RenderInlet}, `.drain` sent over
+  # The banner's own claims, driven against a REAL editor and checked rather
+  # than argued for. `changeset_diff_spec.rb`'s pattern -- a real
+  # {Lain::Frontend::Neovim::RenderInlet}, `.drain` sent over
   # one connection and read back over the SAME one, so message order is the
   # only ordering this needs -- rather than the full RPC-thread/async gesture
   # loop, which is a second object's seam to cover.

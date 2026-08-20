@@ -181,14 +181,14 @@ module Lain
       #   stream_started events land -- chat's live TTY Channel, so a stream
       #   start actually reaches the frontend. Like spool it defaults to the
       #   Null instance (headless/bench pass nothing, so their events land
-      #   nowhere). Every arm gets it now: Bedrock and -- since T2/F7 -- Ollama
-      #   too, whose retries used to reach no Journal at all. Since T4 that
-      #   makes a retry storm VISIBLE LIVE as well as readable afterwards:
+      #   nowhere). Every arm gets it now: Bedrock and -- since F7 -- Ollama
+      #   too, whose retries used to reach no Journal at all. That also makes a
+      #   retry storm VISIBLE LIVE as well as readable afterwards:
       #   {Frontend::Decorators::ProviderRetry} paints each
       #   {Telemetry::ProviderRetry} as it lands, so a long stall shows the
       #   operator what is happening instead of a blank screen. An earlier
       #   edition of this note said the opposite, and called leaving it
-      #   unpainted a decision rather than a gap; T4 reversed the decision.
+      #   unpainted a decision rather than a gap; painting it reversed that.
       # @param queue [Boolean] the caller's willingness to WAIT for
       #   {Provider::Admission} to free a slot; not a property of the endpoint.
       #   Not forwarded to the bedrock arm, which does not take it: bedrock
@@ -280,7 +280,7 @@ module Lain
       # this exists to prevent, and the probe is one live round trip whose
       # answer can move under a runner reload.
       #
-      # The memo is of the OBJECT, not of the answer inside it (T6). A run
+      # The memo is of the OBJECT, not of the answer inside it. A run
       # launched with `--num-ctx` while nothing is resident resolves to a guess,
       # and a memoized guess is permanent -- the runner loads on turn one and
       # the session goes on dividing by a number nobody confirmed. So the three
@@ -406,7 +406,7 @@ module Lain
       # lowest object above every reader: the repl's command surface, the skill
       # middleware, {Tools::RunSkill} and {Skill::RoleSpawn} are all wired from
       # {Wiring}, which is handed a Backend and cannot be handed a library it
-      # would then have to load itself. Before T40 the halves had two owners --
+      # would then have to load itself. The halves used to have two owners --
       # Wiring loaded the catalog, this loaded the slots -- and travelled onward
       # as two keywords.
       def library = @library ||= Skill::Library.load

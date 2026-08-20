@@ -12,7 +12,7 @@ RSpec.describe Lain::CLI::Backend do
 
   let(:options) { {} }
 
-  # T10: a Backend on `--provider ollama` asks its server which window it is
+  # A Backend on `--provider ollama` asks its server which window it is
   # SERVING before it builds the run's book ({Backend#context_window}), so
   # every ollama example here now makes one GET. The default answer is "nothing
   # resident", which is both the ordinary state of a fresh box and the answer
@@ -80,7 +80,7 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
-  # T17w's convergence: "anthropic" always means {Provider::Anthropic} for
+  # THE CONVERGENCE: "anthropic" always means {Provider::Anthropic} for
   # chat now, whether or not journaling is on -- the spool no longer switches
   # provider CLASS, only whether the spool it's handed is Null (--no-journal,
   # bench's no-spool-at-all default) or a real tee (journaling on). Class
@@ -145,7 +145,7 @@ RSpec.describe Lain::CLI::Backend do
       expect(provider.instance_variable_get(:@channel)).to be(Lain::Channel::Null.instance)
     end
 
-    # T2/F7, and the assertion the other two in this group cannot make: those
+    # F7, and the assertion the other two in this group cannot make: those
     # read an ivar, which stays green whether or not the keyword was ever
     # threaded HERE. This drives the whole production chain instead -- Backend
     # -> Provider::Ollama -> #build_config's retry_block -> faraday-retry ->
@@ -174,12 +174,12 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
-  # T10: the ONE denominator this run divides by. The POC published 86.4%
+  # The ONE denominator this run divides by. The POC published 86.4%
   # occupancy at 2.7% of the real capacity -- the numerator was exact and only
   # the window was wrong -- because every reader defaulted to
   # {ContextWindow.default}'s 8,192 conservative fallback for an ollama model
   # id no Anthropic-shaped table carries. The book is built HERE, once, out of
-  # the window T9's {Provider#context_window_tokens} says the server is
+  # the window {Provider#context_window_tokens} says the server is
   # actually serving, and the status feed, the compaction source and the Agent
   # all read this one instance -- so `state.json`, the journal and the REPL
   # prompt cannot tell a human three different stories.
@@ -291,10 +291,10 @@ RSpec.describe Lain::CLI::Backend do
       expect(a_request(:get, "http://localhost:11434/api/ps")).to have_been_made.once
     end
 
-    # T9's docstring makes this constraint the CALLER's, and T11 made it live:
-    # a runner left at 32,768 by `ollama run` or by a sibling session answers
-    # 32,768 while the very next request -- carrying --num-ctx -- reloads it at
-    # the smaller size.
+    # {Provider#context_window_tokens}'s docstring makes this constraint the
+    # CALLER's, and sending `num_ctx` on the request made it live: a runner left
+    # at 32,768 by `ollama run` or by a sibling session answers 32,768 while the
+    # very next request -- carrying --num-ctx -- reloads it at the smaller size.
     describe "--num-ctx" do
       it "outranks a larger served window" do
         serving(ps_entry(model, 32_768))
@@ -312,7 +312,7 @@ RSpec.describe Lain::CLI::Backend do
         expect(ollama_backend(num_ctx: 65_536).context_window.window_tokens(model)).to eq(32_768)
       end
 
-      # T6 CHANGED THE SECOND HALF of this deliberately. The number stands --
+      # THE SECOND HALF of this CHANGED deliberately. The number stands --
       # discarding a plausible `--num-ctx` would over-report 4x on the ordinary
       # `--num-ctx 32768` case -- but nobody measured it, so it is a guess and
       # not the tier whose docstring says "the server said so". Measured before
@@ -368,7 +368,7 @@ RSpec.describe Lain::CLI::Backend do
         expect(Lain::CLI::Backend::InvalidCeiling).to be < Lain::Error
       end
 
-      # T6. An operator's `--num-ctx` is a REQUEST, and there is exactly one
+      # An operator's `--num-ctx` is a REQUEST, and there is exactly one
       # number it can be checked against before a runner exists: the maximum
       # the weights were trained for. `--num-ctx 999999` on a model trained to
       # 262,144 was accepted, sent, and journaled as the run's whole window
@@ -457,12 +457,13 @@ RSpec.describe Lain::CLI::Backend do
           expect(a_request(:post, "http://localhost:11434/api/show")).not_to have_been_made
         end
 
-        # The construction ORDER, which T6's fix round made user-visible and
-        # which nothing pinned: `--api-base` is validated before `--num-ctx`,
-        # because the ceiling lookup is the first thing in construction that
-        # talks to a server and a base URL it is about to probe has to be a
-        # usable one first. Asserted through a run that gets BOTH flags wrong,
-        # since that is the only case in which the order is observable -- swap
+        # The construction ORDER, which the ceiling's fix round made
+        # user-visible and which nothing pinned: `--api-base` is validated before
+        # `--num-ctx`, because the ceiling lookup is the first thing in
+        # construction that talks to a server and a base URL it is about to probe
+        # has to be a usable one first. Asserted through a run that gets BOTH
+        # flags wrong, since that is the only case in which the order is
+        # observable -- swap
         # the two lines in `#initialize` and this reads InvalidCeiling instead.
         it "refuses a bad --api-base before it asks that base for a ceiling" do
           expect { ollama_backend(api_base: "localhost:11434", num_ctx: 0) }
@@ -482,7 +483,7 @@ RSpec.describe Lain::CLI::Backend do
       end
     end
 
-    # T5: unlike an unknown --provider or a missing key (both below), a bad
+    # Unlike an unknown --provider or a missing key (both below), a bad
     # `--api-base` is not a question #provider can defer -- Endpoint checks it
     # at CONSTRUCTION, same as --num-ctx above, because `localhost:11434` (the
     # scheme-less typo) is a VALID URI and used to sail past a URI.parse guard
@@ -552,8 +553,8 @@ RSpec.describe Lain::CLI::Backend do
       expect { backend.model }.to raise_error(Lain::CLI::UnknownProvider)
     end
 
-    # T5 UPDATED this deliberately: `--api-base "not a url"` used to be a THIRD
-    # deferral -- a denominator lookup left `#provider` to raise
+    # This example was UPDATED deliberately: `--api-base "not a url"` used to be
+    # a THIRD deferral -- a denominator lookup left `#provider` to raise
     # URI::InvalidURIError on its own request -- but that meant construction
     # SUCCEEDED for a base that could never serve a chat, and the same
     # scheme-less typo (`localhost:11434`) parsed as a valid URI and reached a
@@ -705,9 +706,9 @@ RSpec.describe Lain::CLI::Backend do
   end
 
   # RES4's escalation trigger: Context#cache_marked always marks the LAST
-  # system block, and CacheBreakpoints budgets exactly ONE system cache slot
-  # (the T24 follow-up) -- Anthropic's cache_control cap is 4 breakpoints, so
-  # a second system mark here is a live 400 risk, not a style nit. A role's
+  # system block, and CacheBreakpoints budgets exactly ONE system cache slot --
+  # Anthropic's cache_control cap is 4 breakpoints, so a second system mark here
+  # is a live 400 risk, not a style nit. A role's
   # prelude is TWO segments (the shared bulk, then the role tail --
   # {Lain::Role#prelude_segments}); rendering them as two ordinary text
   # blocks -- neither pre-marked -- through Context must spend that ONE mark
@@ -750,7 +751,7 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
-  # T40: the slots are HALF a pair. This object is the one owner of both halves
+  # The slots are HALF a pair. This object is the one owner of both halves
   # now -- before, it owned the slots while Wiring separately owned the catalog,
   # and the two travelled onward as two keywords. One library, one read, one
   # owner; #slots is the library's, so the bench path's reader is unchanged.
@@ -771,7 +772,7 @@ RSpec.describe Lain::CLI::Backend do
     # against a second render, because the two are not the same claim and the
     # weaker one is worthless here: the tree does not change between two reads,
     # so `eq` holds just as well when #context does its OWN Prompt::Slots.load --
-    # which is precisely the bug this example's name denies. The T40 panel caught
+    # which is precisely the bug this example's name denies. The review panel caught
     # that; the example survived the mutation it is named for.
     #
     # The reader is stubbed rather than the Slots instance because a Slots is
@@ -940,10 +941,10 @@ RSpec.describe Lain::CLI::Backend do
     # from the absent signal, because empty signals alone would also be
     # satisfied by any window >= 8_334.
     #
-    # T10 made the fallback the SECOND answer rather than the only one, so the
-    # silent server is now stated rather than assumed: /api/ps answers with
-    # nothing resident, which is exactly when the conservative fallback is
-    # still what a run measures against.
+    # The provider-reported window made the fallback the SECOND answer rather
+    # than the only one, so the silent server is now stated rather than assumed:
+    # /api/ps answers with nothing resident, which is exactly when the
+    # conservative fallback is still what a run measures against.
     it "builds against the conservative fallback window for a model in no table, and chat starts" do
       stub_request(:get, "http://localhost:11434/api/ps")
         .to_return(status: 200, headers: { "Content-Type" => "application/json" },
@@ -1023,7 +1024,7 @@ RSpec.describe Lain::CLI::Backend do
       expect(decisions.last.compacted).to be(false)
     end
 
-    # T9. `--compact-strategy` is DECLARED by exe/lain and RESOLVED by
+    # `--compact-strategy` is DECLARED by exe/lain and RESOLVED by
     # CLI::CompactionStrategy; this is the seam that reads it. Without this call
     # site the flag ships parsed and consumed by nobody -- F7's "unwired in
     # production" pattern, and the exact direction `chat_flags_spec.rb` cannot
@@ -1403,7 +1404,7 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
-  # T11 AC: the two throughput knobs reach the wire the same way temperature
+  # The two throughput knobs reach the wire the same way temperature
   # and seed do -- through #sampler_extra, so an UNSET flag leaves the options
   # hash untouched. Defaulting num_batch inside the encoder instead would put
   # an `options` key on every ollama request in the suite; the third example is
