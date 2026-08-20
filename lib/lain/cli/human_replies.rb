@@ -9,7 +9,7 @@ module Lain
     # arrival note, the `/inbox` drain, and the editor's :LainReply leg -- and
     # the Metrics trip said so.
     #
-    # Every answer NAMES the set it answers (T11). This class holds the run's
+    # Every answer NAMES the set it answers. This class holds the run's
     # {Tools::AskHuman::Directory}, not one asker, and routes by the digest the
     # arrival carried: which asker holds the named set is the directory's
     # question, and answering it from "the asker this class happens to hold"
@@ -19,7 +19,7 @@ module Lain
     class HumanReplies
       # I6: one pending human question as the drain surface lists it -- who is
       # stuck (the asker's chain correlation), since when, the question, and
-      # (T11) the name an answer must cite to reach it.
+      # the name an answer must cite to reach it.
       InboxItem = Struct.new(:question, :from, :digest, :asked_at, keyword_init: true) do
         # The arrival, built from the Q event that has just been written --
         # {Wiring::Askers#announce}'s one call, and the only moment BOTH
@@ -95,7 +95,7 @@ module Lain
         def self.answered(_digest) = nil
       end
 
-      # The changeset review nobody wired (T11) -- {NoEditor} and {NoViews}'
+      # The changeset review nobody wired -- {NoEditor} and {NoViews}'
       # third sibling, and a third object because it is a third fact: the rail,
       # the views and the review the human is reading are bound at three
       # different moments by three different callers, and a run can easily have
@@ -133,7 +133,7 @@ module Lain
         # "Nothing is bound yet" stated as the bind it is, rather than as a
         # second copy of which Null each surface holds -- the copy that would
         # be the one to drift when a fourth arrived, which is exactly what
-        # T36's did.
+        # the approval list's did.
         bind_editor(nil)
         @changeset_review = NoReview
         @reviews = Reviews.new
@@ -159,7 +159,7 @@ module Lain
       # conversation -- the gesture arrives on the rail, resolves through the
       # views, and a refusal goes back out on the rail.
       #
-      # `approvals` is the frontend's {Frontend::Neovim#approval_view} (T36),
+      # `approvals` is the frontend's {Frontend::Neovim#approval_view},
       # bound HERE and not at a second call site for {#bind_changeset_review}'s
       # recorded reason: the rendering a keypress resolves through and the rail
       # its refusal goes back out on are one conversation, and two binds are two
@@ -186,7 +186,7 @@ module Lain
       def bind_commands(commands) = @reply.bind_commands(commands)
 
       # The editor a changeset is DRAWN in, and the second rail a review's
-      # writes are answered on (T31a). The whole frontend, and deliberately not
+      # writes are answered on. The whole frontend, and deliberately not
       # a piece of it the way {#bind_editor} takes two: what this class needs
       # from it is one object to bind to and two collaborators to hand on, and
       # they are one fact -- a review drawn in one editor and answered in
@@ -209,7 +209,7 @@ module Lain
       # {Reviews#bind}, which is where the keying rule lives.
       def bind_review(review, token:) = @reviews.bind(review, token:)
 
-      # Hold the CHANGESET review the editor is reading (T11), so its gestures --
+      # Hold the CHANGESET review the editor is reading, so its gestures --
       # opening a row, marking a hunk, asking a docent about one -- resolve
       # against the rendering that produced the line they name. Deliberately not
       # {#bind_review}, which holds an EPIC's prose review keyed by (slug,
@@ -217,7 +217,7 @@ module Lain
       # folding them together would mean one object answering `settle` and
       # `mark` for two unrelated notions of "review".
       #
-      # ONE BIND, BOTH RAILS (T31a). The acked gestures resolve here; the two
+      # ONE BIND, BOTH RAILS. The acked gestures resolve here; the two
       # WRITES -- an annotation and a verdict -- are answered by the editor on
       # its own RPC thread, through {Frontend::Neovim#bind_changeset_review},
       # and that method had no caller in the whole tree: notes and verdicts
@@ -233,12 +233,12 @@ module Lain
 
       # A human question is waiting for an answer: an item mid-drain (@inbox) or
       # one a subagent enqueued while the human sat idle at `you>`, which no
-      # answer_loop fiber is watching between asks. T21's standing-goal driver
+      # answer_loop fiber is watching between asks. The standing-goal driver
       # reads this to hold off re-prompting while the fleet is unquiet -- the
       # inbox half of that guard (the parked-approval half lives in Wiring).
       def pending? = !@inbox.empty? || !@questions.empty?
 
-      # `/inbox` at `you>` (T13): the SAME TTY drain UX #answer_loop's
+      # `/inbox` at `you>`: the SAME TTY drain UX #answer_loop's
       # read_drained_answer calls at `human>`, over whatever has piled up in
       # `@questions` since the last time a fiber was actually watching it.
       # #answer_loop's fiber only lives for one DISPATCHED LINE
@@ -460,12 +460,13 @@ module Lain
       # editor's commands are not this object's to validate, so a verb no route
       # claims falls through in silence (it rode its own path to the frontend).
       # It became a table when `open` and `pin` made five branches of it and
-      # Metrics said what that was, and two tables when T11's three made eight
-      # and Metrics said it again -- this time naming a real seam rather than
-      # mere size. What stays here SUBMITS: an answer for a parked set, a written
-      # document, a settled review, each of which reaches the Store or a promise
-      # and can raise, which is what {#serve_editor_command} rescues. What moved
-      # to {Gestures} names a position and submits nothing.
+      # Metrics said what that was, and two tables when the changeset review's
+      # three made eight and Metrics said it again -- this time naming a real
+      # seam rather than mere size. What stays here SUBMITS: an answer for a
+      # parked set, a written document, a settled review, each of which reaches
+      # the Store or a promise and can raise, which is what
+      # {#serve_editor_command} rescues. What moved to {Gestures} names a
+      # position and submits nothing.
       def routes
         @routes ||= {
           "reply" => ->(args) { deliver(args.first.to_s, @inbox.oldest.digest) },
@@ -485,7 +486,7 @@ module Lain
         advance
       end
 
-      # T16: one document submitted, so open the next set the human owes an
+      # One document submitted, so open the next set the human owes an
       # answer to -- or tell them there is none and leave them at the inbox.
       #
       # IT HAPPENS HERE, ON THE CONSUMER, AND IT CANNOT HAPPEN ANYWHERE ELSE.
@@ -558,7 +559,7 @@ module Lain
         # stale set said by the object that knows), or something raised and the
         # human was TOLD. Either way the line is dead and retiring it is right.
         #
-        # An UNWIND is not on that list, and that is the change (T1).
+        # An UNWIND is not on that list, and that is the change.
         # `Async::Stop` climbing out of a cancelled read is not the question
         # being answered, it is the SURFACE being stopped -- and the surface is
         # now stopped at the end of every dispatched LINE
@@ -670,7 +671,7 @@ module Lain
         end
       end
 
-      # The approval list nobody wired (T36) -- {NoEditor}, {NoViews} and
+      # The approval list nobody wired -- {NoEditor}, {NoViews} and
       # {NoReview}'s fourth sibling, and a fourth object for {NoReview}'s
       # reason: it is a fourth fact. A run can have an editor, its views and a
       # changeset review all bound and still have no approval list at all
@@ -696,7 +697,7 @@ module Lain
       end
 
       # Every editor verb that names a POSITION and answers only whether it
-      # landed (T11, T36). Six of the nine, and they are one thing: each takes a
+      # landed. Six of the nine, and they are one thing: each takes a
       # LINE or an id off the wire, resolves it through the surface that
       # rendered it, and ends at {#gestured}, which reports a refusal back in
       # the editor the gesture came from.
@@ -768,7 +769,7 @@ module Lain
 
         private
 
-        # The `y`/`n` gesture from lain://approval (T36): the wire's
+        # The `y`/`n` gesture from lain://approval: the wire's
         # `["approval", [line, verdict, generation]]`, which is {#mark_hunk}'s
         # shape for {#mark_hunk}'s two reasons. The LINE is all the editor can
         # send, because a row renders no identity for a parked call -- and the
@@ -786,7 +787,7 @@ module Lain
           gestured(@approvals.call.decide(line, verdict, generation:), &:decided?)
         end
 
-        # The inbox's `<CR>`/`r` gesture (T16): the wire's `["open", [line,
+        # The inbox's `<CR>`/`r` gesture: the wire's `["open", [line,
         # generation]]`. The LINE is all the editor can send -- an inbox row
         # renders no digest -- and the GENERATION is the stamp on the rendering
         # the human is looking at, without which a line number names a position
@@ -801,7 +802,7 @@ module Lain
         # turn forever and no stamp is needed.
         def pin_turn(args) = gestured(@views.call.pin(args.first), &:pinned?)
 
-        # The review sidebar's `<CR>` (T11): the wire's `["review_open", [line,
+        # The review sidebar's `<CR>`: the wire's `["review_open", [line,
         # generation]]`, which is {#open_set}'s shape for {#open_set}'s two
         # reasons. The LINE is all the editor can send, because a sidebar row
         # renders no hunk key -- and a hunk key is a DIGEST, which the editor
@@ -968,6 +969,13 @@ module Lain
           def dispatch(_text) = yield
         end
 
+        # A `case` over {#classify}'s arms that met a value no arm claims. It is a
+        # programming error and never a typed line, which is why it is the one
+        # raise this surface's guards deliberately let climb: rendered and
+        # re-read like a command's raise, it would swallow every reply instead of
+        # reporting itself once.
+        class UnknownArm < Error; end
+
         def initialize(tty:, conductor:, inbox:, commands: NoSessionCommands.new)
           @tty = tty
           @conductor = conductor
@@ -1017,9 +1025,33 @@ module Lain
           typed(line, item)
         end
 
+        # `:unmatched` answers HERE and refuses in the drain, and that is the one
+        # place the two prompts part company. An unregistered `/word` typed at
+        # this prompt is the settled precedent -- see the sibling example "still
+        # answers the question with an UNREGISTERED slash word" -- while in a
+        # drain it is refused. Unifying it either deletes that precedent or sends
+        # a mistyped command to the model as a considered reply.
+        # No rescue of its own: {#classify} owns the registry guard that used to
+        # live here, which was this rescue's whole documented purpose, and the
+        # `drained` leg is now guarded exactly as {#at_prompt}'s identical call
+        # already was. Keeping one would also have to make an exception for
+        # {UnknownArm}, which is the one raise here that must climb.
+        def typed(line, item)
+          arm = classify(line)
+          case arm
+          when :prose, :unmatched then [line, item]
+          when :replies then drained(answering: item)
+          when :handled then nil
+          else raise UnknownArm, unknown_arm(arm)
+          end
+        end
+
         # What the line turned out to be, in the order the registry itself draws
-        # the lines. It used to be `line.strip == "/inbox"` and nothing else, so
-        # every OTHER registered `/word` was recorded as the human's answer.
+        # the lines -- asked by BOTH reply prompts ({#typed} and {#replied}) so
+        # the order cannot drift between them. It used to be `line.strip ==
+        # "/inbox"` and nothing else, so every OTHER registered `/word` was
+        # recorded as the human's answer; the drain reached its own reader and
+        # kept that defect one layer in.
         #
         # A command that SERVES REPLIES is not a session command at all -- it is
         # this surface under another name, and `/inbox` is the only one. It keeps
@@ -1029,33 +1061,35 @@ module Lain
         # command's own claim ({Registry#serves_replies?}), so the exception
         # lives with the command instead of as a literal here.
         #
-        # `answer` is set from the FALLTHROUGH block because the block is the
+        # `:unmatched` comes from the FALLTHROUGH block because the block is the
         # only thing that can say a command did NOT claim the line: a command's
         # outcome may be any value, `nil` included, so reading the return would
-        # take a quiet `/keep` for an answer.
-        #
-        # A raise from EITHER registry call is rendered and RE-READ, never
-        # allowed to climb: {AnswerLoop#exchange}'s rescue reports the line
-        # SETTLED, which retires the item while the promise stays pending -- the
-        # agent parked forever with the only line that could unpark it deleted,
-        # which is what {#accepted} exists to prevent one layer up.
+        # take a quiet `/keep` for an unmatched line. This method RUNS the
+        # command it matched -- there is no "was this registered" question the
+        # registry answers without calling -- so only the unmatched arm is left
+        # for a caller to decide, which is exactly the arm they disagree on.
         #
         # `StandardError`, not `Lain::Error`, and the difference is a measured
         # hole rather than caution: {Registry#invoke} wraps a raise from a
         # command's `#call` into an attributed Lain::Error, and NOTHING wraps
         # `#serves_replies?`, which is asked first. A command whose predicate
         # raised took the parked question down exactly as above. `Async::Stop`
-        # is not a StandardError, so a cancelled read still climbs.
-        def typed(line, item)
-          return [line, item] if prose?(line)
-          return drained(answering: item) if @commands.serves_replies?(line)
+        # is not a StandardError, so a cancelled read still climbs. A rendered
+        # raise reports `:handled` for the same reason a command that ran does:
+        # both prompts owe the line nothing further and simply read again.
+        #
+        # @return [Symbol] :prose, :replies, :handled, or :unmatched
+        def classify(line)
+          return :prose if prose?(line)
+          return :replies if @commands.serves_replies?(line)
 
-          answer = nil
-          outcome = @commands.dispatch(line) { answer = [line, item] }
-          answer || delivered(outcome, line)
+          arm = :handled
+          outcome = @commands.dispatch(line) { arm = :unmatched }
+          delivered(outcome, line) if arm == :handled
+          arm
         rescue StandardError => e
           @tty.render_error(e.message)
-          nil
+          :handled
         end
 
         # Whether the line cannot name a command AT ALL, asked before the
@@ -1128,11 +1162,74 @@ module Lain
         # The drain answers the item it was NAMED, and that item is what the
         # answer is paired with here -- the caller's own object, never one
         # shipped out to the frontend and back.
+        #
+        # `reader:` is the seam the registry arrives through: it used to
+        # be a bare lambda that consulted nothing, so a `/word` typed into the
+        # drain was recorded as the human's answer -- the very defect {#typed}
+        # had already been fixed for, surviving behind the detour that opens
+        # this. {Frontend::TTY::Inbox} learns nothing about commands; it asks
+        # for a line and gets one.
         def drained(answering:)
           answer = ""
-          reader = ->(prompt) { @conductor.read_reply(@tty, prompt) }
-          @tty.drain_inbox(@inbox, answering:, reader:) { |typed| answer = typed }
+          @tty.drain_inbox(@inbox, answering:, reader: method(:replied)) { |typed| answer = typed }
           [answer, answering]
+        end
+
+        # One line the drain can treat as an answer, read through {#classify} --
+        # the SAME classification {#typed} uses, so a command runs at either
+        # prompt and the registry's order is decided in one place.
+        #
+        # Lazy and iterative for {#accepted}'s reasons: a command answers
+        # nothing, so the prompt comes round again, and a human who runs six of
+        # them before replying should not cost six frames. EOF terminates it --
+        # `read_reply` returns nil, `.to_s` makes it "", and an empty line is
+        # `prose?`, which the drain reads as "nothing typed" and ends on.
+        #
+        # ⚠️ A reply that opens with a registered-looking `/word` cannot be
+        # typed here -- `/tmp is fine` is classified, not answered. That is the
+        # cost of the third criterion and it is deliberate: a mistyped command
+        # reaching the model as a considered reply is unrecoverable, while a
+        # refusal is one retype. The inline prompt keeps the opposite rule, and
+        # {#typed} records why.
+        def replied(prompt)
+          Enumerator.produce { @conductor.read_reply(@tty, prompt).to_s }
+                    .lazy.filter_map { |line| answerable(line) }.first
+        end
+
+        # The line if the drain should treat it as the answer, or nil to read
+        # again. Both refusals NAME the word, {Repl#called}'s attribution rule:
+        # a `/word` that appears to do nothing reads as a wedged prompt, and a
+        # drain is the one prompt where the human is already waiting.
+        #
+        # `/inbox` is refused rather than dispatched or re-entered. Dispatched
+        # it would open a SECOND reader over the same stdin, which is what
+        # `spec/reply_surface_discipline_spec.rb` exists to prevent; re-entered
+        # it would nest a drain inside the drain it names.
+        def answerable(line)
+          arm = classify(line)
+          case arm
+          when :prose then line
+          when :handled then nil
+          when :replies then refused("#{called(line)} is the drain you are already in -- type the reply")
+          when :unmatched then refused("#{called(line)} is not a registered command -- nothing ran, and " \
+                                       "nothing was answered. If you meant it as text, start the line " \
+                                       "with a space")
+          else raise UnknownArm, unknown_arm(arm)
+          end
+        end
+
+        # Both `case`es above are CLOSED sets, and this is what closes them. A
+        # fourth arm added to {#classify} and forgotten at one of the two call
+        # sites would otherwise fall out of the `case` as nil, which {#accepted}
+        # reads as "nothing typed yet" and re-reads -- swallowing every reply the
+        # human types while rendering nothing. That is the silent-answer failure
+        # this surface exists to close, reintroduced one refactor later.
+        def unknown_arm(arm) = "the reply prompt classified a line as #{arm.inspect}, which no arm claims"
+
+        # Rendered, and nil so the drain reads again.
+        def refused(message)
+          @tty.render_error(message)
+          nil
         end
 
         # Read until the human types something the record can carry. A refusal

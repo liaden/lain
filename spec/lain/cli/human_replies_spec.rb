@@ -25,7 +25,7 @@ class RecordingEditorRail
   def attached? = true
 end
 
-# The nvim end of the approval round trip, recorded (T36): what
+# The nvim end of the approval round trip, recorded: what
 # {Lain::Frontend::Neovim::ApprovalView} answers a `y`/`n` gesture with. Its
 # `decided?`/`report` pair is the whole duck the consumer reads, so this stands
 # in for both outcomes without a real queue -- which the view's own spec drives
@@ -51,8 +51,8 @@ end
 # {Lain::Frontend::Neovim::QuestionView} posts a document through
 # (`open_question`), so an example can assert WHICH set's document reached the
 # editor rather than merely that something did. The same double
-# inbox_view_spec/question_view_spec use, here because T16's consumer wiring is
-# only real if both production objects are on the far side of it.
+# inbox_view_spec/question_view_spec use, here because this consumer's wiring
+# is only real if both production objects are on the far side of it.
 class RecordingQuestionEditor
   def initialize(refusal: nil)
     @refusal = refusal
@@ -70,7 +70,7 @@ class RecordingQuestionEditor
   def digests = @opened.map(&:last)
 end
 
-# The changeset review as {Lain::CLI::HumanReplies} sees it (T11): the three
+# The changeset review as {Lain::CLI::HumanReplies} sees it: the three
 # gestures the sidebar and the diff pair send back, each answering an outcome
 # that says in its own word whether it landed, and what to tell the human when
 # it did not. Recorded rather than doubled so an example can assert WHICH row,
@@ -108,7 +108,7 @@ class RecordingChangesetReview
   end
 end
 
-# A registered `/word` as the reply prompt sees it (T4): the whole command duck
+# A registered `/word` as the reply prompt sees it: the whole command duck
 # {Lain::CLI::Command::Registry} asks of a member -- a name, a usage line, and
 # one `call(args, env)` -- with the args RECORDED, so an example can assert that
 # a line typed at `human> ` reached the command rather than the asker.
@@ -150,7 +150,7 @@ class HostilePredicateCommand
   def call(_args, _env) = "never reached"
 end
 
-# T13: #drain_at_prompt is the `/inbox`-at-`you>` half of this class -- the
+# #drain_at_prompt is the `/inbox`-at-`you>` half of this class -- the
 # SAME TTY drain UX #answer_loop's read_drained_answer calls at `human>`
 # (`@tty.drain_inbox`), reused rather than a second presentation, and the
 # SAME reply seam rather than a second answer path. It exists because the OM-6
@@ -160,7 +160,7 @@ end
 # otherwise, so a question posted while the human sits idle at `you>` has no
 # live watcher until this runs.
 #
-# T11: every answer here NAMES the set it answers. What rides the queue is an
+# Every answer here NAMES the set it answers. What rides the queue is an
 # {Lain::CLI::HumanReplies::InboxItem} carrying the Q event's digest and the
 # asker that asked it, and the reply seam this class holds is the run's
 # {Lain::Tools::AskHuman::Directory} -- so an answer reaches the asker that
@@ -201,8 +201,8 @@ RSpec.describe Lain::CLI::HumanReplies do
     Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => text }])
   end
 
-  # A second agent holding its own asker -- what a subagent is once T10 gives
-  # it one, and what makes "who asked" a real question rather than a constant.
+  # A second agent holding its own asker -- what a subagent is once it has one,
+  # and what makes "who asked" a real question rather than a constant.
   def other_asker(text = "another chat") = askers.enrol(chain(text)).asker
 
   # Asking IS announcing ({Wiring::Askers#announce}): the arrival lands on the
@@ -258,7 +258,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   end
 
   # Every reply surface a running chat has up, in the two lifetimes production
-  # gives them (T33): {Lain::CLI::Repl#run} holds the session ones for the
+  # gives them: {Lain::CLI::Repl#run} holds the session ones for the
   # conversation and {Lain::CLI::Repl#respond} holds the ask ones for one ask.
   # An example meaning "an ask is in flight" wants both, which is what this is;
   # one meaning "the human is idle at `you>`" wants the session ones ALONE, and
@@ -295,7 +295,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   end
 
   describe "#drain_at_prompt" do
-    # A typed reply answers the WHOLE set in prose (T14), so what reaches the
+    # A typed reply answers the WHOLE set in prose, so what reaches the
     # asker is the AnswerSet's own rendering rather than the bare line -- the
     # human's words blockquoted inside a record that says they were typed, not
     # chosen. `eq("go left")` used to pass here only because the harness put a
@@ -434,7 +434,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     # refusal is written to be read at a reply prompt: it says the LINE was
     # stale, not that the answer was wrong.
     #
-    # It also RETIRES the line, and that half changed in T1's review. It used to
+    # It also RETIRES the line, and that half changed in review. It used to
     # render and return, which left the dead question listed and offered it to
     # every later `/inbox` -- "a line that lists forever and can only ever
     # refuse". Nothing else on this path retires it: a drain calls
@@ -457,9 +457,9 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # T14: the arrival note is the FIRST thing a human sees, and the item has
-  # carried its own attribution since T11 -- so a two-agent fleet's arrivals
-  # are told apart before the drain is ever opened, not only once it is.
+  # The arrival note is the FIRST thing a human sees, and the item carries its
+  # own attribution -- so a two-agent fleet's arrivals are told apart before the
+  # drain is ever opened, not only once it is.
   describe "the arrival note" do
     let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
 
@@ -478,7 +478,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # T14, and the sharpest edge this chunk opened. The drain prints a whole
+  # The sharpest edge this chunk opened. The drain prints a whole
   # markdown DOCUMENT now, naming specific questions -- so `/inbox` typed at
   # the `human>` prompt of a PARKED set must render, and answer, that set. It
   # used to render the document (and build the prose answer) against whichever
@@ -508,7 +508,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # T4 (QA round 6, F27). `human> ` used to be prose or the ONE string literal
+  # QA round 6, F27. `human> ` used to be prose or the ONE string literal
   # `/inbox`, so every other registered `/word` was recorded as an answer -- a
   # human who typed `/status` while a set was parked sent the model the text
   # "/status" and got no status. The registry already parameterises exactly this
@@ -654,6 +654,174 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
+  # QA round 7, F29. The sibling describe above pins the INLINE `human> `
+  # read; this one pins the read one layer in, and they were not the same code.
+  # `Reply#drained` handed {Lain::Frontend::TTY::Inbox} a bare reader lambda
+  # that consulted no registry at all, so `/inbox` followed by any `/word`
+  # recorded that word as the human's answer -- the exact defect the inline
+  # prompt had already been fixed for, surviving behind the detour that reaches
+  # it. Measured before the fix: `/status` in a drain reached the model as the
+  # text "/status" and rendered nothing.
+  #
+  # The classification is {Lain::CLI::HumanReplies::Reply#classify}, shared with
+  # the inline prompt rather than restated here, so the ORDER the registry's
+  # lines are drawn in cannot drift between the two prompts.
+  describe "a session command typed INSIDE the inbox drain" do
+    let(:ruby) { RecordingCommand.new("ruby", returns: "=> 2") }
+    let(:env) { instance_double(Lain::CLI::Command::Env) }
+    let(:registry) do
+      Lain::CLI::Command::Registry.new([ruby, Lain::CLI::Command::Inbox.new, Lain::CLI::Command::Quit.new])
+    end
+
+    before { replies.bind_commands(registry.bind(env)) }
+
+    it "runs the command instead of answering the question, and the drain keeps reading" do
+      typed = ["/inbox", "/ruby 1 + 1", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(ruby.calls).to eq(["1 + 1"])
+      expect(ask_human.last_answer.body["answer"]).not_to include("/ruby")
+      expect(ask_human.last_answer.body["answer"]).to include("go left")
+    end
+
+    it "renders what the command returned, through the same delivery the inline prompt uses" do
+      typed = ["/inbox", "/ruby 1 + 1", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(output.string).to include("=> 2")
+    end
+
+    it "still answers the parked question with ordinary prose" do
+      typed = ["/inbox", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(ask_human.last_answer.body["answer"]).to include("go left")
+    end
+
+    # The safety property. An unregistered `/word` here is a MISTYPED command
+    # far more often than it is a reply -- and unlike the inline prompt, where
+    # the settled precedent is that it is an answer, sending it on is
+    # unrecoverable: the model receives it as the human's considered reply to a
+    # question they were reading at the time.
+    it "refuses an unregistered slash word by name rather than sending it to the model" do
+      typed = ["/inbox", "/statsu", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(output.string).to include("/statsu")
+      expect(ask_human.last_answer.body["answer"]).not_to include("/statsu")
+      expect(ask_human.last_answer.body["answer"]).to include("go left")
+    end
+
+    # A command returning a Repl ACTION has nowhere to go from a reply surface,
+    # inline or drained -- {Lain::CLI::HumanReplies::Reply#delivered} is the one
+    # place that says so, and this pins that the drain reaches it too.
+    it "refuses a command that would return a Repl action, by name, and keeps the question answerable" do
+      typed = ["/inbox", "/quit", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(output.string).to include("/quit")
+      expect(ask_human.last_answer.body["answer"]).to include("go left")
+    end
+
+    # `/inbox` names THIS surface ({Lain::CLI::Command::Registry#serves_replies?}),
+    # and it is already open. Dispatched it would open a second reader over the
+    # same stdin, which is what `spec/reply_surface_discipline_spec.rb` exists
+    # to prevent; silently ignored it reads as a wedged prompt. So it is refused
+    # by name, like every other line this surface cannot honour.
+    it "refuses /inbox typed into the drain it already opened, rather than opening a second reader" do
+      typed = ["/inbox", "/inbox", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(output.string).to include("/inbox")
+      expect(ask_human.last_answer.body["answer"]).to include("go left")
+      expect(ask_human.last_answer.body["answer"]).not_to include("/inbox")
+    end
+
+    # The refusal names a way forward, so the way forward has to work.
+    # {Lain::Skill::Invocation.parse} asks `line.start_with?("/")` on the RAW
+    # line, so ONE LEADING SPACE takes a reply out of the grammar entirely --
+    # it never reaches the registry, and `Question::Rules.prose` does not
+    # strip, so what the model receives is what they typed.
+    #
+    # This is load-bearing for the whole split rather than a nicety: without
+    # it the drain cannot express a reply that opens with a slash word at all,
+    # and refusing such a reply would be a dead end rather than a retype.
+    it "records a slash-word reply verbatim when the human takes the escape the refusal names" do
+      typed = ["/inbox", " /tmp is fine"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(ask_human.last_answer.body["answer"]).to include("/tmp is fine")
+    end
+
+    # A refusal that names no way forward is one the human cannot act on --
+    # {Reply#refusal}'s rule, applied to the arm that refuses a REPLY rather
+    # than a command.
+    it "names that escape in the refusal itself, rather than leaving the human to find it" do
+      typed = ["/inbox", "/statsu", "go left"]
+      allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+      Sync { announced(ask_human, "which db?") }
+      with_surfaces { ask_human.last_answer }
+
+      expect(output.string).to include("start the line with a space")
+    end
+  end
+
+  # The arm table is a CLOSED set, and the `else` is what keeps it closed.
+  # {Lain::CLI::HumanReplies::Reply#typed} and `#replied` both `case` over
+  # {Lain::CLI::HumanReplies::Reply#classify}'s answer, and a `case` with no
+  # `else` evaluates to nil -- which `#accepted` reads as "nothing typed yet"
+  # and re-reads. So a fourth arm added to `#classify` and forgotten at one of
+  # the two call sites would SWALLOW every reply the human types, rendering
+  # nothing: the exact silent-answer failure this whole card exists to close,
+  # reintroduced by the refactor that closed it.
+  #
+  # Driven through `send` rather than a typed line because there is no line
+  # that produces a fourth arm -- the hole opens only when the enum grows, so
+  # the enum is what the example has to fake. CLAUDE.md's rule for a
+  # non-exhaustive enum ("always have an `else`") stated as a test.
+  describe "a classification arm nobody handled" do
+    let(:reply) do
+      Lain::CLI::HumanReplies::Reply.new(tty:, conductor:,
+                                         inbox: Lain::CLI::HumanReplies::Pending.new)
+    end
+
+    it "raises from the inline prompt, naming the arm, rather than swallowing the line" do
+      allow(reply).to receive(:classify).and_return(:invented)
+
+      expect { reply.send(:typed, "go left", nil) }
+        .to raise_error(Lain::Error, /invented/)
+    end
+
+    it "raises from the drain, naming the arm, rather than swallowing the line" do
+      allow(reply).to receive(:classify).and_return(:invented)
+
+      expect { reply.send(:answerable, "go left") }
+        .to raise_error(Lain::Error, /invented/)
+    end
+  end
+
   # Review fix 3. `line.strip == "/inbox"` parsed nothing; consulting a registry
   # runs the real skill grammar over every reply line, and
   # {Lain::Skill::Invocation.parse} RAISES on a line that attempts the
@@ -681,7 +849,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # T14 round 3: an answer the record cannot carry is a REFUSAL, not a dead
+  # An answer the record cannot carry is a REFUSAL, not a dead
   # line. Everything else that ends a served question -- answered, withdrawn,
   # unwound, raised out of the read -- means the item is gone and
   # #serve_question's ensure retires it unconditionally, which is what keeps a
@@ -726,7 +894,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # T1 review, BLOCKER 2. A reply surface no longer lives for one ASK -- it lives
+  # A reply surface no longer lives for one ASK -- it lives
   # for one dispatched LINE ({Lain::CLI::Repl::LineScope}), so it is started and
   # stopped around `/help`, `/status`, and every other command a human types in
   # a second. The fleet outlives all of them (OM-6), so a subagent can enqueue
@@ -784,7 +952,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   # offering a question nothing is waiting on -- the live way a human answers
   # a ghost.
   #
-  # T1 REVIEW re-decided which of the two mistakes to make here, and the reason
+  # The review re-decided which of the two mistakes to make here, and the reason
   # is that {HumanReplies} cannot tell the two apart: a stopped surface holding
   # an unanswered item looks identical whether the set was withdrawn under it
   # (this group) or is still parked waiting for an answer (the group above). It
@@ -1013,7 +1181,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # T16's editor leg, from the wire IN. Everything here starts from a command
+  # The editor leg, from the wire IN. Everything here starts from a command
   # shaped EXACTLY as runtime.lua sends it -- `[verb, args]`, args an Array,
   # annotations String-keyed because they crossed msgpack -- because the defect
   # this file was missing lived precisely there: both sides had green specs and
@@ -1110,9 +1278,9 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(editor.refusals.size).to eq(1)
     end
 
-    # T9's owed branch: the answered document arrives as `[digest, AnswerSet]`
+    # The owed branch: the answered document arrives as `[digest, AnswerSet]`
     # -- the digest routes it, and the set renders to the String a Tool::Result
-    # carries. The pre-T11 guard asked the WRONG object ("does this asker have
+    # carries. The earlier guard asked the WRONG object ("does this asker have
     # anything pending"), which is not "is this digest answerable".
     it "answers the set a written question document names" do
       replies.bind_editor(editor)
@@ -1147,7 +1315,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       end
     end
 
-    # T33, stated where the two lifetimes are decided. An ask starts and stops
+    # Stated where the two lifetimes are decided. An ask starts and stops
     # the TTY drain and NOTHING else: the editor's consumer belongs to the
     # conversation, because the gestures it serves arrive between asks.
     it "keeps the editor consumer out of the surfaces an ask starts and stops" do
@@ -1170,7 +1338,8 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # T11's inbound half, on the consumer's side of the rail. Three acked verbs,
+  # The changeset review's inbound half, on the consumer's side of the rail.
+  # Three acked verbs,
   # which is why they arrive here at all: an acked command lands on the command
   # inbox and this fiber is the sole consumer of every verb on it. All three
   # obey the recorded rule -- the editor sends a LINE or a STAMP, never a
@@ -1205,7 +1374,8 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(review.gestures).to eq([[:mark, 4, "reviewed", 3]])
     end
 
-    # T33, and the example above is the vacuous version of it: `with_surfaces`
+    # The two lifetimes again, and the example above is the vacuous version of
+    # it: `with_surfaces`
     # has an ask's surfaces up, which is the state a code review is almost never
     # in. Here the ask's are started and STOPPED first -- exactly what
     # {Lain::CLI::Repl#respond}'s ensure does when a turn settles -- and the
@@ -1257,7 +1427,8 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(editor.refusals).to contain_exactly(a_string_matching(/no changeset review is open/))
     end
 
-    # T36. The verb rides THIS rail and not the answered one, and that is the
+    # The approval gesture. The verb rides THIS rail and not the answered one,
+    # and that is the
     # whole of its wiring: deciding an approval resolves a promise, a promise
     # must be resolved on the reactor, and this fiber is the reactor's. Served
     # on the RPC thread the way a question's `:w` is, it would block that thread
@@ -1377,7 +1548,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # T31a: ONE BIND, BOTH RAILS. A changeset review is reached from two places --
+  # ONE BIND, BOTH RAILS. A changeset review is reached from two places --
   # the acked gestures resolve on this consumer's fiber, and the two WRITES are
   # answered by the editor on its own RPC thread, through
   # {Frontend::Neovim#bind_changeset_review}. That method had no caller in the
@@ -1437,9 +1608,9 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # T16: the inbox's OWN gestures, which is where this consumer had a hole
-  # rather than a defect. T15 bound <CR> and `r` to :LainOpen and the editor
-  # has been sending `["open", [line, generation]]` ever since -- and nothing
+  # The inbox's OWN gestures, which is where this consumer had a hole rather
+  # than a defect. The editor side bound <CR> and `r` to :LainOpen and has
+  # been sending `["open", [line, generation]]` ever since -- and nothing
   # popped it, so the verb fell through this loop in silence and pressing enter
   # on an inbox item did nothing whatsoever in a live session.
   #
@@ -1448,7 +1619,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   # QuestionView. The second half of the same hole was that production Buffers
   # built its InboxView with NO question surface, so it resolved to `Unwired`
   # and would have refused every gesture a consumer sent it -- invisible to
-  # T15's specs, which injected the surface themselves.
+  # the editor side's specs, which injected the surface themselves.
   describe "the inbox's gestures on the editor rail" do
     let(:editor) { RecordingEditorRail.new }
     let(:nvim) { RecordingQuestionEditor.new }
@@ -1558,7 +1729,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect { replies.send(:routes)["pin"].call([1]) }.not_to raise_error
     end
 
-    # T16's own ACs. The advance belongs HERE, on the consumer, and nowhere
+    # The advance belongs HERE, on the consumer, and nowhere
     # else: {Frontend::Neovim::QuestionView}'s lock is not reentrant and its
     # `submit` runs inside it, so a set opened from the submit callable raises
     # `ThreadError: recursive locking` on the human's `:w` (question_view_spec
@@ -1793,7 +1964,7 @@ RSpec.describe Lain::CLI::Wiring::Askers do
     end
   end
 
-  # Retention is bounded by REGISTRATION lifetime (T8): whoever owns an
+  # Retention is bounded by REGISTRATION lifetime: whoever owns an
   # asker's life holds its registration, and dropping it is what stops the
   # routing -- the seam a child's lease reaps through.
   it "hands back the registration that releases the asker's routing" do
