@@ -292,11 +292,28 @@ to sit on that line somewhere else.
 
                                                            *:LainSurveyAdd*
 
-`<leader>sa`, from a real file buffer, runs `:LainSurveyAdd`: it adds the
+`<leader>Lsa`, from a real file buffer, runs `:LainSurveyAdd`: it adds the
 file you are reading to a survey open in this chat. Unlike every gesture
 above it is not scoped to a buffer lain named ahead of time -- a survey grows
 from whatever you are reading, so the keymap is global rather than
-buffer-local. It refuses and says so, rather than sending anything, from a
+buffer-local.
+
+                                                            *g:lain_prefix*
+
+Being global is also why it is the one gesture that wears a prefix. Every
+buffer-local key above (`x`, `u`, `y`, `n`, `p`, `r`, <CR>) is claimed inside a
+`nomodifiable` buffer lain owns, where it can collide with nothing; a global
+key fires in your own editable file, where every bare letter is already yours.
+So every global lain key hangs off ONE prefix, `<leader>L` by default: >lua
+
+    vim.g.lain_prefix = "<leader>z"   -- <leader>zsa instead
+<
+It is read when the keymap is created, which is at attach: set it before you
+start lain, or re-attach after changing it. A re-attach under a changed prefix
+unbinds the lhs it bound last time, so a key lain no longer answers for does
+not keep firing out of your own file.
+
+`:LainSurveyAdd` refuses and says so, rather than sending anything, from a
 buffer with no file OR from one of lain's own (`lain://timeline`,
 `lain://review`, a compose or question pane, ...) -- a view URI is not a
 survey path. It carries the buffer's absolute path and
@@ -659,6 +676,21 @@ is wiped as it is replaced, so a long review leaves no buffer per file behind.
 Notes go on either side of the pair, and both commands work only in a buffer
 lain has open for review -- the stamps above are the test, so a file you have
 moved on from refuses.
+
+The same stamp is what binds the keys, so they exist exactly where a note may
+be left and nowhere else -- a review diff is a real editable file buffer, so
+lain claims no bare letter in it:
+
+    <leader>Ln              Pre-fill `:LainNote note ` on the cmdline
+    <leader>Lq              ... `:LainNote question `
+    <leader>Lb              ... `:LainNote blocker `
+    <leader>LN              |:LainNoteDone|
+    <leader>Lt              |:LainThread|
+
+The first three leave the cmdline OPEN: type your words and press <CR>. That is
+not an oversight -- see |:LainNote|'s note on why it is synchronous. The prefix
+is |g:lain_prefix|, and moving it moves these too. They are removed from a
+buffer whose stamp lain has withdrawn, so a key that is there always works.
 
     :LainNote {kind} {text}
                             Leave a note on the line the cursor is on. {kind}

@@ -256,11 +256,12 @@ vim.api.nvim_create_autocmd("BufEnter", {
 -- WHATEVER FILE the human is reading, and there is no name to scope that to --
 -- so the command and its keymap are GLOBAL, never buffer-local.
 --
--- `<leader>` rather than a bare letter, the one place this departs from its
--- siblings' shape: `x`/`u`/`<CR>` are safe to claim on `review_sidebar.buf()`,
--- which is `nomodifiable` with nothing to type into (see the `u` comment
--- above) -- but the buffer this fires from is the human's own real, EDITABLE
--- file, where a bare `a` would cost them vim's own append.
+-- PREFIXED rather than a bare letter, through `30_commands`' `lain_key`: `x`/
+-- `u`/`<CR>` are safe to claim on `review_sidebar.buf()`, which is
+-- `nomodifiable` with nothing to type into (see the `u` comment above) -- but
+-- the buffer this fires from is the human's own real, EDITABLE file, where a
+-- bare `a` would cost them vim's own append. Every global lain key shares one
+-- movable prefix for that reason; see `lain_key`.
 --
 -- ACKED, `review_open`/`review_mark`'s shape, and this card proves emission
 -- only: nothing here reads a return value, and an unrouted verb is not a raise
@@ -311,5 +312,4 @@ define("LainSurveyAdd", function()
     { vim.fn.fnamemodify(name, ":p"), vim.b[buf].lain_view_generation })
 end)
 
-vim.keymap.set("n", "<leader>sa", "<Cmd>LainSurveyAdd<CR>",
-  { desc = "lain: add the current file to the open survey" })
+lain_key("sa", "<Cmd>LainSurveyAdd<CR>", "add the current file to the open survey")

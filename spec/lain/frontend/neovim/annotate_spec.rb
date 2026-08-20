@@ -667,6 +667,55 @@ RSpec.describe "the review annotation runtime", :nvim do
       expect(messages).not_to include("stack traceback")
     end
   end
+
+  # The keys are bound on the STAMP and never on a buffer NAME, which is the one
+  # thing that makes them correct: a stamped buffer is not a review buffer
+  # forever, and T15 withdraws the stamp when the human opens the next file.
+  describe "the note keys" do
+    # `maparg` per lhs rather than pressing anything: a press that finds no map
+    # is not a no-op in normal mode (`\Lsa` is `L`, then `s`, which enters
+    # INSERT), so an absence asserted by pressing fails somewhere else entirely.
+    def mapped(win, suffix)
+      lua(<<~LUA, [win, "\\L#{suffix}"])
+        local win, lhs = ...
+        vim.api.nvim_set_current_win(win)
+        vim.api.nvim_exec_autocmds("BufEnter", { buffer = vim.api.nvim_win_get_buf(win) })
+        return vim.fn.maparg(lhs, "n")
+      LUA
+    end
+
+    it "binds a key per annotation kind on a stamped review buffer" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+
+      expect(mapped(slots.fetch("new"), "n")).to include("LainNote note")
+      expect(mapped(slots.fetch("new"), "q")).to include("LainNote question")
+      expect(mapped(slots.fetch("new"), "b")).to include("LainNote blocker")
+      expect(mapped(slots.fetch("old"), "n")).to include("LainNote note")
+    end
+
+    # The cmdline is PRE-FILLED and not executed -- no <CR> -- because
+    # `:LainNote` is synchronous on purpose and a prompt would put the placement
+    # sequence at the mercy of how fast the human types. See 48_annotate.lua.
+    it "leaves the human to finish the sentence rather than running the command" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+
+      expect(mapped(slots.fetch("new"), "n")).not_to include("<CR>")
+      expect(mapped(slots.fetch("new"), "n")).to end_with(" ")
+    end
+
+    # A key that is present and refuses teaches the human that notes are broken;
+    # a key that is absent teaches them they are somewhere else.
+    it "removes them from a buffer whose stamp has been withdrawn" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+      win = slots.fetch("new")
+      # What `review_diff.withdraw` does, spelled out: it is a module-local
+      # function with no `__lain` entry point, and the stamp IS these variables.
+      lua("local buf = ...; vim.b[buf].lain_review_side = nil", [buf_in(win)])
+
+      expect(mapped(win, "n")).to eq("")
+      expect(mapped(win, "q")).to eq("")
+    end
+  end
 end
 
 # The one closed set this runtime has to restate, pinned against the declaration

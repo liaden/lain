@@ -468,7 +468,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         buf = open_real_file(path)
         stamp_generation(buf, 7)
 
-        feed(path, "\\sa", cursor: [1, 0])
+        feed(path, "\\Lsa", cursor: [1, 0])
 
         verb, args = Timeout.timeout(5) { handle.command_inbox.pop }
         expect(verb).to eq("survey_add")
@@ -489,7 +489,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       frontend.run do |handle|
         open_real_file(path)
 
-        feed(path, "\\sa", cursor: [1, 0])
+        feed(path, "\\Lsa", cursor: [1, 0])
 
         expect(Timeout.timeout(5) { handle.command_inbox.pop }).to include("survey_add")
         expect { Timeout.timeout(5) { inspector.command("echo 'still here'") } }.not_to raise_error
@@ -511,14 +511,57 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         wait_until { bufnr("lain://timeline") != -1 }
         set_view("lain://timeline", ["user: first", "assistant: second"])
 
-        feed("lain://timeline", "\\sa", cursor: [1, 0])
+        feed("lain://timeline", "\\Lsa", cursor: [1, 0])
         open_real_file(path)
-        feed(path, "\\sa", cursor: [1, 0])
+        feed(path, "\\Lsa", cursor: [1, 0])
 
         verb, args = Timeout.timeout(5) { handle.command_inbox.pop }
         expect(verb).to eq("survey_add")
         expect(args.first).to eq(path)
         expect(messages).to include("LainSurveyAdd")
+      end
+    end
+
+    # `vim.g.lain_prefix` is read when the map is CREATED, which is attach, so
+    # this sets it on the editor before the frontend attaches to it -- the same
+    # order a human's init.lua puts it in.
+    it "binds the gesture under vim.g.lain_prefix when the human moved it" do
+      inspector.exec_lua("vim.g.lain_prefix = '<leader>z'", [])
+      frontend = described_class.new(channel:, socket_path: @socket)
+      path = real_file
+
+      frontend.run do |handle|
+        open_real_file(path)
+
+        feed(path, "\\zsa", cursor: [1, 0])
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to include("survey_add")
+      end
+    end
+
+    # The half a "the prefix is configurable" example does not reach on its own:
+    # a re-attach under a changed prefix must UNBIND the old lhs, or a key lain
+    # no longer admits to keeps firing out of the human's own file. `lain_key`
+    # remembers on `vim.g` for exactly this, because a re-attach re-runs the
+    # chunk and a chunk-local table would remember nothing.
+    #
+    # Asserted against the MAP TABLE and not by pressing the old key, which is a
+    # trap worth recording: `\Lsa` with the map gone is not a no-op, it is
+    # `L` (cursor to the bottom of the window) then `s` (substitute, which
+    # ENTERS INSERT MODE) then `a`. The next `feed` then types its keys into the
+    # buffer as text, and the example fails somewhere else entirely.
+    it "unbinds the previous lhs when a re-attach moves the prefix" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run { wait_until { bufnr("lain://timeline") != -1 } }
+      inspector.exec_lua("vim.g.lain_prefix = '<leader>z'", [])
+
+      described_class.new(channel:, socket_path: @socket).run do
+        wait_until { bufnr("lain://timeline") != -1 }
+
+        expect(inspector.exec_lua("return vim.fn.maparg('\\\\Lsa', 'n')", [])).to eq("")
+        expect(inspector.exec_lua("return vim.fn.maparg('\\\\zsa', 'n')", []))
+          .to include("LainSurveyAdd")
       end
     end
   end

@@ -430,3 +430,59 @@ vim.api.nvim_create_autocmd("BufUnload", {
   group = vim.api.nvim_create_augroup("lain_review_notes", { clear = true }),
   callback = function(ev) review_notes.harvest(ev.buf) end,
 })
+
+-- The note keys, on the buffers a note can actually be placed in.
+--
+-- THE MEMBERSHIP TEST IS THE STAMP, `review_notes.stamp`'s own rule and not a
+-- second reading of it: a `BufEnter` pattern cannot match on a buffer variable,
+-- and it must not match on a NAME -- a stamped buffer is not a review buffer
+-- forever, and the name outlives the stamp. So the autocmd is broad and the
+-- callback asks the one question that decides it, which is also the question
+-- `:LainNote` itself asks before placing anything. Two answers to "may a note
+-- go here" cannot disagree, because there is one.
+--
+-- It follows that the keys are REMOVED when the stamp is withdrawn (T15 does
+-- that when the human opens the next file). A key left behind would still find
+-- `:LainNote`, which would refuse correctly -- but a key that is present and
+-- refuses teaches the human that notes are broken, where a key that is absent
+-- teaches them they are somewhere else.
+--
+-- THE CMDLINE IS PRE-FILLED, NOT EXECUTED -- no `<CR>`, no `vim.ui.input`. The
+-- prompt version is the obvious one and it is wrong here for the reason stated
+-- above `:LainNote`: `vim.ui.input` is asynchronous under the dressing plugins
+-- that replace it, and two overlapping prompts would put the placement SEQUENCE
+-- at the mercy of how fast the human types -- and the sequence is the output.
+-- Typing into the cmdline is synchronous, and the command that runs on Enter is
+-- the same one, in the same order, that a human typing it out would get. It
+-- also leaves the command's name on screen, which is how the key teaches what
+-- it is a shortcut for.
+--
+-- One key per KIND, never a prompt for the kind: it is a closed set, and
+-- `blocker` -- the only kind a verdict policy reads -- must not be reachable
+-- only through a word the human has to remember to type.
+-- ONE table, read by both halves, so a key added to the bind list cannot be
+-- forgotten by the unbind list -- which is the drift that would leave exactly
+-- the stale, refusing key this whole autocmd exists to remove.
+local NOTE_KEYS = {
+  { "n", ":LainNote note ", "note on this line (finish the sentence, then <CR>)" },
+  { "q", ":LainNote question ", "question on this line (finish it, then <CR>)" },
+  { "b", ":LainNote blocker ", "blocker on this line (finish it, then <CR>)" },
+  { "N", "<Cmd>LainNoteDone<CR>", "hand every note back" },
+  { "t", "<Cmd>LainThread<CR>", "open the thread on this line" },
+}
+
+local function bind_note_keys(buf)
+  local stamped = review_notes.stamp(buf) ~= nil
+  for _, key in ipairs(NOTE_KEYS) do
+    if stamped then
+      lain_buf_key(buf, key[1], key[2], key[3])
+    else
+      pcall(vim.keymap.del, "n", lain_prefix() .. key[1], { buffer = buf })
+    end
+  end
+end
+
+vim.api.nvim_create_autocmd("BufEnter", {
+  group = vim.api.nvim_create_augroup("lain_review_note_keys", { clear = true }),
+  callback = function(ev) bind_note_keys(ev.buf) end,
+})
