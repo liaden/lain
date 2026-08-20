@@ -176,6 +176,57 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     end
   end
 
+  # A corpus surveyed from OUTSIDE the project root -- `/survey
+  # <absolute path>` when the walked tree merely sits beside the chat's cwd --
+  # names every file with a `../../..` climb ahead of its own path
+  # (`Review::Source::Corpus::Prefix.between`), so a row rendered verbatim
+  # reads as a parent-directory traversal instead of a name.
+  describe "a row named for a survey outside the project root" do
+    let(:files) { [file_entry(path: "../../../etc/foo/bar.rb", first: 1)] }
+
+    it "drops the climb from what is drawn" do
+      rendered = view.render(changeset(files:), scope: :cumulative)
+
+      expect(rendered.lines).to eq(["[ ] etc/foo/bar.rb"])
+    end
+
+    # The RESOLUTION key must not move with the display: `<CR>` still has to
+    # open the exact string the corpus named the file by, which is what
+    # `47_diff.lua`'s old-side buffer resolves against the editor's own cwd.
+    it "still opens the file by the climbing path the corpus named it with" do
+      rendered = view.render(changeset(files:), scope: :cumulative)
+
+      view.open(1, generation: rendered.generation)
+
+      expect(opener.calls).to eq([["../../../etc/foo/bar.rb", 1]])
+    end
+
+    it "leaves an in-project path exactly as it was drawn before" do
+      rendered = view.render(changeset(files: [file_entry(path: "lib/a.rb")]), scope: :cumulative)
+
+      expect(rendered.lines).to eq(["[ ] lib/a.rb"])
+    end
+
+    # A KNOWN LIMITATION, pinned rather than left to a hand-back: `Corpus::Prefix.between`
+    # (cwd `/p/docs`, surveyed root `/p/lib`) names this file `../lib/greeter.rb` -- climbing
+    # to the shared ancestor and back down into the surveyed root's own directory before the
+    # file's own root-relative name. Stripping only the LEADING `..` run leaves `lib/greeter.rb`,
+    # which reads as -- and is indistinguishable from -- an ordinary IN-PROJECT row, even though
+    # this file is not under the project at all. A true root-relative name (`greeter.rb`) would
+    # need `walk.root` itself threaded into `#render`, which is out of this view's single-file
+    # scope. Only the fully-disjoint case (no shared ancestor, this describe block's other
+    # examples) and the fully-nested case (an in-project survey) render exactly root-relative.
+    it "still reads as an in-project path when the surveyed root shares a partial ancestor with cwd" do
+      partial = [file_entry(path: "../lib/greeter.rb", first: 1)]
+
+      rendered = view.render(changeset(files: partial), scope: :cumulative)
+      view.open(1, generation: rendered.generation)
+
+      expect(rendered.lines).to eq(["[ ] lib/greeter.rb"])
+      expect(opener.calls).to eq([["../lib/greeter.rb", 1]])
+    end
+  end
+
   # The BLOCKER a review panel found: `Partition::ByCommit::Commit#numstat` is an
   # `Array<Source::FileStat>` and answers neither `#added` nor `#deleted`, so a
   # walk reaching through it raises NoMethodError against the real object while

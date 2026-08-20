@@ -522,8 +522,14 @@ module Lain
           "+#{group.added} -#{group.deleted}"
         end
 
+        # A leading climb ("../../../etc/foo/bar.rb") is `Corpus::Prefix.between`
+        # joining the hops from the chat's cwd out to a tree merely BESIDE it,
+        # ahead of the file's own path -- so a row surveyed outside the project
+        # root reads as a traversal rather than a name. Dropped for DISPLAY
+        # only: `path:` below stays `file.path` untouched, since every gesture
+        # and `47_diff.lua`'s old-side buffer resolve through THAT, not the text.
         def file_row(file, indent)
-          plain("#{indent}#{state_marker(file)} #{legible(file.path)}")
+          plain("#{indent}#{state_marker(file)} #{legible(file.path).sub(%r{\A(?:\.\./)+}, "")}")
             .with(path: file.path.to_s, line: first_line(file), hunk_keys: file.hunk_keys, read: file.chunked?)
         end
 

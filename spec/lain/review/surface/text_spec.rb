@@ -71,6 +71,19 @@ RSpec.describe Lain::Review::Surface::Text do
       expect(sink.string).to include("[ ] lib/c.rb")
     end
 
+    # Mirrors `Frontend::Neovim::ReviewView`'s fix so the two surfaces do not
+    # diverge: `Corpus::Prefix.between` prepends a climb ahead of a file's own
+    # path whenever the surveyed tree sits outside the project root, so a row
+    # rendered verbatim reads as a parent-directory traversal instead of a name.
+    it "drops a survey's leading climb from a row's displayed path" do
+      climbing = file_entry(path: "../../../etc/foo/bar.rb", state: :unreviewed)
+
+      surface.present(changeset(files: [climbing]), scope: :cumulative)
+
+      expect(sink.string).to include("[ ] etc/foo/bar.rb")
+      expect(sink.string).not_to include("../../../etc")
+    end
+
     it "heads each group with its partition's label at :commits scope" do
       surface.present(two_commit_changeset, scope: :commits)
 

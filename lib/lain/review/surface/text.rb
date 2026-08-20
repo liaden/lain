@@ -173,7 +173,7 @@ module Lain
           ([legible(partition.label)] + partition.files.map { |file| "  #{row(file)}" }).join("\n")
         end
 
-        def row(file) = "#{STATE_MARKERS.fetch(file.state.to_s)} #{legible(file.path)}"
+        def row(file) = "#{STATE_MARKERS.fetch(file.state.to_s)} #{legible(file.path).sub(%r{\A(?:\.\./)+}, "")}"
 
         # git (and a commit subject) yields BYTES, not characters -- the house
         # precedent is `Isolation::Worktree::Handback#unmerged`
