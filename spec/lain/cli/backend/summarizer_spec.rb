@@ -125,7 +125,7 @@ RSpec.describe Lain::CLI::Backend::Summarizer do
     # Holding the slot in the SAME fiber rather than racing a sleeping holder
     # against a sleeping caller: `try_enter` refuses immediately instead of
     # blocking, so there is no re-entrancy hang to dodge and no timing to lose
-    # under load (CLAUDE.md's load-induced-flake list is full of the other
+    # under load (docs/toolchain-traps.md's load-induced-flake list is full of the other
     # shape).
     def fire_against_a_held_slot(eager)
       Sync do

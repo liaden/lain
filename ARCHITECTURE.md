@@ -1143,7 +1143,8 @@ snapshots state pays `Hash#dup` at O(n) where a HAMT forks in O(1). That asympto
 argument, and "Rust is faster" is not. The gap is **latent today**: `Cargo.toml` says so
 explicitly, because the Store mutates one map in place and no Timeline retains a prior version,
 so the current O(1) `fork` comes from the handle plus content addressing rather than from the
-HAMT. The binding earns rule 2 of `CLAUDE.md`'s five only once speculative branching snapshots
+HAMT. The binding earns rule 2 of `docs/rust-bindings.md`'s five only once speculative branching
+snapshots
 the map. Pure Ruby ships first behind the same interface, and the `Regular` / `MeetSemilattice`
 property tests must pass unchanged against both implementations, which is what makes a port a
 swap rather than a rewrite, and why the Ruby version is not deleted.

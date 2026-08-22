@@ -28,7 +28,7 @@ require "prop_check"
 
 module PropCheckSetup
   # Bound the work: these run inside `rake pspec`, and the suite's wall clock is
-  # already floored by one file (root CLAUDE.md). 100 draws per law is
+  # already floored by one file (docs/spec-suite-performance.md). 100 draws per law is
   # prop_check's own default and matches the count the previous engine ran,
   # which keeps the swap honest as a comparison.
   DEFAULT_RUNS = 100

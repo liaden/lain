@@ -1,9 +1,8 @@
 # Working on `ext/lain` (the in-process Rust extension)
 
 This crate is **pure and synchronous**. It exists for Rust's *data model* — ownership, cheap
-immutability, structural sharing — not for speed. See the root `CLAUDE.md` section "Rust, and
-which data structures earn a binding" for the five tests a structure must pass before it gets a
-binding at all.
+immutability, structural sharing — not for speed. See `docs/rust-bindings.md` for the five tests
+a capability must pass before it gets a binding at all.
 
 Anything **async, I/O-bound, or isolation-relevant** belongs in `crates/lain-core` (tokio,
 msgpack-RPC over a Unix socket), not here. Driving an async runtime from inside a magnus FFI call

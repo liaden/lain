@@ -242,7 +242,7 @@ Measured across a load of the 18GB `qwen3-coder:30b`: `llama-server` RSS **49.9 
 unchanged (7,007 → 6,951 MB), `buff/cache` up 746 MB. Weights stream NVMe → page cache → VRAM and
 the page cache is reclaimable, so 15.9GB of system RAM is ample. RAM binds only when the model
 *doesn't* fit: the nemotron wedge drove zram swap to 82% and left memory pressure at 3.1% against
-the 0.35% baseline in CLAUDE.md, long after the process was killed.
+the 0.35% baseline in `docs/spec-suite-performance.md`, long after the process was killed.
 
 ### The rest of llama.cpp's knobs are NOT reachable through ollama
 
@@ -273,7 +273,8 @@ Four traps, all of which produced confident wrong answers here first.
    the next gave a **1.7x spread within a single value** (2,154 vs 3,661 at nb=2048) — wider than
    the difference between values — with rep1 systematically below rep2. Cycling the values
    round-robin spreads warm-up and ambient load across all of them instead of concentrating it on
-   whichever ran first. This is the same failure CLAUDE.md documents for the spec-worker sweep.
+   whichever ran first. This is the same failure `docs/spec-suite-performance.md` documents for the
+   spec-worker sweep.
 3. **"Loads" is not "works", and neither is "offloaded N/N layers".** Both nemotron (wedged at
    54/54) and f16-at-96k (6x slow at 49/49) reported full offload. The layer count describes intent,
    not residency. Score on the tok/s curve.
