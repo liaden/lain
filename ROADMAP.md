@@ -1404,6 +1404,41 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    `lain://timeline` "the DAG" while it renders a linear first-parent chain).
 
 
+34. **Planned (2026-08-21, panel-reviewed)** —
+   `planning/specs/chunk-qa-round8-cancellation-and-environment.md`: discharge QA round 8. **Six of
+   its findings share one shape — the system knows a fact and never says it.** A cancelled tool call
+   leaves a `tool_use` with no result, which permanently refuses every later compaction and makes the
+   session unforkable *and* unresumable (F46); a compaction that has stopped increments a
+   `consecutive` streak whose stated purpose is to say so and which **nothing in `lib/` reads**
+   (F47); a provider with no prompt cache is reported as `saving $0.000000` two lines under
+   `4 prefix rewrites detected`, both true and neither saying which question it answered (F49); a
+   model emitting its tool call as prose decodes as `end_turn` and lands on the **healthy** arm
+   (MODEL-2); and an approval parked for a human renders nowhere once a sibling surface answered the
+   first one, because `ApprovalPolicy#watch` blocks in a terminal read with no way to abandon it
+   (F40). A green suite of **14,926 examples** sees none of them.
+   Alongside: `Grader::TestHarness` already scrubs lain's own bundler environment out of a child,
+   with a class doc naming the hazard — and `Tools::Bash`, the tool the model actually uses, never
+   got it, so every Ruby subprocess in the user's project resolves against **lain's** Gemfile (F45).
+   That becomes **`Lain::Exec`**, a name for a question the code already answers twice without
+   naming it: `Local` (in-process shellout), `Core` (the existing lain-core arm) and a new bare-bones
+   `Docker`. Deliberately **not** under `Isolation`, which answers how a *worker* gets a *workspace*
+   and which `exe/lain:843-845` records as "inert in chat today". **14 cards, 3 waves.**
+   The panel returned *request-changes* with four BLOCKERs, all fixed, and three were premises the
+   code contradicted rather than sizing problems: the first draft's refusal named `/rewind` as its
+   remedy, which needs a **live REPL** and so can never be reached from a door that refuses before
+   one exists; the "five duplicated git scrubs" were two documented decisions to stay separate plus a
+   constant that **spawns nothing at all** (cut); a retry affordance was scoped to two files and
+   needed the whole dispatch chain (deferred); and the malformed-call detector was made to hinge on
+   an **undecidable** distinction only because of an unreachable rendering AC (dropped). The panel
+   also found the plan asserting two `pending_tool_use?` copies were byte-equivalent when the
+   difference — a nil guard — is load-bearing at `heads[heads.length]`. **F46's cause as filed was
+   wrong and is corrected by T14**: the iteration ceiling is checked at `agent.rb:401` *before*
+   `call_model` and cannot interleave into the dispatch window; the journal's five `run_interrupted`
+   records follow 25/25/25/25/**12** turns, and the one that stranded the call came after 12. The
+   repair therefore lands **at load** (`Resume`), which is trigger-agnostic and covers SIGKILL and
+   OOM that no in-process handler sees. Findings in
+   [`planning/qa-findings-round8-2026-08-21.md`](planning/qa-findings-round8-2026-08-21.md).
+
 ---
 
 ## Map of the documents
