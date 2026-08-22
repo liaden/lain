@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# Serving-stack benchmarks for the local ollama arm.
+#
+# Every finding in DEBUGGING_OLLAMA.md's 2026-08-14 entry came from these subcommands. Read that
+# entry's "How these were measured" section before trusting or extending output: the prompt cache
+# fakes prefill rates, blocked sweeps lie, and "offloaded N/N layers" does not mean resident.
+#
+# Emits NDJSON on stdout, one record per measurement, so runs can be concatenated and re-aggregated.
+set -uo pipefail
+
+HOST="${OLLAMA_HOST_URL:-http://127.0.0.1:11434}"
+HW=$(echo /sys/class/drm/card*/device/hwmon/hwmon*/ 2>/dev/null | tr ' ' '\n' | head -1)
+CARD=$(echo /sys/class/drm/card*/device/ 2>/dev/null | tr ' ' '\n' | tail -1)
+
+usage() {
+  cat <<'USAGE'
+usage: bin/bench-ollama-gpu <subcommand> [args]
+
+  decode  <label> <model>...          decode tok/s, 3 reps, at NUM_BATCH (default 2048)
+  prefill <label> <model>...          prefill tok/s, 3 reps, cache-defeating unique prefixes
+  batch-sweep <label> <model> [passes]  INTERLEAVED num_batch sweep (default 5 passes)
+  kv-ceiling  <label> <model> <ctx>...  decode tok/s per context; finds where the KV spills
+  thermals <interval_s>               sample GPU sensors until killed
+  summarize <file.ndjson>...          aggregate to a table
+
+env:
+  NUM_BATCH   logical batch passed as options.num_batch (default 2048).
+              Ollama's own default is 512, which overrides llama.cpp's 2048 and costs
+              up to 3x decode and 8x prefill on Vulkan. There is no server-side setting.
+  NUM_CTX     context length (default 32768)
+  OLLAMA_HOST_URL
+
+examples:
+  bin/bench-ollama-gpu decode vulkan qwen3-coder:30b > decode.ndjson
+  NUM_BATCH=512 bin/bench-ollama-gpu decode vulkan-default qwen3-coder:30b >> decode.ndjson
+  bin/bench-ollama-gpu batch-sweep rocm qwen3-coder:30b 5 | bin/bench-ollama-gpu summarize /dev/stdin
+USAGE
+}
+
+NUM_BATCH="${NUM_BATCH:-2048}"
+NUM_CTX="${NUM_CTX:-32768}"
+DECODE_TOKENS=300
+DECODE_PROMPT='Write a detailed technical description of how a B-tree index works.'
+
+# ~7.5k tokens. Held identical across models and backends so comparisons are like-for-like.
+long_prompt() {
+  local block="The quick brown fox jumps over the lazy dog while the committee reviews the quarterly figures and the archivist catalogues each manuscript by provenance, binding, and marginalia. "
+  local out=""; for _ in $(seq 1 220); do out="${out}${block}"; done; printf '%s' "$out"
+}
+
+# jq cannot parse a response whose generated text carries raw control characters, so the timing
+# fields are pulled out with grep instead of by parsing the document.
+field() { echo "$1" | grep -oE "\"$2\":[0-9]+" | head -1 | cut -d: -f2; }
+
+rate() { # count, duration_ns
+  [ -n "${1:-}" ] && [ -n "${2:-}" ] && [ "${2:-0}" -gt 0 ] \
+    && python3 -c "print(f'{$1/($2/1e9):.2f}')" || echo "null"
+}
+
+gen() { # model, prompt, num_predict, [num_batch]
+  jq -cn --arg m "$1" --arg p "$2" --argjson n "$3" --argjson b "${4:-$NUM_BATCH}" --argjson c "$NUM_CTX" \
+    '{model:$m,prompt:$p,stream:false,
+      options:{num_predict:$n,temperature:0,seed:42,num_batch:$b,num_ctx:$c}}' \
+  | curl -s --max-time 600 "$HOST/api/generate" -H 'Content-Type: application/json' -d @-
+}
+
+unload() { curl -s "$HOST/api/generate" -H 'Content-Type: application/json' \
+  -d "$(jq -cn --arg m "$1" '{model:$m,keep_alive:0}')" >/dev/null; sleep 2; }
+
+emit() { # label model phase rep num_batch tokens rate extra_json
+  jq -cn --arg backend "$1" --arg model "$2" --arg phase "$3" --argjson rep "$4" \
+         --argjson num_batch "$5" --argjson num_ctx "$NUM_CTX" \
+         --argjson tokens "${6:-0}" --argjson tps "${7:-null}" \
+    '{backend:$backend,model:$model,phase:$phase,rep:$rep,
+      num_batch:$num_batch,num_ctx:$num_ctx,tokens:$tokens,tps:$tps}'
+}
+
+cmd_decode() {
+  local label="$1"; shift
+  for m in "$@"; do
+    gen "$m" "warmup" 1 >/dev/null          # pay the load once; it is not part of the measurement
+    for rep in 1 2 3; do
+      local r; r=$(gen "$m" "$DECODE_PROMPT" "$DECODE_TOKENS")
+      emit "$label" "$m" decode "$rep" "$NUM_BATCH" \
+        "$(field "$r" eval_count)" "$(rate "$(field "$r" eval_count)" "$(field "$r" eval_duration)")"
+    done
+    unload "$m"
+  done
+}
+
+cmd_prefill() {
+  local label="$1"; shift
+  local long; long="$(long_prompt)"
+  for m in "$@"; do
+    gen "$m" "warmup" 1 >/dev/null
+    for rep in 1 2 3; do
+      # Unique LEADING nonce: llama.cpp caches by prefix, so a repeated prompt reports a fabricated
+      # rate (measured 393,042 tok/s on a cached rep). Changing the prefix invalidates all of it.
+      local r; r=$(gen "$m" "$label-$m-$rep. $long" 1)
+      emit "$label" "$m" prefill "$rep" "$NUM_BATCH" \
+        "$(field "$r" prompt_eval_count)" \
+        "$(rate "$(field "$r" prompt_eval_count)" "$(field "$r" prompt_eval_duration)")"
+    done
+    unload "$m"
+  done
+}
+
+cmd_batch_sweep() {
+  # INTERLEAVED on purpose. Blocked (all reps of one value, then the next) gave a 1.7x spread
+  # within a single value -- wider than the difference between values -- because warm-up and
+  # ambient load land on whichever value happens to run first.
+  local label="$1" m="$2" passes="${3:-5}"
+  local long; long="$(long_prompt)"
+  gen "$m" "warmup" 1 >/dev/null
+  for pass in $(seq 1 "$passes"); do
+    for nb in 256 512 1024 2048 4096 8192; do
+      local r; r=$(gen "$m" "p$pass-nb$nb. $long" 1 "$nb")
+      emit "$label" "$m" prefill "$pass" "$nb" \
+        "$(field "$r" prompt_eval_count)" \
+        "$(rate "$(field "$r" prompt_eval_count)" "$(field "$r" prompt_eval_duration)")"
+      local d; d=$(gen "$m" "$DECODE_PROMPT" 200 "$nb")
+      emit "$label" "$m" decode "$pass" "$nb" \
+        "$(field "$d" eval_count)" "$(rate "$(field "$d" eval_count)" "$(field "$d" eval_duration)")"
+    done
+  done
+}
+
+cmd_kv_ceiling() {
+  # Scores the tok/s CURVE, not whether the model loads. Both an over-large KV cache and a model
+  # that does not fit still report "offloaded N/N layers to GPU" and still generate correct text --
+  # they just do it several times slower. Set OLLAMA_KV_CACHE_TYPE before starting the server.
+  local label="$1" m="$2"; shift 2
+  for ctx in "$@"; do
+    local r; r=$(NUM_CTX="$ctx" gen "$m" "$DECODE_PROMPT" 200)
+    emit "$label" "$m" "kv-ceiling" 1 "$NUM_BATCH" \
+      "$(field "$r" eval_count)" "$(rate "$(field "$r" eval_count)" "$(field "$r" eval_duration)")" \
+      | jq -c --argjson ctx "$ctx" '.num_ctx = $ctx'
+  done
+}
+
+cmd_thermals() {
+  # mem (VRAM) is the sensor to watch: it runs ~15C above edge at idle and sits closest to its limit.
+  local interval="${1:-3}"
+  r() { cat "${HW}$1" 2>/dev/null || echo 0; }
+  while true; do
+    printf '{"t":%s,"edge_c":%s,"junction_c":%s,"mem_c":%s,"power_w":%s,"fan_rpm":%s,"sclk_mhz":%s,"busy_pct":%s,"vram_mib":%s}\n' \
+      "$(date +%s)" "$(( $(r temp1_input)/1000 ))" "$(( $(r temp2_input)/1000 ))" \
+      "$(( $(r temp3_input)/1000 ))" "$(( $(r power1_average)/1000000 ))" "$(r fan1_input)" \
+      "$(( $(r freq2_input)/1000000 ))" "$(cat "${CARD}gpu_busy_percent" 2>/dev/null || echo 0)" \
+      "$(( $(cat "${CARD}mem_info_vram_used" 2>/dev/null || echo 0)/1048576 ))"
+    sleep "$interval"
+  done
+}
+
+cmd_summarize() {
+  cat "$@" | jq -s -r '
+    def median: sort | if length==0 then null
+      elif length%2==1 then .[length/2|floor] else (.[length/2-1]+.[length/2])/2 end;
+    def r1: if .==null then null else (.*10|round)/10 end;
+    map(select(.tps != null))
+    | group_by([.backend,.model,.phase,.num_batch])
+    | map({backend:.[0].backend, model:.[0].model, phase:.[0].phase,
+           num_batch:.[0].num_batch, n:length,
+           median:([.[].tps]|median|r1), best:([.[].tps]|max|r1), worst:([.[].tps]|min|r1)})
+    | sort_by(.model,.phase,.num_batch)
+    | (["backend","model","phase","num_batch","n","median","best","worst"]),
+      (.[]|[.backend,.model,.phase,(.num_batch|tostring),(.n|tostring),
+            (.median|tostring),(.best|tostring),(.worst|tostring)])
+    | @tsv' | column -t
+}
+
+case "${1:-}" in
+  decode)      shift; cmd_decode "$@" ;;
+  prefill)     shift; cmd_prefill "$@" ;;
+  batch-sweep) shift; cmd_batch_sweep "$@" ;;
+  kv-ceiling)  shift; cmd_kv_ceiling "$@" ;;
+  thermals)    shift; cmd_thermals "$@" ;;
+  summarize)   shift; cmd_summarize "$@" ;;
+  -h|--help|"") usage ;;
+  *) echo "unknown subcommand: $1" >&2; usage >&2; exit 1 ;;
+esac
