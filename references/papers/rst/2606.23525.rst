@@ -1,0 +1,1134 @@
+.. rubric:: Abstract
+
+Long agent traces composed of chains of thought and tool calls accumulate stale content that anchor subsequent generations, and eventually outgrow the context window. Existing scaffolds mitigate it with
+*fixed-interval* compaction triggered at a token threshold. Such triggers pay no heed to trajectory structure, risking
+discard of partial results mid-derivation or mid-search. We propose
+, a scaffold that allows the model itself to decide *when* and *how* to compact. Specifically, it
+pairs two inference-time elements:
+(i) a
+*compaction tool* the model invokes to summarize the accumulated context, and
+(ii) a lightweight
+*rubric* specifying when to fire (a sub-task has resolved, or
+the trajectory is converging) and when to suppress (mid-derivation,
+or when stuck). Both are needed. The tool alone is unevenly used
+across open-weight models, often invoked at unhelpful moments or not
+at all; the rubric alone cannot act. Together, they elicit effective
+adaptive compaction without any fine-tuning or external supervision. We present empirical results on six benchmarks (competitive math
+and agentic search) and seven models. Our results show that
+ matches or exceeds fixed-interval summarization at a fraction of the token cost, improving over a no-summarization baseline by up to 18.1 points on math and 5–9 points on agentic search at 30–70% lower
+per-question cost. Our results expose a meta-cognitive gap: although unprompted models cannot reliably tell when their own context is rotting, a lightweight rubric closes this gap, reframing when to compact as a capability that scaffolds can supply without training [].
+
+Introduction
+------------
+
+We are chasing after harder problems over longer horizons [metr-2026-time-horizon-1-1]_, and consequently, the trajectories LMs generate to solve them keep growing. Reasoning models are now able to spend tens of thousands of tokens deliberating on a single competition math question: Qwen3.5 produces 81k tokens [qwen3.5]_, Kimi-K2.5 produces 96k [kimiteam2026kimik25visualagentic]_. Agentic systems extend further, orchestrating search results [wei2025browsecompsimplechallengingbenchmark]_, code execution outputs [jimenez2024swebench]_, and intermediate plans [novikov2025alphaevolvecodingagentscientific]_ across hundreds of turns. The bet that more thinking and interactions yields better answers has paid off, but long traces carry a hidden cost.
+
+As the trace grows, it accumulates junk — a flawed case split made early, a search result the model has moved past, a candidate program that led nowhere. These leftovers do not just sit there; they anchor everything that follows [laban2026llms]_. A model that solves a problem from a clean start often fails when fed back its own flawed reasoning. This phenomenon is known as *context rot* [hong2025context]_ [cheng2026contextualdrag]_. Existing systems try to manage it with rigid rules: compacting the trajectory when a token threshold is met [research2026composer2technicalreport]_, or delegating the burden of identifying context rot to the user via ``/compact`` [anthropic2025claudecode]_.
+
+  Today, this rigidity is the rule. Industrial deployed systems either wait until
+  fixed token intervals to invoke compaction [research2026composer2technicalreport]_; recent academic scaffolds that compact context on reasoning traces [wu2026reasoningcachecontinualimprovement]_ [yan2026inftythink]_ and deep research systems [chen2026iterresearch]_, all rely on a token threshold to trigger compaction. For example, [liu2025webexplorer]_ triggers compaction when “token usage exceeds 30% of the maximum context.” []
+  But a fixed threshold knows nothing about what the model is doing when it invokes summarization. It cannot distinguish a model mid-derivation from one that has just resolved a sub-problem, mid-search from one converging on an answer. The cost is asymmetric: a well-timed call discards stale work, but a poorly timed call discards the partial result the model needed to continue. These scaffolds help, but they leave substantial headroom. The right time to compact heavily depends on what the model is doing, not just on how many tokens have passed.  Figure teaser shows this concretely: fixed-interval
+compression wipes four already-verified facts mid-trajectory, and the
+model falls back to a guess. In this work, we ask the following research question:
+
+[enhanced,
+  colback=gray!8, colframe=gray!90,
+  boxrule=0.4pt, arc=2pt,
+  left=2pt, right=2pt, top=4pt, bottom=4pt,
+  drop fuzzy shadow=black!20, width=1.0, center]
+
+    *Can the LM agent itself*recognize*its own context rot without training, and compact accordingly?*
+
+To answer the research question, we hand the decision of when to compact back to the LM agent itself. We propose , a scaffold that pairs two inference-time elements: an inline *compaction tool* the model invokes itself, and a lightweight *rubric* specifying when to fire (a sub-task has resolved, or the trajectory is converging) and when to suppress (mid-derivation, or when stuck). The model emits ``<summarize>`` when it wants to compact, the scaffold runs the summarization, and generation resumes from the summarized prefix. Both the rubric judge and summarizer is the same model: no external verifier, no fine-tuning.
+
+Both elements are needed. Across seven open-weight models, four ``Qwen`` models on competition math and three deployed search agents (``MiniMax-M2.5``, ``GLM-4.7-Flash``, ``MiMo-V2-Flash``), ablating the rubric exposes uneven tool use: some models call the tool at unhelpful moments, others not at all. With the rubric in place, elicits effective adaptive compaction without any fine-tuning, matching or exceeding fixed-interval summarization at a fraction of the token cost: on competition math (IMO-Answerbench, HMMT Nov 25 / Feb 26), it improves over a no-compaction baseline by up to 18.1 points; on agentic search (BrowseComp, BrowseComp-Plus, DeepSearch QA), it adds 5–9 points at 30–70% lower per-question cost.
+
+To sum up, our contribution is three-fold:
+
+- * We propose , a novel scaffold that exposes summarization as an inline tool paired with a lightweight rubric that tells the model when to invoke it. No fine-tuning required.
+
+    * Across seven open-weight models on competition math (four reasoning models) and agentic search (three deployed agents),  matches or exceeds fixed-interval summarization at substantially lower token cost.
+
+    * Ablations find that the rubric is crucial for effective self-compaction: offering the tool alone yields uneven behavior, while a paragraph of guidance closes the gap. Our findings imply that knowing when to perform compaction can be supplied as a meta-cognitive capability at inference time, rather than baked into weights.
+
+To the best of our knowledge, our work is the first to introduce and evaluate rubric-based adaptive compaction timing in a training-free setting.
+
+Preliminaries
+-------------
+
+""""
+
+Context management in long-horizon agents. LM agents on long-horizon tasks accumulate tokens in a single rolling context: prior thoughts, tool calls, and observations. A single coding-agent session on SWE-bench-style tasks routinely spans millions of tokens and well over a hundred turns. e.g., Qwen3-Coder-Next averages 8M tokens and 154 turns per problem on SWE-rebench [badertdinov2026swerebench]_. Deep-research agents on BrowseComp scale to hundreds of tool calls per query [wei2025browsecompsimplechallengingbenchmark]_ [miromindteam2026mirothinkerpushingperformanceboundaries]_. Even single-shot reasoning is no longer short: Kimi-K2.5 [kimiteam2026kimik25visualagentic]_ generates up to 96k thinking tokens on a single competition math problem. As horizons and task difficulty continue to scale, this accumulated context is not merely expensive but actively harmful: model performance degrades sharply with length, a phenomenon known as *context rot* [hong2025context]_. Compaction is therefore a prerequisite for sustained long-horizon capability.
+
+""""
+
+Current strategies. Today's agents compact via two
+content-agnostic heuristics. *Reactive* compaction triggers only when
+the rolling context approaches the model's token budget, treating
+compaction purely as overflow prevention [anthropic2025claudecode]_.
+*Periodic* compaction fires on a *fixed interval*—every k
+turns or every k tokens—regardless of what the trajectory contains
+[research2026composer2technicalreport]_ [wu2026reasoningcachecontinualimprovement]_. Both ignore the state of the
+trajectory, and fail in opposite directions: reactive compaction waits
+until the context is already saturated with stale or erroneous tokens that
+have been polluting generation for many steps, while periodic compaction
+discards context indiscriminately, often summarizing in the middle of an
+active subgoal and erasing information the model still needs.
+Figure teaser illustrates how a fixed-interval
+summary firing mid-reasoning on a BrowseComp trajectory can wipe four
+already-verified facts, and the model is left to guess.
+
+Our Approach:
+-------------
+
+NoteNotation
+
+[t]
+
+: rubric-gated inference-time context compaction.
+
+prompt x; model π; probe interval N; step budget T;
+      rubric prompt P_R; summarizer prompt P_S.
+\mathcalC ← \mathcalC ∘ m appends message m to context \mathcalC;
+        z ~ π(·\mid\mathcalC) samples response z from π given \mathcalC;
+        \textpop(\mathcalC, m) pop (removes) message m from \mathcalC (assuming that it's the last item in \mathcalC).
+\mathcalC \gets x*Overall context and its KV cache
+t = 1, …, T
+    y_t ~ π(· \mid \mathcalC);  \mathcalC ← \mathcalC ∘ y_t
+    y_t is a final answery_t
+    t \bmod N = 0
+        \mathcalC ← \mathcalC ∘ P_R*rubric probe; KV prefix reused
+        r_t ~ π(· \mid \mathcalC),\ r_t ∈ \textsccompress,\textsccontinue;  \mathcalC ← \mathcalC ∘ r_t
+        r_t = \textsccompress
+            \mathcalC ← \mathcalC ∘ P_S*KV prefix still reused
+            \tildey ~ π(· \mid \mathcalC)*summarize trajectory
+            \mathcalC \gets x ∘ \tildey*hard reset; resume from summary
+
+            \textpop(\mathcalC, r_t);  \textpop(\mathcalC, P_R)*revert; trajectory unchanged
+
+y_T
+
+""""
+
+Setup. Given a natural language prompt x, a language model π(· \mid x) generates a continuation y = (y_1, y_2, …) autoregressively, with each token conditioned on the prompt and all preceding tokens. We equip the language model with a summarization tool \mathcalS: (x, y_1:t) → \tildey, which takes the original prompt x and a (possibly partial) continuation y_1:t and produces a condensed version \tildey. Generation then resumes from the new context (x, \tildey). Crucially, the summarizer is the same model π—no external verifier or auxiliary model is required.
+
+""""
+
+. pairs two inference-time elements: (i) the summarization tool \mathcalS exposed to the model, and (ii) a lightweight *rubric* that decides, at periodic probe intervals, whether \mathcalS should fire. Both elements are needed: exposing the tool alone—letting π emit ``<summarize>`` whenever it wants—yields uneven, often poorly-timed firing across models: some call the tool reflexively at unhelpful moments, others rarely at all. The rubric closes that gap by translating “a sub-task has resolved” and “the trajectory is not stuck mid-derivation” into concrete, cite-able conditions π can verify against the trajectory in front of it. runs on a single inference engine with no fine-tuning.
+
+""""
+
+Summarizer design. To maximize KV-cache reuse, we implement \mathcalS by appending a summarizer prompt (Box math summarizer for Math; Box summ for Search Agents) as a user-role message: the cache of y_1:t at trigger time is preserved across the call,
+so \mathcalS pays prefill only on the appended instruction, not on the full trajectory. A saving we quantify in
+the cost analysis below. The scaffold appends the instruction to
+(x, y_1:t), π generates the summary \tildey, and \tildey then
+replaces y_1:t; decoding resumes from the original question and the summarized content (x, \tildey).
+
+""""
+
+Triggering the summarizer. At intervals
+t ∈ N, 2N, 3N, …, the scaffold appends a rubric prompt P_R as a user-role message to
+(x, y_1:t) and samples from π(x, y_1:t,P_R) a binary verdict r_t ∈
+\textsccompress, \textsccontinue. These intervals are measured in tokens of the reasoning trace (math) or in tool calls (agentic search).
+
+As with \mathcalS, the probe is
+appended rather than substituted so that the KV cache of y_1:t is
+preserved across the call, keeping the judge near-free relative to the
+trajectory length. The probe enumerates a small set of conditions, each
+requiring verbatim evidence quoted from the trajectory, so π can check
+them locally. The rubric is task-specific: the conditions for competition
+math differ from those for agentic search, and we defer the exact wording to
+Appendix math setup (math) and
+Appendix search setup (search). On a compress verdict,
+the summarizer fires:
+
+\[
+\tilde{y} ← \mathcal{S}(x, y_{1:t}) \quad \text{whenever } t \equiv 0 ±od{N} \text{ and } r_t = \textsc{compress};
+\]
+
+otherwise generation resumes from (x, y_1:t) unchanged.
+
+""""
+
+Workflow. Our experiments compare three regimes that share the same generation loop but differ in how the transcript is compressed: **no compaction** (the trajectory accumulates untruncated), **fixed-interval compaction** (summarize-and-replace at every probe interval, and (summarize-and-replace only when the rubric returns compress, otherwise continue). On agentic search this yields a *search–judge–summarize–search* loop, with the agent continuing against \tildey rather than the full history after each compression.
+
+""""
+
+Cost analysis. Define L = |y_1:t| as the pre-compression
+trajectory length and \ell = |\tildey| for the summary length, both in
+tokens. adds at most two LLM calls per probe interval: the rubric
+probe always, the summarizer only on a compress verdict.
+Both append to (x, y_1:t), so the KV cache of y_1:t is reused
+across the call and the \mathcalO(L²) re-prefill that a naive
+re-encode would incur is avoided. The rubric probe is essentially free: a
+short verdict r_t generated on top of the cached prefix. The summarizer
+is the only real overhead: \mathcalO(L\ell) to generate \tildey
+plus a one-time \mathcalO(\ell²) prefill of the new (x, \tildey)
+prefix. Empirically the trade is favorable: on agentic search
+ adds 5–9 accuracy points at 30–70% lower per-question
+token cost than the no-compaction baseline (agentic-search);
+on competition math it leads on 11 of 12 benchmark/model cells under a
+token budget matched to fixed-interval summarization
+(multi-turn-math). Appendix cost states
+the per-question cost formula in full, defines how
+(N_\textprefill, N_\textcached, N_\textout) are
+accumulated from each trajectory, lists the OpenRouter prices, and
+works out the cached-vs-prefill break-even (compaction wins iff L/\ell
+> 10, which the search summarizer reaches at 20–80×).
+
+Experiments
+-----------
+
+Multi-turn Reasoning in Competition Math
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+""""
+
+Setup. We evaluate 4 models of different sizes in the Qwen family — 2 instruct models ``Qwen3-4B-Instruct-2507`` and ``Qwen3-30B-A3B-Instruct-2507``, and 2 Qwen3.5 [qwen3.5]_: ``Qwen3.5-4B`` and ``Qwen3.5-9B``, on 3 benchmarks: IMO-Answerbench [luong-etal-2025-towards]_, HMMT Nov 2025 and HMMT Feb 2026 [balunovic2025matharena]_. We generate 16 responses for each question in parallel and report the mean across samples. We use vLLM [kwon2023efficient]_ for inference and the ` <>`_https://github.com/huggingface/Math-Verify``math_verify`` package for parsing and evaluation.
+
+We compare   against fixed interval summary, where summarization is always triggered for every 16k tokens, we keep making the model compact until it uses a similar amount of tokens compared to   for a fair comparison. We use the same scaffold as ReasoningCache [wu2026reasoningcachecontinualimprovement]_, prompting the model to continue generating based on an existing trajectory or a summary of it. Detailed summarization and continuation prompts can be found in Appendix math setup.
+
+Performance across competition math benchmarks, for fixed interval summary, we constrain the avg. number of tokens per question as the same as . Numbers in brackets indicate the average number of tokens used per question.
+
+| | **IMOBench** | **HMMT_\textNov 25** | **HMMT_\textFeb 26** | **Avg.** |
+| ``Qwen3-4B-Instruct-2507`` |
+| [2pt] No Compaction [16k] | 38.9_1.7 | 40.8_2.1 | 36.5_2.9 | 38.7_2.2 |
+| Fixed Interval Summary [44k] | 41.4_2.1 | 44.0_2.7 | 39.2_1.8 | 41.5_2.2 |
+| [48k] | **45.5**_2.8 | **47.8**_1.8 | **42.1**_2.8 | **45.1**_2.5 |
+| ``Qwen3-30B-A3B-Instruct-2507`` |
+| [2pt] No Compaction [16k] | 45.2_1.2 | 54.7_2.7 | 51.9_2.8 | 50.6_2.2 |
+| Fixed Interval Summary [26k] | 48.7_2.9 | 57.3_1.7 | **58.7**_1.9 | 54.9_2.2 |
+| [29k] | **52.1**_2.6 | **59.4**_1.2 | 57.6_1.4 | **56.4**_1.7 |
+| ``Qwen3.5-9B (Thinking Disabled)`` |
+| [2pt] No Compaction [16k] | 25.0_1.0 | 38.2_1.2 | 34.2_2.7 | 32.5_1.6 |
+| Fixed Interval Summary [90k] | 33.4_2.7 | 42.1_2.2 | 44.9_2.9 | 40.1_2.6 |
+| [93k] | **41.4**_2.3 | **48.2**_1.6 | **52.3**_2.0 | **47.3**_2.0 |
+| ``Qwen3.5-4B (Thinking Disabled)`` |
+| [2pt] No Compaction [16k] | 16.9_3.0 | 26.4_1.2 | 22.5_1.6 | 21.9_1.9 |
+| Fixed Interval Summary [64k] | 27.4_0.9 | 35.5_2.0 | 29.1_2.9 | 30.7_1.9 |
+| [67k] | **34.1**_2.7 | **37.4**_1.1 | **30.0**_2.2 | **33.8**_2.0 |
+
+""""
+
+Results. Table performance fixed vs adaptive shows the results across three competition math benchmarks and four model configurations. Under matched token budgets,  consistently outperforms both the baseline and fixed interval summarization, achieving the best performance in 11 out of 12 settings. The gains are most pronounced for the thinking-enabled models: on Qwen3.5-9B,  improves over the baseline by 16.4, 10.0, and 18.1 points on IMO-Answerbench, HMMT Nov, and HMMT Feb respectively. The one exception is ``Qwen3-30B-A3B`` on HMMT Feb, where fixed interval summarization edges out  by 1.1 points, though the latter still leads on the other two benchmarks.
+
+[10]r0.35
+
+Answer transitions across 12 fixed interval summarization calls for Qwen3-4B-Instruct-2507 on IMO-Answerbench.
+
+| Transition | Count |
+| Wrong → Correct | 1486 |
+| Correct → Wrong | 1009 |
+
+""""
+
+Headroom analysis. We analyze the failure modes of fixed interval summarization for ``Qwen3-4B-Instruct-2507`` on IMO-Answerbench by tracking answer transitions across the 12 summarization calls. <ref> reports the number of instances where the model's answer changes from correct to wrong after a summarization and vice versa.
+
+[8]r0.48
+
+Oracle analysis on IMO-Answerbench for Qwen3-4B-Instruct-2507.
+
+| Method | Accuracy (%) |
+| No Compaction [16k] | 38.9_1.7 |
+| Fixed Interval Summary [44k] | 41.4_2.1 |
+| | 42.4 |
+| [48k] | 45.5_2.8 |
+| Oracle (skip if correct) [44k] | 52.9_1.4 |
+
+While summarization produces a net gain, 40.4% of all transitions cause degradations. This motivates a natural question: what if the model could selectively skip summarization when its current answer is already correct? <ref> shows that an oracle policy which suppresses summarization calls whenever the current answer is correct but otherwise follows the same fixed schedule achieves 52.9%, a +11.5 improvement over fixed interval and +14.0 over baseline. Notably, this oracle is a strict subset of what a fully adaptive policy could achieve, as it only decides *whether* to summarize at each fixed interval, not *when* to summarize.
+
+Both our results on Qwen3.5, where adaptive summarization already outperforms fixed interval, and this oracle analysis indicate substantial headroom for adaptive policies that learn when summarization is beneficial.
+
+Agentic Search
+~~~~~~~~~~~~~~
+
+""""
+
+Setup.
+
+We evaluate 3 models of different sizes and families: ``GLM-4.7-Flash`` (30B total, 3B active; [5team2025glm45agenticreasoningcoding]_), ``MiniMax-M2.5`` (230B total, 10B active; [minimax2026m25]_) and ``Mimo-V2-Flash`` (309B total, 15B active; [coreteam2026mimov2flashtechnicalreport]_) on 3 agentic search tasks: BrowseComp [wei2025browsecompsimplechallengingbenchmark]_ , BrowseComp plus [chen2025BrowseCompPlus]_ and DeepSearch QA [gupta2026deepsearchqabridgingcomprehensivenessgap]_. We use the exact same scaffold and evaluation settings as [lee2026agenticaggregationparallelscaling]_. We defer detailed sampling parameters and prompts to Appendix search setup.
+
+For cost, we report the per-question USD cost. In the main text we use a
+single-rate approximation that bills every prompt token at the cached
+rate,
+\textscCost(q) = (p_\textcache N_\textprompt + p_\textout N_\textout)/10⁶,
+where N_\textprompt and N_\textout are the cumulative prompt
+and completion tokens summed across every LLM call in the trajectory
+(assistant turns, rubric probes, and summaries). This is conservative:
+the first-time prefill tokens that a provider bills at the higher
+uncached rate p_\textin are only a small fraction (empirically
+5–8%) of N_\textprompt, so the effective rate stays close to
+p_\textcache. Prices come from OpenRouter
+(Table openrouter pricing). Appendix cost gives
+the full procedure, and Appendix tokens reports the
+finer-grained accounting that separates first-time prefill (billed at
+p_\textin) from cached reads (billed at p_\textcache).
+We compare  against the following baseline methods:
+
+- * **No Compaction**: No context management is used, model stops when either max context window is reached, or max number of tool calls are executed.
+
+    * **Fixed-interval summary**: Summarization is triggered when 30% of the max context window is consumed, a threshold suggested by [liu2025webexplorer]_, closely resembling [wu2026reasoningcachecontinualimprovement]_.
+
+    * **Delete-all**: All the past trajectory is discarded when 30% of the max context window is consumed.
+
+    * **Keep-last-N**: The last 3 turns are saved and the rest is discarded when 30% of the max context window is consumed.
+
+""""
+
+Main Results. <ref> shows the results of the three deployed agents (``GLM-4.7-Flash``, ``MiniMax-M2.5``, ``MiMo-V2-Flash``) on agentic search.  is the strongest method for all three models, improving over the no-compaction baseline by +8.5 (GLM-4.7-Flash), +9.2 (MiniMax-M2.5), and +5.3
+  (Mimo-V2-Flash) absolute points on BrowseComp-Plus.
+
+  The accuracy ordering is consistent across all three models: baseline < fixed-interval \le .
+  Fixed-interval summarization recovers most of the baseline's lost ground; 's autonomous trigger adds up to +6.3 points by avoiding poorly-timed compressions the
+   rubric concentrates that distribution at meaningful stopping points.
+
+  On the cost axis,  is *cheaper* than the baseline despite issuing an extra LLM call at each probe. Per-question cost on BrowseComp-Plus drops by
+  67% (GLM-4.7-Flash, 0.12 \to 0.04), 63% (MiniMax-M2.5, 0.19 \to 0.07), and 33% (Mimo-V2-Flash, 0.24 \to 0.16). The KV-cache reuse described in 3 is what
+  makes the probe affordable: each rubric judgement contributes only its own short generation, since the trajectory's cache is preserved. The bulk of the savings come from the post-summarization regime, where every subsequent token attends to \tildey rather than y_1:t.
+
+Performance and per-question cost across benchmarks. “Cost”
+is USD per question, computed with a single-rate approximation that
+bills every prompt token at the cached rate,
+(p_\textcache N_\textprompt + p_\textout N_\textout)/10⁶,
+where N_\textprompt and N_\textout are the cumulative
+prompt and completion tokens summed across every LLM call in the
+trajectory; Appendix tokens reports the finer-grained
+cost that separates first-time prefill from cached reads, and the full
+bookkeeping is in Appendix cost.
+We highlight the cost reduction % compared to the “no compaction”
+baseline for . **Bold** indicates the best value per
+column within each model block. Following
+[sun2025scalinglonghorizonllmagent]_ and
+[lee2026agenticaggregationparallelscaling]_, evaluations are done
+on 150 subsampled questions per benchmark.
+
+llcccccccc[cell-space-limits=2pt]
+glmcolor3-17-1
+  minimaxcolor8-112-1
+  mimocolor13-119-1
+    3***Context Management**     2c**BrowseComp**     2c**BrowseComp-Plus**     2c**DeepSearchQA**     2c**Overall**
+
+(lr)3-4(lr)5-6(lr)7-8(lr)9-10
+         Acc. \uparrow     Cost \downarrow     Acc. \uparrow     Cost \downarrow     Acc. \uparrow     Cost \downarrow     Acc. \uparrow     Cost \downarrow
+
+5*[origin=c]90``GLM-4.7-Flash``
+    No Compaction                   30.1_1.0     0.14     45.6_0.7              0.12              34.2_0.3     0.13     36.6_0.4     0.13
+
+    Fixed-interval     35.4_1.8     0.06     50.0_2.3              0.04     39.1_0.3     0.05     41.5_1.0     0.05
+
+    Delete-all     31.6_1.3     **0.03**     47.3_1.3     **0.02**     35.8_1.5     **0.03**     38.2_0.8     **0.03**
+
+    Keep-last-N     33.5_2.4     0.05     51.4_1.6     0.03     38.8_0.5     0.04     41.2_1.0     0.04
+
+(lr)2-10
+     (Ours)        **41.2**_2.3     0.10 (-29%)     **54.1**_1.4     0.04 (-67%)     **44.0**_1.3     0.07 (-46%)     **46.4**_1.0     0.07 (-46%)
+
+5*[origin=c]90``MiniMax-M2.5``
+    No Compaction                  47.2_0.7     0.19     62.0_1.8              0.19     52.0_1.4     0.19     54.6_0.8     0.19
+
+    Fixed-interval     55.3_1.6     0.07     65.9_2.1              0.04     56.7_0.6     0.06     59.3_0.9     0.06
+
+    Delete-all     52.7_1.3     **0.05**     65.0_1.3     **0.03**     54.9_0.7     **0.04**     57.5_0.7     **0.04**
+
+    Keep-last-N      54.5_1.7     0.06     67.4_0.4     0.05     57.0_1.8     0.06     59.6_0.8     0.06
+
+(lr)2-10
+      (Ours)       **59.3**_1.4     0.09 (-53%)     **71.2**_2.6     0.07 (-63%)     **61.3**_2.2     0.08 (-58%)     **63.9**_1.2     0.08 (-58%)
+
+6*[origin=c]90``Mimo-V2-Flash``
+    No Compaction                   42.7_0.9     0.27        57.6_1.4             0.24       46.5_1.4     0.25     48.9_0.7     0.25
+
+    Fixed-interval     51.6_2.2     0.14          60.2_1.9           0.14       52.3_1.4     0.14     54.7_1.1     0.14
+
+    Delete-all                 45.5_1.1     0.08     61.2_2.3     **0.11**     49.7_2.1     **0.09**     52.1_1.1     **0.09**
+
+    Keep-last-N     49.8_0.8     **0.06**     **63.5**_1.7     0.15     53.0_0.5     0.10     55.4_0.6     0.10
+
+(lr)2-10
+     (Ours)         **57.9**_2.4     0.11 (-59%)     62.9_2.2     0.16 (-33%)     **56.8**_2.2     0.13 (-48%)     **59.2**_1.3     0.13 (-48%)
+
+""""
+
+ fires compression earlier.
+  We plot the number of tokens accumulated before each compaction fires in Figure tokens before summarization, comparing
+  Fixed-Interval (30% of context) against   on BrowseComp-Plus. 's rubric-fired summaries skew to the left of the 30% threshold line in all three models, whereas Fixed-Interval pins
+  triggers at the threshold by construction.
+  This left skew indicates that the rubric reaches its “compress now” verdict well before the trajectory consumes 30% of
+  context. This indicates the fixed threshold typically fires too late, retaining stale tokens past the point where the model has already
+  resolved the current sub-question.
+
+""""
+
+ helps on harder problems.   We bin each question by the total output tokens its no-compression baseline
+  trajectory consumed (a model-specific proxy for question difficulty) and
+  split into five equal-size quantiles per model. Within each bin we report
+  accuracy for the baseline, a fixed-budget Threshold (30% of context), and
+   (Figure difficulty binned). On easy bins the three
+  policies are within sampling noise, but on the two hardest bins
+   improves over the Threshold baseline by 5–20 pp consistently
+  across 3 models, indicating that
+  rubric-driven compression helps the most on questions that require deep
+  search and accumulate the largest contexts.
+
+""""
+
+Ablation on the effect of rubrics. We ablate the effect of rubrics by removing the rubric-gated verification and instead letting the model self-decide whether to summarize at each step. This collapses performance to 41.0% on average with ``GLM-4.7-Flash`` (<ref>), a 5.4-point drop from full SelfCompact (46.4%) that leaves it on par with the naive fixed-interval schedule (41.5%) and below it on BrowseComp (33.6 vs 35.4), with the same effect on math reasoning using ``Qwen3-4B-Instruct-2507`` (40.9% vs 45.5%, <ref>). This shows that the gains do not come from triggering compaction per se, but from the rubric-gated verification that determines what reasoning state is safe to preserve; without it, the model's unconstrained summarization discards information that later steps depend on. In other words, knowing when to compact is insufficient, and the rubrics are what make the retained context reliable.
+
+Accuracy (%) across agentic search benchmarks with ``GLM-4.7-Flash``. Subscripts denote standard deviation over 5 runs. Best per column in bold.
+
+| Method | **BrowseComp** | **BrowseComp-Plus** | **DeepSearchQA** | **Avg.** |
+| No Compaction | 30.1_1.0 | 45.6_0.7 | 34.2_0.3 | 36.6_0.4 |
+| Fixed-interval | 35.4_1.8 | 50.0_2.3 | 39.1_0.3 | 41.5_1.0 |
+| w/o rubrics | 33.6_2.1 | 51.9_2.4 | 37.6_1.9 | 41.0_1.2 |
+| | **41.2**_2.3 | **54.1**_1.4 | **44.0**_1.3 | **46.4**_1.0 |
+
+Related Work
+------------
+
+""""
+
+Context compaction in frontier models. In API-based models, context compaction has become a standard built-in feature to prevent multi-rounds of long reasoning chains from blowing up the context window. []
+Note that while the feature is often named as “auto compaction”, it refers to the compaction operation being automatically triggered and performed when the *context length reaches a target threshold*, i.e. fixed interval.
+Such mechanisms have raised complaints from the community [], where compaction at inappropriate positions tends to remove important information from the context, which is a central issue we aim to resolve.
+The only exception is a new feature from LangChain posted concurrently to our work [] March 2026, where they also introduced a summary tool; they did not introduce the rubric-based criteria for deciding *when* to summarize.
+
+r0.42
+
+Accuracy (%) on IMOBench with ``Qwen3-4B-Instruct-2507.`` Subscripts denote standard deviation.
+
+| Method | Math |
+| No Compaction | 38.9_1.7 |
+| Fixed-interval | 41.4_2.1 |
+| w/o rubrics | 40.9_2.3 |
+| | **45.5**_2.8 |
+
+""""
+
+Learning to compact during post-training.
+Long-horizon reasoning and agentic search accumulate tokens at an unsustainable rate: observations pile up, intermediate results go stale, and prior context anchors rather than informs subsequent generations. A broad line of work addresses this through periodic compaction, sharing a common paradigm: generate an extended sequence of thoughts or actions, summarize the accumulated context, resume from the compressed state, and repeat [shao2025foldactefficientstablecontext]_ [sun2025scalinglonghorizonllmagent]_. The majority of these methods *train* models to perform compaction (via SFT, RL, or both) in order to encode the when-to-compact decision implicitly in teacher demonstrations or rewards [kontonis2026memento]_ [yang2026accordionthinkingselfregulatedstepsummaries]_ [yan2026inftythink]_ [cassano2026selfsummarization]_ [mitra2025motif]_ [aghajohari2025markovian]_ [wu2026reasoningcachecontinualimprovement]_ [sun2025scalinglonghorizonllmagent]_ [ye2025agentfoldlonghorizonwebagents]_ [shao2025foldactefficientstablecontext]_ [wu2026resumunlockinglonghorizonsearch]_.
+Our approach is entirely training-free. We draw on recent advances in tool-using models [5team2025glm45agenticreasoningcoding]_ [minimax2026m25]_, which have unlocked the ability to invoke external tools mid-generation, and show that off-the-shelf models can self-compact effectively if scaffolded correctly. A lightweight rubric specifying when to invoke the compaction tool is sufficient to elicit reliable adaptive compaction without any parameter updates.
+
+Across these methods, most also trigger compaction at *fixed* token-count thresholds independent of trajectory structure [yan2026inftythink]_ [aghajohari2025markovian]_ [wu2026reasoningcachecontinualimprovement]_ [wu2026resumunlockinglonghorizonsearch]_, risking compaction mid-derivation when the model still needs the context it is about to discard. Our rubric is designed precisely to detect these structural conditions, firing when a sub-task has resolved or the trajectory is converging, and suppressing when the model is mid-derivation or stuck.
+
+Few works have studied compaction without model training. The closest to ours is by [zhu2026retracrecursivetrajectorycompression]_, which introduces a training-free variant that uses a frontier model as an external summarizer applied at *fixed* intervals after each full search trajectory. Our work differs in that, we introduce a rubric that dynamically determines when compaction should fire rather than relying on fixed post-trajectory intervals. Our work also connects to a broader goal of context management. We refer the interested reader to the existing surveys on this topic [mei2025survey]_.
+
+""""
+
+Context Management.
+Our work also falls in the broad idea of argentic context management, i.e., letting the LLM manage its own context.
+AggAgent [lee2026agenticaggregationparallelscaling]_
+AgentSwing [feng2026agentswingadaptiveparallelcontext]_
+WebResearcher [qiao2025webresearcherunleashingunboundedreasoning]_
+
+Simple Masking [lindenbauer2025complexitytrapsimpleobservation]_
+
+""""
+
+KV Cache Eviction.
+A complementary line of work reduces memory and compute costs by evicting or compressing KV cache entries during inference.
+Static methods retain tokens based on recency [xiao2023efficient]_ or attention scores [li2024snapkv]_, while more recent approaches use richer importance measures that are often learned [park2025keydiff]_ [eyuboglu2025cartridges]_ [zweiger2026fast]_ [monea2025breadcrumbs]_ [li2026neuralgarbagecollectionlearning]_. Across this literature, interpretability of the compressed representation is treated as secondary: what is retained or evicted need not be human-readable, only attention-efficient, and may even be complemented by black-box weight updates [zuo2026rethinkingloramemorylens]_. The context compaction literature (which is where our work fits in), by contrast, prioritizes discrete natural-language summaries that remain inspectable and overridden.
+
+Limitations
+-----------
+
+""""
+
+Model capability gap. We only evaluated open-weight models;
+frontier systems (GPT-5.5 [openai2026gpt55]_, Claude Opus
+4.7 [anthropic2026opus47]_, Gemini 3 Pro [google2026gemini31pro]_)
+report stronger metacognition [lindsey2025introspection]_ and may
+detect context rot without a rubric. is complementary: a
+training-free scaffold that layers onto any model and closes the gap
+precisely where it exists in deployed open-weight agents.
+
+""""
+
+No reinforcement learning. We scope this work to
+training-free interventions to isolate the rubric's contribution. Prior
+work [kontonis2026memento]_ [zhu2026lightthinkerreasoningcompressionmemory]_ shows RL can teach a model both
+*when* and *what* to compact. We view RL as a natural
+extension: the rubric supplies a behavioral target that RL can distill
+into the policy.
+
+Conclusion
+----------
+
+We introduced , a rubric-gated summarization scaffold that
+compacts agent trajectories at closed reasoning units rather than on
+fixed intervals. Across six benchmarks and seven models, it matches
+or exceeds fixed-interval summarization at 30–70% lower cost,
+reframing *when to compact* as a capability that a lightweight
+rubric can supply without training.
+
+Acknowledgments
+---------------
+
+This work was supported in part by Apple and Defense Advance Research Projects Agency
+(DARPA) under Contract No. HR001125C0304
+and ONR grant (N0001424-1-2089).
+Any opinions,
+findings and conclusions or recommendations expressed in this material are those of the author(s)
+and do not necessarily reflect the views of DARPA.
+We acknowledge the use of computational resources from the Johns Hopkins DSAI cluster.
+
+plainnat
+
+Math experimental setup
+-----------------------
+
+""""
+
+Models. We evaluate four open-weight Qwen models on competition
+math: two instruction-tuned models (``Qwen3-4B-Instruct-2507`` and
+``Qwen3-30B-A3B-Instruct-2507``) and two thinking-disabled variants
+(``Qwen3.5-4B`` and ``Qwen3.5-9B``). All checkpoints are loaded
+from Hugging Face and served via vLLM [kwon2023efficient]_. The
+30B-A3B model uses tensor-parallel size 2; all others run on a single H200
+GPU.
+
+""""
+
+Benchmarks. IMO-Answerbench [luong-etal-2025-towards]_,
+HMMT November 2025, and HMMT February 2026. Final answers are extracted
+and scored with the
+` <>`_https://github.com/huggingface/Math-Verify``math_verify``
+package.
+
+""""
+
+Sampling parameters. We use temperature 1.0 and top-p
+0.7 for all models, generating n=16 samples per question and
+reporting mean ± std over samples. Each generation round is capped
+at 16,384 tokens (``–num_tokens 16384``); the per-trajectory
+round budget is ``–max_rounds 12``, and the summarizer output is
+hard-truncated at 512 tokens (``–max_summary_tokens 512``).
+
+""""
+
+Scaffold. We adopt the ReasoningCache scaffold of
+[wu2026reasoningcachecontinualimprovement]_: at each round, the
+model is prompted to either solve from scratch or improve on a summary
+of the previous attempt. The continuation prompt issued to the model
+after every refinement is reproduced verbatim in Box math continuation.
+
+""""
+
+Methods.
+Baseline runs the model with a single 16k-token budget
+(``–max_rounds 1``) and no summarization.
+Fixed-Interval Summary sets ``–force_tool_calls``,
+which fires the summarizer at the end of every round (i.e. every
+16,384 generated tokens) regardless of trajectory state.
+ exposes ``<tool_call>`` as a vLLM stop token so
+that the model autonomously emits the summarizer; the round ends and the
+summary fires whenever the stop token appears.
+ w/ Rubrics interposes the rubric probe in
+Box rubric math between rounds: if the rubric fires
+compress the summarizer is invoked, otherwise the model
+continues from the unmodified prefix.
+
+  [
+  colback=teal!5,
+  colframe=teal!70!black,
+  coltitle=white,
+  title=**Math rubric prompt** (ANSWER / STUCK / HAS-NEXT; appended to (x, y_1:t) at every round boundary),
+  label=box:rubric_math,
+  fonttitle=,
+  boxrule=0.5pt,
+  arc=2pt,
+  left=6pt, right=6pt
+  ]
+  Judge your math-solving state from the conversation above. Answer Q1…Q3 with Y or N and one short evidence phrase. Answers without evidence must be N. “Non-trivial fact” = a new equation, reduction, bound, case-elimination, or counterexample, not a paraphrase.
+
+**Q1 ANSWER:** The latest round states a specific final answer (a expression or “Final Answer: …”), not merely a partial result.
+    *If Y*, quote the answer verbatim.
+    *If N*, state what is still unknown.
+
+  **Q2 STUCK:** Your last 2 rounds added no non-trivial fact — only paraphrases or abandoned attempts.
+    *If Y*, name the two rounds and write “no new fact”.
+    *If N*, name one non-trivial fact from the last 2 rounds.
+
+  **Q3 HAS-NEXT:** You can write the exact next step (case split, substitution, verification, lemma to prove).
+    *If Y*, write the step as one imperative sentence.
+    *If N*, write “NONE”.
+
+  Output: exactly 3 lines, no preamble or trailing text.
+
+.. code-block::
+
+  Fire rule: compress iff \textQ1=\textY \lor (\textQ2=\textY \land \textQ3=\textY). Branch A (\textQ1=\textY) fires a lock-in re-prompt that preserves the boxed answer; Branch B (\textQ2=\textY \land \textQ3=\textY) fires a reset that preserves the named next step.
+
+  [
+  colback=teal!5,
+  colframe=teal!70!black,
+  coltitle=white,
+  title=**Math summarizer prompt** (preserve-answer v3; replaces y_1:t with \tilde y when fired),
+  label=box:math_summarizer,
+  fonttitle=,
+  boxrule=0.5pt,
+  arc=2pt,
+  left=6pt, right=6pt
+  ]
+  **Context Refinement Prompt:**
+
+**Original Prompt:** ``{original_prompt}``
+
+  **Partial Generation:** ``{partial_generation}``
+
+Your task is to create a compressed summary for another model to continue solving from.
+
+**RULES:**
+
+0. * If a final answer (e.g., ) was found, PRESERVE IT at the end of your summary.
+
+    * Keep key insights, important calculations, and the reasoning path.
+
+    * Remove redundant text, false starts, and unnecessary repetition.
+
+    * If the answer seems wrong or unverified, note that verification is needed.
+
+    * Be concise but preserve all critical mathematical steps.
+
+  **Output format:**
+
+- * Key insights and progress made.
+
+    * Important intermediate results.
+
+    * If found: “Final Answer: [the answer]” or the  expression.
+
+    * If not solved: what still needs to be done.
+
+  [
+  colback=teal!5,
+  colframe=teal!70!black,
+  coltitle=white,
+  title=**Continuation prompt** (issued to π at the start of every round, with \tilde y filled in if available),
+  label=box:math_continuation,
+  fonttitle=,
+  boxrule=0.5pt,
+  arc=2pt,
+  left=6pt, right=6pt
+  ]
+  You are given a maths problem. You may also be given a summary of a previous attempt to solve it. This previous attempt may or may not be correct.
+
+**### PROBLEM** ``{problem}``
+
+  **### SUMMARY OF PREVIOUS ATTEMPT** ``{summary}``
+
+**### INSTRUCTIONS**
+
+If no summary of a previous attempt is provided, solve the problem from scratch.
+
+If a summary of a previous attempt is provided, your task is to improve upon this attempt. You should rely on this summary to guide your thinking. Some strategies you could use include:
+
+- * Verifying the previous solution.
+
+    * Proving the result in a different way.
+
+    * Finding alternative problem-solving strategies.
+
+    * Continuing from where the previous solution left off, assuming that the previous solution is incomplete.
+
+Reason step-by-step and return your final answer in .
+
+Agentic-search experimental setup
+---------------------------------
+
+""""
+
+Models and serving. The three deployed agents
+(``GLM-4.7-Flash``, ``MiniMax-M2.5``, ``Mimo-V2-Flash``)
+are accessed through OpenRouter via the AggAgent
+runtime [lee2026agenticaggregationparallelscaling]_. We use the
+unmodified
+``react_agent_selfcheck`` scaffold; the rubric and summarizer
+prompts are reproduced verbatim in Box rubric and
+Box summ.
+
+""""
+
+Benchmarks. BrowseComp [wei2025browsecompsimplechallengingbenchmark]_,
+BrowseComp-Plus [chen2025BrowseCompPlus]_, and
+DeepSearchQA [gupta2026deepsearchqabridgingcomprehensivenessgap]_.
+Following [sun2025scalinglonghorizonllmagent]_ and
+[lee2026agenticaggregationparallelscaling]_, we sub-sample 150
+questions per benchmark.
+
+""""
+
+Sampling parameters. All three models share the same
+decoding configuration: temperature 1.0, top-p 0.95, max output
+tokens per call 10,000, parallel-tool-calls disabled, and a
+per-trajectory cap of 100 LLM calls. Per-model context windows, the
+30%-of-context trigger used by Fixed-Interval Summary and
+the rubric's token-pct backstop, and model-specific decoding flags are
+listed in Table search model config.
+
+Per-model context windows, 30%-of-context summarization
+trigger, and decoding flags for the three OpenRouter agents.
+GLM-4.7-Flash keeps the thinking trace visible to the rubric probe via
+``enable_thinking=True`` and ``clear_thinking=False``.
+
+| **Model** | **Ctx window** | **30% trigger** | **Model-specific flags** |
+| ``GLM-4.7-Flash`` | 128,000 | 38,400 | ``enable_thinking=True``, ``clear_thinking=False`` |
+| ``MiniMax-M2.5`` | 196,608 | 58,982 | ``reasoning_split=True`` |
+| ``Mimo-V2-Flash`` | 262,144 | 78,643 | (default OpenRouter body) |
+
+""""
+
+Scaffold details. A single trajectory is the standard ReAct
+loop: the agent emits a tool call (``search`` and either
+``visit`` for BrowseComp/DeepSearchQA or
+``get_document_bcp`` for BrowseComp-Plus), receives the result,
+reasons, and either issues another tool call or commits a final answer.
+For BrowseComp and DeepSearchQA, ``search`` is backed by the
+Serper API (https://serper.dev/) and ``visit`` fetches and
+extracts page content via crawl4ai
+(https://github.com/unclecode/crawl4ai); for BrowseComp-Plus,
+``search`` and ``get_document_bcp`` resolve against the
+benchmark's released corpus.
+The rubric in Box rubric is appended to a *copy* of the
+trajectory at each round boundary so the probe does not pollute the
+rolling cache. compress fires only when four gates pass
+simultaneously: (round) iteration ≥ 3,
+(tokens) running prompt length ≥ 40,000,
+(cap) total summaries so far < 1, and (period)
+≥ 2 rounds elapsed since the last probe. The token-pct backstop
+forces a compress once the prompt crosses 0.30 ·
+\textctx_window regardless of the rubric.
+
+  [
+  colback=teal!5,
+  colframe=teal!70!black,
+  coltitle=white,
+  title=**Search rubric probe** (appended to (x, y_1:t) at every round boundary),
+  label=box:rubric,
+  fonttitle=,
+  boxrule=0.5pt,
+  arc=2pt,
+  left=6pt, right=6pt
+  ]
+  You are about to decide whether to compress your conversation history into a summary that REPLACES the full history above. After compression, you continue research from
+  only ``[system, original_question, assistant_summary, user_continue]``. Compression is irreversible: anything not preserved in the summary is gone.
+
+  Compression is safe ONLY when ALL FOUR of the following hold:
+
+- (C1) the trajectory has reached a closed unit (not mid-thought),
+
+    (C2) the essential information is reducible to 3–5 cite-able facts without loss,
+
+    (C3) something has progressed since the last compression,
+
+    (N1) you are NOT currently stuck in a way summarization would mask.
+
+  Answer C1, C2, C3, N1 honestly. Each Y answer requires verbatim evidence quoted from the trajectory above; answers without evidence default to N.
+
+  **C1 CLOSED-UNIT:** The most recent assistant message is a closed unit — a completed tool call whose result is now visible, or a completed sub-analysis with a clear
+   stopping point. It is NOT mid-sentence reasoning (“Let me now check…”, “I should next look at…”), and not a half-formulated query.
+    *If Y*, quote the closing fragment of the last assistant message.
+    *If N*, quote the open fragment that shows the trajectory is mid-thought.
+
+  **C2 SUMMARIZABLE:** You can write 3–5 essential facts (with verbatim citations from the trajectory) that future-you needs to continue research after compression.
+  Each fact must be a single concrete statement: a name, date, URL, quoted claim, or resolved sub-question. Answer N if the trajectory's value is dispersed across many small
+   inferences (e.g., a list of dead-end queries needed to avoid retries, negative results that constrain hypothesis space) that would be lost without the dispersal.
+    *If Y*, list the 3–5 facts numbered, each with a verbatim citation in quotes, separated by “ | ”.
+    *If N*, name in one sentence the class of information that would be lost.
+
+  **C3 PROGRESS:** Since the most recent compression (or since the start of the conversation if none), you have either obtained a new concrete fact (name, date, URL, or
+   quoted claim) OR refined the sub-question being pursued.
+    *If Y*, name the new fact or refined sub-question.
+    *If N*, state that you are returning the same state you compressed from.
+
+  **N1 STUCK:** At least 3 of your last 4 search queries returned no new URL or fact (i.e., were duplicates or returned already-known content). If you have made fewer
+  than 4 searches total, answer N.
+    *If Y*, name 1 distinct strategy you have NOT yet tried (different tool, different query type, different angle on the question).
+    *If N*, name one new URL or fact obtained recently.
+
+  Output: exactly 4 lines, no preamble or trailing text.
+
+.. code-block::
+
+  Fire rule: compress iff \textC1=\textY \land \textC2=\textY \land \textC3=\textY \land \textN1=\textN; otherwise continue.
+
+""""
+
+Summarizer. The search summarizer is the
+``webresummer`` variant of
+[wu2026resumunlockinglonghorizonsearch]_, reproduced verbatim in
+Box summ below; we use it unmodified for all three deployed agents.
+
+  [
+  colback=teal!5,
+  colframe=teal!70!black,
+  coltitle=white,
+  title=**Summarizer prompt** (\mathcalS instruction appended to (x, y_1:t)),
+  label=box:summ,
+  fonttitle=,
+  boxrule=0.5pt,
+  arc=2pt,
+  left=6pt, right=6pt
+  ]
+  You are an expert at analyzing conversation history and extracting relevant information. Your task is to thoroughly evaluate the conversation history above and the user's original question to provide a summary that will REPLACE the full conversation history when you continue.
+
+**Task Guidelines**
+
+  **1. Information Analysis:**
+
+- * Carefully analyze the conversation history to identify truly useful information.
+
+    * Focus on information that directly contributes to answering the question.
+
+    * Do NOT make assumptions, guesses, or inferences beyond what is explicitly stated in the conversation.
+
+    * If information is missing or unclear, do NOT include it in your summary.
+
+  **2. Summary Requirements:**
+
+- * Extract only the most relevant information that is explicitly present in the conversation.
+
+    * Synthesize information from multiple exchanges when relevant.
+
+    * Only include information that is certain and clearly stated in the conversation.
+
+    * Do NOT output or mention any information that is uncertain, insufficient, or cannot be confirmed from the conversation.
+
+Cost analysis of summarization
+------------------------------
+
+""""
+
+Cost model (single-rate). In the main text, for all
+OpenRouter-hosted agents we charge each question with the additive
+token-cost
+
+\[
+\textsc{Cost}(q)
+= \frac{1}{10^6}\Big(
+  p_{\text{cache}} · N_{\text{prompt}}
+  + p_{\text{out}} · N_{\text{out}}
+\Big),
+\]
+
+where N_\textprompt is the cumulative prompt tokens summed across *every* LLM call in
+the trajectory assistant turns, the rubric probe, and the
+summarizer call, and N_\textout is the cumulative completion
+tokens over the same set of calls.
+We charge every prompt token at the cache rate p_\textcache
+rather than separately tracking which tokens were a cache hit and which
+were a first-time prefill. This is a conservative single-rate
+approximation: the first-time prefill tokens — the question, each
+assistant turn, and each tool observation, counted once when they first
+enter the prefix — are only a small fraction (empirically 5–8%)
+of N_\textprompt, which counts each token once per call it
+survives, so the effective per-token rate sits close to
+p_\textcache even when provider-side caching misses occasionally.
+Appendix tokens relaxes this approximation, splitting
+N_\textprompt into first-time prefill N_\textprefill (billed
+at the uncached rate p_\textin) and cache reads N_\textcached
+(billed at p_\textcache) and reporting the resulting two-rate cost
+in Table tokens all. Per-1M token prices are
+listed in Table openrouter pricing.
+
+""""
+
+Calculation procedure. For each of the 150 sampled
+questions per benchmark, we (i) load the trajectory's per-call usage
+records logged by the AggAgent runtime, (ii) accumulate
+(N_\textprompt, N_\textout) as defined above,
+(iii) apply the model's prices from
+Table openrouter pricing, and (iv) report the mean across
+the 150 questions in Table perf-cost-multi (units: USD per
+question).
+
+OpenRouter prices in USD per 1,000,000 tokens.
+
+| **Model** | p_\textin | p_\textcache | p_\textout |
+| ``GLM-4.7-Flash`` | 0.07 | 0.01 | 0.40 |
+| ``MiMo-V2-Flash`` | 0.10 | 0.01 | 0.30 |
+| ``MiniMax-M2.5`` | 0.30 | 0.03 | 1.20 |
+
+""""
+
+Where compaction saves cost. Under the single-rate cache
+billing above, the savings from compaction come entirely from
+shortening every *subsequent* call's prompt. After a fire that
+collapses a T-token prefix to a \tilde t-token summary, every later
+call pays p_\textcache · \tilde t instead of
+p_\textcache · T, a T/\tilde t ratio per call.
+Empirically summarization collapses a 50–100k trajectory into
+\tilde t ≈ 1–3k, giving 20–80× shrinkage of the
+post-compact prompt. The rubric probe and summarizer both append to
+the live prefix so the running prompt is preserved during the probe
+itself; the probe contributes only its own ~60-token verdict to
+N_\textout, and the summarizer contributes \tilde t tokens
+once, both negligible relative to the future-call savings amortized
+across the rest of the trajectory.
+
+""""
+
+Math. The Qwen runs are served locally with vLLM, so cost
+collapses to a wall-clock trade-off rather than a dollar one. We report
+the per-question budget tag ``[Xk]`` in
+Table performance fixed vs adaptive: the average sum of
+generated tokens (``rounds`` × ``num_tokens``) plus
+refinement tokens across the n=16 samples. Fixed-Interval
+Summary's budget is matched to within ± 3k tokens so
+all four rows in each model block compete at identical compute.
+
+Trajectory token consumption
+----------------------------
+
+""""
+
+Token lifecycle. A trajectory under looks like
+Q \to A_1 \to A_2 \to ·s \to A_k \to S \to A'_1 \to A'_2 \to ·s,
+where Q is the original question (plus system prompt), each A_t
+is one assistant turn (model output for tool call or final answer),
+and S is a summary the model emits when the rubric fires
+compress. Each token a model produces is billed three different
+ways over its lifetime:
+
+- * *Output* — when the model first emits the tokens (one charge).
+
+    * *Prefill* (uncached input) — on the immediately next LLM call,
+  when the tokens are appended to the prefix and seen by the provider for
+  the first time (one charge).
+
+    * *Cached input* — on every subsequent LLM call until the
+  prefix is reset (one charge per reuse).
+
+Concretely, a single A_t at round t in a trajectory of R rounds
+contributes once to *Output*, once to *Prefill*, and R-t
+times to *Cached*. A summary S emitted at compaction is billed
+once as output, once as prefill on the first post-compact call, then as
+cached input until the next compaction (or end of trajectory).
+
+""""
+
+Per-question token totals. Table tokens all
+reports, for each (model, benchmark, method) cell, the cumulative prompt
+tokens N_\textprompt and completion tokens N_\textout summed
+across all LLM calls (assistant turns, rubric probes, summarizer calls),
+together with the split of N_\textprompt into first-time prefill
+N_\textprefill and cache reads N_\textcached. The single-rate
+cost reported in the main text (Table perf-cost-multi)
+recovers directly from the N_\textprompt column as
+(p_\textcache N_\textprompt + p_\textout N_\textout)/10⁶.
+The **Cost** column of Table tokens all instead applies
+the finer two-rate billing,
+(p_\textin N_\textprefill + p_\textcache N_\textcached
++ p_\textout N_\textout)/10⁶,
+charging the first-time prefill at the higher uncached rate
+p_\textin; this raises each entry modestly above the single-rate
+value in Table perf-cost-multi but preserves the headline
+comparison that costs less than the no-compaction baseline.
+
+Per-question token accounting across all three benchmarks, splitting the
+  cumulative prompt N_\textprompt into first-time prefill
+  (N_\textprefill) and cache reads (N_\textcached), alongside output
+  (N_\textout). Cost uses the two-rate billing
+  N_\textprefill p_\textin + N_\textcached p_\textcache + N_\textout p_\textout
+  with the prices in Table openrouter pricing; this is finer than the
+  single-rate approximation behind Table perf-cost-multi and so gives
+  slightly higher costs.
+
+| **Model** | **Benchmark** | **Method** | N_\textprompt | N_\textprefill | N_\textcached | N_\textout | **Cost** |
+| ``GLM-4.7-Flash`` | BrowseComp-Plus | No Compaction | 11.6M | 0.58M | 11.0M | 8.9k | 0.15 |
+| | | Fixed-interval | 3.6M | 0.29M | 3.31M | 9k | 0.06 |
+| | | | 3.6M | 0.29M | 3.31M | 9k | 0.06 |
+| | BrowseComp | No Compaction | 13.6M | 0.68M | 12.9M | 8.9k | 0.18 |
+| | | Fixed-interval | 5.6M | 0.45M | 5.15M | 9k | 0.09 |
+| | | | 9.6M | 0.77M | 8.83M | 9k | 0.15 |
+| | DeepSearchQA | No Compaction | 12.6M | 0.63M | 12.0M | 8.9k | 0.17 |
+| | | Fixed-interval | 4.6M | 0.37M | 4.23M | 9k | 0.07 |
+| | | | 6.6M | 0.53M | 6.07M | 9k | 0.10 |
+| ``MiniMax-M2.5`` | BrowseComp-Plus | No Compaction | 5.7M | 0.29M | 5.41M | 16.6k | 0.27 |
+| | | Fixed-interval | 0.7M | 0.06M | 0.64M | 16.9k | 0.06 |
+| | | | 1.7M | 0.14M | 1.56M | 17.4k | 0.11 |
+| | BrowseComp | No Compaction | 5.7M | 0.29M | 5.41M | 16.6k | 0.27 |
+| | | Fixed-interval | 1.7M | 0.13M | 1.57M | 16.9k | 0.11 |
+| | | | 2.3M | 0.18M | 2.12M | 17.4k | 0.14 |
+| | DeepSearchQA | No Compaction | 5.7M | 0.29M | 5.41M | 16.6k | 0.27 |
+| | | Fixed-interval | 1.3M | 0.11M | 1.19M | 16.9k | 0.09 |
+| | | | 2.0M | 0.16M | 1.84M | 17.4k | 0.12 |
+| ``MiMo-V2-Flash`` | BrowseComp-Plus | No Compaction | 23.8M | 1.19M | 22.6M | 6.8k | 0.35 |
+| | | Fixed-interval | 13.8M | 1.10M | 12.7M | 7.0k | 0.24 |
+| | | | 15.8M | 1.26M | 14.5M | 7.2k | 0.27 |
+| | BrowseComp | No Compaction | 26.8M | 1.34M | 25.5M | 6.8k | 0.39 |
+| | | Fixed-interval | 13.8M | 1.10M | 12.7M | 7.0k | 0.24 |
+| | | | 10.8M | 0.86M | 9.94M | 7.2k | 0.19 |
+| | DeepSearchQA | No Compaction | 24.8M | 1.24M | 23.6M | 6.8k | 0.36 |
+| | | Fixed-interval | 13.8M | 1.10M | 12.7M | 7.0k | 0.24 |
+| | | | 12.8M | 1.02M | 11.8M | 7.2k | 0.22 |
+
+Per-question token consumption for the math benchmarks
+(IMO-Answerbench / HMMT Nov 25 / HMMT Feb 26 averaged). Prompt is the
+cumulative refinement summaries fed back into the next round; output is
+model generation per round. The Output column matches the
+``[Xk]`` tag in Table performance fixed vs adaptive;
+Total is Prompt + Output.
+
+| **Method** | **Prompt (cum.)** | **Output** | **Total** |
+| ``Qwen3-4B-Instruct-2507`` |
+| [2pt] No Compaction | 1.2k | 16.0k | 17k |
+| Fixed-Interval | 7.1k | 44.1k | 51k |
+| | 7.3k | 43.7k | 51k |
+| | 7.9k | 47.9k | 56k |
+| ``Qwen3-30B-A3B-Instruct-2507`` |
+| [2pt] No Compaction | 1.2k | 16.0k | 17k |
+| Fixed-Interval | 4.1k | 25.6k | 30k |
+| | 4.0k | 25.7k | 30k |
+| | 4.6k | 28.6k | 33k |
+| ``Qwen3.5-9B (Thinking Disabled)`` |
+| [2pt] No Compaction | 1.2k | 16.0k | 17k |
+| Fixed-Interval | 14.4k | 89.0k | 103k |
+| | 14.6k | 89.4k | 104k |
+| | 15.0k | 92.5k | 107k |
+| ``Qwen3.5-4B (Thinking Disabled)`` |
+| [2pt] No Compaction | 1.2k | 16.0k | 17k |
+| Fixed-Interval | 10.1k | 63.7k | 74k |
+| | 10.3k | 63.5k | 74k |
+| | 10.7k | 66.6k | 78k |
+
+casebox[1][]
+   enhanced, breakable,
+   colback=orange!4,
+   colframe=orange!75!black,
+   colbacktitle=orange!75!black,
+   coltitle=white,
+   fonttitle=,
+   boxrule=0.8pt, arc=3pt,
+   left=8pt, right=8pt, top=8pt, bottom=8pt,
+   #1
+
+Qualitative trajectories
+------------------------
+
+We walk through three BrowseComp-Plus questions on ``MiniMax-M2.5``,
+each run two ways: **fixed-interval** compaction (summarize whenever the
+prompt passes 30% of the context window) and ****
+(summarize only when the rubric judges that a sub-task has closed). On all
+three questions both fixed-interval *and* the no-compaction baseline
+answer incorrectly, while answers correctly — so the difference
+is *when* compaction fires, not whether it fires.
+
+""""
+
+How to read these traces. Each turn is one ``search`` or
+``get_document`` call. Fixed-interval compacts on a blind clock: every
+time the running prompt refills to {≈}60k tokens (30% of
+MiniMax-M2.5's window) it summarizes whatever is currently in context —
+including dead-end searches. probes a rubric at intervals and
+compacts only when a sub-task has genuinely resolved, so it can let the
+prompt grow well past 30% while the agent is still exploring. We write
+each compaction as (prefix tokens \to summary tokens).
+
+[title=Case A: Whitesnake — fixed-interval stays anchored, breaks out]
+**Question.** Name the band formed between 1970 and 1990 by a musician
+who played in a rock band that sold 100M+ records, began performing as a
+teenager, was married three times, has one daughter and one son, attended art
+college, and worked in a boutique. **Gold:** *Whitesnake* (the
+musician is David Coverdale, ex-Deep Purple).
+
+**Fixed-interval @ 30% (wrong: “Paul McCartney formed Wings”).**
+
+- * **Turns 1–20.** Cycles famous British rockers against the clues —
+  Keith Richards, Pete Townshend, Malcolm McLaren, Bryan Ferry — none of whom fit.
+
+    * **Compactions at turns 21, 41, 61, 82** (each {≈}60\mathrm{k}\to1–3\mathrm{k}).
+  Each summary re-dumps the same ruled-out-names search log, so the agent
+  resumes from the identical dead-end shortlist.
+
+    * **Turns 22–100.** Keeps re-trying the same pool (Brian May, Mick
+  Jagger, Ronnie Wood, Paul McCartney), never tests David Coverdale, hits the
+  100-search cap, and falls back to a generic guess.
+
+**(correct: *Whitesnake*).**
+
+- * **Turns 1–40.** The same broad cycling (Freddie Mercury, Bowie,
+  Boy George, Stevie Nicks); the rubric keeps continuing — no sub-task has
+  closed — and lets the prompt grow to {≈}118k.
+
+    * **One compaction at turn 41** (118.6\mathrm{k}\to1.1\mathrm{k}),
+  distilling the constraints rather than the ruled-out shortlist.
+
+    * **Turns 46–57.** No longer re-primed with the old names, the agent
+  tries a fresh candidate — David Coverdale — confirms Deep Purple (100M+
+  records), art college, and the boutique job, and answers *Whitesnake*.
+
+Fixed-interval compacted four times but kept re-seeding the same wrong shortlist;
+'s single late compaction cleared it and let the agent escape to the
+right musician.
+
+ [title=Case B: Majida El Roumi — fixed-interval freezes a wrong lead]
+**Question.** An artist released their first solo album between 1975 and
+1978, served as a UN Goodwill Ambassador, and made a song (released 2004–2007)
+that is a rendition of a 1956–1959 classical piece; a different artist — who
+started singing at age eight and cited Barbra Streisand and Queen — released a
+version between 1994 and 1997. Name the first artist. **Gold:**
+*Majida El Roumi* (her “Habibi” is built on Albinoni's *Adagio*).
+
+**Fixed-interval @ 30% (wrong: “None”).**
+
+- * **Turns 1–20.** Chases both threads but latches onto the wrong
+  classical piece — Rachmaninoff, via Céline Dion's “All by Myself”.
+
+    * **Compactions at turns 21, 41, 61, 81** ({≈}60\mathrm{k} each).
+  Every summary carries the “All by Myself” lead forward, so the agent stays on
+  Western pop (Nana Mouskouri, Eric Carmen, Cyndi Lauper, Angélique Kidjo).
+
+    * **Turns 22–100.** Never reconsiders the piece or tests an Arabic
+  artist; hits the cap and returns “None”.
+
+**(correct: *Majida El Roumi*).**
+
+- * **Turns 1–23.** Searches both threads and at turns 18–20 corrects
+  the piece — Albinoni's *Adagio*, not Rachmaninoff — then looks for an
+  Adagio cover by a UN-Ambassador artist.
+
+    * **One compaction at turn 24** (70.2\mathrm{k}\to0.9\mathrm{k}),
+  consolidating the corrected lead.
+
+    * **Turns 25–42.** Zeroes in on Majida El Roumi and her song
+  “Habibi”, confirms the album dates, and answers correctly.
+
+The fixed clock froze an early wrong guess into every summary;
+compacted only after the agent had corrected the lead to Albinoni's *Adagio*.
+
+[title=Case C: Raheem Sterling — fixed-interval never reaches the match]
+**Question.** A league football match (1992–2023) in a European capital,
+attendance 61,700–61,906; Team Y scored in the 6th minute (a left-footed
+player), Team X scored in the 35th and 75th minutes and in stoppage time
+(90'+4', 90'+7'). Name the player who assisted the third goal (the
+75th-minute one). **Gold:** *Raheem Sterling* (Tottenham 1–4
+Chelsea, 6 Nov 2023).
+
+**Fixed-interval @ 30% (wrong: “Unable to determine”).**
+
+- * **Turns 1–22.** Searches the goal-minute fingerprint
+  (6'/35'/75'/90+4'/90+7') and the attendance band; the literal-minute queries
+  return nothing relevant. Guesses Sevilla–Roma.
+
+    * **Compactions at turns 23, 45, 67, 88** ({≈}60\mathrm{k} each).
+  Each summary re-dumps the same fruitless minute-by-minute log, and the agent
+  keeps trying stadiums and teams at random (Stadio Olimpico, PSG, Man Utd, Moscow).
+
+    * **Turns 24–100.** Never tests Tottenham–Chelsea; hits the cap and
+  gives up.
+
+**(correct: *Raheem Sterling*).**
+
+- * **Turns 1–22.** The same fingerprint searches, also unproductive.
+
+    * **Turns 23–25.** Tries the right pairing — Tottenham vs Chelsea,
+  4–1, November 2023 — and hits the match.
+
+    * **One compaction at turn 28** (70\mathrm{k}\to0.8\mathrm{k}$),
+  consolidating the identified match; turns 29–41 confirm the attendance,
+  Kulusevski's left-footed 6th-minute goal, and Sterling's assist on the
+  75th-minute goal.
+
+Both arms flailed on the goal-minute fingerprint, but kept exploring
+until the match was found and compacted only then; the fixed clock kept
+interrupting to re-summarize dead ends and never reached the pairing.

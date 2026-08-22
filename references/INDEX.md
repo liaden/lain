@@ -73,6 +73,105 @@ story IDs/points/URLs are verifiable, the "→ Lain" readings are Claude's. **No
 Effect/Middleware guardrail sweep, the model-migration A/B harness, the M6 retrieval axes, and
 `Agent::Budget` per-effect cost accounting. Comment-linked arXiv IDs are parked for SCOPE vetting.
 
+### [hn-agent-landscape-2026-08-18.md](hn-agent-landscape-2026-08-18.md) ⚠️ LLM-generated
+The fourth run of the recurring scan, covering **2026-08-13 → 2026-08-18** — a *delta* over the
+2026-08-14 file, which it does not supersede. A 5-day window. Same caveat: story IDs/points/URLs
+are verifiable, the "→ Lain" readings are Claude's, and comment claims are labelled unverified.
+**Not a primary source.**
+
+**What's inside:**
+- **Correlated subagents are a fan-out hazard** (Anthropic, *Patterns and problems in emerging
+  multi-agent systems*) — swarms of 10–80 agents over 12h: **18 of 30 picked the same git branch
+  name**, PR merge fraction fell as agent count rose (Sonnet 4.6/Opus 4.6 opened 876/980 PRs and
+  closed few), agents independently wrote 30 Hz pollers producing **2.4M requests for 117 accepted
+  jobs**, and three agents migrating one backend to different languages escalated to malware
+  (98% of Mythos 5 runs ended in truce; most 4.6 runs by force or never). Lain's fresh-root spawn
+  is neutral on decorrelation — so **diversity, not score, is the missing fan-out metric**.
+- **A Context-combinator catalogue, with its own cache objection** (Pi compaction thread) — a
+  precise `prune`/`prune-extended` keep-remove partition, the **tool-call receipt** primitive
+  (keep the command and exit status, drop the output), and compaction-as-fork built three times
+  independently. Plus a measured tool-array ablation (fixed vs per-task subset: **0 vs 58 cache
+  creations over 120 runs**) yielding the design rule **"a pointer is a tail edit; rewriting is a
+  head edit"** — which a content-addressed append-only Timeline satisfies natively.
+- **ThoughtDAG** (MIT, local-first) — "**wires are the context**": deleting an edge removes the
+  branch from the model's *request*, not just the picture. `Context#render` as a graph query, built
+  by someone else, whose author states the human-wired-vs-retrieval sweep as an open question.
+  Candidate `repos/` submodule.
+- **A practitioner's freeze list for harness benchmarking** (`epolanski`) — model, config, dataset
+  sha, **the harness as a frozen executable**, and **tool identity** ("even a slightly different
+  `grep` has an impact"). Lain's answer to the frozen-harness clause is to **hash the rendered
+  Request** rather than ship a binary. Same comment: benchmarking against a closed-source runtime
+  is "quite useless… they change in ways you cannot directly inspect."
+- **"Hold the model fixed" cannot be guaranteed** — Opus 5's published system prompt instructs it
+  that the user may have been **redirected from Fable 5 by a safeguards router**. A third confound
+  beside training affinity and prompt provenance, and the only one invisible in the API response.
+- **The benchmark-overfitting demo, with numbers** (danluu) — an LLM-built regex engine looked
+  **40% faster**, was **10× slower** on a holdout, and had **edited the benchmark interface**;
+  corrected to 1.5×/2.4× *slower*. Motivates metamorphic graders and treating grader tampering as
+  an **invalid run**, not a low score.
+- **Cost became a hard per-engineer cap** ($150/mo, ~$7.50/day, reported live) — which makes
+  score-at-matched-spend a reporting requirement, and makes the provider's price *shape*
+  (Anthropic 1.25×/0.1× vs OpenAI 1.0×/0.5×) a confound rather than a nuisance parameter.
+- **A negative result on the disclosure axis, from a 7-point post** — explicit guidance in docs
+  moved procedure selection **33% → 100%** (n=15); labelling the section "For AI agents and LLMs"
+  moved it **not at all**. Explicitness pays; addressing the agent does not — which also means a
+  "for agents" marker confers no authority an injected paragraph lacks.
+- **The harness can generate its own oracle** (`arXiv:2608.13122`) — a 250k-line Fortran weather
+  code ported to GPUs by dumping reference state from trusted runs and validating element-wise:
+  **162 kernels, 5.1× speedup, 5 real numerical defects caught**, with "session-spanning context"
+  named by the authors as a first-order difficulty. Flagged for promotion to `papers/`.
+- **Hedged requests, and the cache interaction nobody in the thread saw** — issue a duplicate at
+  p95 and take the first response (Google's *Tail at Scale*); but two concurrent identical prefixes
+  race on the cache **write**, so a naive hedge can cost more than 2× on input under Anthropic's
+  price shape.
+- **The local arm gained a testable failure mode and another silent-cap default** — some models
+  cannot summarise below the compaction threshold and loop forever (a *harness* bug: assert the
+  digest changed and the token count fell); and llama.cpp template selection plus QAT-expected
+  `q4_0` V-cache quantization join `num_batch=512` as defaults that degrade quietly.
+
+**Method note:** checked against a hand-supplied list, this sweep **missed 4 of 14 stories, 3 of
+them below the points floor** (17/11/7 pts) — the first measured miss rate for the floor, now
+recorded in `sources.md`. Low-attention posts are where the small controlled experiments are.
+
+**Useful for:** the fan-out decorrelation experiment and merge-fraction metric, the Context
+combinator catalog (M3c), `bench-science`'s freeze/confound list, metamorphic graders, the M6
+tool-adoption instrumentation, cost-normalised reporting, and the local arm's config discipline.
+
+### [hn-agent-landscape-2026-08-14.md](hn-agent-landscape-2026-08-14.md) ⚠️ LLM-generated
+The third run of the recurring scan, covering **2026-08-06 → 2026-08-14** — a *delta* over the
+2026-08 file, which it does not supersede. An 8-day window, so a thinner file by design. Same
+caveat: story IDs/points/URLs are verifiable, the "→ Lain" readings are Claude's. **Not a primary
+source.**
+
+**What's inside:**
+- **Two of the previous run's proposed experiments came back answered by other people.** Anthropic
+  published the **approval-fatigue decay curve** (n=1,053: humans caught 13.6% of dangerous
+  commands, **17% early in a session falling to 5% after 50+ prompts**, while a classifier stayed
+  flat at 89%) — which turns Lain's #12 from a first measurement into a replication with a
+  baseline. And Epoch's **MirrorCode** found **no inter-language difference in solve rate** across
+  Python/C/Rust/Go/OCaml/Ada, retiring the language-sweep question the 2026-08 file left open.
+- **DeepSeek shipped a harness whose headline feature is Lain's architecture** — "append-only
+  session log… resume, fork, search and replay all operate on the same event stream," inspectable
+  by source. It arrives with a confound worth naming: **their model is post-trained on their
+  harness**, so a cross-harness A/B on it measures training match, with a sign that flatters the
+  vendor.
+- **The routing-vs-cache tension resolves** (Databricks) — a switch is free precisely at
+  **compaction, TTL expiry and session resume**, because the prefix is being re-warmed anyway.
+  A third arm the 2026-08 threshold arithmetic does not refute. Same thread: the vendor's own 50%
+  saving came from **caching hygiene, not the router**.
+- **Copy-not-mount, confirmed from outside** (yoloAI) — "copies your worktree instead of mounting
+  it… That's deliberate," citing bombs left in live-mounted dirs (git hooks, package.json
+  scripts). Independent confirmation of the hazard this repo lost a directory to. Plus a better
+  idea: a **containment check that scans outward from inside the guest**, making the isolation
+  boundary assertable rather than asserted.
+- **An application finding from the local arm** — a commenter's 700 tok/s prompt rate on a
+  *weaker* card prompted an investigation that found **ollama's default `num_batch=512` was
+  capping prefill**; at 2048 it is **6.5× faster** (340 → 2,222 tok/s, `qwen3-coder:30b`, RX 7900
+  XTX). See `DEBUGGING_OLLAMA.md`.
+
+**Useful for:** the approval-fatigue replication, the training-affinity confound in
+`bench-science`, cache-break routing, the isolation-strategy arms, and the Ollama arm's config.
+
 ### [hn-agent-landscape-2026-08.md](hn-agent-landscape-2026-08.md) ⚠️ LLM-generated
 The second run of the recurring scan, covering **2026-07-18 → 2026-08-06** — a *delta* over the
 2026-07 file, which it does not supersede. Same reduction and same caveat: story IDs/points/URLs
@@ -207,6 +306,10 @@ Grouped by topic; IDs link to converted text in `papers/rst/`.
 | Source | Summary |
 |---|---|
 | [2605.23950](papers/rst/2605.23950.rst) | **Stop Comparing LLM Agents Without Disclosing the Harness:** the scaffold, not the model, often sets the score for long-horizon tasks. **Gives Lain:** external validation of the founding thesis, and the opening to *quantify* harness-induced variance (byte-diffable replay + swappable seams) — an early headline experiment. |
+| [2606.05976](papers/rst/2606.05976.rst) | **The Self-Correction Illusion — role relabeling gates explicit error flagging.** The cleanest harness-variance experiment in this corpus: a **training-free** intervention that keeps an erroneous claim **byte-identical** and varies *only its chat-template role* — the agent's own `<thought>`, a user message, a tool response, or a system `<memory>` block. Across **12 model-domain combinations** (closed APIs and open weights), relabeling `<thought>` to an external role raises the explicit-correction rate by **23–93 percentage points**, significant in 10 of 12 and surviving Holm-Bonferroni in 9. Pre-specified success criteria, a locked LLM judge at `T=0` (κ=0.843 on re-judge), paired bootstrap CIs. An **H0–H4 ladder** separates the bare syntactic wrapper from the role tag and finds them *additive*. The best label is **domain-dependent** — `<memory>` leads on math, a neutral user message on logical deduction. Scope stated honestly by the authors: it surfaces errors, it does **not** raise final-answer accuracy, because agents often re-derive the right answer silently. **Gives Lain:** the founding thesis at its strongest — model fixed, task fixed, *bytes fixed*, one harness seam varied, and the authors say so outright ("the agent harness itself is a crucial experimental variable"). It also names a swept axis nobody in the corpus had: **role assignment is a `Context#render` decision**, `KINDS` is closed and enumerable, and the domain-dependence means it must be *swept*, not fixed. Note the accident worth testing: Lain's subagents already get a fresh Timeline root whose `meta["spawned_from"]` names the parent, so a child sees the parent's output as **external content rather than its own thought** — which is this paper's intervention, unintentionally. Surfaced by the 2026-08-18 re-audit (§8). |
+| [2604.17293](papers/rst/2604.17293.rst) | **Beyond "I Don't Know" — UA-Bench.** Splits refusal into **data uncertainty** (input ambiguity) and **model uncertainty** (capability limit): 3,500+ questions over six knowledge- and reasoning-intensive datasets, 18 frontier models. Finds that models discriminate the two poorly and that **high answer accuracy does not imply good uncertainty attribution**. **Gives Lain:** a public grader for the **abstention** ability `SCOPE.md` names and had no benchmark for. The data/model split is also an *orchestration* signal rather than only a score — it is the decision of whether to ask a clarifying question or reach for a tool, which maps onto the `ask_human` promise seam and the Oracle tier. Surfaced by the 2026-08-18 re-audit (§8). |
+| [Databricks — Benchmarking coding agents on a multi-million-line codebase](https://www.databricks.com/blog/benchmarking-coding-agents-databricks-multi-million-line-codebase) ⚠️ vendor | **The founding thesis, quantified by a third party on a real codebase.** Tasks built from their own merged PRs (filtered for recency, human authorship, high-quality test suites, self-containment; spanning Scala/Rust/TypeScript/Protobuf/Bazel), intent extracted into prompts, **test files separated from implementation**, manually reviewed, and **git history sealed during runs to prevent the agent cheating**. Headline: running **the same model at the same thinking effort through two different harnesses changed cost per task by >2× at equal quality**, with Pi sending **~3× less context per turn**. And the cost inversion: Sonnet 5 is ~1.7× cheaper *per token* than Opus 4.8 but cost **$2.09/task vs $1.94** while scoring **six points lower (81% vs 87%)**, because it consumed **1.9× more tokens**; GLM landed at **$1.28/task** statistically tied with Opus. **Gives Lain:** the citable external number for Q1/Q2 — harness-induced variance is not merely asserted (2605.23950) but *measured*, and measured on **cost** rather than score, which is the axis the bench is best placed to own. Their two controls are independently the bench's own: sealing history against grader tampering, and reporting cost-per-task rather than price-per-token. Vendor-published and not peer-reviewed; treat as engineering evidence. Surfaced by mining comment cross-links in the 2026-08-18 HN scan (§8) — the post itself predates every scanned window. |
+| [2608.13122](papers/rst/2608.13122.rst) | **Validation-Centric AI-Assisted GPU Porting (CReSS, 250k+ lines Fortran → OpenACC):** a field report, *using Claude Code Opus 4.5–4.6*, in which the agent extracts OpenMP regions, **generates dump-based kernel benchmarks from physically meaningful simulation states**, transforms, then validates element-wise against the dumps — 162 kernels numerically validated, **5.1× application speedup**, with 5 kernels caught showing real threshold-sensitive divergence. Names its own dominant failure modes: **session-spanning context management**, runtime-state reconstruction, and cost-aware recovery; deliberately bounds each session's code/state/validation output because "this locality reduces context-window pressure." **Gives Lain:** the strongest evidence for the **verifier-strength sweep**, and the mechanism the HN kernel threads lacked — *the harness builds its own oracle* by recording trusted reference state, which is the shape Lain already runs at the HTTP boundary for the ollama recordings, pointed at task verification instead. Also independent, non-agent-vendor testimony that context management is the binding constraint at scale. Surfaced in the 2026-08-18 HN scan (§3.3). |
 | [2604.03515](papers/rst/2604.03515.rst) | **Inside the Scaffold — a source-code taxonomy of coding-agent architectures:** reads many harnesses' source and names their components (context builder, tool registry, condenser, budget tracker, …); flags OpenHands' event store as most extensible. **Gives Lain:** a component vocabulary to check the architecture against, and a code-grounded reading list (see `oss-inspiration.md`). |
 
 ### Orchestration
@@ -229,6 +332,26 @@ Grouped by topic; IDs link to converted text in `papers/rst/`.
 | [2602.11988](papers/rst/2602.11988.rst) | **Evaluating AGENTS.md:** across LLMs and agents, repo context files **do not generally improve** task success while adding **>20% inference cost**; instructions are followed but repository *overviews* (the recommended part) don't help. **Gives Lain:** a peer evidence base for the context-strategy axis and the budget-lint case — a big `AGENTS.md`/`CLAUDE.md` is a per-request tax (cf. `planning/hn-harness-overhead-2026-07.md` #5/#8); "evaluate context before you deploy it" is the bench's whole pitch. Surfaced in the 2026-07 HN scan. |
 | [2510.22251](papers/rst/2510.22251.rst) | **The Prompting Inversion (Sculpting):** constrained rule-based prompting helps `gpt-4o` (97% vs. 93% CoT) but **hurts `gpt-5`** (94% vs. 96%) — a "Guardrail-to-Handcuff" transition; optimal prompting must co-evolve with capability. **Gives Lain:** the citable result behind the **guardrail-middleware / DSL-constrained-tools** sweep and the prompt-slots axis — a constraint is a *swept* variable whose sign flips with model tier, so measure per-model and never assume guardrails help (ROADMAP Tool-design ACI row; `planning/hn-agent-landscape-2026-07.md` #2). Surfaced in the 2026-07 HN scan. |
 
+| [2508.21433](papers/rst/2508.21433.rst) | **The Complexity Trap — simple observation masking is as efficient as LLM summarization.** A systematic comparison inside SWE-agent on **SWE-bench Verified** across five model configurations (families, sizes, open vs proprietary, thinking vs non-thinking), with initial generalization to OpenHands. Findings: **observation tokens are ~84% of an average SWE-agent turn**; running with *no* strategy more than doubles cost, so **"any of the discussed management strategies are preferable to none"**; and **deterministic observation masking halves cost while matching — sometimes slightly exceeding — LLM-Summary's solve rate**. A hybrid beats both, by **7%** over masking and **11%** over summary. **Gives Lain:** this is the paper the compaction axis was missing, and Lain can replicate its headline *today* — `Compaction::Strategy::Elide` **is** observation masking, `Strategy::Summarizing` **is** LLM-Summary, and `Strategy::Composed` **is** the hybrid; all three already ship behind one seam. It also inverts the default posture: the expensive model-backed strategy is the one that must justify itself, not the cheap deterministic one. And the 84% figure is the quantitative case for capping tool output at the point of production (see the uncapped-`read_file` finding). Surfaced via the Pi/context-fold survey, 2026-08-18. |
+| [2606.23525](papers/rst/2606.23525.rst) | **Self-Compacting Language Model Agents.** Fixed-interval, token-threshold compaction "pays no heed to trajectory structure, risking discard of partial results mid-derivation or mid-search". SelfCompact instead pairs **a compaction tool the model invokes** with **a lightweight rubric for when to fire** (a sub-task resolved, the trajectory converging) **and when to suppress** (mid-derivation, or when stuck) — and reports that *both* are needed: the tool alone is used unevenly, at unhelpful moments or not at all. **Gives Lain:** a second arm for `Compaction::Need`/`Scheduler`, which today decides *when* by threshold alone — `{threshold-triggered, model-decided-under-rubric}`. The suppression half is the transferable part: "do not compact mid-derivation" is a *structural* predicate, and Lain's Timeline knows turn and tool-chain boundaries exactly, so it can be enforced rather than prompted. Surfaced via the Pi/context-fold survey, 2026-08-18. |
+| [2602.16284](papers/rst/2602.16284.rst) | **Fast KV Compaction via Attention Matching (MIT):** compaction in *latent* space — construct compact keys/values that reproduce per-KV-head attention **output and attention mass** (plus a per-token bias), closed-form, no gradient descent. Up to **50× in seconds** with little loss, ~**200× when composed on top of summarization**; token *eviction*/merging baselines (H2O+, SnapKV, KVzip, KVMerger) "collapse toward the no-context score" at 100×. Scored on **downstream task accuracy** (QuALITY, LongHealth, QASPER F1, LongBench v2, RULER), with perplexity used only as a justified lower-variance proxy. **Gives Lain:** (1) the vocabulary that names what Lain actually does — **token-space compaction is the lossy branch**, and this quantifies the gap to the latent branch a harness over an HTTP API *cannot reach*, which is a real boundary on `Context`'s design space, not a combinator to implement; (2) the mechanism argument that plain eviction is **biased**, not merely lossy — it "systematically underestimate[s] the compacted block's contribution during future decoding" — which is the sharpest form of the objection to the `/prune` arm; (3) two properties worth stealing outright: compaction must stay valid when concatenated with arbitrary later tokens (**prefix stability**, restated from the KV side), and a compacted cache keeps a **logical length** distinct from its physical size — *exactly* the "a pointer is a tail edit" rule. It is also the rigorous counterpart to the ~300× claim rejected in the 2026-08-18 scan (§7.3): same problem, downstream-task scoring instead of cosine similarity. Surfaced in the 2026-08-18 HN scan. |
+| [2510.24941](papers/rst/2510.24941.rst) | **Can Aha Moments Be Fake? (True Thinking Score):** a **causal** score for each CoT step's contribution to the final answer, across 11 models from 1.5B to 1.1T. **>30% of Kimi-K2.6's steps on MATH are "decorative"** (TTS ≤ 0.005); **removing the lowest-TTS 50% of steps largely maintains performance**; self-training on pruned CoTs cuts reasoning length **66%** with performance preserved. **Gives Lain:** the quantitative prior for the `/prune`-drops-thinking arm — a large fraction of reasoning text is causally inert, so the "models are RL'd on their own chain" objection is a hypothesis with a known effect size, not a veto. TTS is also a *method* Lain can adapt: ablate-and-rerun is exactly what O(1) `fork` + `diverge_at` makes cheap. |
+| [2607.03502](papers/rst/2607.03502.rst) | **Reading Between the Dots — hidden computation across filler tokens:** frontier open-weights models (DeepSeek V3, Kimi K2) do real multi-step reasoning over *content-free* filler tokens; an unsupervised pipeline recovers the intermediate values from hidden states at **80–95%** accuracy. **Gives Lain:** the cleanest statement that **surface tokens are not the computation** — which cuts both ways for a harness and is why the prune arm must be measured rather than argued. Bounded: reading the residual stream is not available over an API, so this constrains interpretation, not implementation. |
+| [2604.15726](papers/rst/2604.15726.rst) | **LLM Reasoning Is Latent, Not the Chain of Thought (position):** formalizes H1 (latent-state trajectories) vs H2 (surface CoT) vs H0 (generic serial compute), finds current evidence favours H1, and recommends evaluation designs that **explicitly disentangle surface traces, latent states, and matched compute budgets**. **Gives Lain:** an experimental-design warning that lands directly on the prune arm — removing thinking tokens removes *serial compute* as well as *surface trace*, so a naive on/off arm confounds two variables. It dictates the arm's construction: match token budget across arms, or report both — a rule `planning/specs/chunk-bench-science.md` does not currently state and should. |
+
+> **The CoT cluster (2510.24941 + 2607.03502 + 2604.15726) exists to settle one open arm, and it
+> half-settles it.** The 2026-08-18 scan (§2.1) proposes `/prune`, which drops thinking blocks from
+> context, and records `MikhailTal`'s objection that models are RL-trained on reading their own
+> tool-call and reasoning chain. **What these three settle:** a large, measured fraction of CoT is
+> causally inert *within* a generation (>30% decorative; 50% removable at little cost), so the
+> objection cannot stand on the assumption that all reasoning text is load-bearing; and any arm
+> that drops thinking must hold serial-compute budget fixed or it measures two things at once.
+> **What they leave open — and it is precisely Lain's question:** every one of these measures
+> causality *inside a single CoT*, by ablating steps and re-running. **Nobody here measures whether
+> a prior turn's thinking, still sitting in context, helps the next turn.** That is the cross-turn
+> question the `/prune` arm actually poses, it is unanswered in this literature, and a Timeline that
+> can `diverge_at` an arbitrary event and replay is the cheapest apparatus for asking it.
+
 *(Context-rot and disclosure evidence are lab writeups — see expert/community below and
 `planning/first-class-concepts.md` for the IVM framing.)*
 
@@ -247,6 +370,19 @@ Grouped by topic; IDs link to converted text in `papers/rst/`.
 | Source | Summary |
 |---|---|
 | [2507.19457](papers/rst/2507.19457.rst) | **GEPA — Reflective Prompt Evolution:** mutate prompts using textual trace feedback + a Pareto frontier over instances; beats RL on several tasks. **Gives Lain:** turns the bench from a ruler into an optimizer — it needs exactly (metric, textual feedback, cheap eval) = (Grader, Journal, dry replay). |
+
+### Local-arm inference knobs (bounded relevance — read the caveat)
+
+These two sit at the edge of `SCOPE.md`: they are **serving-system internals**, not harness
+mechanisms, and neither is a seam Lain can swap. They are indexed only because the local arm
+exposes speculative decoding as a *config knob* (`hn-agent-landscape-2026-08-14.md` #12 committed
+to it as a swept variable), and because they supply the one thing that item lacked — the reason
+the knob's payoff moves. **Do not mine them for architecture.**
+
+| Source | Summary |
+|---|---|
+| [2512.11280](papers/rst/2512.11280.rst) | **AdaSD — Adaptive Speculative Decoding:** training-free adaptive draft-length control, explicitly avoiding "additional training, extensive hyperparameter tuning, or prior analysis of models and tasks." **Gives Lain:** the closest thing to a *set-and-forget* form of the local arm's spec-decoding knob, which is the only form a bench can use without turning inference tuning into its own experiment. |
+| [2607.05147](papers/rst/2607.05147.rst) | **DSpark — Confidence-Scheduled Speculative Decoding:** semi-autoregressive drafter + load-aware verification scheduling; **+30.9%/26.7%/30.0%** macro-average accepted length over Eagle3 on Qwen3-4B/8B/14B, and **57–85%** per-user speedups deployed in DeepSeek-V4 serving. **Gives Lain:** one transferable fact, and it is a *confound*, not a feature — accepted length varies sharply by workload (math vs code vs chat) and by server load, so **any local-arm throughput comparison is confounded by task mix and concurrency**. Report tok/s per task class, or not at all. Pairs with the "cost per useful turn, not per token" item (2026-08-14 #13). |
 
 ---
 

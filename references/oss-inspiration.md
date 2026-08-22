@@ -146,6 +146,7 @@ rather than marketing.
 | Codex CLI (Rust) | sandbox (seccomp/landlock), approval modes | the tier-3 `bash` exec boundary + `Handler::Approving` |
 | ~~Cline~~ ✓ done (above, read not vendored) | — | the Workspace Timeline; approval economics |
 | SWE-agent | `commands/` (the ACI tools) | how concise feedback + guardrails are actually implemented |
+| ThoughtDAG | the node/edge → request builder | **"wires are the context"** — an editable context DAG where deleting an edge removes the branch from the model *request*, not just the view. The closest external analogue to `Context#render`; MIT, local-first, Ollama-capable. Author has publicly posed the human-wired-vs-retrieval-selected sweep as an open question (`hn-agent-landscape-2026-08-18.md` §2.3). |
 
 > Adding these as submodules touches `.gitmodules` (a repo commitment) — do it deliberately, one at
 > a time, when actually reading the core, the way MemPalace was pulled.

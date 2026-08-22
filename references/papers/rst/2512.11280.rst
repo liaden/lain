@@ -1,0 +1,609 @@
+.. rubric:: Abstract
+
+Large language models (LLMs) have achieved remarkable performance across a wide range of tasks, but their increasing parameter sizes significantly slow down inference.
+Speculative decoding mitigates this issue by leveraging a smaller draft model to predict candidate tokens, which are then verified by a larger target model.
+However, existing approaches often require additional training, extensive hyperparameter tuning, or prior analysis of models and tasks before deployment.
+In this paper, we propose Adaptive Speculative Decoding (AdaSD), a hyperparameter-free decoding scheme that dynamically adjusts generation length and acceptance criteria during inference.
+AdaSD introduces two adaptive components: one to determine when to stop candidate token generation and the other to decide token acceptance, updated in real time based on token entropy and Jensen-Shannon distance.
+This approach eliminates the need for pre-analysis or fine-tuning and is compatible with off-the-shelf models.
+Experiments on benchmark datasets demonstrate that AdaSD achieves up to 1.46× speedup over vanilla speculative decoding while limiting accuracy degradation to under 1.8%, making it a practical solution for efficient and adaptive LLM inference.
+
+Introduction
+------------
+
+Large language models (LLMs) have rapidly become integral to a wide range of applications, including natural language understanding, content generation, and code synthesis.
+This progress is driven by the advances of the Transformer architecture [vaswani2017attention]_.
+Representative models such as T5 [raffel2020exploring]_, GPT [brown2020language]_, Gopher [rae2022scaling]_, and PaLM [chowdhery2023palm]_ have successively advanced the state of the art, demonstrating that scaling up model parameters can substantially improve performance across many real-world tasks.
+
+Despite these remarkable performance gains, increasing model size also introduces substantial inference overhead.
+For example, Meta's flagship model Llama 3 [grattafiori2024llama3]_ achieves 87.3% accuracy on the MMLU general knowledge benchmark with its 405 billion parameters.
+However, at this massive scale, inference becomes memory-bound, as every forward pass requires loading the entire set of model weights from memory, which significantly slows down computation and poses challenges for practical deployment.
+
+Speculative decoding [leviathan2023fast]_ is a technique to alleviate the memory-bound bottleneck by maximizing the utilization of each weight load during inference.
+It uses a smaller and faster, but less accurate, *draft model* to generate a sequence of candidate tokens, which are then verified *in parallel* by the original large *target model* to ensure correctness.
+By offloading token generation to the draft model and verifying multiple tokens simultaneously, speculative decoding significantly improves inference throughput while preserving accuracy, effectively reducing the latency imposed by repeatedly loading the full set of model weights.
+
+Building upon this foundation, several methods have been proposed to improve speculative decoding, such as fine-tuning the draft model to better align with the target model's distribution [zhou2024distillspec]_ [li2024eagle]_ [li2024eagle2]_, dynamic mechanisms to determine the optimal length of the candidate token sequences [mamou2024dynamic]_ [huang2025specdec]_ [liu2025pearl]_, and relaxing the acceptance criteria during target model verification [kim2023speculative]_ [holsman2025fuzzy]_.
+
+However, these methods have limitations.
+First, aligning the draft model often requires additional training, adding computational cost.
+Second, relaxing acceptance criteria introduces trade-offs between accuracy and efficiency, and requires extra efforts to determine the tolerable levels.
+Third, many approaches rely heavily on extensive hyperparameter tuning, necessitating iterative configuration searches to achieve satisfactory performance.
+
+To address the aforementioned limitations, we propose *Adaptive Speculative Decoding* (AdaSD), a hyperparameter-free approach to enhance LLM inference efficiency.
+AdaSD consists of two components: one determines the termination of candidate token generation, and the other defines acceptance criteria for verification.
+Specifically, we employ entropy and Jensen-Shannon distance as principled metrics to set these components separately.
+Furthermore, both metrics are dynamically adjusted during inference based on information from previously generated tokens, eliminating the need for manual configuration or model-specific tuning.
+
+The contributions of this paper are as follows:
+
+- * We propose AdaSD, an adaptive speculative decoding method that jointly adjusts candidate generation length and acceptance criteria to balance inference speed and accuracy.
+
+    * We introduce a Bayesian verification mechanism that estimates the acceptance probability of candidate tokens, providing an adaptive alternative to fixed verification rules.
+
+    * Our method is compatible with off-the-shelf models, requiring neither model architecture change nor additional training.
+      Moreover, we eliminate the need for hyperparameter tuning.
+
+    * Experimental results indicate that AdaSD achieves up to 1.46× speedup over standard speculative decoding, while limiting accuracy degradation to less than 1.8%.
+
+Background
+----------
+
+Language Model Acceleration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Auto-Regressive Model
+^^^^^^^^^^^^^^^^^^^^^
+
+An auto-regressive model employs a decoder-based Transformer architecture to perform text generation.
+It produces each output token conditioned on the preceding tokens.
+The newly generated token is then appended to the input sequence, serving as the context for the next step of generation.
+
+Let p denote the probability distribution of the auto-regressive model.
+At each time step t, the next token x_t is drawn from the conditional probability distribution over the preceding token sequence x_<t, defined as x_t ~ p(x \mid x_<t).
+The token x_t can be selected *deterministically* by choosing the most probable token: x_t = \arg\max_x p(x \mid x_<t).
+Alternatively, x_t can be chosen *stochastically* by sampling from the adjusted distribution, using techniques such as temperature scaling, top-k sampling, or top-p sampling.
+This iterative process continues until the model produces a special end-of-sequence (EOS) token, which terminates generation.
+
+Speculative Decoding
+^^^^^^^^^^^^^^^^^^^^
+
+Speculative decoding is designed to address the high inference time of auto-regressive generation in the large language model, denoted as the *target model* M_p.
+To mitigate this, a smaller and faster model, referred to as the *draft model* M_q, is introduced to approximate the target model's output distribution.
+
+Each iteration of speculative decoding consists of two steps: *generation* and *verification*.
+In the generation step, the draft model proposes candidate tokens by sequentially producing a number of tokens up to a limit, which may be fixed or adaptively adjusted.
+In the verification step, the target model evaluates these candidate tokens in parallel by expanding them into a batch and accepting the longest valid prefix to ensure correctness.
+By combining fast speculative generation with efficient verification, speculative decoding lowers inference latency without compromising output quality.
+
+Sampling Strategy
+^^^^^^^^^^^^^^^^^
+
+To determine which tokens are accepted during the verification step of speculative decoding, a straightforward deterministic strategy is *greedy decoding*.
+In this approach, both the draft model M_q and the target model M_p always select the token with the highest probability:
+
+.. math::
+
+   x_t^q = max_x M_q(x |x_<t),
+
+       x_t^p = max_x M_p(x |x_<t),
+
+where x_t^q and x_t^p are the tokens chosen by the draft and target models at step t, respectively.
+Greedy decoding imposes a strict acceptance rule: the candidate token x_t^q is accepted only if it exactly matches x_t^p.
+
+The verification process determines the longest valid prefix by scanning the evaluation results in parallel until the first mismatch occurs.
+
+Although greedy decoding is simple, it is overly restrictive and limits diversity in text generation.
+To address this limitation, prior work [leviathan2023fast]_ [chen2023accelerating]_ introduces *speculative sampling*, which relaxes the strict matching requirement by allowing tokens from the draft model to be probabilistically accepted by the target model.
+Speculative sampling preserves the target distribution by jointly considering the distributions of both models.
+A candidate token \tildex_t is first sampled from the draft model distribution and then accepted by the target model with probability α:
+
+.. math::
+
+   x̃_̃t̃ ∼M_q(x |x_<t),
+
+       α= min(1, M_p(x̃_̃t̃ |x_<t)/M_q(x̃_̃t̃ |x_<t)).
+
+If the candidate token is rejected, the target model re-samples a new token from an adjusted distribution that excludes \tildex_t.
+
+Jensen-Shannon Divergence and Distance
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Entropy and cross-entropy provide fundamental measures for characterizing uncertainty and distribution mismatch.
+Building on these concepts, Kullback-Leibler (KL) divergence offers a principled way to quantify the difference between two probability distributions.
+For completeness, the formal definitions of entropy, cross-entropy, and KL divergence are provided in Appendix information theoretic background.
+
+However, KL divergence is asymmetric and unbounded, making it less desirable for directly comparing two probability distributions.
+Therefore, Jensen-Shannon (JS) divergence is often adopted as a symmetric and bounded alternative derived from KL divergence.
+
+JS divergence is defined as:
+
+.. math::
+
+   D_JS(p ∥q)    = 1/2 D_KL(p ∥m) + 1/2 D_KL(q ∥m)
+
+                                           = H(m) - 1/2 (H(p) + H(q)),
+
+where m = \frac12(p+q) is the mixture distribution of the draft model q and the target model p, H(·) denotes entropy, and D_\mathrmKL(· \parallel m) denotes the KL divergence with respect to m.
+Unlike KL divergence, JS divergence is symmetric in p and q, and is bounded in [0, 1] under base-2 logarithm.
+These properties make it a more stable and interpretable metric for quantifying the dissimilarity between probability distributions.
+
+To provide a more intuitive measure of the difference between distributions, we consider the Jensen-Shannon (JS) distance, defined as the square root of the JS divergence:
+
+.. math::
+
+   d_JS(p ∥q) = √(D_JS(p ∥q)).
+
+Since the JS distance satisfies the properties of a metric [endres2003a]_, it provides a well-defined notion of distance between probability distributions within the metric space it induces.
+
+Related Work
+------------
+
+Several studies enhance speculative decoding by modifying model architectures.
+Medusa [cai2024medusa]_ retains a single model but equips it with multiple decoding heads, enabling parallel prediction of consecutive future tokens at each step.
+EAGLE [li2024eagle]_ [li2024eagle2]_ reconstructs draft transformer layers via additional training and employs dynamic tree search to align with the target distribution.
+Both approaches, however, entail significant model adaptation and require extra training before yielding performance gains.
+
+To mitigate the memory and computational overhead associated with deploying a separate auxiliary model, some works focus on self-speculative decoding.
+This paradigm leverages the internal structure of the target model itself to act as the draft model, while the full model is subsequently used for verification.
+Draft & Verify [zhang2024draft]_ selectively skips intermediate layers during the draft step based on an offline Bayesian optimization search.
+EESD [liu2024speculative]_ constructs its draft model by introducing a trainable early-exiting layer immediately following the first few layers of the target model.
+SWIFT [xia2025swift]_ dynamically optimizes the set of skipped layers on-the-fly during inference without additional training.
+However, although self-speculative approaches eliminate the extra memory footprint, their speedup remains inherently bounded.
+Omitting an excessive number of layers to accelerate drafting inevitably degrades the prediction quality and lowers the acceptance rate.
+
+Another line of research focuses on adjusting the candidate token generation length in draft models.
+DISCO [mamou2024dynamic]_ employs a two-layer feedforward network (FFN) classifier to adaptively set a termination threshold, stopping generation once a candidate token's probability falls below the threshold.
+Hugging Face's Assisted Generation [gante2023assisted]_ extends DISCO to an unsupervised variant that preserves the same decision mechanism but replaces the FFN classifier with a receiver operating characteristic (ROC) curve.
+AdaEDL [agrawal2024adaedl]_ introduces a training-free early stopping criterion that halts the drafting process by approximating a lower bound on the expected token acceptance probability using the entropy of the draft model's logits.
+SpecDec++ [huang2025specdec]_ formulates the problem as a Markov decision process and introduces a trained head that predicts the acceptance probability of candidate tokens to decide when to stop.
+PEARL [liu2025pearl]_ simulates dynamic draft lengths through two strategies: it first verifies whether a newly generated token is accepted by the target model, and upon success, allows the draft model to continue generating tokens in parallel with verification, creating the effect of dynamic length adjustment.
+HSDDW [syu2025hierarchical]_ proposes a three-layer hierarchical structure of progressively larger models.
+The smallest model applies a threshold-based mechanism to control generation or forward tokens to larger models in the hierarchy for verification.
+C2T [huo2026c2t]_ leverages a trainable lightweight classifier based on joint probability, entropy, and depth to dynamically pre-prune token trees and facilitate early stopping during inference.
+Although effective, these approaches primarily focus on the generation process of draft models, and leave the target model's role in verification unexplored.
+
+A number of works define acceptance criteria based on the divergence between draft and target distributions.
+BiLD [kim2023speculative]_ uses a fixed cross-entropy threshold to determine whether to accept draft tokens, while FSD [holsman2025fuzzy]_ utilizes a fixed JS divergence threshold, accepting tokens when the divergence between draft and target models is sufficiently small.
+However, both methods require model- or task-specific information in advance for deciding the optimal thresholds, which limits their general applicability.
+
+The summary and comparison of related methods are provided in Appendix method comparison.
+
+Adaptive Speculative Decoding
+-----------------------------
+
+In this section, we first provide an overview of AdaSD.
+We then present the empirical study, whose insights motivate this work.
+Finally, we describe the proposed method in detail.
+
+Overview
+~~~~~~~~
+
+We propose Adaptive Speculative Decoding (AdaSD), a hyperparameter-free scheme for efficient LLM inference.
+AdaSD differs from prior methods in that it requires neither additional training nor any model- or task-specific information in advance.
+Moreover, it optimizes the decoding decisions by taking both the draft and target models into account.
+In particular, it eliminates the burden of hyperparameter tuning, which often requires exhaustive search and manual effort.
+
+AdaSD consists of two steps.
+The *generation* step (Section generation) determines when the draft model should stop generating candidate tokens and hand them off to the target model.
+The *verification* step (Section verification) regulates the acceptable level of dissimilarity between the probability distributions of the draft and target models.
+The workflow of AdaSD is illustrated in Figure adasd.
+
+To further improve efficiency, AdaSD introduces a heuristic feedback mechanism that adaptively adjusts decision rules during inference.
+Instead of relying on pre-analysis of models or tasks, AdaSD dynamically leverages statistics from previously generated tokens to compute entropy and JS distance to update decision rules on the fly.
+The algorithm of our method is provided in Appendix algorithm of adasd.
+
+Empirical Study
+~~~~~~~~~~~~~~~
+
+We begin by considering the generation step of the draft model.
+Since entropy quantifies the uncertainty associated with a *single* random variable, we use it solely within the draft model to estimate the uncertainty of its generated candidate tokens, independent of the target model.
+This uncertainty measurement is commonly employed in early-exit networks [agrawal2024adaedl]_.
+
+For the verification, we propose a joint optimization approach that simultaneously considers both the draft and target models.
+The main challenge lies in selecting an appropriate indicator that captures the correlation between the two models and determines the acceptance probability of tokens.
+At the same time, the indicator must be bounded to ensure that the resulting acceptance probabilities remain within a well-defined range, facilitating stable analysis and implementation.
+
+Cross-entropy and KL divergence are unsuitable in this context because, when the distributions p and q differ substantially, their values can diverge to infinity, making the threshold unmanageable.
+
+To address this issue, we propose using JS distance.
+While both JS divergence and JS distance are bounded, JS distance offers the additional advantage of defining a proper metric, providing a more stable and consistent signal for adaptive verification within a metric space.
+
+To validate the effectiveness of these measures, we conduct an initial experiment analyzing entropy and JS distance for accepted and rejected tokens.
+We sample 20 examples from the widely used instruction-tuning dataset Alpaca [taori2023alpaca]_, and use Llama 3.1 8B as the draft model and Llama 3.1 70B as the target model.
+For each example, we compute the mean entropy of the candidate token distributions produced by the draft model, as well as the mean JS distance between the draft and target models for both accepted and rejected tokens.
+The results, illustrated in Figure mean entr jsdist, show a clear separation.
+The rejected tokens consistently exhibit higher entropy and JS distance than the accepted tokens, suggesting that both measures can serve as effective signals for predicting token acceptance and guiding the design of adaptive thresholds.
+
+To further understand the correlation between models, we examine the distribution of JS distances across the sample data.
+As shown in Figure distribution jsdist, a certain samples of rejected tokens exhibits JS distances close to 1, whereas such cases would produce extreme values that destabilize the threshold when using cross-entropy or KL divergence.
+Furthermore, the JS distance distribution for accepted tokens shows two distinct clusters.
+The first cluster (i.e., near zero) occurs when both models assign most of the probability mass to the *same* token, typically in highly predictable contexts.
+The second cluster appears when both models distribute probability more evenly across multiple options but ultimately select the same token, usually in contexts with weaker contextual correlation.
+These results offer insights that JS distance effectively captures model agreement and measures uncertainty, allowing to provide robust thresholding for token verification in AdaSD.
+
+Generation
+~~~~~~~~~~
+
+The generation step in AdaSD employs an entropy-based threshold to control candidate token generation in the draft model.
+If the entropy of a newly generated candidate token exceeds this threshold, indicating that the token is likely to be rejected, the generation process is terminated and control proceeds to the verification step.
+
+The generation threshold is updated adaptively during inference.
+At each iteration, the entropy of the rejected candidate token is recorded.
+The threshold is then recalculated as the mean entropy of all rejected tokens collected from the start of the process.
+Let T_G denote the generation threshold, and avg(e_r) represent the mean entropy of the previously rejected tokens.
+The generation threshold is then updated as follows:
+
+.. math::
+
+   T_G = avg(e_r).
+
+This adaptive mechanism enables the threshold to adjust dynamically based on the draft model's own output, ensuring that token generation stops at the most appropriate point.
+
+The generation threshold is updated adaptively during inference.
+Let e_r denote the entropy of a candidate token rejected by the target model during the verification step.
+We define E_r as the set of all such entropy values collected since the start of the decoding process.
+The generation threshold T_G is then recalculated as the mean value of the elements in E_r:
+
+.. math::
+
+   T_G = 1/|E_r|∑_e ∈E_r e.
+
+This adaptive mechanism ensures that T_G dynamically adjusts based on the draft model's historical uncertainty for rejected tokens.
+
+Verification
+~~~~~~~~~~~~
+
+At each verification step, we measure the discrepancy between the draft and target models by computing the JS distances between their output probability distributions for the candidate tokens.
+The JS distance provides a symmetric and bounded measure of divergence and serves as the primary signal for regulating token acceptance during verification.
+
+Instead of filtering candidate tokens using a fixed threshold as in previous approaches [kim2023speculative]_ [holsman2025fuzzy]_,
+
+we model the acceptance probability of a candidate token as a function of the JS distance.
+Intuitively, smaller distances indicate stronger agreement between the draft and target models and should therefore correspond to higher acceptance probabilities.
+
+To capture this relationship, we employ Bayesian inference.
+Given the JS distance d of a candidate token, the probability of accepting the token is computed from the relative likelihood under two density functions:
+
+.. math::
+
+   P(A |d) = p(d |A) P(A)/p(d |A) P(A) + p(d |R) P(R),
+
+where A and R respectively denote the acceptance and rejection events, P(A) and P(R) represent the prior probabilities, while p(d \mid A) and p(d \mid R) are the conditional probability density functions of JS distances.
+To estimate these densities, we collect the JS distances of verified tokens from the beginning of decoding and group them according to their verification outcome (accepted or rejected).
+We then construct the empirical densities p(d \mid A) and p(d \mid R) using kernel density estimation (KDE) [silverman1986density]_.
+
+To capture this relationship, we employ Bayesian inference.
+Given the JS distance d of a candidate token, the probability of accepting the token is computed from the relative likelihood under two density functions:
+
+.. math::
+
+   P(A |d) = p(d |A) P(A)/p(d |A) P(A) + p(d |R) P(R)
+
+where P(·), p_a(d) and p_r(d) denote the probability density functions (PDF) of JS distances conditioned on the accepted and rejected tokens, respectively.
+To estimate these densities, we collect the JS distance values of verified tokens from the beginning of decoding and group them according to their verification outcome (accepted or rejected).
+We then construct empirical density estimates p_a(d) and p_r(d) for the accepted and rejected tokens using kernel density estimation (KDE) [silverman1986density]_.
+
+Note that we exclude tokens whose JS distances are exactly 0 or 1 when computing the KDEs.
+This design provides three advantages.
+First, distances of 0 and 1 correspond to cases of absolute agreement and disagreement between the draft and target models.
+Excluding these cases allows the model to focus on estimating acceptance probabilities for the intermediate distances where the decision is uncertain.
+Second, computing the KDE incurs a cost proportional to the number of collected samples.
+As shown in Figure distribution jsdist, a significant portion of tokens have JS distances equal to 0 or 1.
+Removing these tokens therefore reduces the number of samples involved in density estimation and significantly lowers the verification overhead without affecting the decision quality.
+Third, KDE estimation may suffer from boundary leakage, where probability density spills outside the [0, 1] range.
+Excluding boundary cases therefore improves the accuracy of the density estimation.
+
+Figure filtered distribution illustrates the acceptance probability as a function of the JS distance for the samples in Figure distribution jsdist, excluding the distances of 0 and 1.
+The orange and blue curves correspond to the KDEs for accepted and rejected tokens, respectively.
+The dashed curve represents the resulting acceptance probability derived from these density estimates, confirming our intuition that smaller distances exhibit higher acceptance probabilities.
+
+After the target model makes the verification decision, JS distances of candidate tokens are added to the corresponding group (accepted or rejected), and the density estimates are updated accordingly.
+Through this online update process, the acceptance criteria gradually adapts to the empirical distribution of verification outcomes during decoding.
+
+The verification threshold leverages the JS distance to regulate token acceptance in the target model.
+At each verification step, we compute the JS distance between the probability distributions of the verification pair (the candidate token proposed by the draft model and the token predicted by the target model).
+If the computed distance is smaller than the threshold, the candidate token is accepted, regardless of whether the actual generated tokens from both models are identical or not.
+
+Determining an appropriate distance threshold, however, is non-trivial.
+One possible strategy is to set the threshold based on the mean JS distance of previously accepted tokens.
+While this ensures conservative verification and high accuracy, it results in few tokens being accepted, thereby reducing the throughput of speculative decoding.
+Alternatively, we could set the threshold using the mean JS distance of previously rejected tokens.
+However, this could lead to excessive acceptance of low-confidence tokens, and thus, significantly degrade overall accuracy.
+Therefore, an effective verification threshold must strike a careful balance between efficiency and reliability.
+It should be tight enough to preserve semantic alignment with the target model while being loose enough to enable meaningful acceleration during inference.
+
+To this end, we incorporate information from both accepted and rejected tokens.
+As shown in Figure mean entr jsdist, the JS distances of rejected tokens are consistently higher and clearly separable from those of accepted tokens.
+Motivated by this observation, we define the verification threshold as the midpoint between the mean JS distances of the previous accepted and rejected tokens.
+That is,
+
+.. math::
+
+   T_V = avg(d_a) + avg(d_r)/2,
+
+where T_V denotes the verification threshold, and avg(d_a) and avg(d_r) represent the mean JS distances of previously accepted and rejected tokens, respectively.
+This heuristic strikes a balance that guides the verification process between precision and efficiency.
+
+Similar to the generation threshold, the verification threshold is adjusted adaptively throughout inference.
+At each iteration, the JS distance of each newly generated token is recorded separately based on whether it was accepted or rejected.
+The mean JS distance of all accepted and rejected tokens since the start of the speculative decoding process are updated accordingly, and the verification threshold is subsequently adjusted to reflect these updated statistics.
+For example, assume we have recorded twenty accepted and twenty rejected tokens with JS distances using the numbers shown in Figure mean entr jsdist.
+In this case, the mean JS distances of accepted and rejected tokens are 0.15 and 0.49 respectively, and the verification threshold will be 0.32.
+
+In addition to this approach, we explore several more sophisticated heuristics to adjust the verification threshold, which are described in Appendix extension experiments.
+However, these methods do not outperform the proposed simple yet effective heuristic.
+
+Experiments
+-----------
+
+Experimental Setup
+~~~~~~~~~~~~~~~~~~
+
+""""
+
+Benchmark.
+We select three benchmark datasets, each focusing on a different task.
+GSM8K [cobbe2021training]_ contains grade school-level mathematical word problems.
+HumanEval [chen2021evaluating]_ evaluates programming and code generation.
+MMLU [hendrycks2021measuring]_ covers multiple-choice questions across a wide range of subjects.
+
+""""
+
+Model.
+We select two representative model families, Llama 3 [grattafiori2024llama3]_ and Qwen 2.5 [yang2025qwen25]_,
+
+and consider three target-draft model pairs: (Llama 3.1 70B, Llama 3.1 8B), (Llama 3.1 70B, Llama 3.2 1B), and (Qwen 2.5 72B, Qwen 2.5 7B).
+These configurations enable a comprehensive evaluation of performance within the same model family across different scales and across model families of comparable sizes.
+
+""""
+
+Baseline.
+We compare two speculative decoding methods that require no additional training and are agnostic to task-specific information:
+(a) Vanilla speculative decoding [leviathan2023fast]_, which uses a fixed candidate token length of five, and
+(b) Hugging Face's built-in Assisted Generation [gante2023assisted]_.
+
+In the following experiments, we use *Vanilla* and *AssistedGen* to represent both methods, respectively.
+
+""""
+
+Implementation.
+All experiments are conducted using the Hugging Face Transformer framework [wolf2020transformers]_ version 4.55.
+We run tests on four NVIDIA A6000 GPUs and enable “``device_map=auto``” to evenly split the model on all available GPUs.
+All evaluated approaches use sampling to select the predicted tokens.
+
+Performance Results
+~~~~~~~~~~~~~~~~~~~
+
+Table main result presents the throughput and accuracy results for AdaSD and the baseline methods across all evaluated benchmarks, with more detailed data listed in Appendix additional experimental results.
+
+The performance of standalone draft and target models is included for reference, with efficiency measured as the speedup relative to the Vanilla baseline on four NVIDIA A6000 GPUs.
+All evaluated methods use sampling, which may result in minor accuracy deviations from the original target model.
+Detailed hardware and software configurations are provided in Appendix implementation details.
+
+    max width=.8
+
+| | **GSM8K** | **HumanEval** | **MMLU** |
+| **Llama 3.1 70B – Llama 3.1 8B** |
+| | tks/sec | accuracy | speedup | tks/sec | accuracy | speedup | tks/sec | accuracy | speedup |
+| Draft | 36.446 | 0.828 | 2.624 | 36.257 | 0.634 | 2.532 | 33.274 | 0.695 | 4.206 |
+| Target | 4.842 | 0.939 | 0.349 | 4.838 | 0.750 | 0.338 | 4.376 | 0.836 | 0.553 |
+| Vanilla | 13.890 | 0.945 | 1.000 | 14.319 | 0.768 | 1.000 | 7.912 | 0.835 | 1.000 |
+| AssistedGen | 16.062 | 0.944 | 1.156 | 18.137 | 0.756 | 1.267 | 7.970 | 0.835 | 1.007 |
+| Gen-Only | 16.243 | 0.943 | 1.169 | 18.017 | 0.762 | 1.258 | 8.023 | 0.831 | 1.014 |
+| Verify-Only | 14.227 | 0.931 | 1.024 | 14.425 | 0.750 | 1.007 | 8.247 | 0.836 | 1.042 |
+| AdaSD | 17.039 | 0.943 | **1.227** | 18.348 | 0.799 | **1.281** | 8.477 | 0.834 | **1.071** |
+| **Llama 3.1 70B – Llama 3.2 1B** |
+| | tks/sec | accuracy | speedup | tks/sec | accuracy | speedup | tks/sec | accuracy | speedup |
+| Draft | 99.919 | 0.375 | 6.080 | 100.683 | 0.348 | 5.764 | 95.141 | 0.453 | 10.878 |
+| Target | 4.842 | 0.939 | 0.295 | 4.838 | 0.750 | 0.277 | 4.376 | 0.836 | 0.500 |
+| Vanilla | 16.434 | 0.939 | 1.000 | 17.467 | 0.756 | 1.000 | 8.746 | 0.838 | 1.000 |
+| AssistedGen | 19.892 | 0.936 | 1.210 | 23.265 | 0.774 | 1.332 | 8.920 | 0.833 | 1.020 |
+| Gen-Only | 21.126 | 0.939 | 1.286 | 24.842 | 0.768 | 1.422 | 9.085 | 0.835 | 1.039 |
+| Verify-Only | 17.063 | 0.926 | 1.038 | 17.710 | 0.726 | 1.014 | 9.346 | 0.817 | 1.069 |
+| AdaSD | 22.225 | 0.937 | **1.352** | 25.452 | 0.774 | **1.457** | 9.795 | 0.815 | **1.120** |
+| **Qwen 2.5 72B – Qwen 2.5 7B** |
+| | tks/sec | accuracy | speedup | tks/sec | accuracy | speedup | tks/sec | accuracy | speedup |
+| Draft | 38.796 | 0.867 | 2.667 | 38.724 | 0.720 | 2.840 | 38.544 | 0.725 | 3.667 |
+| Target | 4.728 | 0.913 | 0.325 | 4.717 | 0.787 | 0.346 | 4.690 | 0.845 | 0.446 |
+| Vanilla | 14.546 | 0.912 | 1.000 | 13.634 | 0.799 | 1.000 | 10.511 | 0.837 | 1.000 |
+| AssistedGen | 18.721 | 0.917 | **1.287** | 17.482 | 0.799 | **1.282** | 11.436 | 0.837 | 1.088 |
+| Gen-Only | 18.054 | 0.920 | 1.241 | 16.733 | 0.787 | 1.227 | 10.735 | 0.841 | 1.021 |
+| Verify-Only | 14.705 | 0.920 | 1.011 | 13.838 | 0.787 | 1.015 | 11.042 | 0.837 | 1.051 |
+| AdaSD | 18.289 | 0.915 | 1.257 | 17.041 | 0.799 | 1.250 | 11.470 | 0.839 | **1.091** |
+
+        Performance comparison of speculative decoding methods.
+        Metrics include decoding speed (tks/sec), accuracy, and speedup over the Vanilla baseline.
+        Gen-Only and Verify-Only represent AdaSD variants that use only the generation and verification component, respectively.
+        The bold and underlined values indicate the highest and second-highest speedups.
+
+Overall, AdaSD achieves the highest speedup among all methods on Llama models and is only slightly slower than AssistedGen on the Qwen model.
+For GSM8K and HumanEval, AdaSD achieves 23-46% higher throughput than Vanilla.
+Compared to AssistedGen, AdaSD performs comparably or achieves further speedups depending on the model pairs (up to 14.2% higher on GSM8K with Llama 3.1 70B–1B), while preserving accuracy within 1.8% of the baseline.
+
+A notable observation is the relatively modest speedup achieved by AdaSD on the MMLU dataset.
+Both AdaSD and AssistedGen exhibit limited acceleration, with the highest improvement being only 12%.
+This is because MMLU is a multiple-choice benchmark, where the model generates only a small number of tokens corresponding to the selected answer.
+The short sequence of these outputs inherently limits opportunities for acceleration.
+
+We also observe that AdaSD achieves lower speedup than AssistedGen with Qwen 2.5.
+To investigate this, we analyze the number of generated and accepted tokens, as well as the corresponding acceptance rates.
+As Table qwen analysis shows, both the average lengths of generated and accepted tokens in AdaSD are longer than those in AssistedGen.
+Although AssistedGen produces shorter sequence per speculative decoding step, it can still generate sufficiently long sequences while maintaining a high acceptance rate.
+This results from its design objective, which jointly maximizes generation efficiency and the acceptance rate.
+While AssistedGen occasionally adopts a conservative strategy that underestimates the candidate sequence length, it terminates generation at an appropriate point without excessive token generation, thus minimizing the draft model's inference overhead.
+
+In contrast, AdaSD's generation threshold relies on the uncertainty of tokens produced by the draft model.
+Therefore, this can lead to relatively more candidate tokens and the likelihood of tokens being rejected, which increases both generation and verification overhead.
+This explains why AssistedGen outperforms AdaSD with Qwen.
+
+We further investigate whether combining the strategies of AdaSD and AssistedGen can improve decoding efficiency for Qwen.
+As shown in Table qwen analysis, the hybrid approach achieves the best performance across all tasks.
+On GSM8K, the speedup increases from 1.287 (AssistedGen) and 1.257 (AdaSD) to 1.307 with the hybrid approach.
+Similarly, the speedup improves from 1.282 and 1.250 to 1.286 on HumanEval, and from 1.088 and 1.091 to 1.134 on MMLU.
+These results indicate that AdaSD’s adaptive verification and AssistedGen’s generation-length control mechanism are complementary, and their combination enables further improvements in speculative decoding efficiency.
+
+    max width=
+
+| **Qwen 2.5 72B – Qwen 2.5 7B** |
+| | **GSM8K** | **HumanEval** | **MMLU** |
+| | #cand | #match | AccRate | speedup | #cand | #match | AccRate | speedup | #cand | #match | AccRate | speedup |
+| Vanilla | 5.000 | 4.228 | 0.846 | 1.000 | 5.000 | 3.942 | 0.788 | 1.000 | 5.000 | 2.811 | 0.562 | 1.000 |
+| AssistedGen | 10.038 | 8.335 | 0.830 | 1.287 | 9.745 | 7.720 | 0.792 | 1.282 | 6.109 | 3.618 | 0.592 | 1.088 |
+| Gen-Only | 14.254 | 9.967 | 0.699 | 1.241 | 13.199 | 8.832 | 0.669 | 1.227 | 8.962 | 4.210 | 0.470 | 1.021 |
+| Verify-Only | 5.000 | 4.290 | 0.863 | 1.011 | 5.000 | 4.024 | 0.812 | 1.015 | 5.000 | 3.010 | 0.610 | 1.051 |
+| AdaSD | 14.389 | 10.541 | 0.731 | 1.257 | 13.476 | 9.141 | 0.677 | 1.250 | 8.904 | 4.539 | 0.495 | 1.091 |
+| AdaSD + AssistedGen | 10.297 | 8.639 | 0.840 | **1.307** | 9.646 | 7.727 | 0.800 | **1.286** | 5.761 | 3.743 | 0.646 | **1.134** |
+
+        Decoding results of Qwen on different datasets.
+        The result shows the number of generated candidates (#cand), accepted tokens (#match), and the acceptance rates (AccRate) collectively influence the decoding speedup.
+
+Ablation Studies
+~~~~~~~~~~~~~~~~
+
+In this section, we analyze the individual impact of AdaSD's components
+
+by comparing AdaSD with its two variants, *Gen-Only*, which applies only the generation component, and *Verify-Only*, which applies only the verification component, as reported in Tables main result and qwen analysis.
+For Verify-Only, we fix the candidate token length to five, consistent with Vanilla.
+
+""""
+
+Gen-Only.
+Gen-Only demonstrates strong inference speedup over Vanilla, achieving a 16-42% improvement on GSM8K and HumanEval.
+On MMLU, the improvement is more modest, ranging from 1.4% to 3.9% due to the inherently short generation sequences.
+This improvement arises from generating longer candidate token sequences.
+
+The draft model continues generating tokens until the token entropy exceeds the generation threshold, which is adaptively updated based on feedback from the target model.
+
+""""
+
+Verify-Only.
+In contrast, the speedup of Verify-Only is limited when used alone, with at most 6.9% improvement over Vanilla on MMLU.
+This is because Vanilla achieves a high acceptance rate with its carefully chosen candidate length, effectively covering most general cases.
+However, when combined with the generation component, AdaSD further improves the efficiency, bringing the total improvement to 12% over Vanilla (5.1% over Verify-Only).
+These results indicate that our JS distance-based acceptance criteria can further accelerate inference while maintaining accuracy.
+
+Conclusion
+----------
+
+This paper proposes AdaSD, a novel speculative decoding method without the need for manual hyperparameter tuning.
+AdaSD improves decoding speed with minimal accuracy loss.
+
+While AdaSD enhances decoding efficiency, there is still room for further improvement in its adaptive mechanisms.
+For generation, incorporating additional indicators beyond entropy could enable more precise decisions.
+
+For verification, refining JS distance modeling could further boost acceptance and accuracy.
+We believe that AdaSD represents a practical step toward more efficient and adaptive decoding for large language models.
+
+Future work can explore enhancing both the breadth and depth of the decoding process.
+From a breadth perspective, deploying multiple draft models in parallel to generate diverse candidate tokens could enable the target model to perform batch verification and select the most promising output, thereby improving overall quality.
+From a depth perspective, a multi-layer design could further enhance decoding efficiency by allowing tokens to be accepted early during generation when their confidence level is sufficiently high.
+
+Limitations
+-----------
+
+AdaSD is applicable when the draft and target models share the same vocabulary, meaning that both models must have identical token sizes and token content.
+This requirement arises because AdaSD relies on computing entropy and JS distance for output tokens.
+When the vocabulary differs, these metrics cannot be calculated consistently, and determining an appropriate threshold becomes difficult.
+
+Another limitation lies in the challenge of selecting compatible draft and target model pairs.
+In practice, the optimal size gap between the draft and target models is roughly 50-100 times.
+However, within this range, few well-known model pairs share an identical vocabulary.
+This issue is exacerbated by recent model development trends, where smaller models (<1B) often use different vocabularies from larger-sized models (>70B).
+Moreover, smaller models frequently incorporate architectural modifications beyond simply reducing the number of Transformer layers, such as changes to embedding layers or tokenization schemes, which further limits compatibility and applicability of AdaSD.
+
+Information Theoretic Background
+--------------------------------
+
+""""
+
+Entropy.
+In information theory, entropy measures the uncertainty associated with a random variable.
+For a discrete random variable X taking values x ∈ \mathcalX with a probability distribution p: \mathcalX → [0, 1], the entropy is defined as:
+
+.. math::
+
+   H(X)    = 𝔼[-logp(x)]
+
+                   = -∑_x ∈𝒳 p(x) logp(x).
+
+Entropy can be interpreted as the expected value of the self-information -\log p(x), representing the average number of bits needed to encode the outcome of X.
+A larger entropy value indicates higher uncertainty or greater variability in the distribution.
+
+""""
+
+Cross-Entropy.
+Cross-entropy quantifies the difference between two probability distributions p and q defined over the same event space \mathcalX.
+Formally, the cross-entropy of an estimated distribution q with respect to a true distribution p is defined as:
+
+.. math::
+
+   H(p, q)    = 𝔼_p[-logq(x)]
+
+                      = -∑_x ∈𝒳 p(x) logq(x).
+
+Cross-entropy represents the expected number of bits needed to encode samples drawn from p using a code optimized for q.
+Hence, it captures both the inherent uncertainty of p and the additional cost due to the divergence between p and q.
+
+""""
+
+Kullback-Leibler Divergence.
+The Kullback-Leibler (KL) divergence measures the discrepancy between a true distribution p and an approximating distribution q.
+It can be expressed as the difference between cross-entropy and entropy:
+
+.. math::
+
+   D_KL(p ∥q)    = H(p, q) - H(p)
+
+                                           = ∑_x ∈𝒳 p(x) logp(x)/q(x).
+
+Since KL divergence has no fixed upper bound, if an event occurs frequently under p but rarely under q, the divergence can become arbitrarily large, making it difficult to stop or normalize the measure within a controlled range.
+
+Method Comparison
+-----------------
+
+This section provides a summary comparison of representative speculative decoding methods.
+Table method comparison highlights several key design choices across prior work and our proposed method.
+Specifically, we compare whether each method adopts self-speculative decoding, dynamically adjusts the draft sequence length, or introduces relaxed verification mechanisms.
+The table also indicates whether the method requires architectural modifications or additional training, relies on empirically tuned hyperparameters, or performs task-specific pre-analysis.
+This comparison helps clarify the design space of speculative decoding methods and highlights the characteristics of AdaSD.
+
+    max width=
+
+Comparison of representative speculative decoding methods and their key design choices.
+
+Algorithm of AdaSD
+------------------
+
+Algorithm adasd shows the AdaSD procedure, which comprises three main steps: generation, verification, and update.
+To enable adaptive threshold adjustment, we record the entropy of generated tokens and the JS distances during inference in three lists: rejected entropy (L_E^R), rejected JS distance (L_D^R), and accepted JS distance (L_D^A).
+These statistics are used to update the generation and verification thresholds.
+Moreover, two additional constraints are imposed.
+First, we set the maximum window size W to 20, limiting the number of candidate tokens generated per iteration and preventing unbounded draft expansion.
+Second, due to the inherent maximum context length of LLMs, we define a limit K on the total number of generated tokens to ensure the context X remains within allowable bounds.
+
+Implementation Details
+----------------------
+
+Experiments are implemented using the Hugging Face Transformer framework [wolf2020transformers]_ version 4.55.
+The Transformer backend uses PyTorch [paszke2019pytorch]_ version 2.8 with CUDA 12.8 and cuDNN 9.10.
+
+We run all tests on four NVIDIA A6000 GPUs and enable “``device_map=auto``” to evenly split the model on all available GPUs.
+All evaluated methods use speculative sampling for token selection.
+
+Additional Experimental Results
+-------------------------------
+
+Tables gsm8k, humaneval, and mmlu present the performance results on the GSM8K, HumanEval, and MMLU datasets respectively.
+
+    max width=.6
+
+Inference results on the GSM8K test set with different schemes across three model pair combinations.
+
+    max width=.6
+
+Inference results on the HumanEval test set with different schemes across three model pair combinations.
+
+    max width=.6
+
+Inference results on the MMLU validation set with different schemes across three model pair combinations.

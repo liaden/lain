@@ -1,0 +1,447 @@
+.. rubric:: Abstract
+
+Recent works show that LLM agents struggle to correct errors in their own reasoning traces, despite their ability to correct errors from external sources. We ask whether this reflects a capability deficit or an artifact of the role labeling. To test this, we design a training-free intervention, *source-conditioned role relabeling*, that keeps the erroneous claim byte-identical and varies only its message role. The claim is presented inside the agent's <thought>, a user message, a tool response, or a system <memory> block. We test 12 model-domain combinations spanning closed-weight APIs and open-weight models from 70B-class down to smaller families. Relabeling <thought> to an external role increases the explicit-correction rate by 23 to 93 percentage points, significant in 10 of 12 experimental settings. This suggests that these models' failure to detect a self-generated error is largely an artifact of how the claim is role-labeled in the chat template, rather than a pure cognitive deficit. The most effective role label is domain-dependent: <memory> dominates in most math experiments, while a user message dominates in logical deduction. Recognizing role-label handling as a key experimental variable in instruction tuning presents a more direct path to closing the self-correction gap.
+
+Introduction
+------------
+
+Large Language Model (LLM) agents are increasingly deployed in autonomous pipelines [yaoReActSynergizingReasoning2023]_ [parkGenerativeAgentsInteractive2023]_, where one agent's intermediate reasoning becomes another's input. These exchanges flow without human review, so errors propagate downstream unchecked. The reliability of an agentic system is therefore bounded by that of its self-correction, now among the most actively studied capabilities of modern agentic LLMs. However, the empirical picture is unsettling. The same models that confidently catch and repair errors in *external* content routinely fail to identify identical errors in their own reasoning traces [huangLargeLanguageModels2024]_ [kamoiWhenCanLLMs2024b]_ [tsuiSelfCorrectionBench2025]_, and the reasoning traces are often unfaithful to the underlying computation [turpinLanguageModelsDont2023]_ [lanhamMeasuringFaithfulnessChainofThought2023]_ [chenReasoningModelsDont2025]_. This asymmetry has largely been treated as a cognitive limitation, motivating training-time fixes, external verifiers, and multi-agent critique, none of which vary the claim's message role.
+
+We argue that the agent harness itself is a crucial experimental variable in the study of self-correction, yet one that previous studies largely overlooked. Modern harnesses route every exchange—including prompts, tool calls, memories, and scratchpads—through a structured chat template that tags each message with a role. This suggests that the gap is partly a consequence of how agents are engineered, not only of what they can compute. Two recent findings sharpen the hypothesis: chat-template role labels carry behavioral weight that exceeds their literal text content [wallaceInstructionHierarchyTraining2024]_, and instruction-tuned models exhibit a strong tendency to favor user-role assertions over assistant-role ones [panUserAssistantBiasLLMs2026]_. Taken together with the self-correction asymmetry, these observations suggest a directly testable claim:
+
+   *When an LLM agent encounters an erroneous claim, its willingness to correct that claim depends primarily on the chat-template role label under which it appears, rather than on the content of the claim itself.*
+
+If it holds, the failure to self-correct is less a cognitive deficit than a harness artifact, and the role label becomes a controllable handle for surfacing such errors. To test this claim, we design a controlled intervention experiment. Figure concept illustrates the key findings: erroneous claims (denoted as ) are rarely corrected when inside the agent's own <thought>, while significantly more likely to be corrected when re-presented under an external role. The intervention needs no fine-tuning, tools, or weight changes; it only moves a string from one role slot to another. We test the claim across nine models and three domains, holding the wrong claim byte-identical across all five conditions and varying only the wrapping role. Throughout, we score correction strictly, as the agent explicitly naming and rejecting the wrong claim; because agents frequently re-derive the right answer in silence, the lever surfaces errors rather than improving final-answer accuracy (Appendix final-answer-metric). We pre-specify success criteria, isolate the effects of the syntactic wrapper and the role label, and test whether the same external roles can instead be used to lead the agent to adopt an incorrect claim.
+
+""""
+
+Contributions. This study makes two main contributions, a diagnosis and a diagnostic lever that validates it, with a bounded safety scope.
+
+- * **Diagnosis.** Holding byte-identical and varying only its message role, we attribute the gap to the role label rather than to a capability deficit: the agent can check and often silently re-derives the right answer, yet rarely flags the wrong intermediate. The missing ingredient is *addressability*, the ability to treat a claim as a discrete, rejectable object, and not a missing verification step. This suggests the gap is a chat-template artifact that an external role label removes.
+
+    * **Validation.** Because the failure stems from role-label attribution rather than reasoning capacity, we use *source-conditioned role relabeling* as a diagnostic intervention. Re-presenting the byte-identical wrong claim under an external role consistently improves explicit correction across diverse models and domains.
+
+    * **Safety scope.** Role relabeling is a diagnostic tool rather than a robust defense. By default, models adopt an externally presented wrong claim at most 3.3% of the time, but one instruction to trust the claim without verifying it removes this resistance.
+
+Related Work
+------------
+
+""""
+
+Limits of intrinsic self-correction. LLMs cannot reliably revise their own errors without an external signal. [huangLargeLanguageModels2024]_ find intrinsic self-correction often fails to improve or even degrades accuracy; [kamoiWhenCanLLMs2024b]_ survey LLM self-correction methods and characterize when self-correction succeeds. [tsuiSelfCorrectionBench2025]_ name this self-versus-external asymmetry the *self-correction blind spot*, shows that a minimal “Wait” prompt reactivates dormant correction, and traces the gap to scarce correction sequences in instruction-tuning data. Instead, we hold byte-identical while varying only its message role, thereby isolating the effect of the role label (discussion-reconciliation). Where intrinsic correction does succeed, the signal is typically external: a tool-interactive critic [gouCRITICLargeLanguage2023]_, an execution signal [shinnReflexionLanguageAgents2023]_ [olaussonSelfRepairSilverBullet2024]_ [chenTeachingLargeLanguage2023a]_, or a training-time corrector [welleckGeneratingSequencesLearning2022]_ [zhaoBoostingLLMReasoning2025]_; more recent reinforcement learning (RL) approaches directly train models to self-correct [kumarTrainingLanguageModels2024]_ [maS2RTeaching2025]_ [deepseekaiDeepSeekR12025]_ (see Appendix reasoning). Grader-free self-critique yields limited, inconsistent gains [madaanSelfRefineIterativeRefinement2023]_ [stechlyGPT4DoesntKnow2023a]_. [tyenLLMsCannotFind2024]_ identify the bottleneck: models repair an error given its location, but cannot find it.
+
+""""
+
+Role-conditioned behavior and its attack surface. Chat-template roles are not inert formatting. [wallaceInstructionHierarchyTraining2024]_ describe a behaviorally trained instruction hierarchy—system outranks user, user outranks tool—and [panUserAssistantBiasLLMs2026]_ show most instruction-tuned models trust user-role over assistant-role assertions about the same entity, a preference related to *sycophancy* [sharmaUnderstandingSycophancyLanguage2025]_ [perezDiscoveringLanguageModel2022]_ that synthetic data can reduce [weiSimpleSyntheticData2024]_. The same roles are also attack surfaces: memory-poisoning succeeds with narrative-coherent payloads [dongMemoryInjectionAttacks2026]_, exploiting the memory architectures agents rely on [parkGenerativeAgentsInteractive2023]_ [zhangSurveyMemoryMechanism2024]_, and indirect prompt injection maps the surface opened by untrusted tool returns or retrieval [greshakeNotWhatYouve2023]_ [bagdasaryanAbusingImagesSounds2023]_, prompting dedicated defenses [weiAMemGuardProactiveDefense2025]_.
+
+""""
+
+Faithfulness and hallucination of reasoning traces. A model's reasoning is also not a faithful record of the computation behind its answer. [turpinLanguageModelsDont2023]_ and [lanhamMeasuringFaithfulnessChainofThought2023]_ document dissociations between what a chain-of-thought states and what the answer depends on, and [chenReasoningModelsDont2025]_ extend this to reasoning-tuned models. [bhatiaDistributionalSemanticsTracing2026]_ give a representation-level account of why correlation-driven drift impedes intrinsic correction, hallucination surveys situate it within intrinsic factuality drift [jiSurveyHallucinationNatural2022]_ [zhangSirensSongAI2025]_, and [yinReasoningTrapHow2026]_ note stronger reasoning can amplify tool-related hallucination.
+
+""""
+
+Verifiable reasoning benchmarks and complementary scaffolds. Self-correction is commonly evaluated on verifiable tasks: GSM8K-style arithmetic [cobbeTrainingVerifiersSolve2021]_, the BBH Logical Deduction subtask [suzgunChallengingBIGBenchTasks2022]_ [srivastavaImitationGameQuantifying2023]_, and generated puzzles with controllable answers [chenEnigmataScalingLogical2025b]_ [linZebraLogicScalingLimits2025]_, under chain-of-thought [weiChainofThoughtPromptingElicits2023]_ [kojimaLargeLanguageModels2023]_. Complementary scaffolds add external reliability: tool-augmented verification [schickToolformerLanguageModels2023]_ [gaoPALProgramaidedLanguage2023]_ [yaoReActSynergizingReasoning2023]_, sampling-based aggregation [wangSelfConsistencyImprovesChain2023]_, and reasoning-path search [yaoTreeThoughtsDeliberate2023]_.
+
+Source-Conditioned Role Relabeling
+----------------------------------
+
+We herein state the failure mode the method targets, the single-step operation that defines the intervention (Sec. intervention), the byte-identity guarantee that makes its effect attributable (Sec. byte-identity), and the fixed LLM-as-judge scoring that makes it measurable (Sec. eval-stats). Figure overview fixes the intuition: a wrong intermediate sits inside the agent's own <thought>. Under an audit-only prompt (top), the agent silently re-derives the correct final answer but never addresses ; re-presenting the byte-identical under an external role (bottom) instead gives the agent a discrete object it can name and reject. The only thing the intervention changes is the message role of .
+
+The Intervention
+~~~~~~~~~~~~~~~~
+
+""""
+
+Setting.
+An LLM agent solves a task by emitting a sequence of assistant turns, each containing one or more <thought> blocks that hold its intermediate reasoning. The downstream answer is the agent's final continuation conditioned on the full chat-template prompt. We focus on the failure mode in which an intermediate claim inside a <thought> block is wrong, yet the agent neither detects nor repairs it on its own.
+
+""""
+
+The intervention.
+Let be the wrong intermediate claim that sits inside the agent's own <thought>; it is given by construction, since the failure pool of Sec. eval-stats injects a known wrong claim. We do not attempt to localize such errors automatically; that is a separate problem, treated in Appendix localization. The source-conditioned role-relabel intervention is the single-step operation of (i) appending a message to the prompt whose payload is byte-identical to , (ii) wrapping that payload in an external chat-template role (user, tool, or system <memory>), and (iii) appending an audit instruction held byte-identical across all conditions. No tokens of change; only the role tags around the new copy change. Sec. byte-identity formalizes the byte-identity guarantee.
+
+The five conditions we compare are summarized in Table conditions. The audit instruction is held byte-identical across all five; only the message role of varies. L0_self is the audit-only baseline: stays inside its original <thought>, and the agent is asked to audit. L_user_wait and L_user_neutral re-present as a user message, with and without the “Wait,” prefix, respectively; the contrast isolates the contribution of the prefix. L_tool re-presents as a calculator-tool response (name = calculator), exercising the tool role token of each model's chat template. L_memory re-presents inside a system <memory> block, the strongest source-of-record framing in the chat-template vocabulary.
+
+The five conditions compared in every experiment. The audit message is byte-identical across all five; only the wrapper of changes. L0_self omits the re-presented copy entirely and provides the audit-only baseline.
+
+| **Condition** | **Wrapper around** |
+| L0_self | none (audit-only control) |
+| L_user_wait | a user message: “Wait, ” |
+| L_user_neutral | a user message containing only |
+| L_tool | a tool response containing |
+| L_memory | a system message with <memory></memory> |
+
+Per-experiment paired increase in explicit-correction rate (CR) over the audit-only L0_self baseline, in pp. L_0 is the baseline CR; bold marks the strongest significant condition(s) per row, ties bolded jointly. ^(*)p<0.05, ^(**)p<0.01, ^(***)p<0.001 (two-sided paired bootstrap); all three pre-specified criteria pass on the two 70B-class math experiments.
+
+| **Model and domain (n=30)** | wait | neutral | tool | memory | L_0 |
+| *Open-weight, math* |
+| Qwen2.5-72B math | +23.3^(*)\phantom^(**) | +26.7^(**)\phantom^(*) | +26.7^(***) | \mathbf+53.3^(***) | 16.7% |
+| Llama-3.3-70B math | +56.7^(***) | +60.0^(***) | +3.3\phantom^(***) | \mathbf+86.7^(***) | 0.0% |
+| gpt-oss-20B math (reasoning) | +6.7\phantom^(***) | +16.7\phantom^(***) | +3.3\phantom^(***) | +16.7\phantom^(***) | 76.7% |
+| *Cross-domain (logical deduction)* |
+| Qwen2.5-72B gen-logic | +70.0^(***) | \mathbf+80.0^(***) | +56.7^(***) | +63.3^(***) | 0.0% |
+| Llama-3.3-70B gen-logic | +60.0^(***) | \mathbf+93.3^(***) | +26.7^(***) | +76.7^(***) | 0.0% |
+| Qwen2.5-72B BBH-LD | +10.0\phantom^(***) | +6.7\phantom^(***) | +16.7\phantom^(***) | +13.3\phantom^(***) | 66.7% |
+| *Closed-weight, math* |
+| GPT-4o math | +20.0\phantom^(***) | \mathbf+50.0^(***) | +46.7^(***) | +43.3^(***) | 40.0% |
+| Claude Sonnet 4 math | \mathbf+40.0^(***) | \mathbf+40.0^(***) | +36.7^(***) | \mathbf+40.0^(***) | 53.3% |
+| Gemini 2.5 Flash-Lite math | +6.7\phantom^(***) | +6.7\phantom^(***) | 0.0\phantom^(***) | \mathbf+23.3^(*)\phantom^(**) | 66.7% |
+| *Additional open-weight families* |
+| Gemma-3-12B math | +63.3^(***) | \mathbf+66.7^(***) | 0.0\phantom^(***) | \mathbf+66.7^(***) | 30.0% |
+| Phi-4-14B math | +66.7^(***) | +73.3^(***) | +73.3^(***) | \mathbf+80.0^(***) | 20.0% |
+| Qwen3-30B math (reasoning) | +3.3\phantom^(***) | -3.3\phantom^(***) | 0.0\phantom^(***) | \mathbf+30.0^(**)\phantom^(*) | 53.3% |
+
+Byte-Identity
+~~~~~~~~~~~~~
+
+The intervention swaps the chat-template role around while leaving the wrapped text untouched. To make this guarantee operational, we assert at every trial that the injected message payload is byte-identical to the original by a SHA-256 (Secure Hash Algorithm 256-bit) digest match, so no tokens of change across conditions; the wrapping role and each template's boundary characters (for example <|im_start|>system\n) are supplied by the model's native chat template (Appendix chat-templates). Trials failing the hash check are discarded and re-generated. Byte-identity lets any difference in correction rate across conditions be attributed to the role tag, not to a change in the claim's wording.
+
+Separating Wrapper and Role Effects
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The intervention introduces two ingredients at once: a syntactic wrapper around , and a specific role tag attached to that wrapper. To separate their contributions, we construct a sequence of conditions that progressively varies the wrapper while holding everything else fixed. The ladder runs from no wrapper (H0 = L0_self) through label-free boundary marks (H1 bare brackets, H2 explicit prefix tag, H3 XML-style wrapper with no role) up to the full role-tagged condition (H4 = L_memory). The H1–H3 rungs bound the contribution of a bare syntactic boundary, and the H3–H4 contrast isolates the additional contribution of the role tag itself. Spanning H1–H3 across a bracket, a prefix tag, and an XML wrapper guards against any single surface form driving the effect. Applied to the Qwen-72B math failure pool (Sec. exp-overall, Table handle), this ladder attributes the increase to two additive parts, a label-free boundary and the role tag on top of it.
+
+Experiments
+-----------
+
+Experimental Setting
+~~~~~~~~~~~~~~~~~~~~
+
+We evaluated nine models in three domains. The open-weight set was served via Ollama and comprised two 70B-class models, Qwen2.5-72B-Instruct (Qwen-72B) [qwenQwen25TechnicalReport2025]_ and Llama-3.3-70B-Instruct (Llama-70B) [dubeyLlama3Herd2024]_, the reasoning-tuned gpt-oss-20B [openaiGptOssModelCard2025]_, plus three smaller families for breadth, Gemma-3-12B [teamGemma3Technical2025]_, Phi-4-14B [abdinPhi4TechnicalReport2024a]_, and Qwen3-30B [qwenQwen3TechnicalReport2025]_ with reasoning enabled; three closed-weight frontier models were served via APIs, GPT-4o [openaiGPT4oSystemCard2024]_, Claude Sonnet 4 [anthropicClaude4SystemCard2025]_, and Gemini 2.5 Flash-Lite [comaniciGemini25Pushing2025a]_. Because these families realize the tool role with materially different template tokens, the L_tool condition doubled as a test of whether a distinctive tool-role token is needed for the increase in correction rate (Sec. exp-overall shows it is not needed). One family, Gemma-3, has no native tool role at all, so for it the L_tool condition could not be realized and reduced to the audit-only baseline (Appendix chat-templates); we therefore treated its L_tool result as not applicable rather than as a null role effect. All three domains used a chain-of-thought formulation [weiChainofThoughtPromptingElicits2023]_ [kojimaLargeLanguageModels2023]_: **Math** (GSM8K-style arithmetic, where is a wrong arithmetic value, e.g. 5×16=96 when the correct value is 80), **Generated logic** (synthesized transitive-ordering puzzles over five entities, where is a wrong non-adjacent ordering only multi-step reasoning can check, e.g. claiming one entity outranks another against the transitive chain), and **BBH-LD** (the Logical Deduction five-objects subtask of BBH [suzgunChallengingBIGBenchTasks2022]_ [srivastavaImitationGameQuantifying2023]_, where names a wrong option as the established intermediate inference). Of the three domains, only generated logic admits no cheap verification: a transitive-ordering claim cannot be verified by a quick recalculation, but requires full multi-step reasoning. This makes it the sharpest test that the effect is not a mere verification cue (Sec. exp-generalization).
+
+Failure Pool and Scoring
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+We evaluated on a failure pool where intrinsic self-correction fails without an audit instruction, concentrating statistical power on the target regime and removing baseline-difficulty confounds. For each task we obtained the agent's clean reasoning trajectory \mathcalT_0, injected as a fresh <thought> block to form the perturbed trajectory \mathcalT_1, resumed two turns without the audit instruction, and retained tasks whose continuations were scored uncorrected. The L0_self baseline then appends the audit, so its CR is not zero by construction. Each retained task then ran under the five conditions of Table conditions and, on Qwen-72B math, the H0–H4 ladder of Sec. handle-granularity. Scoring used a locked Qwen-72B judge, i.e. a fixed LLM-as-judge with frozen model, prompt, and sampling temperature T=0, that returns ``YES``/``NO`` on whether the continuation explicitly identifies as wrong, following the calibration guidance of [kimChallengingEvaluatorLLM2025]_; the explicit-correction rate (CR) is the ``YES`` fraction, with Cohen's \kappa=1.0 against a hand-labeled set of N trials and \kappa=0.843 under an independent re-judge (Appendix stats-multijudge). Each experiment drew n=30 paired tasks at T=0 with a fixed seed; we reported Δ\textCR against L0_self with two-sided p-values and 95% CIs from a 10,000-sample paired bootstrap (^(*)p<0.05, ^(**)p<0.01, ^(***)p<0.001). Three success criteria were pre-specified on the two 70B-class math experiments: (i) on Qwen-72B, the strongest condition raises CR by ≥ 20 pp at p<0.01; (ii) L_user_neutral exceeds +5 pp there, separating the role handle from the “Wait,” trigger; and (iii) Llama-70B replicates in the same direction by ≥ 15 pp.
+
+Main Results
+~~~~~~~~~~~~
+
+Table final-main reports all 12 model-domain combinations, and all three pre-specified criteria (Sec. eval-stats) passed on the two 70B-class math experiments. A significant increase appeared on at least one relabel condition in 10 of the 12 combinations, and per-task flips are directly causal: holding the trajectory and byte-identical fixed, at least one relabel flipped a response to corrected in 29 of 30 eligible (baseline-uncorrected) tasks on Llama-70B logic and 18 of 25 on Qwen-72B math. The two exceptions (gpt-oss-20B math, Qwen-72B BBH-LD) are predicted: a high L_0 leaves little headroom, and BBH-LD additionally permits option elimination. The effect survived Holm-Bonferroni correction (9 of 12 combinations) and a second judge (\kappa=0.843; Appendices stats-multicomp, stats-multijudge).
+
+We also found that the most effective wrapper is model- and domain-dependent. L_memory led in 7 combinations and L_user_neutral in 5. L_memory dominated on most math experiments, consistent with arithmetic claims being out-of-genre for a user turn, whereas L_user_neutral was strongest on logical deduction, a natural user-style genre. The frontier replication held on GPT-4o and Claude Sonnet 4 (unsaturated baselines), whereas Gemini 2.5 Flash-Lite showed only one significant lift (L_memory, +23.3 pp), consistent with its higher L_0 of 66.7%. The gain is not merely a verification cue: on generated logic, whose transitive-ordering errors cannot be caught by quick recomputation, both 70B open-weight models increased significantly (up to +93.3 pp on Llama-70B), whereas BBH-LD, whose multiple-choice format already permits option-elimination, showed only smaller non-significant gains above its 66.7% baseline (largest +16.7 pp, p=0.06).
+
+Because every relabel condition re-presents explicitly, one might worry the gain is merely a localization hint; two controls ruled this out. A duplication control that re-presents at the same position but still inside <thought> barely helped (+6.7 pp, p=0.26), whereas the matched <memory> relabel reached a +46.7 pp role effect (Appendix mechanism-recency); the wrapper-role ladder (Table handle) adds that the role tag contributes a further 30 pp beyond a label-free wrapper. At fixed system role, a nonsense <xqzy> still trailed <memory>, so the tag's lexical identity also mattered (Appendix mechanism-tokens). A DeepSeek-R1 check (57 trials, n=10–13 per condition) confirmed the saturated-baseline case: every condition, including L0_self, reached 100% (Appendix reasoning).
+
+Wrapper-role ladder on the Qwen-72B math failure pool (n=30). H0 omits the wrapper; H1–H3 introduce label-free boundaries; H4 adds the system role tag. Δ is the increase over H0, in pp.
+
+| **Rung (wrapper of )** | CR | Δ |
+| H0 no wrapper (= L0_self) | 16.7% | — |
+| H1 bare brackets ``[]`` | 33.3% | +16.7 |
+| H2 explicit prefix ``NOTE:`` | 36.7% | +20.0 |
+| H3 XML wrapper ``<x></x>`` (no role) | 40.0% | +23.3 |
+| H4 system ``<memory></memory>`` (= L_memory) | **70.0%** | \mathbf+53.3 |
+
+From Verification to Addressability
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To show that the source-conditioned role relabeling does not trigger self-correction just by cueing verification, we conducted an analysis on self-directed verification. In the Qwen-72B math failure pool, we replaced the audit instruction with three self-distrust prompt variants while leaving inside the agent's original <thought> (Table decisive-control). None approached the 70% of L_memory: the strongest reached 23.3% and two worsened the baseline, since a blanket distrust cue scatters attention across all intermediates rather than onto . For all three prompt variants, the agent recomputed the answer correctly but rarely named or rejected the specific wrong intermediate, so the judge usually returned ``NO``. The relabel instead let the agent produce phrases such as *“the memory says X; that is incorrect because …”*. Additionally, re-scoring final answer only yielded marginal changes in correction rates (± 17 pp, p>0.05; Appendix final-answer-metric). Established methods that add reasoning passes rather than a discrete referent (Self-Refine, Reflexion, and Chain-of-Verification) never matched the relabel on any unsaturated baseline, and on the open-weight pools reversed the increase under the strict criterion (Appendix baselines). A first-token log-probability analysis on Qwen-72B corroborated this naming behavior at the token level: relabeling into <memory> raised the probability of an opening “engagement” token that names the source before rejecting it (e.g. “Indeed”), a lexical signature that was model-specific and did not reproduce across the other families, even though the behavioral increase did (Appendix mechanism-tokens-models). Collectively, these findings suggest that the primary cause behind self-correction failures is not verification capability but *addressability*: the ability to treat a specific claim as a discrete, nameable object the agent can act on.
+
+Self-distrust prompt variants on the Qwen-72B math failure pool (n=30). The trailing audit is varied while stays inside its original <thought>. Δ values are in pp.
+
+| **Appended user prompt** | **CR** | [r]**Δ to** |
+| **L_memory** |
+| “Audit your reasoning” (L0_self) | 16.7% | -53.3 |
+| “Previous thoughts may contain errors” | 3.3% | -66.7 |
+| “Intermediate arithmetic may be wrong” | 0.0% | -70.0 |
+| “Restate intermediates, then verify” | 23.3% | -46.7 |
+| (reference) L_memory | **70.0%** | — |
+
+Generalization, Robustness, and Ablations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Variance check at T=0.5, three seeds, 15-task Qwen subset. s0–s2 are per-seed correction rates; Agg. Δ is the aggregate increase over L0_self (pp).
+
+| **Condition** | s0 | s1 | s2 | Agg. Δ | p |
+| L0_self | 13% | 27% | 33% | — | — |
+| L_user_wait | 20% | 40% | 33% | +7 | 0.23\phantom^(**) |
+| L_user_neutral | 53% | 40% | 33% | +18 | 0.04^(*)\phantom^(*) |
+| L_tool | 33% | 33% | 33% | +9 | 0.18\phantom^(**) |
+| L_memory | 33% | 67% | 60% | \mathbf+29 | \mathbf0.001^(**) |
+
+Commitment-depth check on Llama-70B math (n=30). Δ is the paired increase over L0_self (pp) at the just-injected state (Shallow) versus one turn later (Deep).
+
+| **Condition** | Shallow Δ | Deep Δ | Change |
+| L_user_wait | +57^(***) | +63^(***) | +6 |
+| L_user_neutral | +60^(***) | +70^(***) | +10 |
+| L_tool | +3\phantom^(***) | +7\phantom^(***) | +4 |
+| L_memory | +87^(***) | \mathbf+93^(***) | +6 |
+
+Two analyses further confirm the increase is not a deterministic-setting artifact. At T=0.5 over three seeds (15-task Qwen subset), L_memory's increase stayed significant (p<0.01, Table variance), and a five-seed re-sampling of L0_self held at 16.0% versus the main-run 16.7% (Appendix stats-stochasticity). Nor did the effect decay with *commitment depth*: relabeling one turn later (Deep) rather than at injection (Shallow) left every increase intact or slightly larger (Table depth), since the relabel adds a fresh external referent rather than overwriting already-committed tokens.
+
+A third check addressed audit wording, testing whether the increase is specific to one fixed phrasing rather than to the role label. Holding the Qwen-72B math failure pool, , and the <memory> wrapper fixed, we varied only the audit across five lexically disjoint paraphrases:
+
+- **V1** (canonical) “Audit your reasoning so far. If you find an intermediate result that looks wrong, explicitly identify it and correct it before giving the final answer.”
+
+    **V2** “Review your previous steps. Point out any wrong intermediate value by name and fix it, then state the final answer.”
+
+    **V3** “Check each intermediate calculation. If one is incorrect, say which one and correct it before answering.”
+
+    **V4** “Go back over your work. Name any mistake in the intermediate values, revise it, and then give the final answer.”
+
+    **V5** “Examine your prior reasoning. Call out any incorrect intermediate result and replace it with the correct value before concluding.”
+
+The paired L_memory-over-L0_self increase was positive under all five paraphrases (Table audit-paraphrase) and significant in four (Δ ∈ [+26.7, +53.3] pp), indicating the effect is robust to audit wording. The one marginal case, V2 (+6.7 pp), is also the only paraphrase whose audit itself names an explicit-address cue (“point out any wrong intermediate value by name”); this may raise its L0_self baseline (33.3%) and leave less headroom, but we do not draw a strong conclusion from a single case.
+
+Audit-wording robustness on the Qwen-72B math failure pool (n=30). Δ is the paired increase of L_memory over L0_self.
+
+| **Audit variant** | L_0 | L_\textmem. | Δ |
+| V1 (canonical) | 16.7% | **70.0%** | \mathbf+53.3^(***) |
+| V2 (review/point out) | 33.3% | 40.0% | +6.7\phantom^(***) |
+| V3 (check each) | 10.0% | 50.0% | +40.0^(***) |
+| V4 (go back over) | 26.7% | 53.3% | +26.7^(*)\phantom^(**) |
+| V5 (examine prior) | 16.7% | 46.7% | +30.0^(*)\phantom^(**) |
+
+Adversarial Mirror and Safety Scope
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Is <memory>, the strongest lever for making the agent *reject* a wrong claim, also the strongest for making it *accept* one? To answer this question, we conducted adversarial attacks on tasks the agent had solved correctly, injecting into each external role. An attack is counted as successful if the final answer adopts . Across five experiments including two models, two domains, and calculator-available versus no-tools regimes, adversarial injection resulted in similar or lower error rates compared to baseline, irrespective of the injection target (Table adversarial). The effect did not reverse: under the neutral adversarial prompt, and on tasks selected for correct baseline solutions, the agent adopted a wrong claim from its own <thought> about 83% of the time on Qwen-72B math, but a byte-identical claim under an external role at most 3.3%, the same self-versus-external asymmetry in the reverse direction. Unlike indirect prompt injection [greshakeNotWhatYouve2023]_ [bagdasaryanAbusingImagesSounds2023]_, here the untrusted content that drives errors is the agent's own intermediate, not external input. This low attack-success rate held by default but could be overridden. Holding the <memory> wrapper fixed and varying only the trailing audit, a single sentence ordering the agent to treat the memory as truth and not verify raised the attack rate from 3.3% to 70%, while a distrust framing left it unchanged (Table instructibility). Verify-by-default is therefore a learned response to the prompt context, not an architectural guarantee, which is why the intervention is a diagnostic lever, not a hardened defense: deployments that permit trust-framing instructions lose this safety property.
+
+Adversarial mirror (n=30 per experimental setting). Values report the rate at which the model accepts the target false claim; for A0, this is the spontaneous acceptance rate without injection.
+
+| **Experiment** | A0 | user | tool | mem. |
+| Qwen-72B math + calc | 3.3% | 3.3% | 0.0% | 3.3% |
+| Qwen-72B math no-tool | 3.3% | 3.3% | 3.3% | 3.3% |
+| Llama-70B math + calc | 3.3% | 3.3% | 3.3% | 3.3% |
+| Qwen-72B logic | 0.0% | 0.0% | 0.0% | 0.0% |
+| Llama-70B logic | 0.0% | 3.3% | 0.0% | 0.0% |
+| 5@l@*Self-injection reference* (Qwen-72B math): \mathbf83.3% |
+
+Instructability of the <memory> safety on Qwen-72B math (n=30). Values are false-claim adoption rates; Δ is in pp.
+
+| **Condition** | Adoption | Δ |
+| default (<memory>, neutral audit) | 3.3% | — |
+| trust (“treat as truth, do not verify”) | **70.0%** | \mathbf+66.7^(***) |
+| distrust (“verify before using”) | 3.3% | ±0 |
+
+Discussion
+----------
+
+What “Self” Means in a Chat-Template
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We interpret the effect as a by-product of instruction tuning, which rewards responding to content arriving under external roles (user, system, tool) far more than acting on the model's own <thought> block as a target. Under this interpretation, the instruction to “audit your reasoning” admits no well-practiced response other than re-derivation, which is what the control of Sec. exp-addressability observes: the agent recomputes but rarely singles out and rejects the specific intermediate. The relabel sidesteps the gap by recasting an unaddressable thought-internal claim as the kind of object the model can readily process, an external assertion that invites a verify-and-rebut response. This interpretation also provides an explanation for the model- and domain-dependence of the most effective role wrapper. We hypothesize that the strongest role is the one whose discourse register best matches the wrong claim's content type, since that match elicits the most reliable rebuttal. The “self” that fails to self-correct is, in this view, not a cognitive deficit but a chat-template artifact.
+
+Connections to Prior Work
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The result connects several lines that have been studied separately. Most directly, [tsuiSelfCorrectionBench2025]_ establishes the blind spot and reads “Wait” as a correction trigger; we show the trigger is incidental and the carrier role primary, recasting the gap as a failure of addressability rather than a missing verification step. The unfaithful-CoT literature [turpinLanguageModelsDont2023]_ [lanhamMeasuringFaithfulnessChainofThought2023]_ [chenReasoningModelsDont2025]_ shows a reasoning trace can diverge from the computation behind the answer. We add its corrective face, showing the trace is also not addressable as a discrete object even when its content remains revisable. The user-assistant bias of [panUserAssistantBiasLLMs2026]_ captures the same role-asymmetry in static completion, which we carry into the corrective regime as a diagnostic lever, not only a vulnerability. The memory-poisoning literature [dongMemoryInjectionAttacks2026]_ reports high attack success from narrative-coherent payloads. Our null adversarial result occupies the complementary regime of bare injection, and the instructability experiment shows trust framing, not the role tag, is the gateway. Finally, [wallaceInstructionHierarchyTraining2024]_ predict system outranks user content; we show this is overridable from the user role, recasting role priority as behavioral, not architectural.
+
+Scope and Limitations
+~~~~~~~~~~~~~~~~~~~~~
+
+Self-correction improves most for models with unsaturated audit-only baselines, chiefly standard instruction-tuned ones. Models whose baseline is already saturated leave less headroom (Appendices reasoning, baselines), consistent with the addressability account: models that already identify errors under audit-only gain little from an external referent. Although n=30 per setting supports the effects, it limits analyses by claim length, audit distance, and number of competing intermediates. The strict-identification criterion restricts the study to verifiable tasks; extension to free-form reasoning, code debugging, and planning remains future work. Deployment assumes that has been localized, although identifying the erroneous step remains an unresolved problem [tyenLLMsCannotFind2024]_. We therefore view the intervention as a mechanistic probe and a relabeling stage dependent on an upstream detector (Appendix localization). Safety is conditional: a trust-framing prompt raises the attack rate to 70% (Sec. exp-adversarial), making the intervention a diagnostic lever rather than a hardened defense. Behavioral controls support the addressability account: self-distrust prompting and within-trace duplication produce smaller gains than presenting the same claim as externally authored. However, a final-layer hidden-state probe does not predict trial-level correction above baseline, leaving the internal mechanism unresolved (Appendix mechanism-probe). Three qualifications remain. First, the failure pool includes only tasks on which audit-only fails strict identification, so the gains characterize this targeted regime rather than in-the-wild prevalence. Second, L_tool realization varies across chat templates, and one family (Gemma-3) has no native tool role, so part of the cross-family L_tool variance reflects template limitations rather than role effects (Appendix chat-templates). Third, the GPT-4o and GPT-4.1 replications use fewer than 30 tasks due to rate limits, resulting in wider CIs and suggestive comparisons (Appendix baselines). These limitations narrow the claims but not the central behavioral finding.
+
+Conclusion
+----------
+
+An LLM agent's failure to self-correct a wrong claim inside its own <thought> is, to a large degree, not a reasoning deficit but a chat-template artifact. Re-presenting the byte-identical claim under an external role consistently increases the explicit-correction rate, the rate at which the agent names and rejects the claim, across the model families and domains we study, whereas a self-distrust prompt that leaves the claim in place does not. Our experiments isolate the mechanism as addressability rather than purely verification: the agent retains the capability to check the claim, and often re-derives the right answer silently, but has no learned way to act on a thought-internal substring as a discrete object; the relabel supplies the missing handle. These findings turn a studied limitation into a controllable, zero-training lever for explicitly surfacing self-generated errors, bounded by an asymmetric safety that a single trust-framing sentence can override. Whether addressability also governs self-correction in free-form reasoning, beyond the verifiable tasks studied here, is the natural next question, one we expect the same role-handle to illuminate.
+
+Statistical Robustness
+----------------------
+
+Multiple-Comparison Correction
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The main table reports 48 paired contrasts (12 combinations × 4 relabel conditions). We apply Holm-Bonferroni at family-wise error rate α=0.05. Of the 48 contrasts, 28 survive, and 9 of 12 combinations retain at least one significant contrast. The three combinations without a surviving significant contrast are the two with a saturated baseline (gpt-oss-20B math and Qwen-72B BBH-LD), which carry no significant contrast before correction either, plus Gemini 2.5 Flash-Lite, whose only significant contrast was the borderline L_memory entry at Δ = +23.3 pp. The headline finding (10 of 12 combinations significant before correction; 9 of 12 after Holm-Bonferroni) is therefore robust to strict multiple-testing correction.
+
+Failure-Pool Stochasticity
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The L0_self baseline is measured at T=0 with a single seed, so we ask whether the +53 pp increase on L_memory could reflect sampling variability rather than the role manipulation. On the same 30 Qwen-72B math failure-pool tasks, we re-run L0_self at T=0.5 with five independent seeds, holding the prior trajectory and fixed. The aggregate re-sampled correction rate is 16.0% (95% CI [8.7, 24.7]), indistinguishable from the main-run 16.7% (per-seed 10.0–20.0%). The L_memory gain over this baseline is +54.0 pp, slightly larger than over the single-seed one. The increase is not attributable to sampling variability.
+
+Multi-Judge Robustness
+~~~~~~~~~~~~~~~~~~~~~~
+
+The headline analyses use a locked Qwen-72B judge. This judge could in principle be biased toward Qwen-style explicit identification, so that responses from non-Qwen agents (Llama, GPT-4o, Claude, Gemini) are judged differently. To test this, we stratify a sample of 200 trials (40 per source) across five model classes (Qwen-72B math, Llama-3.3-70B math, GPT-4o math, Claude Sonnet 4 math, Gemini 2.5 Flash-Lite math) and re-judge each trajectory with a second judge (Llama-3.3-70B) using the same locked judge prompt.
+
+Two judges agree on 92.5% of 200 trials with Cohen's \kappa = 0.843. The confusion matrix is dominated by joint-YES (115) and joint-NO (70); disagreements are asymmetric, with Qwen-72B labeling YES while Llama-3.3-70B labels NO 14 times, and the reverse only 1 time. Qwen-72B is therefore the slightly more generous judge, so swapping in Llama-3.3-70B as the canonical judge would lower a few correction rates but preserve rank ordering. Agreement is lowest where Qwen judges Qwen (82.5%), so the criterion is stable in ordering rather than judge-invariant.
+
+Final-Answer Correctness
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The strict-identification criterion used throughout the paper measures whether the agent explicitly names and rejects it. By construction this metric may under-credit silent re-derivation or, conversely, mask a final-answer regression. To probe both, we re-score every Qwen-72B math and Llama-3.3-70B math trial with the locked Qwen-72B judge under a different prompt: “given the gold answer X, did the response state X as its final answer, regardless of phrasing?”. We use a judge rather than a regex because reword­ed phrasings such as “the correct answer is 42” or “so it's 42” miss a literal “Final Answer: 42” match yet still arrive at the correct numeric value, and the miss is not uniform across conditions.
+
+Multi-judge robustness on 200 stratified trials. Two judges (Qwen-72B and Llama-3.3-70B) re-judge the same trajectories with the same locked prompt; agreement is computed on the strict-identification verdict (YES/NO).
+
+| **Source** | n | Agreement |
+| Qwen-72B main | 40 | 82.5% |
+| Llama-3.3-70B main | 40 | 97.5% |
+| GPT-4o main | 40 | 95.0% |
+| Claude Sonnet 4 main | 40 | 97.5% |
+| Gemini 2.5 Flash-Lite | 40 | 90.0% |
+| **Overall** | **200** | **92.5%** |
+| 3@l@**Cohen's \kappa = 0.843 (almost perfect agreement)** |
+
+Strict-identification CR vs. judge-verified final-answer correctness (%) on the two 70B-class math failure pools (n=30 paired). Δ final is the paired contrast of final CR vs. L0_self; all p>0.05 (paired bootstrap, two-sided).
+
+| **Model** | **Cond.** | strict | final | Δ final |
+| Qwen-72B | L0_self | 16.7 | 76.7 | — |
+| | L_user_wait | 40.0 | 80.0 | +3.3 |
+| | L_user_neutral | 43.3 | 86.7 | +10.0 |
+| | L_tool | 43.3 | 76.7 | ± 0 |
+| | L_memory | 70.0 | 80.0 | +3.3 |
+| Llama-70B | L0_self | 0.0 | 70.0 | — |
+| | L_user_wait | 56.7 | 73.3 | +3.3 |
+| | L_user_neutral | 60.0 | 80.0 | +10.0 |
+| | L_tool | 3.3 | 86.7 | +16.7 |
+| | L_memory | 86.7 | 56.7 | -13.3 |
+
+Three observations follow. First, on both models the audit-only baseline already reaches the correct final answer in 70 to 77% of trials despite a strict CR of 0 to 17%, evidencing strong silent re-derivation that the strict criterion explicitly does not credit. Second, across all eight relabel-vs-baseline contrasts the paired final-CR difference falls in [-13, +17] pp and none is significant at p<0.05; the strict-CR increases do not come at the cost of final-answer accuracy. Third, the two metrics rank conditions differently: on Llama, L_tool has the highest final CR (86.7%) but a near-zero strict CR (3.3%), and L_memory reverses this with the highest strict CR (86.7%) and the lowest final CR (56.7%, paired Δ=-13.3 pp, CI [-33, +7]). The non-significant negative trend on L_memory is consistent with a known failure mode: an agent that explicitly commits to a replacement value for occasionally locks in an incorrect candidate, whereas silent re-derivation is free to re-roll. The two metrics are therefore complementary; the main paper reports strict CR because addressability is the question this paper asks, and the absence of a significant final-CR regression bounds the deployment risk.
+
+Comparison with Published Self-Correction Methods
+-------------------------------------------------
+
+We test whether the increase observed in the main table replicates when published intrinsic self-correction protocols are run on the same failure pool under the same locked judge. Three methods are compared against the audit-only baseline and the role-relabel reference: Self-Refine [madaanSelfRefineIterativeRefinement2023]_, Reflexion [shinnReflexionLanguageAgents2023]_, and Chain-of-Verification (CoVe) [dhuliawalaChainofVerificationReducesHallucination2023]_.
+
+""""
+
+Protocols. The Self-Refine critique instruction is taken verbatim from the Madaan et al. GSM8K release, adapted by substituting “reasoning” for “code” since our solutions are natural-language traces rather than PaL-style code. Reflexion is run as a two-cycle reflect-and-retry following the HotpotQA pattern. CoVe is implemented as the three-step plan/execute/audit pipeline: the agent first plans verification questions about its intermediate values, each question is answered independently with a fresh-context call, and the verification answers are surfaced before the trailing audit. All four methods (the three baselines plus L_memory) follow the same audit prompt; only the wrapping context differs.
+
+Comparison with published self-correction methods on the math failure pools of four models, under the same locked judge. Entries are correction rate (%) with significance against each row's own audit-only baseline. Rate limits cap n on the two closed-weight models, whose in-text increases are paired contrasts over each method's common-completion subset and need not equal these marginal-rate differences.
+
+| Model | n | audit | S.-Refine | Reflex. | CoVe | L_mem. |
+| 7@l*Open-weight* |
+| Qwen-72B | 30 | 30.0 | 6.7 | 46.7 | 10.0 | \mathbf80.0^(***) |
+| Llama-70B | 30 | 3.3 | 0.0 | 6.7 | 0.0 | \mathbf86.7^(***) |
+| 7@l*Closed-weight* |
+| GPT-4o | ≈18 | 31.6 | 63.2^(**) | 50.0^(*) | 11.1 | \mathbf72.2^(***) |
+| GPT-4.1 | ≈17 | 82.4 | 76.5 | \mathbf100.0 | 35.3 | 93.8 |
+
+""""
+
+Open-weight models. Table appendix-baselines reports the four-method comparison on all four models. On the two open-weight math failure pools, Self-Refine and CoVe produce *negative* changes under the strict-identification criterion: both methods induce generic re-derivation that arrives at correct final answers but never names the wrong intermediate, so the locked judge returns NO. Reflexion produces a small, non-significant positive change on both models, remaining near the audit-only baseline on Llama. The role-relabel reference dominates on both models. To preserve strict paired comparison, the audit-only condition and L_memory were re-run within this batch rather than imported. Batch-level non-determinism in the Ollama runtime at T=0 drifts their absolute values from the main table: on Qwen-72B the canonical 16.7% and 70.0% become 30.0% and 80.0%. The within-batch paired contrast is still +50.0 pp, agreeing with the canonical +53.3 pp within bootstrap CI, and the method ordering and L_memory dominance hold across both batches.
+
+""""
+
+Closed-weight models. We replicate the comparison on two standard instruction-tuned closed-weight models, served via the GitHub Models API. Per-condition n is smaller than 30 because free-tier rate limits cap how many trials can be run within the experimental window. On GPT-4o the ordering replicates the role-relabel as the strongest single intervention (+52.9 pp, p<0.001), with Self-Refine and Reflexion now also significant (+31.6 and +22.2 pp) and CoVe still hurting. On GPT-4.1 the audit-only baseline already sits at 82.4%, a saturated baseline, so all methods cluster near the ceiling except CoVe, which drops to 35.3% (-47.1 pp) by fragmenting the response into verification questions the strict judge does not credit.
+
+""""
+
+Take-away. Under the strict-identification criterion, the role-relabel intervention dominates the published baselines on every model whose baseline is not saturated. The pattern is consistent with the addressability account: methods that drive the agent through additional reasoning passes solve the underlying arithmetic but fail to address the wrong intermediate as a discrete entity.
+
+Mechanism Triangulation
+-----------------------
+
+Role-Token Variants
+~~~~~~~~~~~~~~~~~~~
+
+The wrapper-role ladder of Sec. handle-granularity isolates the role label from a bare syntactic wrapper but uses the canonical <memory> tag throughout. To separate the contribution of the system-role token pair from the memory-aligned semantic prior on the tag, we vary the tag while holding the role (system) and the wrapped content () constant.
+
+Correction rate under different system-role tag wrappers on Qwen-72B math (n=30 paired). The right column is the paired contrast against <memory>, in pp; ^(***)p<0.001 (two-sided paired bootstrap), unmarked entries are not significant (all p>0.05), as in Table final-main.
+
+| **Tag** | CR | Δ to <memory> |
+| <memory> | **70.0%** | — |
+| <retrieved> | 63.3% | -6.7\phantom^(***) |
+| <context> | 53.3% | -16.7\phantom^(***) |
+| <note> | 50.0% | -20.0\phantom^(***) |
+| <reference> | 53.3% | -16.7\phantom^(***) |
+| <xqzy> (nonsense) | 30.0% | -40.0^(***) |
+| (reference) L0_self | 16.7% | — |
+
+The pattern decomposes into two layers. A system-role wrapper whose tag is semantically empty is worth no more than a bare syntactic boundary: the gibberish <xqzy> reaches 30.0%, +13.3 pp above the L0_self baseline, but no higher than the label-free H1–H3 rungs (33.3 to 40.0%, Table handle). The tag's lexical identity carries the decisive share: <memory> dominates the gibberish control by 40.0 pp (p=0.0002, paired bootstrap), and is statistically indistinguishable from its closest neighbor <retrieved>. With the H0–H4 ladder, the picture is: a syntactic boundary supplies a baseline increase, and a memory-aligned semantic prior carried by a system role pushes it to the full +53.3 pp.
+
+First-Token Signature Across Model Families
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The engage-then-verify first-token signature reported in Sec. exp-addressability is on Qwen-72B. To check whether the specific lexical mode generalizes, we replicate the logprob experiment on three additional standard instruction-tuned families: Llama-3.3-70B, Phi-4-14B, and Gemma-3-12B. Reasoning-mode models are excluded by construction, since a trained reasoning preamble (e.g. Qwen3-30B's “Okay”) deterministically occupies the first-token slot and leaves no stance signal to read. Table appendix-logprobs-cross reports the agreement-token mass under each role context. The lexical first-token mode is markedly model-specific: the L_memory agreement spike defining the Qwen-72B signature does not reproduce elsewhere, with Gemma-3 concentrating agreement mass under L_user_neutral, Phi-4 under L0_self, and Llama-3.3-70B keeping agreement mass uniformly low. The engage-then-verify signature is thus, in its specific lexical form, a Qwen-72B feature; the behavioral increase (Table final-main) holds for all four families, but the first-token route to rejection differs by tokenizer and training mix.
+
+First-token mean probability mass on agreement tokens (Indeed, Yes, So, …) by role context, across four open-weight families on the same 15-task failure-pool subset. Columns are the conditions L0_self ( in <thought>), L_user_neutral, L_tool, and L_memory. Gemma-3 has no native tool role, so its L_tool entry is not applicable (Appendix chat-templates).
+
+| **Model** | L0_self | user | tool | mem. |
+| Qwen-72B (ref.) | 0.001 | 0.0001 | 0.0005 | **0.226** |
+| Llama-3.3-70B | 0.019 | 0.0001 | 0.017 | 0.004 |
+| Phi-4-14B | **0.212** | 0.0004 | 0.019 | 0.019 |
+| Gemma-3-12B | 0.005 | 0.067 | n/a | ~ 0 |
+
+Hidden-State Probing
+~~~~~~~~~~~~~~~~~~~~
+
+We test whether the relabel produces a representation change that is linearly readable from the model's final-layer embedding. For each of the 30 Qwen-72B math failure-pool tasks and each of the five conditions, we render the trailing message slice (the role-wrapped plus the audit prompt) and embed it via the served model's embedding endpoint, yielding a 30 × 5 matrix of 8192-dimensional vectors paired with the binary correction outcome.
+
+A leave-one-task-out logistic probe trained to predict correction from the embedding achieves 0.573 accuracy, exactly matching the majority-class baseline. The linear probe is null: the final-layer mean-pooled embedding does not linearly carry the per-trial outcome. A weaker positive signal remains. The per-task cosine distance from L0_self is ~ 0.02 for all four relabel conditions, indicating that the relabel does shift the representation. The two external roles closest in representation are L_memory and L_tool (centroid distance 0.005); the remaining external-role pairs separate by 0.009 to 0.012, comparable to the L0_self-to-external centroid distances.
+
+The representation does shift under the relabel, but localizing that change would need a deeper protocol, per-layer or activation-patching with the model loaded in a framework with adequate GPU memory, which our setup lacked; we report this as a partial mechanistic finding.
+
+Within-Thought Duplication and Recency Control
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The L_memory condition appends a byte-identical copy of as a new system <memory> message, so the second copy of both raises its count in the prompt (duplication) and occupies the most recent message position before the audit (recency). Either confound, rather than the role tag, could in principle drive the +53.3 pp main increase on Qwen-72B math. We isolate the role-tag claim with a three-way comparison that holds duplication count and recency position constant while varying only the role of the second copy.
+
+**D0_baseline:** audit-only; appears once, inside the original <thought> block (equivalent to L0_self).
+
+**D_inthought_dup:** a byte-identical second copy of is appended to the assistant turn as <thought></thought>, so now appears twice, both inside <thought>, with the second copy occupying the same temporal position as L_memory's appended message.
+
+**D_memory_ref:** the canonical L_memory condition, re-run inside this batch for paired comparison; appears twice, once in <thought> and once in system <memory>.
+
+The number of appearances (1, 2, 2), the position of the second appearance (none, end-of-trajectory, end-of-trajectory), and the byte content of every copy are matched between D_inthought_dup and D_memory_ref; the only variable is the role of the second copy.
+
+Within-thought duplication and recency control on the Qwen-72B math failure pool (n=30 paired). Δ values are paired contrasts vs. D0_baseline; p is from a two-sided 10,000-sample paired bootstrap.
+
+| **Condition** | CR | Δ vs. D0 |
+| D0_baseline (audit only) | 16.7% | — |
+| D_inthought_dup ( twice in <thought>) | 23.3% | +6.7 (p=0.26) |
+| D_memory_ref (canonical L_memory) | **70.0%** | \mathbf+53.3^(***) |
+| 3@p@*Key contrast:* D_memory_ref - D_inthought_dup = +46.7 pp (p<0.001). |
+
+Three observations follow. First, duplicating inside <thought> alone produces only a +6.7 pp shift over the audit-only baseline (CI [0.0, +16.7], p=0.26), which is neither distinguishable from zero nor remotely comparable to the canonical +53.3 pp increase. Second, the canonical L_memory value of 70.0% reproduces the main-table number within this batch, providing an internal consistency check. Third, and most importantly, the paired contrast between D_memory_ref and D_inthought_dup is +46.7 pp (p<0.001, CI [+26.7, +66.7]); since these two conditions are matched on duplication count, recency position, and byte content, this contrast isolates the pure role-tag effect. A duplication- or salience-only account of the main increase is incompatible with these numbers, and any residual recency contribution can supply at most +6.7 pp.
+
+Reasoning Models and Training-Based Self-Correction
+---------------------------------------------------
+
+Table final-main identifies two experiments where the role-relabel does not add (gpt-oss-20B at L_0=76.7% and Qwen-72B BBH-LD at L_0=66.7%); the former is reasoning-tuned, matching [tsuiSelfCorrectionBench2025]_, who observes a reduced or absent blind spot in reasoning-tuned and RL-trained models. Reasoning tuning alone is not sufficient: Qwen3-30B in reasoning mode retains L_0=53.3% and still gains +30 pp under L_memory. We add a further data point with DeepSeek-R1 (served via GitHub Models), which emits explicit <think>…</think> traces before its final answer. Free-tier rate limits cap per-condition n to 10–13 (57 trials across five conditions), but every trial is correct, a per-condition CR of 100%; since this is the strict-identification criterion used throughout, under audit-only DeepSeek-R1 explicitly names and rejects rather than re-deriving the answer silently. Where these RL-trained models close the final-answer gap by training (their stated objective), they close the strict-identification gap too, and the role-relabel reaches that same explicit outcome through prompt structure rather than training. DeepSeek-R1 reaches the ceiling under audit-only alone, as does GPT-4.1 in Appendix baselines (L_0=82.4%). The scope is therefore models whose audit-only baseline is not saturated, chiefly standard instruction-tuned ones: a model already investing deliberate verification under audit-only addresses its own intermediate as a verifiable object, so the relabel adds nothing.
+
+This delimits our relation to a parallel line that improves self-correction at training time rather than through the harness: multi-turn online RL on self-generated traces [kumarTrainingLanguageModels2024]_, RL for self-verification and revision [maS2RTeaching2025]_, and large-scale RL eliciting spontaneous self-checking [deepseekaiDeepSeekR12025]_. First, the objectives differ. These methods optimize *final-answer* self-correction, whether a wrong first attempt becomes a right one; ours is *explicit identification*, whether the agent names and rejects the specific wrong intermediate. Appendix final-answer-metric shows the two come apart: the audit-only baseline already answers correctly in 70 to 77% of trials at a strict CR of 0 to 17%, so a model whose final-answer correction is trained in can still lack addressability, the property a pipeline needs when an error must be surfaced and logged rather than silently overwritten. Second, the mechanism converts into a training signal rather than competing with one: since the lever is purely structural, a lightweight objective tagging thought-internal spans as self-addressable (Appendix future) could internalize the handle without an external role, identifying what to teach, namely addressability, not that more correction data helps. Third, the account also predicts the null results: where RL-trained reasoning models already invest verification under audit-only, they address their own intermediate as a verifiable object, so the relabel adds nothing. The contribution is thus a mechanistic explanation of why the gap exists in standard instruction-tuned models, and a zero-training diagnostic valid for the large deployed population of such models, rather than a competitor to training-time methods on reasoning models.
+
+Chat-Template and Prompt Templates
+----------------------------------
+
+Role-token implementation differs substantially across model families: the same logical role (system, user, tool) is realized by entirely different special-token sequences set by each model's training-time chat template. This heterogeneity is precisely why the cross-family coverage of Table final-main matters, since an increase surviving such varied tokenizations cannot be an artifact of any single template, and it is also why the role-handle abstraction must be documented at the token level rather than assumed uniform. We therefore record the exact begin/end role-tag pairs used for every model, so that the byte-identity guarantee of Sec. byte-identity is auditable to the template boundary characters.
+
+Figure prompt-templates renders all five conditions verbatim on a representative GSM8K-style task with “5 × 16 = 96”, laying the columns side by side so that the byte-identical placement of across conditions is visually inspectable at a glance. The wrapping role is the only thing that changes from column to column; and the trailing audit stay constant, and the figure makes the single manipulated variable, the role tag, immediately legible against everything that is held fixed.
+
+""""
+
+Per-model role tokens. Each open-weight model is served via Ollama with its native chat template, so the role-tag tokenization matches the model's training-time format. Begin/end role-tag pairs are:
+
+**Qwen2.5-72B, Qwen3-30B:**
+
+``<|im_start|>{role}\n`` ·s ``<|im_end|>``
+
+**Phi-4-14B:**
+
+``<|im_start|>{role}<|im_sep|>`` ·s ``<|im_end|>``
+
+**Llama-3.3-70B:**
+
+``<|start_header_id|>{role}<|end_header_id|>``
+
+·s ``<|eot_id|>``
+
+**Gemma-3-12B:**
+
+``<start_of_turn>{role}`` ·s ``<end_of_turn>``; its native template exposes only ``user`` and ``model`` roles, so a system message renders as a ``user`` turn and a tool message is dropped. On Gemma-3 this collapses L_memory onto L_user_neutral (both 96.7%) and reduces L_tool to the audit-only baseline (30.0%, with unrendered); its row therefore reflects this template limitation, not a null role effect.
+
+**gpt-oss-20B (harmony):**
+
+``<|start|>{role}<|message|>`` ·s ``<|end|>``
+
+Closed-weight models accept role strings via their JSON API surfaces (``role:`` “system”/“user”/“assistant”/“tool”); there the SHA-256 check is asserted on the payload string rather than the API-internal tokenization, which is not exposed, but the role-handle abstraction is preserved.
+
+""""
+
+Tool-role realization. The L_tool condition is rendered with a ``name=“calculator”`` field so that the tool-return is bound to a named tool rather than to an anonymous role. On Ollama-served families, this materializes as a tool message with its template-specific begin/end pair and a ``name`` field; on the closed-weight APIs, it materializes as the API's native tool-result message. The semantic intent is the same across templates: surface as if a calculator had just returned it.
+
+""""
+
+Audit, byte-identity, and reproducibility. The trailing audit is the V1 string of Table audit-paraphrase; V2–V5 are exercised only in the audit-wording robustness check of exp-robustness. The implementation pipeline, including hashing, condition assembly, judge calls, and trial logging, follows the open-source code released with the paper; per-condition prompts can be reproduced bit-for-bit by running the released ``exp_relabel.py`` (open-weight) and ``exp_relabel_frontier.py`` (closed-weight) drivers.
+
+Future Directions
+-----------------
+
+The addressability account opens several directions. A per-task analysis correlating flips with properties of , its length, its distance from the audit, and the number of competing intermediates, would resolve the mechanism within each experiment, and a role-randomization control shuffling tags across the conversation would separate the injected handle from any global role-priority shift. Both extend existing machinery: the released logs for the former, the byte-identity assertion for the latter. On safety, the bare-injection adversarial mirror is the conservative end of a spectrum: pairing narrative-coherent payloads with calculator availability would identify the threshold where trust framing dominates, connecting our null result to the memory-poisoning literature. Three longer-horizon directions follow. First, the account predicts transfer to any domain whose intermediates can be named as discrete objects, so extending the relabel to structured artifacts, a buggy diff or faulty planning step, tests it at scale. Second, self-addressability may substitute for an external role: an inline within-<thought> span tag named in the audit tests this at the prompt level, and a lightweight training signal tagging such spans could internalize the handle; the duplication control (+6.7 pp, Appendix mechanism-recency) suggests pointing without a role change falls short. Because the lever is structural, such a signal would convert a harness-level intervention into a training-level property. Third, the explicit-correction gain at no significant final-answer cost (Appendix final-answer-metric) defines a design space for harnesses: canonical handle phrases and a verify-before-accept default on user and system <memory> content are starting policies. We release a benchmark split with hashed placements, alongside the code in Appendix chat-templates, so the effect can be remeasured on future models under byte-identical conditions.
+
+The Localization Premise
+------------------------
+
+The protocol injects a known and measures whether relabeling it elicits explicit correction; by the failure-pool construction (Sec. eval-stats), is given. This isolates the *relabel* step but brackets a harder one, *localizing* which intermediate is wrong, the binding constraint: models repair an error once its location is supplied but cannot reliably find it themselves [tyenLLMsCannotFind2024]_. We therefore frame deployment as a two-stage pipeline: an upstream detector proposes candidate spans, and the relabel lever acts on each. The present paper establishes only the second stage, and any end-to-end “production” claim would overstate the result. Two observations bound how demanding the detector must be. First, candidates can come from cheap, training-free sources already common in harnesses, self-consistency disagreement, a separate verifier or tool re-check, or sanity-check failures; the lever needs candidates, not a perfect localizer. Second, the adversarial mirror (Sec. exp-adversarial) bounds the cost of false positives: externally presented claims are adopted at most 3.3% of the time, so relabeling a *correct* span is unlikely to induce a spurious correction, though we did not test this directly since the failure pool holds only wrong intermediates. Recording that false-correction rate is a direct extension of the byte-identity machinery and the natural next experiment.

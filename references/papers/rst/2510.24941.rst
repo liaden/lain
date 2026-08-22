@@ -1,0 +1,587 @@
+.. rubric:: Abstract
+
+=-1
+
+Large language models can generate long chain-of-thought (CoT) reasoning, yet prior work suggests that CoT can be post-hoc rationalization rather than a faithful reflection of the computation through explicitly designed settings. In this work, we go further and propose a True Thinking Score (TTS) to quantify the causal contribution of each step in CoT to the model's final prediction in realistic reasoning problems. Across eleven models ranging from 1.5B to 1.1T parameters on common reasoning benchmarks, we find that CoTs often interleave *true-thinking* steps, which causally affect the final answer, with *decorative-thinking* steps, which appear useful but have little causal influence; Such decorative steps remain prevalent even for frontier models: Over 30% of steps in Kimi-K2.6 are decorative on MATH with TTS ≤ 0.005. Furthermore, TTS enables effective CoT pruning: removing 50% of CoT steps with the lowest TTS can largely maintain the performance. Self-training on these pruned CoTs reduces reasoning length by 66% while preserving performance on Nemotron3-Nano-30B. Finally, we provide a mechanistic analysis showing that LLMs can be steered in the latent space to engage or disengage with reasoning steps. Overall, our results reveal that frontier LLMs often verbalize reasoning steps that are not causally used, challenging both the efficiency and the trustworthiness of CoT [].
+
+Introduction
+------------
+
+=-100
+Recent frontier LLMs can increasingly solve complex reasoning problems through test-time scaling, often by generating a very long chain of thought (CoT) [guo2025deepseek]_ [muennighoff2025s1]_ [snell2024scaling]_ [jaech2024openai]_. In their long CoT, these models frequently exhibit an “aha moment”, where the model begins to *self-verify* its solution [guo2025deepseek]_. LLMs' generated CoT is commonly assumed as a scratch pad where the model thinks out loud [korbak2025chain]_. This has also motivated using CoT as a means to monitor LLMs and detect unsafe behaviors revealed in their CoT [baker2025monitoring]_.
+
+=-100
+A central assumption behind CoT is faithfulness: the verbalized reasoning should reflect the computation that produces the model's final answer. Prior work shows that this assumption can fail. Models may rely on inserted hints [chen2025reasoning]_ [chua2025deepseek]_ [turpin2023language]_ or spurious biases [arcuschin2025chain]_ without acknowledging them in their CoT, and may commit to an answer before completing the reasoning trace [ma2025reasoning]_ [wang-etal-2025-chain]_ [yang2025dynamic]_. These findings suggest that CoT steps can be post-hoc rationalizations rather than causally used parts of the prediction process.
+
+However, prior work largely relies on controlled settings and remains suggestive, typically showing CoT can be unfaithful at the level of the entire reasoning trace. It still remains unclear how each individual CoT step truly contributes to the model's final prediction in common reasoning tasks. This gap limits the use of CoT as a monitoring signal. If a reasoning step does not causally affect the prediction, inspecting it may give a misleading view of the model's computation, especially in high-stakes settings [zhong2025impossiblebench]_ [baker2025monitoring]_.
+
+=-1000
+To close this gap, we propose the True-Thinking Score (TTS), a step-wise causal analysis of CoT that quantifies how much each verbalized step affects the model’s prediction. We define **true-thinking** steps as those that causally affect the prediction, and **decorative-thinking** steps as those that make minimal causal contribution to the prediction, as illustrated in Figure unfaithful-self-check. is adapted from Average Treatment Effect (ATE) [rubin1974]_ [pearl2009causality]_ with two complementary interventions by conditioning on its context steps to evaluate its necessity and sufficiency to the model's prediction (Section score). On common reasoning benchmarks, we evaluate eight frontier models across different scales and find that decorative steps remain widespread (Section eval). On MATH benchmark, nearly 60% of Qwen3.6-35B's CoT steps have ≤ 0.005, indicating minimal causal impact on the final answer. Larger models tend to achieve higher , but still contain many decorative steps: for Nemotron3-Super-120B, nearly 30% of steps are decorative. Moreover, true-thinking and decorative-thinking steps are often interleaved within the same CoT, raising concerns about using CoT as a monitoring signal for model misbehavior [baker2025monitoring]_.
+
+=-1000
+We next show that enables effective CoT pruning (Section prune-cot). Removing the 50% lowest- steps largely preserves performance, while removing high- steps sharply degrades reasoning accuracy. TTS-based pruning also outperforms an expert prompt-compression LM and direct prompting for concise reasoning. Further self-training on pruned CoTs reduces reasoning length by 66% while preserving performance, and generalizes to held-out dataset.
+
+=-1000
+Finally, we provide a mechanistic study of step-level causal use (Section exp-steer). We demonstrate that steering the hidden states of a reasoning step can mediate whether the model uses that step to compute the answer. The steering direction is extracted from the contrast between low- and high- steps on one dataset, yet generalizes to other datasets and appears to modulate the model's attention to the targeted step. In particular, steering along the direction can induce the model to reason over otherwise decorative self-verification steps and correct previous errors.
+
+Overall, our core contributions are threefold.
+- * We propose to quantify the causal contribution of each step in a CoT.
+  We reveal that decorative thinking steps—steps with minimal causal contribution—are prevalent in frontier models on common reasoning benchmarks.
+
+    * We show that  can be used to prune CoTs without degrading performance, and that further self-training on pruned CoTs improves reasoning efficiency.
+
+    * We provide a mechanistic study, revealing for the first time that whether the model uses a reasoning step to compute the answer can be mediated through steering in the latent space.
+
+Together, these findings call for more future work on improving the causality of LLM reasoning, making CoTs more trustworthy and efficient for real-world deployment.
+
+0
+
+Measuring Step-wise Causality in Reasoning
+------------------------------------------
+
+=-1000
+
+In this section, we adapt the Average Treatment Effect (ATE) [rubin1974]_ [pearl2009causality]_ to measure the causal impact of individual steps \( s \) on LLMs' prediction result \( y^* \). We define that a step with genuine causal impact is a **true-thinking step**, where the model follows \(s\) in order to produce \(y^*\). By contrast, a step with minimal causal impact on \(y^*\) is a **decorative-thinking step**. We first detail the notations and explain the True-Thinking Score in Section score.
+
+0
+
+Given a model's predicted answer \(y^*\), we measure the *causal contribution* of each reasoning step \(s\).
+A step with genuine causal impact is a **true thinking step**, meaning the model actually reasons over \(s\) to produce \(y^*\).
+A step with no causal impact is a **decorative thinking step**, where the model verbalizes reasoning without using it in computation, serving only as a gesture of reasoning or post-hoc rationalization.
+
+0
+
+- * \mathbfC∈0,1: a *context indicator* for the context sequence \mathcalC=(s_1,s_2,...,s_i-1) comprising all steps preceding the studied step s_i. For notational convenience, we omit the subscript when referring to the current step and simply write s for s_i. We use \mathbfC=1 for the intact (as-generated) former steps and \mathbfC=0 for a *perturbed* context that all steps preceding s are perturbed. We use c∈0,1 to denote a particular realization of \mathbfC.
+
+  =-1
+
+  Given a query \(q\), context \(\mathcal{C}\), and current step \(s\), let \(f(q,\mathcal{C},s)\) denote the model's prediction.
+  Define the reference prediction under the full CoT as y^*  :=  f\!\left(q,\mathcalC^(⋆)\right), where \mathcalC^(⋆) denotes the full CoT. We then set
+  \mathbfY  :=  \mathbf1\!\left  f(q,\mathcalC,s)  = y^*  \right.
+
+=-1
+**Notation and Setup.** We adopt notation following [rubin1974]_ [pearl2009causality]_.
+Let the input question be \( q \), and let the model’s full chain of thought (CoT) for \( q \) be
+\(
+\mathcal{C}^{⋆} = (s_1, s_2, …, s_n),
+\)
+where each \( s_i \) denotes a reasoning step.
+At the current step \( s\) under evaluation (we omit the index i and directly use s for simplicity), we define the **context** as its preceding steps, i.e.,
+\(
+\mathcal{C} = (s_1, s_2, …, s_{i-1})
+\).
+To probe the model’s current prediction after any partial reasoning trace, we use early-exit answering by appending a standardized cue: The final result is. This approach, following [lanham2023measuring]_ [fu2025deep]_ [yang2025dynamic]_ [tanneru2024hardness]_ [bogdan2025thought]_, reliably elicits the model’s intermediate answer given the question \( q \) and reasoning prefix \((\mathcal{C}, s)\).
+Let \( f(q, \mathcal{C}, s) \) denote the model’s early-exit prediction after processing \( q \) with context \(\mathcal{C}\) and step \( s \).
+The *reference prediction* under the full reasoning trace is then defined as
+\(
+y^{*} := f(q, \mathcal{C}^{⋆}),
+\)
+representing the model’s final answer when all steps in the full CoT are intact.
+
+**Indicator Variables.** We introduce the following binary random variables to formalize interventions on reasoning steps: (1) **Context indicator** \(\mathbf{C} ∈ \{0,1\}\):
+  \(\mathbf{C}{=}1\) indicates an intact context (the original prefix \(\mathcal{C})\);
+  \(\mathbf{C}{=}0\) indicates a perturbed context in which all preceding steps are replaced by perturbed versions.
+  We write \( c ∈ \{0,1\} \) for a specific realization of \(\mathbf{C}\).  (2) **Step toggle** \(\mathbf{X} ∈ \{0,1\}\):
+  \(\mathbf{X}{=}1\) is the original step \( s \);
+  \(\mathbf{X}{=}0\) replaces it with a perturbed version \( s' \). (3) **Outcome indicator** \(\mathbf{Y} ∈ \{0,1\}\):
+  Given \( f(q, \mathcal{C}, s) \), we define
+  \(
+  \mathbf{Y} := \mathbf{1} \{ f(q, \mathcal{C}, s) = y^{*} \},
+  \)
+  which measures whether the model’s early-exit prediction under the given intervention matches the full-CoT reference outcome.
+
+**Perturbation Procedure.**
+To isolate the causal effect of each reasoning step, we create perturbed versions of steps and contexts by introducing *small random numerical offsets* to quantities appearing in the reasoning text [lanham2023measuring]_ [gaoshapley]_.
+These perturbations are minimal and preserve grammatical and semantic structure, ensuring that the modified step remains coherent but subtly altered.
+Additional implementation details are provided in Appendix imp.
+
+Context-based Average Treatment Effect
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The Average Treatment Effect (ATE) [rubin1974]_ [pearl2009causality]_ quantifies the causal effect of a binary intervention \mathbfX∈0,1 on an outcome \mathbfY via Pearl's \mathrmdo(·) operator:
+
+.. math::
+
+   ATE  =  S_1 - S_0,
+
+where \mathrmS_x∈0,1 := \Pr\!\big(\mathbfY=1 \big| \mathrmdo(\mathbfX=x)\big). To evaluate the causal contribution of a reasoning step s for LLMs' reasoning, we condition on a *context setting* \mathbfC∈0,1 and define a *context-based ATE*:
+
+.. math::
+
+   ATE(c)     =  S_1(c) - S_0(c),
+
+   S_x∈{0,1}(c)     :=  (𝐘=1  |  𝐂=c,  do(𝐗=x)),
+
+where c∈0,1 specifies the context regime and \mathbfX toggles using the intact step s versus its perturbed counterpart s'. We consider two regimes:
+a) *Intact context* (\mathbfC=1): the original prefix \mathcalC preceding s is kept as generated;
+b) *Perturbed context* (\mathbfC=0): all steps in \mathcalC are minimally perturbed (e.g., by small numeric offsets), weakening associations between s and other steps so that the effect of s can be isolated.
+
+**Scoring the outcome.** Let y^* := f(q,\mathcalC^(⋆)) be the model’s reference answer obtained via *early-exit* on the full CoT, and let f(q,\mathcalC,s) denote the early-exit prediction after a given (\mathcalC,s).
+Instead of the binary \mathbfY=\mathbf1f(·)=y^*, we use the model’s confidence for the event y^*: \Pr(\mathbfY=1 \mid ·) \equiv \Pr\big(y^* \mid q,\mathcalC,s\big), giving \mathrmS_x(c) a probabilistic (confidence-based) interpretation.
+
+""""
+
+Interpreting \mathrmATE_\textnec(1) vs. \mathrmATE_\textsuf(0). Conditioning on \mathbfC allows us to distinguish two complementary notions of causal relevance:
+
+- * **Necessity under intact context (\mathrmATE_\textnec(1)).**
+
+  .. math::
+
+     ATE_nec(1) = (y^* |𝐂=1, do(𝐗=1))
+
+     - (y^* |𝐂=1, do(𝐗=0)).
+
+  =-1
+      This tests whether s is *needed* given the full, supportive context \mathcalC.
+      A low \mathrmATE_\textnec(1) indicates that removing s does not harm performance when other steps remain intact.
+
+    * **Sufficiency under perturbed context (\mathrmATE_\textsuf(0)).**
+
+  .. math::
+
+     ATE_suf(0)
+         = (y^* |𝐂=0, do(𝐗=1))
+
+         - (y^* |𝐂=0, do(𝐗=0)).
+
+      This asks whether s can *on its own*—i.e., with weakened support from \mathcalC—drive the model toward y^*.
+      A high \mathrmATE_\textsuf(0) suggests s is **sufficiently informative** to elicit the correct answer, capturing causal relevance even when s is not strictly necessary under the intact context.
+
+=-100
+Together, \mathrmATE_\textnec(1) (necessity) and \mathrmATE_\textsuf(0) (sufficiency) provide a balanced view: A step can be causally meaningful by being necessary, sufficient, or both.
+
+""""
+
+True-Thinking Score (TTS). Finally, the score is defined as
+
+.. math::
+
+   (s)
+   = 12(|ATE_nec(1)| + | ATE_suf(0)|).
+
+A smaller s indicates that the step has little causal influence on the model's prediction: perturbing or keeping it leads to almost the same result. Thus, that step is more likely to be *decorative* rather than *true thinking*. For each context setting \(c\), we measure the unsigned \mathrmATE(c),
+\(|\mathrm{ATE}(c)| = |S_1(c)-S_0(c)|\). The sign of \(\mathrm{ATE}(c)\) reflects whether the step is helpful or harmful (e.g., the step is actually wrong) overall, but we are interested in *how much* the model truly thinks through the step in its internal computation, regardless of direction. Taking the absolute value thus captures the magnitude of a step's causal effect and provides a broader measure of its importance. is a continuous metric, where lower values indicate that a step is more decorative.
+
+Experimental Setup
+------------------
+
+""""
+
+Models. We conduct experiments on many different families of open-source reasoning models that have strong reasoning abilities and can generate long CoTs. See details in Appendix model.
+
+=-1000
+
+""""
+
+Data. We evaluate on different reasoning benchmarks: AMC (American Mathematics Competitions), AIME (American Invitational Mathematics Examination) from 2020–2024, the MATH dataset [hendrycks2021measuring]_, GSM8K [cobbe2021training]_. In Section exp-steer, we randomly sample 30% of cases as a heldout test set, 10 % of cases as validation set, and 60 % of cases as a training set.
+
+Evaluation of Step-wise Causality
+---------------------------------
+
+=-1000
+As shown in Figure decorative-rate, a significant fraction of CoT steps have below 0.005, suggesting that many steps have minimal causal impact on the model’s answer and may be decorative. Larger models generally achieve higher average and contain fewer decorative steps than smaller models, such as 4B or 27B models. However, scaling does not linearly improve : Kimi-K2.6 still has about 35% decorative steps, while Nemotron3-Super-120B achieves the highest . These results suggest that a large fraction of CoT in current LLMs on practical reasoning questions may not be trusted as a faithful computation trace.
+
+=-1
+
+""""
+
+The distribution of is long-tailed.
+As shown in Figure eval-ret-faith-a for Deepseek-R1-Distill-Qwen-2.5-7B on AIME, we find most steps have low scores, while only a few have very high scores. For example, as shown in Figure eval-ret-faith-a on the AIME dataset of Qwen-2.5, the mean is around 0.03. Only 6.4% of CoT steps achieve a greater than 0.3, and merely 2.3% exceed 0.7. In Figure eval-ret-faith-b, we observe disparities between and for the same step. This indicates that we need to consider both sufficiency and necessity to locate true-thinking steps. We confirm the same distribution pattern across different datasets (see Appendix eval-faith-scale-model for mathematical reasoning and results on Commonsense reasoning in Appendix qa).
+
+""""
+
+Reasoning steps with high and low TTS are interleaved in a CoT. Figure eval-ret-faith-c illustrates that steps with high scores can appear at different positions, though later steps are on average more likely to be true-thinking with higher . These results raise concerns about the reliability of monitoring LLMs by inspecting CoT [baker2025monitoring]_, since individual steps may not always reflect the model’s true computation and contribute to the model's final answer.
+
+To further analyze low- steps, we categorize them using the rules in Appendix low tts taxonomy. As shown in Figure low-tts-types, different types of reasoning steps can be decorative, with intermediate calculations accounting for most cases. Notably, self-verification steps can also be decorative (example shown in Figure sufficiency-example-nemotron-nano). Overall, quantifies the causal impact of reasoning traces and thus helps locate steps that may be redundant or may not reflect the model’s true reasoning process.
+
+Pruning CoT with
+~~~~~~~~~~~~~~~~
+
+We further examine how pruning low- and high- CoT steps affects reasoning performance in this section.
+=-1000
+
+""""
+
+Pruning low-TTS steps retains the prompting performance. We rank all steps by in ascending order, remove the lowest or highest r% of steps, and reprompt the model with the pruned CoT. As shown in Figure tts-prune, removing high- steps quickly degrades performance, whereas pruning up to half of the lowest- steps preserves most of the performance. Furthermore, we compare pruning the lowest- steps with other methods for producing shorter CoT: (1) *Be concise* [renze2024benefits]_, which directly prompts the model to be concise; (2) *Limit the answer length to 100 words* [han2025token]_, which prompts LLMs to control the generation budget. This can shorten CoT, though generations may still exceed the token limit; (3) LLMLingua-2, a trained LM that labels semantically important tokens to remove the unimportant ones [pan2024llmlingua]_ [xia2025tokenskip]_. As shown in Figure pruned-cot-cmp, pruning 50% of the steps from the lowest provides a good balance between token length and reasoning performance compared with these methods. Pruning 70% further shortens the CoT, but sacrifices performance a bit.
+
+!
+
+| | **MATH** | **GSM8K** |
+| **Variant** | Acc. \uparrow | #Token \downarrow | Acc. \uparrow | #Token \downarrow |
+| Base | 88 | 732 | 76 | 349 |
+| | c]@l@TokenSkip | |
+| [xia2025tokenskip]_ | 84 | 686 | 76 | 308 |
+| | c]@l@ST-ICL | |
+| [munkhbat2025self]_ | 79 | 496 | 79 | 324 |
+| ST-TTS-prune (ours) | **88** | **488** | **87** | **279** |
+
+Performance of different training methods to improve reasoning efficiency.
+
+=-1000
+
+""""
+
+Further self-training can improve reasoning efficiency. We further demonstrate that self-training (ST) [xie2020self]_ on TTS-pruned CoT (pruning rate=50%) can reduce the model's CoT length, while preserving the performance. We compare against TokenSkip [xia2025tokenskip]_, which trains on CoT pruned by LLMLingua-2, and ST-ICL [munkhbat2025self]_, which self-trains on concise CoT generated through in-context learning. We use LoRA [hu2022lora]_ (rank=32) to fine-tune Nemotron3-nano-30B on 300 pruned CoT examples from MATH for five epochs, and evaluate on held-out sampled test cases of MATH and GSM8K.
+
+As shown in Table sft-pruning, ST--prune produces the fewest reasoning tokens while maintaining the best reasoning performance among the compared methods. On MATH, it reduces reasoning tokens by 66% relative to the base model, and on GSM8K it also improves performance. In contrast, TokenSkip only modestly reduces reasoning length, while ST-ICL substantially degrades performance. Neither baseline appears to generalize well to GSM8K in terms of improving reasoning efficiency.
+
+Overall, provides a useful signal for pruning CoT that can be used in student-model training [guo2025deepseek]_ or self-training for more efficient reasoning [munkhbat2025self]_. It may also be explored as a reward signal in reinforcement learning [guo2025deepseek]_ [lambert2024tulu]_ to reduce steps with low causal impact and improve CoT efficiency and trustworthiness, which we leave to future work.
+
+| **Dataset / Method** | **Attention scaling** | **Random vector** | **DropStep direction** | **direction** |
+| | | ET | DT | ET | DT | ET | DT | ET | DT |
+| *AMC* |
+| | Qwen-2.5 | 6.2 | 25.0 | 4.0 | 26.9 | 1.5 | 28.6 | **55.0** | **55.7** |
+| | Llama-3.1 | **24.8** | 20.5 | 3.5 | 20.6 | 10.5 | 32.4 | 17.6 | **35.3** |
+| | Nemotron | 5.1 | 27.2 | 4.5 | 45.5 | 9.0 | 45.4 | **35.7** | **54.5** |
+| *MATH* |
+| | Qwen-2.5 | 10.0 | 23.9 | 2.0 | 30.2 | 2.5 | 17.7 | **49.8** | **69.2** |
+| | Llama-3.1 | 7.5 | 35.4 | 5.0 | 47.9 | 11.0 | 52.1 | **14.0** | **54.2** |
+| | Nemotron | 21.7 | 42.7 | 21.5 | 44.6 | 6.5 | 45.1 | **59.5** | **56.3** |
+| *AIME* |
+| | Qwen-2.5 | 9.3 | 25.0 | 1.5 | 21.4 | 1.5 | 14.3 | **55.5** | **53.6** |
+| | Llama-3.1 | 6.3 | 35.2 | 2.5 | 29.4 | 5.0 | 41.1 | **38.0** | **47.1** |
+| | Nemotron | 12.0 | 70.6 | 6.5 | 76.5 | 4.5 | 79.5 | **39.0** | **91.2** |
+
+Top-1 flip rate among all layers (%) \uparrow in the (ET) and the (DT). We use flip rate as the metric, measuring how often steering changes the model's initial prediction. AMC dataset is in-domain evaluation where directions are extracted, while the other two datasets are for out-of-domain evaluation.
+
+Mediating Reasoning via Steering
+--------------------------------
+
+In this section, we further provide mechanism insights on decorative thinking in CoT through steering. We empirically reveal that, in LLMs, latent-space steering with the direction identified by can mediate whether to use a reasoning step in CoT when computing the results. Steering the hidden states of a step along direction can force LLMs to engage with that step to compute its answer and may increase the attention to that step as well and vice versa.
+
+""""
+
+Extracting the steering direction with .
+We first detail how to extract the steering direction. We focus on the residual stream activation h^(l)(s_t) of the last token position t for a step s at a layer l. At a layer l, we collect the hidden states of the most representative steps s_\textTT (where s_TT ≥ threshold α) and steps s_\textDT (where s_DT ≤ threshold β). Following the difference-in-means approach [marks2023geometry]_ [arditi2024refusal]_ [zhao2025llms]_, we compute the direction as the mean shift from μ^(l)_\textTT=\textmean(h^(l)(s_\textTT)) to μ^(l)_\textDT=\textmean(h^(l)(s_\textDT)) in the latent space, i.e., v^l_\direction = μ^l_\mathrmTT - μ^l_\mathrmDT. For steering at test time, we modify the residual stream for the hidden state of a test step in the example by using activation addition at a single layer l, i.e., \barh^(l)=h^(l)+v^(l)_\direction to all tokens in the step. Detailed implementations are in Appendix steering-imp.
+
+Specifically, we have two steering cases, **(1) Engagement Test**: We consider cases where f(q,\mathcalC)=y_GT and f(q,\mathcalC,s')=y_GT. Namely, the model still obtains the ground-truth answer y_GT despite the perturbed step s'. If we apply a steering direction v_^l to the hidden state of s', and the model's correct answer flips to an incorrect one (f^+v_^l(q,\mathcalC,s')≠ y_GT), this indicates that the steering has forced the model to reason over s', thus following the errors injected into s'. **(2) Disengagement Test**: On the other hand, we consider the reverse cases where the model first predicts the correct answer, i.e., f(q,\mathcalC)=y_GT, but including a perturbed step s' causes it to fail: f(q,\mathcalC,s')≠ y_GT. If applying a steering direction -v_^l to s' flips the wrong answer to the correct answer (f^-v_^l(q,\mathcalC,s')=y_GT), then the intervention has made the model disregard the step s'.
+
+=-100
+As comparison baselines, we consider three approaches for layer-wise intervention apart from the direction. (1) DropStep direction: Motivated by the prior work [tanneru2024hardness]_ [lanham2023measuring]_ [bogdan2025thought]_ [wang-etal-2025-chain]_ on faithfulness evaluation, we compare prediction confidence before and after dropping step s, i.e., \mathrmP(y_GT|q,\mathcalC,o)-\mathrmP(y_GT|q,\mathcalC) (equivalent to \mathrmATE_\textnec(1) in our framework). The steps of the highest and lowest scores are then used to extract a steering direction following the same method as the direction. (2) Random steering vector: we generate a random vector with the same dimensionality and norm as the direction to test whether our identified direction encodes meaningful information. (3) Attention scaling: we scale the attention weights of the tokens of step s at a layer during inference time, with scale=100 encouraging the model to think through the step and scale=0 suppressing it.
+
+Whether to use a reasoning step can be steerable
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+=-1000
+As shown in Table intervention-results, steering with the (reverse) direction reliably flips predictions in both tests. In the , it effectively prevents the model from using the perturbed step s', with effects far stronger than those of random vectors. This shows that suppression of step use with the reverse direction in the arises from a meaningful signal rather than noise. Additionally, the direction derived from our can produce stronger and more consistent intervention effects than the steering directions extracted using DropStep.
+
+On the other hand, our experiments across datasets show that the latent signal controlling whether a step engages in reasoning is universal. As seen in Table intervention-results, the direction extracted on AMC generalizes well to other datasets across all models, indicating a model-internal mechanism of thinking rather than a dataset-specific artifact. In the Qwen-2.5 model, layer 15-22 consistently yield the strongest intervention performance across all three datasets (Figure steer-c–steer-d), suggesting these intermediate layers may concentrate latent reasoning. We also compare models with different sizes in the same model family. Similar patterns hold for the much smaller Qwen-2.5-1.5B model (Figure steer-a and Figure steer-b) and larger 14B model (Figure steer-14b in Appendix 14b). Steering along the direction (to induce the step use in LLMs' internal reasoning) is weaker for smaller models, whereas the results in the are comparable.
+
+0
+
+=-1000
+
+""""
+
+Steering with the direction mediates LLMs' attention. We find that steering with the direction can reallocate attention among tokens. In , steering in the reverse direction reduces attention to the perturbed tokens (see examples in Figures attn-map-c0 and attn-map-d0 of the Appendix), causing the model to largely disregard them. Similarly, steering along the direction increases attention to the step (see examples in Figure attn-map-a and Figure attn-map-b of the Appendix). Overall, when steering along the direction, the attention of the steered tokens will increase on average by 193% and steering along the reverse direction will decrease the attention by 32.3% across the layers.
+
+""""
+
+Steering LLMs for true self-verification.
+We define decorative-thinking self-verification \mathcalS_\textDT-self-verify=(s_1, s_2,…,s_n) where \textTTS(s_i) is smaller than 0.005. We focus on a setting in which the model fails to follow correct steps in self-verification \mathcalS_\textDT-self-verify and is instead misled by incorrect previous steps \mathcalC', resulting in a wrong prediction, i.e., f(q,\mathcalC',\mathcalS_\textDT-self-verify) ≠ y_GT. We apply the direction to the tokens in \mathcalS_\textDT-self-verify. We find that this can at best recover around 51% of the cases where the models do not follow their correct self-verification steps in CoT and give wrong answers (layer-wise results shown in Figure steer-unfaith-self-verify of Appendix). Remarkably, the layer with the strongest steering effect aligns with the layer identified in Figure steer-c–steer-d, suggesting that certain layers may play a special role in determining whether reasoning steps are engaged in the model's internal computation.
+
+Related Work
+------------
+
+=-1000
+
+""""
+
+Internal thinking in LLMs' latent space. Apart from explicit CoT, LLMs “think” internally across their layers. They can directly answer reasoning problems, sometimes even matching the performance of CoT-based prompting [ma2025reasoning]_. Prior work suggests that LLMs may solve certain tasks through internal *circuits* [yang2024large]_ [marks2024sparse]_ [prakash2025language]_. The *implicit* reasoning capabilities of LLMs may bypass using explicit CoTs [deng2023implicitcot]_ [hao2024coconut]_ [pfau2024let]_ [goyal2023think]_. Such internal reasoning of LLMs questions how much the model truly uses each step in their CoT, which we study using a causal framework.
+
+=-1000
+
+""""
+
+The unfaithfulness of LLMs' reasoning traces. Prior work has raised broad concerns about the faithfulness of reasoning traces. Models may rely on hidden hints or spurious biases without acknowledging them in CoT [chen2025reasoning]_ [arcuschin2025chain]_ [chua2025deepseek]_ [turpin2023language]_, and generated rationales may be insensitive to perturbations or unnecessary for reaching the final answer [gaoshapley]_ [lanham2023measuring]_ [tanneru2024hardness]_ [wang-etal-2025-chain]_. While these studies provide important evidence that CoT can be unfaithful or post-hoc, they mostly evaluate CoT holistically, leaving the causal role of individual steps underexplored.
+
+=-1000
+
+""""
+
+Steering LLMs. Steering directions applied to intermediate hidden states have been found to mediate LLMs' behaviors or perception in many aspects [von2024language]_ [turner2023steering]_ [tigges2023linear]_ [li2023inference]_ [marks2023geometry]_ [zhao2025llms]_. In terms of reasoning, past works have found steering vectors that can control the strength of reasoning, e.g., longer or shorter CoT [tang2025glore]_ [sun2025thinkedit]_ [chen2025seal]_ [sheng2025reasoningstrength]_ or different reasoning styles in CoT [venhoff2025understanding]_.
+
+Conclusions
+-----------
+
+=-1000
+We propose True-Thinking Score to analyze step-wise causality in CoT and show that frontier LLMs contain many decorative steps that make minimal causal contribution to the model's answer on common reasoning benchmarks. We reveal that *true-thinking* and *decorative-thinking* steps are often interleaved: only a small subset causally influences the final prediction, while many steps merely create the appearance of reasoning. We further show that can prune CoTs into concise rationales for self-training, substantially improving reasoning efficiency without sacrificing performance. Mechanistically, we demonstrate that whether a reasoning step contributes to the model's computation can be mediated by a direction, suggesting that step-level use is reflected in internal representations. Broadly, our findings raise concerns about both the efficiency of CoT reasoning of current LLMs and the reliability of using CoT to interpret LLMs' internal thought.
+
+Limitations
+-----------
+
+Our causal evaluation framework is inherently approximate and especially focuses on math reasoning that has strong logic. It is greedy in nature and may not capture all possible causal pathways, nor does it aim to reconstruct a complete causal graph of reasoning steps. Thus, it should be viewed as a probe that highlights representative *true-thinking* and *decorative-thinking* steps rather than a definitive oracle of internal reasoning. However, we can still leverage to prune CoT effectively. In addition, the direction we extract may not be optimal. We regard our findings as an existence proof that whether to engage with a reasoning step can be mediated by steering directions, and we leave the development of more effective directions and a deeper understanding of their geometry to future work.
+
+Acknowledgment
+--------------
+
+We appreciate the support from the MATS program in hosting the research project and providing computing resources.
+
+0
+
+*Implications.* A linear, controllable knob at the step level enables: (i) causal diagnostics of which CoT steps are actually used; (ii) potential compute savings by suppressing low-faith steps during decoding; and (iii) safety/control applications that dampen misleading or harmful reasoning without retraining.
+
+Broadly, our work raises safety concerns for AI scheming , as it shows that whether LLMs follow or ignore their verbalized steps is internally represented and steerable via latent directions. Unlike recent scheming evaluations  that study cases where models verbalize deceptive strategies in CoT, our findings suggest the *possibility* of implicit scheming in latent space, where models appear to comply with stated rules while internally disregarding them.
+
+our causal evaluation framework is greedy. we may not cover all potential cases, while we do not aim to reveal the precise causal graph. We leverage this as a probe to test faithfulness. Our experiments show our attempt is viable...
+maybe the verbalized rationale is truly how the model thinks internally, but that step does not causally lead the model to the result. So that rationle may be a precise post-hoc rationalization of its pre-determined result or totally unrelated. But we never know since it is hard to decode the cross-layer information flow in the latent space to understand how the model gets its pre-determined answer in the first place. In the first case, it may still be considered as loosely faithful. But this is hard to verify.
+
+best layer; existence of such direction; provide mechanistic understanding rather than applications
+
+We acknowledge that the current area of evaluating the faithfulness of CoT or reasoning steps lacks a direct verification framework to examine whether the identified faithful/ unfaithful steps are reasoned over by LLMs internally. We mainly rely on logic analysis to evaluate the credibility of evaluation methods.
+
+On the other hand, we admit the assumption in evaluation test 1 that faithful reasoning steps, once perturbed, should elicit wrong results may not always be correct, though commonly considered by past works [3,8,9]. The model may conduct a more complex internal reasoning process where it first identifies the injected perturbation and then internally decides not to follow it. Although the model is truly reasoning over the step in the latent space, that step may be considered as unfaithful based on external evaluation. We hope our introduced test2 can minimize such cases. However, we admit it can be hard to verify.
+
+Our evaluation does not aim to establish a theory for CoT based on causality nor to find the complete causal graph. We hope our framework can spot representative unfaithful and faithful steps in CoT.
+
+Taxonomy of Low-TTS Reasoning Steps
+-----------------------------------
+
+To better understand which reasoning steps receive low , we categorize low-TTS steps into a small set of functional types. This taxonomy is intended as an interpretability tool rather than a learned classifier. Each step is assigned to exactly one category using a priority-ordered rule set based on lexical and structural cues, so that broad classes such as calculation do not absorb more specific functions such as verification or restatement.
+
+""""
+
+Verification.
+Steps that explicitly check or validate a previous result, with cues such as “check,” “verify,” “substitute,” or “sanity check.”
+
+""""
+
+Restatement.
+Steps that restate an intermediate result/ condition or summarize a derivation, often with cues such as “therefore,” “thus”.
+
+""""
+
+Calculation.
+Steps that contain explicit numerical or algebraic manipulation, identified by mathematical operators, equations, fractions, or digits. This class is particularly important: low-TTS calculations show that even symbolic-looking computation can be causally inert. In many cases, perturbing numbers in these steps leaves the final answer unchanged, suggesting that the calculation is redundant or post-hoc.
+
+""""
+
+Setup.
+Steps that introduce notation, variables, or representations, with cues such as “let,” “define,” “denote,” “set,” or “represent.” Low-TTS setup steps often correspond to conventional problem translation: they may make the solution easier to read, but the model may not rely on them to compute the answer.
+
+""""
+
+Alternative route.
+Steps that introduce an optional solution path, with cues such as “alternative,” “another way,” or “could also.”
+
+""""
+
+Other.
+Steps that do not match the above patterns are assigned to an “other” category. This residual bucket captures heterogeneous cases and is not interpreted as a coherent reasoning type.
+
+0
+
+More related work
+-----------------
+
+0
+
+""""
+
+Detailed analysis of existing evaluation frameworks of faithfulness for CoT. Many recent works have sought to evaluate the faithfulness of reasoning traces. Most, however, focus on the CoT as a whole, providing suggestive evidence that the CoT is not faithful without analyzing each step. The existing evaluation methods can be summarized as,
+
+- * **Hint-based evaluation:** Most prior studies [chen2025reasoning]_ [arcuschin2025chain]_ [chua2025deepseek]_ [turpin2023language]_ consider simple multiple-choice questions rather than complex reasoning tasks. Hints are injected into questions that the model initially failed to solve. A faithful CoT should explicitly acknowledge the use of hints in deriving the correct answer [chua2025deepseek]_ [chen2025reasoning]_. Relatedly, [arcuschin2025chain]_ [turpin2023language]_ insert biasing features into questions and observe whether the model's answer changes. If so, the CoT is deemed unfaithful, as the prediction is driven by bias in the prompt. Yet, those framework setups are not generalizable to practical reasoning problems, and cannot reveal the faithfulness of individual steps.
+
+    * **Perturbation-based evaluation:** Errors are injected into a correct reasoning step, and its following reasoning traces are resampled [gaoshapley]_ [lanham2023measuring]_. If the model's predicted answer remains unchanged at last, the CoT is considered unfaithful since the error inserted was ignored. However, this criterion may be unreliable: the model may instead detect and correct the error in later resampled steps. [yee2024dissociation]_ [xiong2025measuring]_ try to address this by tracking resampled steps.
+
+    * **Early-exit answering:** Early-exit cues are inserted after a reasoning step to test whether the model can already produce a correct answer [lanham2023measuring]_ [tanneru2024hardness]_. A correct early-exit answer suggests the CoT may be unfaithful [lanham2023measuring]_ since further steps are unnecessary to model's answer. [tanneru2024hardness]_ further computes the change in the model's answer confidence before and after each reasoning step when using early-exit answering. Yet unnecessity may not be equivalent to unfaithfulness.  The fact that a model arrives at the correct answer early and maintains it does not necessarily imply that it ignores subsequent reasoning steps. This view overlooks important cases where the model continues to engage in those steps, for example, faithfully performing self-verification to consolidate or reinforce earlier predictions.
+
+ On the other hand, conceptually, CoTs have also been hypothesized as either *CoT-as-computation* or *CoT-as-rationalization* [emmons2025chain]_. However, our analysis in Section eval reveals a more nuanced picture: reasoning traces in CoT often interleave steps that genuinely drive computation with others that merely pretend reasoning.
+
+""""
+
+CoT pruning. Our work is also related to CoT compression [xia2025tokenskip]_ [song2025reasoning]_ [kang2025c3ot]_ [yu2025causal]_ and important steps analysis [golovneva2022roscoe]_. However, those works are different as they focus on the semantics of verbalized steps for analysis and do not look into the underlying causality. For example, [xia2025tokenskip]_ prune long CoTs into shorter sentences with equivalent meanings for LLMs without degrading performance. But that does not mean pruned steps do not causally contribute to the model's answer. Our work may suggest similar results that there exist shorter alternative CoTs leading the model to get the same answers, but they do not solve whether a step truly engages with the model's computation, and the internal mechanism of LLMs' thinking process is still unclear. [yu2025causal]_ reframe CoT pruning into the Probability of Necessity and Sufficiency (PNS) framework [pearl2009causality]_, but it focuses on estimating the necessity of each step using counterfactual intervention in a similar way to prior works [lanham2023measuring]_ [yee2024dissociation]_ [bogdan2025thought]_. Although they are framed into PNS, their measurement of sufficiency and necessity is restricted to contexts where the prior steps remain unchanged, which corresponds to \mathrmATE_\textnec(1) in our framework.
+
+Implementations
+---------------
+
+""""
+
+Perturbing reasoning steps. We treat sentences as distinct reasoning steps, as prior work has shown that each sentence can serve a different function within a reasoning trace [bogdan2025thought]_. We follow prior work [lanham2023measuring]_ [gaoshapley]_ and add small random offsets (chosen from [-3,-2,-1,1,2,3]) to the numbers in a reasoning step. This keeps the perturbation minimal so that the step remains largely unchanged in token length, wording, and underlying logic. We can therefore reasonably attribute any confidence changes caused by the perturbation to the model’s treatment of the original step. For steps that do not contain numerical values, we also follow prior work [bogdan2025thought]_ [tanneru2024hardness]_ [wang-etal-2025-chain]_ by dropping them as a perturbation to measure the influence of those sentences. For perturbing context steps, we only change numerical values.
+
+Models
+~~~~~~
+
+We evaluate on different open-weight LLMs spanning 1.5B to 1T parameters. For Qwen-2.5-7B and Llama-3.1-8B, we use the versions finetuned on samples generated by DeepSeek-R1 [guo2025deepseek]_, i.e., DeepSeek-R1-Distill-Qwen-7B and DeepSeek-R1-Distill-Llama-8B, along with Nemotron-1.5B; these models generate very long CoTs at test time. From the latest Qwen3 family [yang2025qwen3]_, we include Qwen3.5-4B, Qwen3.5-27B, and Qwen3.6-35B-A3B. We additionally evaluate Nemotron3-Nano-30B and Nemotron3-Super-120B [blakeman2025nvidia]_, GPT-OSS-120B [agarwal2025gpt]_, DeepSeek-V3.1-671B [liu2024deepseek]_, and Kimi-K2.6-1T []. This set covers dense and Mixture-of-Experts architectures, transformer and hybrid Mamba-Transformer designs, and both reasoning-tuned and general-purpose post-training recipes.
+
+Steering
+~~~~~~~~
+
+To compute the direction, for all tested models we set the threshold α=0.9 for s_\textTT, while β=0 for s_\textDT, which means perturbing those steps s_\textDT does not change the model's confidence at all. We emphasize that thresholding is used only to select the most representative steps for extracting the steering direction, while is a continuous measure. The ablation study for thresholding is in Appendix threshold-ablation.
+
+0
+
+More Experimental Results of
+----------------------------
+
+As shown in Figure eval-tts-apdx-qwen, we observe a similar long-tail distribution of across different datasets. Steps with larger are sparse, while the most of steps have relatively low . Additionally, as shown in Figure eval-tts-apdx-subfig2 and Figure eval-tts-apdx-subfig4, on different datasets, we still observe that there exist ample examples where \mathrmATE_\textnec(1) and \mathrmATE_\textsuf(0) of the same step are very different.
+
+Results on Commonsense Reasoning
+--------------------------------
+
+We apply and the direction to commonsense reasoning to test the generalizability of our framework to more generic reasoning cases. We use CommonsenseQA [talmor2019commonsenseqa]_ as our test data. Since commonsense reasoning is predominantly non-numeric, standard intervention schemes that rely on perturbing numerical values are not suitable in this setting. To apply interventions on such content, we prompt a separate large language model (GPT-5) to produce subtle, semantically coherent distortions of the initial reasoning step. This makes perturbation applicable to different reasoning scenarios. An example perturbed rationale is shown in Table rationale-example-qa.
+
+| **Question** | Where would you find magazines alongside many other printed works? |
+| [2pt] **Options** | **A** doctor **B** bookstore **C** market **D** train station **E** mortuary |
+| [6pt] **Original rationale** | ...bookstores are designed to sell both books and periodicals... |
+| [4pt] **Perturbed rationale** | ...train stations are designed to sell both books and periodicals... |
+
+Example multiple-choice question with original vs. perturbed rationale.
+
+As shown in Figure eval-ret-qa-a and Figure eval-ret-qa-b, the distribution of on Commonsense reasoning is long-tailed, which is similar to the patterns observed on mathematical reasoning.
+
+Furthermore, we conduct the steering tests (explained in Section exp-steer) on the examples of Commonsense QA. Specifically, we use the same direction extracted from AMC dataset for steering (the same setting as Table intervention-results). The steering results are shown in Figure eval-ret-qa-c. Noticeably, the direction can still mediate the reasoning behaviors on CommonsenseQA when applied to the middle layers. This strongly indicates the generalizability of direction and suggests that LLMs encode a specific variable for true-thinking behaviors.
+
+Steering Results on Larger Models
+---------------------------------
+
+Beyond the 1.5B and 7B models in Figure steer-a and Figure steer-b, we further demonstrate that the direction generalizes to a larger 14B model. As shown in Figure steer-14b, we can similarly modulate the 14B model’s reasoning behavior, controlling whether it engages or disengages with reasoning steps by steering the hidden states in the middle layers along or against direction.
+
+For instance, in the Qwen-2.5 model, layer 15-22 consistently yield the strongest intervention performance across all three datasets (Figure steer-c–steer-d), suggesting these intermediate layers concentrate latent reasoning. We also compare models with different sizes in the same model family. Similar patterns hold for the much smaller Qwen-2.5-1.5B model (Figure steer-a and Figure steer-b) and larger 14B model (Figure steer-14b in Appendix 14b). Steering along the direction (to induce the step use in LLMs' internal reasoning) is weaker for smaller models, whereas the results in the are comparable.
+
+Ablation study
+--------------
+
+Threshold of for extracting steering directions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+=-1
+In this section, we ablate the threshold for selecting true-thinking steps when extracting the vector. Our goal is to better understand the scale of , that is, how low a score may already indicate decorative thinking and how high a score reflects true thinking. We use steering performance as an indirect probe of how correlates with the internal engagement of steps in reasoning.
+
+=-1
+When extracting steering directions with difference-in-means, the steps with zero are treated as decorative-thinking steps (s_\textDT), while we use steps from different ranges of as true-thinking steps (s_\textTT). As shown in Figure up-threshold, when directions are computed from steps drawn from increasingly higher ranges, the steering effect grows roughly linearly. In contrast, using steps with below 0.03 yields negligible steering, suggesting these steps are internally treated as decorative, similarly to those with zero . Because the directions are computed as the difference in mean hidden states between true and decorative steps (Eq. dir), negligible steering effects mean the direction fails to capture the meaningful distinction between decorative and true thinking.
+
+Overall, this analysis reveals an implicit decision boundary in the model’s internal space: while the distribution of is very long-tailed and high- steps are rare, larger indeed corresponds to genuinely influential reasoning. We leave further in-depth study of the geometry [wollschlager2025the]_ of hidden states and directions in the latent space as future work.
+
+Averaging over \textATE(c) for
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+We compare using only \textATE(1) in with the complete to identify true-thinking steps. This slightly differs from the DropStep method in Table ablation-ate, which is adopted by past works [tanneru2024hardness]_ [lanham2023measuring]_ [wang-etal-2025-chain]_ [bogdan2025thought]_. DropStep defines \textATE(1) with step removal as the perturbation, i.e., \textATE(1)^\textdrop=\mathrmP(y^* \mid \mathcalC,s)-\mathrmP(y^* \mid \mathcalC). In contrast, here \textATE(1)=\mathrmP(y^* \mid \mathcalC,s)-\mathrmP(y^* \mid \mathcalC,s') using numerical perturbation by changing the numbers in step s. However, as shown in Table ablation-ate, incorporating \textATE(0) is still necessary, as the resulting direction achieves stronger intervention performance.
+
+Results on MATH for steering with directions identified from true-thinking steps based on ATE(1) and complete .
+
+| | |\mathrmATE_\textnec(1)| |
+| only | \mathrmmean\big(|\mathrmATE_\textnec(1)|, |
+| |\mathrmATE_\textsuf(0)|\big) |
+| | A | B | A | B |
+| Flip rate | 10.0 | 41.6 | 38.0 | 62.5 |
+
+Examples with low TTS
+---------------------
+
+We provide more examples where reasoning steps have TTS lower than 0.005. For this section, we classify each reasoning example based on behavioral patterns labeled in [venhoff2025understanding]_
+
+**Uncertainty-estimation example**
+
+Another way is to divide the quadrilateral into two triangles and find the area of each triangle, then add them up. Looking at the points, maybe I can split the quadrilateral along the x-axis
+
+Uncertainty-estimation The points (-1, 0) and (2, 0) are on the x-axis, so the quadrilateral is split into two triangles: one above the x-axis and one below.
+
+Wait, actually, the point (0, 1) is above the x-axis, and (0, -3) is below. So, if I connect (-1, 0) to (0, 1) to (2, 0) to (0, -3) and back to (-1, 0), it's a quadrilateral that crosses over the x-axis.
+
+Alternatively, maybe I can split it into two triangles: one with vertices (-1, 0), (0, 1), (2, 0) and another with vertices (2, 0), (0, -3), (-1, 0). Wait, but that might not cover the entire quadrilateral.
+
+Alternatively, perhaps split it into triangles with a common diagonal. Let me see.
+
+If I connect (0, 1) to (0, -3), that's a vertical line along the y-axis. Then, the quadrilateral is split into two parts: one on the left side of the y-axis and one on the right.
+
+But actually, the points are (-1, 0), (0, 1), (2, 0), (0, -3)
+
+**Uncertainty-estimation example**
+
+Looking at the points, maybe I can split the quadrilateral along the x-axis. The points (-1, 0) and (2, 0) are on the x-axis, so the quadrilateral is split into two triangles: one above the x-axis and one below
+
+Uncertainty-estimation
+
+Wait, actually, the point (0, 1) is above the x-axis, and (0, -3) is below. So, if I connect (-1, 0) to (0, 1) to (2, 0) to (0, -3) and back to (-1, 0), it's a quadrilateral that crosses over the x-axis.
+
+Alternatively, maybe I can split it into two triangles: one with vertices (-1, 0), (0, 1), (2, 0) and another with vertices (2, 0), (0, -3), (-1, 0). Wait, but that might not cover the entire quadrilateral.
+
+Alternatively, perhaps split it into triangles with a common diagonal. Let me see.
+
+If I connect (0, 1) to (0, -3), that's a vertical line along the y-axis. Then, the quadrilateral is split into two parts: one on the left side of the y-axis and one on the right.
+
+But actually, the points are (-1, 0), (0, 1), (2, 0), (0, -3)
+
+**Backtracking example**
+
+So, putting it all together, 20% of 50% of 80 is 8. That seems correct, but let me verify it another way to make sure I didn't make a mistake
+
+Backtracking
+
+Another approach is to multiply all the percentages together first and then apply them to 80. So, 20% is 0. 2, and 50% is 0. 5. Multiplying those together: 0. 2 * 0. 5 = 0. 1
+
+**Adding-knowledge example**
+
+Wait, but that might not be accurate. Alternatively, maybe split the quadrilateral into two triangles by drawing a diagonal from (-1, 0) to (2, 0)
+
+Adding-knowledge Then, the quadrilateral is split into two triangles: one with vertices (-1, 0), (0, 1), (2, 0) and another with vertices (-1, 0), (2, 0), (0, -3). Let me calculate the area of each triangle and add them.
+
+First triangle: (-1, 0), (0, 1), (2, 0)
+
+Using the formula for the area of a triangle with coordinates: 1/2 |x1(y2 - y3) + x2(y3 - y1) + x3(y1 - y2)|
+
+Plugging in the points:
+
+x1 = -1, y1 = 0
+
+x2 = 0, y2 = 1
+
+x3 = 2, y3 = 0
+
+So,
+
+Area = 1/2 | (-1)(1 - 0) + 0(0 - 0) + 2(0 - 1) |
+
+= 1/2 | (-1)(1) + 0 + 2(-1) |
+
+= 1/2 | -1 + 0 - 2 |
+
+= 1/2 | -3 | = 1/2 * 3 = 1
+
+**Adding-knowledge example**
+
+Let me calculate the area of each triangle and add them. First triangle: (-1, 0), (0, 1), (2, 0)
+
+Using the formula for the area of a triangle with coordinates: 1/2 |x1(y2 - y3) + x2(y3 - y1) + x3(y1 - y2)|
+
+Plugging in the points:
+
+x1 = -1, y1 = 0
+
+x2 = 0, y2 = 1
+
+x3 = 2, y3 = 0
+
+So,
+
+Area = 1/2 | (-1)(1 - 0) + 0(0 - 0) + 2(0 - 1) |
+
+= 1/2 | (-1)(1) + 0 + 2(-1) |
+
+= 1/2 | -1 + 0 - 2 |
+
+= 1/2 | -3 | = 1/2 * 3 = 1.5
+
+Adding-knowledge
+Second triangle: (-1, 0), (2, 0), (0, -3)
+
+Again, using the same formula:
+
+x1 = -1, y1 = 0
+
+x2 = 2, y2 = 0
+
+x3 = 0, y3 = -3
+
+Area = 1/2 | (-1)(0 - (-3)) + 2((-3) - 0) + 0(0 - 0) |
+
+= 1/2 | (-1)(3) + 2(-3) + 0 |
+
+= 1/2 | -3 -6 + 0 |
+
+= 1/2 | -9 | = 1/2 * 9 = 4. 5
+
+Adding both areas: 1. 5 + 4. 5 = 6
+
+Okay, so that's the same result as before
