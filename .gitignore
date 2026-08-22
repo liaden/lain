@@ -37,3 +37,11 @@ references/repos/
 # whole repo once per worktree. That is what put ~1.2M drawers in the `lain`
 # wing and OOM-killed the hourly refresh.
 .claude/worktrees/
+
+# ctags index and rubocop's cache: local build artifacts, regenerated on demand.
+/tags
+/.cache/
+
+# /critique panel output. Scratch by convention -- a review worth keeping gets
+# filed into planning/reviews/ under its own dated name instead.
+/.critique-*.md
