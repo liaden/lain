@@ -15,15 +15,53 @@ home for the three things the small scenarios structurally cannot reach:
 **Cost:** expensive. Several sessions. Run it when the question is *context economics*, not when the
 question is *does the loop work*.
 
-**Needs:** `bench.md` up. Ruby with `rails` available — **check first**, and if it is absent do not
-improvise a substitute mid-run:
+**Needs:** `bench.md` up, and a working Rails toolchain — **check first, and if it is absent INSTALL
+it rather than improvising a substitute mid-run.** A Sinatra app does **not** work here; it is too
+small to be this scenario, and swapping it in produces a null that reads like a result.
 
 ```bash
-gem list -i rails || echo "FALLBACK: use --minimal, or run rust-cli.md instead"
+gem list -i rails && rails --version        # both, not just the first
 ```
 
-If `rails` is missing, `rails new blog --minimal --skip-bundle` still exercises the volume that
-matters. A Sinatra app does **not** — it is too small to be this scenario.
+### Standing up the environment, measured 2026-08-21
+
+`rails` was absent on this box for every round up to and including round 8, which is part of why this
+scenario had never run. The recipe below took **~4 minutes** total and is contained entirely inside
+the QA sandbox, so it is disposable with the sandbox and never touches the operator's own gems:
+
+```bash
+. "$QA/env.sh"
+mkdir -p "$QA/gems"
+export GEM_HOME="$QA/gems"
+export PATH="$QA/gems/bin:$PATH"
+gem install rails --no-document          # 32 gems, ~3 min; writes only under $QA
+```
+
+**Then put `GEM_HOME` and the `PATH` entry into `$QA/env.sh` itself, BEFORE the tmux server is
+started.** This is the step that is easy to miss and silent when missed: `PaneCommand::PANE_ENV` is
+an eleven-name `LAIN_*` allowlist, so a `GEM_HOME` exported in the shell that runs `lain up` does
+**not** reach the chat pane — the model's very first `bash` call comes back
+`rails: command not found`, which reads like a model failure or a broken tool layer and is neither.
+It is the same mechanism as `LAIN_DESKTOP` (`method.md`), one variable over. The `$QA/gems/bin` entry
+goes **before** `$QA/shim`, and the gate to run beside the `XDG_*` one:
+
+```bash
+for p in $(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_pid}'); do
+  tr '\0' '\n' < /proc/$p/environ | command grep -c "^GEM_HOME=$QA/gems"   # every pane must report 1
+done
+```
+
+**What is needed beyond the gem, all present on this box and all worth checking rather than
+assuming:** a C toolchain (`gcc`/`make`) because `sqlite3` is a native gem, `sqlite3` itself, and
+`node`/`yarn` (mise-provided here) for anything not `--minimal`. Verified end to end rather than
+inferred — a full `rails new t2 --minimal` completed in **19s**, the native gems built, and
+`bin/rails runner 'puts Rails.version'` printed **8.1.3.1**. `rails new t1 --minimal --skip-bundle`
+generates **80 files**, which is the volume floor this scenario is built on.
+
+*(One incidental: gem installs on this box fire a global `ctags` post-install hook that emits several
+`ctags: Warning: … TOML parser is broken` lines per gem. Harmless, but it pads any `bash` result that
+installs a gem — keep it in mind when reading §2's tool-result sizes, and do not file it as lain
+disclosing something odd.)*
 
 ---
 

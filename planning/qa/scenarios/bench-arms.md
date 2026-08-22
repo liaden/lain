@@ -112,8 +112,18 @@ omission is now *visible* for the first time; it is recorded, not fixed.
   is the shape that has killed sessions elsewhere. It has not fired here in two rounds — the
   requests are 1.4–2.1s each, so no stream goes 30s silent — so if it *does* fire, that is a
   finding, not background noise.
-- **Wall-time outliers.** Round 4 saw `single-thread` at a 29.6s max against a 1.39s median — 20×
-  on one task, unexplained. Worth a look whenever the cost axis is the subject.
+- **Wall-time outliers are FIRST-LOAD COST, and that is settled rather than open.** Round 4 saw
+  `single-thread` at a 29.6s max against a 1.39s median and recorded it as unexplained; round 8
+  reproduced it (**27.47s** against a 1.39s median) and then re-ran the identical suite immediately,
+  warm — the same arm came back **mean 1.51s, max 2.40s**. The outlier is the run's FIRST request
+  paying the runner load, which `bench.md` already prices at ~27s. So: warm the model before the run
+  if the wall-time column is the subject, and read a lone ~27s max on the first arm as the load,
+  not as an anomaly. A ~27s outlier on a LATER arm, or on a demonstrably warm runner, is still a
+  finding.
+- **`num_batch` does not re-key the runner, though `--num-ctx` does.** Both round-8 arm runs sent
+  `num_batch: 2048` against a runner whose argv read `-b 512`, across two full suites, with residency
+  unchanged throughout. Round 6's 30.9s→9.3s reading was a hand-rolled `curl` probe and does not
+  generalise to lain's own launches.
 
 ## What the arms cannot do today
 

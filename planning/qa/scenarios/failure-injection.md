@@ -54,7 +54,20 @@ lain sessions
 ```
 
 Expected: **one fewer turn, under the SAME head digest, plus `1 line unparsed`.** Then fork the
-damaged session at that advertised head:
+damaged session at that advertised head.
+
+**Read that head by PATTERN, never as the row's last field.** The damage note is appended after the
+digest, so `awk '{print $NF}'` returns the literal word `unparsed` on exactly the rows this section
+cares about — and `lain chat --fork SESSION@unparsed` then refuses with `no turn matching "unparsed"`,
+which is a correct refusal of a bogus input wearing the shape of a pass. Round 8 lost the `--fork`
+door to this and had to re-drive it. Use:
+
+```bash
+HEAD=$(lain sessions | command grep 'TORN-turn' | command grep -oE 'blake3:[0-9a-f]+')
+lain chat --fork "TORN-turn.ndjson@${HEAD}" --provider ollama --model qwen3-coder:30b < /dev/null
+```
+
+Expected from that fork:
 
     cannot fork <session>: turn record 3 (user) recorded as blake3:6dbf0c8b… re-commits to
     blake3:6aaa90f1…; its content no longer matches its content address

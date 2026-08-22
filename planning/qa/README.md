@@ -34,8 +34,24 @@ Pick by the question being asked, not by coverage. Each states its own cost and 
 line for the order): `session-and-window` → `rust-cli` → a subject with `cockpit-surfaces`
 piggybacked → `bench-arms` → `failure-injection`.
 
+**That is FIVE steps, and `rust-cli` is not one of the subjects.** It is the smoke test; the subjects
+are `bowling-ruby` and `rails-blog`, and the third step is a SUBJECT with `cockpit-surfaces` riding
+on it. **Rounds 7 and 8 both collapsed steps 2 and 3** — each piggybacked `cockpit-surfaces` onto the
+`rust-cli` crate, each wrote "the `rust-cli` crate served as this round's subject", and neither
+noticed it was repeating the other. The substitution is easy precisely because `rust-cli` leaves a
+working crate behind, so the slot *looks* filled. Two consecutive rounds means `bowling-ruby` has had
+no coverage since 2026-08-19, when it scored 5/5 oracles.
+
+So, mechanically: **`cockpit-surfaces` piggybacks on the SUBJECT session, not on the smoke test.**
+Bring the subject up before deciding where the cockpit checks ride — round 8 launched the cockpit
+before it had read `cockpit-surfaces.md`, and the slot was gone by the time anyone chose. If the
+subject really is being skipped, that has to be said in the findings **before** the round ends, not
+reconstructed afterwards.
+
 **Run BOTH subjects** (`bowling-ruby` and `rails-blog`), rather than picking one. This line used to
-say "one subject", and the predictable consequence is that the cheaper one always won.
+say "one subject", and the predictable consequence is that the cheaper one always won. **The same
+consequence recurs one level out** when the smoke test is allowed to stand in for a subject, which is
+what the paragraph above exists to stop.
 
 **But `rails-blog` gets its OWN round, in its own driver context** — it is not the tail of the
 sequence above, and it is not something a full round "reaches" if there is budget left. Rounds 4, 5
@@ -67,6 +83,7 @@ call per turn.
 
 Written per round, kept in `planning/` alongside the chunk specs that discharge them:
 
+- [`../qa-findings-round8-2026-08-21.md`](../qa-findings-round8-2026-08-21.md) — round 8
 - [`../qa-findings-round7-2026-08-20.md`](../qa-findings-round7-2026-08-20.md) — round 7
 - [`../qa-findings-round7-survey-2026-08-20.md`](../qa-findings-round7-survey-2026-08-20.md) — round 7,
   the `/survey` supplement: `cockpit-surfaces` §4 and §4b, the first time §4b was ever driven
@@ -86,6 +103,22 @@ first exercised the section rather than what the section asks for:
 - **`cockpit-surfaces.md` §4b (notes on a survey) was first driven on 2026-08-20**, in round 7's
   `/survey` supplement (`../qa-findings-round7-survey-2026-08-20.md`). Rounds 4, 5, 6 and round 7's
   own main pass had all skipped it — nobody had placed a note on a survey before that round.
+  **Round 8 skipped it again**, so it has been driven exactly once and every one of round 7's ten
+  §4b findings (F30–F39) is un-regressed. It is the highest-value single item for round 9.
+- **`cockpit-surfaces.md` §8 (fold state on the approval and inbox rows) was first driven on
+  2026-08-21**, in round 8. It had been carried in `method.md` as pending "once T9/T12 land"; those
+  have landed, the RPC recipe runs, and it immediately produced two findings (F42, F43) that no
+  buffer-text probe in §1 or §2 could have seen.
+- **`rails-blog.md` §1 (compaction at scale) was first reached on 2026-08-21**, in round 8's second
+  pass — the first time in eight rounds. 11 compactions, both triggers, occupancy falling 25–30
+  points each time, and **no `Overlap`** across the composed `elide-tools+summarize-conversation`
+  pair. Until then every claim about the two content-selective strategies rested on specs alone.
+  **`rails-blog.md` §2 (unbounded tool output) was NOT reached even then** — largest tool result
+  4,713 bytes, zero caps disclosed. §1's volume came from turn COUNT, not result SIZE; do not read a
+  pass on one as a pass on the other.
+- **`bowling-ruby.md` was last driven on 2026-08-21** (round 8, second pass): 5/5 oracles, and §2's
+  F23 fork/resume regression step passed with a valid control pair. Before that it had been dropped
+  by rounds 7 and 8's first pass — see the subject-slot guard above, which exists because of it.
 
 ## The two rules that outrank everything else here
 
@@ -100,11 +133,15 @@ first exercised the section rather than what the section asks for:
 
 Worth stating plainly, because "every defect behaves differently now" reads as coverage:
 
-- **`:LainReviewDone` is the rail still undriven.** It is the third rail `cockpit-surfaces.md` §4's
-  delivery discussion names, alongside `:LainNoteDone` and the thread pane's `:w` — and round 7 found
-  both of *those* raising a Lua traceback (F30, F31) rather than delivering cleanly. Given that,
-  `:LainReviewDone` is the first thing the next round should check, not an assumed pass by
-  association.
+- ~~**`:LainReviewDone` is the rail still undriven.**~~ **Closed by round 8, and it passes.** Driven
+  against a survey buffer it refuses cleanly — `lain: :LainReviewDone needs an open EPIC review, and
+  this buffer is not one -- a changeset review or a survey hands back with :LainReviewVerdict
+  {verdict} instead` — with **no `stack traceback:`**, `nvim_get_mode()` not blocking, and the journal
+  unchanged. At 161 characters against a measured `v:echospace` of 88 it also exercised the
+  width-aware rail, which middle-elided the displayed line and kept the full sentence in `:messages`.
+  **What is still owed on that rail is the OTHER leg round 7 named:** `51_thread.lua:639` deliberately
+  still raises out of a `BufWriteCmd`, so the traceback-and-modal shape survives there. Reaching it
+  needs `cockpit-surfaces.md` §4b's thread pane, which round 8 did not drive at all.
 - **The plain, non-cockpit path.** Almost every scenario runs under `lain up --nvim`. The REPL/stdin
   concerns exist on a bare `lain chat` too — and round 4 found that the approval surface is *worse*
   there, with no `:LainApprove` to recover through. `cockpit-surfaces.md` §5 now forces one

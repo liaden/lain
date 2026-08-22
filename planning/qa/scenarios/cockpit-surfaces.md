@@ -146,7 +146,11 @@ window 1 to press `x`.
 
 Check, in order:
 
-- `x` on an opened row redraws `[ ]` → `[x]` **and** acknowledges: `lain: unit-content-v1:<key>… is now reviewed`.
+- `x` on an opened row redraws `[ ]` → `[x]` **and** acknowledges, naming the ROW rather than a
+  content hash: `lain: marked reviewed: 6 hunk(s) of src/main.rs`. (The older
+  `lain: unit-content-v1:<key>… is now reviewed` is what round 7's F38 fixed — one message per row
+  instead of one per unit, of which only the last survived the message line. A driver still expecting
+  the digest form will file the fix as a regression; verified live, round 8.)
 - `x` on a row nothing has opened refuses **by name** and leaves the row unmarked:
   `lain: lain://review line 3 names lib/version.rb, which nothing has read -- open it with <CR> first`.
 - `x` on a row with no hunks (an empty file) refuses cleanly:

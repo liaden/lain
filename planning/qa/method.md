@@ -328,6 +328,15 @@ ruby -rjson -e 'c=Hash.new(0); File.foreach(ARGV[0]){|l| r=JSON.parse(l) rescue 
 Expect the HUD to gain a `fleet N` segment and the prompt to become `human>`. **Answering there is
 its own hazard — see the `human>` note below.**
 
+**This recipe parks the CHILD's question, so it cannot exercise the HUD's idle-elision check**
+(`cockpit-surfaces.md` §7: "at the `human>` prompt of a parked `ask_human` the `idle` segment must be
+absent entirely"). `PromptComposer#idle` elides on `@agent.dispatching?`, which reads the PARENT's
+dispatch lock; with a subagent holding the question the parent is genuinely idle, so the line
+correctly reads `... fleet 1 idle 5s` and a driver who does not know this files a defect that is not
+there (round 8 nearly did, and withdrew it on the code read). Reaching §7's case needs the parent's
+OWN `ask_human` parked — ask the top-level agent a question it must put to a human — not a `@role`
+spawn.
+
 ### At the `human>` prompt: commands run, but `/inbox` opens a drain where the next line is an answer
 
 **Round 6's F27 ("every command but `/inbox` is silently delivered to the subagent as a prose
@@ -675,9 +684,15 @@ ls -l /proc/<pid>/exe                                 # what it really is
 `qwen3-coder:30b` behaviours that are neither lain defects nor interesting:
 
 - **It emits tool calls as literal text.** `<function=web_search><parameter=query>...` and stray
-  `</tool_call>` arrive as prose. Reproduced cleanly in round 4: the trigger is a contaminated
-  transcript, not payload length — the same prompt that failed twice in a poisoned session
-  succeeded immediately in a fresh one.
+  `</tool_call>` arrive as prose. Round 4 reproduced it out of a contaminated transcript and
+  concluded that contamination was THE trigger rather than payload length — the same prompt that
+  failed twice in a poisoned session succeeded immediately in a fresh one.
+  **Round 8 overturned the "only when contaminated" half: it fired on a CLEAN transcript.** The
+  session's entire history was two trivial one-word exchanges (`ping`, `pong`) with no tool calls at
+  all, and the first substantive ask emitted `<function=` as assistant text, wrote no file and ended
+  the turn; a restart plus the identical prompt then succeeded immediately. So contamination is *a*
+  trigger and not *the* trigger, and **a fresh session is not protection** — the restart rule stands
+  unchanged, but do not read a clean transcript as a reason to look for a lain defect instead.
 - **It loops on clarifying questions instead of acting**, and on exploration instead of writing.
   Round 4 watched it burn the **entire 25-iteration ceiling on `/create-plan` without writing a
   single file** — git status, then find, then grep, then more listing. Since T14 that ceiling is
