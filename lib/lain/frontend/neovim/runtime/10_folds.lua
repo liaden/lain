@@ -196,25 +196,28 @@ end
 -- shape), so it IS the summary; a multi-line record appends only its hidden
 -- line count.
 --
--- A BLANK RECORD HAS TO RENDER BLANK, and returning the line is not enough to
--- get that: a closed fold displays this text and nvim then FILLS the rest of
--- the screen line with the 'fold' fillchar, so an empty summary comes out as a
--- full-width bar of dots. The line that meets it is lain://approval's blank
--- trailer, which must answer `spanning_record` true or nothing in that buffer
--- folds at all (05_records' measurement) -- so it gets a fold it has no use
--- for, and the fold has to be invisible. Spaces to the window's width leave
--- nvim nothing left to fill; over-padding is safe, since a closed fold is one
--- screen line and the surplus is simply not drawn.
+-- EVERY CLOSED FOLD HAS TO FILL ITS OWN LINE, and returning the summary is
+-- not enough to get that: a closed fold displays this text and nvim then
+-- FILLS the rest of the screen line with the 'fold' fillchar, so anything
+-- shorter than the window trails a bar of dots -- a blank summary
+-- (lain://approval's trailer, which must answer `spanning_record` true or
+-- nothing in that buffer folds at all, 05_records' measurement) is only the
+-- most visible case, not a special one. `strdisplaywidth` on the string this
+-- function is ABOUT TO RETURN -- suffix included, so the `span > 1` branch's
+-- padding accounts for "  (+N lines)" too -- is what the fillchar would
+-- otherwise measure against: raw byte or character length disagrees with it
+-- under a tab or multibyte content. Padding past the window is safe, since a
+-- closed fold is one screen line and the surplus is simply not drawn.
+-- `nvim_win_get_width` is the WHOLE window, so this math assumes no gutter
+-- (no 'signcolumn'/'foldcolumn'/'number') -- true of every lain view today
+-- and inherited unchanged from the pre-fix blank-only branch, not new here.
 function _G.__lain.foldtext()
   local line = vim.fn.getline(vim.v.foldstart)
   local span = vim.v.foldend - vim.v.foldstart + 1
   if span > 1 then
-    return line .. "  (+" .. (span - 1) .. " lines)"
+    line = line .. "  (+" .. (span - 1) .. " lines)"
   end
-  if line:match("^%s*$") ~= nil then
-    return (" "):rep(vim.api.nvim_win_get_width(0))
-  end
-  return line
+  return line .. (" "):rep(vim.api.nvim_win_get_width(0) - vim.fn.strdisplaywidth(line))
 end
 
 -- 'foldmethod' and friends are WINDOW options, and these buffers are created

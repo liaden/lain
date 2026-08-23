@@ -982,6 +982,34 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       LUA
     end
 
+    # T10: `foldtext()`'s general statement (10_folds.lua:208-217) padding
+    # every closed fold, not only a blank one, needs a fold whose closed
+    # summary is SHORTER than the window -- and lain://approval's own WIDTH
+    # (96) always cuts a wrapped summary past this harness's 80-column
+    # default, so going through the real view can never show the gap the fix
+    # closes. A throwaway window with a hand-built manual fold measures
+    # `foldtext()` directly, the same function every record-shaped view
+    # shares, with content this example controls.
+    #
+    # THIS SETS `foldtext` ITSELF, so it deliberately bypasses
+    # `10_folds.lua`'s own INSTALLATION of that option (`install_folds`, the
+    # `BufWinEnter` autocmd) -- a break there would still read green through
+    # this helper. That wiring is what `fold_display` and the pre-existing
+    # blank-trailer example already drive, against the real `ApprovalView`
+    # window; this helper is narrower on purpose, for the width reason above.
+    def manual_fold_display(lines)
+      inspector.exec_lua(<<~LUA, [lines])
+        local lines = ...
+        vim.cmd("botright new")
+        local win, buf = vim.api.nvim_get_current_win(), vim.api.nvim_get_current_buf()
+        vim.bo[buf].buftype = "nofile"
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+        vim.wo[win].foldmethod, vim.wo[win].foldtext = "manual", "v:lua.__lain.foldtext()"
+        vim.cmd(("1,%dfold"):format(#lines))
+        return { text = vim.fn.foldtextresult(1), width = vim.api.nvim_win_get_width(win) }
+      LUA
+    end
+
     # `zo` on a row, from the window that holds the buffer, answering the row's
     # fold state afterwards.
     def open_fold_at(line)
@@ -1041,6 +1069,34 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(screen[:folds][blank - 1]).to eq(blank)
       expect(screen[:blank]["text"]).to match(/\A +\z/)
       expect(screen[:blank]["text"].length).to be >= screen[:blank]["width"]
+    end
+
+    # T10, scenario 1 (F52's general statement). The key-hint line's own
+    # one-line fold is the blank trailer's defect with the special case
+    # removed: non-blank text, still with nothing left over for nvim to fill,
+    # so it wore a trail of fold fillchars before this fix padded every
+    # closed fold rather than only the blank one.
+    it "pads the key-hint line's closed fold to the window width, with no fill trailing it" do
+      screen = rendered_fold_state { { hint: fold_display(buffer_lines.size) } }
+
+      expect(screen[:lines].last).to eq(described_class::HINT)
+      expect(screen[:hint]["text"]).to start_with(described_class::HINT)
+      expect(screen[:hint]["text"].length).to be >= screen[:hint]["width"]
+    end
+
+    # T10, scenario 2. The `span > 1` branch appends "  (+N lines)" to the
+    # summary and never padded at all -- invisible only because a record row
+    # is open at rest today (the round's own measurement). Padding has to
+    # account for the SUFFIXED line's display width, not the raw line's, or a
+    # multi-line record closed by a human (`zc`, or a second parked item
+    # landing behind the live one) would still trail fill past the marker.
+    it "pads a closed multi-line record's summary to the window width, suffix included" do
+      screen = rendered_fold_state do
+        { multiline: manual_fold_display(["a short summary line", "  continuation one", "  continuation two"]) }
+      end
+
+      expect(screen[:multiline]["text"]).to match(/\Aa short summary line {2}\(\+2 lines\) *\z/)
+      expect(screen[:multiline]["text"].length).to be >= screen[:multiline]["width"]
     end
 
     # The claim the fold surface exists at all, restated where the new at-rest
