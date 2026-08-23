@@ -142,6 +142,48 @@ RSpec.describe Lain::Friction::Report do
       expect(rendered).to include("compaction scheduling knobs")
     end
   end
+
+  # T11/AC 2. The round-8 ollama report printed `4 prefix rewrites detected` and,
+  # two lines later, `none -- no prefix break was re-billed`. Both true: the
+  # rewrite line reads `request_sent` prefix chains and nothing else, while the
+  # waste line multiplies those same breaks by the cache-creation tokens the next
+  # call was BILLED. Neither said which question it had answered, so the pair read
+  # as a contradiction. Reconciled by saying what each measured -- NOT by making
+  # the counts agree: the rewrite line is unsegmented and the waste line is per
+  # model, so across a `/model` switch they legitimately differ.
+  describe "the two cache lines, when one fires and the other reports nothing" do
+    def request_sent(digest)
+      { "type" => "request_sent", "digest" => "blake3:req", "payload" => { "model" => "claude-opus-4-8" },
+        "prefix_chain_version" => 1, "prefix_digests" => [[0, digest]] }
+    end
+
+    def turn_usage(read:)
+      { "type" => "turn_usage", "digest" => "blake3:turn", "model" => "claude-opus-4-8",
+        "usage" => { "input_tokens" => 10, "output_tokens" => 10,
+                     "cache_creation_input_tokens" => 0, "cache_read_input_tokens" => read } }
+    end
+
+    # 5 chains -> 4 rewrites, one past CACHE_REWRITE_THRESHOLD, and every call
+    # billed zero cache creation, so nothing is attributable as waste.
+    subject(:rendered) { described_class.new(entries).render }
+
+    let(:entries) do
+      %w[a b c d e].flat_map { |digest| [request_sent(digest), turn_usage(read: 50_000)] }
+    end
+
+    it "still reports the rewrite count and still reports nothing re-billed" do
+      expect(rendered).to include("cache_rewrites: 4 prefix rewrites detected")
+      expect(rendered).to include("cache_waste: none -- no prefix break was re-billed")
+    end
+
+    it "says what the rewrite line measured" do
+      expect(rendered).to include("prefix chains that diverged")
+    end
+
+    it "says what the waste line measured" do
+      expect(rendered).to include("cache-creation tokens billed")
+    end
+  end
 end
 
 RSpec.describe Lain::CLI::Friction do

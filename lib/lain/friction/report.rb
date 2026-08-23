@@ -53,6 +53,41 @@ module Lain
                      "block that changes every turn, or compaction firing while the cache was still warm"
       }.freeze
 
+      # What each of the two cache lines MEASURED, said in the line itself.
+      # They read different bytes and answer different questions: `cache_rewrites`
+      # counts divergences between consecutive `request_sent` prefix chains and
+      # never looks at a usage record, while `cache_waste` multiplies those same
+      # breaks by the cache-creation tokens the next call was BILLED. So "4
+      # prefix rewrites detected" beside "no prefix break was re-billed" is two
+      # answers to two questions, and a reader given only the two numbers reads
+      # it as a contradiction.
+      #
+      # Saying what each measured is the whole reconciliation, deliberately: the
+      # counts are NOT made to agree, because they legitimately differ. The
+      # rewrite line counts across every model, {Friction::CacheWaste} segments
+      # per model (see its class doc), so a `/model` switch is one rewrite there
+      # and no waste here -- which is the {MODEL_SWITCH_NOTE} case, and would be
+      # papered over by any reconciliation that forced one number.
+      REWRITE_MEASURE = "prompt prefix chains that diverged, counted across every model, before billing"
+      WASTE_MEASURE = "measured as the cache-creation tokens billed after a break, per model"
+
+      # The fact that turns three true numbers -- zero waste, zero tokens served,
+      # zero saved -- from a healthy-looking cache report into what they are.
+      # Stated from the journal's `capability_degraded` record and never
+      # inferred, so a journal that recorded nothing says nothing here.
+      #
+      # The subject is "the provider that record names", not "this provider":
+      # the record carries a provider field, no call record carries one, and
+      # this report deliberately does not echo the name (it is a journal string
+      # reaching a render, the hazard {Friction::CacheWaste::SAFE_MODEL} exists
+      # for). Attributing the sentence to the record keeps it true without
+      # claiming an authority over the session's calls that nothing here can
+      # back -- which is also why {Friction::CacheWaste#no_prompt_cache?}, not
+      # `#prompt_cache_degraded?`, is what selects this line.
+      NO_PROMPT_CACHE = "not measured -- the journal records prompt_caching degraded, and no cache read " \
+                        "or re-billed write contradicts it, so the provider that record names does not " \
+                        "cache and no saving is quoted"
+
       # Why a model switch contributes no waste, said out loud rather than left
       # as an unexplained zero. {Friction::CacheWaste} segments per model, so a
       # switch's forfeited prefix never reaches the meter -- and a reader who
@@ -149,7 +184,8 @@ module Lain
         count = Bench::Rewrites.from_journal(@entries).count
         return [] if count <= CACHE_REWRITE_THRESHOLD
 
-        ["cache_rewrites: #{count} prefix rewrites detected: #{KNOBS.fetch(:cache_rewrites)}"]
+        ["cache_rewrites: #{count} prefix rewrites detected (#{REWRITE_MEASURE}): " \
+         "#{KNOBS.fetch(:cache_rewrites)}"]
       end
 
       def cache_waste_section
@@ -166,8 +202,10 @@ module Lain
       # because folding the analyzers and PHRASING a priced finding are
       # different jobs, and the phrasing carries real policy rather than
       # formatting: an upper bound has to say "at most", a dollar figure with
-      # nothing priceable behind it must not print as a confident zero, and a
-      # session with nothing to charge has to say so rather than be omitted.
+      # nothing priceable behind it must not print as a confident zero, a
+      # session with nothing to charge has to say so rather than be omitted, and
+      # a session that never had a cache must not read as one whose cache
+      # happened to save nothing.
       class CacheWasteSection
         # @param waste [Friction::CacheWaste]
         # @param knob [String] the guidance this section proposes
@@ -194,10 +232,20 @@ module Lain
         def notes
           return [] if @waste.calls.empty? || @waste.rebilled_tokens.positive?
 
-          ["cache_waste: #{(["none -- no prefix break was re-billed"] + context).join("; ")}"]
+          ["cache_waste: #{([headline] + context).join("; ")}"]
         end
 
         private
+
+        # A cacheless provider's "none" is not the same finding as a cache that
+        # HELD, and the two rendered identically. AC 5's other half lives in the
+        # `false` branch: the journal that recorded no capability keeps the
+        # measured wording, because it is still what was measured.
+        def headline
+          return NO_PROMPT_CACHE if @waste.no_prompt_cache?
+
+          "none -- no prefix break was re-billed (#{WASTE_MEASURE})"
+        end
 
         # "at most", because the figure IS an upper bound: a call that both
         # broke its prefix and appended new messages has its whole cache write
@@ -217,9 +265,32 @@ module Lain
         # figure here -- "priced call(s)" alone is a scoping word only a source
         # reader decodes.
         def context
-          bought = "#{@waste.cached_tokens} tokens served from cache over " \
-                   "#{@waste.calls.size} priced main-agent call(s), #{saved_phrase(@waste.cached_savings)}"
           [bought] + switch_notes + unpriced_notes + refusal_notes
+        end
+
+        # Two withholdings, and they answer different questions.
+        #
+        # The first is the card's: for a session the journal says had no cache,
+        # both the served count and the saving go, for the reason
+        # {Friction::CacheWaste#saving_on} sets out -- the arithmetic really is
+        # zero, and printing it says "your cache saved you nothing" about a
+        # session that never had one. Gated on `no_prompt_cache?` so it cannot
+        # fire over calls that did use a cache.
+        #
+        # The second needs no capability record at all, which is what closes
+        # F49's own sentence for the journals that carry none -- a recorded bench
+        # session, a strict-policy run. A dollar figure with nothing MEASURED
+        # behind it is the same shape as one with nothing PRICEABLE behind it,
+        # which {#figure_phrase} already withholds: zero tokens at any rate is
+        # zero, so `saving $0.000000` reports the multiplication rather than the
+        # session. The token count stays, because a zero the reader can see is
+        # the evidence; only the vacuous dollar tail goes.
+        def bought
+          calls = "#{@waste.calls.size} priced main-agent call(s)"
+          return "#{calls}, with no prompt cache to serve or save against" if @waste.no_prompt_cache?
+
+          served = "#{@waste.cached_tokens} tokens served from cache over #{calls}"
+          @waste.cached_tokens.zero? ? served : "#{served}, #{saved_phrase(@waste.cached_savings)}"
         end
 
         def switch_notes

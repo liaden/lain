@@ -96,6 +96,18 @@ module Lain
     # `request_sent` of its own to pair with. Every figure here is therefore
     # scoped to "priced main-agent calls", and the render says so.
     #
+    # == Whether there was a cache AT ALL, which no token count can answer
+    #
+    # Every figure below assumed a prompt cache existed and asked only how well
+    # it was used. A provider without one reports both cache fields as 0 on
+    # every call, so the same fold reports zero waste, zero tokens served and a
+    # confident zero saved -- three true numbers that together read as a healthy
+    # cache. The missing fact is a CAPABILITY, and the Journal already carries
+    # it: {Telemetry::CapabilityDegraded}, which {Bench::Session::Loader#degraded}
+    # reads offline the same way. It is folded in on the same walk (see
+    # {#prompt_cache_degraded?}), and its ABSENCE is deliberately not the
+    # complement -- see that method.
+    #
     # == What it emits
     #
     # Digests, token counts, model names and dollars. `payload` is read for one
@@ -181,7 +193,7 @@ module Lain
       def self.from_journal(entries, price_book: PriceBook.default)
         walk = Pairing.new
         Journal.records(entries).each { |record| walk.observe(record) }
-        new(calls: walk.calls, refused_usages: walk.refused, price_book:)
+        new(calls: walk.calls, refused_usages: walk.refused, degraded: walk.degraded, price_book:)
       end
 
       # The cache sensor's own door: one `turn_usage` record in, one cache fact
@@ -221,15 +233,17 @@ module Lain
         SAFE_MODEL.match?(candidate) ? candidate : UNRECORDED_MODEL
       end
 
-      # The pairing walk's state, which is genuinely a small state machine: a
-      # request waiting for its usage, the calls completed so far, and the
-      # usages refused because they belonged to somebody else.
+      # The journal walk's state, which is genuinely a small state machine: a
+      # request waiting for its usage, the calls completed so far, the usages
+      # refused because they belonged to somebody else, and what the provider
+      # was recorded as unable to do.
       class Pairing
         attr_reader :calls, :refused
 
         def initialize
           @calls = []
           @refused = 0
+          @capabilities = []
           @pending = nil
         end
 
@@ -237,7 +251,29 @@ module Lain
           case record["type"]
           when "request_sent" then @pending = record
           when "turn_usage" then pair(record)
+          when "capability_degraded" then @capabilities << record["capability"]
           end
+        end
+
+        # Collected on THIS walk: the state machine already visits every
+        # record, so a second scan would be a second O(n) pass and a second
+        # place that knows the record type's name. (Both of today's callers
+        # hand in a materialized Array -- {Friction::Report} freezes one -- so
+        # the saving is a pass and not a re-read; but {CacheWaste.from_journal}'s
+        # duck admits a one-shot enumerator, which no second scan could walk at
+        # all.)
+        #
+        # Anything that cannot BE a capability name is dropped, which is wider
+        # than nil: {Capability::DegradedSet} maps `to_sym` over its members, and
+        # `lain friction` reads whatever journal a user points it at, so a
+        # number or an object there raised straight out of the report. That is
+        # the decline-never-crash doctrine {#call_for} applies to a usage-less
+        # record -- where {Bench::Session::Loader} `fetch`es instead, because a
+        # bench must not replay a half-read degradation.
+        #
+        # @return [Capability::DegradedSet]
+        def degraded
+          Capability::DegradedSet.new(@capabilities.select { |name| name.respond_to?(:to_sym) })
         end
 
         private
@@ -294,11 +330,17 @@ module Lain
 
       # @param calls [Enumerable<Call>] every billed call, in journal order
       # @param refused_usages [Integer] usages that belonged to somebody else
+      # @param degraded [Capability::DegradedSet] what the journal recorded the
+      #   provider could not do -- the VALUE, not a list of names, so this class
+      #   never has to decide what a capability name is and the object stays
+      #   Ractor-shareable by construction
       # @param price_book [Lain::PriceBook]
-      def initialize(calls:, refused_usages: 0, price_book: PriceBook.default)
+      def initialize(calls:, refused_usages: 0, degraded: Capability::DegradedSet.new([]),
+                     price_book: PriceBook.default)
         @price_book = price_book
         @calls = calls.to_a.freeze
         @refused_usages = refused_usages
+        @degraded = degraded
         @model_switches = [consecutive_runs.size - 1, 0].max
         @rebills = @calls.group_by(&:model).values.flat_map { |arm| rebills_in(arm) }.freeze
         @unpriced_models = unpriceable_models.freeze
@@ -322,6 +364,46 @@ module Lain
       # Models this journal used that {PriceBook} declines to price.
       # @return [Array<String>]
       attr_reader :unpriced_models
+
+      # What this session's provider was recorded as unable to do.
+      # @return [Capability::DegradedSet]
+      attr_reader :degraded
+
+      # Whether there was a prompt cache to waste, as against how much of one
+      # was wasted -- the question every token figure here silently assumed had
+      # the answer "yes".
+      #
+      # ABSENCE IS NOT THE COMPLEMENT, so this is deliberately not spelled as a
+      # positive `caches?`. {Telemetry::CapabilityDegraded} is written only
+      # where a `:degrade` policy resolved a capability the provider lacks
+      # (`capability/policy.rb`), and only on the live chat path -- a
+      # strict-policy run, a recorded bench journal and a hand-assembled fixture
+      # all carry none. False therefore means "the journal did not say", which
+      # no caller may render as "it caches"; and it cannot be inferred from the
+      # cache fields either, since an all-zero session is equally a cacheless
+      # provider and a session too short to have cached anything.
+      def prompt_cache_degraded? = @degraded.include?(:prompt_caching)
+
+      # Whether a REPORT may say this session had no prompt cache -- narrower
+      # than {#prompt_cache_degraded?}, and it must stay narrower.
+      #
+      # {Telemetry::CapabilityDegraded} is written once per session and names a
+      # PROVIDER; every figure here is keyed by MODEL, because a model is all
+      # {Telemetry::RequestSent} and {Telemetry::TurnUsage} record. There is no
+      # provider field on either, so the two cannot be joined and the flag is
+      # unavoidably session-wide in a class whose whole doctrine is per-model
+      # segmentation. A session that degraded `prompt_caching` on a local
+      # provider and then `/model`-switched to one that really caches carries
+      # that flag over calls which genuinely read and re-bought a cache.
+      #
+      # So the claim is made only when NOTHING measured contradicts it: the
+      # record said there was no cache, no cache read was served, and no cache
+      # write was re-billed. Otherwise the tokens are reported as measured --
+      # announcing cachelessness over them would bury real tokens and real
+      # dollars under a sentence denying them, which is the same "two true
+      # numbers that read as a lie" this class exists to remove, arrived at from
+      # the other side.
+      def no_prompt_cache? = prompt_cache_degraded? && cached_tokens.zero? && rebilled_tokens.zero?
 
       # @yieldparam rebill [Rebill]
       # @return [Enumerator<Rebill>, self]
@@ -392,7 +474,16 @@ module Lain
       end
 
       # Zero tokens at an unknown rate is exactly zero, so an unpriced model
-      # only taints a figure that had tokens behind it.
+      # only taints a figure that had tokens behind it. That argument is about
+      # PRICING and it still stands; what it does not settle is which of two
+      # facts a zero here reports -- "the cache served nothing on this call" or
+      # "there was never a cache". Both sum to a `Dollars.zero`, which renders
+      # as a confident `saving $0.000000`: the very shape {PriceBook}'s raise
+      # exists to refuse, reached from the other side. The premise the argument
+      # is missing was never a rate, and no token count can supply it: it is the
+      # provider's CAPABILITY. So it is answered by {#prompt_cache_degraded?}
+      # and the report WITHHOLDS the figure, rather than this method inventing a
+      # third kind of zero and making every caller's arithmetic tri-valued.
       def saving_on(call)
         tokens = call.usage.cache_read_input_tokens
         return Dollars.zero if tokens.zero?

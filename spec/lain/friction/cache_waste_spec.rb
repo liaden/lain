@@ -43,6 +43,14 @@ RSpec.describe Lain::Friction::CacheWaste do
     ).prefix_digests
   end
 
+  # The `capability_degraded` shape `Telemetry::CapabilityDegraded#to_journal`
+  # writes, and which `Bench::Session::Loader#degraded` already reads offline.
+  # Taken verbatim from the round-8 ollama session journal.
+  def capability_degraded(capability: "prompt_caching")
+    { "type" => "capability_degraded", "capability" => capability,
+      "requirer" => "Lain::Context", "provider" => "Lain::Provider::Ollama" }
+  end
+
   # AC 1: a broken prefix reports re-billed tokens and their cost.
   describe "a prefix that broke, and the cache creation the next call was billed for" do
     subject(:waste) { described_class.from_journal(entries) }
@@ -485,6 +493,148 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
   end
 
+  # T11. A provider with no prompt cache reports BOTH cache fields as 0 on every
+  # call (`provider/ollama/decoding.rb:91-93`), so the fixtures in this block are
+  # all-zero where every other fixture in this file is deliberately not. That is
+  # not an exemption from the premise at the top: all-zero IS the shape under
+  # test here, and what is asserted is the capability the journal recorded --
+  # a fact no cache field can supply, and the one every token figure in this
+  # class had silently assumed the answer to.
+  describe "a journal that records the provider had no prompt cache" do
+    subject(:waste) do
+      described_class.from_journal(
+        [capability_degraded,
+         request_sent([[0, "blake3:a"]], model: "qwen3-coder:30b"),
+         turn_usage(model: "qwen3-coder:30b"),
+         request_sent([[0, "blake3:a-EDITED"]], model: "qwen3-coder:30b"),
+         turn_usage(model: "qwen3-coder:30b")]
+      )
+    end
+
+    it "carries the degraded capability the journal recorded" do
+      expect(waste.degraded.to_a).to eq(%i[prompt_caching])
+    end
+
+    it "answers that there was no prompt cache to waste" do
+      expect(waste).to be_prompt_cache_degraded
+    end
+
+    it "still attributes the prefix break, which happened whether or not it was billed" do
+      expect(waste.count).to eq(1)
+      expect(waste.rebilled_tokens).to be_zero
+    end
+
+    it "stays deeply frozen with the capability fact aboard" do
+      expect(Ractor.shareable?(waste)).to be(true)
+    end
+  end
+
+  # Review fix (Linus). `capability_degraded` is written ONCE per session and
+  # names a PROVIDER; every figure in this class is keyed by MODEL, because a
+  # model is all `request_sent`/`turn_usage` record. The two cannot be joined,
+  # so a session that degraded prompt_caching on ollama and then `/model`-switched
+  # to a provider that really caches carries a session-wide "degraded" flag over
+  # calls that genuinely read and re-bought a cache. Claiming cachelessness there
+  # would swallow those tokens under a sentence contradicting them -- the exact
+  # "two true numbers that read as a lie" defect this card exists to remove.
+  describe "a degraded record over calls that did use a cache" do
+    def switched(read:, creation: 0)
+      [capability_degraded,
+       request_sent([[0, "blake3:a"]], model: "qwen3-coder:30b"), turn_usage(model: "qwen3-coder:30b"),
+       request_sent([[0, "blake3:b"]], model: "claude-opus-4-8"), turn_usage(model: "claude-opus-4-8", read:),
+       request_sent([[0, "blake3:b-EDITED"]], model: "claude-opus-4-8"),
+       turn_usage(model: "claude-opus-4-8", creation:, read: 100_000)]
+    end
+
+    it "still answers that the RECORD said the cache was degraded" do
+      expect(described_class.from_journal(switched(read: 200_000, creation: 90_000)))
+        .to be_prompt_cache_degraded
+    end
+
+    it "declines the cacheless CLAIM while a cache read contradicts it" do
+      expect(described_class.from_journal(switched(read: 200_000, creation: 90_000)))
+        .not_to be_no_prompt_cache
+    end
+
+    # The re-billed half of the predicate, ISOLATED: not one cache read in the
+    # whole session, so `cached_tokens.zero?` is true and only the re-billing
+    # stands between the record and the cacheless claim. A mutant dropping that
+    # conjunct survives every other example here.
+    it "declines it on a re-billed cache write alone, with no cache read anywhere" do
+      waste = described_class.from_journal(
+        [capability_degraded,
+         request_sent([[0, "blake3:a"]], model: "claude-opus-4-8"),
+         turn_usage(model: "claude-opus-4-8"),
+         request_sent([[0, "blake3:a-EDITED"]], model: "claude-opus-4-8"),
+         turn_usage(model: "claude-opus-4-8", creation: 40_000)]
+      )
+
+      expect(waste.cached_tokens).to be_zero
+      expect(waste.rebilled_tokens).to eq(40_000)
+      expect(waste).to be_prompt_cache_degraded
+      expect(waste).not_to be_no_prompt_cache
+    end
+
+    it "makes the claim only when nothing measured contradicts the record" do
+      quiet = described_class.from_journal(
+        [capability_degraded, request_sent([[0, "blake3:a"]], model: "qwen3-coder:30b"),
+         turn_usage(model: "qwen3-coder:30b")]
+      )
+
+      expect(quiet).to be_no_prompt_cache
+    end
+  end
+
+  # Review fix (Jeremy). `lain friction` is a reader of whatever journal a user
+  # points it at, and `Capability::DegradedSet` maps `to_sym` over every member.
+  # Any non-nil value that does not answer it raised NoMethodError straight out
+  # of the report -- the crash `Pairing`'s decline-never-crash doctrine exists to
+  # prevent, and which the source comment already claimed was handled.
+  describe "a capability_degraded record whose capability is not a name" do
+    it "drops every value that cannot be a capability, rather than raising" do
+      %i[nil number array object boolean].zip([nil, 7, [], { "n" => 1 }, true]).each do |label, value|
+        waste = described_class.from_journal(
+          [{ "type" => "capability_degraded", "capability" => value },
+           request_sent([[0, "blake3:a"]]), turn_usage(read: 5)]
+        )
+
+        expect(waste.degraded.to_a).to eq([]), "#{label} was not dropped"
+        expect(waste).not_to be_prompt_cache_degraded
+      end
+    end
+
+    it "keeps a real capability recorded alongside a torn one" do
+      waste = described_class.from_journal(
+        [{ "type" => "capability_degraded", "capability" => 7 }, capability_degraded,
+         request_sent([[0, "blake3:a"]]), turn_usage]
+      )
+
+      expect(waste.degraded.to_a).to eq(%i[prompt_caching])
+    end
+  end
+
+  # The last AC, and the reason the fact is a RECORD rather than an inference:
+  # `capability_degraded` is written only where a `:degrade` policy resolved a
+  # missing capability, on the live chat path. A strict-policy run and a
+  # hand-assembled journal both carry none, and neither is evidence of a cache.
+  describe "a journal that records no degraded capability" do
+    it "does not read that absence as a working prompt cache" do
+      waste = described_class.from_journal([request_sent([[0, "blake3:a"]]), turn_usage])
+
+      expect(waste).not_to be_prompt_cache_degraded
+      expect(waste.degraded).to be_empty
+    end
+
+    it "reads some OTHER degraded capability as no answer about the cache" do
+      waste = described_class.from_journal(
+        [capability_degraded(capability: "thinking"), request_sent([[0, "blake3:a"]]), turn_usage]
+      )
+
+      expect(waste.degraded.to_a).to eq(%i[thinking])
+      expect(waste).not_to be_prompt_cache_degraded
+    end
+  end
+
   describe "as a value" do
     # Two calls with a break between them, so `@rebills` is POPULATED and the
     # Rebill/Dollars members are actually exercised -- a one-call fixture
@@ -549,6 +699,100 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rendered).to include("200000")
     end
 
+    # T11/AC 1. The round-8 ollama session rendered `4 prefix rewrites detected`
+    # and, two lines later, `saving $0.000000` -- a confident dollar figure from
+    # a provider that has no cache to save with.
+    it "says the provider does not cache, and quotes no saving, when the journal recorded that" do
+      rendered = render([capability_degraded,
+                         request_sent([[0, "blake3:a"]], model: "qwen3-coder:30b"),
+                         turn_usage(model: "qwen3-coder:30b"),
+                         request_sent([[0, "blake3:a-EDITED"]], model: "qwen3-coder:30b"),
+                         turn_usage(model: "qwen3-coder:30b")])
+
+      expect(rendered).to include("does not cache")
+      expect(rendered).not_to include("saving $")
+      expect(rendered).not_to include("$0.000000")
+    end
+
+    # The headline and the context sentence are two withholdings, and each needs
+    # its own pin: "0 tokens served from cache" is a true measurement that still
+    # implies a cache which happened to serve nothing, so a cacheless session
+    # must not be described with it even once the vacuous dollar tail is gone.
+    it "does not describe a cacheless session as a cache that served zero" do
+      rendered = render([capability_degraded,
+                         request_sent([[0, "blake3:a"]], model: "qwen3-coder:30b"),
+                         turn_usage(model: "qwen3-coder:30b")])
+
+      expect(rendered).to include("with no prompt cache to serve or save against")
+      expect(rendered).not_to include("tokens served from cache")
+    end
+
+    # AC 5. Two journals identical but for the one record, so the cacheless
+    # statement is pinned to the RECORD rather than to the all-zero cache
+    # fields both journals share -- an inference from those fields cannot tell a
+    # cacheless provider from a session too short to have cached anything, and
+    # the report may claim neither.
+    it "does not read an absent capability record as either answer" do
+      session = [request_sent([[0, "blake3:a"]], model: "qwen3-coder:30b"),
+                 turn_usage(model: "qwen3-coder:30b"),
+                 request_sent([[0, "blake3:a-EDITED"]], model: "qwen3-coder:30b"),
+                 turn_usage(model: "qwen3-coder:30b")]
+
+      unrecorded = render(session)
+
+      expect(unrecorded).to include("cache_waste")
+      expect(unrecorded).not_to include("does not cache")
+      expect(unrecorded).not_to eq(render([capability_degraded] + session))
+    end
+
+    # Review fix (Linus), rendered. The cacheless sentence must not appear over a
+    # line that is simultaneously billing a cache, and the real tokens and the
+    # real saving must survive.
+    it "reports the real cache reads and saving when a degraded session switched to a caching model" do
+      rendered = render([capability_degraded,
+                         request_sent([[0, "blake3:a"]], model: "qwen3-coder:30b"),
+                         turn_usage(model: "qwen3-coder:30b"),
+                         request_sent([[0, "blake3:b"]], model: "claude-opus-4-8"),
+                         turn_usage(model: "claude-opus-4-8", read: 200_000),
+                         request_sent([[0, "blake3:b-EDITED"]], model: "claude-opus-4-8"),
+                         turn_usage(model: "claude-opus-4-8", creation: 90_000, read: 100_000)])
+
+      expect(rendered).to include("300000 tokens served from cache")
+      expect(rendered).to include("saving $1.350000")
+      expect(rendered).not_to include("does not cache")
+      expect(rendered).not_to include("no prompt cache to serve or save against")
+    end
+
+    # The same, with nothing re-billed: the "none" headline must not become the
+    # cacheless one while a quarter-million cache reads sit under it.
+    it "does not swallow real cache reads under the cacheless headline" do
+      rendered = render([capability_degraded,
+                         request_sent([[0, "blake3:a"]], model: "qwen3-coder:30b"),
+                         turn_usage(model: "qwen3-coder:30b"),
+                         request_sent([[0, "blake3:b"]], model: "claude-opus-4-8"),
+                         turn_usage(model: "claude-opus-4-8", read: 250_000)])
+
+      expect(rendered).to include("250000 tokens served from cache")
+      expect(rendered).not_to include("does not cache")
+    end
+
+    # Review fix (Jeremy, judgement taken). F49's own sentence -- `saving
+    # $0.000000` -- survived on any journal carrying no capability record, which
+    # is every recorded bench session and every strict-policy run. Withheld now
+    # for a reason that needs no inference about the provider: zero tokens times
+    # any rate is zero, so the figure reports the multiplication, not the
+    # session. The token count stays; only the vacuous dollar tail goes.
+    it "quotes no dollar saving when no cache tokens were served, capability record or not" do
+      rendered = render([request_sent([[0, "blake3:a"]], model: "qwen3-coder:30b"),
+                         turn_usage(model: "qwen3-coder:30b"),
+                         request_sent([[0, "blake3:a-EDITED"]], model: "qwen3-coder:30b"),
+                         turn_usage(model: "qwen3-coder:30b")])
+
+      expect(rendered).to include("0 tokens served from cache")
+      expect(rendered).not_to include("$0.000000")
+      expect(rendered).not_to include("saving $")
+    end
+
     # The Friction doctrine (ROADMAP.md:1218-1223): a section PROPOSES with
     # evidence, it never applies. The waste line carries a knob, like every
     # other signal in this report.
@@ -570,9 +814,11 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rendered).to include("7000 tokens re-billed")
       expect(rendered).to include("cost unpriced")
       expect(rendered).to include("claude-fable-5")
-      # The re-billing specifically carries no dollar figure. A `$0.000000`
-      # against the SAVINGS is not the same defect and is not asserted away:
-      # zero tokens served from cache really did save exactly zero.
+      # The re-billing specifically carries no dollar figure. This assertion is
+      # about the RE-BILLING alone and stays scoped to it: the savings figure is
+      # withheld here too, but for the unrelated reason that zero tokens were
+      # served (review fix, Jeremy) -- two withholdings with two causes, and
+      # conflating them would let either one's regression hide behind the other.
       expect(rendered).not_to match(/re-billed[^;]*costing \$/)
     end
 
