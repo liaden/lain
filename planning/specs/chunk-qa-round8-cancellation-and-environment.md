@@ -1,6 +1,6 @@
 # Say what happened: cancellation, capability, and the child environment
 
-status: draft
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -1061,3 +1061,176 @@ Scenario: the rails scenario separates its two volumes
    `bundle exec rake -T`. Round 8 could not do this without a driver-side wrapper; after T1 it must
    work unaided. **This is the check that proves the defect is gone rather than scrubbed in a unit
    test.** Then repeat under T2's docker backend.
+
+## Execution log
+
+Kept by the orchestrator as the chunk runs. Records what the cards could not know in advance.
+
+**Worktree base defect (process, not code).** The first five agent worktrees were created 32
+commits behind `main` (`36aa11a4`, 2026-08-20) — 52 files and +2,666 lines of `lib/` adrift.
+T13 and T9 were building against materially different files and were stopped and restarted;
+`ask_human/unattended.rb`, whose `REFUSAL` T9's card tells it to reuse, **did not exist** at that
+base. T1, T4 and T7 were unaffected (every file in their scope byte-identical across the two
+bases) and were transplanted onto `main` with `git apply --3way`. Worktrees are now created by the
+orchestrator from `main` rather than by the harness. Three agents — T14, T7, T1 — reported the
+staleness themselves before being asked.
+
+**Wiring correction, from T12: the requires needle is narrower than the contract says.** The
+Orchestrator contract routes T1, T12 and T6 through one `lib/lain.rb` line each. That is right for
+T1 (`lain/exec` is a new subtree) and **wrong for T12 and T6**: `lib/lain/telemetry.rb` is that
+subtree's index and already requires its twenty sibling records, so a new telemetry record is added
+there and `lib/lain.rb` is not touched at all. Two of the three cards come off the needle.
+
+**T13 declined its own card's candidate answer, with a measurement.** The card proposed
+`vim.bo[buf].modified = true` after the handler returns. On nvim 0.12.4 `modified` is *already* true
+on that leg, and a `BufWriteCmd` that returns without clearing it leaves `:w` reporting nothing
+written and `:wq`/`:x` declining to quit — so the last two ACs are reconcilable without it, and
+setting it would duplicate one guarantee in two places. Round 7's traceback was not the only way to
+avoid the write that lies.
+
+**F40 is narrower than round 8 recorded it (T7).** The editor surface was never broken: it observes
+the parked set and approved both calls before the fix. The casualty was the terminal, which rendered
+only the first of two prompts — so the defect bites a `--no-nvim` session, where nobody can answer.
+
+**MODEL-2 is larger than round 8 recorded it (T12).** Written up as 3-of-6 on one scenario; it is
+**11 distinct incidents across nine corpora on seven different tools**, 2026-08-17 → 08-21, with a
+byte-identical `</parameter>\n</function>\n</tool_call>` close every time. Folded into T14's
+corrections as a deliberate scope expansion — same document, same class of error, and a findings
+document that understates an incidence is the failure T14 exists to fix.
+
+**Owed checks the cards could not run.** `rake core:build && rspec --tag core` for T1's `Exec::Core`
+arm (the `:core` tier needs the daemon, which implementers were forbidden to build). Docker is **not
+installed on this box**, so T2's seam spec must skip and integration check 7's docker leg cannot be
+run here.
+
+**T12's residual false-positive rate, reproduced by its panel.** 207 files, 1,267 recorded assistant
+turns, 181 in scope, **20 fires, 0 of them false** — and a naive `<function=` match scores the same
+20, so the three narrowings **declined nothing measurable on this corpus**. That is not a defect in
+the narrowing: `planning/qa/method.md` tells drivers to restart at the first `<function=`, so a model
+*explaining* the syntax is never recorded, and the corpus cannot contain the negative the narrowing
+exists to reject. Residual bounded at ≤1.7% per in-scope turn (95%, rule of three). Recorded here
+because a hand-back dies with its worktree and the next reader will look at the code, not at a
+transcript.
+
+**Follow-up card owed, from T10's review: the stalled reading latches.** `Derived#over` is reached
+only when a derivation is both needed and timely, and nothing decays the streak — only a *successful*
+derivation clears it. A session that refused twice and then settles into the warm-cache defer band
+the code itself calls "the steady state" keeps rendering `compaction stalled` while nothing is
+refusing. The implementer went looking for the cheap decay and **correctly did not take it**:
+`Source#record` journals a `CompactionDecision` every turn and does reach the feed, but
+`compacted: false` covers *both* a defer and a refusal, and a refusing turn writes both records — so
+clearing on it would clear the streak on the very turn that just refused, trading a reading that is
+**late** for one that is **wrong**. A live reading needs a record that distinguishes *not attempted*
+from *attempted and succeeded*, which is a change to what `Source` journals and outside T10's three
+files. The word "stalled" was kept and its claim made precise where readers meet it: *no derivation
+has succeeded since N consecutive refusals* — not *one was attempted this turn*.
+
+**`StatusFeed` is at 108 lines against a `Metrics/ClassLength` limit of 110.** T10's inline fold is
+honest and no cop was loosened, but the next field on that class needs the extraction
+(`StatusFeed::DerivationStreak` is the name T10 proposes), not another inline.
+
+**T3 discharges the tear it was written for — and the round-8 journal is not that shape.** Read at
+the tear (the state the session was actually in when it was interrupted) the file goes from a hard
+refusal to a clean resume: 229 turns, head carrying `[["tool_result","call_f4eu93ak"]]`, rendered
+chain `valid? true`, `resumed_from` still the recorded head, journal bytes unchanged. But **as it
+lies on disk the head is not torn at all**: it is `user`/`tool_result`, and `pending_tool_use?`
+answers false. The human typed another ask after the interrupt, so the REPL committed a user text
+turn *on top of* the dangling `call_f4eu93ak`; the strand is now buried at `messages[227]` of 235,
+and `derivation_refused` names it four times. **T3 changes nothing for that file**, and resuming it
+refuses for a third, unrelated tear: a trailing `memory_root` naming a turn never journaled.
+
+Three findings fall out, none of which has a card:
+
+- **F46-b — a buried strand.** A `tool_use` stranded mid-history, not at the head, is the shape round
+  8 actually produced. A load-side head repair cannot see it; it needs a render-side answer.
+- **F46-c — the REPL commits onto a dangling `tool_use`.** That is what buries the strand, and it is
+  upstream of every repair in this chunk.
+- **F46-d — salvage is unreachable behind the eager memory fold.** `#rebuild` loads before it
+  salvages, so `SessionRecord::Salvage` never runs for a session with a torn `memory_root`. (Named
+  by code, not by card: "T18" is a chunk-local card id and at least two earlier chunks have one.)
+
+**This qualifies T14's F46 rewrite.** The corrected *cause* stands (the `agent.rb:433 → 517` dispatch
+window, trigger unidentified). What needs adding is that the recorded session's strand is buried
+rather than at the head, and that its refusal to resume has a third cause unrelated to either.
+
+**Owed to the manual pass, from T5.** `/fork`'s decision to keep gating rests on a four-link
+argument, and two links cannot be pinned from T5's own spec files without putting another subject
+in its slot (which the one-spec-file-per-code-file rule forbids). Link 2 — that `Fork` does not
+answer `serves_replies?`, so `classify` falls past the reply reader to `@commands.dispatch` — **is**
+T5's own subject and is now pinned by an example, because `registry.rb:68-71` sends that message
+optionally after a `respond_to?` check: if a later card gave `Fork` a `serves_replies? = true`,
+`/fork` would silently stop being dispatchable at `human>`, the live in-flight case would evaporate,
+and the gate would stand on a reason that had become false **with a green suite**. Links 3 and 4 —
+that `Wiring` binds that registry to the reply prompt, and that the head at that prompt is the
+in-flight `ask_human` — are owed: **a driver typing `/fork` at a parked `ask_human` and seeing the
+refusal is the real proof.** Two-minute scenario.
+
+**`exe/lain` is at exactly 110/110 `Metrics/ClassLength` with zero headroom** after T2. No cop was
+loosened; the next line added to that class forces an extraction.
+
+**A second witness for the `SystemExit` trap, from T2.** `cli_spec.rb` reported *"7 examples, 0
+failures"* having silently dropped 32, because **`debug: true` covers Thor's exit but not lain's own
+`exit`**. CLAUDE.md's entry says `debug: true` is the fix; it is necessary and not sufficient. Being
+added to `docs/toolchain-traps.md` under T2.
+
+**Owed check DISCHARGED: the `:core` tier.** `rake core:build && rspec --tag core` against the T1+T2
+exec seam with the real daemon: **42 examples, 0 failures**. This was the gap T1's panel recorded as
+owed — the live differential proving `Exec::Local` and `Exec::Core` still agree after both arms were
+refactored. It is no longer owed.
+
+**Follow-up card owed, from T6's review: a layering inversion at the tear.**
+`agent/tool_runner.rb` resolves `CLI::Resume::Cancellation::NO_RESULT` at tear time — the Agent
+reaching into the CLI. It is safe **only** because `lain.rb` always loads `lain/cli`; if that ever
+stopped being true, the `NameError` would fire *inside* `rescue Async::Stop` and **replace the
+interrupt**. T6 named it and named the fix: promote the shared constants to a neutral home
+(`lib/lain/tool/cancellation.rb`), which after T3's extraction is a rename rather than an extraction.
+Out of both T3's and T6's scope; substantive; scheduled rather than smuggled.
+
+**Two toolchain traps confirmed twice each, for `docs/toolchain-traps.md` (T6 is writing them).**
+**RSpec `let` memoization deadlocks a reactor**: a `Mutex` locked by the example fiber reads
+`owned? == false` from a sibling fiber on the same thread, so a first `let` read inside `Sync` parks
+the reactor until the watchdog fires. T6 hit it; T6's reviewer then reproduced it *by accident in its
+own probe* before applying the fix. And **`Task#wait` on a cancelled task does not raise** — it
+returns `nil` with `status: :cancelled`, so `expect { run.wait }.to raise_error` asserts nothing.
+Both are the "your seam spec asserts nothing" shape.
+
+**A behaviour change beyond F46, for T6's commit message.** Moving `names_by_id` to the top of
+`#run` is right — it makes a duplicate `tool_use_id` unreachable from the cancellation path — but a
+duplicate-id turn previously ran its tools and *then* raised. It now raises before dispatch.
+
+## Landed
+
+All fourteen cards are on `main`, leaf-first, one commit each. Integration checks 1-4 and 6 pass;
+5 and 7 are owed to a manual pass (below).
+
+**Suite: 15,172 examples, 0 failures, 21 pending** — against the 2026-08-21 baseline of 14,926 / 0 /
+15, so **+246 examples and +6 pending** (T2's docker seams, which skip with no docker on this box).
+Checked by COUNT, not exit status. Bare `rubocop` 1,373 files clean; `cargo test` and
+`cargo clippy --all-targets -- -D warnings` clean; `pre-commit run --all-files` all fifteen hooks
+pass; `Gemfile.lock` unmodified; `:core` tier 42 / 0 against the real daemon.
+
+**Two defects the per-card work could not see, both found by assembling every card into one tree
+before committing.** A `root:` discipline lint (`root_defaults_spec`) failed on three of T2's
+constructors defaulting a project root to the working directory — the codified form of the exact
+hazard T2 itself named. And `subagent_concurrency_spec` pinned the **pre-T6 contract**, "a stop
+mid-fan-out commits nothing"; T6 ruled it the same fact as a main-loop tear (the interrupt stops the
+*parent's* run task; there is no subagent-specific cancellation path) and found the old title was
+itself false — at the tear the Store already held 3 `spawn` + 6 `turn` events.
+
+**A third slipped past the integration run and was caught by the commit hook**: a duplicated
+`@param head` tag left in `Resume::Cancellation` by T3's extraction. `rake pspec` and `rubocop` do
+not run `yard-lint`; only `pre-commit` does. Integration check 2 names it and it was skipped —
+run it before believing an assembled tree is clean.
+
+**Two harness traps worth the next orchestrator's time.** An aborted `pspec` leaves a PARTIAL
+`tmp/parallel_runtime_rspec.log`, and `--group-by runtime` raises `RuntimeLogTooSmallError` on it —
+the Rakefile's fallback covers the MISSING log, not the partial one; delete it. And the `pre-commit`
+hook inherits the caller's PATH, so a commit made without `mise env` exported fails every ruby hook
+with `Executable 'bundle' not found`.
+
+**Still owed, and not done:** integration check 5 (the manual pass over `failure-injection`,
+`session-and-window` and `cockpit-surfaces`, including `cockpit-surfaces.md` §4b, which no round has
+driven since round 7) and check 7's docker leg (**docker is not installed on this box**, so T2's
+container ACs are written, skipping, and unscored — its own panel called a real AC1 the sharpest
+argument for paying that debt before `--exec docker` is called done). Plus T5's links 3 and 4: a
+driver typing `/fork` at a parked `ask_human` and seeing the refusal.
