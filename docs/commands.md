@@ -331,10 +331,6 @@ set you have not answered. See `:help lain-question`.
 
 Answer each pending tool approval `y/N`.
 
-### /yolo
-
-`/yolo on` auto-approves gated tool calls. `/yolo off` restores the approval queue.
-
 ### /goal
 
 `/goal <objective>` drives the agent toward a standing goal until it signals done. `/goal off`

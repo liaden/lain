@@ -93,7 +93,6 @@ Typed at `you>`. Each dispatches lib-side, ahead of the skill middleware, with z
 * [/keep](docs/commands.md#keep): promote the ephemeral `--btw` session into a durable one.
 * [/inbox](docs/commands.md#inbox): list and answer pending human questions.
 * [/approve](docs/commands.md#approve): answer each pending tool approval.
-* [/yolo](docs/commands.md#yolo): auto-approve gated tool calls, or restore the approval queue.
 * [/goal](docs/commands.md#goal): drive the agent toward a standing goal until it signals done.
 * [/ruby](docs/commands.md#ruby): inspect live state, as a console, an expression, or a file.
 * [/meta](docs/commands.md#meta): generate a customized harness script, then run it by slug.

@@ -321,7 +321,8 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
   - **The Workspace Timeline** — **✅ landed 2026-07-17** (write side `b2b1051`, restore `03ef086`):
     a second content-addressed DAG of file snapshots (`:snapshot` events) paired with the
     conversation DAG — independent rewind of files vs. conversation. From Cline. The
-    `Handler::Approving` coupling (cheap rollback makes `--yolo` safe) remains open, `[exp]`.
+    `Handler::Approving` coupling (cheap rollback made `--yolo` safe) closed with the flag's
+    removal.
   - **Attention-following context** (TODO 17–21): the human's Neovim quickfix/marks/jump-history/
     registers as a live relevance signal (Aider-style ranking personalized to *live attention*).
     Editor state is **Workspace-shaped**: sent-not-stored, rendered after the last cache breakpoint
@@ -842,7 +843,7 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
 
 12. **Planned (2026-07-23, panel-reviewed)** — `planning/specs/chunk-ui-ux-tmux-nvim.md`:
    the UI/UX chunk — in-repo tmux + Neovim plugins, the `you>` command registry
-   (/help /status /sessions /inbox /approve /yolo /model /rewind /fork /btw /quit /goal
+   (/help /status /sessions /inbox /approve /model /rewind /fork /btw /quit /goal
    /ruby /meta), session forking with ephemeral journal-and-reap, the M4-2 provider
    round-trip of an edited `lain://request`, auto-approver wiring (`--auto-approve`),
    read-only per-subagent tmux windows (`lain watch`), `lain up` flag passthrough +

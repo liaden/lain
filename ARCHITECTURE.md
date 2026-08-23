@@ -481,7 +481,7 @@ the Thor flag declarations and the `Lain::Error` to `Thor::Error` mapping.
   `AskHuman` reply tool, and `RunSkill`), the `Effect::Handler::Gate` wrapping
   `Effect::Handler::Live` (`build_agent`), the `Supervisor` (`lib/lain/supervisor.rb`), the
   `Skill::RoleSpawn` seam (`lib/lain/skill/role_spawn.rb`) a `@role/skill` line folds through,
-  and the `Approval::Queue` (`lib/lain/approval/queue.rb`) that `--yolo` bypasses. It hands back
+  and the `Approval::Queue` (`lib/lain/approval/queue.rb`) that gates tool calls. It hands back
   a built `Agent` and exposes the `ask_human` and `questions` seams `Repl` needs.
 - **`Repl`** owns one conversation. It reads `you>` prompts through `CLI::Conductor`
   (`lib/lain/cli/conductor.rb`, the shutdown and signal bracket; see `lib/lain/cli/shutdown.rb`
