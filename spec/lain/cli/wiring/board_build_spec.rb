@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "stringio"
 require "tmpdir"
 
 # The unit's own seam. {Lain::CLI::Wiring} drives this module with everything
@@ -8,8 +9,16 @@ require "tmpdir"
 # wiring_spec.rb; what belongs HERE is the `paths:` injection Wiring does not
 # expose, and the two vocabularies the module exists to keep apart.
 RSpec.describe Lain::CLI::Wiring::BoardBuild do
-  let(:chronicle) { Lain::CLI::Chronicle::Null.new }
-  let(:toolset) { Lain::Toolset.new([]) }
+  # A REAL journal behind the chronicle, because the production-path examples
+  # below read the ladder's own record: "which rung refused, and what it said"
+  # is the assertion, and {Chronicle::Null} writes it to the null device.
+  let(:journal_io) { StringIO.new }
+  let(:journal) { Lain::Journal.new(io: journal_io) }
+  let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+  # A REAL Toolset, for switchboard_spec's reason: the ladder's deterministic
+  # rung reads the tier off the live capability set, so a call that is not
+  # gated at all never reaches a rung and every example here would pass vacuously.
+  let(:toolset) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
 
   def in_tree(config: nil)
     Dir.mktmpdir("lain-board-build") do |dir|
@@ -25,17 +34,47 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
   def paths_at(home) = Lain::Paths.new(env: { "HOME" => home })
 
-  def board_for(root, home, options: { yolo: false })
+  # `.classifier` takes the COMPILED table rather than a `notice:` of its own:
+  # the file is parsed once, by `.for`, and handed to all three readers. This
+  # composes the two the way `.for` does, so the examples below still drive the
+  # real "what does a broken config cost" behaviour.
+  def classifier_at(root, home, notice: nil, cwd: root)
+    project = project_at(root, cwd)
+    described_class.classifier(project:, paths: paths_at(home),
+                               table: described_class.rules(project:, notice:))
+  end
+
+  def board_for(root, home, options: {})
     described_class.for(chronicle:, options:, model: "m", toolset:, project: project_at(root),
                         paths: paths_at(home))
   end
 
   def read_of(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
 
+  def bash_of(command, **rest)
+    Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => command }.merge(rest))
+  end
+
+  def rulings = Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a
+
+  # The ladder BLOCKS on the queue when every deterministic rung abstains, which
+  # is itself the assertion for two of these examples. Driven the way
+  # switchboard_spec drives it: the call runs in a task, the pending is drained
+  # so the ask is observable, and the task is stopped rather than answered.
+  def while_parked(board, effect)
+    Sync do |task|
+      call = task.async { board.policy_switch.call(effect, nil) }
+      task.with_timeout(1) { board.approvals.dequeue }
+      yield
+    ensure
+      call&.stop
+    end
+  end
+
   describe ".classifier" do
     it "anchors the home-relative table at the INJECTED home, not the process's" do
       in_tree do |root, home|
-        classifier = described_class.classifier(project: project_at(root), paths: paths_at(home))
+        classifier = classifier_at(root, home)
 
         expect(classifier.denied?(File.join(home, ".kube", "config"))).to be(true)
         expect(classifier.denied?(File.join(Dir.home, ".kube", "config"))).to be(false)
@@ -57,7 +96,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       in_tree do |root, home|
         cwd = File.join(root, "services")
         FileUtils.mkdir_p(cwd)
-        classifier = described_class.classifier(project: project_at(root, cwd), paths: paths_at(home))
+        classifier = classifier_at(root, home, cwd:)
 
         expect(classifier.gated?(".env")).to be(true)
         expect(classifier.classify(".kube/config").reason).to eq(:none)
@@ -66,7 +105,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
     it "compiles the project's own [sensitivity] table into the rules" do
       in_tree(config: "[sensitivity]\ndenied = [\"*.secret\"]\n") do |root, home|
-        classifier = described_class.classifier(project: project_at(root), paths: paths_at(home))
+        classifier = classifier_at(root, home)
 
         expect(classifier.classify(File.join(root, "prod.secret")).reason).to eq(:configured)
       end
@@ -76,7 +115,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # silently un-parsed would be running with the project's denials off.
     it "refuses a malformed table by name, and names the file" do
       in_tree(config: "sensitivity = \"strict\"\n") do |root, home|
-        expect { described_class.classifier(project: project_at(root), paths: paths_at(home)) }
+        expect { classifier_at(root, home) }
           .to raise_error(Lain::Sensitivity::Rules::NotATable, /config\.toml.*must be a table/)
       end
     end
@@ -87,7 +126,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # so it is the one worth pinning.
     it "is unmoved by a typo in a table it does not read" do
       in_tree(config: %(epics = "not a table"\n\n[sensitivity]\ndenied = ["*.secret"]\n)) do |root, home|
-        classifier = described_class.classifier(project: project_at(root), paths: paths_at(home))
+        classifier = classifier_at(root, home)
 
         expect(classifier.classify(File.join(root, "prod.secret")).reason).to eq(:configured)
       end
@@ -99,8 +138,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     it "degrades to the built-in rules when the file will not parse, and reports it" do
       in_tree(config: "this is not [valid toml") do |root, home|
         said = []
-        classifier = described_class.classifier(project: project_at(root), paths: paths_at(home),
-                                                notice: ->(message) { said << message })
+        classifier = classifier_at(root, home, notice: ->(message) { said << message })
 
         expect(classifier.classify(File.join(home, ".ssh", "id_rsa")).reason).to eq(:protected)
         expect(said.join).to match(/\[sensitivity\].*not in force/)
@@ -110,8 +148,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     it "stays silent about a file that parses" do
       in_tree(config: %([sensitivity]\ndenied = ["*.secret"]\n)) do |root, home|
         said = []
-        described_class.classifier(project: project_at(root), paths: paths_at(home),
-                                   notice: ->(message) { said << message })
+        classifier_at(root, home, notice: ->(message) { said << message })
 
         expect(said).to be_empty
       end
@@ -138,6 +175,165 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
         expect(board.instance_variable_get(:@rules)).to be_empty
         expect(board.sensitivity.denial(read_of(File.join(root, "a.secret")))&.reason).to eq(:configured)
+      end
+    end
+  end
+
+  # F63, and the reason this whole card exists: {Approval::Escalation::Triage}'s
+  # argv check has been implemented and spec'd since T20 and has never once run,
+  # because nothing built a board that handed it a classifier. These examples
+  # drive the REAL construction path -- `BoardBuild.for` and nothing injected --
+  # so a call site that stops passing one goes red here rather than passing
+  # everywhere and protecting nothing.
+  describe "the triage rung's path classifier, on the production path" do
+    def key_under(home) = File.join(home, ".ssh", "id_rsa")
+
+    it "denies a bash call whose argv names a protected path, at the triage rung" do
+      in_tree do |root, home|
+        board = board_for(root, home)
+
+        expect(board.policy_switch.call(bash_of("cat #{key_under(home)}"), nil)).to be(false)
+        expect(rulings.first).to include("rung" => "triage", "verdict" => "deny", "faulted" => false)
+        expect(rulings.first["reason"])
+          .to include(key_under(home), Lain::Approval::Escalation::Triage::PROTECTED)
+      end
+    end
+
+    # The other half of the same refusal, and the half a human would otherwise
+    # lift: this rung answers BEFORE the queue, so nothing parks.
+    it "parks no approval for a human, because the rung already answered" do
+      in_tree do |root, home|
+        board = board_for(root, home)
+        board.policy_switch.call(bash_of("cat #{key_under(home)}"), nil)
+
+        expect(board.approvals.each.count).to eq(0)
+        expect(rulings.map { |ruling| ruling["rung"] }).to eq(%w[triage])
+      end
+    end
+
+    it "leaves an ordinary command to park exactly as it did before" do
+      in_tree do |root, home|
+        board = board_for(root, home)
+
+        while_parked(board, bash_of("ls -la")) do
+          expect(rulings.map { |ruling| ruling["rung"] }).to eq(%w[triage rules])
+          expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
+        end
+      end
+    end
+
+    # `cwd` is MODEL-CONTROLLED (`bash.rb:50`), so what the factory does with one
+    # it cannot resolve IS the security question. Two answers are wrong and one
+    # is right. Raising is a {Escalation::RUNG_BROKE} fault, and a fault turns
+    # this deny into an abstention a human then approves. Falling back to
+    # {Triage::AnyPath} protects nothing, which is the same disarm without the
+    # fault -- and the call's cwd contributes NOTHING to classifying an absolute
+    # path, so discarding the whole classifier over a bad one is over-broad
+    # besides. The fallback is the SESSION's own classifier, anchored on `home`
+    # and the project cwd, both of which come from the wiring.
+    it "still denies a protected absolute path when the cwd cannot be resolved" do
+      in_tree do |root, home|
+        board = board_for(root, home)
+
+        expect(board.policy_switch.call(bash_of("cat #{key_under(home)}", "cwd" => "bad\0dir"), nil)).to be(false)
+        expect(rulings.first).to include("rung" => "triage", "verdict" => "deny", "faulted" => false)
+        expect(board.approvals.each.count).to eq(0)
+      end
+    end
+
+    # Every one of these is JSON a model can put in the `cwd` field, and the
+    # factory has to stay TOTAL over all of them: nothing raises, nothing
+    # faults, and none of them costs the refusal.
+    it "denies under every hostile cwd shape a model can write, and raises on none" do
+      in_tree do |root, home|
+        board = board_for(root, home)
+        hostile = ["bad\0dir", 42, { "a" => 1 }, true, "~nosuchuser999", [1], "",
+                   (+"/tmp/\xC3\x28").force_encoding("UTF-8")]
+
+        answers = hostile.map { |cwd| board.policy_switch.call(bash_of("cat #{key_under(home)}", "cwd" => cwd), nil) }
+
+        expect(answers).to eq([false] * hostile.size)
+        expect(rulings.map { |ruling| ruling["verdict"] }).to eq(["deny"] * hostile.size)
+        expect(rulings.map { |ruling| ruling["faulted"] }).to eq([false] * hostile.size)
+        expect(board.approvals.each.count).to eq(0)
+      end
+    end
+
+    # A cwd it CAN resolve still anchors the relative words -- the fallback is a
+    # fallback, not the whole behaviour.
+    it "still anchors a relative word on the cwd the call named" do
+      in_tree do |root, home|
+        board = board_for(root, home)
+
+        while_parked(board, bash_of("cat .kube/config", "cwd" => root)) do
+          expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
+        end
+      end
+    end
+
+    # IDENTITY at the construction site, not merely behaviour, and on
+    # tool_guard_spec's shape. The keyword has a default, and a default is how
+    # this rung gets silently re-disarmed: deleting the argument from
+    # `BoardBuild.for` restores {Triage::AnyPath} and every behavioural example
+    # above still passes on a board that protects nothing.
+    it "hands the triage rung a real classifier factory rather than the inert default" do
+      in_tree do |root, home|
+        board = board_for(root, home)
+        triage = board.ladder.first
+        factory = triage.instance_variable_get(:@sensitivity)
+
+        expect(triage.name).to eq("triage")
+        expect(factory).not_to be_a(Lain::Approval::Escalation::Triage::AnyPath)
+        expect(factory).to be_a(described_class::Classifiers)
+      end
+    end
+  end
+
+  # The factory's own seam. Everything it needs to anchor on comes from the
+  # WIRING -- `home` from {Paths}, `cwd` from the resolved {Project} -- so a
+  # value it cannot use is a startup bug and belongs at startup. Built eagerly
+  # for exactly that reason: a lazily-discovered bad home made the rung inert
+  # for the whole session and said nothing, and the only thing making that loud
+  # was that `.for` happens to evaluate `sensitivity:` before `classifiers:`.
+  # Loudness must not rest on Ruby's keyword evaluation order.
+  describe described_class::Classifiers do
+    it "refuses a home it cannot anchor on, at construction rather than per call" do
+      expect { described_class.new(home: "", cwd: "/tmp") }
+        .to raise_error(ArgumentError, /home must be an absolute path/)
+      expect { described_class.new(home: "/", cwd: "/tmp") }
+        .to raise_error(ArgumentError, /home must not be the filesystem root/)
+    end
+
+    it "refuses a session cwd it cannot anchor on, for the same reason" do
+      expect { described_class.new(home: "/home/u", cwd: "relative") }
+        .to raise_error(ArgumentError, /cwd must be an absolute path/)
+      expect { described_class.new(home: "/home/u", cwd: nil) }
+        .to raise_error(ArgumentError, /cwd must be an absolute path/)
+    end
+
+    # Total over the model's half regardless, which is the asymmetry that
+    # matters: the wiring's values are refused loudly, and the model's are
+    # absorbed onto the session's own classifier.
+    it "answers a real classifier for a cwd nothing could resolve" do
+      factory = described_class.new(home: "/home/u", cwd: "/home/u/work")
+
+      expect(factory.call("bad\0dir").denied?("/home/u/.ssh/id_rsa")).to be(true)
+      expect(factory.call(nil).denied?("/home/u/.ssh/id_rsa")).to be(true)
+    end
+  end
+
+  # ONE parse, one notice. `.for` needs the compiled table twice -- once for the
+  # path boundary the gates read, once for the classifier the triage rung
+  # anchors per call -- and calling {.rules} again for the second would parse
+  # the config twice and say the same thing to the operator twice.
+  describe "the [sensitivity] table, compiled once" do
+    it "reports an unparseable config exactly once, however many collaborators need it" do
+      in_tree(config: "this is not [valid toml") do |root, home|
+        said = []
+        described_class.for(chronicle:, options: {}, model: "m", toolset:, project: project_at(root),
+                            paths: paths_at(home), notice: ->(message) { said << message })
+
+        expect(said.grep(/\[sensitivity\].*not in force/).size).to eq(1)
       end
     end
   end

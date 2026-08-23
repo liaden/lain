@@ -140,45 +140,25 @@ module EscalationSpecSupport
     end
   end
 
-  # What a session's wiring would hand the triage rung, and the reference for
-  # the contract {Lain::Approval::Escalation::Triage#initialize} states: a
-  # classifier per call, anchored on the cwd THAT call named, resolved against
-  # the session's the way {Lain::WorkerEnv#resolve} resolves it before the
-  # command runs -- and TOTAL.
-  #
-  # Total is the part that matters. `cwd` is model-controlled, and
-  # `Sensitivity.new` refuses anything not absolute and readable, so a factory
-  # that let those raise would let the model disarm the rung with one argument:
-  # the raise becomes a fault, the fault replaces the deny with an abstention,
-  # and a human approves the read. A cwd this cannot resolve falls back to
-  # {Triage::AnyPath} -- which refuses nothing, because the failure is a wiring
-  # error rather than evidence about a path, and an unliftable deny on a wiring
-  # error is a dead end where an abstention still reaches a person.
+  # The REAL factory a session's wiring hands the triage rung
+  # ({Lain::CLI::Wiring::BoardBuild::Classifiers}), with every cwd and every
+  # path it was asked about written down. Wrapped rather than reimplemented:
+  # a second copy of a security-relevant TOTAL factory is one that can drift,
+  # and these twenty examples would then be exercising the copy while a live
+  # session ran on the other.
   class Classifiers
     attr_reader :cwds, :paths
 
     def initialize(home:, base:, rules: Lain::Sensitivity::Rules.empty)
-      @home = home
-      @base = base
-      @rules = rules
+      @factory = Lain::CLI::Wiring::BoardBuild::Classifiers.new(home:, cwd: base, rules:)
       @cwds = []
       @paths = []
     end
 
     def call(cwd)
       @cwds << cwd
-      Watched.new(anchored(cwd), @paths)
+      Watched.new(@factory.call(cwd), @paths)
     end
-
-    private
-
-    def anchored(cwd)
-      Lain::Sensitivity.new(home: @home, cwd: resolved(cwd), rules: @rules)
-    rescue StandardError
-      Lain::Approval::Escalation::Triage::AnyPath.new
-    end
-
-    def resolved(cwd) = Lain::WorkerEnv.new(cwd: @base, env: {}).resolve(cwd)
   end
 end
 
@@ -824,10 +804,16 @@ RSpec.describe Lain::Approval::Escalation do
       expect(classifiers.cwds).to eq(["src"])
     end
 
-    it "abstains rather than faulting when the cwd cannot be resolved at all" do
+    # A cwd nothing can resolve costs the RELATIVE anchoring and nothing else.
+    # It must not cost the refusal: `cwd` is model-controlled, so a fallback
+    # that protected nothing would let one JSON field turn this deny back into
+    # the ordinary approval the rung exists to prevent -- and an ABSOLUTE path
+    # never needed the call's cwd to classify in the first place. The fallback
+    # is the session's own classifier, so the deny stands and nothing faults.
+    it "still denies, without faulting, when the cwd cannot be resolved at all" do
       expect(triaged("cat #{home}/.ssh/id_ed25519", cwd: "bad\0dir")).to be(false)
 
-      expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
+      expect(rulings.first).to include("verdict" => "deny", "faulted" => false)
       expect(faults).to be_empty
     end
 

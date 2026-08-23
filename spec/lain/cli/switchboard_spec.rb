@@ -36,6 +36,16 @@ RSpec.describe Lain::CLI::Switchboard do
       described_class.for(chronicle:, options:, model: "claude-opus-4-8", toolset: base)
     end
 
+    # `.for` is the only construction a real chat reaches, so a classifier this
+    # entry dropped would be a rung disarmed everywhere while `new` stayed green.
+    it "carries the classifier factory through to the ladder's triage rung" do
+      factory = ->(_cwd) { Lain::Approval::Escalation::Triage::AnyPath.new }
+      board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+                                  classifiers: factory)
+
+      expect(board.ladder.first.instance_variable_get(:@sensitivity)).to be(factory)
+    end
+
     # There is no longer a flag that skips either half: a chat gets the parked
     # list and the asking posture, and `/mode auto` is the only way out of them.
     it "wires the approval queue and starts on accept_edits, with no flag to skip either" do
@@ -99,6 +109,28 @@ RSpec.describe Lain::CLI::Switchboard do
       expect(Lain::Journal.records(journal_io.string.lines, type: "escalation")
                           .select { |record| record["rung"] == "rules" }
                           .map { |record| record["verdict"] }.to_a).to eq(%w[allow])
+    end
+
+    # The third vocabulary on this board, and the one that had no wiring at all
+    # until F63: `sensitivity:` is the run's PATH BOUNDARY (a policy, asked
+    # `gates?`), and `classifiers:` is a FACTORY the triage rung calls per
+    # gated command to anchor the argv it reads on the cwd THAT call named.
+    describe "the triage rung's classifier factory" do
+      def factory_of(board) = board.ladder.first.instance_variable_get(:@sensitivity)
+
+      it "hands the rung whatever the session was built with" do
+        factory = ->(_cwd) { Lain::Approval::Escalation::Triage::AnyPath.new }
+
+        expect(factory_of(switchboard(classifiers: factory))).to be(factory)
+      end
+
+      # The default is the inert one, deliberately: a board built with no
+      # project has no home to anchor a {Lain::Sensitivity} on. What must NOT
+      # happen is a live session silently keeping it -- which is what
+      # board_build_spec's identity example pins.
+      it "defaults to the inert AnyPath, which protects nothing" do
+        expect(factory_of(switchboard)).to be_a(Lain::Approval::Escalation::Triage::AnyPath)
+      end
     end
 
     # The default is what every caller gets until one passes a consented
@@ -201,16 +233,32 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(switchboard(attended: false).approvals).to be_nil
       end
 
-      # The queue is nil here; the LADDER is not. It stands a flat denial in
-      # the ladder's place, so "this session has no ladder" is unrepresentable
-      # above the seam rather than a nil every reader has to remember to check
-      # -- and {Lain::Mode::Resolution} now refuses a nil `queue:` outright, so
-      # a board that answered nil here would not survive its own construction.
-      it "stands a flat denial where the ladder would be, rather than answering nil" do
+      # The queue is nil here; the LADDER is not, and it is a LADDER -- one rung
+      # that refuses -- rather than a bare {Gate::DenyAll} substituted beside
+      # it. Two things follow. `#ladder` answers the same kind of thing on both
+      # arms, so "this session has no ladder" is unrepresentable rather than
+      # merely handled, and {Lain::Mode::Resolution}'s nil guard stays the loud
+      # backstop it was written to be instead of being masked by a `||` on the
+      # only production path. The second is the record, below.
+      it "stands a one-rung refusing ladder where the asking one would be, rather than answering nil" do
         board = switchboard(attended: false)
 
-        expect(board.ladder).to be_a(Lain::Effect::Handler::Gate::DenyAll)
+        expect(board.ladder).to be_a(Lain::Approval::Escalation)
+        expect(board.ladder.map(&:name)).to eq(%w[unattended])
         expect(board.ladder.call(gated_call, nil)).to be(false)
+      end
+
+      # {Gate::DenyAll} holds no journal at all, so an unattended run's refusals
+      # left NO escalation record and the bench could not compare an unattended
+      # arm's denials against an attended one's. A ladder journals every rung it
+      # consults, which is what makes the two arms comparable.
+      it "journals its refusal, so an unattended arm's denials are on the record too" do
+        board = switchboard(attended: false)
+
+        board.policy_switch.call(gated_call, nil)
+
+        expect(Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a)
+          .to include(a_hash_including("rung" => "unattended", "verdict" => "deny", "faulted" => false))
       end
 
       # The capability set is untouched: this flag answers "who approves", not

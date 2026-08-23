@@ -46,11 +46,12 @@ module Lain
       # answer has a writer at all, so exposing it hands out the reading
       # ("which rungs are in force, in what order") and no authority. That is
       # the same line {LiveToolset} draws below, and it is why it can sit beside
-      # the switches without being one. For a session with nobody to ask it is
-      # the flat {Effect::Handler::Gate::DenyAll} rather than an
-      # {Approval::Escalation}, and the reading is then "no rung asks anybody,
-      # everything refuses" -- still a reading, still no authority. It is never
-      # nil, so no caller writes `if board.ladder`.
+      # the switches without being one. For a session with nobody to ask it is an
+      # {Approval::Escalation} too -- one {Unattended} rung, refusing -- and the
+      # reading is then "no rung asks anybody, everything refuses", still a
+      # reading and still no authority. Never nil, and never a different KIND of
+      # thing, so no caller writes `if board.ladder` and nothing has to ask
+      # which arm built it.
       # `sensitivity` sits beside `ladder` for the same reason and on the same
       # terms: it is a frozen {Sensitivity::Policy} with no writer, so exposing
       # it hands out the reading ("which paths this session gates") and no
@@ -96,13 +97,16 @@ module Lain
       #   {CLI::Wiring} over the resolved {Project} and that project's
       #   `[sensitivity]` table. Defaulted to the same Null `new` defaults to,
       #   so the direct-construction seams a spec drives are unchanged
+      # @param classifiers [#call] the triage rung's `cwd -> #classify` factory,
+      #   on `new`'s terms
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal -- the only flag this entry reads off `options`, so
       #   a board built here differs from `new` in exactly that one resolution
       # @return [Switchboard]
       def self.for(chronicle:, options:, model:, toolset:, rules: [],
-                   sensitivity: Sensitivity::Policy::Null.instance)
-        new(journal: chronicle.record_journal, model:, toolset:, rules:, sensitivity:,
+                   sensitivity: Sensitivity::Policy::Null.instance,
+                   classifiers: Approval::Escalation::Triage::AnyPath.new)
+        new(journal: chronicle.record_journal, model:, toolset:, rules:, sensitivity:, classifiers:,
             attended: !options[:non_interactive])
       end
 
@@ -123,6 +127,19 @@ module Lain
       #   the tool's own tier. {Sensitivity::Policy::Null} by default, so a
       #   session that resolved no project root behaves byte-for-byte as it did
       #   before this axis existed.
+      # @param classifiers [#call] `cwd -> #classify`, the factory the ladder's
+      #   triage rung anchors a bash argv on. THE THIRD VOCABULARY on this
+      #   board, and its resemblance to `sensitivity:` is a trap worth naming:
+      #   that one is the run's path BOUNDARY, asked `gates?` about a path a
+      #   tool already resolved; this one is asked for a FRESH classifier per
+      #   gated command, because a command names its own working directory.
+      #   {Approval::Escalation::Triage::AnyPath} by default, which protects
+      #   nothing -- a board built with no project knows no home to anchor on.
+      #   {CLI::Wiring::BoardBuild::Classifiers} is what a real chat passes, and
+      #   board_build_spec asserts that IDENTITY rather than the behaviour:
+      #   dropping the argument at the one call site restores this default and
+      #   disarms the rung with a fully green suite, which is exactly how the
+      #   argv check came to be dead for two chunks.
       # @param attended [Boolean] whether a human is at this session's terminal
       #   at all. `--non-interactive` says no, which answers "who decides a
       #   gated call" with "nobody can, so refuse" -- see {#seed} for why
@@ -131,9 +148,11 @@ module Lain
       #   {Wiring::Askers}), so no reader has to un-negate it twice to find out
       #   what it means.
       def initialize(journal:, model:, toolset:, rules: [],
-                     sensitivity: Sensitivity::Policy::Null.instance, attended: true)
+                     sensitivity: Sensitivity::Policy::Null.instance,
+                     classifiers: Approval::Escalation::Triage::AnyPath.new, attended: true)
         @attended = attended
         @sensitivity = sensitivity
+        @classifiers = classifiers
         @rules = rules.to_a.freeze
         @ledger = Sensitivity::Ledger.new
         # Kept, where the switches merely borrow it: {#gate}'s path refusals are
@@ -229,29 +248,7 @@ module Lain
       # nil -- nothing asks it anything until a call is gated.
       def seed(initial, journal:)
         @toolset = LiveToolset.new(-> { @resolved })
-        # A session with nobody to ask has no ladder, and what stands in its
-        # place is DENY -- the two rejected alternatives being why. Approving
-        # would be the `auto` posture under another name, granted to a run the
-        # operator never said that about: the one answer this may not silently
-        # be. Parking is worse than it looks -- the call waits on a queue no
-        # surface drains until the fail-closed timeout denies it anyway, so the
-        # outcome is identical and the run spends the wait first.
-        # {Effect::Handler::Gate::DenyAll} already names this case in its own
-        # words ("correct when no interactive frontend is attached to answer for
-        # a human"), so the third option is the one that was already written
-        # down.
-        #
-        # It is NOT a quiet demotion to `plan`, which {Mode::Resolution} refuses
-        # a nil `queue:` outright to prevent: the posture stays what it says, the
-        # capability set is untouched, and only the gate's answer changes.
-        # `--non-interactive` is a declared arm, so its record is honest by
-        # construction, where an accidentally queueless `manual` would not have
-        # been.
-        #
-        # Substituted HERE rather than guarded at every read, so "this session
-        # has no ladder" is unrepresentable above this line instead of merely
-        # handled -- {Sink::Null}'s shape, one axis over.
-        @ladder = build_ladder(journal:) || Effect::Handler::Gate::DenyAll.new
+        @ladder = build_ladder(journal:)
         resolution = resolve(initial)
         @resolved = resolution.toolset
         @policy_switch = Approval::PolicySwitch.new(resolution.gate_policy, journal:)
@@ -265,12 +262,35 @@ module Lain
       # so a call the session has already decided about never reaches a human,
       # and every rung's answer lands in the same journal the flips do.
       #
-      # `nil` for an unattended session, which wired no queue. {#seed} is what
-      # turns that nil into the flat denial, and is the only place that reads it.
+      # TOTAL: both arms answer an {Approval::Escalation}, and neither answers
+      # nil. A session with nobody to ask gets a ladder of ONE {Unattended}
+      # rung, and the two rejected alternatives are why it refuses. Approving
+      # would be the `auto` posture under another name, granted to a run the
+      # operator never said that about: the one answer this may not silently be.
+      # Parking is worse than it looks -- the call waits on a queue no surface
+      # drains until the fail-closed timeout denies it anyway, so the outcome is
+      # identical and the run spends the wait first.
+      #
+      # A rung rather than the flat {Effect::Handler::Gate::DenyAll} that stood
+      # here before, for two reasons. The first is the guard one file over:
+      # {Mode::Resolution} refuses a nil `queue:` outright, and a `|| DenyAll`
+      # here made that guard unreachable on the only production path -- worse
+      # than never having written it, because a reader finds a guard that looks
+      # like it covers the case. The second is the RECORD. {Effect::Handler::Gate::DenyAll}
+      # holds no journal, so an unattended run's refusals were written down
+      # nowhere at all; a ladder journals every rung it consults, which is what
+      # makes an unattended arm's denials comparable with an attended arm's on
+      # the bench.
+      #
+      # It is still NOT a quiet demotion to `plan`: the posture stays what it
+      # says, the capability set is untouched, and only the gate's answer
+      # changes. `--non-interactive` is a declared arm, so its record is honest
+      # by construction, where an accidentally queueless `manual` would not be.
       def build_ladder(journal:)
-        return nil unless @approvals
+        return Approval::Escalation.new([Unattended.new], journal:) unless @approvals
 
-        Approval::Escalation.for(queue: @approvals, tools: @toolset, journal:, rules: @rules)
+        Approval::Escalation.for(queue: @approvals, tools: @toolset, journal:, rules: @rules,
+                                 triage: Approval::Escalation::Triage.new(sensitivity: @classifiers))
       end
 
       # The posture's declared symbols as this session's live collaborators.
@@ -379,6 +399,30 @@ module Lain
           @apply.call(resolution, surface:)
           @switch.current
         end
+      end
+
+      # The whole ladder of a session with nobody to ask: one rung, refusing.
+      #
+      # A RUNG rather than a policy standing beside the ladder, so `#ladder`
+      # answers the same kind of thing on both arms and the refusal lands in the
+      # journal like every other rung's ruling -- see {#build_ladder} for both
+      # halves of that reasoning. It names itself rather than borrowing
+      # {Escalation::LADDER}, because a reader tallying denials by rung must be
+      # able to tell "this run had no human" from "the rungs ran out".
+      #
+      # What the MODEL is told is a different question and is not this rung's:
+      # {Switchboard#denial} answers it, one layer up at the Gate.
+      class Unattended
+        NAME = "unattended"
+        BECAUSE = "no human is attached to this session, so no rung can ask anybody and nothing can approve"
+
+        # Frozen on {Approval::Escalation::Triage}'s terms, and {Escalation}'s,
+        # and {LiveToolset}'s: a rung holds no state, and a ladder is a value.
+        def initialize = freeze
+
+        def name = NAME
+
+        def call(_effect, _context) = Approval::Escalation::Ruling.deny(rung: NAME, because: BECAUSE)
       end
     end
   end
