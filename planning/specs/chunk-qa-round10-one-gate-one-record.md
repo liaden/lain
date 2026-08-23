@@ -1,6 +1,6 @@
 # One gate, one record: a dead safety seam, a flag that outlived its reason, and four refusals that lie
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -116,6 +116,27 @@ with the places code and documents disagree:
   to the real work list of **186 files**. A naive `sed -i` from the root will edit eight other
   checkouts.
 
+### Divergence found at execution time (2026-08-23, orchestrator)
+
+**Round 9's remainder is not owed — it is written and uncommitted.** Grounding recorded only r9 T2
+as written. In fact `.claude/worktrees/t3,t5,t6,t7,t8,t9` each hold a complete implementation plus a
+detailed `.handback-T*.md`, left uncommitted when round 9's orchestration stopped. None of their
+files collide with what main changed between `07e0bef2` and `ffd27c06`, so each diff applies to
+current main unchanged.
+
+**T17, T18, T19, T20, T21 and T24 are therefore executed as HARVEST cards, not implement cards**
+(user decision): rebase the existing worktree diff onto current main, run its specs, send it through
+the full panel review as if freshly written, and land it. Re-implement only what review rejects. The
+hand-backs carry design reasoning the cards do not restate — T9's per-pane tmux path resolution and
+T5's `Source#collapse_strategy` interface contract especially — and are the reason harvesting beats
+a clean-room rewrite here.
+
+Pre-step commits made before wave 1: `a26ee02b` (r9 T2, the `--quiet` change) and `cde61940` (the
+round 9/10 planning record, including this document).
+
+Baseline suite before wave 1: **15203 examples, 0 failures, 15 pendings**; `rubocop` 1375 files, no
+offenses.
+
 ## Orchestrator contract (plan-specific only)
 
 - Shared files (orchestrator-owned, wiring diffs only): `lib/lain.rb`, `lain.gemspec`,
@@ -166,7 +187,7 @@ with the places code and documents disagree:
 ```
 Wave 1 (14): T1, T2, T5, T6, T7, T8, T10, T11, T12, T14, T15, T17, T18, T19
 Wave 2  (6): T3 (←T1), T4 (←T1,T2), T9 (←T8), T20 (←T19), T21 (←T19), T24 (←T18)
-Wave 3  (3): T13 (←T3), T22 (←T4), T23 (←T3,T14)
+Wave 3  (4): T13 (←T3), T22 (←T4), T23 (←T3,T14), T25 (←T1,T2,T4)
 Critical path: T1 → T3 → T23   (three chains tie at length 3; T1→T3→T13 and T1→T4→T22 are the others)
 ```
 
@@ -1102,6 +1123,65 @@ Scenario: the scenario names a check that fails on today's code and passes on T3
   confirm the call reaches a human as an ordinary approval; then restore T3 and confirm the triage
   deny. A manual probe that was never seen fail proves nothing about the fix.
 
+### T25 — Purge or wire what the flag's deletion left behind   [wave 3] [risk: medium]
+
+**Depends on:** T1, T2, T4
+**Files:** determined by the audit; anything it proposes to DELETE from a file owned by a landed
+card is this card's to change, anything it proposes to WIRE is escalated before it is written.
+**Reuse:** `tmp/lib_reach_report.txt`, written by `spec/lib_reach_spec.rb` on every suite run — it
+already lists public `lib/` methods named only from `spec/`, which is the exact shape a deletion
+leaves behind. `command grep` per the sweep rules below.
+**Shared-file wiring:** possible; hand back one-line diffs.
+**Reachable from:** deferred: this card removes reach rather than adding it.
+
+Added at the user's request, after T1/T2/T4 have landed, so the audit runs against a tree where
+`--yolo`, `/yolo` and the queueless renames are already done rather than against a prediction of it.
+
+Deleting a flag, a REPL command and two unreachable branches strands code in three distinct ways,
+and each wants a different answer:
+
+1. **Dead** — reachable from nothing but its own spec, and its reason for existing died with the
+   flag. Purge it, and its spec with it.
+2. **Orphaned but wanted** — a real capability whose only caller was the deleted flag. Wire it to
+   the live path that should have had it, or say why nothing should.
+3. **Load-bearing under a stale name** — reached by `--non-interactive`, which T4 renames. Not this
+   card's, already covered; the audit must not double-touch it.
+
+Take the `lib_reach` delta as the primary instrument: capture the report before and after the yolo
+cards, and every method that newly appears in it is a candidate. `Approval::PolicySwitch` writers,
+`Switchboard`'s private helpers, and anything under `cli/command/` that only `/yolo` reached are the
+named places to look first.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: nothing in lib/ is reachable only from a deleted caller's spec
+  Given the lib_reach report from before the yolo cards
+  And the report from after them
+  When the two are compared
+  Then every method the deletion newly orphaned is either purged or wired
+  And the audit names which, for each
+
+Scenario: the suite's example count falls only by the examples the audit deleted
+  When the suite runs after the purge
+  Then the count equals the post-T22 count minus the examples the audit removed
+  And no example fails
+```
+→ spec file: none new; the card deletes specs or adds wiring specs as its findings dictate.
+
+**Escalation triggers**
+- **A purge is a deletion, and a wrong one is silent.** If a candidate's only caller is a spec but
+  its docstring claims a production reason, stop and report rather than deleting — that is the
+  dormant-feature shape this plan exists to fight, and deleting it hides the same defect the other
+  way round.
+- Anything the audit wants to WIRE is a capability change, not a cleanup. Stop and hand back the
+  proposal; the orchestrator decides.
+- `Env::NoApprovals` and `RedactSecretReads::Unqueued` are T4's and are **load-bearing** via
+  `--non-interactive`. If the audit flags either as dead, its reachability model is wrong — stop.
+- Do not extend the audit past what the yolo deletion exposed. Pre-existing dead code is a real
+  finding but a different card; list it, do not purge it.
+
+
 ## Integration checks
 
 After the last wave:
@@ -1148,6 +1228,8 @@ After the last wave:
   is the control that stops "it denies everything" reading as a pass.
 - **A compaction record carries `collapse_strategy`** (T24) — the check that F51 is discharged
   rather than half-landed. Drive one compacting session and read the record.
+- **The dead-code audit (T25) named every orphan and said purge-or-wire for each**, and the
+  post-chunk `tmp/lib_reach_report.txt` has no entry that the yolo deletion created.
 - Re-run round 10's close-out negatives, since T19 moves the file two of them watch: XDG leak with
   its positive control, `git status` against baseline with the **real** `HOME` (P16), and
   `ls -d $LAIN_REPO/.lain`.
