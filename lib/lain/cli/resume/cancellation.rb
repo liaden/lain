@@ -39,8 +39,8 @@ module Lain
       # It is a PROJECTION, never a record: {Resume#settled} commits it onto the
       # rebuilt in-memory Timeline, and the journal that witnessed the tear is
       # left exactly as it was. Nothing here claims the tool produced output --
-      # which is what separates it from the fabrication {Resume.refuse_mid_tool!}
-      # was right to refuse.
+      # which is what separates it from the fabrication the backstop was right
+      # to refuse ({Resume::MidTool} states that refusal now).
       class Cancellation
         # A torn head this projection cannot answer: {Tool::ResultBlock}'s
         # gate 4 refuses to build a result that names no tool_use, and no

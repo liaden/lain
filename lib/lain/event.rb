@@ -74,13 +74,24 @@ module Lain
     end
 
     # Whether `event` is an assistant turn still carrying an unanswered
-    # tool_use block -- the shape that must never become a resume head, a fork
-    # point, or a rewind target, because the next request would render a
-    # dangling tool_use the API rejects. Shared by every door that has to
-    # refuse the same head the same way (CLI::Resume#refuse_mid_tool!,
-    # CLI::Command::Fork#anchor!, CLI::Command::Rewind#settled_target!) --
-    # this used to be two separately maintained copies that had quietly
-    # drifted (one guarded a nil event, one did not).
+    # tool_use block -- the shape the next request would render as a dangling
+    # tool_use, which the API rejects.
+    #
+    # "It must never become a rewind TARGET" is the one claim here still
+    # absolute. It is NOT true of the session-loading doors any more: since T3
+    # they repair rather than refuse -- CLI::Resume#settled answers every
+    # stranded call with a projected cancellation turn committed above the torn
+    # head, so a resumed or forked chain legitimately starts from a head that
+    # is settled again. Only a call naming no tool_use id, which nothing can
+    # pair a result with, still refuses there.
+    #
+    # Shared by every door that has to recognise this shape the same way --
+    # CLI::Resume#settled, which repairs it (CLI::Resume::MidTool states the
+    # refusal for the one shape it cannot), and CLI::Command::Fork#anchor! and
+    # CLI::Command::Rewind#settled_target!, which refuse it because they move a
+    # LIVE head with no load behind them to answer it. This used to be two
+    # separately maintained copies that had quietly drifted (one guarded a nil
+    # event, one did not).
     #
     # Nil-safe on purpose: CLI::Command::Rewind#nearest_valid evaluates this
     # over `(1..heads.length)`, and `heads[heads.length]` is nil by

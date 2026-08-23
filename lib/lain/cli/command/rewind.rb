@@ -101,13 +101,25 @@ module Lain
           raise Refusal, "#{prefix.inspect} is ambiguous on this session's chain: #{matches.join(", ")}"
         end
 
-        # Shares {Event.pending_tool_use?} with {CLI::Resume#refuse_mid_tool!}:
-        # a target that is an assistant tool_use turn still awaiting its
-        # results must not become the head -- the next ask would render a
-        # dangling tool_use (the real API rejects it), and the journaled file
-        # would then refuse to resume through the very guard this command
-        # would have skipped. Both forms funnel through the count, so both
-        # meet the guard.
+        # Shares {Event.pending_tool_use?} with the session-loading doors (see
+        # {CLI::Resume::MidTool}): a target that is an assistant tool_use turn
+        # still awaiting its results must not become the head -- the next ask
+        # would render a dangling tool_use, which the real API rejects. That
+        # reason stands on its own and is why this guard is here.
+        #
+        # What it no longer shares is the REMEDY, and the difference is not
+        # drift. Since T3 a loaded session repairs this shape instead of
+        # refusing it, so the older second reason given here -- that the
+        # journaled file would refuse to resume through the very guard this
+        # command skipped -- is no longer true; it would repair and resume.
+        # This command is unaffected because it moves a LIVE head and projects
+        # nothing: the torn turn would simply BE the head, with no load to
+        # answer it. A live head is also where the shape stops being one fact
+        # (a call may still be in flight -- the distinction
+        # {CLI::Command::Fork#anchor!} reads off `env.replies.pending?`), which
+        # is why the live doors are the conservative ones.
+        #
+        # Both forms funnel through the count, so both meet the guard.
         def settled_target!(count, timeline)
           heads = timeline.ancestors.to_a
           return unless Event.pending_tool_use?(heads[count])

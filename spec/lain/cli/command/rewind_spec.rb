@@ -130,12 +130,16 @@ RSpec.describe Lain::CLI::Command::Rewind do
     end
   end
 
-  # Panel fix 1 (Jeremy): {CLI::Resume#refuse_mid_tool!} refuses to resume a
-  # head that is an assistant tool_use turn still awaiting its results;
+  # Panel fix 1 (Jeremy): a loaded session refuses a head that is an assistant
+  # tool_use turn still awaiting its results and cannot be repaired
+  # ({Lain::CLI::Resume::MidTool});
   # /rewind must not CREATE that head -- the next ask would render a dangling
-  # tool_use (a real-API 400), and the journaled file would then refuse to
-  # resume through the very guard the command skipped.
-  describe "a mid-tool target is refused (parity with Resume#refuse_mid_tool!)" do
+  # tool_use (a real-API 400). It moves a LIVE head and projects nothing, so
+  # unlike a resume there is no load to answer the stranded call: the torn turn
+  # would simply be the head. (The older second reason -- "the journaled file
+  # would then refuse to resume" -- stopped being true at T3, which repairs
+  # that file rather than refusing it. The first reason is sufficient.)
+  describe "a mid-tool target is refused (parity with the session-loading doors)" do
     let(:provider) do
       Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "ping" }]),
                                            text_response("done")])

@@ -27,6 +27,23 @@ module Lain
         NO_TURNS = "cannot fork: no turns are recorded yet, so there is no head to fork -- " \
                    "ask something first, then /fork"
 
+        # Why this door refuses a shape `lain chat --fork` REPAIRS, and the
+        # whole of the divergence (see {#anchor!}). Written in the child's
+        # vocabulary for the shape -- "awaiting tool results" -- because it is
+        # the same shape; only what it MEANS here differs.
+        #
+        # It says "may still be making", and the hedge is the point: what the
+        # door sees is a parked question, not a running tool. Those coincide at
+        # the `human> ` prompt and come apart at `you> `, where a question a
+        # subagent queued reads pending over a head torn by an old interrupt.
+        # An earlier draft asserted the call WAS still being made, which is a
+        # fact this door does not have -- and a refusal claiming what it cannot
+        # see is the defect this chunk exists to remove.
+        MID_TOOL = "this session's head is an assistant tool_use turn still awaiting tool results, " \
+                   "and a question is parked for you right now -- so this session may still be " \
+                   "making that call, and a fork opened here could tell its model the call was " \
+                   "cancelled while it was not"
+
         # The digest-prefix length the window name carries, hex-only -- long
         # enough to tell forks apart at a glance, short enough for a tab.
         NAME_HEX = 12
@@ -57,14 +74,50 @@ module Lain
 
         # Durability first, even ahead of the refusal: catch_up re-journals
         # through the scribe's idempotent braces (fsync'd), so the head is on
-        # disk before anything reads for it. THEN the child's own mid-tool
-        # gate, mirrored parent-side (F1): Resume#fork runs exactly this on
-        # arrival, so refusing here -- same predicate, same words, against
-        # the same now-durable record -- beats opening a window that flashes
-        # and dies.
+        # disk before anything reads for it. THEN the mid-tool gate, which used
+        # to be `Resume.refuse_mid_tool!` (since deleted) run parent-side (F1) -- the child's
+        # own words against the same now-durable record, beating a window that
+        # flashes and dies.
+        #
+        # T5 kept a gate here and narrowed it TWICE. T3 made the child repair a
+        # torn head, so refusing every torn head would refuse forks the child
+        # would open happily. But a live head is not a recorded one: on disk an
+        # unanswered `tool_use` is stranded -- nothing will ever answer it, so
+        # the child's "cancelled" states a fact -- while live it may be a call
+        # still in flight. Both prompts dispatch through one bound registry over
+        # one Env (`wiring.rb:474`), so `/fork` is typeable at the `human> `
+        # prompt a parked `ask_human` opens (`human_replies.rb:1113`), and there
+        # the head's `tool_use` IS that ask_human.
+        #
+        # `env.replies.pending?` is what separates them, and it is exact rather
+        # than approximate: {HumanReplies::Reply::AnswerLoop#exchange} enqueues
+        # the item BEFORE it parks, so it is true for the whole life of that
+        # prompt and false at rest. Those are the only two command-dispatch
+        # surfaces in `lib/` -- the approval prompt reads y/N straight through
+        # `conductor.read_reply` and never consults the registry -- so nothing
+        # else can be running a tool while this line is read.
+        #
+        # It fails safe in one direction only: a question a subagent queued
+        # while the human sat idle at `you> ` also reads pending, over-refusing
+        # a fork that would have been fine. Over-refusing costs a message;
+        # under-refusing opens a child told its call was cancelled while the
+        # parent was still making it.
         def anchor!(env)
           env.checkpoint
-          Resume.refuse_mid_tool!(env.journal_path, env.timeline)
+          return unless Event.pending_tool_use?(env.timeline.head)
+          return unless env.replies.pending?
+
+          raise Resume::Door.new(verb: "fork", path: env.journal_path)
+                            .refuse("#{MID_TOOL}. #{remedy(File.basename(env.journal_path))}")
+        end
+
+        # Reachable from where the human is standing: they have a live session,
+        # so an earlier settled digest forks clean today ({Resume#fork} checks
+        # out before it refuses), and answering the parked question costs no
+        # command at all.
+        def remedy(file)
+          "Fork an earlier, settled turn instead: lain chat --fork #{file}@<digest-prefix> -- " \
+            "or answer the question and /fork once this turn has settled"
         end
 
         # Journal, prove, place -- and degrade to the printed command when no

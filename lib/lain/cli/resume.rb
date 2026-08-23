@@ -18,6 +18,44 @@ module Lain
       # message, nonzero exit, no backtrace.
       class Refusal < Error; end
 
+      Door = Data.define(:verb, :path)
+
+      # WHICH door a human came through and WHICH file they named -- the two
+      # facts every refusal needs and the only two that vary between them.
+      # They were a bare String and a bare String riding seven frames as
+      # positionals for one use at the very end, where `refusal("fork", path)`
+      # and `refusal(path, "fork")` both type-check and one prints
+      # `cannot /sessions/f.ndjson fork:`. As a value they cannot be swapped
+      # silently, `verb` is checked against a closed set at construction rather
+      # than at the sentence, and the wording lives with the pair instead of
+      # being spread over the sites that pass them.
+      #
+      # Reopened rather than written in the `Data.define` block because a
+      # constant declared inside that block belongs to the ENCLOSING module,
+      # not to the Data class (CLAUDE.md) -- {VERBS} would silently become
+      # `Resume::VERBS`. The docstring goes on the reopen for the same reason
+      # YARD demands it there.
+      class Door
+        VERBS = %w[resume fork].freeze
+
+        def initialize(verb:, path:)
+          raise ArgumentError, "unknown door #{verb.inspect}: expected #{VERBS.join(" or ")}" \
+            unless VERBS.include?(verb)
+
+          super
+        end
+
+        # The basename, because a refusal names the file the human typed and
+        # never the absolute path the resolver built.
+        def file = File.basename(path)
+
+        # Every refusal either door raises reads "cannot <verb> <file>:
+        # <reason>", so the shape lives here and a new refusal cannot forget
+        # the file. {MidTool}, {Resume#fork_refusal} and {Resume#rebuild} all
+        # come through it.
+        def refuse(reason) = Refusal.new("cannot #{verb} #{file}: #{reason}")
+      end
+
       # Everything a resumed chat starts from. `resumed_from`/`written` are
       # exactly {CLI::Chronicle#start}'s chaining keywords, derived here so
       # the exe never assembles wire-format hashes itself.
@@ -45,54 +83,6 @@ module Lain
         # recorded one untouched, so "these are the same object" is the whole
         # question and needs no walk.
         def repaired? = !recorded.equal?(timeline)
-      end
-
-      # The reason {.refuse_mid_tool!} states for the backstop: this is the
-      # shape no projection can answer, and saying so is the whole of it.
-      #
-      # Declared on {Resume} rather than inside `class << self`, where it would
-      # belong to the singleton class and resolve from nowhere an instance
-      # method can see -- the same scoping trap CLAUDE.md records for constants
-      # in a `Data.define` block.
-      UNANSWERABLE = "and one of those calls names no tool_use id, so nothing can answer it"
-
-      # The reason the parent-side `/fork` mirror states, being the one caller
-      # T3 did not convert to a repair. It describes what that door does and
-      # claims nothing more -- in particular it no longer says fabricating a
-      # result would falsify the record, which T3 established is false: a
-      # projection edits nothing and witnesses nothing.
-      MIRRORED = "so no request can be built from it here"
-
-      class << self
-        # THE BACKSTOP, since T3. A torn head no longer refuses here: {#settled}
-        # projects a cancellation onto the rebuilt timeline and the session
-        # resumes. What still reaches this is the one shape that projection
-        # cannot answer -- a stranded `tool_use` naming no id, which
-        # {Tool::ResultBlock}'s gate 4 refuses to build a result for and which
-        # no projection makes valid. It stays because deleting it would leave
-        # that shape escaping as a raw ArgumentError with no file attached,
-        # against a door whose whole doctrine is to refuse namedly.
-        #
-        # It is ALSO still the gate `/fork` mirrors parent-side
-        # ({CLI::Command::Fork#anchor!}) against a LIVE timeline, which T3 does
-        # not repair -- so that door refuses a head this one now resumes. T5
-        # owns fork.rb and is where the two are reconciled.
-        #
-        # Takes the timeline (not the recording) so fork mode's checked-out
-        # head faces the SAME refusal verbatim. A class method (T16 F1) for the
-        # parent-side mirror -- one predicate, one wording, wherever the user
-        # meets it.
-        # @param path [String] the session file, named in the refusal
-        # @param timeline [Lain::Timeline] the chain whose head is judged
-        # @param reason [String] why THIS door refuses -- the shared predicate
-        #   and verb, the caller's reason, because the two callers no longer
-        #   refuse for the same reason
-        def refuse_mid_tool!(path, timeline, reason: MIRRORED)
-          return unless Event.pending_tool_use?(timeline.head)
-
-          raise Refusal, "cannot resume #{File.basename(path)}: its head is an assistant tool_use turn " \
-                         "still awaiting tool results, #{reason}"
-        end
       end
 
       def initialize(paths: Paths.new)
@@ -182,14 +172,14 @@ module Lain
         # It was missing here once, and the cost was not theoretical: the SAME
         # damaged file refused namedly from `--fork` and escaped as a raw store
         # complaint, with no file on it, from `--resume`.
-        raise Refusal, "cannot resume #{File.basename(path)}: #{e.message}"
+        raise Door.new(verb: "resume", path:).refuse(e.message)
       rescue Provider::ResponseWal::CorruptFrame => e
         # The response WAL should never raise here -- salvage reads it TOLERANTLY
         # ({Salvager#wal_frames}), so a mis-slotted region resyncs to a notice,
         # not an exception. This is the loud backstop: a CorruptFrame escaping
         # is a bug in the tolerant path, and it must refuse namedly rather than
         # crash the whole resume with a raw provider error the exe cannot map.
-        raise Refusal, "cannot resume #{File.basename(path)}: its response log is corrupt (#{e.message})"
+        raise Door.new(verb: "resume", path:).refuse("its response log is corrupt (#{e.message})")
       end
 
       def load_recording(path)
@@ -203,18 +193,16 @@ module Lain
       # out fork point with the mismatch notices alone.
       def resumed_result(path, recording, outcome, model, provider)
         mismatched = mismatches(path, recording, model, provider)
-        result(path, recording.timeline, replay(path),
+        result(Door.new(verb: "resume", path:), recording.timeline, replay(path),
                open: recording.open?, notices: notices(path, recording, outcome, mismatched))
       end
 
       def fork_result(point, recording, forked, model, provider)
-        result(point.path, forked, replay(point.path),
+        result(Door.new(verb: "fork", path: point.path), forked, replay(point.path),
                open: recording.open?, notices: mismatches(point.path, recording, model, provider))
       end
 
-      def fork_refusal(point, reason)
-        Refusal.new("cannot fork #{File.basename(point.path)}: #{reason}")
-      end
+      def fork_refusal(point, reason) = Door.new(verb: "fork", path: point.path).refuse(reason)
 
       # Run-state and memory replay are chain-wide (the Loader folds only the
       # Timeline and message events across `resumed_from`, its stated limit),
@@ -252,9 +240,14 @@ module Lain
       # explicit "try that call again" prompt. Saying what happened is not
       # that.) Built through {Data#with} so {Result#repaired?} is the ONE
       # predicate, asked of the object that owns it.
-      def result(path, timeline, replay, open:, notices:)
-        built = Result.new(file: File.basename(path), timeline: settled(path, timeline), recorded: timeline,
-                           session: replay.session, recorder: replay.memory, open:, notices:)
+      #
+      # The {Door} rides through for the REFUSAL alone: the repair, and this
+      # disclosure of it, are identical at both doors -- only what a human is
+      # told when the repair CANNOT be made names which door they used.
+      def result(door, timeline, replay, open:, notices:)
+        built = Result.new(file: door.file, timeline: settled(door, timeline),
+                           recorded: timeline, session: replay.session, recorder: replay.memory,
+                           open:, notices:)
         built.repaired? ? built.with(notices: [*notices, repair_notice(built)]) : built
       end
 
@@ -283,24 +276,22 @@ module Lain
       # The journal is not rewritten. This commit lands on the rebuilt
       # in-memory Timeline, which is what the NEW session starts from -- and
       # what its OWN record then journals as its own first turn.
-      def settled(path, timeline)
+      def settled(door, timeline)
         return timeline unless Event.pending_tool_use?(timeline.head)
 
-        timeline.commit(role: :user, content: cancellation(path, timeline).blocks)
+        timeline.commit(role: :user, content: cancellation(door, timeline).blocks)
       end
 
-      # The bare `raise` is STRUCTURAL, not defensive. Without it this arm
-      # returns whatever {.refuse_mid_tool!} returns, which is nil whenever its
-      # own predicate disagrees -- and a nil timeline reaches the Agent as a
-      # fresh chain, so the whole conversation would vanish with no error at
-      # all. The two predicates do agree today (both read the same immutable
-      # head), which is exactly why the failure would be silent if they ever
-      # stopped: this arm cannot return.
-      def cancellation(path, timeline)
+      # THE BACKSTOP, and the whole of it. The rescue arm IS the knowledge:
+      # being here means the head is torn ({#settled} proved it) AND that no
+      # result can be paired with it ({Cancellation} mints eagerly, so
+      # construction is the one place {Cancellation::Unpairable} surfaces).
+      # {MidTool} is handed that answer and states it; it re-derives nothing,
+      # which is what lets it be a sentence rather than a gate.
+      def cancellation(door, timeline)
         Cancellation.new(timeline.head)
       rescue Cancellation::Unpairable
-        refuse_mid_tool!(path, timeline, reason: UNANSWERABLE)
-        raise
+        raise MidTool.refusal(door)
       end
 
       # The Loader's injected filesystem duck (its contract is handed-records,
@@ -312,13 +303,6 @@ module Lain
           path = File.join(dir, basename)
           File.file?(path) ? File.foreach(path) : nil
         end
-      end
-
-      # The shared class-level gate (see its own comment), reachable from the
-      # private instance flow. `reason:` forwards, or a door would state the
-      # OTHER door's reason.
-      def refuse_mid_tool!(path, timeline, reason: MIRRORED)
-        self.class.refuse_mid_tool!(path, timeline, reason:)
       end
 
       # `outcome.notice` is nil for {SessionRecord::Salvage::Nothing} (the
@@ -341,13 +325,14 @@ module Lain
   end
 end
 
-# Cancellation, Salvager, Selector, MismatchNotices, and ChainWalk reopen Resume to nest
-# themselves (see Salvager's own class comment for why separate files rather
-# than a separate cop-loosening): #salvage, #call, #call, and #replay send
-# them messages, so they read as the dependent units even though all four
-# resolve at runtime, the same ordering note {Bench::Session}'s own require
-# block makes.
+# Cancellation, MidTool, Salvager, Selector, MismatchNotices and ChainWalk all
+# reopen Resume to nest themselves (see Salvager's own class comment for why
+# separate files rather than a separate cop-loosening): #cancellation, #salvage,
+# #call, #call and #replay send them messages, so they read as the dependent
+# units even though all six resolve at runtime -- the same ordering note
+# {Bench::Session}'s own require block makes.
 require_relative "resume/cancellation"
+require_relative "resume/mid_tool"
 require_relative "resume/salvager"
 require_relative "resume/selector"
 require_relative "resume/mismatch_notices"

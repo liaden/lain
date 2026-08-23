@@ -2,6 +2,7 @@
 
 require "json"
 require "stringio"
+require "thor"
 require "tmpdir"
 
 # T19: resolving `lain chat --resume [SESSION]` into the pieces the exe wires --
@@ -910,7 +911,8 @@ RSpec.describe Lain::CLI::Resume do
   # tool_use. The repair is a PROJECTION onto the rebuilt in-memory
   # timeline -- one user turn answering every stranded call with a
   # cancellation -- and the NDJSON keeps the honest torn record, which is
-  # what separates it from the fabrication `refuse_mid_tool!` refused.
+  # what separates it from the fabrication the backstop refused (T5 collapsed
+  # that gate into {Resume::MidTool}; the refusal itself is unchanged).
   describe "a session torn mid-tool (F46)" do
     def tool_use(id) = { "type" => "tool_use", "id" => id, "name" => "echo", "input" => { "text" => "hi" } }
 
@@ -1049,8 +1051,9 @@ RSpec.describe Lain::CLI::Resume do
 
     # The one shape the projection cannot answer: {Tool::ResultBlock}'s gate 4
     # refuses to build a block that names no tool_use, and nothing projected
-    # would make that chain valid. So the door still refuses -- the backstop
-    # `refuse_mid_tool!` is kept for (T5 renames its verb, it does not delete it).
+    # would make that chain valid. So the door still refuses -- this is the
+    # backstop, now stated by {Resume::MidTool} from {Resume#cancellation}'s
+    # rescue arm rather than by a gate that re-asks what that arm already knows.
     it "still refuses namedly when a stranded tool_use carries no pairable id" do
       anonymous = Lain::Timeline.empty(store: Lain::Store.new)
                                 .commit(role: :user, content: text("echo hi"))
@@ -1088,6 +1091,145 @@ RSpec.describe Lain::CLI::Resume do
       expect(result.timeline.head.content.map { |block| block["type"] }).to eq(["text"])
       expect(result).not_to be_repaired
       expect(result.notices).to be_empty
+    end
+  end
+
+  # T5. After T3 this refusal fires for exactly ONE shape -- a stranded
+  # tool_use naming no id, which {Tool::ResultBlock}'s gate 4 will not pair a
+  # result with -- and what it says is the whole of what a human gets. Two
+  # things were wrong with what it said. It hardcoded "cannot resume" at a
+  # door the user may well have opened with `--fork`, and it sent them to
+  # "re-ask the question in a new session", which throws the chain away.
+  #
+  # The remedy has to be one reachable FROM HERE, which is what rules
+  # `/rewind` out even though it can already decline a torn turn:
+  # {Lain::CLI::Command::Rewind#call} reads `env.timeline` and `env.agent` --
+  # a live REPL -- and this fires while a session is still being loaded, before
+  # one exists. `--fork` is reachable, because {Resume#fork} checks out first
+  # and refuses second.
+  describe "the torn-head refusal names its own door and a reachable remedy (T5)" do
+    def prefix_for(digest) = digest.delete_prefix("blake3:")[0, 12]
+
+    # The one shape T3's projection cannot answer.
+    let(:unpairable) do
+      Lain::Timeline.empty(store: Lain::Store.new)
+                    .commit(role: :user, content: text("echo hi"))
+                    .commit(role: :assistant,
+                            content: [{ "type" => "tool_use", "name" => "echo", "input" => {} }])
+    end
+
+    let(:file) { "20260101T000000-1.ndjson" }
+
+    before { write_closed(file, unpairable) }
+
+    def raised
+      yield
+      raise "expected a Refusal, none was raised"
+    rescue described_class::Refusal => e
+      e
+    end
+
+    # BOTH doors, driven for real. The card is that they say different things,
+    # so nothing here may assert against one of them alone.
+    def refusals
+      { "resume" => raised { resume.call },
+        "fork" => raised { resume.fork(selector: "20260101@#{prefix_for(unpairable.head_digest)}") } }
+    end
+
+    it "says resume at the resume door" do
+      expect(refusals["resume"].message).to start_with("cannot resume #{file}:")
+    end
+
+    it "says fork at the fork door" do
+      expect(refusals["fork"].message).to start_with("cannot fork #{file}:")
+    end
+
+    it "gives both doors the same reason, in the same words" do
+      resumed, forked = refusals.values_at("resume", "fork").map(&:message)
+
+      expect(forked.delete_prefix("cannot fork")).to eq(resumed.delete_prefix("cannot resume"))
+      expect(resumed).to include("awaiting tool results")
+    end
+
+    it "names forking at an earlier settled turn, at both doors" do
+      refusals.each_value do |refusal|
+        expect(refusal.message).to include("lain chat --fork", file).and include("earlier").and include("settled")
+      end
+    end
+
+    # The defect this card exists to fix: a remedy the human cannot reach.
+    # Every command that needs a live REPL is a slash command, so "names no
+    # slash command" is the mechanical form of the AC -- and `/rewind`, the
+    # tempting one, is named explicitly so a later edit cannot re-add it.
+    #
+    # The lookbehind covers this codebase's own way of writing one. An earlier
+    # spelling anchored on whitespace, which reads a bare `/sessions` but not
+    # the BACKTICKED `/sessions` every doc comment here uses -- so the guard
+    # would have watched a form nobody writes. It excludes `\w` and `.` so a
+    # path (`lib/lain`) and a filename are not slash commands; it must NOT
+    # exclude the backtick, or it re-opens the very leak it closes.
+    it "names no command that needs a live session" do
+      refusals.each_value do |refusal|
+        expect(refusal.message).not_to match(/rewind/i)
+        expect(refusal.message).not_to match(%r{(?<![\w.])/[a-z]+}i)
+      end
+    end
+
+    it "is a Lain::Error at both doors, so the exe maps it to a message rather than a backtrace" do
+      refusals.each_value { |refusal| expect(refusal).to be_a(Lain::Error) }
+    end
+
+    # `Lain::Error` is only half the AC: the PROCESS status and whether a frame
+    # is printed are Thor's decisions, downstream of exe/lain's
+    # `rescue Lain::Error => e; raise Thor::Error, e.message`. A throwaway Thor
+    # carrying exactly that line is the smallest thing that can be asked.
+    #
+    # NO `debug: true` here, deliberately -- debug re-raises and the exit
+    # status IS the assertion -- so the SystemExit is caught by {#catch_exit}
+    # rather than left to escape. RSpec does not rescue SystemExit inside an
+    # example, and a truncated run reports what had already passed as a pass.
+    it "exits non-zero at both doors, printing the message and no backtrace frame" do
+      refusals.each do |door, refusal|
+        status, printed = exe_exit { raise refusal }
+
+        expect(status).to be_positive, "the #{door} door exited #{status.inspect}"
+        expect(printed).to include(refusal.message)
+        expect(printed).not_to match(/\.rb:\d+:in|^\s+from /)
+      end
+    end
+
+    def exe_exit(&door)
+      captured = StringIO.new
+      status = with_stderr(captured) { catch_exit { thor_door(door).start(["door"]) } }
+      [status, captured.string]
+    end
+
+    def with_stderr(io)
+      original = $stderr
+      $stderr = io
+      yield
+    ensure
+      $stderr = original
+    end
+
+    def catch_exit
+      yield
+      nil
+    rescue SystemExit => e
+      e.status
+    end
+
+    def thor_door(door)
+      Class.new(Thor) do
+        def self.exit_on_failure? = true
+
+        desc "door", "the door under test"
+        define_method(:door) do
+          door.call
+        rescue Lain::Error => e
+          raise Thor::Error, e.message
+        end
+      end
     end
   end
 
