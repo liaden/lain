@@ -105,7 +105,7 @@ RSpec.describe Lain::CLI::Command::Surface do
   # in #initialize and read through a bare attr_reader, so two reads are already
   # one object. It is asserted because the contract ("assembled ONCE per run")
   # is what makes every reader identity-stable across a session, and a later
-  # card that made #env a builder would break /mode and /yolo silently.
+  # card that made #env a builder would break /mode and /approve silently.
   it "assembles the Env exactly once per run, so two reads are the same object" do
     with_project do |root|
       surface = build_surface(root)
@@ -138,8 +138,28 @@ RSpec.describe Lain::CLI::Command::Surface do
 
       expect(surface.commands.registry.map(&:name)).to contain_exactly(
         "quit", "rewind", "pin", "unpin", "fork", "btw", "keep", "status", "sessions", "inbox",
-        "ruby", "mode", "goal", "meta", "review", "review-submit", "survey", "help", "approve", "yolo", "model"
+        "ruby", "mode", "goal", "meta", "review", "review-submit", "survey", "help", "approve", "model"
       )
+    end
+  end
+
+  # `/yolo` is gone (round 10): the identical PolicySwitch flip it wrapped is
+  # already reachable through `/mode auto` and `/mode accept_edits`, so the
+  # command was a redundant alias rather than a capability of its own. A typed
+  # `/yolo on` must not be silently swallowed -- with no command claiming the
+  # name, dispatch falls through to the skill middleware, which reports it the
+  # same loud way it reports any other unrecognised word.
+  it "registers no command named yolo, and a typed /yolo falls through to an unknown-skill report" do
+    with_project do |root|
+      surface = build_surface(root)
+
+      expect(surface.commands.registry.map(&:name)).not_to include("yolo")
+
+      env = surface.commands.dispatch("/yolo on") do
+        surface.middleware.call({ text: "/yolo on", agent: :the_agent }) { |e| e }
+      end
+
+      expect(env.fetch(:response).text).to include("unknown skill", "yolo")
     end
   end
 

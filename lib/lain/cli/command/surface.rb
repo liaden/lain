@@ -125,7 +125,6 @@ module Lain
           @registry ||= Registry.new(builtins).tap do |registry|
             registry.register(Help.new(registry:, catalog: @library.catalog))
             registry.register(Approve.new(prompt: @approval_prompt))
-            registry.register(Yolo.new)
             registry.register(Model.new)
           end
         end
