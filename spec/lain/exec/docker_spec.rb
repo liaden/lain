@@ -53,11 +53,20 @@ RSpec.describe Lain::Exec::Docker do
   # Stands in for the inner {Lain::Exec} backend the docker argv is run
   # through, recording the whole call rather than only the command: the cwd and
   # env this backend hands the DOCKER CLIENT are decisions of its own.
+  #
+  # `calls` because the client is asked what it IS through this same backend,
+  # so a run is now TWO invocations of it and both the order between them and
+  # the DEADLINE each is given are decisions of this backend's. The singular
+  # readers stay the LAST call, which is the run -- every example below that
+  # asserts an argv means that one.
   let(:inner) do
     Class.new do
-      attr_reader :command, :cwd, :env, :timeout, :sinks
+      attr_reader :command, :cwd, :env, :timeout, :sinks, :calls
+
+      def initialize = @calls = []
 
       def call(command:, cwd:, env:, timeout:, **sinks)
+        @calls << { command:, cwd:, env:, timeout: }
         @command = command
         @cwd = cwd
         @env = env
@@ -84,10 +93,14 @@ RSpec.describe Lain::Exec::Docker do
   def flag_values(name) = argv.each_cons(2).select { |flag, _| flag == name }.map(&:last)
 
   describe "the docker invocation it builds" do
+    # STRUCTURE, not the first four elements: what follows `--rm` depends on
+    # which client is answering (see "how the calling user reaches the
+    # container" below), and a positional assertion on the head would pin an
+    # argv this backend deliberately does not always build.
     it "runs one throwaway container per command" do
       run
 
-      expect(argv.first(4)).to eq(%w[docker run --rm --user])
+      expect(argv.first(3)).to eq(%w[docker run --rm])
     end
 
     it "puts the image immediately before what the container is asked to run" do
@@ -157,10 +170,160 @@ RSpec.describe Lain::Exec::Docker do
       expect(flag_values("--volume").size).to eq(2)
     end
 
-    it "runs as the calling user, so files a command writes are owned the way the local backend owns them" do
+    # ONE OF THE TWO MECHANISMS, named as one. Files a command writes end up
+    # owned the way the local backend owns them either by this flag or by a
+    # client that already runs the container as the host user -- so the name
+    # says which of the two is being pinned here, and "how the calling user
+    # reaches the container" below owns the choice between them.
+    it "names the calling user for a client that needs telling" do
       run
 
       expect(flag_values("--user")).to eq(["1000:1000"])
+    end
+  end
+
+  # F57, and the reason this backend only ever worked on one client. `--user`
+  # is not the same INSTRUCTION to every client. Measured on one bind mount:
+  #
+  #   docker run --rm --user 1000 ... alpine sh -c 'cat seed.txt; touch made'
+  #     -> uid=1000(tara)  cat: Permission denied   touch: Permission denied
+  #   docker run --rm             ... alpine sh -c 'cat seed.txt; touch made2'
+  #     -> uid=0(root)     seed                     made2 owned by tara on the host
+  #
+  # Under rootless podman the host user is ALREADY the container's root, so
+  # naming the host uid maps it to an id that owns nothing; under docker the
+  # flag is exactly right. So the question asked is what the CLIENT is, not
+  # whether it is rootless -- a ROOTFUL podman behaves like docker, and a fix
+  # keyed on "is podman" would break that host instead.
+  describe "how the calling user reaches the container" do
+    # No `user:` override: these examples are about the CALLING process, which
+    # is what the backend defaults to and what the seam below checks for real.
+    def backend_asking(prober) = described_class.new(project:, image: "img:1", exec: inner, prober:)
+
+    def run_through(backend) = backend.call(command: "echo hi", cwd: project, env: {}, timeout: 5)
+
+    it "names no user for a client that maps the host user to container root" do
+      run_through(backend_asking(->(_timeout) { "podman version 6.1.0\n" }))
+
+      expect(argv).not_to include("--user")
+    end
+
+    it "still hands a docker client the calling user, whose files the operator would otherwise not own" do
+      run_through(backend_asking(->(_timeout) { "Docker version 27.3.1, build ce12230\n" }))
+
+      expect(flag_values("--user")).to eq(["#{Process.uid}:#{Process.gid}"])
+    end
+
+    # Conservative on purpose: a client that will not say what it is keeps the
+    # flag this backend has always passed, which is right for every client but
+    # the one that names itself.
+    it "keeps today's behaviour for a client that answers nothing usable" do
+      expect { run_through(backend_asking(->(_timeout) {})) }.not_to raise_error
+
+      expect(flag_values("--user")).to eq(["#{Process.uid}:#{Process.gid}"])
+    end
+
+    # SEQUENTIALLY once, which is the property this pins. Sibling subagent
+    # fibers share ONE backend and can each reach the question before the memo
+    # is written -- measured, benign, and accounted for on {UserMapping}
+    # itself: the question is idempotent and every racer computes the same
+    # Array.
+    it "asks the client once, then answers every later command from the memo" do
+      asked = 0
+      prober = lambda do |_timeout|
+        asked += 1
+        "podman version 6.1.0\n"
+      end
+      backend = backend_asking(prober)
+
+      run_through(backend)
+      run_through(backend)
+
+      expect(asked).to eq(1)
+    end
+
+    # The prober is not a second transport. The client is asked what it is
+    # through the very backend the client itself runs through, which is why
+    # every unit example in this file spawns nothing, and why the operator's
+    # DOCKER_HOST reaches the question exactly as it reaches the run.
+    it "asks the client through the same backend it runs the client through" do
+      run
+
+      expect(inner.calls.first[:command]).to eq([%w[docker --version]])
+    end
+
+    # THE QUESTION IS SPENT FROM THE CALLER'S BUDGET. A command asking for one
+    # second must not wait ten for a client that will not answer -- and it did:
+    # a client that slept on `--version` returned a caller's `timeout: 1` after
+    # 10.4 seconds, reporting SUCCESS, because the probe carried a deadline of
+    # its own that nothing capped.
+    it "asks the client within the deadline the command was given, not one of its own" do
+      run(timeout: 1)
+
+      expect(inner.calls.first[:timeout]).to eq(1)
+    end
+
+    # The other half of the same `min`: a generous caller does not license an
+    # unbounded wait on a client that never answers.
+    it "does not spend a generous caller's whole deadline on the question" do
+      run(timeout: 600)
+
+      expect(inner.calls.first[:timeout]).to eq(10)
+    end
+
+    # `@param prober [#call]` is a documented injection seam, and a seam
+    # promises nothing about what comes back through it. The conservative
+    # answer therefore belongs to the object that ASKS, not to the one default
+    # prober that happens to rescue for itself -- an injected prober that
+    # raised used to kill the command it was asked on behalf of.
+    it "keeps today's behaviour when the prober itself raises" do
+      expect { run_through(backend_asking(->(_timeout) { raise "boom" })) }.not_to raise_error
+
+      expect(flag_values("--user")).to eq(["#{Process.uid}:#{Process.gid}"])
+    end
+
+    # Matching a Regexp against a String tagged UTF-8 that is not valid UTF-8
+    # RAISES. Not reachable through the default prober -- `Shell::Pipeline`
+    # hands back ASCII-8BIT -- but reachable the moment `exec:` is something
+    # that decodes, `Exec::Core` over msgpack being the one already in the
+    # tree. Named `podman` on purpose: the fallback is what protects the
+    # command, not a lucky non-match.
+    it "keeps today's behaviour when the client answers bytes that are not valid UTF-8" do
+      broken = (+"podman \xC3(").force_encoding(Encoding::UTF_8)
+
+      expect { run_through(backend_asking(->(_timeout) { broken })) }.not_to raise_error
+
+      expect(flag_values("--user")).to eq(["#{Process.uid}:#{Process.gid}"])
+    end
+
+    # The client NAMES ITSELF in its first word, so that is where the question
+    # is asked. A docker client that merely mentions podman further along --
+    # a shim, a compat note -- is a docker client, and mapping it to root
+    # would hand the operator the root-owned files `--user` exists to prevent.
+    it "reads the client's first word, not any mention of podman further along" do
+      run_through(backend_asking(->(_timeout) { "Docker version 27.3.1, build ce12230 (podman-compat shim)\n" }))
+
+      expect(flag_values("--user")).to eq(["#{Process.uid}:#{Process.gid}"])
+    end
+
+    # `docker --version` contacts no daemon, but a client can still be absent,
+    # or hang until the deadline. A failed probe is not a failed command.
+    it "keeps today's behaviour when asking the client fails outright" do
+      refusing = Class.new do
+        attr_reader :command
+
+        def call(command:, **)
+          raise Lain::Exec::Timeout, "the client never answered" if command.flatten.include?("--version")
+
+          @command = command
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+        end
+      end.new
+      backend = described_class.new(project:, image: "img:1", exec: refusing)
+
+      expect { run_through(backend) }.not_to raise_error
+
+      expect(refusing.command.first).to include("--user")
     end
   end
 
