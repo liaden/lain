@@ -35,6 +35,25 @@ module ThreadFixture
     File.write(File.join(PROJECT, path), "#{lines.join("\n")}\n")
   end
 
+  # A CursorMoved firing is NOT synchronous with the `normal!` that triggers it --
+  # measured, under load, straddling `watch_calls` below: `nvim_command("normal!
+  # 21G")` can return to Ruby before nvim has dispatched the CursorMoved it
+  # queued, and the dispatch then happens on whatever RPC request arrives next.
+  # A `move_to` that just returns after the command races that dispatch against
+  # every following line, which is a spec defect (`move_to` assuming a duration,
+  # not a condition) and not a product one -- `51_thread.lua`'s own idempotency
+  # guard is what a delayed run of `refresh` still has to satisfy, and it does.
+  # This tick is the condition: it runs in the SAME group-ordering position
+  # `51_thread.lua`'s own callback does (registered after it, at runtime load,
+  # so `refresh` has already applied for this dispatch by the time the tick
+  # advances), and `move_to` below polls it rather than trusting the round trip.
+  CURSOR_TICK_PROBE = <<~LUA
+    _G.__cursor_tick = 0
+    vim.api.nvim_create_autocmd("CursorMoved", {
+      callback = function() _G.__cursor_tick = _G.__cursor_tick + 1 end,
+    })
+  LUA
+
   # The two API calls the "does not re-render" AC names, counted at the source.
   # Both are read off `vim.api`/`vim.keymap` at CALL time by the runtime, so a
   # shim installed here is what the module actually reaches. In a constant for
@@ -110,6 +129,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
     @editor = Neovim.attach_unix(socket)
     @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
                      [Lain::VERSION, Lain::Frontend::Neovim::PROTOCOL, @editor.channel_id])
+    @editor.exec_lua(ThreadFixture::CURSOR_TICK_PROBE, [])
     example.run
   ensure
     @editor = nil
@@ -185,9 +205,33 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
   def enter(win) = lua("vim.api.nvim_set_current_win(...)", [win])
 
   # A REAL motion, in whichever window is current -- see the file header.
-  def move_to(row) = @editor.command("normal! #{row}G")
+  # Waits on `CURSOR_TICK_PROBE`'s counter rather than trusting the round trip:
+  # the constant's comment is the measurement, and `ticked_motion` is the fix --
+  # a condition, not a duration, so a slow dispatch is waited out rather than
+  # raced.
+  def move_to(row) = ticked_motion { @editor.command("normal! #{row}G") }
 
-  def move_right = @editor.command("normal! l")
+  def move_right = ticked_motion { @editor.command("normal! l") }
+
+  # THE GUARD ABOVE THE WAIT: CursorMoved does not fire at all when the motion
+  # did not actually move anything (`move_to` onto the line the cursor already
+  # sits on, in `open_counter`'s default position) -- vim's own rule, not a
+  # gap in the probe. The command's own reply already carries the real,
+  # non-deferred cursor position (only the AUTOCMD dispatch is what races), so
+  # comparing positions before and after is what tells a genuine no-op apart
+  # from a motion still in flight, and only the latter has anything to wait for.
+  def ticked_motion
+    before_tick = lua("return _G.__cursor_tick")
+    before_pos = cursor_position
+    yield
+    return if cursor_position == before_pos
+
+    wait_until(reason: "CursorMoved to settle after a motion") { lua("return _G.__cursor_tick") > before_tick }
+  end
+
+  def cursor_position
+    lua("local c = vim.api.nvim_win_get_cursor(0) return { vim.api.nvim_get_current_win(), c[1], c[2] }")
+  end
 
   def window_options(win)
     lua("local w = ... return { diff = vim.wo[w].diff, foldmethod = vim.wo[w].foldmethod }", [win])
