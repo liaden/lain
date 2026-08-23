@@ -49,8 +49,19 @@ module Lain
 
       # The fixed head of every invocation. `--rm` because the card's whole
       # shape is one container per command: nothing here names, reuses or
-      # reaps a container, so nothing may leave one behind either.
-      RUN = [CLI, "run", "--rm"].freeze
+      # reaps a container, so nothing may leave one behind either. `--quiet`
+      # because an image absent locally makes the client narrate its own pull
+      # progress onto the same stderr the command's own output rides, and a
+      # tool result carrying transfer noise reads to the model as if it were
+      # the command's own (F55). Spelled `-q, --quiet` by both clients that can
+      # sit behind {CLI}, and measured NOT to touch the command's own streams:
+      # a forced fresh pull loses every `Trying to pull`/`Copying blob` line
+      # while stdout, stderr and a failed pull's own diagnostic come through
+      # byte for byte. The measurement is podman's, not two clients' -- the
+      # `docker` on this box is a shim that execs it, so `docker run --help`
+      # and `podman run --help` answer from one binary. Docker's own reference
+      # is what carries the other half.
+      RUN = [CLI, "run", "--rm", "--quiet"].freeze
 
       # What crosses into the container, as an ALLOWLIST over the caller's
       # environment. It was a ten-name denylist, and a denylist is the wrong

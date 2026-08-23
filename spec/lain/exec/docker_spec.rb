@@ -109,6 +109,17 @@ RSpec.describe Lain::Exec::Docker do
       expect(argv.last(4)).to eq(["img:1", "sh", "-c", "echo hi"])
     end
 
+    # F55: with the image absent, the client narrates its own pull progress
+    # into the same stderr the command's own output rides, so a tool result
+    # carries transfer noise the model then reads as if it were the command's
+    # own. `--quiet` asks the client not to.
+    it "asks the client not to narrate its own image-pull progress" do
+      run(command: "echo hi")
+
+      expect(argv).to include("--quiet")
+      expect(argv.last(4)).to eq(["img:1", "sh", "-c", "echo hi"])
+    end
+
     it "hands the command to `sh -c` inside the container, exactly as the local arm does" do
       run(command: "echo one && echo two")
 
