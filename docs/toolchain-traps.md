@@ -204,6 +204,11 @@ the cop.
 - **`ls-files` truncates against the PROCESS directory**, so a home-repo surface read from a
   subdirectory is both short and rejoins to the wrong file. `-C <dir>` is the fix; `--full-name`
   is not sufficient.
+- **`rake pspec` can exit 0 while printing `rake aborted!`.** Observed 2026-08-23: the task printed
+  `15172 examples, 2 failures` followed by `rake aborted! Command failed with status (1)`, and the
+  calling shell still saw exit status **0**. So the exit code is not a gate. **Score a suite run on
+  the printed `N examples, M failures` line and nothing else** -- together with the example-COUNT
+  rule in CLAUDE.md that is two independent ways a red suite reads green.
 - **A `SystemExit` inside an example truncates the run and still reports "0 failures".** Thor
   turns a refusal into `exit(1)` and RSpec does not rescue `SystemExit` inside an example — one
   regression took a file from 32 examples to 22 while reporting a clean pass, and the truncation
@@ -215,6 +220,23 @@ the cop.
   motions/syntax still work`; `Lain::Frontend::Neovim the review thread pane following the cursor
   does not re-place the diff on every further move once it is back`; and
   `isolation/worktree_handback_spec`'s `Dir.mktmpdir` teardown racing git maintenance.
+
+  Added 2026-08-23: the entry above still under-describes this file. Two MORE of its examples have
+  been observed red and green on the same box within minutes, both in the `#continue refuses a
+  resolution that is not one` describe block that no entry here names: `Lain::Isolation::Worktree::Handback
+  #continue refuses a resolution that is not one can be retried, and concludes once the markers are
+  gone` and `... wants all three shapes in order, not any marker-shaped line`. Measured directly:
+  the file alone, four consecutive runs, no `parallel_rspec` and no `pre-commit` running, went
+  `0, 0, 0, 2` failures; a separate isolated run on the same box reddened the `we\nird.txt` example
+  the 2026-08-19 entry already names, which that entry says passes in isolation.
+
+  **So the honest unit here is the FILE, not any example in it.** Treat a red example anywhere in
+  `spec/lain/isolation/worktree_handback_spec.rb` as unattributable until it is re-run alone, and do
+  NOT conclude "not a known flake" because the particular example name is missing from this list --
+  that is the exact misreading the by-name rule was written to prevent, and this file defeats it by
+  moving between examples. It builds its own repository under `Dir.mktmpdir` and never touches
+  lain's own git admin dir, so the number of worktrees registered in this repo is NOT the cause:
+  that hypothesis was tested and rejected 2026-08-23.
 
   Added 2026-08-19, and it is a SECOND example in that same file rather than the teardown shape
   above -- which is why the entry above was not enough to recognise it:
