@@ -120,10 +120,27 @@ omission is now *visible* for the first time; it is recorded, not fixed.
   if the wall-time column is the subject, and read a lone ~27s max on the first arm as the load,
   not as an anomaly. A ~27s outlier on a LATER arm, or on a demonstrably warm runner, is still a
   finding.
-- **`num_batch` does not re-key the runner, though `--num-ctx` does.** Both round-8 arm runs sent
-  `num_batch: 2048` against a runner whose argv read `-b 512`, across two full suites, with residency
-  unchanged throughout. Round 6's 30.9s→9.3s reading was a hand-rolled `curl` probe and does not
-  generalise to lain's own launches.
+  **Round 9 refines the mechanism -- read the next bullet before acting on this one.** "Warm the
+  model" is insufficient if you warm it with `ollama run`: that leaves a `-b 512` runner which lain
+  then RELOADS. The outlier is a `num_batch` mismatch reload, not an unavoidable first-load.
+- **`num_batch` DOES re-key the runner. Round 9 overturned this, with a control.** This bullet used
+  to say the opposite, on round 8's uncontrolled observation. Measured 2026-08-23:
+
+  ```
+  # a runner ollama loads on its own, no num_batch anywhere:
+  runner 2176470   -c 32768  -np 1  -b 512  -ub 512
+  # ONE lain request carrying LAIN_NUM_BATCH=2048:
+  runner 2177020   -b 2048          <- PID CHANGED, the runner reloaded
+  # THE CONTROL -- the identical request again, runner now matching:
+  runner 2177020   -b 2048          <- SAME PID, no reload
+  ```
+
+  The reload is the **mismatch**, not lain. Two consequences. Round 6's 30.9s→9.3s reading DOES
+  generalise to lain's own launches. And **"warm the model before the run" is not enough if you warm
+  it with `ollama run`** -- that produces a `-b 512` runner which lain reloads on the first arm, at
+  `bench.md`'s own ~27s, which is a better explanation of the first-arm outlier below than generic
+  first-load cost. Warm through a lain request, or one whose `num_batch` matches. Round 9 did, and
+  saw **no outlier at all**: single-thread max 1.8422s against a 1.3935s median.
 
 ## What the arms cannot do today
 

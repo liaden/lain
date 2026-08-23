@@ -136,6 +136,18 @@ LAIN_REPO=/home/tara/dev/lain   # the lain checkout itself, NOT $QA -- the repo 
 git -C "$LAIN_REPO" status --porcelain   # the OTHER close-out: must be empty
 ```
 
+**And a THIRD close-out check, because the two above are BOTH blind to it (P11, round 9).**
+`Project` writes `.lain/state.json` into the **cwd lain was launched from**, which for an agent
+driving non-interactive probes is usually the lain checkout itself. `find ~/.local/state/lain`
+cannot see it -- it is not under that tree -- and `git status --porcelain` cannot see it either,
+because lain's own repo gitignores `/.lain/` (`.gitignore:22`). Round 9 ran
+`session-and-window` 1/2/7 from the checkout and left a `.lain/state.json` in it while both
+negatives reported clean. Either `cd` into the sandbox project for every probe, or check:
+
+```bash
+ls -d "$LAIN_REPO"/.lain 2>/dev/null && echo "LEAKED: remove it"   # must print nothing
+```
+
 **The warning that prevents it: never put a `GEM_HOME` on a path `exe/lain` will inherit.**
 `exe/lain:28-32` pins `BUNDLE_GEMFILE` to lain's own Gemfile and requires `bundler/setup` — so a
 `GEM_HOME` exported for a scenario's own gem install (a sandbox-local Rails, say) is visible to
@@ -663,6 +675,21 @@ pgrep -P "$(pgrep -x ollama | head -1)" | head -1     # a child, by parent pid
 ps -eo pid,args | grep '[b]ench arms' | grep -v zsh   # bracket AND drop the shell
 ls -l /proc/<pid>/exe                                 # what it really is
 ```
+
+**Round 9 hit it a SIXTH time, having read this section**, reaching for `pkill -f` reflexively to
+clear a hung `ollama run`: the pattern matched the agent shell's own command line and killed the
+command issuing it (exit 144). Treat it as a standing hazard, not a lesson anyone has absorbed --
+the safe form is one line longer and works first try.
+
+### The driver shell here is zsh, and zsh does not word-split unquoted parameters
+
+Every recipe in these documents is written in bash idiom. In zsh, `$VAR` unquoted expands to ONE
+word, so a loop like `for A in "--num-ctx 0" ...; do lain up ... $A; done` passes `--num-ctx 0` as a
+single argument. What comes back is a Thor usage error --
+`ERROR: "lain chat" was called with arguments ["--num-ctx 0"]` -- which exits 1 and creates no
+session, so it wears the exact shape of the construction refusal the step is testing and reads as a
+pass. Round 9 filed nothing on it only because the message did not match the expected text. Use
+explicit arguments or an array; and when a refusal's WORDING is the assertion, check the wording.
 
 ## Instruments worth building
 

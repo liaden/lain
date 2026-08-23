@@ -20,6 +20,8 @@ owns the procedure and the driver scripts; these own the method and the scenario
 
 Pick by the question being asked, not by coverage. Each states its own cost and preconditions.
 
+**The core seven** — the loop, the cockpit, the record, the bench:
+
 | Scenario | The question it answers | Cost |
 |---|---|---|
 | [`session-and-window.md`](scenarios/session-and-window.md) | Is the bench **honest before a model is asked** — served window, `provenance`, occupancy, the launch-level refusals, the `options` asymmetry, **which prices it will quote and which collapse strategy it resolved**? Mostly needs no model call. | cheap |
@@ -29,6 +31,35 @@ Pick by the question being asked, not by coverage. Each states its own cost and 
 | [`bowling-ruby.md`](scenarios/bowling-ruby.md) | Does the **authoring loop** produce something worth having — plan, execute, critique, graded against driver-owned oracles? | 1–3 sessions |
 | [`bench-arms.md`](scenarios/bench-arms.md) | Does the arm driver produce numbers that are not artifacts, **say what produced them, and refuse a price it cannot stand behind**? | ~5 min |
 | [`rails-blog.md`](scenarios/rails-blog.md) | **Context economics at scale** — the composed compaction strategy firing for real, unbounded tool output, the gate under volume, and what a broken cache cost in dollars. The only scenario that reaches any of these. | expensive |
+
+**The six added 2026-08-23**, each covering a tier the core seven never reach. All are driveable
+against the **local** bench — ollama, `git`, `docker`, the filesystem — and none needs a remote
+provider or a forge:
+
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`repl-commands.md`](scenarios/repl-commands.md) | Does the **command surface** do what `/help` says — `/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/fork`, `/goal`, `/meta`, `/yolo`, `/review-submit` and the ten others? Eleven of the twenty-one had never been typed in a round. Every refusal path is a **zero-model-turn** path. | cheap |
+| [`epic-tier.md`](scenarios/epic-tier.md) | Does a four-stage pipeline stay honest when only a journal remembers where it is — the stage-boundary ruling, all four gate policies, the drain-is-journaling fold, and the fail-**closed** abort on a damaged record? ~4,100 lines with no prior coverage at all. | cheap |
+| [`secret-boundary.md`](scenarios/secret-boundary.md) | Does the **three-place split** hold — gate on the effect, filter on the result, mask on the content — with a real model pulling on it, and is a denial actually unliftable (including under `--yolo`)? `--secret-oracle` is a local model by construction. | cheap |
+| [`changeset-review.md`](scenarios/changeset-review.md) | Does a review of a **real diff** tell the truth? `cockpit-surfaces` drives the review rails over `/survey`, which has no old side, no base ref and no commits — everything that makes a changeset a changeset is untouched by it. Local branches only; no forge. | cheap |
+| [`subagents-and-backends.md`](scenarios/subagents-and-backends.md) | When the loop stops being one process, does anything still tell the truth — `actor` mode, `--isolation worktree`'s real-`git` seams, `--exec docker`, `lain watch`, `--windows`? Also settles whether `--isolation`'s "inert in chat" help text is still true. | minutes |
+| [`memory-and-dogfood.md`](scenarios/memory-and-dogfood.md) | Does what a session learned **come back**? The memory ceiling and its chain, the `memory_root` pairing, `lain consolidate` / `improve` / `improvements`, and `bench sweep`'s offline five-arm recall@k. | cheap–minutes |
+
+**Thirteen scenarios do not fit in one round, and pretending otherwise is how a slot gets
+substituted** — that is the failure rounds 7 and 8 made with `cockpit-surfaces`, one level out. So
+the six above are **not appended to the full round below**. They are placed:
+
+- `repl-commands` and `epic-tier` are cheap and fully deterministic, so they join the
+  **regression gate** (see below) on the standing rule that anything deterministic belongs in the
+  cheap set even when the feature it guards is not.
+- `secret-boundary`, `changeset-review`, `subagents-and-backends` and `memory-and-dogfood` are
+  **owned rounds**, on `rails-blog`'s precedent: a scenario that owns its context has no position in
+  a list to be unlucky about. Schedule one per round alongside the full round, rotating. **Round 9
+  was scheduled to take `secret-boundary` and did NOT run it** — the full round was driven in one
+  context and no owned round was invoked alongside it. So `secret-boundary` carries to **round 10**,
+  and it is still the largest untested surface here: every claim about the three-place split rests
+  on specs alone. **Do not let the rotation advance past it** — a rotating slot that slips one round
+  and then rotates anyway is how `rails-blog` went unrun for three rounds.
 
 **A full round — the default when no scope is named** (`.claude/skills/manual-qa` defers to this
 line for the order): `session-and-window` → `rust-cli` → a subject with `cockpit-surfaces`
@@ -64,16 +95,20 @@ dropped, because it was never in that budget — it is **owed**, and a round sho
 skipped by convention stops being a gap anyone can see; one that is separately scheduled stays
 visible as an outstanding debt instead.
 
-**A suggested regression gate after a chunk lands:** `failure-injection` + `session-and-window`.
-Both are cheap, deterministic, and cover the paths most chunks touch. As of 2026-08-18 that pair
+**A suggested regression gate after a chunk lands:** `failure-injection` + `session-and-window`,
+and since 2026-08-23 also `repl-commands` + `epic-tier`.
+All four are cheap, deterministic, and cover the paths most chunks touch. As of 2026-08-18 the first pair
 also covers **most of a chunk that was mostly not about the cockpit at all** — the price table and
 its lint, `--compact-strategy` resolution, both tool-bound shapes, the `edit_file` refusal
 vocabulary, the summarizer's ceilings, the per-ask iteration ceiling and the `lain up`
 crash-on-start case. That is deliberate: **a check that only runs in an expensive scenario mostly
-does not run**, so anything deterministic belongs in the cheap pair even when the feature it guards
-is expensive.
+does not run**, so anything deterministic belongs in the cheap set even when the feature it guards
+is expensive. The two added in 2026-08-23 are there on exactly that rule: `repl-commands` is almost
+entirely zero-model-turn refusal paths, and `epic-tier` is deterministic except for one policy.
+**If the gate is too long to run every time, cut `epic-tier` first** — say so in the findings rather
+than letting it drop quietly, which is the failure mode this whole file keeps re-learning.
 
-The corollary is the one thing the pair cannot do: **nothing deterministic can tell you a
+The corollary is the one thing the gate cannot do: **nothing deterministic can tell you a
 compaction strategy works**, because a compaction needs volume that a cheap scenario cannot
 manufacture. `rails-blog.md` §0 is the only place that act lives, and it carries a precondition
 (tool results of real size) without which it silently measures nothing while paying for a model
@@ -83,6 +118,7 @@ call per turn.
 
 Written per round, kept in `planning/` alongside the chunk specs that discharge them:
 
+- [`../qa-findings-round9-2026-08-23.md`](../qa-findings-round9-2026-08-23.md) — round 9
 - [`../qa-findings-round8-2026-08-21.md`](../qa-findings-round8-2026-08-21.md) — round 8
 - [`../qa-findings-round7-2026-08-20.md`](../qa-findings-round7-2026-08-20.md) — round 7
 - [`../qa-findings-round7-survey-2026-08-20.md`](../qa-findings-round7-survey-2026-08-20.md) — round 7,
@@ -100,11 +136,31 @@ Written per round, kept in `planning/` alongside the chunk specs that discharge 
 Per-section coverage a scenario file cannot state about itself, because it is about which round
 first exercised the section rather than what the section asks for:
 
+- **Round 9 (2026-08-23) drove six of the thirteen** — `session-and-window`, `rust-cli`,
+  **`bowling-ruby` as the subject with `cockpit-surfaces` piggybacked on it** (the first round since
+  round 8's second pass to fill the subject slot properly), `bench-arms`, and `failure-injection`
+  §1/§2/§3/§11a. It drove **none of the six added that day**, and no owned round.
+
+- **The six scenarios added on 2026-08-23 have been driven ZERO times.** `repl-commands`,
+  `epic-tier`, `secret-boundary`, `changeset-review`, `subagents-and-backends` and
+  `memory-and-dogfood` were written from the code rather than from a round, so every expected string,
+  every record name and every ceiling in them is a **prediction**. The first round to drive each
+  should expect to correct the document as much as to find defects, and should say which it did:
+  a wrong expectation in a scenario and a defect in lain look identical from the driver's seat, and
+  telling them apart is the first round's real job. Until then they are coverage on paper only.
+
 - **`cockpit-surfaces.md` §4b (notes on a survey) was first driven on 2026-08-20**, in round 7's
   `/survey` supplement (`../qa-findings-round7-survey-2026-08-20.md`). Rounds 4, 5, 6 and round 7's
   own main pass had all skipped it — nobody had placed a note on a survey before that round.
-  **Round 8 skipped it again**, so it has been driven exactly once and every one of round 7's ten
-  §4b findings (F30–F39) is un-regressed. It is the highest-value single item for round 9.
+  **Round 8 skipped it again; round 9 drove it, so it now stands at TWO drives.** Round 9 passed
+  every check in it except the thread pane (`\Lt`, the one part that spends a model call): the
+  cmdline stays open on `\Ln` (`mode()=="c"`), all four markers render `right_align` with the
+  correct kinds including `blocker`, **the payload arrives in placement order 5, 9, 2, 3** rather
+  than the positional 2, 3, 5, 9, `drifted: false` is present on every record, and a second `\LN`
+  sends nothing and says so. It also demonstrated end to end, for the first time, that the `blocker`
+  kind is what the verdict policy reads — `approve` refused over it by name, and a note on the same
+  line resolved it. **What is still owed here is the thread**, and with it round 7's other
+  `:LainReviewDone` leg (`51_thread.lua:639`).
 - **`cockpit-surfaces.md` §8 (fold state on the approval and inbox rows) was first driven on
   2026-08-21**, in round 8. It had been carried in `method.md` as pending "once T9/T12 land"; those
   have landed, the RPC recipe runs, and it immediately produced two findings (F42, F43) that no
@@ -120,7 +176,10 @@ first exercised the section rather than what the section asks for:
   F23 fork/resume regression step passed with a valid control pair. Before that it had been dropped
   by rounds 7 and 8's first pass — see the subject-slot guard above, which exists because of it.
 
-## The two rules that outrank everything else here
+## The rules that outrank everything else here
+
+(The `manual-qa` skill carries the operative three-line form; these are the same rules stated for
+someone deciding what a round is FOR.)
 
 1. **Success is not "nothing went wrong."** It is: every defect the previous round found behaves
    *differently* now, every knowingly-partial fix fails the way its documentation says rather than
@@ -133,26 +192,32 @@ first exercised the section rather than what the section asks for:
 
 Worth stating plainly, because "every defect behaves differently now" reads as coverage:
 
-- ~~**`:LainReviewDone` is the rail still undriven.**~~ **Closed by round 8, and it passes.** Driven
-  against a survey buffer it refuses cleanly — `lain: :LainReviewDone needs an open EPIC review, and
-  this buffer is not one -- a changeset review or a survey hands back with :LainReviewVerdict
-  {verdict} instead` — with **no `stack traceback:`**, `nvim_get_mode()` not blocking, and the journal
-  unchanged. At 161 characters against a measured `v:echospace` of 88 it also exercised the
-  width-aware rail, which middle-elided the displayed line and kept the full sentence in `:messages`.
-  **What is still owed on that rail is the OTHER leg round 7 named:** `51_thread.lua:639` deliberately
-  still raises out of a `BufWriteCmd`, so the traceback-and-modal shape survives there. Reaching it
-  needs `cockpit-surfaces.md` §4b's thread pane, which round 8 did not drive at all.
-- **The plain, non-cockpit path.** Almost every scenario runs under `lain up --nvim`. The REPL/stdin
-  concerns exist on a bare `lain chat` too — and round 4 found that the approval surface is *worse*
-  there, with no `:LainApprove` to recover through. `cockpit-surfaces.md` §5 now forces one
-  `--no-nvim` comparison; nothing else does.
-- **`--resume`**, except `failure-injection.md`'s damaged-journal probes and `bowling-ruby.md`'s F23
-  regression step. Both drive it as a refusal or a rebuild; nothing continues a resumed session and
-  checks the conversation actually carried over.
-- **The secret boundary** — `Sensitivity::Policy` and the two middlewares get zero manual coverage,
-  despite CLAUDE.md calling the three-place split forced. This is the largest untested surface here.
-- **Isolation backends** — no scenario runs `--isolation worktree`, which is where the real-`git`
-  seams live. `rails-blog.md` is the natural host if one is written.
+- **`:LainReviewDone` — one leg passes, one is owed.** Round 8 drove it against a survey buffer and
+  it refuses cleanly (`lain: :LainReviewDone needs an open EPIC review, and this buffer is not one
+  -- a changeset review or a survey hands back with :LainReviewVerdict {verdict} instead`), with no
+  `stack traceback:`, `nvim_get_mode()` not blocking, and the journal unchanged; at 161 characters
+  against a measured `v:echospace` of 88 it exercised the width rail too. **The other leg is still
+  owed:** `51_thread.lua:639` deliberately raises out of a `BufWriteCmd`, so the traceback-and-modal
+  shape survives there. Reaching it needs `cockpit-surfaces.md` §4b's thread pane, which no round has
+  driven — rounds 8 and 9 both stopped short of it.
+- **The plain, non-cockpit path — narrowed by round 9, not closed.** Almost every scenario runs under
+  `lain up --nvim`. **The `--no-nvim` approval path now works**: round 9 drove it and the prompt
+  renders naming the requester, `y` is consumed, and the turn completes, so round 4's permanent wedge
+  is gone. `cockpit-surfaces.md` §5 forces that one comparison and nothing else does, so the rest of
+  the plain path — REPL commands, `/inbox`, the HUD — remains uncovered.
+- **`--resume` — partly driven.** Round 9 resumed a spawned session (exit 0) and drove three damaged
+  journals through it (refuses by name, exit 1, no backtrace). Still undriven is `repl-commands.md`
+  §4's loop `/btw` → `/keep` → `lain sessions` → `--resume`, which asks a question whose answer
+  depends on the carried-over turns — the half that tests continuity rather than refusal.
+- **The secret boundary — written 2026-08-23, still undriven.** `secret-boundary.md` was scheduled as
+  round 9's owned round; **round 9 did not run it**, so it carries to round 10 and the rotation must
+  not advance past it. Every claim about the three-place split rests on specs alone, and a written
+  scenario is not coverage.
+- **Isolation backends — `subagents-and-backends.md` §3 written 2026-08-23, undriven.** It carries an
+  open question to settle by driving: the `--isolation` flag's help text says it "is inert in chat
+  today" because no chat path spawns an actor-mode subagent, but `CLI::Wiring` builds a real
+  `Supervisor` with `fleet_isolation(...)` and `Subagent#adopt_actor` refuses only
+  `unless supervisor.running?`. One of the two is wrong.
 - **Cost and latency.** Nothing records wall-clock or tokens per act, so "the plumbing works" and
   "the plumbing is usable" are not separated. One wiring mistake once cost 84.0s against 7.5s and
   nothing here would catch the same class again.
@@ -182,3 +247,33 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   journal. A scenario cannot drive this until a surface exists to project the causal edges
   (`spawn`/`child_turn`/`message` parent-child structure) rather than just their count; that surface
   is deferred, not scheduled (`planning/specs/chunk-qa-round5-causal-fold-and-surfaces.md`, T13).
+  **Partly narrowed 2026-08-23:** `lain watch` IS a surface over one actor's lineage, and
+  `subagents-and-backends.md` §5 drives it. What stays undrivable is the *fan* — parent/child edges
+  across a fleet — which is what T13 owes; one lineage at a time is not it.
+
+Still uncovered as of 2026-08-23, and **not** addressed by the six scenarios added that day, so that
+"thirteen scenarios" does not read as completeness:
+
+- **`Toolset::Disclosure`, both arms.** `Upfront` vs `Deferred` (+ the `tool_search` tool) is a
+  headline context-strategy axis and `Bench::DisclosureSweep` exists to compare them — but **there is
+  no `lain bench disclosure-sweep` subcommand**, and no chat flag selects an arm. It is library-only,
+  so nothing a driver can type reaches it. Same for `Bench::DeciderSweep`. A scenario here is blocked
+  on a CLI entry point, not on writing.
+- **`Context` strategies other than `compact`/`reminder`/`cache_breakpoints`.** `pinned_messages`,
+  `mailbox`, `dedupe_tool_calls`, `purge_failed_inputs`, `model_switch`, `tail_injection`,
+  `protected_patterns` are composed by no live pipeline path a flag selects. `Context::Recall` is
+  explicitly opt-in and unwired — see `memory-and-dogfood.md`'s note, which exists so the next round
+  does not go looking for it.
+- **`Exec::Core` and the `lain-core` daemon.** Refused by name from `--exec` **by design** (it needs
+  a started client and the reactor holding it), so it is unreachable from any chat. The `:core`-tagged
+  specs cover it; what is missing is a human at the gate, which needs a `bundle exec ruby` harness
+  rather than a scenario.
+- **The forge half of the review tier.** `Source::GithubPr`, `lain epic land`'s promote/merge path,
+  and `/review-submit` actually posting all need github.com. `changeset-review.md` and `epic-tier.md`
+  drive the **boundary** — that a local-branch review refuses to post, and that `land` refuses before
+  the first forge intent — and stop there deliberately.
+- **Compaction strategies `identity`, `replacement` and `elide_tool_observations` by name.**
+  `session-and-window.md` §7 resolves the names it resolves; these three are never named in any
+  scenario, so `--compact-strategy` coverage is narrower than it looks.
+- **`bench variance`, `bench record`, `bench plan-sweep`.** `bench-arms.md` covers `arms` and
+  `memory-and-dogfood.md` §6 covers `sweep`; the other three have one prose mention between them.

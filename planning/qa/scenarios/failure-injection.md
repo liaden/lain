@@ -139,6 +139,22 @@ only one was ever a *dangling* edge:
   `ArgumentError` from sorting a list containing `null` is the other old shape. **Neither is an
   acceptable answer now** — anything but `Corrupt` from any of the four doors is the finding.
 
+**Round 9 drove both shapes through three doors each (six combinations) and they pass — with the
+malformed case answering in its OWN vocabulary, which is better than this section predicted.** It
+does not borrow the dangling sentence; regress against these exact texts:
+
+    # dangling, and note it uses the MESSAGE index space, not the turn one
+    message record 14 (message) cites a causal parent this replay never landed:
+    no object "blake3:52afd5de…" in store: putting "blake3:034fd821…" would dangle
+
+    # malformed -- names the actual bad value and what the field is FOR
+    message record 0 (message) records causal_parents as [nil, "blake3:059603fa…"];
+    the field is a set of digest strings, and only an array of them lands
+
+All six exited 1 with **zero** backtrace frames, and both damaged files still advertised `43 turns`
+and the correct head digest at rest — invisible at rest, unforgeable on use, in both directions.
+**The supervisor door was NOT driven** and stays owed; round 9 says so rather than marking it passed.
+
 ## 4 — A severed transport
 
 **Use a severing proxy, not a killed server.** Put a small TCP forwarder in front of the model

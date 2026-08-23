@@ -45,10 +45,18 @@ for b in journal timeline workspace diff inbox request approval; do
 done
 ```
 
-Expected placeholders: `(no reminders)`, `(no questions pending)`, `(no approvals pending)`,
-`(no requests yet)`, and — since T18 — **`(no streamed tool output yet)`** for `lain://journal`,
-which was the one view priming to a bare empty line. An empty `lain://journal` at rest is now the
-regression, not the status quo.
+Expected placeholders, all seven, measured round 9. **Note `diff` is plural and `request` is
+singular** — that is not a typo here, and a driver grepping for one string across both will miss:
+
+| buffer | at rest |
+|---|---|
+| `lain://journal` | `(no streamed tool output yet)` — since T18; a bare empty line is the regression |
+| `lain://timeline` | `(no turns yet)` |
+| `lain://workspace` | `(no reminders)` |
+| `lain://diff` | `(no requests yet)` — plural |
+| `lain://inbox` | `(no questions pending)` |
+| `lain://request` | `(no request yet)` — singular |
+| `lain://approval` | `(no approvals pending)` |
 
 **`lain://approval` is the newest of the seven and the reason this loop was corrected.** It used to
 be absent until the first pending parked, which made "the buffer is not there" and "there is nothing
@@ -157,6 +165,20 @@ Check, in order:
   `lain: no hunk on lain://review line 1 -- nothing on that row can be marked`.
 - `:LainReviewVerdict approve` over a **partially** reviewed changeset refuses, naming the
   unreviewed file and the remedy.
+
+**If you drove §4b first, the verdict refuses over the BLOCKER instead, and that is not a
+regression.** Round 9 hit this and it is worth knowing before you file: a `blocker` note is the one
+kind a verdict policy reads, so with one placed the refusal is about the blocker rather than about
+unreviewed files, and it is shorter than the 225-character partial refusal quoted below:
+
+    lain: approve is refused over 1 blocker nobody has answered: ../tally/lib/tally.rb:2 (new)
+    -- answer each one with a note on that same line, which is what resolves it
+
+Prefer driving it this way round when you can: it is the only end-to-end demonstration that
+§4b's `blocker` kind actually reaches the policy, rather than merely being journalled with the
+right `kind`. Answering it with a note on the same line resolves it and the approve then lands, so
+the pair is one check, not two. Mark every row reviewed **as well** if you want the partial-refusal
+wording itself — both refusals exist and they are different sentences.
 - `:LainReviewVerdict approve` over a fully reviewed one acknowledges — `lain: this review is
   settled: approve` — **and** journals `review_verdict` with its `changeset_digest`. Check both;
   a version of this shipped that journalled correctly and said nothing.
@@ -214,44 +236,34 @@ If `nvim_get_mode` ever reports `mode = "rm"` here, read the pane with tmux (it 
 blocked) and note that Enter may not clear it -- at 60 lines in a 20-row pane, twenty `<CR>`s
 did not.
 
-**nvim 0.11 is the stated minimum, so all three checks apply unconditionally.** The rail suppresses
-the hit-enter prompt by swapping `'messagesopt'`'s `hit-enter` item for `wait:0` while it writes the
-unfolded sentence to `:messages`, and `'messagesopt'` arrived in nvim **0.11**. That used to be
-probed for (`vim.fn.exists("&messagesopt")`) with a documented degrade on 0.10; the probe and the
-degrade are both gone, and `README.md` states the requirement instead.
-
-Two consequences for driving this section:
-
-- the no-paging and no-traceback checks apply on every supported nvim, and a failure of either is a
-  finding;
-- the "**the full sentence survives in `:messages`**" check now applies too, with no version caveat.
-  A truncated `:messages` here is a **regression**, not a documented degrade.
-
-`nvim --version` still belongs in the record — not to interpret this reading, but because an editor
-below the stated minimum makes every reading in this file untrustworthy rather than just this one.
+**nvim 0.11 is the stated minimum, so all three checks apply unconditionally — and a truncated
+`:messages` is a regression, not a documented degrade.** The rail suppresses the hit-enter prompt by
+swapping `'messagesopt'`'s `hit-enter` item for `wait:0` while it writes the unfolded sentence to
+`:messages`, and `'messagesopt'` arrived in **0.11**. The old version probe
+(`vim.fn.exists("&messagesopt")`) and its 0.10 degrade are both gone; `README.md` states the
+requirement instead. Record `nvim --version` anyway — an editor below the minimum makes every
+reading in this file untrustworthy, not just this one.
 
 Every refusal lain itself ships is inside the 80-column bar
 (`spec/refusal_width_discipline_spec.rb`), so the folding path is reachable in practice only through
 a sentence carrying an unbounded interpolated field — a quoted `Lain::Error#message`, a path, a
 docent's exception. Which is exactly what the `:LainReviewVerdict` partial refusal below is.
 
-An earlier edition of this section said `method.md` "sizes the QA server at 220x50 precisely so
-this does not fire", and concluded that a blocking read here meant the window had been resized.
-**That premise was wrong: nvim never gets 220 columns.** Measured round 5, on a correctly-sized
-bench with no resize, and the row that binds is the one in bold:
+**`v:echospace`, not `&columns`, is the ceiling — and nvim never gets the tmux server's width.**
+'showcmd' reserves eleven cells plus one in the last screen line, so the pane width minus twelve is
+what binds. Measured twice, on two different pane splits, and the formula holds:
 
-| | width | binds? |
+| | round 5 | round 9 |
 |---|---|---|
-| tmux server / window | 220 | no -- nvim never gets it |
-| the nvim pane -- `lain up` splits the window with chat | 110 | it sets the one below |
-| **the message area, `v:echospace` at that pane width** | **98** | **yes** |
-| the review tab's three windows | 40 / 32 / 36 | **no** -- `nvim_echo` never reads a window |
-| the `:LainReviewVerdict approve` partial refusal | 225 characters | |
+| tmux server / window — **nvim never gets this** | 220 | 220 |
+| the nvim pane (`lain up` splits it with chat) | 110 | 100 |
+| **the message area, `v:echospace` — this is what binds** | **98** | **88** |
+| the review tab's three windows — `nvim_echo` never reads a window | 40 / 32 / 36 | — |
 
-`v:echospace` and not `&columns` is the exact ceiling: 'showcmd' reserves eleven cells plus one in
-the last screen line, so 110 columns hold 98. Below that a message is echoed and nothing happens;
-above it, before T5, the modal fired EVERY time. The contrast confirmed the mechanism is width and
-not sizing policy: the short refusal (`lain: no hunk on lain://review line 1 ...`) never blocked.
+Below that width a message is echoed and nothing happens; above it, before T5, the modal fired every
+time. Sizing policy is not the mechanism: a short refusal (`lain: no hunk on lain://review line 1
+...`) never blocked at either width, while round 9's 158-character blocker refusal was middle-elided
+to fit with the full sentence kept in `:messages`.
 
 **And the modal blocks the RPC, not just the keyboard** -- which is why it was worth fixing, and is
 the recovery to know if one ever fires again. `nvim --server "$S" --remote-expr "execute('messages')"`
@@ -397,6 +409,25 @@ the surfaces for the *second* call:
 | `lain://approval` | does it hold the full command text and the `y approve, n deny` affordance? |
 | `.lain/state.json` | `approvals_pending` |
 | journal | `approval_pending` with `requester` |
+| journal | the `escalation` ladder — see below; it is the surface that settles F40 |
+
+**The `escalation` records are the sixth surface, and the only one that says WHICH surface
+answered.** Round 9 used them to settle round 8's F40 in a way no pane capture could: every gated
+call journals a triage → rules → surfaces ladder, and the final rung names the answering surface.
+So a round can prove that answering at nvim did not orphan the TTY reader, from the record rather
+than from a screenshot:
+
+```bash
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
+  next unless r["type"]=="escalation" && r["rung"]=="surfaces"
+  puts [r["tool_use_id"], r["verdict"], r["reason"], r["authority"]].join(" ")}' "$LAIN_QA_JOURNAL"
+# -> call_i56e1vrp allow a surface approved this call (nvim) human
+# -> call_dpm11x9y allow a surface approved this call (tty)  human
+```
+
+Check the `approval_pending` and `approval_decision` COUNTS match too — round 9 read **12 and 12**,
+both surfaces represented, no pending left unanswered. That is the shape F40's
+eleven-pendings-to-one-prompt violated, and it is cheaper to read than the panes.
 
 The prompt must **name the requester** (`agent asks:` / `researcher asks:` / `subagent asks:`) —
 with `fleet 2` on the status line you otherwise cannot tell a parent from its child. The whole line:
@@ -616,10 +647,23 @@ Drive it against **two parked approvals**, matching the integration check's own 
 
 1. Force two gated calls so two rows exist in `lain://approval` (§5's three-call recipe works;
    answer one to leave two, or just read both before answering either).
-2. Before touching anything: both rows' first lines should read `foldclosed(<line>) == <line>`
-   (closed, showing the one-line summary — `<requester> asks: approve <tool>(<input>)? [y/N]` per
-   §5) and `foldclosedend(<line>)` should be past it (the full command and any other detail lines
-   are hidden beneath).
+2. **This step's expectation was a prediction, and round 9 measured the opposite -- the RECORD row
+   is OPEN at rest and the TRAILER is what folds closed.** Measured against two separate pendings,
+   identically:
+
+   ```
+   line 1: level=1 closed=-1 closedend=-1     <- row summary   (OPEN)
+   line 2: level=1 closed=-1 closedend=-1     <- full command  (OPEN)
+   line 3: level=1 closed=-1 closedend=-1     <- full command  (OPEN)
+   line 4: level=1 closed=4  closedend=4      <- blank separator, its OWN closed fold
+   line 5: level=1 closed=5  closedend=5      <- affordance,      its OWN closed fold
+   ```
+
+   That is the good direction for round 8's F42 (the command is visible, not hidden behind a
+   truncated summary) and it leaves F43's mechanism in place on the trailer, where the affordance
+   line renders with the `fold:` fillchar appended: `-- y approve, n deny  (:LainApprove /
+   :LainDeny)··`. Filed as round 9's F52. Drive this step as "what folds, and does it make sense
+   that it folds", not as an assertion that the row is closed.
 3. Open one row (`<CR>`, or whatever gesture T9 wires): its `foldclosed` must flip to `-1` and the
    full command must now be on screen — check both eye (the pane) and RPC (`getbufline` between
    `foldclosed()` and `foldclosedend()` before the open, `getline` after).

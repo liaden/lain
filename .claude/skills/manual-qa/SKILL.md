@@ -21,31 +21,33 @@ components disagreeing with each other, and for the moments a human would be mis
 
 ## Phase 1 — Scope, and say what you chose
 
-**The inputs live in `planning/qa/`, and the scenario set is whatever `planning/qa/scenarios/*.md`
-currently holds — enumerate that directory rather than working from a remembered list.** Scenarios
-get added there, and a round that runs a hard-coded five silently stops covering the sixth.
+**Enumerate `planning/qa/scenarios/` — never work from a remembered list.** Thirteen files as of
+2026-08-23, and a round that runs a hard-coded five silently stops covering the sixth. A scenario in
+neither README's tiers nor your round is one somebody added and nobody scheduled: say so.
 
-**With no scope named, the default is the FULL round: every scenario in that directory.** Take
-`planning/qa/README.md`'s ordering as the authority — as of 2026-08-19 that is `session-and-window`
-→ `rust-cli` → a subject with `cockpit-surfaces` piggybacked → `bench-arms` → `failure-injection`.
+**README sorts the thirteen into three tiers, and that sorting — not the directory listing — is what
+a round follows.** It carries the reasoning for each; this is the shape:
 
-**A scenario README marks `expensive` is driven as its OWN round, in its own context — never as the
-tail of another one.** `rails-blog` is the only one today. This is not a scheduling preference, it
-is the fix for a failure that has now repeated three times: rounds 4, 5 and 6 all ended without
-reaching it, each time because one driver context was carrying every scenario and the budget was
-spent by the time it came up. **Reordering does not fix that** — it only changes which scenario
-starves. Giving the expensive one its own context makes its position in the list irrelevant, which
-is the point.
+| tier | what |
+|---|---|
+| **full round** | `session-and-window` → `rust-cli` → **a SUBJECT with `cockpit-surfaces` piggybacked** → `bench-arms` → `failure-injection` |
+| **regression gate** | `failure-injection` + `session-and-window` + `repl-commands` + `epic-tier` — cheap, deterministic, run after any chunk |
+| **owned rounds** | `rails-blog`, `secret-boundary`, `changeset-review`, `subagents-and-backends`, `memory-and-dogfood` — each drives its OWN round in its OWN context, because each brings up its own subject and interleaving them half-builds a precondition |
 
-So a full round is: the sequence above in this context, **and** a separate invocation for
-`rails-blog` (`/manual-qa rails-blog`). Say in the findings which of the two you are writing up, and
-if you drove only the sequence, say plainly that the expensive round is still owed rather than
-listing it as dropped — a scenario with its own context is not competing for budget and so is never
-legitimately a casualty of one.
+**With no scope named, run the full round.** Two traps in that sequence, both of which have already
+cost a round: `rust-cli` is the smoke test and is **not** a subject — the subjects are
+`bowling-ruby` and `rails-blog` — and `cockpit-surfaces` piggybacks on the **subject** session, not
+on the smoke test. Rounds 7 and 8 collapsed those two steps and neither noticed.
 
-If the user named a scenario, use that one. If they asked for a regression gate after a chunk,
-README's cheap pair (`failure-injection` + `session-and-window`) is the answer, and README says why
-that pair is worth more than its cost.
+**An owned round needs a separate invocation and you cannot start one.** So say it in the **opening
+plan**, not only in the findings: *"this context runs the full round; `<owned>` is scheduled for this
+round and needs a second `/manual-qa <owned>` invocation, which I cannot start."* Round 9 named it
+only at the end and `secret-boundary` slipped anyway — the same way `rails-blog` slipped for three
+rounds. When one does slip, **the rotation does not advance**: record the slip in README so the next
+round takes the same scenario rather than the next one along.
+
+If the user named a scenario, use it. If they asked for a regression gate after a chunk, that is the
+cheap set above; README says which to cut first if it will not fit.
 
 **Dropping a scenario from a full round is a decision, not a default** — name which and why, in the
 findings, so the gap is legible rather than looking like coverage. Do not block on the question:
@@ -153,6 +155,14 @@ embarrasses itself.
   **The same discipline applies to a CLAIM or a diagnosis, not only a number — round 7 (2026-08-20)
   overturned two this way: `cockpit-surfaces.md`'s NEW-window claim (F34) and the F27 diagnosis
   (`method.md` has both).** Re-verify a claim in these documents the same way you re-verify a number.
+  **Round 9 (2026-08-23) overturned a third, and the shape is worth copying: it needed a CONTROL,
+  not just a re-measurement.** `bench-arms.md` asserted "`num_batch` does not re-key the runner",
+  from round 8 watching residency stay unchanged. Round 9 loaded a runner with ollama's own defaults
+  (`-b 512`), sent ONE lain request carrying `LAIN_NUM_BATCH=2048`, and watched the runner reload —
+  then **sent the identical request again**, against the now-matching runner, and watched it NOT
+  reload. The second half is what makes it evidence rather than a coincidence: without it, "the
+  runner reloaded" is equally consistent with "lain always reloads". **When you overturn a claim,
+  ask what observation would look the same if the claim were true, and go take it.**
 - **Separate MODEL findings from LAIN findings.** The local model failing to drive `/create-plan` is
   not a defect in lain. Record it under model behaviour so the next round does not re-derive it.
 
@@ -176,7 +186,23 @@ each, whether differently means better. A fix that turned a hang into a crash is
 
 - Kill the QA tmux server; confirm no stray `lain` processes.
 - **Verify the negative:** `find ~/.local/state/lain -newermt '<round start>'` must be empty. That
-  is the proof the sandbox held, and it belongs in the findings.
+  is the proof the sandbox held, and it belongs in the findings. **Keep the `Z`, and always run the
+  positive control beside it** (`-newermt '<some earlier date>'` must be > 0) — `find` here is `bfs`,
+  and a mis-spelled timestamp returns 0 unconditionally. Round 9 read 0 against a control of 468.
+- **Two MORE negatives, because the one above cannot see either of them.** Both have now cost a
+  round (round 8's P9, round 9's P11), and both live outside `~/.local/state/lain`:
+
+  ```bash
+  git -C "$LAIN_REPO" status --porcelain   # must match the baseline you took BEFORE act 0
+  ls -d "$LAIN_REPO"/.lain 2>/dev/null      # must print nothing
+  ```
+
+  The first catches a sandbox `GEM_HOME` reaching `exe/lain` and silently re-locking `Gemfile.lock`.
+  The second catches `.lain/state.json` written into whatever cwd a probe ran from — which for an
+  agent driving `session-and-window` §1/§2/§7 is usually the lain checkout itself. **`git status`
+  cannot see that one**, because lain's own repo gitignores `/.lain/` (`.gitignore:22`), so it is
+  invisible to both of the other checks at once. Take the `git status` baseline at the START of the
+  round; you cannot reconstruct it afterwards.
 - **Clear the desktop, and verify that negative too.** If any act ran with the notifier on, close
   what it raised (`dunstctl close-all`) and confirm none survives. This is not tidiness: approvals
   are raised `-u critical`, which never auto-expires, and dunst suspends expiry entirely while
@@ -191,8 +217,12 @@ each, whether differently means better. A fix that turned a hang into a crash is
 Then summarize to the user: what was confirmed fixed, what is new ranked by severity, what could not
 be reached and why.
 
-## The two rules that outrank everything else
+## The three rules that outrank everything else
+
+README states these at more length under the same idea; these are the operative forms.
 
 1. **Success is not "nothing went wrong."** A round that finds nothing new did not push hard enough.
-2. **Report faithfully.** If a step was skipped, say so. If a probe was inconclusive, say
-   inconclusive — do not record "could not reproduce" as a pass.
+2. **A fix can make the failure mode worse.** When a previous defect behaves *differently*, record
+   whether differently means *better* — one round turned a >400s silent hang into a hard crash.
+3. **Report faithfully.** If a step was skipped, say so. If a probe was inconclusive, say
+   inconclusive — never record "could not reproduce" as a pass.

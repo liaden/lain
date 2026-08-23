@@ -83,7 +83,7 @@ Float did not:
 
 | backoff | renders | why |
 |---|---|---|
-| `0.14368744774438316` | `retrying in 0.14s` | two places, which is what a human reads at |
+| `0.14368744774438316` | `retrying in 0.14s` | at MOST two places, which is what a human reads at — a trailing zero is dropped, so `0.1` renders `0.1s`, not `0.10s` (round 9 saw both `0.1s` and `0.14s` in one run; neither is the regression) |
 | a whole second | `retrying in 2s` | no decimal tail, so `2.0` cannot masquerade as measured to the millisecond |
 | under 0.01s | `retrying in under 0.01s` | a rounded `0s` is indistinguishable from no wait at all, and a real one is happening |
 | non-finite | `retrying in a while` | reachable from a misbehaving server's oversized `Retry-After`, which parses to `Float::INFINITY` |
@@ -123,8 +123,20 @@ honest denominator with nothing resident. That is the operator lever; it is othe
 Journal `compaction_decision`, `.lain/state.json` `occupancy`, and the HUD's `ctx N%`.
 *Disagreement between them is the real failure;* a uniformly wrong number is the known one.
 
-Cross-check the denominator too: `compaction_decision.used_tokens` should equal the matching
-`turn_usage.usage.input_tokens` (round 4: both 4515, exactly). Note the token counts are **nested
+Cross-check the denominator too -- **but mind the LAG, which round 9 measured and which the old
+wording here got wrong.** `compaction_decision.used_tokens` equals the **PRECEDING**
+`turn_usage.usage.input_tokens`, not the following one: the decision is made *before* the turn and
+can only read the last completed turn's measured usage. Over a 29-turn session:
+
+```
+decision[i] == turn_usage[i-1]   ->  28/28 pairs
+decision[i] == turn_usage[i]     ->   0/29 pairs
+decision[0].used_tokens          ->  nil          (cold: nothing measured yet)
+```
+
+Read same-index -- which is what this paragraph used to say, on the strength of round 4's "both
+4515, exactly" from a session short enough for the pairing to be unambiguous -- and a healthy
+session reads 0/29 and looks like a defect. The three readers DO agree; the lag is inherent. Note the token counts are **nested
 under `usage`**, not top-level — reading the wrong path makes them look absent.
 
 ## 5 — `capability_degraded`
@@ -269,6 +281,9 @@ The injected clock is the whole design — a spec pinned to the system clock wou
 unattended in 91 days — so drive the stale branch that way rather than by editing the marker:
 
     lib/lain/price_book.rb: price table reviewed-on marker is 2026-08-18 (200 days old; horizon is 90 days) -- re-verify DEFAULTS against the published rates and update the marker
+
+(The day count is computed as `today - marker`, so it is not a fixed 200 -- driving this on
+2026-08-23 prints **205**. Only the arithmetic is the assertion.)
 
 `load`, not `require_relative`: the file has no `.rb` extension. **What wrong looks like:** the lint
 exiting 0 with a marker it never found — check that a *deleted* marker fails too, since a regex that

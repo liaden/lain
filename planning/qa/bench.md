@@ -37,8 +37,19 @@ scenarios assumes 1 and is void without it.
 
 ## Controlling residency
 
-`ollama ps` reports it; `ollama run qwen3-coder:30b ""` makes it resident; `ollama stop
-qwen3-coder:30b` evicts it; `OLLAMA_KEEP_ALIVE=5m` self-evicts. **Cold vs warm changes what the
+`ollama ps` reports it; **`ollama run qwen3-coder:30b ""` does NOT return -- an empty prompt drops
+into interactive mode and hangs** (round 9 killed it after 3m20s). Load through the API instead:
+
+```bash
+curl -s localhost:11434/api/generate \
+  -d '{"model":"qwen3-coder:30b","prompt":"hi","stream":false,"options":{"num_predict":1}}' >/dev/null
+```
+
+**And warm it through a LAIN request, not through ollama** -- see `bench-arms.md`: a runner ollama
+loads on its own gets `-b 512`, which lain then RELOADS on its first request. Warming the wrong way
+buys the reload it was meant to avoid.
+
+`ollama stop qwen3-coder:30b` evicts it; `OLLAMA_KEEP_ALIVE=5m` self-evicts. **Cold vs warm changes what the
 window scenario measures**, so assert it rather than assuming it:
 
 ```bash
