@@ -112,6 +112,16 @@ module Lain
         *STRUCTURAL
       ].freeze
 
+      # What to offer a file whose bytes are not text at all. Neither `offset`
+      # nor `limit` can make invalid bytes valid, and the structural tools
+      # refuse the same file for the same reason, so the advice leaves
+      # read_file entirely rather than naming a call that would be refused
+      # identically. `PATH` is the placeholder {LONG_LINE_NARROWER} already uses.
+      NOT_TEXT_NARROWER = [
+        "identify it with bash (`file PATH`)",
+        "look at its bytes with bash (`xxd PATH | head`)"
+      ].freeze
+
       # 16 KiB, the block {ReadFile.separator_within?} reads in. Two numbers
       # meet here and neither is the ceiling: it is what a single refusal may
       # ALLOCATE, and it is how much of an ordinary file has to be read before
@@ -162,9 +172,48 @@ module Lain
         # contract asks the session whether this file was read. Only a
         # SUCCESSFUL read counts -- a missing, unreadable or REFUSED path
         # taught the model nothing about the file's contents.
+        #
+        # Bytes that could never become a turn are refused HERE, because this
+        # is the one point both readers pass through and the last one that
+        # still knows which path produced them. Left alone they reach
+        # `Canonical.normalize` inside {Event::Payload} on {Timeline#commit},
+        # which raises `UnsupportedType` naming no file and takes the whole ask
+        # down with it -- a read that cannot be recorded is a failed read, and
+        # saying so here is what turns a killed ask into an answer the model
+        # can act on.
         def deliver(session, path)
+          return ReadFile.not_text(path) unless committable?
+
           session.record_read(path, complete:)
           Tool::Result.ok(contents)
+        end
+
+        private
+
+        # Canonical's UTF-8 rule, restated here for {Question#prose}'s reason
+        # and only for it: `Canonical.normalize` interns what it returns
+        # (`-@`), so asking it the question directly would pay a full-string
+        # hash and pin a quarter-megabyte of file contents in the process-wide
+        # fstring table on every tier-1 read. A spec reads every byte shape
+        # through both, so the copy cannot drift silently.
+        #
+        # NARROWER than Canonical's on one point, and the difference is forced
+        # by the line below it: {#deliver} ships `contents` UNCONVERTED.
+        # Canonical admits whatever it can CONVERT, so it would admit a UTF-16
+        # read -- putting one encoding on the wire to the model and a different
+        # one on the Timeline. The question that is sound for a value nobody
+        # converts is whether Canonical would hand back the SAME BYTES: already
+        # UTF-8, or ASCII-only under some ASCII-compatible tag, which
+        # transcodes to itself.
+        #
+        # That second arm is not hypothetical bet-hedging. `Array#join` answers
+        # US-ASCII for an EMPTY array, so a COMPLETE window over an empty file
+        # -- {Window#disclosed}'s `seen.join` with nothing in `seen` -- arrives
+        # tagged US-ASCII no matter what the read was told to decode. Demanding
+        # the UTF-8 tag alone refuses `.keep`, an empty `__init__.py`, and
+        # every other zero-length file reached through a window.
+        def committable?
+          contents.valid_encoding? && (contents.encoding == Encoding::UTF_8 || contents.ascii_only?)
         end
       end
 
@@ -226,7 +275,15 @@ module Lain
         # file would come back ASCII-8BIT and stop comparing equal to the bytes
         # this tool returned yesterday. Nothing is validated, exactly as
         # `File.read` validates nothing -- an invalid-UTF-8 file keeps its bytes
-        # and its invalidity.
+        # and its invalidity, and {Read#deliver} is the one place that judges.
+        #
+        # UTF-8 by NAME, and not `Encoding.default_external`, which is what
+        # this line used to say. Under a C locale (containers, systemd units)
+        # that is US-ASCII, so {Read#committable?} -- and `Canonical` behind it
+        # -- would refuse an ordinary UTF-8 file with a message saying it is
+        # not UTF-8, which it is, and the model would have no move. The read
+        # names its own encoding for exactly the reason the sibling structural
+        # tools do (`code_outline.rb`, `file_symbols.rb`, `ast_search.rb`).
         #
         # `+""` and NOT `""`, and the whole difference is one unary plus. This
         # file is `frozen_string_literal`, so a bare literal is frozen while
@@ -238,7 +295,7 @@ module Lain
         # `spec/support/shared_examples/tier_one_read_contract.rb` is what
         # catches the next one.
         def capped(path)
-          (File.read(path, WHOLE_BOUND.limit + 1) || +"").force_encoding(Encoding.default_external)
+          (File.read(path, WHOLE_BOUND.limit + 1) || +"").force_encoding(Encoding::UTF_8)
         end
       end
 
@@ -438,9 +495,18 @@ module Lain
         # over the ceiling. {LongLine} is what turns that into the refusal, and
         # it has to sit BEFORE the `drop`, because `drop` is the thing that
         # would otherwise miscount.
+        #
+        # `encoding:` for {Whole#capped}'s reason, and it is not optional here
+        # either: `File.foreach` tags every line with
+        # `Encoding.default_external`, so under `LC_ALL=C` a window over a
+        # perfectly good UTF-8 file would be refused by {Read#committable?} the
+        # moment the model passed an offset. Naming UTF-8 also makes the
+        # multi-byte behaviour the `+ 1` note above relies on unconditional
+        # rather than a property of the locale.
         def read(path)
           watch = LongLine.new(WINDOW_BOUND.limit, offset: @offset)
-          lines = watch.through(File.foreach(path, WINDOW_BOUND.limit + 1).lazy).drop(@offset - 1)
+          stream = File.foreach(path, WINDOW_BOUND.limit + 1, encoding: Encoding::UTF_8).lazy
+          lines = watch.through(stream).drop(@offset - 1)
           read = @limit ? bounded(lines, path) : to_eof(lines, path)
           # Consulted AFTER the force, because the walk is lazy: nothing has
           # been read at the point the watcher is built. A long line inside the
@@ -635,6 +701,23 @@ module Lain
                                                 narrower: [PART_ONLY, *STRUCTURAL]))
       end
 
+      # The refusal for bytes that are text to nobody. `Canonical` asks this
+      # same question later and answers it with a raise that names no file;
+      # asked here it names the file, and what comes back is committable, so
+      # the ask continues instead of being interrupted.
+      #
+      # Class-level beside {too_large} and {grew_past} because it is a fact
+      # about the FILE rather than about either reader -- and unlike those two
+      # it returns the {Tool::Result} directly, since the branch that refuses
+      # is already inside {Read#deliver} and has no reader left to answer to.
+      #
+      # @param path [String] the resolved path, as the model spelled it back
+      # @return [Tool::Result] an error carrying the verdict and none of the bytes
+      def self.not_text(path)
+        Tool::Result.error("#{path} is not valid UTF-8, so its contents cannot be recorded as part of this " \
+                           "conversation -- instead, #{NOT_TEXT_NARROWER.join(", or ")}")
+      end
+
       def name = "read_file"
 
       def description
@@ -645,7 +728,8 @@ module Lain
           "end, before editing it. A read is refused rather than truncated when it would hand back " \
           "more than #{WHOLE_BOUND.limit} bytes whole or #{WINDOW_BOUND.limit} bytes through a " \
           "window, and the refusal names what to do instead. Returns an error result if the path " \
-          "does not exist, is a directory, or cannot be read."
+          "does not exist, is a directory, cannot be read, or holds bytes that are not valid UTF-8 " \
+          "text and so could not be recorded."
       end
 
       # Audited: this tool only reads the filesystem and appends to the

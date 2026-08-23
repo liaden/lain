@@ -102,9 +102,16 @@ RSpec.shared_examples "a tier-1 read of any path that never raises" do
   # be refused; a symlink to an ordinary file is an ordinary file and must not
   # be -- that row is what reddens if `File.file?` is ever "tidied" to
   # `File.ftype`, which is lstat-based and answers "link".
+  #
+  # Invalid UTF-8 refuses (T8, QA round 10 F62). This row read `false` until
+  # then, on the reasoning that a tool which does not decode has nothing to
+  # object to -- but the bytes it handed back could not become an `Event`, so
+  # `Canonical.normalize` killed the whole ask on `Timeline#commit`, naming no
+  # file. A read whose result cannot be recorded is a failed read, and saying
+  # so here is what keeps it one.
   def path_shapes
     {
-      "a file of invalid UTF-8" => [binary_file("\xFF\xFE alpha\n".b), false],
+      "a file of invalid UTF-8" => [binary_file("\xFF\xFE alpha\n".b), true],
       "a symlink to an ordinary file" => [symlink_to_file, false],
       "a missing path" => [File.join(scratch, "absent.txt"), true],
       "a directory" => [scratch, true],

@@ -274,10 +274,20 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(session.read?(path)).to be(true)
     end
 
-    it "hands an empty file back in the default external encoding, as File.read does" do
+    # T8: the same repudiated claim as the example far below, restated for the
+    # empty file, and the only one of the four a UTF-8 locale hides -- `capped`
+    # returns `+""` tagged UTF-8 by name where `File.read` returns `""` tagged
+    # with whatever the locale guessed, so under `LC_ALL=C` this asserted the
+    # tool must hand back US-ASCII. What matters about an empty read is that it
+    # is an EMPTY String the Timeline can hold, and the tag is the tool's own
+    # answer rather than the locale's.
+    it "hands an empty file back as an empty UTF-8 String, whatever the locale says" do
       path = write("empty.txt", "")
 
-      expect(tool.call(path:).content.encoding).to eq(File.read(path).encoding)
+      result = tool.call(path:)
+
+      expect(result.content).to eq("")
+      expect(result.content.encoding).to eq(Encoding::UTF_8)
     end
 
     # AC4: the unwindowed path is the one every other caller in the repo takes,
@@ -434,6 +444,158 @@ RSpec.describe Lain::Tools::ReadFile do
       def read_of(bytes) = tool.call(path: file_of(bytes), offset: 1, limit: 10_000_000)
 
       it_behaves_like "a tier-1 read that never raises"
+    end
+  end
+
+  # T8 (QA round 10, F62). A file whose bytes are not valid UTF-8 used to come
+  # back as a SUCCESS, and the ask then died several objects later inside
+  # {Lain::Timeline#commit}: `Event::Payload#initialize` calls
+  # `Canonical.normalize`, which refuses a String it cannot pin to UTF-8. The
+  # model learned nothing, the turn never landed, and the message named no
+  # file. The refusal moves that verdict to the one place that still knows
+  # which path produced the bytes, and it asks exactly the question
+  # `Canonical` will ask later so the two cannot disagree.
+  describe "refusing a file whose bytes could never become a turn" do
+    let(:session) { Lain::Session.new }
+
+    def invocation_with(context) = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context:)
+
+    def binary(bytes) = File.join(tmpdir, "random.bin").tap { |path| File.binwrite(path, bytes) }
+
+    it "refuses a file of invalid UTF-8 with an error Result naming the file" do
+      path = binary("\xFF\xFE\x00\x01 alpha\n".b)
+
+      result = tool.call(path:)
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include(path).and include("not valid UTF-8")
+    end
+
+    # This file's doctrine is that a refusal names somewhere to go, and for
+    # bytes that are text to nobody that somewhere is outside read_file.
+    it "names an action that is not another read_file call" do
+      path = binary("\xFF\xFE\x00\x01 alpha\n".b)
+
+      expect(tool.call(path:).content).to include(*Lain::Tools::ReadFile::NOT_TEXT_NARROWER)
+    end
+
+    # The whole point of refusing HERE rather than there: what comes back is
+    # committable, so the ask continues instead of being interrupted.
+    it "hands back content the Timeline can commit, so the ask survives" do
+      path = binary("\xFF\xFE\x00\x01 alpha\n".b)
+
+      result = tool.call(path:)
+
+      expect { Lain::Canonical.normalize(result.content) }.not_to raise_error
+    end
+
+    # A refusal carries the verdict and none of the bytes -- the same property
+    # {Lain::Tools::ReadFile::Refused} already has for an oversized read.
+    it "carries none of the file's bytes" do
+      path = binary("\xFF\xFE\x00\x01 alpha\n".b)
+
+      expect(tool.call(path:).content.b).not_to include("alpha")
+    end
+
+    it "refuses a window over the same file, not just the whole read" do
+      path = binary("\xFF\xFE alpha\n\xFF beta\n".b)
+
+      result = tool.call(path:, offset: 1, limit: 1)
+
+      expect(result).to have_attributes(is_error: true)
+      expect(result.content).to include(path).and include("not valid UTF-8")
+    end
+
+    it "records no read, so a refused file teaches the model nothing about it" do
+      path = binary("\xFF\xFE\x00\x01 alpha\n".b)
+
+      tool.call({ path: }, invocation_with(session))
+
+      expect(session.read?(path)).to be(false)
+    end
+
+    # The refusal above is only useful if it is TRUE. A bare `File.read` tags
+    # its result with `Encoding.default_external`, which a C locale makes
+    # US-ASCII -- and `Canonical`'s question then refuses an ordinary UTF-8
+    # file, so the model would be handed a true-sounding lie about a file it
+    # can read. This pins the mechanism the tool controls (the read names its
+    # own encoding) rather than the locale, exactly as `code_outline_spec.rb`
+    # pins it for the sibling tools.
+    it "still reads an ordinary UTF-8 file when the default external encoding is US-ASCII" do
+      path = write("accented.txt", "héllo wörld\n")
+
+      result = under_us_ascii { tool.call(path:) }
+
+      expect(result).to have_attributes(ok?: true, content: "héllo wörld\n")
+    end
+
+    # `File.foreach` takes the locale's guess too, so the window reader needs
+    # its own row: without it the refusal above would fire on a good file the
+    # moment the model passed an offset.
+    #
+    # A COMPLETE window, and the completeness is the whole point of the shape.
+    # {Window#disclosed}'s incomplete branch builds its content by
+    # INTERPOLATION -- `"#{terminated(seen.join)}#{notice(seen.size)}"` -- and
+    # interpolating a US-ASCII-tagged invalid String into a UTF-8 literal
+    # silently re-tags the result UTF-8, so an incomplete window is committable
+    # whatever `foreach` was told and this row would pass with the fix reverted.
+    # A complete window returns `seen.join` raw and keeps the bad tag, so it is
+    # the only shape that can hold the fix honest.
+    it "still reads a complete WINDOW of an ordinary UTF-8 file when the default external encoding is US-ASCII" do
+      path = write("accented.txt", "héllo\nwörld\nthird\n")
+
+      result = under_us_ascii { tool.call(path:, offset: 1, limit: 3) }
+
+      expect(result).to have_attributes(ok?: true, content: "héllo\nwörld\nthird\n")
+    end
+
+    # The predicate duplicates `Canonical`'s question rather than calling it
+    # (`normalize` deduplicates the String it returns, which would intern a
+    # quarter-megabyte of file contents on every tier-1 read). This row is what
+    # keeps the copy honest: whatever the bytes, the result must be
+    # committable, and it must be an error exactly when the file is not UTF-8.
+    it "answers every byte shape with content Canonical can commit" do
+      {
+        "plain ASCII" => "alpha\n",
+        "valid UTF-8" => "héllo\n",
+        "a lone continuation byte" => "\x80".b,
+        "a truncated multi-byte character" => "caf\xC3".b,
+        "an unassigned lead byte" => "\xFF\xFE\n".b,
+        "NUL bytes" => "alpha\x00beta\n",
+        "an empty file" => ""
+      }.each do |shape, bytes|
+        result = tool.call(path: binary(bytes))
+
+        expect { Lain::Canonical.normalize(result.content) }.not_to raise_error, shape
+        expect(result.is_error).to be(!bytes.dup.force_encoding(Encoding::UTF_8).valid_encoding?), shape
+      end
+    end
+
+    # {Read#deliver} ships `contents` UNCONVERTED, so the question it has to
+    # ask is "are these bytes already committable", not Canonical's wider "could
+    # they be converted". Canonical accepts UTF-16 because it converts on the
+    # way in; accepting it here would put one encoding on the wire to the model
+    # and a different one on the Timeline. No reader produces UTF-16 today, and
+    # this row is what keeps it that way LOUDLY rather than by luck. The gate is
+    # the same-bytes question, not the same-tag one: ASCII-only content under an
+    # ASCII-compatible tag passes, which is what an empty window needs.
+    it "refuses contents Canonical could convert but this tool would not have converted" do
+      read = Lain::Tools::ReadFile::Read.new(contents: "hello".encode(Encoding::UTF_16LE), complete: true)
+
+      result = read.deliver(session, File.join(tmpdir, "utf16.txt"))
+
+      expect(result).to have_attributes(is_error: true)
+    end
+
+    # `Encoding.default_external=` is process-global, so the restore is an
+    # `ensure` rather than an `after` -- a failing example must not leave the
+    # rest of this worker's files reading as US-ASCII.
+    def under_us_ascii
+      previous = Encoding.default_external
+      Encoding.default_external = Encoding::US_ASCII
+      yield
+    ensure
+      Encoding.default_external = previous
     end
   end
 
@@ -1010,21 +1172,19 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(content).not_to include(Lain::Tools::ReadFile::FULL_COVER)
     end
 
-    it "keeps the unwindowed read's bytes and encoding identical for a file that fits" do
+    # T8: the read NAMES its encoding rather than inheriting the locale's
+    # guess, which is why this compares against the file's BYTES and against
+    # UTF-8 by name. It used to compare against a bare `File.read`'s encoding,
+    # i.e. against `Encoding.default_external` -- a claim that is true under a
+    # UTF-8 locale and, under `LC_ALL=C`, pins the very defect the tool now
+    # avoids.
+    it "hands back the file's bytes tagged UTF-8, whatever the locale says" do
       utf8 = write("utf8.txt", "héllo wörld\n" * 10)
-      raw = File.read(utf8)
 
       result = tool.call(path: utf8)
 
-      expect(result.content).to eq(raw)
-      expect(result.content.encoding).to eq(raw.encoding)
-    end
-
-    it "keeps invalid UTF-8 intact through the capped read" do
-      path = File.join(tmpdir, "invalid.bin")
-      File.binwrite(path, "\xFF\xFE ok\n")
-
-      expect(tool.call(path:).content.b).to eq("\xFF\xFE ok\n".b)
+      expect(result.content).to eq(File.binread(utf8).force_encoding(Encoding::UTF_8))
+      expect(result.content.encoding).to eq(Encoding::UTF_8)
     end
 
     # The window ceiling sits above the whole-read ceiling on purpose: were
