@@ -28,14 +28,92 @@ require "socket"
 module DockerBackendAvailability
   IMAGE = Lain::Exec::Docker::DEFAULT_IMAGE
 
+  # `system`'s own tri-state, kept rather than collapsed: `true` (ran, exit 0),
+  # `false` (ran, exited nonzero) and `nil` (could not be executed at all --
+  # `Errno::ENOENT` under the hood) are three different findings, and only the
+  # last one is "nothing on PATH". Collapsing `false` into `nil` is exactly how
+  # "no `docker` client on PATH" used to read on a `podman-docker` box where a
+  # client plainly IS on PATH and merely failed to answer -- the reason named
+  # what was looked for, not what running the probe actually found.
   def self.probe(*argv) = system(*argv, out: File::NULL, err: File::NULL)
 
-  def self.unavailability
-    return "no `docker` client on PATH" unless probe("docker", "--version")
-    return "the docker daemon is not answering `docker info`" unless probe("docker", "info")
-    return nil if probe("docker", "image", "inspect", IMAGE)
+  # @param prober [#call] answers each probe argv with {.probe}'s own
+  #   true/false/nil vocabulary. Defaults to the real probe, so production
+  #   behaviour is unchanged; a unit example injects a canned one so the three
+  #   reasons below are each driven directly, with no client to remove.
+  # @return [String, nil] why a real container will not run here, naming the
+  #   probe that answered and what it found -- or nil once every probe is
+  #   satisfied
+  def self.unavailability(prober: method(:probe))
+    version = prober.call("docker", "--version")
+    return "`docker --version` found nothing to run -- no docker or podman-docker client on PATH" if version.nil?
+    return "`docker --version` ran but exited nonzero -- a `docker` on PATH that will not answer" unless version
 
-    "the image #{IMAGE} is not present locally -- run `docker pull #{IMAGE}`; a :seam spec must not pull it"
+    info = prober.call("docker", "info")
+    return "found a client on PATH, but its daemon is not answering `docker info`" unless info
+
+    return nil if prober.call("docker", "image", "inspect", IMAGE)
+
+    "found a client and a daemon, but the image #{IMAGE} is not present locally -- " \
+      "run `docker pull #{IMAGE}`; a :seam spec must not pull it"
+  end
+end
+
+# AC2 (chunk-qa-round9, T3): the SKIP REASON's own quality, exercised without
+# touching a real client. `.unavailability` takes an injected `prober:` for
+# exactly this -- a unit example hands it a canned true/false/nil answer per
+# probe, the same vocabulary `system` itself returns, and reads the sentence
+# that comes back. No `:seam` tag: nothing here spawns a subprocess.
+RSpec.describe DockerBackendAvailability do
+  # @return [Array(#call, Array<Array<String>>)] a prober that answers each
+  #   call from `results`, in order, and a log of the argv it was asked --
+  #   so an example can assert BOTH the sentence produced and which probes it
+  #   took to produce it.
+  def canned_prober(*results)
+    calls = []
+    prober = lambda do |*argv|
+      calls << argv
+      results.shift
+    end
+    [prober, calls]
+  end
+
+  describe ".unavailability" do
+    it "names docker --version and that nothing on PATH could even run it" do
+      prober, calls = canned_prober(nil)
+
+      reason = described_class.unavailability(prober:)
+
+      expect(reason).to include("docker --version")
+      expect(reason).to include("PATH")
+      expect(calls).to eq([%w[docker --version]])
+    end
+
+    it "names docker info and that its daemon did not answer, once a client is found" do
+      prober, calls = canned_prober(true, false)
+
+      reason = described_class.unavailability(prober:)
+
+      expect(reason).to include("docker info")
+      expect(reason).to include("daemon")
+      expect(calls).to eq([%w[docker --version], %w[docker info]])
+    end
+
+    it "names the image and that it is not present locally, once a daemon answers" do
+      prober, calls = canned_prober(true, true, false)
+
+      reason = described_class.unavailability(prober:)
+
+      expect(reason).to include(described_class::IMAGE)
+      expect(reason).to include("not present locally")
+      expect(calls.last).to eq(["docker", "image", "inspect", described_class::IMAGE])
+    end
+
+    it "is nil once a client, a daemon and the image all answer" do
+      prober, = canned_prober(true, true, true)
+
+      expect(described_class.unavailability(prober:)).to be_nil
+    end
   end
 end
 
@@ -526,12 +604,23 @@ RSpec.describe Lain::Exec::Docker do
       expect(capture.stdout.strip).not_to eq(Socket.gethostname)
     end
 
-    it "shows the command the project's own files" do
-      File.write(File.join(@project, "witness.txt"), "seed\n")
+    # AC1 (chunk-qa-round9, T3), and the round's own reproduction of F57 run as
+    # ONE container so a client that still passed a wrong `--user` fails BOTH
+    # halves at once rather than just one of them:
+    #
+    #   docker run --rm --user 1000 ... alpine sh -c 'cat seed.txt; touch made'
+    #     -> uid=1000(tara)  cat: Permission denied   touch: Permission denied
+    #   docker run --rm             ... alpine sh -c 'cat seed.txt; touch made'
+    #     -> uid=0(root)     seed                     made lands on the host, owned by tara
+    it "reads a seeded file and writes a new one, whichever client is installed" do
+      File.write(File.join(@project, "seed.txt"), "seed\n")
 
-      capture = run_real("cat witness.txt")
+      capture = run_real("cat seed.txt; touch made")
 
       expect(capture.stdout).to eq("seed\n")
+      made = File.join(@project, "made")
+      expect(File.exist?(made)).to be(true)
+      expect(File.stat(made).uid).to eq(Process.uid)
     end
 
     it "keeps lain's own Gemfile out of the container, whatever the host is carrying" do
@@ -541,14 +630,6 @@ RSpec.describe Lain::Exec::Docker do
 
       expect(capture.stdout).to include("scanned")
       expect(capture.stdout).not_to include("BUNDLE_GEMFILE")
-    end
-
-    it "writes into the mounted project as the calling user, not as root" do
-      run_real("touch made-inside")
-
-      made = File.join(@project, "made-inside")
-      expect(File.exist?(made)).to be(true)
-      expect(File.stat(made).uid).to eq(Process.uid)
     end
 
     it "reports a nonzero exit the way the local backend does" do
