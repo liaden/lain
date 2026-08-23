@@ -28,7 +28,6 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 | `--api-base` | Ollama's localhost | Overrides the Ollama base URL — for whichever of the chat and the summarizer is on Ollama (see [Compaction](#compaction-flags)). |
 | `--max-tokens` | `4096` | Per model turn. |
 | `--temperature`, `--seed` | unset | Ride `Request#extra`. Ollama honors both; `--temperature 0` is the determinism recipe. |
-| `--yolo` | off | Skip the approval prompt for tier-3 (free-form shell) tools. |
 | `--auto-approve` | off | Wire an `auto_approver` role that judges pendings the human has not. Races the human and dunst surfaces. |
 | `--desktop` / `--no-desktop` | on | Fire `dunstify` notifications for parked approvals and `ask_human` questions. `dunstify` on `PATH` is capability, not consent: a spec, probe or subagent shares your `PATH`, so nothing but this flag builds a real notifier. `LAIN_DESKTOP=0` silences a whole shell; `LAIN_DESKTOP=1` forces one on. |
 | `--journal` / `--no-journal` | on | The durable, fsync'd, replayable session record. `--no-journal` also disables `--windows`. |

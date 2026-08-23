@@ -44,7 +44,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   # The example that DOES care wires a real {Lain::CLI::EpicMount}.
   let(:epic) { Lain::CLI::EpicMount::NoEpic }
 
-  # The run's real switches, not a double: `/mode` and `/yolo` write these, and
+  # The run's real switches, not a double: `/mode` writes these, and
   # the whole claim is that a child reads them LIVE. A stub with a fixed
   # posture would pass whether or not the read is live, which is the one thing
   # worth asserting here.
@@ -63,7 +63,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: "/home/tester", cwd: "/home/tester/proj"))
   end
   let(:switchboard) do
-    Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), yolo: false, model: "test-model",
+    Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), model: "test-model",
                                sensitivity:,
                                toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }))
   end
@@ -332,7 +332,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         end
 
         let(:headless) do
-          Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), yolo: false, model: "test-model",
+          Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), model: "test-model",
                                      attended: false, sensitivity:,
                                      toolset: Lain::Toolset.new(ToolRegistry.names.map { |n| ToolRegistry.build(n) }))
         end
@@ -363,7 +363,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         let(:live) { described_class::LiveSensitivity.new(board: -> { board_slot.first }) }
 
         def board(policy)
-          Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), yolo: false, model: "m",
+          Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), model: "m",
                                      sensitivity: policy,
                                      toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]))
         end

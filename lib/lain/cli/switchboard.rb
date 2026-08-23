@@ -11,27 +11,27 @@ module Lain
     # not loosen):
     #
     # * ONE {Approval::PolicySwitch} the Gate holds for the whole session --
-    #   `/yolo` flips the delegate inside it, Gate stays construction-fixed.
-    #   `--yolo` wires NO queue ({#approvals} is nil then, so Wiring's callers
-    #   keep their existing no-queue paths); otherwise the {Approval::Queue} is
-    #   the parked list `/approve` drains, and the {Approval::Escalation} ladder
+    #   a posture flip re-binds the delegate inside it, Gate stays
+    #   construction-fixed. An attended session's {Approval::Queue} is the
+    #   parked list `/approve` drains, and the {Approval::Escalation} ladder
     #   OVER it is what the asking rungs resolve to -- so the deterministic rungs
-    #   answer first and the queue is where a call lands when they abstain.
+    #   answer first and the queue is where a call lands when they abstain. An
+    #   unattended one wires NO queue ({#approvals} is nil then, so Wiring's
+    #   callers keep their existing no-queue paths).
     # * ONE {Context::ModelSwitch} the main agent's Context reads at render
     #   time -- `/model` writes it, {#graft} installs it.
     # * ONE {Mode::Switch} holding the session's posture and layers -- `/mode`
-    #   writes it, the prompt and the HUD read it. `--yolo` starts it on `auto`.
+    #   writes it, the prompt and the HUD read it.
     # * ONE {LiveToolset} the Agent and its executor are BUILT with -- the
     #   capability set a posture attenuates, re-bound in place.
     #
-    # == The flag is read once, and the ladder says the rest
+    # == The starting mode is the only thing chosen here
     #
-    # `--yolo` used to be read twice, once per axis, with a comment promising the
-    # two could never disagree. They no longer can, because it is read once: it
-    # picks the starting {Mode}, and {Mode::Resolution} answers the gate policy
-    # and the capability set that mode implies. Nothing here re-states "yolo
-    # means approve everything" -- {Mode::Posture}'s table does, in one place,
-    # for the starting mode and for every flip after it.
+    # Nothing in this class re-states what a posture MEANS. It picks the
+    # starting {Mode}, and {Mode::Resolution} answers the gate policy and the
+    # capability set that mode implies -- {Mode::Posture}'s table says
+    # "approve everything" in one place, for the starting mode and for every
+    # flip after it.
     #
     # Every switch journals its flips to the SAME journal approval decisions
     # land in: on a study bench "who flipped what, when" is evidence.
@@ -42,11 +42,15 @@ module Lain
       # call (/dev/null under --no-journal) -- the leak wiring.rb:363-366
       # documents and fixed for #goal_driver. This class resolves that journal
       # exactly once and builds all of them over it.
-      # `ladder` is read-only in the strongest sense: {Approval::Escalation} is a
-      # frozen value with no writer at all, so exposing it hands out the reading
-      # ("which rungs are in force, in what order") and no authority. That is the
-      # same line {LiveToolset} draws below, and it is why it can sit beside the
-      # switches without being one.
+      # `ladder` is read-only in the strongest sense: neither thing it can
+      # answer has a writer at all, so exposing it hands out the reading
+      # ("which rungs are in force, in what order") and no authority. That is
+      # the same line {LiveToolset} draws below, and it is why it can sit beside
+      # the switches without being one. For a session with nobody to ask it is
+      # the flat {Effect::Handler::Gate::DenyAll} rather than an
+      # {Approval::Escalation}, and the reading is then "no rung asks anybody,
+      # everything refuses" -- still a reading, still no authority. It is never
+      # nil, so no caller writes `if board.ladder`.
       # `sensitivity` sits beside `ladder` for the same reason and on the same
       # terms: it is a frozen {Sensitivity::Policy} with no writer, so exposing
       # it hands out the reading ("which paths this session gates") and no
@@ -57,14 +61,17 @@ module Lain
       # IS the authority to release. It is exposed for one reason -- the masking
       # arm and the approval arm must hold the SAME one, and two half-wirings
       # would give the run two ledgers and a release control that silently
-      # releases nothing. Constructed under --yolo too: the posture decides who
-      # is asked, not whether the run has somewhere to record an answer.
+      # releases nothing. Constructed for a queueless session too: the posture
+      # decides who is asked, not whether the run has somewhere to record an
+      # answer.
       attr_reader :approvals, :ladder, :ledger, :policy_switch, :model_switch, :mode_switch, :toolset, :sensitivity
 
       # The wiring entry: resolves the journal the chronicle carries -- the
       # null device under --no-journal (the operator declined the record, not
-      # the gate) -- then builds the switches over it, reading the surface
-      # flags (`--yolo`, `--auto-approve`) off the CLI options itself.
+      # the gate) -- then builds the switches over it, reading the one surface
+      # flag that changes them (`--non-interactive`) off the CLI options itself.
+      # `--auto-approve` is NOT read here: it wires an adjudicating surface, and
+      # that is {CLI::Wiring::ToolsetBuild}'s to build.
       #
       # `toolset:` is the run's BASE capability set, and base is the whole point:
       # attenuation is monotone, so every posture resolves from the set the
@@ -89,18 +96,17 @@ module Lain
       #   {CLI::Wiring} over the resolved {Project} and that project's
       #   `[sensitivity]` table. Defaulted to the same Null `new` defaults to,
       #   so the direct-construction seams a spec drives are unchanged
-      # @option options [Boolean] :yolo start approving everything, with no
-      #   queue -- the only flag this entry reads off `options`, so a board
-      #   built here differs from `new` in exactly that one resolution
+      # @option options [Boolean] :non_interactive no human is at this
+      #   session's terminal -- the only flag this entry reads off `options`, so
+      #   a board built here differs from `new` in exactly that one resolution
       # @return [Switchboard]
       def self.for(chronicle:, options:, model:, toolset:, rules: [],
                    sensitivity: Sensitivity::Policy::Null.instance)
-        new(journal: chronicle.record_journal, model:, yolo: options[:yolo], toolset:, rules:, sensitivity:,
+        new(journal: chronicle.record_journal, model:, toolset:, rules:, sensitivity:,
             attended: !options[:non_interactive])
       end
 
       # @param journal [#record] where flips and approval decisions land
-      # @param yolo [Boolean] start approving everything, with no queue
       # @param model [String] the model in force until the first /model
       # @param toolset [Lain::Toolset] the run's full capability set. Required,
       #   with no empty-set default, for the reason build_agent's `session:` is:
@@ -118,14 +124,13 @@ module Lain
       #   session that resolved no project root behaves byte-for-byte as it did
       #   before this axis existed.
       # @param attended [Boolean] whether a human is at this session's terminal
-      #   at all. `--non-interactive` says no, and that is the OPPOSITE end of
-      #   the axis `--yolo` sits at: both answer "who decides a gated call".
-      #   `--yolo` says "nobody needs to, approve"; false here says "nobody
-      #   can, so refuse" -- see {#asking_policy} for why refusing beats the
-      #   two alternatives. Spelled positively all the way down the chain
-      #   ({CLI::Wiring#attended?}, {Repl}, {Wiring::Askers}), so no reader has
-      #   to un-negate it twice to find out what it means.
-      def initialize(journal:, yolo:, model:, toolset:, rules: [],
+      #   at all. `--non-interactive` says no, which answers "who decides a
+      #   gated call" with "nobody can, so refuse" -- see {#seed} for why
+      #   refusing beats the two alternatives. Spelled positively all the
+      #   way down the chain ({CLI::Wiring#attended?}, {Repl},
+      #   {Wiring::Askers}), so no reader has to un-negate it twice to find out
+      #   what it means.
+      def initialize(journal:, model:, toolset:, rules: [],
                      sensitivity: Sensitivity::Policy::Null.instance, attended: true)
         @attended = attended
         @sensitivity = sensitivity
@@ -137,15 +142,13 @@ module Lain
         # device on EVERY call, which is the leak this class was extracted to
         # stop happening once.
         @journal = journal
-        # No queue for either end of the axis, and for the same reason stated
-        # twice: a parked call has to be answered by somebody. `--yolo`
-        # answered every one of them in advance; an unattended run has nobody
-        # to answer any of them, and a queue with no drain is a wait, not a
+        # A parked call has to be answered by somebody. An unattended run has
+        # nobody to answer one, and a queue with no drain is a wait, not a
         # decision.
-        @approvals = Approval::Queue.new(journal:) if @attended && !yolo
+        @approvals = Approval::Queue.new(journal:) if @attended
         @base = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
-        seed(Mode.new(posture: yolo ? :auto : :accept_edits), journal:)
+        seed(Mode.new(posture: :accept_edits), journal:)
       end
 
       # The main agent's context grafted over the live model slot -- the ONLY
@@ -153,8 +156,8 @@ module Lain
       def graft(context) = context.with_model(@model_switch)
 
       # The session's approval gate over `inner`: the Gate holds this board's
-      # ONE policy switch, so /yolo flips and posture flips both reach it while
-      # the Gate itself stays construction-fixed.
+      # ONE policy switch, so every posture flip reaches it while the Gate
+      # itself stays construction-fixed.
       #
       # {Effect::Handler::Sensitivity} sits AHEAD of it, over the SAME one
       # policy: a denied path is not approvable, and a Gate policy answer is a
@@ -162,10 +165,10 @@ module Lain
       # handlers, in the order that leaves the human a move on the axis that has
       # one -- the gated path reaches the queue, the denied one never does.
       #
-      # Nothing here reads `--yolo`, and that is the point: the refusal is
-      # decided before the policy switch is consulted, so a `--yolo` session
-      # (which wires no queue at all) refuses a denied path exactly as an
-      # attended one does.
+      # Nothing here reads the session's posture, and that is the point: the
+      # refusal is decided before the policy switch is consulted, so a session
+      # approving everything refuses a denied path exactly as an asking one
+      # does.
       def gate(inner:)
         Effect::Handler::Sensitivity.new(
           sensitivity:, journal: @journal,
@@ -226,7 +229,29 @@ module Lain
       # nil -- nothing asks it anything until a call is gated.
       def seed(initial, journal:)
         @toolset = LiveToolset.new(-> { @resolved })
-        @ladder = build_ladder(journal:)
+        # A session with nobody to ask has no ladder, and what stands in its
+        # place is DENY -- the two rejected alternatives being why. Approving
+        # would be the `auto` posture under another name, granted to a run the
+        # operator never said that about: the one answer this may not silently
+        # be. Parking is worse than it looks -- the call waits on a queue no
+        # surface drains until the fail-closed timeout denies it anyway, so the
+        # outcome is identical and the run spends the wait first.
+        # {Effect::Handler::Gate::DenyAll} already names this case in its own
+        # words ("correct when no interactive frontend is attached to answer for
+        # a human"), so the third option is the one that was already written
+        # down.
+        #
+        # It is NOT a quiet demotion to `plan`, which {Mode::Resolution} refuses
+        # a nil `queue:` outright to prevent: the posture stays what it says, the
+        # capability set is untouched, and only the gate's answer changes.
+        # `--non-interactive` is a declared arm, so its record is honest by
+        # construction, where an accidentally queueless `manual` would not have
+        # been.
+        #
+        # Substituted HERE rather than guarded at every read, so "this session
+        # has no ladder" is unrepresentable above this line instead of merely
+        # handled -- {Sink::Null}'s shape, one axis over.
+        @ladder = build_ladder(journal:) || Effect::Handler::Gate::DenyAll.new
         resolution = resolve(initial)
         @resolved = resolution.toolset
         @policy_switch = Approval::PolicySwitch.new(resolution.gate_policy, journal:)
@@ -240,9 +265,8 @@ module Lain
       # so a call the session has already decided about never reaches a human,
       # and every rung's answer lands in the same journal the flips do.
       #
-      # `nil` under --yolo, because that session wired no queue: the sentinel in
-      # {#resolve} then fires and {#refuse_queueless} explains why, exactly as it
-      # did when the queue itself was what a posture asked through.
+      # `nil` for an unattended session, which wired no queue. {#seed} is what
+      # turns that nil into the flat denial, and is the only place that reads it.
       def build_ladder(journal:)
         return nil unless @approvals
 
@@ -251,68 +275,14 @@ module Lain
 
       # The posture's declared symbols as this session's live collaborators.
       # Pure, and it raises before anything moves -- {Toolset::UnknownTool} when
-      # a posture names a tool this run does not hold, and the refusal below.
-      #
-      # The sentinel is how the refusal OBSERVES the answer instead of re-asking
-      # the question. Testing `posture.gate_policy == :queue` here would be a
-      # second reader of {Mode::Posture}'s table, and a future rung whose symbol
-      # differs but which still resolves to the queue slot would walk straight
-      # past it and be handed the fallback -- the same degrade, through a new
-      # door. Passing a value that IS NOT a policy and asking whether the
-      # resolution handed it back reads no table at all: whatever the ladder
-      # grows, "this rung wanted the queue" is exactly "the queue arm fired".
-      def resolve(mode)
-        resolution = Mode::Resolution.for(mode:, base: @base, queue: asking_policy)
-        refuse_queueless(mode.posture) if resolution.gate_policy.equal?(NO_QUEUE)
-        resolution
-      end
-
-      # What an ASKING posture (`manual`, `accept_edits`) resolves its gate to.
-      # Normally the ladder over the queue; for a session with nobody to ask,
-      # a flat denial.
-      #
-      # DENY, and the two rejected alternatives are why. Approving would be
-      # `--yolo` under another name, granted to a run the operator never said
-      # that about -- the one answer this may not silently be. Parking is worse
-      # than it looks: the call waits on a queue no surface drains until the
-      # fail-closed timeout denies it anyway, so the outcome is identical and
-      # the run spends the wait first. {Effect::Handler::Gate::DenyAll} already
-      # names this case in its own words -- "correct when no interactive
-      # frontend is attached to answer for a human" -- so the third option is
-      # the one that was already written down.
-      #
-      # It is NOT a quiet demotion to `plan`, which {Mode::Resolution} warns a
-      # missing queue would be: the posture stays what it says, the capability
-      # set is untouched, and only the gate's answer changes. `--non-interactive`
-      # is a declared arm, so its record is honest by construction, where an
-      # accidentally queueless `manual` would not have been.
-      def asking_policy
-        return @ladder if @ladder
-        return Effect::Handler::Gate::DenyAll.new unless @attended
-
-        NO_QUEUE
-      end
-
-      # `/yolo off`'s doctrine one rung up, and for a sharper reason than that
-      # one: a --yolo session wired no queue AND no `/approve` drain to answer
-      # it, so building one on demand would not restore `manual` -- it would
-      # park every gated call until the fail-closed timeout denied it, a THIRD
-      # arm the operator never asked for. Handing the fallback policy over
-      # instead is the other degrade, a run journalled as `manual` that approves
-      # everything, which is precisely what {Mode::Resolution} refuses a nil
-      # `queue:` to prevent. So the flip refuses, and names the way out: the
-      # choice was made at the command line and only the command line can unmake
-      # it.
-      def refuse_queueless(posture)
-        raise Error, "no approval queue in this session (started with --yolo); the #{posture.name} posture parks " \
-                     "gated calls on one, so there is nothing for it to ask through -- restart without --yolo " \
-                     "to use it"
-      end
+      # a posture names a tool this run does not hold.
+      def resolve(mode) = Mode::Resolution.for(mode:, base: @base, queue: @ladder)
 
       # What a flip DOES. The gate policy goes through the ONE PolicySwitch
-      # /yolo also writes, so a transcript reads as a single policy history and
-      # the last flip wins regardless of which surface made it; the capability
-      # set is re-bound in the slot the Agent and the executor already hold.
+      # every surface writes, so a transcript reads as a single policy history
+      # and the last flip wins regardless of which surface made it; the
+      # capability set is re-bound in the slot the Agent and the executor
+      # already hold.
       #
       # `snapshot_scope` is deliberately NOT bound here: {Workspace::Snapshot}
       # primes its scope against a root at construction, and the Agent's
@@ -325,13 +295,6 @@ module Lain
       def prompt(conductor:, tty:)
         Frontend::ApprovalPolicy.new(reader: ->(question) { conductor.read_reply(tty, question) })
       end
-
-      # Stands where the queue would be for a session that has none, so the
-      # resolution can be ASKED whether the posture wanted one. Frozen and
-      # private: it must never reach a gate, and it cannot -- #resolve raises
-      # the moment it comes back.
-      NO_QUEUE = Object.new.freeze
-      private_constant :NO_QUEUE
 
       # The capability set the Agent and {Effect::Handler::Live} are BUILT with,
       # so a posture flip can change what the model is shown without rebuilding

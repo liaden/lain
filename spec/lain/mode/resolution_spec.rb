@@ -57,6 +57,45 @@ RSpec.describe Lain::Mode::Resolution do
       expect { described_class.for(mode: Lain::Mode.new(posture: :manual), base:) }
         .to raise_error(ArgumentError, /queue/)
     end
+
+    # The required keyword catches an OMITTED collaborator. It does not catch a
+    # named one that answered nil, which is the shape a board with no ladder
+    # hands over -- and that is the half the ruling above actually cares about,
+    # because a wiring bug produces nil far more readily than it produces a
+    # missing argument. It was enforced a rung up, by a sentinel on the
+    # switchboard, until the flag that made a queueless session possible was
+    # deleted; the ruling is this object's, so the enforcement belongs here.
+    it "refuses a queue that was named but is nil, which the required keyword does not catch" do
+      expect { described_class.for(mode: Lain::Mode.new(posture: :manual), base:, queue: nil) }
+        .to raise_error(described_class::Unknown, /manual/)
+    end
+
+    # Refused under `auto` and `plan` too, which would never have consulted it.
+    # "Absent" being legitimate on two rungs and a wiring bug on the other two
+    # is exactly the shape the ruling says must not be defaulted, and a guard
+    # that fired only on the asking rungs would let a mis-wired session start
+    # in `auto` and reach the gate before anything noticed.
+    it "refuses it under a posture that would never have consulted it either" do
+      expect { described_class.for(mode: Lain::Mode.new(posture: :auto), base:, queue: nil) }
+        .to raise_error(described_class::Unknown, /auto/)
+    end
+
+    # It raises BEFORE anything moves, which is the property
+    # {Lain::CLI::Switchboard#resolve} documents and the reason a refused flip
+    # never reaches the journal. Said with a posture that ALSO names a tool the
+    # base lacks, because the CLASS of the error is what tells the two orderings
+    # apart: a guard placed after the attenuation answers
+    # {Lain::Toolset::UnknownTool} instead. A spy on `base` cannot say it --
+    # a Toolset is frozen and rspec-mocks cannot proxy one.
+    it "refuses the nil queue before it attenuates, so the wiring fault is the one reported" do
+      broken = Lain::Mode::Posture.new(
+        name: :broken, permits: Lain::Mode::Posture::Permits::Only.new(%i[read_file no_such_tool]),
+        gate_policy: :queue, snapshot_scope: :write_set, lighter: "BR"
+      )
+
+      expect { described_class.for(mode: Lain::Mode.new(posture: broken), base:, queue: nil) }
+        .to raise_error(described_class::Unknown)
+    end
   end
 
   describe "the snapshot scope" do

@@ -12,8 +12,8 @@ RSpec.describe Lain::CLI::Switchboard do
   # at the first `/mode plan` of a real session instead.
   let(:base) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
 
-  def switchboard(yolo: false, toolset: base, **rest)
-    described_class.new(journal:, yolo:, model: "claude-opus-4-8", toolset:, **rest)
+  def switchboard(toolset: base, **rest)
+    described_class.new(journal:, model: "claude-opus-4-8", toolset:, **rest)
   end
 
   def mode(posture) = Lain::Mode.new(posture:)
@@ -23,6 +23,37 @@ RSpec.describe Lain::CLI::Switchboard do
   def mode_records = Lain::Journal.records(journal_io.string.lines, type: "mode_switch").to_a
 
   def policy_records = Lain::Journal.records(journal_io.string.lines, type: "policy_switch").to_a
+
+  # The wiring entry a real chat reaches (`exe/lain#chat` -> {CLI::Wiring#switchboard}
+  # -> {BoardBuild.for}). Driven here rather than only through `new` because the
+  # question these two examples answer is about the OPTIONS HASH -- which flags
+  # this entry reads and what a default one resolves to -- and `new` never sees
+  # a hash at all.
+  describe ".for, the wiring entry" do
+    let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+
+    def board_for(**options)
+      described_class.for(chronicle:, options:, model: "claude-opus-4-8", toolset: base)
+    end
+
+    # There is no longer a flag that skips either half: a chat gets the parked
+    # list and the asking posture, and `/mode auto` is the only way out of them.
+    it "wires the approval queue and starts on accept_edits, with no flag to skip either" do
+      board = board_for
+
+      expect(board.approvals).to be_a(Lain::Approval::Queue)
+      expect(board.mode_switch.posture.name).to eq(:accept_edits)
+    end
+
+    # `--non-interactive` is the only flag this entry reads, and it answers
+    # "who decides a gated call" with "nobody can".
+    it "wires no queue for an unattended session, and a gate that denies" do
+      board = board_for(non_interactive: true)
+
+      expect(board.approvals).to be_nil
+      expect(board.policy_switch.call(gated_call, nil)).to be(false)
+    end
+  end
 
   describe "the approval side" do
     # The queue is still the parked list, but what the gate holds is the
@@ -87,13 +118,6 @@ RSpec.describe Lain::CLI::Switchboard do
         parked&.stop
       end
     end
-
-    it "wires NO queue under --yolo, starting the switch on ApproveAll" do
-      board = switchboard(yolo: true)
-
-      expect(board.approvals).to be_nil
-      expect(board.policy_switch.call("effect", nil)).to be(true)
-    end
   end
 
   # The card that built the ledger owns this: the masking arm reads it and the
@@ -120,10 +144,10 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     # The posture decides who is asked, not whether the run has somewhere to
-    # record an answer -- and --yolo wires no queue, so this is the arm most
-    # likely to be skipped by accident.
-    it "holds one under --yolo too, where there is no queue" do
-      expect(switchboard(yolo: true).ledger).to be_a(Lain::Sensitivity::Ledger)
+    # record an answer -- and an unattended session wires no queue, so this is
+    # the arm most likely to be skipped by accident.
+    it "holds one for an unattended session too, where there is no queue" do
+      expect(switchboard(attended: false).ledger).to be_a(Lain::Sensitivity::Ledger)
     end
 
     it "does not share one between two boards, which is what a run-scoped ledger means" do
@@ -159,29 +183,9 @@ RSpec.describe Lain::CLI::Switchboard do
 
     def rendered_tools(board) = context.render(timeline:, toolset: board.toolset).tools.map { |tool| tool["name"] }
 
-    describe "--yolo, which is the auto posture said on the other axis" do
-      it "starts in auto and approves a tier-3 call with no queue to park it on" do
-        board = switchboard(yolo: true)
-
-        expect(board.mode_switch.posture.name).to eq(:auto)
-        expect(board.approvals).to be_nil
-        expect(board.policy_switch.call(gated_call, nil)).to be(true)
-      end
-
-      # The ladder is what chooses the starting policy now, so --yolo says
-      # ApproveAll exactly once. Construction still journals nothing: the
-      # initial policy is the wiring's choice and is already in the flags.
-      it "journals no flip for the mode it was constructed in" do
-        switchboard(yolo: true)
-
-        expect(mode_records).to be_empty
-        expect(policy_records).to be_empty
-      end
-    end
-
-    # `--non-interactive`, which is the OPPOSITE end of the same axis --yolo
-    # sits at, and the choice this card had to make in the open. A gated call
-    # asks a human; a headless run has none, so the honest answer is no.
+    # `--non-interactive`, and the choice the card that added it had to make in
+    # the open. A gated call asks a human; a headless run has none, so the
+    # honest answer is no.
     # DenyAll is what Effect::Handler::Gate already calls "correct when no
     # interactive frontend is attached", and the alternative -- a queue nobody
     # drains -- parks the call until a fail-closed timeout denies it anyway,
@@ -197,6 +201,18 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(switchboard(attended: false).approvals).to be_nil
       end
 
+      # The queue is nil here; the LADDER is not. It stands a flat denial in
+      # the ladder's place, so "this session has no ladder" is unrepresentable
+      # above the seam rather than a nil every reader has to remember to check
+      # -- and {Lain::Mode::Resolution} now refuses a nil `queue:` outright, so
+      # a board that answered nil here would not survive its own construction.
+      it "stands a flat denial where the ladder would be, rather than answering nil" do
+        board = switchboard(attended: false)
+
+        expect(board.ladder).to be_a(Lain::Effect::Handler::Gate::DenyAll)
+        expect(board.ladder.call(gated_call, nil)).to be(false)
+      end
+
       # The capability set is untouched: this flag answers "who approves", not
       # "what may be called". A headless run that quietly lost `edit_file`
       # would be a third policy nobody chose.
@@ -210,6 +226,7 @@ RSpec.describe Lain::CLI::Switchboard do
       it "journals no flip for the mode it was constructed in" do
         switchboard(attended: false)
 
+        expect(mode_records).to be_empty
         expect(policy_records).to be_empty
       end
 
@@ -286,8 +303,9 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(board.policy_switch.current).to be(board.ladder)
       end
 
-      # The gate flip rides the SAME journal /yolo's does, so a transcript shows
-      # one policy history rather than two half-histories to be joined by hand.
+      # The gate flip rides the SAME journal the mode flip does, so a transcript
+      # shows one policy history rather than two half-histories to be joined by
+      # hand.
       it "journals the gate flip through the one policy switch, attributed to the surface" do
         board = switchboard
 
@@ -350,46 +368,6 @@ RSpec.describe Lain::CLI::Switchboard do
         board.mode_switch.switch(mode(:manual), surface: "tty")
 
         expect(board.toolset.names).to eq(base.names)
-      end
-    end
-
-    # The doctrine /yolo off already states, one rung up: a session that wired
-    # no queue cannot enter a posture that parks on one, and inventing a policy
-    # would journal the run as `manual` while approving everything.
-    describe "a posture that needs a queue this session never wired" do
-      it "refuses the flip loudly" do
-        board = switchboard(yolo: true)
-
-        expect { board.mode_switch.switch(mode(:manual), surface: "tty") }
-          .to raise_error(Lain::Error, /no approval queue/)
-      end
-
-      # The run is otherwise partitioned into {auto, plan} for its whole life,
-      # so the refusal has to name the only way out rather than leave the
-      # operator guessing at a command that cannot exist.
-      it "names the remedy, which is a restart and not a command" do
-        board = switchboard(yolo: true)
-
-        expect { board.mode_switch.switch(mode(:accept_edits), surface: "tty") }
-          .to raise_error(Lain::Error, /restart without --yolo/)
-      end
-
-      it "leaves the mode where it was, and journals nothing" do
-        board = switchboard(yolo: true)
-
-        expect { board.mode_switch.switch(mode(:manual), surface: "tty") }.to raise_error(Lain::Error)
-
-        expect(board.mode_switch.posture.name).to eq(:auto)
-        expect(mode_records).to be_empty
-      end
-
-      it "still refuses /yolo off, because there is no prior policy to restore either" do
-        board = switchboard(yolo: true)
-        env = build_command_env(policy_switch: board.policy_switch)
-
-        expect { Lain::CLI::Command::Yolo.new.call("off", env) }
-          .to raise_error(Lain::Error, /nothing to restore/)
-        expect(board.policy_switch.call(gated_call, nil)).to be(true)
       end
     end
   end

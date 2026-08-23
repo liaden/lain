@@ -46,8 +46,8 @@ module Lain
         #   `[approval]` table reports through
         # @param paths [Paths] supplies the HOME the classifier anchors its
         #   home-relative rules against
-        # @option options [Boolean] :yolo start approving everything, with no
-        #   queue -- read by {Switchboard.for}, never here
+        # @option options [Boolean] :non_interactive no human is at this
+        #   session's terminal -- read by {Switchboard.for}, never here
         # @return [Switchboard]
         def for(chronicle:, options:, model:, toolset:, project:, notice: nil, paths: Paths.new)
           Switchboard.for(chronicle:, options:, model:, toolset:,

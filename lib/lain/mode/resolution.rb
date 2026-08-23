@@ -64,9 +64,12 @@ module Lain
       # (the trap {Request::SYSTEM_PREFIX} documents). Keeping `.for` here too
       # puts the factory in the same scope as the table it reads.
 
-      # Raised when a posture names a gate policy or capability nothing declares.
-      # Loud rather than defaulted: a silently-dropped policy is an approval gate
-      # that quietly stops guarding.
+      # Raised when the gate policy cannot be resolved at all -- because the
+      # posture names one nothing declares, or because the session handed over
+      # no queue to resolve the asking rungs against. Loud rather than
+      # defaulted, and one class for both because the consequence is the same:
+      # a silently-dropped policy is an approval gate that quietly stops
+      # guarding.
       class Unknown < Error; end
 
       # Takes the whole {Mode} and reads only `posture` from it. Deliberate: a
@@ -92,9 +95,19 @@ module Lain
       # @return [Resolution]
       # @raise [Lain::Toolset::UnknownTool] when the posture names a tool `base`
       #   does not hold
-      # @raise [Unknown] when the posture names a gate policy nothing declares
+      # @raise [Unknown] when the posture names a gate policy nothing declares,
+      #   or when `queue:` is nil
       def self.for(mode:, base:, queue:)
         posture = mode.posture
+        # The required keyword catches an OMITTED queue; this catches a named
+        # one that answered nil, which is what a mis-wired session actually
+        # produces. Refused for EVERY posture, not only the two that consult it:
+        # a nil that `auto` tolerates is the same wiring bug one `/mode manual`
+        # away, and refusing here is the difference between a refusal at the
+        # switchboard and a NoMethodError on `nil.call` inside the Gate at
+        # approval time. Ahead of the attenuation, so nothing has moved.
+        raise Unknown, format(MISSING_QUEUE, posture: posture.name) if queue.nil?
+
         new(toolset: posture.attenuate(base),
             gate_policy: gate_policy_for(posture.gate_policy, queue),
             snapshot_scope: posture.snapshot_scope)
@@ -110,6 +123,16 @@ module Lain
         end.call(queue)
       end
       private_class_method :gate_policy_for
+
+      # Said when the session wired no approval policy at all. Names the posture
+      # because that is what tells a reader which half of the ruling above they
+      # tripped, and names the consequence because "queue is nil" alone reads as
+      # a missing argument rather than as an arm about to become a different arm.
+      MISSING_QUEUE = "cannot resolve the %<posture>s posture: `queue:` is nil, and no Null Object stands " \
+                      "behind it. An asking posture resolved without a queue silently becomes plan's gate -- " \
+                      "every gated call would answer \"approval denied\", no human would ever be asked, and " \
+                      "the journal would still record the arm as %<posture>s."
+      private_constant :MISSING_QUEUE
 
       # Each declared gate policy as a function of the session's queue, so the
       # queue arm is a member of the table rather than a branch beside it.

@@ -28,7 +28,7 @@ RSpec.describe Lain::Effect::Handler::Sensitivity do
   end
 
   def board(sensitivity)
-    Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), yolo: false, model: "m",
+    Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), model: "m",
                                sensitivity:, toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]))
   end
 

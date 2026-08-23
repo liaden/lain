@@ -605,13 +605,24 @@ RSpec.describe Lain::CLI::Wiring do
     # pure string manipulation, and a Provider::Mock run never writes a frame.
     let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "t1-spec-fake-session.ndjson") }
     let(:views) { { channel: view_channel, socket_path: "/tmp/lain-t1-spec.sock", journal: } }
-    # --yolo, because bash is tier 3 and would otherwise park on the approval
-    # gate; this block is about where the bytes go, not who let them run.
-    let(:wiring) { described_class.new(options: { grace: 5, yolo: true }, chronicle:, status_feed:) }
+    let(:wiring) { described_class.new(options: { grace: 5 }, chronicle:, status_feed:) }
+
+    # Bash is tier 3 and would otherwise park on the approval gate forever;
+    # this block is about where the bytes go, not who let them run. `--yolo`
+    # used to buy that at construction, and `auto` is the posture it resolved
+    # to -- so the board is flipped there instead. It has to happen HERE, after
+    # #wire_agent, because that is where Wiring builds and memoizes the board,
+    # and it reaches in for it because the board is Wiring's private
+    # collaborator rather than part of its surface.
+    def approve_everything
+      wiring.instance_variable_get(:@switchboard)
+            .mode_switch.switch(Lain::Mode.new(posture: :auto), surface: "spec")
+    end
 
     def dispatch(attached)
       recorder, session = wiring.run_state(nil)
       agent = wiring.wire_agent(channel:, recorder:, session:, backend:, views: attached)
+      approve_everything
       agent.ask("run it")
       agent
     end
@@ -1124,7 +1135,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     # The load-bearing identity AC1/AC3 stand on (a review panel's probe): a dropped
     # surface_kwargs would leave these readers on their Nulls and silently
-    # disconnect /yolo from the Gate and /model from the Agent's Context.
+    # disconnect /mode from the Gate and /model from the Agent's Context.
     it "hands the Env the SAME switches the Gate and the Agent's context hold" do
       wiring = run_wiring
       env = wiring.command_env
@@ -1213,8 +1224,8 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    it "wires the queue-shaped YoloApprovals under --yolo, so the env reader stays nil-free" do
-      wiring = run_wiring(options: { grace: 5, yolo: true })
+    it "wires the queue-shaped YoloApprovals under --non-interactive, so the env reader stays nil-free" do
+      wiring = run_wiring(options: { grace: 5, non_interactive: true })
 
       expect(wiring.command_env.approvals).to be(Lain::CLI::Command::Env::YoloApprovals)
     end

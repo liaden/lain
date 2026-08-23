@@ -308,6 +308,32 @@ RSpec.describe LainCLI do
     end
   end
 
+  # `--yolo` is gone: every posture it bought is reachable through `/mode auto`,
+  # and the branches only it could reach went with it. What matters at this seam
+  # is that the removal is LOUD -- a flag silently ignored would start a session
+  # the operator believes is approving everything.
+  #
+  # `check_unknown_options!` is declared nowhere in this class, so Thor answers a
+  # stray switch on a zero-arity command as an ARITY error rather than an
+  # unknown-option one. That is the shape asserted, deliberately, rather than the
+  # words "unknown option" -- pinning a sentence Thor never says would go green
+  # only by accident.
+  describe "the removed --yolo flag" do
+    # The double is a GUARD, not a subject: if the refusal ever stops happening
+    # this example fails on its assertions instead of opening a real session.
+    # And no `debug: true`, because what is under test is what an operator meets
+    # -- the message on stderr and a nonzero status; `raise_error` catches the
+    # SystemExit, so this cannot truncate the run.
+    it "refuses it as a stray argument rather than ignoring it" do
+      launch = instance_double(Lain::CLI::ChatLaunch, call: nil, exit_status: 0)
+      allow(Lain::CLI::ChatLaunch).to receive(:new).and_return(launch)
+
+      expect { described_class.start(%w[chat --yolo]) }
+        .to output(/was called with arguments.*--yolo/m).to_stderr
+        .and raise_error(SystemExit) { |error| expect(error.status).not_to eq(0) }
+    end
+  end
+
   # `up` trailing args ride Thor's real `.start` argv path (method_option
   # defaults and the post-`--` splat both exist only there), so these examples
   # drive `.start` itself with Up and Kernel.exec doubled out.

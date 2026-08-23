@@ -806,7 +806,7 @@ RSpec.describe Lain::Tools::Subagent do
       # the child's chain and the parent's must resolve the SAME policy object,
       # or the two can be told different things about which paths are denied.
       it "resolves, through the board delegator, the very policy the parent's chain holds" do
-        board = Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new), yolo: false,
+        board = Lain::CLI::Switchboard.new(journal: Lain::Journal.new(io: StringIO.new),
                                            model: "m", sensitivity:,
                                            toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]))
         live = Lain::CLI::Wiring::ToolsetBuild::LiveSensitivity.new(board: -> { board })

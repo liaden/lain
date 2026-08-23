@@ -868,8 +868,6 @@ class LainCLI < Thor
   end
 
   desc "chat", "Start an interactive Lain session"
-  method_option :yolo, type: :boolean, default: false,
-                       desc: "Skip the approval prompt for tier-3 (free-form shell) tools"
   ModelFlags.declare(self)
   method_option :journal, type: :boolean, default: true,
                           desc: "Write a durable, replayable session journal (fsync'd); --no-journal opts out"
