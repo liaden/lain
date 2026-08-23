@@ -293,6 +293,34 @@ the cop.
   `cli/up_spec.rb:115`/`:175` drifted within days — one chunk grew that file by 454 lines and the
   live failure moved to `:166`. A stale line number is worse than no list: it reads as "not a
   known flake" and sends the next reader hunting a regression that is not there.
+- **For a `SpecWatchdog::Stuck`, even the NAME can be unreliable — read past it to the `around`
+  chain before trusting it.** `spec/support/watchdog.rb` is deliberately the OUTERMOST `around`
+  (so it can see a hang in an editor spawn, not just in an example body), which means it also
+  wraps every FILE's own `around` blocks — shared fixture setup that runs before every example in
+  that file, whether or not that example's own body touches the thing which stalled. A strike
+  during that setup still reports the example that happened to be current, by exact name and
+  line, same as any other `Stuck`.
+  Two names were chased as flaky commit-hook failures with nothing in their own bodies that could
+  hang: `spec/lain/cli/command/review_spec.rb`'s `answers its own usage when no target was named`
+  (its body calls no git at all) and `spec/lain/cli/review_spec.rb`'s `reviews against the ref
+  --base names instead, when it is given one`. Neither is a bad test, and neither reproduced by
+  name. What DID reproduce, 2026-08-23, twice in one hunt, is the MECHANISM: on their immediate
+  NEIGHBOURS in the same describe blocks, driving the identical shared code:
+  `command/review_spec.rb`'s `around` block does `git branch -M main` before every example in the
+  file, and it stalled 61.4s inside `Mixlib::ShellOut::Unix#configure_parent_process_file_descriptors`;
+  `cli/review_spec.rb`'s `LocalBranch#merge_base!` — the same call target 2's own body drives —
+  stalled 61.3s inside `IO.select`. Both were caught live as `SpecWatchdog::Stuck` naming the
+  wrong example. The trigger needs no other agent: `git commit` runs `rake check`'s `multitask`,
+  fanning `rubocop` over the whole repo and `parallel_rspec` (one worker per core) out together,
+  which is real structural contention on its own. **So a `Stuck` on one example is evidence
+  against that example's FILE and its shared fixtures, not against that example's own body** —
+  the same "the honest unit is the FILE" lesson `worktree_handback_spec.rb` already taught above,
+  arriving through the watchdog instead of through leaked state.
+  Fixed the same day, in the watchdog itself rather than in either spec: `SpecWatchdog::Sentry::Starvation`
+  now checks CPU time consumed against wall time and the box's own 1-minute load average, and a
+  `Stuck` report leads with "STARVED, not necessarily stuck" instead of "This is a hang, not
+  slowness" when the numbers say the process was never scheduled rather than genuinely wedged —
+  still loud, still dumps every thread, just honestly labelled. See `spec/support_watchdog_spec.rb`.
 - **Never name a `.toml` explicitly on a `rubocop` command line.** `rubocop -a lib/lain/prompt/default.toml`
   parses it as Ruby and "corrects" it — it silently stripped `format = ` from the prompt format.
   A bare `bundle exec rubocop` (and so `pre-commit run --all-files`) is safe: the default
