@@ -830,18 +830,20 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
 
       settle
 
-      expect(echoed).to include(a_string_starting_with("lain: handed 4 notes back"))
+      expect(echoed).to include("lain: handed 4 notes back; their markers go with them")
     end
 
     # `1 notes` is the kind of thing that ships, and this sentence is a receipt:
-    # a human reading it is counting.
+    # a human reading it is counting. The tail has to agree too -- `their
+    # markers go with them` is a plural possessive dangling off a singular
+    # count, which reads no better than `1 notes`.
     it "counts a single note in the singular" do
       open_changeset("docs/guide.txt", guide_old_lines)
       note("new", 3, "note", "first")
 
       settle
 
-      expect(echoed).to include(a_string_starting_with("lain: handed 1 note back"))
+      expect(echoed).to include("lain: handed 1 note back; its marker goes with it")
     end
 
     # THE ORDER, ASSERTED WHERE IT IS DECIDED. Clearing the markers is what makes

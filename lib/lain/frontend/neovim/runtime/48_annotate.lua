@@ -333,7 +333,9 @@ end
 review_notes.NOTHING_PENDING = "no notes are pending -- :LainNote places one on the line you are on"
 
 function review_notes.receipt(count)
-  return "handed " .. count .. (count == 1 and " note" or " notes") .. " back; their markers go with them"
+  return "handed " .. count .. (count == 1
+    and " note back; its marker goes with it"
+    or " notes back; their markers go with them")
 end
 
 -- Handed back means handed back: the markers go with the notes, so a second
