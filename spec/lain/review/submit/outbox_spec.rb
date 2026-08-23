@@ -143,6 +143,19 @@ RSpec.describe Lain::Review::Submit::Outbox do
 
       expect(outbox).to be_open
     end
+
+    # The whole sentence, not a fragment: `label` already carries "branch", so
+    # the refusal must not add a second noun that repeats it -- see F56.
+    it "names the branch once, not twice, and still points at the remedy" do
+      held(number: nil, label: "branch feature/widget")
+
+      expect { outbox.submit(executor:) }.to raise_error(
+        described_class::Nowhere,
+        "this review was opened on branch feature/widget, which has no pull request to post a review " \
+        "to -- the annotations and the verdict are on the journal either way. Run `/review <pull-request>` " \
+        "against the pull request itself to post one."
+      )
+    end
   end
 
   describe "sent at most once, because an accepted POST creates a review every time" do

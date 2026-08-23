@@ -69,8 +69,8 @@ module Lain
         # instead of a blank.
         NOTHING_HELD = "no open changeset review"
 
-        NOT_A_PULL_REQUEST = "this review was opened on %<label>s, and a branch has no pull request to post " \
-                             "a review to -- the annotations and the verdict are on the journal either way. " \
+        NOT_A_PULL_REQUEST = "this review was opened on %<label>s, which has no pull request to post a " \
+                             "review to -- the annotations and the verdict are on the journal either way. " \
                              "Run `/review <pull-request>` against the pull request itself to post one."
 
         SENT_ALREADY = "this review was already posted to pull request %<number>s -- GitHub creates a new " \
@@ -84,10 +84,10 @@ module Lain
         UNCERTAIN = "GitHub refused that attempt, and whether it recorded a review anyway is a question " \
                     "only the pull request itself can answer -- read it before opening another round."
 
-        # One round, and where it posts. `number` is nil for a branch review,
-        # which is what {Nowhere} is about; `label` is the caller's own words
-        # for the target, so the refusal names what the human typed rather than
-        # a class.
+        # One round, and where it posts. `number` is nil for a round with no
+        # pull request under it -- a branch review, a survey -- which is what
+        # {Nowhere} is about; `label` is the caller's own words for the target,
+        # so the refusal names what the human typed rather than a class.
         Held = Data.define(:session, :number, :label)
 
         def initialize

@@ -457,6 +457,25 @@ RSpec.describe Lain::CLI::Command::Survey do
         .to raise_error(Lain::Review::Submit::Outbox::Nowhere, /#{Regexp.escape(@root)}/)
     end
 
+    # The whole sentence, not a fragment: a survey is not a branch, and the
+    # refusal must not call it one -- see F56. The label already names the
+    # survey and its path, so the sentence adds no second noun.
+    it "names the survey and its path, never calls it a branch, and still points at the remedy" do
+      attached
+
+      command.call(@root, env)
+      label = outbox.target
+
+      expect(label).to include("survey of", @root)
+
+      expect { outbox.submit(executor: instance_double(Lain::Forge::Gh)) }.to raise_error(
+        Lain::Review::Submit::Outbox::Nowhere,
+        "this review was opened on #{label}, which has no pull request to post a review " \
+        "to -- the annotations and the verdict are on the journal either way. Run `/review <pull-request>` " \
+        "against the pull request itself to post one."
+      )
+    end
+
     # The disclosure `lain survey` owes a human, owed identically here: a listing
     # short by one file with no word about why is the silent narrowing the whole
     # secret boundary is written against, and a cockpit that discloses less than
