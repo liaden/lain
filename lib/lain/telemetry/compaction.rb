@@ -133,25 +133,50 @@ module Lain
     # is the one formatter both this record and {SeamDecision} quote through, and
     # it is where the nil-as-refusal above is honoured.
     #
+    # `collapse_strategy` names the POLICY that collapsed the span --
+    # `--compact-strategy`'s own value verbatim (a leaf like `"elide-tools"`,
+    # or a composition like `"elide-tools+summarize-conversation"`), or
+    # {Compaction::EAGER_CONTROL_ARM} for a run that never set the flag. It is
+    # a SEPARATE axis from {ContextDerived#strategy}, which names the
+    # DERIVATION CLASS that ran, not the collapse policy behind it -- the same
+    # UX5 hazard the byte/token rename above paid for once already, one field
+    # short of two units sharing one name. `collapse_strategy` is the name
+    # this record owns; `strategy` stays the other record's.
+    #
+    # nil is NOT "no strategy". {Backend::SpanSummarizer}'s own doc
+    # (`backend/span_summarizer.rb:19-36`) argues an unflagged run still HAS a
+    # policy -- the eager tool-result tier, the control arm every
+    # `--compact-strategy` run is measured against -- so a caller building
+    # this record for that run passes {Compaction::EAGER_CONTROL_ARM}
+    # explicitly, never nil. That is the same doctrine `cost_saved`/
+    # `cost_spent` already keep for a switched-model refusal above: a real
+    # state gets a name, not a fold into the absence a reader would misread as
+    # "nothing to say". nil is reserved for the one case that predates this
+    # field: a journal written before this chunk, where the kwarg was never
+    # offered at all -- {#initialize} defaults it so that old caller still
+    # builds and reads exactly as it always has.
+    #
     # Emitted from {Compaction::Scheduler}'s existing `if decision.compact?`
     # guard in `#pipeline` -- REPLACING the lighter `CompactionScheduled` record
     # that guard used to build (`reason`/`tier` alone). There is one record at
     # that call site, not two synchronized ones: extending what was already
     # there, not adding a second, independently-guarded emission path.
     Compaction = Data.define(:trigger, :cache_state, :bytes_before, :bytes_after, :cost_saved, :cost_spent,
-                             :model) do
+                             :model, :collapse_strategy) do
       include Journalable
 
-      # `model:` defaults, so every constructor that predates it keeps building
-      # the record it always did and reads as the unpriced case.
-      def initialize(trigger:, cache_state:, bytes_before:, bytes_after:, cost_saved:, cost_spent:, model: nil)
+      # `model:` and `collapse_strategy:` both default, so every constructor
+      # that predates either keeps building the record it always did.
+      def initialize(trigger:, cache_state:, bytes_before:, bytes_after:, cost_saved:, cost_spent:, model: nil,
+                     collapse_strategy: nil)
         trigger = Array(trigger).map(&:to_sym).freeze
         cache_state = cache_state.to_sym
         cost_saved = Telemetry.fixed_point(cost_saved)
         cost_spent = Telemetry.fixed_point(cost_spent)
         Guards::Compaction.check!(trigger:, cache_state:, cost_saved:, cost_spent:)
         super(trigger:, cache_state:, bytes_before: Integer(bytes_before), bytes_after: Integer(bytes_after),
-              cost_saved:, cost_spent:, model: model&.to_s&.freeze)
+              cost_saved:, cost_spent:, model: model&.to_s&.freeze,
+              collapse_strategy: collapse_strategy&.to_s&.freeze)
       end
 
       # Does this record CARRY figures at all? False for exactly one cause: the
@@ -183,6 +208,20 @@ module Lain
 
         BigDecimal(cost_saved) - BigDecimal(cost_spent)
       end
+    end
+
+    class Compaction
+      # Reopened, NOT folded into the `Data.define ... do` block above: a
+      # constant defined inside that block resolves against the enclosing
+      # module (`Telemetry`), not the Data class itself -- the trap
+      # `CacheProfile::MINIMUM_CACHEABLE_TOKENS` documents (CLAUDE.md).
+
+      # What a caller passes for `collapse_strategy` when a run never set
+      # `--compact-strategy` -- see the header for why that is a real policy
+      # (the eager tool-result tier) and not an absence of one, and so
+      # deliberately not nil. T5/T6's wiring reads this; nothing in this file
+      # constructs a record against it.
+      EAGER_CONTROL_ARM = "eager"
     end
   end
 end

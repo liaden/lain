@@ -77,4 +77,38 @@ RSpec.describe Lain::Telemetry::Compaction do
       expect { record(cost_spent: nil) }.to raise_error(ArgumentError, /cost_saved/)
     end
   end
+
+  # F51: the one axis `--compact-strategy` exists to vary was missing from
+  # the record it is meant to explain. `collapse_strategy`, never `strategy`
+  # -- {ContextDerived#strategy} already owns that name for the DERIVATION
+  # CLASS, a different axis, and folding both under one name is the exact
+  # UX5 hazard the byte/token rename above paid for once already.
+  describe "the strategy that ran" do
+    it "carries the operator's own words" do
+      composed = record(collapse_strategy: "elide-tools+summarize-conversation")
+
+      expect(composed.to_journal).to include("collapse_strategy" => "elide-tools+summarize-conversation")
+    end
+
+    # An unflagged run is not "no strategy" -- it is the eager tool-result
+    # tier, the control arm every `--compact-strategy` run is measured
+    # against (backend/span_summarizer.rb:19-36). A caller building this
+    # record for that run names it explicitly; T5/T6 are that caller.
+    it "names the eager control arm for a run with no --compact-strategy" do
+      control = record(collapse_strategy: described_class::EAGER_CONTROL_ARM)
+
+      expect(control.to_journal).to include("collapse_strategy" => "eager")
+    end
+
+    # The one case nil is still allowed to mean: a journal written before
+    # this field existed, where the kwarg was never offered at all.
+    it "is nil, and the record still deeply frozen, for a journal older than this field" do
+      predates = described_class.new(trigger: %i[token_threshold], cache_state: :forced, bytes_before: 26_174,
+                                     bytes_after: 21_867, cost_saved: BigDecimal("0.002"),
+                                     cost_spent: BigDecimal("0.0005"))
+
+      expect(predates.to_journal).to include("collapse_strategy" => nil)
+      expect(predates).to be_deeply_frozen
+    end
+  end
 end
