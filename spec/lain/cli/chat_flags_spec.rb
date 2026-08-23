@@ -215,6 +215,15 @@ RSpec.describe "lain chat's flag surface" do
       expect(help).to include(*Lain::CLI::IsolationBackend::BACKENDS)
     end
 
+    # The claim this replaces was false: wiring.rb resolves the flag on every
+    # chat launch (an unknown name refuses at startup) and injects it into a
+    # live Supervisor that an actor-mode subagent's #adopt_actor leases from --
+    # "inert" described the resolver's caller count, not the flag's effect.
+    it "does not claim the flag is inert" do
+      help = LainCLI.commands.fetch("chat").options.fetch(:isolation).description
+      expect(help).not_to match(/inert|no chat path|does nothing/i)
+    end
+
     it "reaches the resolver as a backend selection" do
       Dir.mktmpdir do |root|
         expect(Lain::CLI::IsolationBackend.resolve(parse[:isolation], root:)).to be_a(Lain::Isolation::Null)

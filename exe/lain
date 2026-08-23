@@ -899,13 +899,13 @@ class LainCLI < Thor
                                 "(needs $TMUX and the session journal; incompatible with --no-journal)"
   # Names IsolationBackend::BACKENDS rather than restating the set, on the same
   # rule the compact knobs below follow: the flag's help text and the resolver
-  # cannot come to disagree about what a backend name means. Honest about reach:
-  # only an actor-mode subagent leases (Tools::Subagent#adopt_actor), and no chat
-  # path constructs one today, so the flag isolates nothing in chat yet.
+  # cannot come to disagree about what a backend name means. Resolved on every
+  # chat launch and injected into a live Supervisor (Wiring#fleet_isolation);
+  # only an actor-mode subagent leases from it (Tools::Subagent#adopt_actor).
   method_option :isolation, type: :string, default: Lain::CLI::IsolationBackend::DEFAULT,
                             desc: "Isolation backend actor-mode subagents lease workers from " \
-                                  "(#{Lain::CLI::IsolationBackend::BACKENDS.join(", ")}); no chat path " \
-                                  "spawns an actor-mode subagent yet, so this is inert in chat today"
+                                  "(#{Lain::CLI::IsolationBackend::BACKENDS.join(", ")}); the main chat's own " \
+                                  "session is never isolated"
   method_option :grace, type: :numeric, default: Lain::CLI::Shutdown::GRACE_DEFAULT,
                         desc: "Grace seconds a first Ctrl-C / SIGTERM grants a run before it is stopped"
   # CONSENT for the desktop, and this flag is the whole of why a human still
