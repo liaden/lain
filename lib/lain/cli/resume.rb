@@ -21,35 +21,77 @@ module Lain
       # Everything a resumed chat starts from. `resumed_from`/`written` are
       # exactly {CLI::Chronicle#start}'s chaining keywords, derived here so
       # the exe never assembles wire-format hashes itself.
-      Result = Data.define(:file, :timeline, :session, :recorder, :open, :notices) do
-        def initialize(file:, timeline:, session:, recorder:, open:, notices:)
-          super(file:, timeline:, session:, recorder:, open:, notices: notices.freeze)
+      Result = Data.define(:file, :timeline, :recorded, :session, :recorder, :open, :notices) do
+        # `recorded` defaults to `timeline` so a caller with nothing to
+        # distinguish -- every untorn session -- constructs exactly as before.
+        def initialize(file:, timeline:, session:, recorder:, open:, notices:, recorded: timeline)
+          super(file:, timeline:, recorded:, session:, recorder:, open:, notices: notices.freeze)
         end
 
-        def resumed_from = { "file" => file, "head" => timeline.head_digest }
-        def written = timeline.to_a.map(&:digest)
+        # Both are claims about the PRIOR FILE, so both read `recorded` -- the
+        # timeline as that journal recorded it -- and never `timeline`, which
+        # may carry a projected cancellation turn above it ({Cancellation}) that
+        # no journal has ever held. Naming the projection here would open a
+        # header whose `resumed_from.head` the prior file's own fold cannot
+        # verify, and the new session would refuse as {Bench::Session::Corrupt}
+        # the first time IT was resumed -- a failure one whole session away
+        # from its cause.
+        def resumed_from = { "file" => file, "head" => recorded.head_digest }
+        def written = recorded.to_a.map(&:digest)
         def open? = open
+
+        # Whether {Resume#settled} projected a cancellation. Identity, not
+        # digest comparison: the repair commits a NEW Timeline and leaves the
+        # recorded one untouched, so "these are the same object" is the whole
+        # question and needs no walk.
+        def repaired? = !recorded.equal?(timeline)
       end
 
+      # The reason {.refuse_mid_tool!} states for the backstop: this is the
+      # shape no projection can answer, and saying so is the whole of it.
+      #
+      # Declared on {Resume} rather than inside `class << self`, where it would
+      # belong to the singleton class and resolve from nowhere an instance
+      # method can see -- the same scoping trap CLAUDE.md records for constants
+      # in a `Data.define` block.
+      UNANSWERABLE = "and one of those calls names no tool_use id, so nothing can answer it"
+
+      # The reason the parent-side `/fork` mirror states, being the one caller
+      # T3 did not convert to a repair. It describes what that door does and
+      # claims nothing more -- in particular it no longer says fabricating a
+      # result would falsify the record, which T3 established is false: a
+      # projection edits nothing and witnesses nothing.
+      MIRRORED = "so no request can be built from it here"
+
       class << self
-        # Committing synthetic tool_results would be a design decision, not an
-        # implementation detail (T18 owns the response side): a head still
-        # awaiting its tool results refuses with the re-ask shape rather than
-        # resuming into a request the API must reject. A settled head --
-        # assistant text, or tool_results already committed (then the head is
-        # the user-role results turn) -- resumes fine. Takes the timeline (not
-        # the recording) so fork mode's checked-out head faces the SAME
-        # refusal verbatim -- a fork point mid-tool never auto-picks a
-        # neighboring head. A class method (T16 F1) because /fork mirrors
-        # this exact gate PARENT-SIDE, before opening a window whose child
-        # would only die on it -- one predicate, one wording, wherever the
-        # user meets it.
-        def refuse_mid_tool!(path, timeline)
+        # THE BACKSTOP, since T3. A torn head no longer refuses here: {#settled}
+        # projects a cancellation onto the rebuilt timeline and the session
+        # resumes. What still reaches this is the one shape that projection
+        # cannot answer -- a stranded `tool_use` naming no id, which
+        # {Tool::ResultBlock}'s gate 4 refuses to build a result for and which
+        # no projection makes valid. It stays because deleting it would leave
+        # that shape escaping as a raw ArgumentError with no file attached,
+        # against a door whose whole doctrine is to refuse namedly.
+        #
+        # It is ALSO still the gate `/fork` mirrors parent-side
+        # ({CLI::Command::Fork#anchor!}) against a LIVE timeline, which T3 does
+        # not repair -- so that door refuses a head this one now resumes. T5
+        # owns fork.rb and is where the two are reconciled.
+        #
+        # Takes the timeline (not the recording) so fork mode's checked-out
+        # head faces the SAME refusal verbatim. A class method (T16 F1) for the
+        # parent-side mirror -- one predicate, one wording, wherever the user
+        # meets it.
+        # @param path [String] the session file, named in the refusal
+        # @param timeline [Lain::Timeline] the chain whose head is judged
+        # @param reason [String] why THIS door refuses -- the shared predicate
+        #   and verb, the caller's reason, because the two callers no longer
+        #   refuse for the same reason
+        def refuse_mid_tool!(path, timeline, reason: MIRRORED)
           return unless Event.pending_tool_use?(timeline.head)
 
           raise Refusal, "cannot resume #{File.basename(path)}: its head is an assistant tool_use turn " \
-                         "still awaiting tool results (the run stopped mid-tool); fabricating results " \
-                         "would falsify the record -- re-ask the question in a new session"
+                         "still awaiting tool results, #{reason}"
         end
       end
 
@@ -94,7 +136,6 @@ module Lain
         point = ForkPoint.new(dir:).call(selector)
         recording = load_recording(point.path)
         forked = recording.timeline.checkout(point.digest)
-        refuse_mid_tool!(point.path, forked)
         fork_result(point, recording, forked, model, provider)
       # Corrupt is the fold's one currency: both halves of the Loader's fixpoint
       # translate the Store's refusal, and both shape-check the causal edge
@@ -133,7 +174,6 @@ module Lain
         recording = load_recording(path)
         outcome = salvage(path, recording)
         recording = load_recording(path) if outcome.recovered?
-        refuse_mid_tool!(path, recording.timeline)
         resumed_result(path, recording, outcome, model, provider)
       rescue Bench::Session::Corrupt, Store::MissingObject => e
         # Corrupt's own message names digests and reasons; only this layer
@@ -206,9 +246,61 @@ module Lain
       # `replay.memory` over the chain's concatenated records instead. The
       # timeline rides separately from the recording because fork mode's is a
       # checkout below the rebuilt head.
+      # The repair is disclosed, not silent: a session whose model sees a turn
+      # the human never saw is the invisible mutation the Journal doctrine
+      # exists against. (Open decision 5 defers the retry AFFORDANCE -- an
+      # explicit "try that call again" prompt. Saying what happened is not
+      # that.) Built through {Data#with} so {Result#repaired?} is the ONE
+      # predicate, asked of the object that owns it.
       def result(path, timeline, replay, open:, notices:)
-        Result.new(file: File.basename(path), timeline:,
-                   session: replay.session, recorder: replay.memory, open:, notices:)
+        built = Result.new(file: File.basename(path), timeline: settled(path, timeline), recorded: timeline,
+                           session: replay.session, recorder: replay.memory, open:, notices:)
+        built.repaired? ? built.with(notices: [*notices, repair_notice(built)]) : built
+      end
+
+      # Held to {Cancellation::NO_RESULT}'s standard, and for the same reason:
+      # "stopped with N unanswered" is an inference about the RUN, and it is
+      # false on the fork-below-results door -- that file did not stop, and the
+      # call it names returned. What this side knows is what the CONTINUATION
+      # carries.
+      def repair_notice(built)
+        "#{built.file}: the conversation being continued carries no result for " \
+          "#{built.timeline.head.content.length} tool call(s); they are reported to the model as " \
+          "cancelled so the session can continue -- the journal is unchanged"
+      end
+
+      # F46, and the ONE place either door repairs -- both {#resumed_result} and
+      # {#fork_result} come through {#result}, so a fork of a torn point is
+      # repaired exactly as a resume of one.
+      #
+      # Repairing HERE, at load, rather than at the tear is what makes it
+      # trigger-agnostic: the interrupt that tore round 8's session was never
+      # identified, and SIGKILL, an OOM and a reactor teardown are invisible to
+      # every in-process handler while being identical from this side. (T6 adds
+      # the in-process case it CAN see; the block it commits is {Cancellation}'s,
+      # so the two repairs cannot come to disagree.)
+      #
+      # The journal is not rewritten. This commit lands on the rebuilt
+      # in-memory Timeline, which is what the NEW session starts from -- and
+      # what its OWN record then journals as its own first turn.
+      def settled(path, timeline)
+        return timeline unless Event.pending_tool_use?(timeline.head)
+
+        timeline.commit(role: :user, content: cancellation(path, timeline).blocks)
+      end
+
+      # The bare `raise` is STRUCTURAL, not defensive. Without it this arm
+      # returns whatever {.refuse_mid_tool!} returns, which is nil whenever its
+      # own predicate disagrees -- and a nil timeline reaches the Agent as a
+      # fresh chain, so the whole conversation would vanish with no error at
+      # all. The two predicates do agree today (both read the same immutable
+      # head), which is exactly why the failure would be silent if they ever
+      # stopped: this arm cannot return.
+      def cancellation(path, timeline)
+        Cancellation.new(timeline.head)
+      rescue Cancellation::Unpairable
+        refuse_mid_tool!(path, timeline, reason: UNANSWERABLE)
+        raise
       end
 
       # The Loader's injected filesystem duck (its contract is handed-records,
@@ -223,8 +315,11 @@ module Lain
       end
 
       # The shared class-level gate (see its own comment), reachable from the
-      # private instance flow.
-      def refuse_mid_tool!(path, timeline) = self.class.refuse_mid_tool!(path, timeline)
+      # private instance flow. `reason:` forwards, or a door would state the
+      # OTHER door's reason.
+      def refuse_mid_tool!(path, timeline, reason: MIRRORED)
+        self.class.refuse_mid_tool!(path, timeline, reason:)
+      end
 
       # `outcome.notice` is nil for {SessionRecord::Salvage::Nothing} (the
       # Null Object), so it drops out of `.compact` like every other absent
@@ -246,12 +341,13 @@ module Lain
   end
 end
 
-# Salvager, Selector, MismatchNotices, and ChainWalk reopen Resume to nest
+# Cancellation, Salvager, Selector, MismatchNotices, and ChainWalk reopen Resume to nest
 # themselves (see Salvager's own class comment for why separate files rather
 # than a separate cop-loosening): #salvage, #call, #call, and #replay send
 # them messages, so they read as the dependent units even though all four
 # resolve at runtime, the same ordering note {Bench::Session}'s own require
 # block makes.
+require_relative "resume/cancellation"
 require_relative "resume/salvager"
 require_relative "resume/selector"
 require_relative "resume/mismatch_notices"

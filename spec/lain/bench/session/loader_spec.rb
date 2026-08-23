@@ -209,6 +209,26 @@ RSpec.describe Lain::Bench::Session::Loader do
         expect(loaded.open?).to be(true)
         expect(loaded.timeline.head_digest).to eq(chain.head_digest)
       end
+
+      # T3 sites the cancellation repair on the RESUME door alone, deliberately:
+      # this class is also the BENCH rebuild path (`bench/variance.rb`,
+      # `Compare::Run`), and projecting a tool_result here would change what a
+      # recorded session replays as -- and with it every bench number measured
+      # from one. So a head stranded mid-tool rebuilds stranded, and
+      # {CLI::Resume} alone decides what a NEW session starts from.
+      it "rebuilds a head stranded mid-tool exactly as recorded, projecting no cancellation" do
+        chain = Lain::Timeline.empty(store: Lain::Store.new)
+                              .commit(role: :user, content: text("echo hi"))
+                              .commit(role: :assistant,
+                                      content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
+                                                  "input" => { "text" => "hi" } }])
+        records = roundtrip([open_header] + chain.to_a.map { |turn| Lain::SessionRecord.turn(turn) })
+
+        loaded = described_class.new(records).recording
+
+        expect(loaded.timeline.head_digest).to eq(chain.head_digest)
+        expect(Lain::Event.pending_tool_use?(loaded.timeline.head)).to be(true)
+      end
     end
 
     # A CLOSED live session's anchor lives in the session_closed record's OWN

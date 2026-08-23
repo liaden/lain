@@ -686,10 +686,13 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
-    # The card's hard trigger, unchanged in fork mode: a fork point that is an
-    # assistant tool_use turn still awaiting its results refuses with the SAME
-    # re-ask shape -- never an auto-picked neighboring head.
-    it "refuses a fork point that is a mid-tool head, verbatim" do
+    # T3 replaced this door's refusal with a repair: a fork point that is an
+    # assistant tool_use turn still awaiting its results gets the cancellation
+    # projected onto it, exactly as a resume of the same head does. What stays
+    # fork-specific is the ANCHOR -- the chained header must keep naming the
+    # fork point the parent recorded, never the projected turn, or the child's
+    # own resume chain would name a digest the parent's fold never verified.
+    it "repairs a fork point that is a mid-tool head, still anchored on the recorded fork point" do
       mid_tool = Lain::Timeline.empty(store: Lain::Store.new)
                                .commit(role: :user, content: text("echo hi"))
                                .commit(role: :assistant,
@@ -697,10 +700,12 @@ RSpec.describe Lain::CLI::Resume do
                                                    "input" => { "text" => "hi" } }])
       write_closed("20260101T000000-1.ndjson", mid_tool)
 
-      expect { resume.fork(selector: "20260101@#{prefix_for(mid_tool.head_digest)}") }
-        .to raise_error(described_class::Refusal) do |error|
-          expect(error.message).to include("20260101T000000-1.ndjson", "tool", "re-ask")
-        end
+      forked = resume.fork(selector: "20260101@#{prefix_for(mid_tool.head_digest)}")
+
+      expect(forked.timeline.head.content.first)
+        .to include("type" => "tool_result", "tool_use_id" => "tu_1")
+      expect(forked.resumed_from)
+        .to eq("file" => "20260101T000000-1.ndjson", "head" => mid_tool.head_digest)
     end
 
     # T3 fix round (probe 5d): the TOCTOU between ForkPoint's read and this
@@ -880,21 +885,209 @@ RSpec.describe Lain::CLI::Resume do
         end
     end
 
-    # Committing synthetic tool_results is a design decision, not an
-    # implementation detail (the card's hard trigger): a head still awaiting
-    # its tool results refuses with the re-ask shape instead of resuming into
-    # a request the API must reject.
-    it "refuses an open session whose head is a tool_use turn awaiting results (crash mid-tool)" do
-      mid_tool = Lain::Timeline.empty(store: Lain::Store.new)
-                               .commit(role: :user, content: text("echo hi"))
-                               .commit(role: :assistant,
-                                       content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo",
-                                                   "input" => { "text" => "hi" } }])
-      write_session("20260101T000000-1.ndjson", [open_header] + turn_records(mid_tool))
+    # T3 repairs a torn head instead of refusing it -- but not a head whose
+    # stranded call names no tool_use, which no projection can answer
+    # ({Tool::ResultBlock}'s gate 4). That shape must still refuse HERE, with
+    # the file on it: deleting the backstop would leave it escaping the exe as
+    # a bare ArgumentError with nothing to act on.
+    it "refuses an open session whose stranded tool_use names no id, naming the file" do
+      anonymous = Lain::Timeline.empty(store: Lain::Store.new)
+                                .commit(role: :user, content: text("echo hi"))
+                                .commit(role: :assistant,
+                                        content: [{ "type" => "tool_use", "name" => "echo",
+                                                    "input" => { "text" => "hi" } }])
+      write_session("20260101T000000-1.ndjson", [open_header] + turn_records(anonymous))
 
       expect { resume.call }.to raise_error(described_class::Refusal) do |error|
-        expect(error.message).to include("20260101T000000-1.ndjson", "tool", "re-ask")
+        expect(error.message).to include("20260101T000000-1.ndjson", "tool")
       end
+    end
+  end
+
+  # T3 / F46. A run stopped between the assistant's `tool_use` commit
+  # (agent.rb:433) and the tool_result commit (:516-517) leaves a head no
+  # request can be built from: the Messages API rejects an unanswered
+  # tool_use. The repair is a PROJECTION onto the rebuilt in-memory
+  # timeline -- one user turn answering every stranded call with a
+  # cancellation -- and the NDJSON keeps the honest torn record, which is
+  # what separates it from the fabrication `refuse_mid_tool!` refused.
+  describe "a session torn mid-tool (F46)" do
+    def tool_use(id) = { "type" => "tool_use", "id" => id, "name" => "echo", "input" => { "text" => "hi" } }
+
+    def rendered(timeline) = recorded_context.render(timeline:, toolset:).messages
+
+    def digest_prefix(digest) = digest.delete_prefix("blake3:")[0, 12]
+
+    let(:torn) do
+      Lain::Timeline.empty(store: Lain::Store.new)
+                    .commit(role: :user, content: text("echo hi"))
+                    .commit(role: :assistant, content: [tool_use("tu_1")])
+    end
+
+    let(:path) { write_closed("20260101T000000-1.ndjson", torn) }
+
+    before { path }
+
+    it "resumes rather than refusing" do
+      expect { resume.call }.not_to raise_error
+    end
+
+    it "forks at its advertised head rather than refusing" do
+      expect { resume.fork(selector: "20260101@#{digest_prefix(torn.head_digest)}") }.not_to raise_error
+    end
+
+    it "rebuilds a chain the Messages API would accept, with no unanswered tool_use" do
+      expect(Lain::Context::Conversation.new(rendered(resume.call.timeline))).to be_valid
+    end
+
+    it "answers every stranded call in ONE user turn committed above the recorded head" do
+      timeline = resume.call.timeline
+
+      expect(timeline.length).to eq(torn.length + 1)
+      expect(timeline.head.role).to eq("user")
+      expect(timeline.head.parent).to eq(torn.head_digest)
+    end
+
+    it "reports the call as cancelled, and reports no output for the tool" do
+      block = resume.call.timeline.head.content.first
+
+      expect(block).to include("type" => "tool_result", "tool_use_id" => "tu_1", "is_error" => true)
+      expect(block["content"]).to match(/cancel/i).and match(/no output/i)
+    end
+
+    # BLOCKER from review. A fork point can sit BELOW results the journal
+    # really recorded: nothing was interrupted, the call returned, and its
+    # output is in the very file being forked. The only fact the repair knows
+    # is that the conversation IT is continuing carries no result -- so that is
+    # the only thing the block may claim.
+    it "claims no interruption when forking below results the journal recorded" do
+      answered = Lain::Timeline.empty(store: Lain::Store.new)
+                               .commit(role: :user, content: text("echo hi"))
+                               .commit(role: :assistant, content: [tool_use("tu_1")])
+      settled = answered
+                .commit(role: :user,
+                        content: [{ "type" => "tool_result", "tool_use_id" => "tu_1",
+                                    "content" => "hi\n", "is_error" => false }])
+                .commit(role: :assistant, content: text("done"))
+      write_closed("20260105T000000-1.ndjson", settled)
+
+      forked = resume.fork(selector: "20260105@#{digest_prefix(answered.head_digest)}")
+      block = forked.timeline.head.content.first
+
+      expect(block).to include("tool_use_id" => "tu_1")
+      expect(block["content"]).not_to match(/interrupt/i)
+      expect(block["content"]).to match(/no result/i)
+
+      # The SAME standard on the human-facing string: that file did not stop
+      # and tu_1 was not unanswered -- it returned, and the session ran on for
+      # two more turns. Only the continuation carries no result for it.
+      expect(forked.notices).to include(a_string_matching(/no result/i))
+      expect(forked.notices).not_to include(a_string_matching(/stopped|unanswered/i))
+    end
+
+    # The same falsehood on the other door: an OPEN session is one whose owner
+    # may still be appending, so "the run was interrupted" is a guess here too.
+    it "claims no interruption when resuming a session that is still open" do
+      write_session("20260106T000000-1.ndjson", [open_header] + turn_records(torn))
+
+      block = resume.call(selector: "20260106").timeline.head.content.first
+
+      expect(block["content"]).not_to match(/interrupt/i)
+      expect(block["content"]).to match(/no result/i)
+    end
+
+    # F46's own shape: the tear leaves the file OPEN, so the resume salvages
+    # first and repairs second. Both must land.
+    it "repairs a torn head in an OPEN (crashed) session too, after salvage" do
+      write_session("20260104T000000-1.ndjson", [open_header] + turn_records(torn))
+
+      result = resume.call(selector: "20260104")
+
+      expect(result.open?).to be(true)
+      expect(result.timeline.head.content.first).to include("tool_use_id" => "tu_1")
+      expect(Lain::Context::Conversation.new(rendered(result.timeline))).to be_valid
+    end
+
+    it "leaves the journal file's records byte-identical" do
+      before_bytes = File.binread(path)
+
+      resume.call
+
+      expect(File.binread(path)).to eq(before_bytes)
+    end
+
+    # The chained header is a claim about the PRIOR FILE, so it must name the
+    # digest that file recorded -- never the projected turn, which no journal
+    # has ever held. Getting this wrong is silent: the new session writes
+    # fine and only refuses as Corrupt when IT is later resumed.
+    it "chains the new journal to the recorded head, never to the projected turn" do
+      result = resume.call
+
+      expect(result.resumed_from).to eq("file" => File.basename(path), "head" => torn.head_digest)
+      expect(result.written).to eq(torn.to_a.map(&:digest))
+    end
+
+    # The projection is the new session's own commit, so the new record is
+    # where it lands -- and the whole chain must still reload as one verified
+    # conversation across the two files.
+    it "journals the projected turn into the NEW record, and the chain reloads" do
+      result = resume.call
+      journal_io = StringIO.new
+      chronicle = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io))
+      chronicle.start(context: recorded_context, toolset:,
+                      resumed_from: result.resumed_from, written: result.written)
+      chronicle.catch_up(result.timeline)
+
+      new_records = journal_io.string.each_line.map { |line| JSON.parse(line) }
+      expect(new_records.select { |record| record["type"] == "turn" }.map { |record| record["digest"] })
+        .to eq([result.timeline.head_digest])
+
+      resolver = ->(basename) { basename == result.file ? File.foreach(path) : nil }
+      loaded = Lain::Bench::Session::Loader.new(new_records, resolve: resolver)
+      expect(loaded.timeline.to_a.map(&:digest)).to eq(result.timeline.to_a.map(&:digest))
+    end
+
+    # The one shape the projection cannot answer: {Tool::ResultBlock}'s gate 4
+    # refuses to build a block that names no tool_use, and nothing projected
+    # would make that chain valid. So the door still refuses -- the backstop
+    # `refuse_mid_tool!` is kept for (T5 renames its verb, it does not delete it).
+    it "still refuses namedly when a stranded tool_use carries no pairable id" do
+      anonymous = Lain::Timeline.empty(store: Lain::Store.new)
+                                .commit(role: :user, content: text("echo hi"))
+                                .commit(role: :assistant,
+                                        content: [{ "type" => "tool_use", "name" => "echo", "input" => {} }])
+      write_closed("20260102T000000-1.ndjson", anonymous)
+
+      expect { resume.call(selector: "20260102") }.to raise_error(described_class::Refusal) do |error|
+        expect(error.message).to include("20260102T000000-1.ndjson", "tool")
+        # The real reason, not the pre-T3 one: T3 established that projecting a
+        # result falsifies nothing, so "fabricating results would falsify the
+        # record" is now false at the only door that reaches this.
+        expect(error.message).to match(/names no tool_use id|nothing can answer/i)
+        expect(error.message).not_to match(/falsify|re-ask/i)
+      end
+    end
+
+    # A repair that silently changes what the model sees, with no word to the
+    # operator, is the invisible mutation the Journal doctrine exists against.
+    # Open decision 5 defers the retry AFFORDANCE; disclosure is not that.
+    it "tells the human the session was repaired, not only the model" do
+      result = resume.call
+
+      expect(result).to be_repaired
+      expect(result.notices).to include(a_string_matching(/cancel/i))
+    end
+
+    it "projects an untorn session exactly as before: no cancellation result appears" do
+      settled = chain("first", "ack", "second")
+      write_closed("20260103T000000-1.ndjson", settled)
+
+      result = resume.call(selector: "20260103")
+
+      expect(result.timeline.to_a.map(&:digest)).to eq(settled.to_a.map(&:digest))
+      expect(result.timeline.head.content.map { |block| block["type"] }).to eq(["text"])
+      expect(result).not_to be_repaired
+      expect(result.notices).to be_empty
     end
   end
 
