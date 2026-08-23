@@ -216,8 +216,7 @@ the cop.
   shape above. Pass `debug: true` to any Thor `.start` in a spec, and check the example COUNT.
 - **The known load-induced flakes, by name** (2026-08-18; all pass in isolation, all driven by real
   `git`/`tmux`/`nvim` under a loaded box — see the TMPDIR note above before believing any of them):
-  `Lain::Frontend::Neovim ... re-attach is idempotent: no duplicate commands, and
-  motions/syntax still work`; `Lain::Frontend::Neovim the review thread pane following the cursor
+  `Lain::Frontend::Neovim the review thread pane following the cursor
   does not re-place the diff on every further move once it is back`; and
   `isolation/worktree_handback_spec`'s `Dir.mktmpdir` teardown racing git maintenance.
 
@@ -261,6 +260,30 @@ the cop.
   additionally had a second cause -- a scratch `-L` server still sources the user's `tmux.conf`,
   whose background `tpm` rewrites global `status-right` at 300-500ms -- now pinned with
   `-f File::NULL`.
+
+  **`buffers_spec`'s `re-attach is idempotent: no duplicate commands, and motions/syntax still
+  work` is RETIRED as of 2026-08-23 — it had a real cause and it is fixed**, and both halves of
+  what this list said about it were wrong: it was neither load-induced nor a passer in isolation.
+  Measured alone on an idle box it failed **7 of 20** runs, always on one of two values —
+  `Expected [1, 0] to eq [2, 0]` (the `]]` motion did not move) and `Expected "" to eq "lainRole"`
+  — and a state dump at the failure showed every idempotence claim the example makes still TRUE:
+  same `bufnr`, `]]` still buffer-local, `filetype` still `lain`, `lainRole` still defined. Only
+  the buffer's CONTENT was wrong: `["(no turns yet)"]` where the example had just injected two
+  lines. The example's barrier was `wait_until { bufnr("lain://timeline") != -1 }`, which is a
+  real wait for a FIRST attach and **nothing at all for the second** — the buffer is already
+  there, which is what re-attach idempotence means — so the newcomer's at-rest prime, posted
+  after `#run` returns on the drain thread, landed on top of the injection at a different point
+  every run. The fix waits on the newcomer's own `User LainRender` instead. Forced deterministic
+  both ways with a gated `Surfaces#prime` (6/6 red before, 6/6 green after); 25/25 green since.
+  **The product was not at fault, and the reason is LIVENESS rather than anything about priming.**
+  `Frontend::Neovim#run` tears down in an `ensure` — `@channel.close`, the joins, `@rpc.stop` — so
+  the first lain's channel is dead before the second attaches: `channel_alive(owner)` is false,
+  runtime.lua takes the re-attach path rather than the `{ refused = "owned" }` one, and the at-rest
+  prime is the NEW OWNER's. That is the sequential re-attach a human performs (quit lain, start
+  another in the same nvim), never a live double attach — which is refused, and refused *because*
+  a newcomer's empty prime replacing a running lain's rendered views is one of the three harms
+  runtime.lua's head measured. Both halves are pinned by `neovim_runtime_spec`'s "one lain per
+  editor".
 
   A live demonstration of why this list is by NAME rather than by line: `buffers_spec.rb:329` was
   recorded by line in an earlier chunk, and one card in this one moved that same example to `:417`

@@ -109,6 +109,35 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     LUA
   end
 
+  # How many renders a named view has taken, counted off `User LainRender` --
+  # the runtime's own post-render announcement (20_buffers' `announce_render`),
+  # and the same surface a human's config hooks. Installed BEFORE any attach,
+  # exactly as a dotfile's would be.
+  #
+  # It exists because the file's usual priming barrier cannot answer for a
+  # SECOND attach. `wait_until { bufnr(name) != -1 }` waits for the buffer the
+  # prime creates, which is a real barrier for the first lain and nothing at
+  # all for the one after it: the buffer is already there (that IS what
+  # re-attach idempotence means), so the wait returns before the newcomer has
+  # posted a line, and its at-rest prime -- "(no turns yet)" over the whole
+  # timeline -- then lands on top of whatever the example injected, at whatever
+  # point in the example the drain thread gets there. Counting the announcement
+  # names the thing actually being waited for: this attach's render, landed.
+  def count_renders
+    inspector.exec_lua(<<~LUA, [])
+      _G.__lain_spec_renders = {}
+      vim.api.nvim_create_autocmd("User", {
+        pattern = "LainRender",
+        callback = function(event)
+          local seen, name = _G.__lain_spec_renders, event.data.name
+          seen[name] = (seen[name] or 0) + 1
+        end,
+      })
+    LUA
+  end
+
+  def renders_of(name) = inspector.exec_lua("return _G.__lain_spec_renders[...] or 0", [name])
+
   describe "existing highlighting attaches by filetype" do
     it "gives lain://diff the built-in diff filetype -- whatever a human's config attaches there just works" do
       frontend = described_class.new(channel:, socket_path: @socket)
@@ -415,8 +444,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # ticket 31 measured as silent data destruction. The spec certified the
     # defect as a feature for as long as it stood.
     it "re-attach is idempotent: no duplicate commands, and motions/syntax still work" do
+      count_renders
       described_class.new(channel: Lain::Channel.new, socket_path: @socket)
                      .run { wait_until { bufnr("lain://timeline") != -1 } }
+      primed = renders_of("lain://timeline")
       second = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
 
       # No `expect { }.not_to raise_error` around the block: `aggregate_failures`
@@ -425,7 +456,27 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       # only ever hid which check was guarding what, and a raise out of `run`
       # fails the example on its own.
       second.run do
-        wait_until { bufnr("lain://timeline") != -1 }
+        # The newcomer's OWN prime, waited for by the render it announces rather
+        # than by the buffer its predecessor already created ({#count_renders}).
+        # {#run} returns once the runtime is injected and the at-rest views go
+        # out afterwards on the drain thread, so without this the second lain's
+        # "(no turns yet)" replaces the lines injected below, at a different
+        # point every run (7 failures in 20; every idempotence claim below held
+        # on every one of them, which is what said the barrier was the defect
+        # and not the runtime).
+        #
+        # That prime is the NEW OWNER's, and it is one legitimately: {#run}
+        # tears down in an `ensure`, so the first lain's channel is CLOSED
+        # before this attach -- `channel_alive(owner)` is false and runtime.lua
+        # takes the re-attach path, not the `{ refused = "owned" }` one. This is
+        # the sequential re-attach a human performs, never the live double
+        # attach, which is refused precisely SO a newcomer's empty prime cannot
+        # replace a running lain's rendered views (neovim_runtime_spec's "one
+        # lain per editor" pins both halves). If a refactor ever left the first
+        # lain alive across these two attaches, `second.run` would raise
+        # {SocketOwned} out of `@rpc.start` before this block ran at all -- so
+        # the regression is loud, and this barrier can never be what hangs.
+        wait_until { renders_of("lain://timeline") > primed }
         commands = inspector.exec_lua("return vim.tbl_keys(vim.api.nvim_get_commands({}))", [])
         expect(commands.count("LainReply")).to eq(1)
 
