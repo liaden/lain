@@ -23,10 +23,18 @@ corrections. One candidate finding was **withdrawn** before filing after reading
 hypothesis was **refuted** by its own discriminating probe; both are recorded, because the round
 that does not say which probes failed is not reporting faithfully.
 
+**Two filings were corrected in place after the round closed, from reading the code the fixes would
+touch.** F62's mechanism was wrong — the crash is `Canonical.normalize` on `Timeline#commit`, not
+the secret boundary, which is a witness to it — and `bash` and `grep` carry the same latent defect
+unreproduced. F63's cause is an unwired seam rather than a missing check, which lowers its fix cost.
+Both observables are unchanged and both were reproduced; only the attributed layer moves. The
+corrections are written into the findings themselves, in round 9's manner with F54, so that round 11
+reads one record rather than a filing and an erratum.
+
 | id | sev | what |
 |---|---|---|
-| **F63** | **HIGH** | under `--yolo`, `bash cat` reads a protected private key — `Escalation::Triage`'s argv rule abstains, so the only thing that ever stopped it was a human at an *ordinary* gate |
-| **F62** | **MEDIUM** | the secret boundary's whole-or-nothing path is never reached: a binary `read_file` kills the ask with a bare `error: string is not valid UTF-8` instead of the documented withholding sentence |
+| **F63** | **HIGH** | under `--yolo`, `bash cat` reads a protected private key — `Escalation::Triage`'s argv rule abstains, so the only thing that ever stopped it was a human at an *ordinary* gate. **Cause refined after filing:** the rung runs, but its deny arm is inert because no classifier is ever injected (`cli/switchboard.rb:249`) — an unwired seam, not a missing check |
+| **F62** | **MEDIUM** | a binary `read_file` kills the ask with a bare `error: string is not valid UTF-8` instead of the documented withholding sentence. **Diagnosis corrected after filing:** the raise is `Canonical.normalize` on `Timeline#commit`, not the secret boundary — which passes the read through cleanly and would witness the same death unwired. `bash` and `grep` carry it too, unreproduced |
 | **F59** | **MEDIUM** | `run_interrupted` carries no reason, so a stall timeout, a Ctrl-C and a UTF-8 abort are indistinguishable in the record — its sibling `SessionClosed` has a validated reason enum |
 | **F58** | **MEDIUM (UX)** | line-shaped decorator output loses its line ending whenever no countdown is active; four retry lines and an error concatenate into one line |
 | **F64** | **MEDIUM (UX/doc)** | `--isolation`'s help text says the flag "is inert in chat today"; it is resolved at launch and can abort the session — settles the README's open question against the help text |
@@ -112,44 +120,116 @@ private key is a human answering a prompt that is presented as an *ordinary* app
 indication that the argv names a protected path. The gate that is supposed to be unliftable is
 being rendered as the gate that is easiest to wave through.
 
-**Fix shape.** Triage already inspects argv (it returned a `shell verdict allow` opinion). The
-protected-path classifier is already reachable and already answers correctly for this exact string
-— `read_file` proves it. What would pin it: a seam example asserting that `bash` with a protected
-path in argv is refused at the `triage` rung with the unliftable wording, and a second asserting the
-same under `--yolo`.
+**Cause — an unwired seam, not a missing check, which materially lowers the fix cost.** The rule
+this finding says is absent is written, spec'd, and inert. `Escalation::Triage#literal`/`#refused`
+(`escalation.rb:554`, `:567`) classify every word of a parsed `bash` argv and deny with
+`PROTECTED = "the command's argv names a path no approval may lift"` (`:443`) — the exact wording
+this finding expected and did not see. The rung itself **does** run — it is what journals the
+`shell verdict allow` abstention the ladder above records. What cannot fire is its **deny arm**,
+because the classifier it asks is `AnyPath`: `Switchboard#build_ladder` calls
+`Approval::Escalation.for` with no `triage:` (`cli/switchboard.rb:249`), so the default in
+`Escalation.for` (`escalation.rb:169`) is a bare `Triage.new`, whose `sensitivity:` in turn defaults
+to `AnyPath` (`escalation.rb:522`) — `classify(_path) = ORDINARY` for every path there is
+(`escalation.rb:488-493`). The class doc says so outright: "*Inert until wired.* No home is known
+where a ladder is built, so the classifier is injected and defaults to {AnyPath}"
+(`escalation.rb:425-426`). So the abstention in the control's ladder is the documented default
+behaving as documented, not a rule misfiring.
 
-## F62 — the whole-or-nothing path is never reached; a binary read kills the ask
+**Fix shape.** Wiring, not invention: build the ladder with a real classifier anchored on the
+session's home and cwd, and both deny arms come alive at once. The protected-path classifier is
+already reachable and already answers correctly for this exact string — `read_file` proves it above.
+What would pin it: a seam example asserting that `bash` with a protected path in argv is refused at
+the `triage` rung with the unliftable wording, **at the default posture** — which is this finding as
+filed. Deliberately NOT a second example asserting the same under an approve-all posture: a Triage
+deny is an ordinary ladder deny, and an approve-all policy bypasses the ladder outright, so that
+route stays open by decision rather than by oversight. A second example earns its place only by
+recording that bypass as a known-open observable, so a later round does not re-file it as new.
 
-**MEDIUM.** `Middleware::RedactSecretReads` documents a whole-or-nothing rule and implements it
-(`redact_secret_reads.rb:252-258`): content it cannot scan is not sent at all, and the caller gets
+## F62 — a binary read kills the ask; the secret boundary is a witness, not the cause
 
-```
-read_file returned content this secret boundary cannot scan, so it was withheld.
-```
+**MEDIUM.** **The observable stands; the layer it was filed against does not.** This was filed as
+"the whole-or-nothing path is never reached", attributing the crash to
+`Middleware::RedactSecretReads`. That attribution is wrong, and it is corrected here rather than
+left for round 11 to spend a probe on. What was driven — the killed ask, the bare error, the
+reasonless `run_interrupted` — reproduced and is unchanged.
 
-**Actual**, driving the scenario's own probe (`head -c 4096 /dev/urandom > blob.bin`, then asking
-the model to `read_file blob.bin`):
+**What was observed.** Driving the scenario's own probe (`head -c 4096 /dev/urandom > blob.bin`,
+then asking the model to `read_file blob.bin`):
 
 ```
 error: string is not valid UTF-8
 ```
 
 — a bare low-level error naming no tool and no boundary, and **the ask terminates** (back to `you>`,
-no tool result the model could act on).
+no tool result the model could act on). In the session journal, `cannot scan` appears **0** times
+while `blob.bin` appears 11 times, and the ask closes with a `run_interrupted` record.
 
-**Evidence it is not merely a different wording.** In the session journal, `cannot scan` appears
-**0** times while `blob.bin` appears 11 times, and the ask closes with a `run_interrupted` record.
-The `unreadable` branch is correct and simply is not reached — something upstream raises on the
-invalid encoding first. `read_file` does `force_encoding(Encoding.default_external)`
-(`read_file.rb:241`) and explicitly validates nothing, so the invalid bytes flow onward.
+**Why the filed mechanism cannot be right.** The finding read the absent `cannot scan` sentence as
+the boundary failing to reach its own refusal, and named the scan as the likely raiser. Neither
+holds. `Scan#readable?` is `@pieces.all?` (`redact_secret_reads.rb:436`), and for a String the
+pieces are built as `[Piece.new(text: content, key: nil)]` (`:421`) — one element, always truthy.
+**No String can make `readable?` answer false.** The only nil comes from `piece_of` (`:467-472`),
+reachable only through the Array arm, for a block this class cannot recognise as text; `read_file`
+returns a String, so that arm never runs. The `unreadable` branch (`:255-259`) is therefore not
+merely unreached by this probe — it is unreachable by *any* `read_file` result of today's shape.
 
-**Honest limit.** From outside the process I could not settle whether `read_file`'s own
-serialization or the scan raises. Both give the same observable and both violate the documented
-contract.
+Nor does detection raise on the invalid bytes. `Sensitivity::Regions.detect` opens with
+`bytes = content.b` (`regions.rb:204`) and matches against binary throughout, so invalid UTF-8 is
+scanned without complaint, yields no regions, and `adjudicate` takes its `return carried unless
+withheld.unreleased.any?` (`redact_secret_reads.rb:246`). The middleware passes the result through
+clean and unmodified.
 
-**Fix shape.** Decide the encoding question at the boundary that has an answer for it: have the scan
-report `readable? == false` for invalid encoding rather than letting a raise escape. What would pin
-it: a seam example reading a non-UTF-8 file end to end and asserting the withholding sentence.
+**Where the raise actually is.** `Canonical.utf8` (`canonical.rb:120`):
+
+```ruby
+raise UnsupportedType, "string is not valid UTF-8" unless encoded.valid_encoding?
+```
+
+reached from `Canonical.normalize`'s String arm (`canonical.rb:39`), called by
+`Event::Payload#initialize` (`event/payload.rb:24`) on the commit that records the tool result —
+`ToolDelivery#settle` → `Timeline#commit` (`agent/tool_delivery.rb:68`, `timeline.rb:66`). That
+commit sits **downstream of the entire middleware stack**: `CLI::ToolGuard` assembles
+`RedactSecretReads` at `cli/tool_guard.rb:33`, and the result is committed only after the stack has
+handed it back. **So the same read dies identically with the middleware unwired.** The secret
+boundary is a witness here, not a participant.
+
+The escape route explains the rest of the observable. `Canonical::UnsupportedType < Lain::Error`
+(`canonical.rb:26`), so `Repl::Ask#attempt` catches it as a value and `#settle` routes it to
+`#refuse` (`cli/repl/ask.rb:56`, `:69`, `:75`), which renders `error.message` bare and records a
+reasonless `run_interrupted`. `Ask`'s own class doc notes a tool cannot reach that path, because
+`Effect::Handler::Live#dispatch` contains every tool raise as a `Tool::Result.error` — which is
+exactly why this one does reach it. It is raised *after* the tool phase, where nothing contains it.
+
+**The honest limit this correction resolves.** The filing said: "From outside the process I could
+not settle whether `read_file`'s own serialization or the scan raises." Neither — it is the Timeline
+commit, one layer below both. That was settled by reading the code at `ada66c37`, not by a re-drive;
+the reproduction above is round 10's, unrepeated.
+
+**What the filing got right and should be kept.** `read_file` does
+`force_encoding(Encoding.default_external)` (`read_file.rb:241`) and validates nothing, so the
+invalid bytes do flow onward. The observation was right; only its destination was wrong.
+
+**Two more tools carry the identical defect, and neither was driven.** Any tool that returns bytes
+it never decoded hands `Timeline#commit` a String that may not be valid UTF-8:
+
+- `Tools::Bash` interpolates raw `stdout`/`stderr` straight into its result (`bash.rb:114`) — `cat`
+  a binary, or run any command whose output is not UTF-8, and the ask dies the same way.
+- `Tools::Grep` returns matched lines verbatim (`grep.rb:247`) — one match inside a file with
+  invalid bytes does it.
+
+They are named here unreproduced, because a fix scoped to `read_file` would leave two live copies of
+the same crash behind a green suite.
+
+**Fix shape.** Decide the encoding question at a layer that has an answer for it — and the
+candidates are separable now that the raise is located: refuse or transcode in the tools that
+produce undecoded bytes (`read_file`, `bash`, `grep`), or make the commit path refuse loudly and by
+name instead of tearing the ask. Whichever is chosen, two specs pin the *current* contract and must
+flip: `spec/lain/tools/read_file_spec.rb:1023` asserts invalid UTF-8 survives the capped read
+intact, and `spec/support/shared_examples/tier_one_read_contract.rb:107` asserts `is_error` is
+**false** for a file of invalid UTF-8. That they must flip is the signal the contract was wrong, not
+the code. What would pin the fix: a seam example reading a non-UTF-8 file end to end *through a
+commit* — the boundary the original fix shape, aimed at the scan, would have missed — plus one each
+for `bash` and `grep`.
 
 ## F59 — `run_interrupted` cannot say why
 
