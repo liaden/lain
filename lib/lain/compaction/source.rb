@@ -548,10 +548,15 @@ module Lain
       # built with -- this class holds no `@model` of its own -- so naming what
       # is actually answering is what lets it refuse a stale quote after a
       # `/model` switch rather than journal opus dollars for a sonnet turn.
+      # `collapse_strategy:` rides beside it for the mirror-image reason (F51):
+      # the scheduler is handed a PIPELINE and can name no policy behind it,
+      # while this object was told the arm's word at construction -- so the
+      # accounting can be grouped by arm with no launch command to hand.
       def commit(base:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:, provenance:)
         provider = BASE_PROVIDER.call(flattened_twin(base))
         pipeline = scheduler.pipeline(need:, cold: @cold.cold?, history_size: head.bytesize,
-                                      base: provider, rewrite:, ran_under: base.model)
+                                      base: provider, rewrite:, ran_under: base.model,
+                                      collapse_strategy: @collapse_strategy)
         compacted = !pipeline.equal?(provider)
         record(need:, head:, compacted:, outcome:, occupancy:, provenance:)
         compacted ? base.with_pipeline(pipeline) : base

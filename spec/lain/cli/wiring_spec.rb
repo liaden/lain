@@ -845,6 +845,39 @@ RSpec.describe Lain::CLI::Wiring do
       expect(accounting.map(&:cost_saved).uniq).to eq(["0.0"])
     end
 
+    # F51's control arm, on the SAME live path the flagged run below takes. The
+    # flagged example alone would leave the default run's record free to carry
+    # nil -- and nil is the one value {Lain::Telemetry::Compaction} reserves for
+    # a journal written before this field existed, so a bench reading it would
+    # drop the control arm's rows rather than compare against them. This
+    # describe's own `compaction_options` set no `--compact-strategy`, which is
+    # what makes this an unflagged launch and not a contrived one.
+    it "journals the eager control arm on a run that named no strategy at all" do
+      converse(wire_agent)
+
+      accounting = journal.events.grep(Lain::Telemetry::Compaction)
+      expect(accounting).not_to be_empty
+      expect(accounting.map(&:collapse_strategy).uniq).to eq([Lain::Telemetry::Compaction::EAGER_CONTROL_ARM])
+    end
+
+    # F51 end to end, and the only place the whole thread is real: the flag is
+    # parsed here, {Lain::CLI::Backend::SpanSummarizer} resolves it, the Source
+    # carries the operator's word, and the Scheduler -- handed a pipeline, able
+    # to name no policy behind it -- journals that word on every compaction. It
+    # is what lets a bench group `bytes_before - bytes_after` by arm with no
+    # launch command to hand.
+    context "with --compact-strategy" do
+      let(:compaction_options) { super().merge(compact_strategy: "elide-tools") }
+
+      it "journals the arm the operator named on every compaction it performs" do
+        converse(wire_agent)
+
+        accounting = journal.events.grep(Lain::Telemetry::Compaction)
+        expect(accounting).not_to be_empty
+        expect(accounting.map(&:collapse_strategy).uniq).to eq(["elide-tools"])
+      end
+    end
+
     context "with --no-compact" do
       let(:compaction_options) { super().merge(compact: false) }
 

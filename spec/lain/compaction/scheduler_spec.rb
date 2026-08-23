@@ -250,6 +250,53 @@ RSpec.describe Lain::Compaction::Scheduler do
     end
   end
 
+  # F51. The Scheduler is handed a PIPELINE and can name no policy behind it, so
+  # what collapsed the span arrives PER CALL -- `ran_under:`'s precedent, and for
+  # its reason: nothing here reaches COMPOSE, so the composed pipeline closes
+  # over nothing new and the shareability contract is untouched. What travels is
+  # the frozen String and never the strategy object, which may hold a live oracle
+  # and a mutable memo.
+  describe "the arm it journals a compaction under" do
+    def compacting(**named)
+      built = scheduler(hard_cap: 100)
+      built.pipeline(need: need(:token_threshold), cold: false, history_size: 100, base:,
+                     rewrite: built.measure(history), **named)
+    end
+
+    # Verbatim, `+` and all: a bench groups on this string, so normalising it
+    # would give one arm a second vocabulary.
+    it "journals the composition the operator typed, verbatim" do
+      compacting(collapse_strategy: "elide-tools+summarize-conversation")
+
+      expect(records.map { |record| record["collapse_strategy"] })
+        .to eq(["elide-tools+summarize-conversation"])
+    end
+
+    # A caller that names no arm is running this scheduler's bare Compact, which
+    # IS the eager control arm -- not an absence. nil is reserved for a record
+    # written before the field existed, and defaulting to it here would fold the
+    # control arm into "unreadable".
+    it "journals the eager control arm for a caller that names none" do
+      compacting
+
+      expect(records.map { |record| record["collapse_strategy"] })
+        .to eq([Lain::Telemetry::Compaction::EAGER_CONTROL_ARM])
+    end
+
+    # F51's success criterion, stated as the query a bench actually runs.
+    it "attributes every record's bytes to one named arm, with no launch command to hand" do
+      compacting(collapse_strategy: "elide-tools+summarize-conversation")
+      compacting(collapse_strategy: "elide-tools+summarize-conversation")
+      compacting(collapse_strategy: "elide")
+
+      saved = records.group_by { |record| record["collapse_strategy"] }
+                     .transform_values { |group| group.sum { |r| r["bytes_before"] - r["bytes_after"] } }
+
+      expect(saved.keys).to contain_exactly("elide-tools+summarize-conversation", "elide")
+      expect(saved.values).to all(be_positive)
+    end
+  end
+
   # The contract T19 builds on: a compacting pipeline must be Ractor-shareable,
   # so `Context.new(pipeline: scheduler.pipeline(...))` (T21's seam) holds a
   # value with no reachable mutable state -- crucially not the scheduler's own

@@ -201,10 +201,24 @@ module Lain
       #   composed pipeline closes over changes and the T21/T19 shareability
       #   contract is untouched. nil means "the caller did not say", which
       #   journals exactly as it did before {Quote} existed.
+      # @param collapse_strategy [String] the name of the arm that collapses a
+      #   span this run -- F51's grouping key, read off {Compaction::Source
+      #   #collapse_strategy}. Per-call for `ran_under:`'s reason and reaching
+      #   only {#accounting}, never {COMPOSE}, so the composed pipeline closes
+      #   over nothing new; what travels is the frozen String and never the
+      #   strategy OBJECT, which may hold a live oracle and a mutable memo.
+      #   This scheduler cannot answer it for itself -- it is handed a
+      #   PIPELINE, so the policy behind it is not a thing it can name.
+      #   The default is the control arm rather than nil, because a caller
+      #   naming none is running this scheduler's bare Compact, which IS the
+      #   eager tier; nil is reserved for a record written before the field
+      #   existed ({Telemetry::Compaction}'s header), and defaulting to it
+      #   would make "the control arm" and "unreadable" one value.
       # @return the base itself, or a provider riding Compact ahead of it
-      def pipeline(need:, cold:, history_size:, base:, rewrite: nil, ran_under: nil)
+      def pipeline(need:, cold:, history_size:, base:, rewrite: nil, ran_under: nil,
+                   collapse_strategy: Telemetry::Compaction::EAGER_CONTROL_ARM)
         decision = evaluate(need:, cold:, history_size:)
-        record(decision, need, rewrite, ran_under) if decision.compact?
+        record(decision, need, rewrite, ran_under, collapse_strategy) if decision.compact?
         pipeline_for(decision, base)
       end
 
@@ -274,17 +288,23 @@ module Lain
       # dumps on the DEFERRING turns -- the steady state -- that
       # `if decision.compact?` has always kept free. Same figures as ever for a
       # caller that names nothing; no work at all for one that defers.
-      def record(decision, need, rewrite, ran_under)
+      def record(decision, need, rewrite, ran_under, collapse_strategy)
         quote = Quote.new(priced: @model, ran_under:)
-        @journal << accounting(decision, need, rewrite || measure(NO_MESSAGES), quote)
+        @journal << accounting(decision, need, rewrite || measure(NO_MESSAGES), quote, collapse_strategy)
       end
 
       # The measurement, journaled -- taken by {#measure}, not retaken here.
-      def accounting(decision, need, rewrite, quote)
+      #
+      # `collapse_strategy:` is named EXPLICITLY and never left to the member's
+      # own default: that default is nil, which {Telemetry::Compaction} reserves
+      # for a record written before the field existed, so relying on it here
+      # would make "this journal predates F51" and "the caller forgot"
+      # indistinguishable in the one stream a bench groups by arm.
+      def accounting(decision, need, rewrite, quote, collapse_strategy)
         Telemetry::Compaction.new(
           trigger: need.signals, cache_state: decision.cache_state,
           bytes_before: rewrite.before, bytes_after: rewrite.after, model: quote.model,
-          **costs(quote, decision, rewrite)
+          collapse_strategy:, **costs(quote, decision, rewrite)
         )
       end
 

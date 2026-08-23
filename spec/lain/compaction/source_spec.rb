@@ -1221,6 +1221,26 @@ RSpec.describe Lain::Compaction::Source do
 
       expect(built.instance_variable_get(:@derived).instance_variable_get(:@strategy)).to equal(policy)
     end
+
+    # F51, and the reason the name is held here at all. This is the only object
+    # holding both the arm's word and the {Lain::Compaction::Scheduler} that
+    # writes the accounting -- the scheduler is handed a PIPELINE and can name
+    # no policy behind it -- so the word travels per call out of #commit.
+    it "journals the compaction under the arm the run was wired with" do
+      built = forcing(strategy: collapse(policy: composed, name: "elide-tools+summarize-conversation"))
+
+      context_for(built, timeline)
+
+      expect(compactions.map { |record| record["collapse_strategy"] })
+        .to eq(["elide-tools+summarize-conversation"])
+    end
+
+    it "journals the eager control arm on a run that set no flag" do
+      context_for(forcing, timeline)
+
+      expect(compactions.map { |record| record["collapse_strategy"] })
+        .to eq([Lain::Telemetry::Compaction::EAGER_CONTROL_ARM])
+    end
   end
 
   # T9. What a compacting turn actually renders is the projection of a SECOND
