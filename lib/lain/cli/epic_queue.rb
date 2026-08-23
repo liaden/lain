@@ -116,7 +116,7 @@ module Lain
       def drain(digest, approved:, reason:)
         digest = digest.to_s
         rows = review.find(digest)
-        raise UnknownDigest, unknown_message(digest) if rows.empty?
+        raise UnknownDigest, unknown_message(digest, approved:) if rows.empty?
 
         decisions = rows.map { |row| row.terminal(approved:, reason:) }
         append(decisions)
@@ -144,12 +144,33 @@ module Lain
         ["signed off #{digest}", *signed].join("\n")
       end
 
-      def unknown_message(digest)
+      # `review.rows(nil)` deliberately widens to every epic rather than the
+      # one the caller may have named -- the near-miss beside what was typed
+      # is the whole point of this listing. That near-miss is also why a slug
+      # reads as self-contradiction: an epic slug like "alpha" IS parked, so
+      # the listing below carries a row naming it, and "no parked sign-off for
+      # alpha" beside a row that names alpha looks like the fold missed a
+      # match it plainly has. It did not -- `approve`/`deny` key on
+      # `artifact_digest`, never `epic_slug`, so a slug could never match no
+      # matter what is parked. {#digest_shaped?} is what tells the two kinds
+      # of miss apart, so only the argument that could never have been right
+      # gets told what kind of thing this verb wants.
+      def unknown_message(digest, approved:)
         parked = review.rows(nil)
-        return "no parked sign-off for #{digest.inspect} -- nothing is parked for sign-off" if parked.empty?
+        headline = digest_shaped?(digest) ? "no parked sign-off for #{digest.inspect}" : kind_hint(digest, approved:)
+        return "#{headline} -- nothing is parked for sign-off" if parked.empty?
 
-        "no parked sign-off for #{digest.inspect} -- parked right now:\n" \
-          "#{parked.map { |row| "  #{row.address}" }.join("\n")}"
+        "#{headline} -- parked right now:\n#{parked.map { |row| "  #{row.address}" }.join("\n")}"
+      end
+
+      # {Canonical::DIGEST_ALGORITHM} is the one place the "blake3:" scheme is
+      # named, so an argument is judged digest-shaped by the same prefix every
+      # real digest on this surface carries -- not a length or hex check that
+      # a genuinely wrong-but-well-typed digest could still fail.
+      def digest_shaped?(digest) = digest.start_with?("#{Canonical::DIGEST_ALGORITHM}:")
+
+      def kind_hint(digest, approved:)
+        "#{approved ? "approve" : "deny"} names a parked artifact by digest, not #{digest.inspect}"
       end
 
       def headline(rows)

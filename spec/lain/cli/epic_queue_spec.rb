@@ -120,6 +120,28 @@ RSpec.describe Lain::CLI::EpicQueue do
 
       expect(gate_decisions.map { |record| record["policy"] }).to eq(["deferred"])
     end
+
+    # Scenario: a slug passed where a digest belongs says so
+    it "refuses a slug by saying approve wants a digest, not narrowing the listing" do
+      expect { queue.approve("alpha") }
+        .to raise_error(described_class::UnknownDigest, /approve names a parked artifact by digest.*"alpha"/m)
+    end
+
+    it "still lists what is parked when the argument does not look like a digest" do
+      expect { queue.approve("alpha") }.to raise_error(described_class::UnknownDigest, /#{Regexp.escape(digest_a)}/)
+    end
+
+    # Scenario: an unknown digest is unchanged
+    it "leaves the digest-shaped refusal wording as it was" do
+      message = begin
+        queue.approve(digest_c)
+      rescue described_class::UnknownDigest => e
+        e.message
+      end
+
+      expect(message).to start_with("no parked sign-off for #{digest_c.inspect}")
+      expect(message).not_to include("names a parked artifact by digest")
+    end
   end
 
   describe "#deny" do
@@ -147,6 +169,12 @@ RSpec.describe Lain::CLI::EpicQueue do
 
       terminal = gate_decisions.find { |record| record["policy"] == "signoff" }
       expect(terminal["reason"]).to eq("the backfill is unbounded")
+    end
+
+    # Same refusal, spelled with the verb actually typed.
+    it "refuses a slug by saying deny wants a digest" do
+      expect { queue.deny("alpha") }
+        .to raise_error(described_class::UnknownDigest, /deny names a parked artifact by digest.*"alpha"/m)
     end
   end
 
