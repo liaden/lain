@@ -573,8 +573,24 @@ editor rather than only at the chat prompt.
 
 It opens in a split, focused, the moment there is something to answer -- and
 only then, and only if no window is already showing it, so a second call
-arriving never re-steals your cursor. One row per parked call, leading with who
-is asking:
+arriving never re-steals your cursor. It closes again once every parked call
+has been answered: a window lain opened because a call arrived is given back
+when there is nothing left to answer, rather than becoming a pane reading
+"(no approvals pending)" for the rest of the session.
+
+A window YOU opened is not taken away. If you split lain's window to keep the
+list in view, or reached the buffer yourself with `:buffer lain://approval`,
+that window is yours and stays -- showing the empty list -- when the queue
+drains. So does a window lain opened that you have since sent to another buffer
+and brought the list back into yourself: taking it over makes it yours. lain
+gives back only what it took, and only while it is still lain's.
+
+One exception, and it is nvim's: a window that is the only one in its tabpage
+is left alone, because closing it would close the TAB and move you to another
+one. Drain the queue with lain's window `:only` in its own tab and the empty
+list stays there for the session.
+
+One row per parked call, leading with who is asking:
 
     agent  bash({"command" => "pwd"})
 
@@ -735,10 +751,13 @@ above it is not drift, and a note whose line was rewritten under it is.
 The record-shaped views -- `lain://timeline` (one fold per turn),
 `lain://journal` (one fold per `[id stream]` output run), `lain://inbox` (one
 fold per pending question set), `lain://question` (one fold per question in the
-set) -- set window-local expr folds when first shown: every record starts
-closed but one, and which one differs by view. A LOG's live record is its last,
-so the timeline, the journal and the inbox open the newest; a FORM's is its
-first, so a question document opens the question at the top (|lain-question|).
+set), `lain://approval` (one fold per parked call) -- set window-local expr
+folds when first shown: every record starts closed but one, and which one
+differs by view. A LOG's live record is its last, so the timeline, the journal
+and the inbox open the newest; a FORM's is its first, so a question document
+opens the question at the top (|lain-question|) and the approval list opens the
+call you are being asked to answer (|lain-approval|), never the key hints below
+it.
 
 That default applies once, at display; renders never re-fold, so turns you open
 (|za|/|zo|) and |zR| stick while the session streams -- at most lain re-opens

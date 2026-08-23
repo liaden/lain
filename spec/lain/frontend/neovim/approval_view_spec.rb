@@ -781,9 +781,17 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
     let(:long_command) { "git log --oneline --graph --decorate --all #{"--author=someone " * 12}" }
 
-    # One parked call, rendered through the REAL frontend into the REAL editor:
+    # A call that fits inside {ApprovalView::WIDTH}, so a two-item fixture has
+    # one item that is unambiguously ONE row -- which is what lets an example
+    # name the second item's fold by a line number rather than by a range.
+    let(:short_command) { "pwd" }
+
+    # Parked calls, rendered through the REAL frontend into the REAL editor:
     # the view is the frontend's own, so the post takes the RpcThread and the
-    # runtime's set_approval, exactly as a gated session does.
+    # runtime's set_approval, exactly as a gated session does. The optional
+    # block runs against the live editor once the rendering has landed, and
+    # whatever it returns is merged into the reading -- which is how an example
+    # observes a fold BEFORE its own gesture as well as after.
     #
     # THE REACTOR RUNS ON ITS OWN THREAD, and that is not tidiness -- it is the
     # arrangement buffers_spec already uses, for a reason this block rediscovered
@@ -791,37 +799,43 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     # blocking IO; driven from INSIDE the Sync that holds the parked fiber they
     # deadlock the two against each other. The editor is read from the example's
     # own thread, and the queue lives on the worker's.
-    def rendered_fold_state
+    def rendered_fold_state(commands: [long_command], &probe)
       @release = Thread::Queue.new
       screen = nil
       frontend = Lain::Frontend::Neovim.new(channel: Lain::Channel.new, socket_path: @socket)
       # `Neovim#run` answers its own teardown, never the block's value, so the
       # reading is carried out rather than returned.
-      frontend.run { |handle| screen = read_screen(handle) }
+      frontend.run { |handle| screen = read_screen(handle, commands, &probe) }
       screen
     end
 
-    def read_screen(handle)
-      worker = Thread.new { park_and_sweep(handle) }
-      waited_for { buffer_lines.any? { |line| line.include?("git log") } }
-      { lines: buffer_lines, folds: fold_state }
+    # The hint line is the rendering's LAST, and the at-rest projection's is
+    # not -- so waiting on it waits for the sweep rather than for the prime,
+    # which lands first and would otherwise satisfy a line-count wait.
+    def read_screen(handle, commands)
+      worker = Thread.new { park_and_sweep(handle, commands) }
+      waited_for { buffer_lines.last == described_class::HINT }
+      probed = block_given? ? yield : {}
+      { lines: buffer_lines, folds: fold_state }.merge(probed)
     ensure
       @release.push(:done)
       raise "the parked approval's thread never stopped" unless worker&.join(20)
     end
 
-    def park_and_sweep(handle)
+    def park_and_sweep(handle, commands)
       Sync do |task|
         queue = Lain::Approval::Queue.new(journal:, timeout: 60)
-        parked = task.async { queue.call(effect("bash", { "command" => long_command }, "tu_1"), nil) }
-        task.with_timeout(20) { swept(handle, queue) }
+        parked = commands.each_with_index.map do |command, index|
+          task.async { queue.call(effect("bash", { "command" => command }, "tu_#{index}"), nil) }
+        end
+        task.with_timeout(20) { swept(handle, queue, commands.size) }
       ensure
-        parked&.stop
+        parked&.each(&:stop)
       end
     end
 
-    def swept(handle, queue)
-      spun_until { queue.one? }
+    def swept(handle, queue, count)
+      spun_until { queue.count == count }
       handle.approval_view.sweep(queue)
       spun_until { !@release.empty? }
     end
@@ -837,27 +851,270 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       end
     end
 
-    it "closes each item onto its summary at rest, leaving the lines under it hidden" do
-      screen = rendered_fold_state
-      item = screen[:lines].take_while { |line| !line.empty? }
-
-      expect(item.size).to be > 1
-      # Every line of the item reports the SAME closed fold, starting at line 1
-      # -- which is "only its summary line remains visible", stated in the one
-      # vocabulary nvim has for it. The mutant that deletes the fold surface
-      # reads [1, 2, 3, 4] here (each line its own fold) or all -1 (nothing
-      # folded at all); neither survives this.
-      expect(screen[:folds].first(item.size)).to all(eq(1))
+    # The same drive taken one step further: the parked call is ANSWERED and
+    # the view re-rendered, so an example can read what the editor did with a
+    # list that went empty. The optional block runs while the call is still
+    # parked, which is where a human's own split has to happen for it to be a
+    # window lain did not open.
+    def surface_after_emptying(&setup)
+      @release = Thread::Queue.new
+      @empty = Thread::Queue.new
+      surface = nil
+      frontend = Lain::Frontend::Neovim.new(channel: Lain::Channel.new, socket_path: @socket)
+      frontend.run { |handle| surface = read_windows(handle, &setup) }
+      surface
     end
 
-    it "leaves the hint below the list open, which is what keeps the items closed" do
+    def read_windows(handle)
+      worker = Thread.new { park_answer_and_sweep(handle) }
+      observed_windows { yield if block_given? }
+    ensure
+      @release.push(:done)
+      raise "the parked approval's thread never stopped" unless worker&.join(20)
+    end
+
+    # Both readings, either side of the queue emptying: the block is the
+    # example's own chance to act on the editor while a call is still parked.
+    def observed_windows
+      waited_for { buffer_lines.last == described_class::HINT }
+      parked = windows_showing
+      taken = yield
+      @empty.push(:now)
+      waited_for { buffer_lines == described_class::EMPTY }
+      { parked:, taken:, emptied: windows_showing }
+    end
+
+    def park_answer_and_sweep(handle)
+      Sync do |task|
+        queue = Lain::Approval::Queue.new(journal:, timeout: 60)
+        parked = task.async { queue.call(effect("bash", { "command" => long_command }, "tu_1"), nil) }
+        task.with_timeout(20) { emptied(handle, queue) }
+      ensure
+        parked&.stop
+      end
+    end
+
+    # Answered through the QUEUE rather than through a keypress: what is under
+    # test is what the editor does when a list goes empty, and a decision made
+    # anywhere -- the terminal, the clock, another surface -- empties it the
+    # same way.
+    def emptied(handle, queue)
+      spun_until { queue.one? }
+      handle.approval_view.sweep(queue)
+      spun_until { !@empty.empty? }
+      queue.first.approve(surface: described_class::SURFACE)
+      handle.approval_view.sweep(queue)
+      spun_until { !@release.empty? }
+    end
+
+    # How many windows show the buffer, how many of those lain opened for
+    # itself, and how many TABPAGES the editor still has. `w:lain_approval_opened`
+    # is the runtime's own mark, so a window answering false here is one lain
+    # must leave alone; the tab count is what catches a close that took a whole
+    # tabpage with it.
+    def windows_showing
+      inspector.exec_lua(<<~LUA, [described_class::BUFFER])
+        local buf = vim.fn.bufnr(...)
+        local wins = buf == -1 and {} or vim.fn.win_findbuf(buf)
+        local opened = 0
+        for _, win in ipairs(wins) do
+          if vim.w[win].lain_approval_opened then opened = opened + 1 end
+        end
+        return { showing = #wins, opened = opened, tabs = #vim.api.nvim_list_tabpages() }
+      LUA
+    end
+
+    # A window the HUMAN made, in the one way a human most easily makes one:
+    # splitting the window lain already opened. `:vsplit` copies window OPTIONS
+    # and not window VARIABLES (`10_folds.lua`'s probe J), which is the whole
+    # reason the mark is a variable -- so this window carries none of lain's.
+    def human_split
+      inspector.exec_lua(<<~LUA, [described_class::BUFFER])
+        local buf = vim.fn.bufnr(...)
+        vim.api.nvim_win_call(vim.fn.win_findbuf(buf)[1], function() vim.cmd("vsplit") end)
+        return #vim.fn.win_findbuf(buf)
+      LUA
+    end
+
+    # lain's window ALONE in its own tabpage, with another tabpage open beside
+    # it -- the arrangement that separates "the last window there is" from "the
+    # last window in this tab". `:only` is how a human gets there.
+    def alone_in_its_tab
+      inspector.exec_lua(<<~LUA, [described_class::BUFFER])
+        local buf = vim.fn.bufnr(...)
+        local win = vim.fn.win_findbuf(buf)[1]
+        vim.cmd("tabnew")
+        vim.api.nvim_set_current_win(win)
+        vim.cmd("only")
+        return #vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(win))
+      LUA
+    end
+
+    # A window lain opened that the human has since made their own: they send it
+    # to another buffer and later bring the list back into it themselves. The
+    # window is the same one; whose it is has changed. Answers whether lain still
+    # claims it.
+    def human_reclaims_window
+      inspector.exec_lua(<<~LUA, [described_class::BUFFER])
+        local name = ...
+        local win = vim.fn.win_findbuf(vim.fn.bufnr(name))[1]
+        vim.api.nvim_win_call(win, function()
+          vim.cmd("enew")
+          vim.cmd("buffer " .. name)
+        end)
+        return vim.w[win].lain_approval_opened == true
+      LUA
+    end
+
+    # What nvim would DISPLAY for the closed fold at `line`: 'foldtext'
+    # evaluated in the window that holds the fold, which is the only place
+    # `v:foldstart` is set. A buffer read cannot see this -- a blank line reads
+    # blank either way; what differs is whether nvim has room LEFT OVER to fill
+    # with the 'fold' fillchar, which is what draws the bar.
+    def fold_display(line)
+      inspector.exec_lua(<<~LUA, [described_class::BUFFER, line])
+        local name, line = ...
+        local buf = vim.fn.bufnr(name)
+        local win = vim.fn.win_findbuf(buf)[1]
+        return vim.api.nvim_win_call(win, function()
+          return { text = vim.fn.foldtextresult(line), width = vim.api.nvim_win_get_width(win) }
+        end)
+      LUA
+    end
+
+    # `zo` on a row, from the window that holds the buffer, answering the row's
+    # fold state afterwards.
+    def open_fold_at(line)
+      inspector.exec_lua(<<~LUA, [described_class::BUFFER, line])
+        local name, line = ...
+        local buf = vim.fn.bufnr(name)
+        local win = vim.fn.win_findbuf(buf)[1]
+        return vim.api.nvim_win_call(win, function()
+          vim.api.nvim_win_set_cursor(win, { line, 0 })
+          vim.cmd("silent! foldopen!")
+          return vim.fn.foldclosed(line)
+        end)
+      LUA
+    end
+
+    # The item's lines, put back together the way the drawing side cut them
+    # apart -- {ApprovalView#body_for}'s indent removed, nothing else.
+    def reassembled(lines) = lines.map { |line| line.delete_prefix(described_class::INDENT) }.join
+
+    def item_rows(lines) = lines.take_while { |line| !line.empty? }
+
+    # F42. lain://approval is a FORM, not a log: the call a human is being
+    # asked about is the FIRST record, and the at-rest re-open used to land on
+    # the LAST line -- the key hints -- leaving the pending call folded behind
+    # a summary cut at {ApprovalView::WIDTH}. A command longer than the summary
+    # was then in the buffer and on no screen.
+    it "shows the parked call in full at rest, with none of it folded away" do
+      screen = rendered_fold_state
+      item = item_rows(screen[:lines])
+
+      expect(item.size).to be > 1
+      expect(screen[:folds].first(item.size)).to all(eq(-1))
+      expect(reassembled(item)).to include(long_command)
+    end
+
+    # The other half of F42, and the reason the trailer must still be its OWN
+    # record (`05_records.lua`'s measurement): the hints get a fold of their
+    # own, so they can neither steal the at-rest open nor swallow the item
+    # above them into a fold that opens with them.
+    it "leaves the key hints in a fold of their own rather than letting them take the list's" do
       screen = rendered_fold_state
 
-      # 10_folds re-opens the fold holding the LAST line at rest. The hint being
-      # its own record is what makes that harmless; were it swallowed into the
-      # last item's fold, the re-open would open that item, every time.
-      expect(screen[:folds].last).to eq(-1)
-      expect(screen[:lines].last).to include("LainApprove")
+      expect(screen[:lines].last).to eq(described_class::HINT)
+      expect(screen[:folds].last).to eq(screen[:lines].size)
+      expect(screen[:folds].first).to eq(-1)
+    end
+
+    # F43. A closed fold displays 'foldtext' and then FILLS the rest of the
+    # line with the 'fold' fillchar, so a blank trailer whose foldtext is the
+    # empty string renders as a full-width bar of dots -- a line the human
+    # reads as damage. Measured through `foldtextresult()` rather than by
+    # reading the buffer, because the buffer line is blank in both worlds.
+    it "renders the blank line above the hints as blank, not as a bar of fold fill" do
+      screen = rendered_fold_state { { blank: fold_display(buffer_lines.index("") + 1) } }
+      blank = screen[:lines].index("") + 1
+
+      expect(screen[:folds][blank - 1]).to eq(blank)
+      expect(screen[:blank]["text"]).to match(/\A +\z/)
+      expect(screen[:blank]["text"].length).to be >= screen[:blank]["width"]
+    end
+
+    # The claim the fold surface exists at all, restated where the new at-rest
+    # default leaves it observable: with two calls parked, the one that is not
+    # live is closed onto its summary. The mutant that deletes the surface
+    # reads -1 here (nothing folded), and one that makes every line its own
+    # record cannot close a multi-line item onto line 1 at all.
+    it "closes every item but the live one onto its summary" do
+      screen = rendered_fold_state(commands: [long_command, short_command])
+      second = item_rows(screen[:lines]).size
+
+      expect(screen[:folds].first(second - 1)).to all(eq(-1))
+      expect(screen[:folds][second - 1]).to eq(second)
+    end
+
+    # Folds are per-record, so a gesture on one row is a statement about that
+    # row and nothing else -- the property that makes "open the one you are
+    # about to answer" a safe instruction to give a human.
+    it "leaves the other item's fold alone when one of them is opened" do
+      screen = rendered_fold_state(commands: [long_command, short_command]) do
+        second = item_rows(buffer_lines).size
+        { second:, before: fold_state, reopened: open_fold_at(second) }
+      end
+      second = screen[:second]
+
+      expect(screen[:before][second - 1]).to eq(second)
+      expect(screen[:reopened]).to eq(-1)
+      expect(screen[:folds].first(second - 1)).to eq(screen[:before].first(second - 1))
+    end
+
+    # F44. The window is opened BECAUSE a call was parked (`set_approval`'s
+    # `rows > 0`), so it has to go when there is nothing left to answer --
+    # otherwise every session that was ever gated ends up with a pane showing
+    # "(no approvals pending)" for the rest of its life. `parked` is read first
+    # so this cannot pass by closing windows lain never opened.
+    it "takes back the window it opened once nothing is parked" do
+      surface = surface_after_emptying
+
+      expect(surface[:parked]).to eq({ "showing" => 1, "opened" => 1, "tabs" => 1 })
+      expect(surface[:emptied]["showing"]).to eq(0)
+    end
+
+    # The other side of F44, and the one a mark on the WINDOW is what makes
+    # possible: a human who split lain's window to keep the list in view owns
+    # that window, and an emptied queue must not take it.
+    it "leaves a window the human opened themselves, which carries none of lain's marks" do
+      surface = surface_after_emptying { human_split }
+
+      expect(surface[:emptied]["showing"]).to eq(1)
+      expect(surface[:emptied]["opened"]).to eq(0)
+    end
+
+    # "The last window there is" and "the last window in this tab" are not the
+    # same count, and closing on the first takes the human's TABPAGE with it --
+    # focus lands in a tab they were not looking at, because a queue drained.
+    # The empty list staying put is the documented cost of the exception.
+    it "leaves its window alone rather than closing the tabpage it is the last window of" do
+      surface = surface_after_emptying { alone_in_its_tab }
+
+      expect(surface[:taken]).to eq(1)
+      expect(surface[:emptied]["tabs"]).to eq(2)
+      expect(surface[:emptied]["showing"]).to eq(1)
+    end
+
+    # A mark that never expires stops describing the window it is on. lain opened
+    # this one, so the mark was true when it was written -- but the human has
+    # since sent the window elsewhere and brought the list back into it
+    # deliberately, which is the same gesture as opening it themselves.
+    it "gives up its claim on a window the human has taken over and brought back" do
+      surface = surface_after_emptying { human_reclaims_window }
+
+      expect(surface[:taken]).to be(false)
+      expect(surface[:emptied]["showing"]).to eq(1)
+      expect(surface[:emptied]["opened"]).to eq(0)
     end
   end
 

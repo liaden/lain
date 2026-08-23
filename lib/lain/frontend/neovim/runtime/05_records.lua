@@ -108,3 +108,17 @@ local RECORD_START = {
   -- their round trips -- a capability stays deletable with its file -- and it
   -- keeps 00_constants from having to name a buffer nothing else there needs.
 }
+
+-- WHICH RECORD IS LIVE AT REST, the table 10_folds' `open_at_rest` reads. The
+-- doctrine lives there, with the code that acts on it (a LOG's live record is
+-- its LAST, a FORM's is its FIRST); what lives HERE is the declaration, beside
+-- RECORD_START and for RECORD_START's reason. A module loading BETWEEN the
+-- declaration and a registration sees no local at all, so `FORM_VIEWS[x] = true`
+-- would quietly create a GLOBAL that the later `local` then shadows: the
+-- registration is lost, nothing errors, and no lint reports it. Declared with
+-- the record vocabulary, every module with a view name to register loads after
+-- it, and that window does not exist.
+--
+-- CONTINUATION and `spanning_record` above are untouched by this: they carry a
+-- measurement, this carries a name.
+local FORM_VIEWS = { [QUESTION] = true }

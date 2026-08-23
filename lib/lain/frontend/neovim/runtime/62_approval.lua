@@ -69,6 +69,15 @@ local lain_approval = {
 -- the standing rule this serves: a human must read what they approve.
 RECORD_START[lain_approval.NAME] = spanning_record
 
+-- A FORM, NOT A LOG, which is 10_folds' other per-view answer and the one this
+-- buffer was on the wrong side of. Its live record is its FIRST -- the call the
+-- clock is running on -- exactly as lain://question's is. Left as a log, the
+-- at-rest re-open landed on the LAST line, which here is the key hints: the
+-- pending call stayed folded behind a summary cut at ApprovalView::WIDTH, so a
+-- command longer than that was in the buffer and on no screen, on the one
+-- surface whose premise is that a human reads what they approve.
+FORM_VIEWS[lain_approval.NAME] = true
+
 -- `named_buf` attaches a filetype from READONLY_FILETYPES, a table in
 -- 00_constants which this module does not edit -- so the lookup misses and the
 -- option lands unset. 46_sidebar records the fix and this follows it: join the
@@ -81,6 +90,39 @@ function lain_approval.buf()
     vim.bo[buf].filetype = "lain"
   end
   return buf
+end
+
+-- ONLY THE WINDOW THIS MODULE OPENED, and `w:lain_approval_opened` is what
+-- makes that answerable. A window VARIABLE, and both alternatives get it wrong
+-- in a way nothing here would notice: a window OPTION is copied by :vsplit
+-- (10_folds' probe J), so a human's split off lain's window would wear lain's
+-- mark and be taken from them; a lua table keyed by window id outlives the
+-- window it names, so a recycled id would hand a stranger's window to this
+-- loop. A window variable is copied by nothing, dies with its window, and
+-- survives a render -- a render writes buffer lines and buffer variables and
+-- touches no window at all.
+--
+-- THE BUFFER SURVIVES THE CLOSE. `bufhidden = "hide"` (20_buffers' named_buf)
+-- is 60_question's measurement read the other way round: nvim_win_close there
+-- did NOT unload the buffer, which is a problem for an abandon signal and
+-- exactly right here -- `:buffer lain://approval` is still the way back to a
+-- list with nothing in it.
+local function last_in_its_tab(win)
+  return #vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(win)) == 1
+end
+
+local function close_opened_windows(buf)
+  for _, win in ipairs(vim.fn.win_findbuf(buf)) do
+    -- THE LAST WINDOW OF ITS TABPAGE IS KEPT, and the count has to be the
+    -- TABPAGE's: closing the last window of a tab closes the TAB, so a
+    -- whole-editor count says "there are others" while the human's focus is
+    -- thrown into a tab they were not looking at -- because a queue drained.
+    -- The cost of the exception is an empty list left on screen in that tab,
+    -- which is the smaller of the two surprises and is documented as such.
+    if vim.w[win].lain_approval_opened and not last_in_its_tab(win) then
+      vim.api.nvim_win_close(win, false)
+    end
+  end
 end
 
 -- Whole-buffer replace for the parked list, stamped twice.
@@ -117,6 +159,12 @@ end
 -- there is something to answer, so a poll never re-steals a cursor and an
 -- emptied list never opens a window on nothing.
 --
+-- AND IT GIVES THE WINDOW BACK, which is the other half of taking one: a
+-- window opened BECAUSE rows appeared has no claim on the screen once they are
+-- gone, and a session that was gated once would otherwise carry a pane reading
+-- the empty projection for the rest of its life. Only the window this module
+-- opened, per the note above `close_opened_windows`.
+--
 -- Written BEFORE the placement (46_sidebar's ordering), so the window never
 -- shows a half-drawn buffer.
 function _G.__lain.set_approval(lines, gen, rows)
@@ -126,7 +174,11 @@ function _G.__lain.set_approval(lines, gen, rows)
   local shown = vim.fn.win_findbuf(buf)[1]
   set_lines(buf, 0, -1, lines)
   if rows > 0 and shown == nil then
-    vim.api.nvim_win_set_cursor(vim.api.nvim_open_win(buf, true, { split = "below", win = 0 }), { 1, 0 })
+    local opened = vim.api.nvim_open_win(buf, true, { split = "below", win = 0 })
+    vim.w[opened].lain_approval_opened = true
+    vim.api.nvim_win_set_cursor(opened, { 1, 0 })
+  elseif rows == 0 then
+    close_opened_windows(buf)
   end
   announce_render(lain_approval.NAME, buf)
 end
@@ -197,8 +249,39 @@ end)
 -- <Cmd> rather than ":", the inbox and sidebar maps' reason: it
 -- runs the command without leaving normal mode, so the cursor the command is
 -- about does not move out from under it.
+local approval_group = vim.api.nvim_create_augroup("lain_approval", { clear = true })
+
+-- THE MARK EXPIRES WITH WHAT IT DESCRIBES. `w:lain_approval_opened` says "lain
+-- opened this window FOR THIS BUFFER", and a window that has since been sent to
+-- another buffer no longer answers that -- so a human who navigates lain's
+-- window away and later brings the list back into it themselves has taken the
+-- window over, and lain must not close it out from under them on the next
+-- drain. 10_folds' BufWinEnter is the precedent and the same shape for the same
+-- reason: a window whose buffer stops being lain's is handed back right there.
+-- Pattern "*" for that reason too -- the seam is the window acquiring ANOTHER
+-- buffer, which no lain:// pattern can see.
+--
+-- ONE augroup, named once above: a second `clear = true` here would wipe the
+-- keymap autocmd below rather than join it.
+--
+-- The gap, stated because it is real and small: BufWinEnter may not fire for a
+-- buffer that is already displayed in some other window, so a marked window
+-- sent to an already-visible buffer keeps its mark. It shows no approval list
+-- while that is true, so nothing closes; only bringing the list back into that
+-- same window reaches it, and lain did open that window.
+vim.api.nvim_create_autocmd("BufWinEnter", {
+  group = approval_group,
+  pattern = "*",
+  callback = function(ev)
+    local win = vim.api.nvim_get_current_win()
+    if vim.w[win].lain_approval_opened and vim.api.nvim_buf_get_name(ev.buf) ~= lain_approval.NAME then
+      vim.w[win].lain_approval_opened = nil
+    end
+  end,
+})
+
 vim.api.nvim_create_autocmd("BufEnter", {
-  group = vim.api.nvim_create_augroup("lain_approval", { clear = true }),
+  group = approval_group,
   pattern = lain_approval.NAME,
   callback = function(ev)
     for _, answer in ipairs(lain_approval.VERDICTS) do

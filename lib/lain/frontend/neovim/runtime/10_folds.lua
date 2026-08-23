@@ -63,9 +63,21 @@ end
 -- its FIRST: lain://question is a document to fill in from the top, and the
 -- older-closed default handed the human a form with the cursor on line 1
 -- INSIDE a closed fold, two collapsed summaries above the only open question.
--- A `dd` there deletes a whole question they never saw.
+-- A `dd` there deletes a whole question they never saw. lain://approval is the
+-- second, and the default cost it more: the re-open landed on the key-hints
+-- trailer and left the parked call folded behind a summary cut at
+-- ApprovalView::WIDTH -- the command a `y` is about, in the buffer and on no
+-- screen.
+--
+-- WHICH VIEWS ARE FORMS is a table a later module registers itself into --
+-- lain://approval's name belongs to 62_approval, so an entry spelled here would
+-- be a second copy of a string 00_constants deliberately does not carry. The
+-- table is DECLARED in 05_records, beside RECORD_START: a registration from a
+-- module loading before the declaration would land on a global the later
+-- `local` shadows, silently, and declaring it with the record vocabulary is
+-- what makes that unreachable. See its note there.
 local function open_at_rest(buf)
-  if vim.b[buf].lain_view == QUESTION then
+  if FORM_VIEWS[vim.b[buf].lain_view] then
     return 1
   end
   return vim.api.nvim_buf_line_count(buf)
@@ -183,13 +195,26 @@ end
 -- role/attribution/sender-and-age (that is each view's documented line
 -- shape), so it IS the summary; a multi-line record appends only its hidden
 -- line count.
+--
+-- A BLANK RECORD HAS TO RENDER BLANK, and returning the line is not enough to
+-- get that: a closed fold displays this text and nvim then FILLS the rest of
+-- the screen line with the 'fold' fillchar, so an empty summary comes out as a
+-- full-width bar of dots. The line that meets it is lain://approval's blank
+-- trailer, which must answer `spanning_record` true or nothing in that buffer
+-- folds at all (05_records' measurement) -- so it gets a fold it has no use
+-- for, and the fold has to be invisible. Spaces to the window's width leave
+-- nvim nothing left to fill; over-padding is safe, since a closed fold is one
+-- screen line and the surplus is simply not drawn.
 function _G.__lain.foldtext()
   local line = vim.fn.getline(vim.v.foldstart)
   local span = vim.v.foldend - vim.v.foldstart + 1
-  if span == 1 then
-    return line
+  if span > 1 then
+    return line .. "  (+" .. (span - 1) .. " lines)"
   end
-  return line .. "  (+" .. (span - 1) .. " lines)"
+  if line:match("^%s*$") ~= nil then
+    return (" "):rep(vim.api.nvim_win_get_width(0))
+  end
+  return line
 end
 
 -- 'foldmethod' and friends are WINDOW options, and these buffers are created
