@@ -186,6 +186,15 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["t
 which tools produced the top ten, and whether any of them disclosed a cap. Today only `grep`,
 `ast_search`, `web_fetch` and `ast_dump` bound at all, and only by cap-and-disclose.
 
+**Round 8: this premise was NOT reached, even in the scenario built to reach it.** Under
+`--minimal`, the largest single tool result across the whole session was **4,713 bytes**
+(`rails new`), the total across 114 tool results was **40,306 bytes**, and **zero** results
+disclosed a cap — nowhere near the bound-firing volume this section expects. **§1's volume came
+from turn COUNT, not result SIZE**: compaction fired eleven times on a transcript built from many
+small tool results, not from any single large one. Do not read "compaction fired" as evidence this
+section's premise was exercised — it was §1's, not §2's, and §2's is still unreached. A non-minimal
+app, or a directive that reads large generated files back, is what would actually drive this.
+
 ### 3. The approval gate under volume
 
 A `rails new` run and a `bundle install` are both gated `bash`. Expect several approvals per turn —
@@ -237,7 +246,9 @@ Four things to check, and three of them are about honesty rather than arithmetic
   session are indistinguishable to a reader.
 - **What the cache BOUGHT is always reported beside what it wasted.** A waste figure alone is an
   anti-metric by this repo's own rule: an agent that reads nothing wastes nothing. If the "tokens
-  served from cache" half is missing, that is the finding.
+  served from cache" half is missing, that is the finding — **except for a cacheless provider,
+  since T11 (see below): there, a missing "tokens served from cache" half is correct output, not
+  a defect to file.**
 - **`/model` mid-session must not be charged as waste.** Drive one deliberately — a model switch is
   indistinguishable from a real prefix edit unless the journal is segmented per model, and `/model`
   is a normal move. The report must say so:
@@ -252,6 +263,20 @@ and the report says `dollar figures exclude qwen3-coder:30b -- no price recorded
 printing a confident `$0.00`; and every figure covers the **main agent only**, since subagent turns
 are outside the journaling middleware — the wording says `priced main-agent call(s)` for exactly
 that reason, so do not reconcile it against a fleet's total.
+
+**A third shape, since T11 (verified by its panel) — and it is the shape THIS scenario now
+produces, not the `none -- no prefix break was re-billed` line quoted above.** `rails-blog` always
+drives `qwen3-coder:30b` over ollama, which is exactly the cacheless provider F49 named: ollama has
+no prompt caching at all, so the old two-shape reading (a break, or a clean `none`) computed a
+confident `$0.00`/`none` over fields that were structurally never going to be non-zero. T11 closed
+that by making the report say so directly instead of computing a zero. **Expect the report to name
+the provider as not caching, and to quote no dollar figure at all** — not a bound of zero, and not
+the `none -- no prefix break was re-billed` sentence this section used to expect. Read this as the
+shape to look for when driving §5 today; a driver still expecting the two-shape table above will
+read a correctly-working fix as a regression. **The exact wording above is descriptive, not a
+literal quote** — `lib/lain/friction/cache_waste.rb` and `report.rb` do not carry T11's change on
+this repo's `main` as of this note, so check the actual string `lain friction` prints once T11
+lands rather than grepping for these words verbatim.
 
 **Then grep the report for anything it must not contain.** It is built from journal records and may
 carry digests, token counts and dollars — never message content, never a path. A report is pasted

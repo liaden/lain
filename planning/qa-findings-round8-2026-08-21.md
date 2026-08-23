@@ -31,11 +31,11 @@ UX/LOW), one model finding that contradicts a claim in `method.md`, and four pro
 | F43 | LOW (UX) | the blank trailer in `lain://approval` becomes its own closed one-line fold with an EMPTY `foldtext()`, which nvim pads with the `fold:` fillchar — a blank separator renders as a full-width bar of `·` |
 | F44 | LOW (UX) | `set_approval` opens the approval window when rows appear and has no close path, so after the first gated call of a session the layout permanently carries a window reading `(no approvals pending)` |
 | **F45** | **HIGH** | every `bash` tool call inherits `BUNDLE_GEMFILE` pointing at **lain's own Gemfile** (set in-process by `bundler/setup`, so invisible in `/proc/<pid>/environ`), forcing every child Ruby in the user's project into lain's bundle — `rails`, `rake`, `rspec` and `bundle` all break |
-| **F46** | **HIGH** | the per-ask iteration ceiling commits an assistant `tool_use` turn and interrupts before its `tool_result`, leaving a permanently orphaned `tool_use`: compaction is disabled for the rest of the session, occupancy pins at 100%, and the session becomes **unforkable and unresumable** |
+| **F46** | **HIGH** | an interrupt landing inside `Agent#step`'s tool-dispatch window — **not** the iteration ceiling; corrected below — commits an assistant `tool_use` turn with no `tool_result`, leaving a permanently orphaned `tool_use`: compaction is disabled for the rest of the session, occupancy pins at 100%, and the session becomes **unforkable and unresumable** |
 | F47 | MEDIUM (UX) | nothing renders that compaction has stopped — `derivation_refused.consecutive` is written and never read in `lib/`, `since_compaction: 201` sits unrendered in `state.json`, and the HUD says only `ctx 100%` |
 | F48 | LOW | the torn-head refusal says `cannot resume …` even when the door was `--fork` |
 | F49 | MEDIUM | `lain friction`'s `cache_waste` is **vacuous against ollama** for the same reason it is against a mock — ollama has no prompt caching at all — yet `rails-blog.md` §5 calls this "the only scenario that can exercise it honestly" |
-| MODEL-2 | model | a literal `<function=` malformed tool call on a **clean** transcript — contradicts `method.md`'s "contaminated transcript" claim; **measured at roughly half of first turns (3 of 6)** on an identical prompt |
+| MODEL-2 | model | a literal `<function=` malformed tool call on a **clean** transcript — contradicts `method.md`'s "contaminated transcript" claim; round 8's own sample was 3 of 6, **updated below to 11 distinct incidents across nine corpora, seven tools, 2026-08-17→08-21**, always closing byte-identically |
 | P4–P7 | process | `lain sessions`' last field is not the head digest when a damage note is appended; `method.md`'s `human>` recipe cannot exercise §7's idle-elision check; `cockpit-surfaces.md` §4's mark-acknowledgement text is stale; `pgrep -f` self-match (6th round running) |
 
 ---
@@ -603,11 +603,42 @@ the child.
 `env -u BUNDLE_GEMFILE`. A PATH shim could not be made to win — mise's PATH reconstruction dedupes
 and preserved an older relative order — so the wrapper replaced the binstub in place.*
 
-### F46 — the iteration ceiling permanently breaks compaction, fork and resume  *(HIGH, new)*
+### F46 — an interrupt inside the tool-dispatch window permanently breaks compaction, fork and resume  *(HIGH, new)*
 
-**What is wrong.** When the per-ask iteration ceiling fires, it commits the assistant's `tool_use`
-turn and interrupts before any `tool_result` is appended. The timeline is then left holding a
-`tool_use` that is **never answered**, permanently. Measured, four milliseconds apart:
+> **Correction (chunk-qa-round8-cancellation-and-environment, T14).** This section originally
+> named the per-ask iteration ceiling as the cause. **That is wrong**, and is corrected here rather
+> than silently rewritten, because the next round would otherwise read the wrong cause as settled.
+> `Budget#check_iterations!` runs at the top of `Agent#step` (`agent.rb:401`), *before*
+> `call_model` — it cannot land between the assistant commit (`agent.rb:433`) and the tool_result
+> commit (`agent.rb:516-517`), so it cannot produce this shape. The journal settles which one this
+> was: the five `run_interrupted` records in `records/journal-rails-blog.ndjson` are preceded by
+> **25, 25, 25, 25 and 12** `turn_usage` records respectively (116 total). The decisive check is the
+> shape of the `turn` record immediately preceding each `run_interrupted`, not a printed error line
+> — no journal record anywhere contains the text `loop ran 25 iterations` (`grep -c`: 0; that
+> sentence is transcript-only, not journaled):
+>
+>     for each of the five run_interrupted lines, the preceding turn record's {role, content}:
+>       1st-4th: {"role":"user","content_types":["tool_result"]}     <- settled, nothing orphaned
+>       5th:     {"role":"assistant","content_types":["tool_use"]}   <- call_f4eu93ak, unanswered
+>
+> The first four are genuine ceiling hits and each left the record **clean** — no orphaned
+> `tool_use`. The fifth came after only **12** — not the ceiling — and its preceding turn is
+> `call_f4eu93ak`'s own `tool_use` commit, 4.5–5.7ms before its `run_interrupted` (measured across
+> all five; "four milliseconds" undersold the spread). A `comm -23` between every `tool_use` id
+> journal-wide (115) and every `tool_use_id` a `tool_result` answers (114) returns exactly one line,
+> `call_f4eu93ak` — confirming it is the **only** unanswered `tool_use` in the whole journal, not
+> merely the one nearest the fifth interrupt. The window that CAN strand a call is
+> `agent.rb:433 → 517`, reachable by `Budget#interrupt` → `Async::Task#stop` (Ctrl-C,
+> `shutdown.rb:169`; grace expiry, `shutdown.rb:170`), by the token ceiling (`agent.rb:437`, unarmed
+> in chat), or by a raise out of `transition`/`perform_tools`. **The trigger in this session is not
+> identified — no Ctrl-C was sent.** Every consequence below was reproduced independently of the
+> cause and stands unchanged; only the paragraphs naming the cause, the reproduction recipe and the
+> fix shape are rewritten past this point.
+
+**What is wrong.** An interrupt landing inside `Agent#step`'s dispatch window — after the
+assistant's `tool_use` turn is committed (`agent.rb:433`) but before its `tool_result` is committed
+(`agent.rb:516-517`) — leaves the timeline holding a `tool_use` that is **never answered**,
+permanently. Measured, four milliseconds apart:
 
 ```
 14:58:25.850202Z  turn role=assistant   tool_use call_f4eu93ak (bash)   <- no tool_result, ever
@@ -637,20 +668,31 @@ Journal-wide: `tool_use` blocks for `call_f4eu93ak` = **1**, `tool_result` block
        (the run stopped mid-tool); fabricating results would falsify the record -- re-ask the
        question in a new session
 
-**The evidence that rules out the innocent explanation.** Every component here is individually
-correct, and that is the point. The ceiling is T14 working as designed (round 8 confirmed it renders
-its line and the session survives). The derivation guard is doing exactly the right thing — its own
-comment argues carefully for refusing rather than raising, and the resume refusal explicitly declines
-to fabricate. **The defect is the combination**, and it is invisible from inside either component's
-specs: two real components with specs on both sides, which is this bench's whole premise.
+   The consequence stands — both doors do refuse — but see the further qualification below: that
+   quoted reason no longer describes this journal. The recorded head is not the torn `tool_use`
+   (see item 1 there), and the actual refusal this journal produces has a different, unrelated
+   cause (item 3 there).
+
+**The evidence that rules out the innocent explanation.** The derivation guard is doing exactly the
+right thing — its own comment argues carefully for refusing rather than raising — and the resume
+refusal explicitly declines to fabricate. Both are individually correct. What is missing is a guard
+on the dispatch window itself: `agent.rb:433 → 517` is reachable by several distinct interrupt
+sources (see the correction above) and none of them leaves the `tool_use` answered. **The defect is
+the unguarded window, not any of the surrounding components**, and it is invisible from inside any
+one component's specs — two real components with specs on both sides, which is this bench's whole
+premise.
 
 Note the guard's premise is inverted here. `derived.rb`'s comment reasons about "a history that is
 perfectly legal" being awkward for a strategy. This history is *not* legal — and it was made illegal
-by lain's own ceiling, not by the model and not by the strategy. Nothing repairs it.
+by an interrupt inside lain's own dispatch window, not by the model and not by the strategy.
+Nothing repairs it.
 
-**Reproduction.** Drive any long tool-heavy ask until one ask hits 25 iterations while a `bash` call
-is in flight (`rails-blog`'s middle acts do this reliably — five `run_interrupted` records in one
-session). Then:
+**Reproduction.** Not deterministic — the triggering interrupt in this session is unidentified (see
+the correction above), so "drive until the ceiling fires" does **not** reproduce this: the four
+ceiling hits this round each left a clean record. What is known to reproduce reliably is
+`rails-blog`'s middle acts producing several `run_interrupted` records in one session (five, this
+round); the stranding one is whichever lands inside the `agent.rb:433 → 517` window, not the one at
+the iteration count. Once a torn head exists, its downstream effects are reliably drivable:
 
 ```bash
 ruby -rjson -e 'File.foreach(ARGV[0]){|l| r=JSON.parse(l) rescue next
@@ -658,13 +700,69 @@ ruby -rjson -e 'File.foreach(ARGV[0]){|l| r=JSON.parse(l) rescue next
 lain chat --resume "$SESSION"      # refuses; so does --fork
 ```
 
-**Fix shape.** The ceiling should append a synthetic `tool_result` for every `tool_use` it tears —
-an interruption notice, marked as such — before committing the interrupt. The Messages API requires
-the pairing, the model would learn why its call went unanswered, and both compaction and
-fork/resume would keep working. Writing an *honest* refusal result is not the fabrication the resume
-path rightly declines: fabricating a *tool's output* falsifies the record, while recording "this call
-was cancelled by the iteration ceiling" is the record. **What would pin it:** a spec asserting that
-after a ceiling interrupt no `tool_use` in the timeline lacks a matching `tool_result`.
+**Fix shape.** Because the triggering interrupt cannot be identified in general — Ctrl-C, grace
+expiry, a raise inside dispatch, or something this session did not exercise — a fix scoped to the
+ceiling would not close the gap. The repair belongs where every interrupt is visible regardless of
+cause: at session load, project a synthetic `tool_result` — an interruption notice, marked as such —
+onto a torn head before the rebuilt timeline is handed back. The Messages API requires the pairing,
+the model would learn on its next turn why its call went unanswered, and both compaction and
+fork/resume would keep working. Writing an *honest* cancellation result is not the fabrication the
+resume path rightly declines: fabricating a *tool's output* falsifies the record, while recording
+"this call was cancelled" is the record. **What would pin it:** a spec asserting that after any
+interrupt, no `tool_use` in a rebuilt timeline lacks a matching `tool_result`.
+
+> **A further qualification, layered on top of the correction above (T3, driving the real journal;
+> T3 has since been fixed and is in re-review — the mechanism below is reported from T3 and
+> re-checked against the journal directly where noted, but the repaired-session outcome is relayed,
+> not independently re-run here).**
+>
+> F46 as recorded above conflates three separate things.
+>
+> 1. **The recorded journal's head is not torn at all — verified.** The last committed `turn`
+>    record in `journal-rails-blog.ndjson` is `role: user, content: [tool_result]`
+>    (`grep -c '"type":"turn"'` = 235; the 235th record is a settled `tool_result`, not a dangling
+>    `tool_use`), so `pending_tool_use?` answers **false** against it. What happened: after the
+>    interrupt, a human typed another ask, and the REPL committed that user text turn *on top of*
+>    the still-dangling `call_f4eu93ak` rather than refusing or repairing at that point. The strand
+>    is not at the head — it is buried at turn 228 of 235 (`messages[227]` 0-indexed, matching the
+>    citation above), and `derivation_refused` names it four times as the derivation window walks
+>    past it (verified: exactly 4 `derivation_refused` records in the journal, each naming
+>    `call_f4eu93ak`, at shrinking indices 28/26/24/22 as the conversation grew).
+> 2. **Truncated at the tear — the state the session was actually in at the moment of the
+>    interrupt — the repair this chunk proposes works**: reported by T3 as resuming cleanly, 229
+>    turns, a valid chain, journal bytes unchanged. Not independently re-run in this pass.
+> 3. **The session's refusal to resume has a third, unrelated cause — verified.** A trailing
+>    `memory_root` record (`ts: 2026-08-21T15:03:35.663048Z`) names
+>    `turn_digest: blake3:06c233e…2737`. That digest appears in exactly two records in the whole
+>    journal: the `turn_usage` record immediately before it, and the `memory_root` itself — **never**
+>    in a `type: turn` record. The turn that digest names was accounted for but never itself
+>    journaled, most plausibly because the process ended between writing the usage record and the
+>    turn commit. Independent of the `call_f4eu93ak` strand.
+>
+> Three findings follow that have no card of their own yet:
+>
+> - **F46-b.** A strand buried mid-history rather than sitting at the head is what round 8's
+>   session actually produced, and it needs a **render-side** answer (something that notices and
+>   surfaces a buried unanswered `tool_use` wherever it sits in the chain), not only the **load-side**
+>   repair this chunk's T3/T6 target at the head.
+> - **F46-c.** The REPL committing a new turn on top of a dangling `tool_use`, rather than refusing
+>   or repairing at that exact commit, is upstream of every repair this chunk builds — a session that
+>   never let this happen would not need a head-repair, a buried-strand repair, or a resume refusal
+>   at all.
+> - **F46-d.** Load-side salvage never gets a chance to run for THIS failure shape, and the reason
+>   is a specific mechanism, not `#rebuild`'s door order in the abstract. This journal carries **0**
+>   `session_closed` records, so `Anchor#open?` reads it as OPEN — exactly the state
+>   `SessionRecord::Salvage` (`lib/lain/session_record/salvage.rb`, real and shipped) exists to
+>   attempt salvage against. But `Bench::Session::Loader#recording` builds its `memory:` keyword
+>   EAGERLY, as part of constructing the `Recording` itself (`bench/session/loader.rb`), and
+>   `MemoryReplay#agree!` (`bench/session/memory_replay.rb:119-126`) raises `Corrupt` —
+>   `"memory_root record names turn <digest>, which is not in the turn chain"` — for exactly the
+>   trailing `memory_root` item 3 names. `CLI::Resume#rebuild` calls `load_recording(path)` (which
+>   triggers that raise) BEFORE it calls `salvage(path, recording)` on the next line, so the raise
+>   unwinds the whole `#rebuild` before salvage is ever reached. `SessionRecord::Salvage` is real,
+>   shipped, and built for a different situation than either strand — an OPEN recording carrying a
+>   paid-for but uncommitted response in the response WAL — and would have been reachable for this
+>   session's open state if the eager memory fold had not raised first.
 
 ### F47 — nothing tells the human compaction has stopped  *(MEDIUM, UX, new)*
 
@@ -726,8 +824,10 @@ cached) but read together they contradict each other, and nothing on the page re
   pass answered at the terminal throughout, which was a deliberate workaround for F40 and is worth
   knowing shaped how this scenario had to be driven.
 - `.lain/config.toml` was never written in any project — no durable pre-approval was created.
-- **§4, session lifetime:** 116 `turn_usage`, 5 `run_interrupted` (the ceiling), and the session kept
-  answering after every one of them — T14 holding, five times over.
+- **§4, session lifetime:** 116 `turn_usage` across 5 `run_interrupted` records, preceded by
+  25/25/25/25/12 `turn_usage` respectively. The first four are ceiling hits (T14 holding) and the
+  session kept answering cleanly after each. The fifth, after only 12, is **F46** — not the
+  ceiling — and is where the session stopped being able to compact, fork or resume.
 
 ### `bowling-ruby`
 
@@ -759,7 +859,26 @@ cached) but read together they contradict each other, and nothing on the page re
 
 ## Model behaviour — not lain defects
 
-**MODEL-2 — a malformed tool call on a CLEAN transcript, at roughly a 50% rate.** The standing note
+**MODEL-2 — a malformed tool call on a CLEAN transcript, at roughly a 50% rate (round 8's own sample; superseded by the incidence below).**
+
+> **Update (T12, panel-verified) — the incidence below was a single-round sample, and the real
+> figure is larger.** Measured across the QA corpora rather than this round alone: **11 distinct
+> incidents across nine corpora, on seven different tools, 2026-08-17 → 08-21**, and every single
+> occurrence closes with the **byte-identical** sequence `</parameter>\n</function>\n</tool_call>` —
+> one recurring shape, not several independent ones, which is the detail worth carrying forward
+> more than the count. Separately, and these are two different counts of two different things, not
+> one figure restated: a **naive** `<function=` substring match finds **exactly the same 20 raw
+> fires** as a structurally narrowed detector (closing envelope, tool name in the live toolset,
+> envelope at the trailing content) — **20** including mirrored copies of the same failure recorded
+> in more than one place, de-duplicating to **~12 distinct sessions**, consistent with (not a
+> contradiction of) the 11-incident headline above. T12's panel scoped that comparison to **181**
+> assistant turns actually in scope for it, not the full **1,267** recorded assistant turns across
+> the corpora — against 181, the rate is 20/181 ≈ 11%; against the unscoped 1,267 it reads as ≈1.6%,
+> roughly 7× lower and the wrong denominator for "how often does this fire." The narrowing's benefit
+> is unmeasurable against either denominator, and the reason is a method artifact rather than a
+> detector one. See **P10** below.
+
+The standing note
 says of the literal `<function=` failure: *"the trigger is a contaminated transcript, not payload
 length — the same prompt that failed twice in a poisoned session succeeded immediately in a fresh
 one."* The first pass reproduced it on a session whose entire history was **two trivial one-word
@@ -875,6 +994,22 @@ gems the project does not have, they belong somewhere the lain process cannot re
 whatever the arrangement, **`git status` on the repo is part of QA close-out**, not just
 `find ~/.local/state/lain`. The round-8 close-out verified the sandbox negative and never looked at
 the working tree it was launched from.
+
+**P10 — `method.md`'s restart-at-first-`<function=` rule makes one comparison structurally
+unmeasurable, not just costly (from T12's corpus survey, see MODEL-2).** The rule itself is correct
+driving discipline: once a transcript shows the literal `<function=` envelope, restart rather than
+keep driving it — a poisoned transcript never recovers. Its unnamed consequence is a corpus shape:
+because every QA session is abandoned at the FIRST `<function=` sighting, the corpus this bench
+accumulates can never contain a session where the model discusses or explains the syntax in prose
+without emitting it as a call. That is exactly the shape a narrowed detector would need to see to
+demonstrate itself against a naive substring match, and its absence is why the naive match and the
+narrowed detector agree on the same 20 raw fires (T12's panel scoped to 181 assistant turns in
+scope for the comparison, not the full 1,267 recorded across the corpora) — not because the
+narrowing has been proven unnecessary, but because the corpus has never been able to generate the
+one case that would tell them apart. **Not a bug to fix** — restarting on sight is still the right
+call — but a documented blind spot: a future round should not read "0 divergence between naive and
+narrowed" as validation of the narrowing rather than as an artifact of a corpus that structurally
+cannot produce a false positive to catch.
 
 **One process note that is not a defect:** three `lain chat` launches inside one `$(...)` command
 substitution appeared to take ~100s each; measured individually with output redirected to a file
@@ -992,7 +1127,9 @@ Applied to `planning/qa/` in the same pass as this document:
    driven, and `rails-blog` records that §1 was first reached on 2026-08-21 while §2 still has not
    been.
 
-**Still owed to the method and not done here:** `method.md`'s "refuse anything reaching outside the
-sandbox" should become an allow-list against `$QA` rather than an enumeration of forbidden prefixes
-(**P8**), and `rails-blog.md` §2 should say that turn count and result size are different volumes and
-that only the first was reached.
+**Done since, in `chunk-qa-round8-cancellation-and-environment` T14:** `method.md`'s "refuse
+anything reaching outside the sandbox" is now an allow-list against `$QA` (**P8**), `rails-blog.md`
+§2 now says turn count and result size are different volumes and that only the first was reached,
+`method.md`'s close-out now includes `git status` on the repo plus the `GEM_HOME`/`exe/lain`
+warning (**P9**), and **P10** (the restart-at-first-`<function=` corpus-shape blind spot,
+surfaced later by T12) is recorded above beside MODEL-2.

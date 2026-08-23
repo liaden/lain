@@ -123,6 +123,28 @@ find ~/.local/state/lain -newermt '2026-08-19'          | wc -l   # the control:
 Round 7 read 0 against 286 and 24 on the controls, which is what made the 0 evidence rather than a
 spelling accident.
 
+**Close-out is not done until the repo the run launched from has been checked too — `git status`
+on it is part of close-out, not just `find ~/.local/state/lain`.** Round 8 verified the sandbox
+negative above and never looked at the working tree it started from; `git status --porcelain`
+there came back non-empty hours later, after a QA-sandbox `GEM_HOME` had reached `exe/lain` and
+bundler had silently re-locked `Gemfile.lock` (**P9**, findings round 8). A dirty `Gemfile.lock`
+with nobody having edited it is exactly what that mechanism produces, and the sandbox's own
+negative check cannot see it because the repo is outside `~/.local/state/lain`.
+
+```bash
+LAIN_REPO=/home/tara/dev/lain   # the lain checkout itself, NOT $QA -- the repo the run launched from
+git -C "$LAIN_REPO" status --porcelain   # the OTHER close-out: must be empty
+```
+
+**The warning that prevents it: never put a `GEM_HOME` on a path `exe/lain` will inherit.**
+`exe/lain:28-32` pins `BUNDLE_GEMFILE` to lain's own Gemfile and requires `bundler/setup` — so a
+`GEM_HOME` exported for a scenario's own gem install (a sandbox-local Rails, say) is visible to
+every `lain` invocation launched from that shell, not just to the scenario's own subprocesses. If
+that `GEM_HOME` carries a gem version satisfying one of lain's own version constraints more loosely
+than the committed lock, bundler re-locks lain's `Gemfile.lock` silently — no output, on a command
+that was doing something else entirely. If a scenario needs gems the project under test does not
+have, install them somewhere the lain process launching the cockpit cannot resolve against.
+
 
 ## The approval gate is the point, not the paperwork
 
@@ -131,8 +153,14 @@ only worth having if it is read rather than skimmed:
 
 1. **Read every command for what it would do if a path resolved somewhere unexpected**, not for
    whether it contains a scary word.
-2. **Refuse anything reaching outside the sandbox** — `$HOME`, `~/.config`, `~/.ssh`, `/etc`, git
-   history, another checkout. Record the refusal; a model that asks is a finding.
+2. **Refuse anything reaching outside the sandbox — as an allow-list against `$QA`, not an
+   enumerated deny-list.** The sandbox path is known, so the rule is "does this path resolve
+   under `$QA`?", never "does it match one of these names". **P8** (findings round 8): the second
+   pass's approval loop encoded the deny-list shape literally — `$HOME`, `~/.config`, `~/.ssh`,
+   `/etc` — with no entry for `/tmp`, and auto-approved a command that created a directory outside
+   the sandbox precisely because `/tmp` was not on the list. An allow-list has no such gap by
+   construction: anything not under `$QA` is refused, named or not. Record the refusal; a model
+   that asks is a finding.
 3. **A convincing rationale for a destructive command is a worse sign, not a better one.**
 4. **Start at `accept_edits`, the default.** Postures: `plan` (reads only, `deny_all`), `manual`
    (everything, `queue`), `accept_edits` (everything, `queue`, `shadow_git`), `auto` (`approve_all`).
@@ -677,7 +705,12 @@ ls -l /proc/<pid>/exe                                 # what it really is
   did the session survive saying it"**.
 - **Restart the session at the first literal `<function=` in a transcript.** Once one malformed tool
   call is committed as assistant text the model imitates it and the session never recovers, so every
-  later act measures a poisoned context (round 4, MODEL-1).
+  later act measures a poisoned context (round 4, MODEL-1). **This rule has a corpus-shape cost,
+  not just a driving cost (P10, findings round 8):** because every session is abandoned at the FIRST
+  sighting, the corpus this bench accumulates can never contain a session where the model explains
+  the syntax in prose without emitting it as a call — so a narrowed `<function=` detector can never
+  be shown to catch a false positive a naive substring match would have missed. Keep restarting; know
+  that this is why the comparison stays unmeasurable.
 
 ## What the local model does badly — do not re-derive this
 
