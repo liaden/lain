@@ -276,14 +276,39 @@ module Lain
         #   through; rides the spawn seam so a child can enrol its own asker
         #   ({Wiring::Askers#enrol}). Defaults to {Wiring::Askers.unwired} for the
         #   direct-construction seams the specs drive.
-        # @option options [Boolean] :auto_approve the ONE key this class reads --
-        #   everything else in the parsed options belongs to somebody further up.
-        #   Last, after every `@param`, because yard-lint fixes that order.
+        # @param root [String] the PROJECT's root, handed down by {Wiring} the way
+        #   {Wiring#epic_mount} and {ReviewSeams} are handed one -- this object
+        #   holds no Project. Read only to resolve `exec` below; a container
+        #   MOUNTS it, so a chat started in a subdirectory (or under
+        #   `--root PATH`) still shows its commands the project they belong to.
+        #
+        #   REQUIRED, joining the nine other required keywords rather than
+        #   defaulting to `Dir.pwd` -- `spec/lain/project/root_defaults_spec.rb`
+        #   is the mechanical form of the argument, and a mounted root is the
+        #   sharpest case it exists for. The sole production caller already
+        #   threads `project.root`; nothing is made harder by saying so.
+        # @param exec [#call] the {Lain::Exec} backend {Lain::Tools::Bash}
+        #   becomes a process through. Resolved HERE rather than in {Wiring},
+        #   because which transport a capability uses is a fact about the
+        #   TOOLSET -- this class already reads `:auto_approve` off the same
+        #   options and builds a collaborator from it. Injectable all the same,
+        #   which is what lets a spec pin a backend the box cannot run.
+        #
+        #   It resolves at CONSTRUCTION, so an unrecognized `--exec` refuses
+        #   before {Chronicle#start} pins the session header -- the
+        #   refusal-before-journal ordering {Wiring#fleet_isolation} keeps.
+        # @option options [Boolean] :auto_approve the ONE key this class reads
+        #   for a collaborator, alongside the two `--exec` keys the `exec:`
+        #   default reads -- everything else in the parsed options belongs to
+        #   somebody further up. Last, after every `@param`, because yard-lint
+        #   fixes that order.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
-                       switchboard: -> { NoSwitchboard }, askers: Askers.unwired)
+                       root:, switchboard: -> { NoSwitchboard }, askers: Askers.unwired,
+                       exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:))
           @library = library
           @backend = backend
           @options = options
+          @exec = exec
           @epic = epic
           @askers = askers
           @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:,
@@ -300,7 +325,7 @@ module Lain
         #   replier fiber parks on the same object
         # @return [Lain::Toolset]
         def build(recorder, ask_human:)
-          base = Lain::Toolset.new(BaseTools.build(recorder))
+          base = Lain::Toolset.new(BaseTools.build(recorder, exec: @exec))
           @role_spawn = role_spawn_seam(base)
           @docent = Lain::Review::Docent::Answerer.new(spawn: @role_spawn)
           @auto_surface = (Lain::Approval::AutoSurface.new(role_spawn: @role_spawn) if options[:auto_approve])

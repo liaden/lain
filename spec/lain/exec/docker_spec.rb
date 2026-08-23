@@ -1,0 +1,388 @@
+# frozen_string_literal: true
+
+require "fileutils"
+require "socket"
+
+# Why a real container run may not happen here, in the operator's own words.
+# Three separate preconditions with three different fixes, so the skip names
+# WHICH one is missing rather than saying "no docker" for all of them --
+# spec/support/tags.rb's :core and :vsock blocks are the shape.
+#
+# The image is required to be PRESENT LOCALLY on purpose: a :seam spec touches
+# no network, and letting `docker run` pull would make the first run of this
+# file a download.
+#
+# ⚠️ ASKED ONCE, FROM A `before(:context)`, and never at file load. tags.rb's
+# :nvim and :core gates read a CHEAP LOCAL fact (a binary on PATH, a built
+# artifact); `docker info` asks a DAEMON, which on a box with a remote
+# `DOCKER_HOST` can hang. At load that cost is paid by every parallel_rspec
+# worker before any example is selected -- including under `--tag '~seam'`,
+# which selects none of them. RSpec's own once-per-group hook runs only when
+# the group has an example to run, which is exactly the condition wanted, and
+# it needs no memo of its own: measured at 0 probes under `--tag '~seam'` and
+# 1 for the whole group otherwise.
+#
+# A top-level module, not a constant inside `RSpec.describe do ... end` -- one
+# of those lands on Object, where another spec file spelling the same name
+# silently clobbers it.
+module DockerBackendAvailability
+  IMAGE = Lain::Exec::Docker::DEFAULT_IMAGE
+
+  def self.probe(*argv) = system(*argv, out: File::NULL, err: File::NULL)
+
+  def self.unavailability
+    return "no `docker` client on PATH" unless probe("docker", "--version")
+    return "the docker daemon is not answering `docker info`" unless probe("docker", "info")
+    return nil if probe("docker", "image", "inspect", IMAGE)
+
+    "the image #{IMAGE} is not present locally -- run `docker pull #{IMAGE}`; a :seam spec must not pull it"
+  end
+end
+
+# The container arm of the exec seam. Split in two on purpose, because the two
+# halves answer different questions and only one of them needs a docker daemon:
+#
+# * The ARGV this backend builds is asserted against a recording inner backend.
+#   That is where the mount set, the workdir, the scrub and the refusal live,
+#   and every one of them is decided before a container exists.
+# * What a real container actually does is asserted in the :seam block below,
+#   which skips -- loudly, naming the missing precondition -- without docker.
+RSpec.describe Lain::Exec::Docker do
+  subject(:backend) { described_class.new(image: "img:1", project:, exec: inner, user: "1000:1000") }
+
+  # Stands in for the inner {Lain::Exec} backend the docker argv is run
+  # through, recording the whole call rather than only the command: the cwd and
+  # env this backend hands the DOCKER CLIENT are decisions of its own.
+  let(:inner) do
+    Class.new do
+      attr_reader :command, :cwd, :env, :timeout, :sinks
+
+      def call(command:, cwd:, env:, timeout:, **sinks)
+        @command = command
+        @cwd = cwd
+        @env = env
+        @timeout = timeout
+        @sinks = sinks
+        Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+      end
+    end.new
+  end
+
+  let(:project) { "/srv/project" }
+
+  def run(command: "echo hi", cwd: project, env: {}, timeout: 30, **)
+    backend.call(command:, cwd:, env:, timeout:, **)
+  end
+
+  # One argv Array inside a one-stage TERM: the docker client is exec'd
+  # directly, never through a shell of ours.
+  def argv
+    expect(inner.command.size).to eq(1)
+    inner.command.first
+  end
+
+  def flag_values(name) = argv.each_cons(2).select { |flag, _| flag == name }.map(&:last)
+
+  describe "the docker invocation it builds" do
+    it "runs one throwaway container per command" do
+      run
+
+      expect(argv.first(4)).to eq(%w[docker run --rm --user])
+    end
+
+    it "puts the image immediately before what the container is asked to run" do
+      run(command: "echo hi")
+
+      expect(argv.last(4)).to eq(["img:1", "sh", "-c", "echo hi"])
+    end
+
+    it "hands the command to `sh -c` inside the container, exactly as the local arm does" do
+      run(command: "echo one && echo two")
+
+      expect(argv.last(3)).to eq(["sh", "-c", "echo one && echo two"])
+    end
+
+    it "passes the caller's timeout through to whatever runs the client" do
+      run(timeout: 7)
+
+      expect(inner.timeout).to eq(7)
+    end
+
+    it "streams the caller's live sinks, because the client's own stdout is the command's" do
+      out = []
+      run(stdout_sink: out)
+
+      expect(inner.sinks).to include(stdout_sink: out)
+    end
+  end
+
+  describe "what the container can see" do
+    it "mounts the project at its own path, so the paths in a command mean the same thing" do
+      run
+
+      expect(flag_values("--volume")).to eq(["/srv/project:/srv/project"])
+    end
+
+    it "works in the cwd the caller resolved" do
+      run(cwd: "/srv/project/lib")
+
+      expect(flag_values("--workdir")).to eq(["/srv/project/lib"])
+    end
+
+    it "mounts nothing extra for a cwd inside the project" do
+      run(cwd: "/srv/project/lib")
+
+      expect(flag_values("--volume")).to eq(["/srv/project:/srv/project"])
+    end
+
+    # The mount set is exactly {project} plus {cwd}, and never more. That is
+    # STRICTLY narrower than the local backend, which hands the command the
+    # whole host filesystem -- it is not confinement, and the class doc says so.
+    it "mounts a cwd that lies outside the project as well, rather than working in an empty directory" do
+      run(cwd: "/tmp/elsewhere")
+
+      expect(flag_values("--volume")).to eq(["/srv/project:/srv/project", "/tmp/elsewhere:/tmp/elsewhere"])
+    end
+
+    it "mounts the project once when the cwd IS the project" do
+      run(cwd: project)
+
+      expect(flag_values("--volume")).to eq(["/srv/project:/srv/project"])
+    end
+
+    # A sibling whose name merely STARTS with the project's is not inside it.
+    it "does not take a lexical prefix for containment" do
+      run(cwd: "/srv/project-notes")
+
+      expect(flag_values("--volume").size).to eq(2)
+    end
+
+    it "runs as the calling user, so files a command writes are owned the way the local backend owns them" do
+      run
+
+      expect(flag_values("--user")).to eq(["1000:1000"])
+    end
+  end
+
+  # THE BLOCKER THIS ROUND FIXED. `/proc/<pid>/cmdline` is world-readable and
+  # `/proc/<pid>/environ` is owner-only, so a value on the docker client's
+  # command line is a disclosure `Exec::Local` -- which passes the same values
+  # by fork inheritance -- does not make. Measured against a real
+  # `WorkerEnv.default`: 62 `--env NAME=value` flags, carrying
+  # CLAUDE_CODE_MESSAGING_TOKEN, STARSHIP_SESSION_KEY and, in any real chat,
+  # ANTHROPIC_API_KEY. The argv now carries NAMES; the values ride the client's
+  # own environment, which is where Local already keeps them.
+  describe "what reaches the command line" do
+    it "puts no value on the command line, whatever the session is carrying" do
+      secret = "sk-ant-do-not-disclose"
+
+      run(env: { "LAIN_TOKEN" => secret, "LANG" => "en_GB.UTF-8" })
+
+      expect(argv.grep(/#{Regexp.escape(secret)}/)).to be_empty
+      expect(argv.join(" ")).not_to include(secret)
+    end
+
+    it "names the variable instead, so docker forwards it from the client's own environment" do
+      run(env: { "LAIN_TOKEN" => "sk-ant-do-not-disclose" })
+
+      expect(flag_values("--env")).to eq(["LAIN_TOKEN"])
+    end
+
+    # The client is a host process and keeps the host's environment, so the
+    # value has to reach it as an override -- that is the whole mechanism by
+    # which a bare `--env NAME` forwards anything.
+    it "hands the client the values it will forward, where only its owner can read them" do
+      run(env: { "LAIN_TOKEN" => "sk-ant-do-not-disclose" })
+
+      expect(inner.env).to eq({ "LAIN_TOKEN" => "sk-ant-do-not-disclose" })
+    end
+
+    # DOCKER_HOST / DOCKER_CONTEXT select which daemon the client addresses and
+    # are the operator's to set. An additive override map leaves them in place;
+    # the inner backend still applies the framework scrub over the top.
+    it "overrides only what crosses, so the operator's daemon selection survives" do
+      run(env: { "LAIN_TOKEN" => "x", "DOCKER_HOST" => "ssh://box" })
+
+      expect(inner.env.keys).to eq(["LAIN_TOKEN"])
+    end
+  end
+
+  # F45's third arm, and the SHOULD-FIX that closed with it. The container
+  # starts from the image's environment, so a variable crosses only by being
+  # named -- which makes the question "what crosses?" an allowlist, not a
+  # denylist over an unbounded set.
+  describe "what crosses into the container" do
+    it "never names a framework variable" do
+      capture = backend.call(command: "env", cwd: project, timeout: 5,
+                             env: { "BUNDLE_GEMFILE" => "/lain/Gemfile", "RUBYOPT" => "-rbundler/setup" })
+
+      expect(capture.exit_status).to eq(0)
+      expect(flag_values("--env")).to be_empty
+    end
+
+    it "scrubs a framework variable inherited from the live process, not only one the caller passed" do
+      with_env("BUNDLE_GEMFILE" => "/lain/Gemfile") do
+        run(env: { "LAIN_LENT" => "on loan" })
+      end
+
+      expect(flag_values("--env")).to eq(["LAIN_LENT"])
+    end
+
+    it "crosses a variable in lain's own namespace, which is how a session lends one" do
+      run(env: { "LAIN_LENT" => "on loan" })
+
+      expect(flag_values("--env")).to include("LAIN_LENT")
+    end
+
+    it "crosses locale, which means the same thing on both sides" do
+      run(env: { "LANG" => "en_GB.UTF-8", "LC_ALL" => "C", "TZ" => "Europe/London" })
+
+      expect(flag_values("--env")).to eq(%w[LANG LC_ALL TZ])
+    end
+
+    # The image describes the machine it is: its own PATH, its own HOME.
+    it "leaves the variables that describe the machine to the image" do
+      run(env: { "PATH" => "/home/linuxbrew/bin", "HOME" => "/home/tara", "LAIN_LENT" => "1" })
+
+      expect(flag_values("--env")).to eq(["LAIN_LENT"])
+    end
+
+    # The measured list from the panel's probe. Every one names a HOST path
+    # that does not exist inside the container, and a ten-name denylist had
+    # none of them. LD_LIBRARY_PATH is this repo's OWN required export.
+    it "crosses none of the host paths a denylist missed" do
+      run(env: { "LD_LIBRARY_PATH" => "/home/linuxbrew/.linuxbrew/lib", "GEM_HOME" => "/home/tara/.gem",
+                 "RUBYLIB" => "/home/tara/lib", "TMPDIR" => "/home/tara/tmp/lain",
+                 "XDG_RUNTIME_DIR" => "/run/user/1000", "SSH_AUTH_SOCK" => "/run/user/1000/ssh-agent" })
+
+      expect(flag_values("--env")).to be_empty
+    end
+
+    # THE INVERSION, stated as an example because a comment cannot fail.
+    # {Exec.child_env} keeps GEM_* deliberately -- "the child still has to find
+    # its gems" -- and that is a HOST fact. A container's gems are the image's,
+    # so the same name must NOT cross here.
+    it "does not carry GEM_HOME across, though the local arm deliberately keeps it" do
+      expect(Lain::Exec.child_env({ "GEM_HOME" => "/host/gems" })).to include("GEM_HOME" => "/host/gems")
+
+      run(env: { "GEM_HOME" => "/host/gems" })
+
+      expect(flag_values("--env")).to be_empty
+    end
+
+    it "runs the client from the project, a directory that certainly exists" do
+      run(cwd: "/tmp/elsewhere")
+
+      expect(inner.cwd).to eq(project)
+    end
+  end
+
+  describe "a shape it cannot run" do
+    it "runs a single-stage term as argv, with no shell inside the container either" do
+      run(command: [%w[grep -r foo .]])
+
+      expect(argv.last(5)).to eq(["img:1", "grep", "-r", "foo", "."])
+    end
+
+    # A container takes ONE argv and a pipe needs a shell. Joining the stages
+    # back into a string is the one thing this must not do -- it would hand
+    # `sh -c` the very command the term path exists to keep away from it
+    # (Shell::Verdict's own rule, and {Exec::Core} refuses for it too).
+    it "refuses a piped term loudly rather than joining it back into a shell string" do
+      expect { run(command: [%w[grep -r foo .], %w[wc -l]]) }
+        .to raise_error(Lain::Exec::Unsupported, /one argv|pipe/i)
+    end
+
+    it "says the stages out loud in the refusal, so the caller can see what it handed over" do
+      expect { run(command: [%w[grep foo], %w[wc -l]]) }
+        .to raise_error(Lain::Exec::Unsupported, /grep/)
+    end
+
+    # WHY the contract paragraph in exec.rb had to be corrected rather than
+    # left alone. It called Unsupported "a CALLER's bug" that no tool rescues,
+    # on the premise that a caller holding both shapes would not offer a term
+    # to a string-only backend. {Tools::Bash} holds both and offers whatever
+    # the verdict returns -- and the verdict ALLOWS an ordinary pipeline, so
+    # this is reachable in normal use, not a programming error.
+    it "is reachable from an ordinary command, because the verdict allows a pipeline" do
+      decision = Lain::Shell::Verdict.new.call("grep -r foo . | wc -l")
+
+      expect(decision).to be_allow
+      expect(decision.term.size).to be > 1
+      expect { run(command: decision.term) }.to raise_error(Lain::Exec::Unsupported)
+    end
+  end
+
+  # The real thing. Everything above decides an argv; this is the only place a
+  # container actually starts, and it is why the backend is worth having.
+  describe "in a real container", :seam do
+    # Two hooks, because `skip` is not supported inside a `before(:context)`:
+    # that one asks the question once for the group, this one acts on the
+    # answer per example.
+    #
+    # The cop's hazard is state LEAKING between examples, and what this sets is
+    # a String that every example reads and none writes -- the probe's answer
+    # cannot change mid-run. The alternatives both cost something real: a class
+    # instance variable trips ThreadSafety/ClassInstanceVariable, and a `let`
+    # re-probes per example, which on the box this hook exists for (a remote
+    # DOCKER_HOST where `docker info` hangs) turns one hang into six.
+    before(:context) { @unavailable = DockerBackendAvailability.unavailability } # rubocop:disable RSpec/BeforeAfterAll
+
+    before { skip("Lain::Exec::Docker :seam skipped -- #{@unavailable}") if @unavailable }
+
+    around do |example|
+      Dir.mktmpdir("lain-exec-docker") do |dir|
+        @project = File.realpath(dir)
+        example.run
+      end
+    end
+
+    # The REAL default image, the real user, the real inner backend -- only the
+    # project is a throwaway.
+    let(:real) { described_class.new(project: @project) }
+
+    def run_real(command, cwd: @project, env: {}, timeout: 60)
+      real.call(command:, cwd:, env:, timeout:)
+    end
+
+    it "runs the command somewhere that is not this machine" do
+      capture = run_real("hostname")
+
+      expect(capture.exit_status).to eq(0)
+      expect(capture.stdout.strip).not_to eq(Socket.gethostname)
+    end
+
+    it "shows the command the project's own files" do
+      File.write(File.join(@project, "witness.txt"), "seed\n")
+
+      capture = run_real("cat witness.txt")
+
+      expect(capture.stdout).to eq("seed\n")
+    end
+
+    it "keeps lain's own Gemfile out of the container, whatever the host is carrying" do
+      capture = with_env("BUNDLE_GEMFILE" => "/home/tara/dev/lain/Gemfile") do
+        run_real(%(env; echo scanned), env: ENV.to_h)
+      end
+
+      expect(capture.stdout).to include("scanned")
+      expect(capture.stdout).not_to include("BUNDLE_GEMFILE")
+    end
+
+    it "writes into the mounted project as the calling user, not as root" do
+      run_real("touch made-inside")
+
+      made = File.join(@project, "made-inside")
+      expect(File.exist?(made)).to be(true)
+      expect(File.stat(made).uid).to eq(Process.uid)
+    end
+
+    it "reports a nonzero exit the way the local backend does" do
+      expect(run_real("exit 3").exit_status).to eq(3)
+    end
+
+    it "raises the seam's one Timeout when the command outlives its deadline" do
+      expect { run_real("sleep 30", timeout: 1) }.to raise_error(Lain::Exec::Timeout)
+    end
+  end
+end

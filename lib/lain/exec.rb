@@ -28,12 +28,29 @@ module Lain
   # rescues this contract has to know everything that can come out of it:
   #
   # * **Not every backend takes both shapes.** {Core} has no wire shape for a
-  #   TERM and refuses one with {Unsupported} -- loudly, and never by joining it
+  #   TERM at all, and {Docker} none for a PIPED one -- a container takes one
+  #   argv. Both refuse with {Unsupported}: loudly, and never by joining the term
   #   back into a string, which would hand `sh -c` the very command the term path
-  #   exists to keep away from it. Like {Shell::Pipeline}'s NoMethodError on a
-  #   malformed term, that is a CALLER's bug rather than a model's input, so no
-  #   tool rescues it: a caller holding either shape must not offer a term to a
-  #   string-only backend.
+  #   exists to keep away from it.
+  #
+  #   ⚠️ THIS IS NOT A CALLER'S BUG, and an earlier edition of this paragraph
+  #   said it was -- that no tool rescues it, because "a caller holding either
+  #   shape must not offer a term to a string-only backend". {Tools::Bash} holds
+  #   both shapes and offers whichever {Shell::Verdict} returns, and the verdict
+  #   ALLOWS an ordinary pipeline (`grep -r foo . | wc -l`, pinned in
+  #   `spec/lain/exec/docker_spec.rb`). So under `--exec docker` a perfectly
+  #   ordinary command reaches a backend with no shape for it, through nobody's
+  #   mistake. It degrades correctly rather than accidentally: a
+  #   `rescue StandardError` in Effect::Handler::Live turns it into a
+  #   `tool_result` with `is_error` naming the stages, which is the honest answer
+  #   to "this backend cannot run that" -- but a blanket rescue is what is doing
+  #   it, not a design.
+  #
+  #   What is missing is a MESSAGE: a backend cannot say which shapes it takes,
+  #   so {Tools::Bash} cannot ask before it chooses an arm. A `#takes_term?`
+  #   predicate on the three backends, consulted where the arm is chosen, is the
+  #   fix; it touches {Local}, {Core} and {Tools::Bash}, so it belongs to a card
+  #   that owns them. Until then this paragraph is the warning.
   # * **A backend can fail to enforce its own deadline**, which is a different
   #   fact from a command that hit one. {Unenforced} says which -- and it IS a
   #   {Timeout}, so a caller carrying the single `rescue Exec::Timeout` this
@@ -65,8 +82,11 @@ module Lain
     # it as one; a subclass, because {Tools::CoreExec} says which happened.
     class Unenforced < Timeout; end
 
-    # The backend has no shape for what it was handed -- {Core} given a TERM. A
-    # caller's bug, not a model's input, so it is loud and nothing rescues it.
+    # The backend has no shape for what it was handed -- {Core} given a TERM,
+    # {Docker} given a PIPED one. NOT a caller's bug, and not a model's input:
+    # {Tools::Bash} offers whichever shape {Shell::Verdict} returns, and the
+    # verdict allows an ordinary pipeline. The carve-out above is the account of
+    # what rescues this and what message is missing; this is not a second one.
     class Unsupported < Lain::Error; end
 
     # Inherited env whose presence binds a child to LAIN's OWN bundler / rspec
@@ -105,3 +125,4 @@ end
 
 require_relative "exec/local"
 require_relative "exec/core"
+require_relative "exec/docker"

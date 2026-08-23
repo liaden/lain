@@ -209,6 +209,17 @@ the cop.
   regression took a file from 32 examples to 22 while reporting a clean pass, and the truncation
   point moved with the seed. Under `parallel_rspec` that is indistinguishable from the OOM-kill
   shape above. Pass `debug: true` to any Thor `.start` in a spec, and check the example COUNT.
+
+  **`debug: true` is necessary and not sufficient** (2026-08-22, a second witness). It re-raises
+  refusals *Thor* turns into an exit; it does nothing about an `exit` the COMMAND ITSELF calls.
+  `LainCLI#chat` ends in `exit launch.exit_status if options[:non_interactive]`, so a spec driving
+  `start(%w[chat --non-interactive --prompt hi], debug: true)` — with `ChatLaunch` doubled, so the
+  chat never ran — still exited 0 mid-example. `cli_spec.rb` reported **"7 examples, 0 failures"**
+  having silently dropped 32, and the surviving 7 all genuinely passed, so nothing looked wrong.
+  What catches it is the COUNT and only the count: `grep -cE '^\s+it ' <file>` against what the
+  run reports. Grep the command under test for a bare `exit` before driving it, and either avoid
+  the flag that reaches one or wrap the call in a `raise_error(SystemExit)` matcher, which catches
+  it.
 - **The known load-induced flakes, by name** (2026-08-18; all pass in isolation, all driven by real
   `git`/`tmux`/`nvim` under a loaded box — see the TMPDIR note above before believing any of them):
   `Lain::Frontend::Neovim ... re-attach is idempotent: no duplicate commands, and
@@ -254,3 +265,7 @@ the cop.
   `Include` patterns do not match `.toml`. **An `Exclude` entry does not save you** — verified:
   `AllCops: Exclude` governs RuboCop's own file *discovery*, not a path a human hands it
   directly, so the file is still parsed when named. The only defence is not naming it.
+
+  **The rule is general, not `.toml`-specific** (2026-08-22): naming `docs/toolchain-traps.md`
+  on a `rubocop` command line makes it parse THIS FILE as Ruby and report offenses in the
+  prose. Harmless only because no `-a` was passed. Name Ruby files, and nothing else.

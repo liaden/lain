@@ -23,6 +23,12 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   let(:ask_human) { Lain::Tools::AskHuman.new(parent: -> { Lain::Timeline.new }) }
   let(:options) { {} }
 
+  # A root the working directory could never be mistaken for. `root:` is
+  # required now (see the constructor's note and
+  # spec/lain/project/root_defaults_spec.rb), and stating an obviously-fake one
+  # is what makes "the value flows" visible rather than coincidental.
+  let(:root) { "/srv/toolset-build-project" }
+
   # The run's own spooled provider and live parent handle, held as lets so the
   # spawn seam's members can be asserted by identity rather than by type.
   let(:provider) { backend.provider(spool: chronicle.spool) }
@@ -64,10 +70,48 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
   def build_with(options, **over)
     described_class.new(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
-                        **over)
+                        root:, **over)
   end
 
   describe "#build" do
+    # T2. `--exec` names WHERE a shell command becomes a process, and the bash
+    # tool is the one place in the capability floor that becomes one. The
+    # backend is INJECTED down to it rather than resolved here, for
+    # {Lain::CLI::Wiring}'s reason: a container mounts the PROJECT's root, and
+    # this object has no Project to read one from.
+    #
+    # `@exec` is read through the ivar because {Lain::Tools::Bash} exposes no
+    # reader for it -- the transport is a run's choice, not a fact the tool
+    # publishes. cli_spec.rb reads `@config` off a Provider the same way.
+    describe "the exec backend the bash tool becomes a process through" do
+      def bash_backend(toolset) = toolset.fetch("bash").instance_variable_get(:@exec)
+
+      it "hands the bash tool the backend it was built with" do
+        chosen = Lain::Exec::Docker.new(image: "img:1", project: "/srv/project")
+
+        toolset = build_with(options, exec: chosen).build(recorder, ask_human:)
+
+        expect(bash_backend(toolset)).to be(chosen)
+      end
+
+      # The default is the whole of AC5: an unflagged chat runs commands through
+      # the in-process backend exactly as it did before this card.
+      it "defaults to the in-process backend, so an unflagged chat is unchanged" do
+        expect(bash_backend(toolset_build.build(recorder, ask_human:))).to be_a(Lain::Exec::Local)
+      end
+
+      # The floor is what a subagent role attenuates FROM, so a child's bash
+      # runs through the same transport its parent's does -- one run, one
+      # answer to "how does a command become a process".
+      it "gives the capability floor the same backend, so an attenuated child cannot differ" do
+        chosen = Lain::Exec::Docker.new(image: "img:1", project: "/srv/project")
+
+        floor = Lain::CLI::Wiring::BaseTools.build(recorder, exec: chosen)
+
+        expect(floor.find { |tool| tool.name == "bash" }.instance_variable_get(:@exec)).to be(chosen)
+      end
+    end
+
     it "layers the capability floor, the child seam, and the two main-agent-only tools" do
       names = toolset_build.build(recorder, ask_human:).names
 

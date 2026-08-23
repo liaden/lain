@@ -383,9 +383,17 @@ module Lain
       # the whole of what a child spawn needs -- {Askers#enrol} hands back both
       # the asker and the registration that releases it -- so nothing else
       # about this seam crosses into the child path.
+      #
+      # `root:` is T2's, and it is the PROJECT's -- {#epic_mount}'s rule one line
+      # down, for a sharper reason. {ToolsetBuild} resolves `--exec` from it, and
+      # a container MOUNTS what that resolves: `Dir.pwd` would mount whichever
+      # subdirectory the shell happened to be in, leaving every path above it
+      # missing INSIDE the container while it still resolves outside one. So a
+      # chat started in `services/ingest`, or under `lain chat --root PATH`,
+      # shows its commands the project they belong to.
       def build_toolset(recorder, backend:, parent:, journal:, ask_human:, notice: nil)
         @toolset_build = ToolsetBuild.new(backend:, provider: AgentBuild.spooled_provider(backend, chronicle:),
-                                          chronicle:, options:,
+                                          chronicle:, options:, root: project.root,
                                           supervisor: @supervisor, parent:, journal:, library: backend.library,
                                           switchboard: -> { @switchboard }, askers: @askers,
                                           epic: epic_mount(notice))

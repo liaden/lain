@@ -230,6 +230,84 @@ RSpec.describe LainCLI do
     end
   end
 
+  # T2. `--exec` names WHERE a shell command becomes a process, and an
+  # unusable name is the operator's mistake about the box they typed it on.
+  # These drive Thor's real `.start`, because what is under test is the ORDER
+  # -- the refusal lands ahead of `ChatLaunch.new`, so nothing is resolved,
+  # nothing is opened, and no session file exists to be orphaned. Reading the
+  # declaration off `commands` cannot see that; only the argv path can.
+  #
+  # PATH is replaced with an empty directory rather than trusted, so the
+  # docker example means the same thing on a box that HAS docker -- where the
+  # unguarded version would resolve, construct a chat, and park on a terminal.
+  describe "chat's --exec flag" do
+    let(:exec_option) { described_class.commands.fetch("chat").options.fetch(:exec) }
+
+    it "defaults to the resolver's own default, so the flag and the mapping cannot drift" do
+      expect(exec_option.default).to eq(Lain::CLI::ExecBackend::DEFAULT)
+    end
+
+    # Three facts an operator otherwise learns the hard way: from a mid-run
+    # tool error the model reports (the pipeline refusal), from reading the
+    # source (where the env goes), or from a container that never starts (the
+    # daemon is not probed). One clause each.
+    it "tells the operator what --exec docker will not do, rather than leaving it to a tool error" do
+      expect(exec_option.description).to match(/pipeline/i)
+      expect(exec_option.description).to match(/name.*command line|command line.*name/i)
+      expect(exec_option.description).to match(/daemon/i)
+    end
+
+    # `debug: true` so Thor RE-RAISES rather than calling `exit(1)`: RSpec does
+    # not rescue SystemExit inside an example, so an unexpected refusal would
+    # truncate the whole run and report the examples that had already passed as
+    # a clean pass.
+    it "refuses a backend this box cannot run before a session is created" do
+      expect(Lain::CLI::ChatLaunch).not_to receive(:new)
+
+      Dir.mktmpdir("lain-exec-flag") do |empty|
+        with_env("PATH" => empty) do
+          expect { described_class.start(%w[chat --exec docker], debug: true) }
+            .to raise_error(Thor::Error, /--exec docker.*docker.*PATH/m)
+        end
+      end
+    end
+
+    it "refuses an unrecognized backend name the same way, naming the valid set" do
+      expect(Lain::CLI::ChatLaunch).not_to receive(:new)
+
+      expect { described_class.start(%w[chat --exec podman], debug: true) }
+        .to raise_error(Thor::Error, /unknown exec backend "podman".*local.*docker/m)
+    end
+
+    # Without `debug:` the same refusal is what an operator actually meets: the
+    # message on stderr and a nonzero status, never a backtrace. The
+    # `raise_error` matcher CATCHES the SystemExit, so this example cannot
+    # truncate the run.
+    it "prints the refusal and exits nonzero, rather than raising past Thor" do
+      expect(Lain::CLI::ChatLaunch).not_to receive(:new)
+
+      expect { described_class.start(%w[chat --exec podman]) }
+        .to output(/unknown exec backend/).to_stderr
+        .and raise_error(SystemExit) { |error| expect(error.status).not_to eq(0) }
+    end
+
+    # The default resolves and reaches the bracket exactly as it did before
+    # this card: the refusal is the only thing --exec adds to the launch path.
+    #
+    # NO `--non-interactive` HERE. That arm ends in `exit launch.exit_status`,
+    # and a SystemExit inside an example truncates the run while still
+    # reporting "0 failures" -- measured on this very example, which took the
+    # file from 32 examples to 7.
+    it "lets a defaulted chat through to the launch bracket untouched" do
+      launch = instance_double(Lain::CLI::ChatLaunch, call: nil, exit_status: 0)
+      allow(Lain::CLI::ChatLaunch).to receive(:new).and_return(launch)
+
+      described_class.start(%w[chat --exec local], debug: true)
+
+      expect(Lain::CLI::ChatLaunch).to have_received(:new)
+    end
+  end
+
   # `up` trailing args ride Thor's real `.start` argv path (method_option
   # defaults and the post-`--` splat both exist only there), so these examples
   # drive `.start` itself with Up and Kernel.exec doubled out.

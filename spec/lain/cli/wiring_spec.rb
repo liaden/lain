@@ -969,6 +969,19 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    # T2's sibling of the block below, at the seam a COMMAND becomes a process
+    # rather than the one a WORKER leases an environment from, and it keeps the
+    # same ordering rule: resolved before the header is pinned.
+    context "with an unrecognized exec option" do
+      it "raises a Lain::Error before the toolset exists" do
+        wiring = described_class.new(options: { grace: 5, exec: "podman" }, chronicle:, status_feed:)
+        recorder, session = wiring.run_state(nil)
+
+        expect { wiring.wire_agent(channel:, recorder:, session:, backend:) }
+          .to raise_error(Lain::Error, /unknown exec backend "podman".*local.*docker/m)
+      end
+    end
+
     # Resolved BEFORE {Lain::CLI::Chronicle#start} pins the header, so the
     # refusal lands while the session record is still empty -- the same
     # refusal-before-journal ordering --resume and --fork already keep.
@@ -1601,8 +1614,9 @@ RSpec.describe Lain::CLI::Wiring do
     # the root. What is under test is the THREADING, and the argument IS the
     # threading. The two that leave a readable trace get it asserted below as
     # well.
-    it "hands the isolation backend, epic mount, review seams and command surface the ROOT" do
+    it "hands the isolation and exec backends, epic mount, review seams and command surface the ROOT" do
       allow(Lain::CLI::IsolationBackend).to receive(:resolve).and_call_original
+      allow(Lain::CLI::ExecBackend).to receive(:resolve).and_call_original
       allow(Lain::CLI::EpicMount).to receive(:for).and_call_original
       allow(Lain::CLI::ReviewSeams).to receive(:for).and_call_original
       allow(Lain::CLI::Command::Surface).to receive(:new).and_call_original
@@ -1611,6 +1625,7 @@ RSpec.describe Lain::CLI::Wiring do
         run_project(project_at(root, cwd))
 
         expect(Lain::CLI::IsolationBackend).to have_received(:resolve).with(anything, hash_including(root:))
+        expect(Lain::CLI::ExecBackend).to have_received(:resolve).with(anything, hash_including(root:))
         expect(Lain::CLI::EpicMount).to have_received(:for).with(hash_including(root:))
         expect(Lain::CLI::ReviewSeams).to have_received(:for).with(anything, root:)
         expect(Lain::CLI::Command::Surface).to have_received(:new).with(hash_including(root:))
