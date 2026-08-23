@@ -1,7 +1,7 @@
 # Scenario: every command at the `you>` prompt
 
-**What it exercises:** `Command::Registry` and the eleven commands nothing else drives — `/help`,
-`/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/fork`, `/goal`, `/meta`, `/yolo`, `/review-submit` —
+**What it exercises:** `Command::Registry` and the ten commands nothing else drives — `/help`,
+`/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/fork`, `/goal`, `/meta`, `/review-submit` —
 alongside the ten that other scenarios touch only in passing (`/status`, `/sessions`, `/mode`,
 `/model`, `/approve`, `/quit`, `/ruby`, `/inbox`, `/review`, `/survey`).
 
@@ -16,10 +16,11 @@ all. That makes this the cheapest scenario in the set and the one with the highe
 **Needs:** `bench.md` up for §7–§8. tmux for `/btw` and `/fork` (both open panes). nvim not
 required.
 
-**Read `method.md`'s standing rule about `/yolo` first.** It says never to use it during a round —
-correctly, because it disables the gate the rest of the method depends on. §6 is the one deliberate
-exception, it is scoped to a throwaway tree, and it exists to check `/yolo` does what it claims
-**and no more**. Do not carry it into another section.
+**Read `method.md`'s standing rule about `/mode auto` first.** It says never to raise the posture to
+`auto` during a round — correctly, because an approve-all gate answers every question the rest of
+the method exists to ask. §6 is one of the two sanctioned exceptions, it is scoped to a throwaway
+tree, and it exists to check that `auto` does what it claims **and no more**. Do not carry the
+posture into another section: §6 ends with `/mode !`.
 
 ---
 
@@ -205,27 +206,42 @@ Two distinct refusals; "nothing is open" and "there is nowhere to post" have not
 remedies and must not share a sentence. `changeset-review.md` §7 drives the third case (a local
 branch review) and the no-network check; do not repeat it here.
 
-## 6 — `/yolo`, once, deliberately
+## 6 — `/mode auto`: reaching an approve-all gate, once, deliberately
 
-The one exception to `method.md`'s standing prohibition, in a throwaway tree with nothing sensitive
-in it beyond the fixture `secret-boundary.md` §0 builds.
+One of the two exceptions to `method.md`'s standing prohibition, in a throwaway tree with nothing
+sensitive in it beyond the fixture `secret-boundary.md` §0 builds. §1 drove the `/mode` *grammar*;
+this section drives what the top rung actually does to the gate, which nothing else here reaches.
 
 ```
-you> /yolo
+you> /mode auto
 you> /mode
 ```
 
-Check three things and then stop:
+Check four things and then stop:
 
-1. `/mode` reflects it — a `/yolo` that does not show up in the posture report is a hidden state
-   change, and the HUD lighter should show it too (`cockpit-surfaces.md` §7).
+1. `/mode` reflects it — an `auto` that does not show up in the posture report is a hidden state
+   change, and the HUD lighter must read `AUTO` too (`cockpit-surfaces.md` §7). `accept_edits`'s
+   lighter is the empty string, so `AUTO` appearing is the only visible difference and its absence
+   is the finding.
 2. A gated `bash` now runs without a prompt. That is the claim.
-3. **A `denied` path is still refused.** `cat ~/.ssh/id_qa` must fail under `/yolo` exactly as it
-   does without it — denials are not liftable by any policy. This is the same probe as
-   `secret-boundary.md` §5 and it is worth running in both places, because a regression could land
-   in the command surface rather than in the boundary.
+3. **Nothing parks.** `auto` **replaces** the ladder rather than short-circuiting it —
+   `Mode::Resolution` hands the Gate `ApproveAll` in the ladder's place — so the queue is still
+   built and `/approve` still drains it, it simply never receives anything. Type `/approve` after
+   the unprompted call and it must answer `no pending approvals`, and the journal must carry no
+   escalation rungs for that call. A parked-and-auto-drained call and a never-parked one look
+   identical at the prompt and are not the same session.
+4. **A `denied` path is still refused.** `read_file` on the fixture key must fail under `auto`
+   exactly as it does at `accept_edits`: `Effect::Handler::Sensitivity` sits *outside* the gate, so no
+   policy can lift it. Type the path **resolved and absolute**, for the reason `secret-boundary.md`
+   §5 gives — a `~` or a `$HOME` is not expanded on the `read_file` arm. The `bash` spelling of the
+   same probe (`cat` on that path) is §5's and goes through a different rung; drive it there, and
+   read §5 before assuming the two answer alike. Running the `read_file` half in both places is
+   deliberate, because a regression could land in the command surface rather than in the boundary.
 
-Then `/mode !` and confirm the floor is back, before anything else in the round.
+Then `/mode !` and confirm the floor is back — posture `plan`, no layers — before anything else in
+the round. **`!` lands on `plan`, which permits reads only**, so type `/mode accept_edits` to get the
+round's default back before §7, whose `/goal` drives edits and would otherwise be refused by the
+posture rather than by anything under test.
 
 ## 7 — `/goal`: the only loop a command starts
 

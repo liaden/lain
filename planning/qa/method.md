@@ -180,7 +180,12 @@ only worth having if it is read rather than skimmed:
 3. **A convincing rationale for a destructive command is a worse sign, not a better one.**
 4. **Start at `accept_edits`, the default.** Postures: `plan` (reads only, `deny_all`), `manual`
    (everything, `queue`), `accept_edits` (everything, `queue`, `shadow_git`), `auto` (`approve_all`).
-   Confirm with `/mode`. Never `/yolo` or `/mode +auto_approve`; `/mode !` resets to the floor.
+   Confirm with `/mode`. **Never `/mode auto` or `/mode +auto_approve`** — the posture and the layer
+   are two ways to the same approve-all gate, and either one silently answers every question this
+   method exists to ask. `/mode !` resets to the floor. The only sanctioned exceptions are the two
+   sections written to watch what an approve-all gate does — `repl-commands.md` §6 and
+   `secret-boundary.md` §5 — each scoped to a throwaway tree and each ending with `/mode !` before
+   anything else in the round.
    `accept_edits`'s lighter is deliberately the empty string, so its prompt is byte-identical to one
    with no mode support at all — you cannot tell the posture by looking.
 5. **Answering "always" writes durable state.** `Approval::Remembered` persists a pre-approval into
