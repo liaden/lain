@@ -10,6 +10,28 @@ module Lain
     # String; only the frontend prints (output discipline, {Bench::CLI}'s
     # precedent, {CLI::Friction}'s template).
     class Improvements
+      # A `--kind` outside {Improvement::KINDS}. Refused rather than filtered
+      # on, because a filter that matches nothing renders the friendly "no
+      # improvements recorded yet" line -- so a typo would report an EMPTY
+      # STORE for a store that is not empty. Per the error-taxonomy
+      # convention it subclasses {Lain::Error} beside the object that raises
+      # it, so `LainCLI::Boundary#render` maps it to a clean nonzero exit with
+      # no backtrace.
+      class UnknownKind < Error; end
+
+      # A `--project` this process cannot turn into a project hash at all --
+      # SYNTACTICALLY unusable, which is a different question from whether the
+      # directory exists. Held apart from {UnknownKind} because there is no
+      # closed vocabulary to name back at the operator, only the two accepted
+      # shapes.
+      class UnusableProject < Error; end
+
+      # A journaled record this report must read whole and cannot. Held apart
+      # from the two above the way {EpicQueue::UnreadableRecord} is held apart
+      # from its sibling: those say "you named the wrong thing", this one says
+      # "the file is damaged", and the remedies are nothing alike.
+      class UnreadableRecord < Error; end
+
       # Kind-first canonical order within a project section, so the report
       # reads the same closed vocabulary every time regardless of which kind
       # a repo happened to log first -- {Improvement::KINDS} is already that
@@ -32,14 +54,57 @@ module Lain
       # @param kind [String, nil] one of {Improvement::KINDS}
       # @return [String] the rendered report; never printed here
       def report(project: nil, kind: nil)
+        assert_known_kind!(kind)
+        scope = resolve_project(project)
         path = @paths.improvements_path
-        records = filtered(read(path), project:, kind:)
+        records = filtered(read(path), project: scope, kind:)
         return empty_render(path) if records.empty?
 
         render(records)
       end
 
       private
+
+      # Echoes {Improvement::Guards::Record}'s own write-path wording, so the
+      # kind a `improvement_write` refused and the kind this report refuses
+      # read as one vocabulary rather than two.
+      def assert_known_kind!(kind)
+        return if kind.nil? || KIND_ORDER.include?(kind)
+
+        raise UnknownKind, "--kind must be one of #{KIND_ORDER.inspect}, got #{kind.inspect}"
+      end
+
+      # Resolved ONCE, before the file is read. It used to resolve inside the
+      # `select` block below: a SHA-256 and a `realpath` syscall per record for
+      # a value that cannot vary, and -- worse -- that made this refusal
+      # store-dependent, silent against an empty store and raising against a
+      # populated one.
+      #
+      # `File.expand_path` raises ArgumentError on `~nosuchuser` and on a NUL
+      # byte, and `HASH_FORMAT.match?` raises it on invalid UTF-8 before any
+      # expansion is attempted. None of those is the SystemCallError {Paths}
+      # rescues, so all three used to escape {Lain::Error} entirely. Whether
+      # the directory EXISTS is deliberately not asked: a nonexistent path is
+      # legal input here, and there is a spec pinning `--project /some/repo`.
+      def resolve_project(project)
+        return if project.nil?
+
+        raise UnusableProject, empty_project_message if project.empty?
+
+        HASH_FORMAT.match?(project) ? project : @paths.project_hash(project)
+      rescue ArgumentError => e
+        raise UnusableProject, unusable_project_message(project, e)
+      end
+
+      def empty_project_message
+        "--project was given an empty string, which would silently mean this process's working " \
+          "directory. Pass a 12-hex-char project hash, or the path of the repo you mean."
+      end
+
+      def unusable_project_message(project, cause)
+        "--project #{project.inspect} is not a usable project: #{cause.message}. " \
+          "Pass a 12-hex-char project hash, or a path this process can expand."
+      end
 
       def read(path)
         return [] unless File.exist?(path)
@@ -48,12 +113,8 @@ module Lain
       end
 
       def filtered(records, project:, kind:)
-        by_project = project.nil? ? records : records.select { |r| r["project_hash"] == resolve_project(project) }
+        by_project = project.nil? ? records : records.select { |r| r["project_hash"] == project }
         kind.nil? ? by_project : by_project.select { |r| r["kind"] == kind }
-      end
-
-      def resolve_project(project)
-        HASH_FORMAT.match?(project) ? project : @paths.project_hash(project)
       end
 
       def empty_render(path)
@@ -69,8 +130,27 @@ module Lain
       def project_section(project, records)
         by_kind = records.group_by { |r| r["kind"] }
         ordered_kinds = KIND_ORDER.select { |kind| by_kind.key?(kind) }
+        assert_every_kind_known!(by_kind, ordered_kinds)
         blocks = ordered_kinds.map { |kind| kind_block(kind, by_kind.fetch(kind)) }
         (["project #{project}:"] + blocks).join("\n")
+      end
+
+      # `ordered_kinds` keeps only what the closed vocabulary knows, so a
+      # damaged `kind` was dropped from the body while the header above had
+      # already COUNTED it -- a project heading with no bullet under it, and
+      # exit zero. That is exactly the "reports an empty store when it was
+      # handed something it could not use" this class exists to refuse, so
+      # guarding one damaged field and silently discarding another would be
+      # worse than guarding neither: the loud refusal implies the report
+      # validates records.
+      def assert_every_kind_known!(by_kind, ordered_kinds)
+        unknown = by_kind.keys - ordered_kinds
+        return if unknown.empty?
+
+        raise UnreadableRecord,
+              damaged_record_message(by_kind.fetch(unknown.first).first,
+                                     "carries kind #{unknown.first.inspect}, which is not one of " \
+                                     "#{KIND_ORDER.inspect} -- the report cannot place it.")
       end
 
       def kind_block(kind, records)
@@ -78,9 +158,40 @@ module Lain
       end
 
       def note_line(record)
+        "    - #{one_line(record["note"])} (#{evidence(record)}) " \
+          "[session #{record["session"]}, #{record["at"]}]"
+      end
+
+      def evidence(record)
         digests = record["evidence_digests"]
-        evidence = digests.empty? ? "no evidence" : "evidence: #{digests.join(", ")}"
-        "    - #{one_line(record["note"])} (#{evidence}) [session #{record["session"]}, #{record["at"]}]"
+        assert_digest_list!(record, digests)
+
+        digests.empty? ? "no evidence" : "evidence: #{digests.join(", ")}"
+      end
+
+      # {Improvement} always writes a list of digest Strings here, so anything
+      # else was damaged after it was written. The element check is not
+      # fussiness: `is_a?(Array)` alone let `[nil]` render as `(evidence: )`
+      # and `[{"a" => 1}]` render as inspected Ruby inside the bullet -- both
+      # silent, where the missing key at least announced itself as a
+      # `NoMethodError` on `nil.empty?`.
+      def assert_digest_list!(record, digests)
+        return if digests.is_a?(Array) && digests.all?(String)
+
+        raise UnreadableRecord,
+              damaged_record_message(record, "carries #{digests.inspect} where its `evidence_digests` list of " \
+                                             "digest strings must be -- the report cannot say what evidence " \
+                                             "backs it.")
+      end
+
+      # `session` and `at` are what address ONE line in a cross-project file
+      # thousands of records long -- the note may be 2048 bytes and repeat.
+      # The fault clause says what the record CARRIES rather than what it
+      # lacks, so a wrong-typed field cannot produce "carries no list (...)".
+      def damaged_record_message(record, fault)
+        "the improvement journaled at #{record["at"].inspect} in session #{record["session"].inspect} " \
+          "(project #{record["project_hash"].inspect}) #{fault} " \
+          "Repair or delete that line in #{@paths.improvements_path}."
       end
 
       # A note is free-form model/user prose (see {Improvement}'s own comment

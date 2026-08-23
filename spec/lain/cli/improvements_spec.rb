@@ -14,6 +14,14 @@ RSpec.describe Lain::CLI::Improvements do
     sink.append(note: "a note", kind: "knob", evidence_digests: [], **overrides)
   end
 
+  # A record Improvement itself could never build: the sink guards every field,
+  # so damage only ever arrives through the file, and only the file can stage it.
+  def append_raw(**record)
+    FileUtils.mkdir_p(File.dirname(improvements_path))
+    line = JSON.generate({ "type" => "improvement" }.merge(record.transform_keys(&:to_s)))
+    File.open(improvements_path, "a") { |file| file.write("#{line}\n") }
+  end
+
   describe "before any dogfooding" do
     it "states no improvements are recorded yet and names the file path it looked for, when no file exists" do
       expect(File.exist?(improvements_path)).to be(false)
@@ -127,6 +135,125 @@ RSpec.describe Lain::CLI::Improvements do
       expect(report).to include("an intact note before the tear")
       expect(report).to include("an intact note after the tear")
       expect(report).not_to include("cut off mid")
+    end
+  end
+
+  describe "a --kind outside the closed vocabulary" do
+    before do
+      append(project_hash: "aaaaaaaaaaaa", kind: "bug", note: "friction report double-counts")
+      append(project_hash: "aaaaaaaaaaaa", kind: "knob", note: "raise the bash timeout")
+    end
+
+    it "refuses a mistyped kind, naming the four valid kinds, rather than reporting an empty store" do
+      expect { cli.report(kind: "bugs") }
+        .to raise_error(Lain::CLI::Improvements::UnknownKind,
+                        %(--kind must be one of ["knob", "bug", "missing-feature", "doc"], got "bugs"))
+    end
+
+    it "still reports the friendly empty message for a valid kind that matches nothing" do
+      expect(cli.report(kind: "doc")).to eq("no improvements recorded yet -- looked for #{improvements_path}")
+    end
+  end
+
+  # Nothing is seeded here on purpose. Resolution used to happen inside the
+  # `select` block, so a --project this process cannot resolve was invisible
+  # against an empty store and raised a raw ArgumentError against a populated
+  # one -- past Boundary#render, with a backtrace.
+  describe "a --project value this process cannot resolve" do
+    it "refuses a `~user` that does not exist, rather than letting File.expand_path's ArgumentError escape" do
+      expect { cli.report(project: "~definitelynosuchuser99") }
+        .to raise_error(Lain::CLI::Improvements::UnusableProject, /~definitelynosuchuser99.*doesn't exist/m)
+    end
+
+    it "refuses a value carrying a NUL byte" do
+      expect { cli.report(project: "a\0b") }
+        .to raise_error(Lain::CLI::Improvements::UnusableProject, /null byte/)
+    end
+
+    it "refuses invalid UTF-8, which HASH_FORMAT.match? itself rejects before any path expansion" do
+      expect { cli.report(project: (+"\xff\xfe").force_encoding("UTF-8")) }
+        .to raise_error(Lain::CLI::Improvements::UnusableProject, /invalid byte sequence/)
+    end
+
+    it "refuses an empty --project instead of silently meaning this process's working directory" do
+      expect { cli.report(project: "") }
+        .to raise_error(Lain::CLI::Improvements::UnusableProject, /empty/)
+    end
+
+    it "refuses the same way whether the store is empty or populated, since it resolves before reading" do
+      unresolvable = -> { cli.report(project: "a\0b") }
+
+      expect(&unresolvable).to raise_error(Lain::CLI::Improvements::UnusableProject)
+
+      append(project_hash: "aaaaaaaaaaaa")
+
+      expect(&unresolvable).to raise_error(Lain::CLI::Improvements::UnusableProject)
+    end
+  end
+
+  describe "a record whose kind is outside the closed vocabulary" do
+    it "refuses by name rather than counting it in the header and printing no bullet under the project" do
+      append_raw(kind: "bugs", note: "THIS NOTE WOULD BE INVISIBLE", project_hash: "aaaaaaaaaaaa",
+                 session: "sess-badkind", at: "2026-08-23T00:00:01.000000Z", evidence_digests: [])
+
+      expect { cli.report }
+        .to raise_error(Lain::CLI::Improvements::UnreadableRecord, /sess-badkind.*"bugs".*knob/m)
+    end
+
+    it "refuses when the kind is null, which group_by keys as nil and KIND_ORDER silently drops" do
+      append_raw(kind: nil, note: "ALSO INVISIBLE", project_hash: "aaaaaaaaaaaa",
+                 session: "sess-nilkind", at: "2026-08-23T00:00:02.000000Z", evidence_digests: [])
+
+      expect { cli.report }.to raise_error(Lain::CLI::Improvements::UnreadableRecord, /sess-nilkind/)
+    end
+
+    it "refuses even when a well-formed record beside it would have rendered on its own" do
+      append(project_hash: "aaaaaaaaaaaa", kind: "bug", note: "a real bug")
+      append_raw(kind: "bugs", note: "invisible", project_hash: "aaaaaaaaaaaa",
+                 session: "sess-badkind", at: "2026-08-23T00:00:03.000000Z", evidence_digests: [])
+
+      expect { cli.report }.to raise_error(Lain::CLI::Improvements::UnreadableRecord)
+    end
+  end
+
+  describe "a record damaged in a way an intact JSON line still parses" do
+    let(:damaged) do
+      { kind: "knob", note: "a note", project_hash: "aaaaaaaaaaaa", session: "sess-damaged",
+        at: "2026-08-23T00:00:00.000000Z" }
+    end
+
+    it "refuses by name when a record carries no evidence_digests, rather than raising NoMethodError" do
+      append_raw(**damaged)
+
+      expect { cli.report }
+        .to raise_error(Lain::CLI::Improvements::UnreadableRecord, /sess-damaged.*evidence_digests/m)
+    end
+
+    it "refuses the same way when evidence_digests is present but is not a list" do
+      append_raw(**damaged, evidence_digests: nil)
+
+      expect { cli.report }.to raise_error(Lain::CLI::Improvements::UnreadableRecord)
+    end
+
+    it "refuses a list holding something that is not a digest string, not merely a non-list" do
+      append_raw(**damaged, evidence_digests: [nil])
+
+      expect { cli.report }.to raise_error(Lain::CLI::Improvements::UnreadableRecord, /\[nil\]/)
+    end
+
+    it "refuses a list holding an object, which would otherwise render as inspected Ruby in the bullet" do
+      append_raw(**damaged, evidence_digests: [{ "a" => 1 }])
+
+      expect { cli.report }.to raise_error(Lain::CLI::Improvements::UnreadableRecord)
+    end
+
+    it "names what the record actually carries, so the message cannot contradict itself" do
+      append_raw(**damaged, evidence_digests: "deadbeef")
+
+      expect { cli.report }.to raise_error(Lain::CLI::Improvements::UnreadableRecord) do |error|
+        expect(error.message).to include(%(carries "deadbeef"))
+        expect(error.message).not_to include("carries no")
+      end
     end
   end
 end
