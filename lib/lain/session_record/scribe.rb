@@ -234,14 +234,18 @@ module Lain
         self
       end
 
-      # Mark a run stopped before its response committed. `head:` names the last
-      # committed turn the interrupted run was generating from. Unguarded for
-      # the reason {#close} gives.
+      # Mark a run stopped before its response committed. `head:` defaults because
+      # it is DERIVED -- the scribe holds the written chain and knows the last
+      # committed turn. `reason:` has no default for the mirror-image reason: no
+      # value here could derive it, only the caller that watched the run end can
+      # say, and every member of the enum makes a positive claim a wrong guess
+      # would contradict. Unguarded for the reason {#close} gives.
       #
       # @param head [String, nil]
+      # @param reason [Symbol] one of {Telemetry::RunInterrupted::REASONS}
       # @return [self]
-      def interrupted(head: @written.head)
-        @journal << Telemetry::RunInterrupted.new(head:)
+      def interrupted(reason:, head: @written.head)
+        @journal << Telemetry::RunInterrupted.new(head:, reason:)
         self
       end
 

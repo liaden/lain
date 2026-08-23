@@ -35,7 +35,10 @@ module Lain
       end
 
       # The reasons that also owe a run_interrupted record before session_closed.
-      # `:exit` (a clean quit or a wait_responses drain) does not.
+      # `:exit` (a clean quit or a wait_responses drain) does not. Every member
+      # is in BOTH {Telemetry::SessionClosed::REASONS} and
+      # {Telemetry::RunInterrupted::REASONS}, which is what lets {#close} spend
+      # the one reason it holds on both records.
       INTERRUPT_REASONS = %i[interrupted grace_expired].freeze
 
       DEFAULT_TICK = 1.0
@@ -163,13 +166,18 @@ module Lain
       # only the first close writes: a signal that closed the session mid-ask
       # means the ensure's `close(:exit)` is a no-op.
       #
+      # The reason reaches BOTH records: this object is the only place that knows
+      # whether the human interrupted or the grace window expired, and the
+      # run_interrupted used to be written without it -- so the file said a run
+      # stopped and stayed silent about which stop it was.
+      #
       # @param reason [Symbol] one of {Telemetry::SessionClosed::REASONS}
       def close(reason:)
         return self if @closed
 
         @closed = true
         catch_up
-        @chronicle.interrupted(head: @timeline.call.head_digest) if INTERRUPT_REASONS.include?(reason)
+        @chronicle.interrupted(head: @timeline.call.head_digest, reason:) if INTERRUPT_REASONS.include?(reason)
         @chronicle.close(reason:)
         self
       end

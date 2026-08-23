@@ -37,27 +37,71 @@ module Lain
       # purpose or was interrupted mid-turn.
       REASONS = %i[exit interrupted grace_expired salvaged].freeze
 
+      # `respond_to?` rather than a bare `to_sym`, and nil is the case that
+      # forces it: a reconstruction from a journal line written before a field
+      # existed hands in `record["reason"]&.to_sym`, and that must arrive as this
+      # enum's own ArgumentError naming what IS permitted -- not a NoMethodError
+      # raised from inside the guard, which names nothing a caller can act on.
       def self.reason!(reason)
-        symbol = reason.to_sym
+        symbol = reason.respond_to?(:to_sym) ? reason.to_sym : reason
         return symbol if REASONS.include?(symbol)
 
         raise ArgumentError, "reason must be one of #{REASONS.inspect}, got #{reason.inspect}"
       end
     end
 
-    # A single run stopped before its response committed -- a Ctrl-C (or an
-    # expiring grace window) that beat the model's reply back. Distinct from
+    # A single run stopped before its response committed -- a Ctrl-C, an expiring
+    # grace window, or a provider that went quiet. Distinct from
     # {SessionClosed}: the session lives on, but THIS ask produced no complete
     # turn, so `head` names the last committed turn the interrupted run was
     # generating from (nil if none yet). A reader pairs it with the absence of a
     # following turn record the way {Middleware::JournalRequests} reads a
     # request_sent with no turn_usage -- the interruption is in the record, not
     # inferred from a gap.
-    RunInterrupted = Data.define(:head) do
+    #
+    # `reason` says WHICH stop it was, because the gap alone cannot: a run the
+    # human interrupted, a fleet the shutdown window closed on, and a stream the
+    # model stopped feeding all leave the identical hole, and only the first two
+    # are anybody's decision. Round 6's F26 -- a hung ask nobody could attribute
+    # from the file afterwards -- is that ambiguity, and this field is what makes
+    # the triage a read rather than a guess.
+    RunInterrupted = Data.define(:head, :reason) do
       include Journalable
 
-      def initialize(head:)
-        super(head: head&.dup&.freeze)
+      def initialize(head:, reason: :torn)
+        super(head: head&.dup&.freeze, reason: self.class.reason!(reason))
+      end
+    end
+
+    class RunInterrupted
+      # Reopened, not declared inside the `Data.define ... do` block above, for
+      # the reason {SessionClosed}'s own REASONS records: a constant there is
+      # lexically scoped to the enclosing MODULE, not the Data class.
+
+      # DELIBERATELY NOT {SessionClosed::REASONS}. That enum answers "how did the
+      # SESSION end", and two of its members cannot describe an interrupted run
+      # at all -- `:exit` is the clean quit this record's existence contradicts,
+      # and `:salvaged` is a later process's verdict on a file. It also has
+      # nowhere to put a stall. The overlap is real and intended:
+      # `:interrupted`/`:grace_expired` are exactly {CLI::Conductor::INTERRUPT_REASONS},
+      # the pair a signal-driven close already holds and used to throw away.
+      #
+      # `:stalled_stream` names the one failure that is NOT the harness's doing
+      # ({Provider::HTTP::Streaming::StalledStreamError}); `:torn` is the honest
+      # residue -- some other {Lain::Error} ended the ask -- and the default,
+      # because it is the only thing every stopped run is known to have in
+      # common. A record built with no classification says the unclassified
+      # thing rather than borrowing a narrower one it cannot support.
+      REASONS = %i[interrupted grace_expired stalled_stream torn].freeze
+
+      # Mirrors {SessionClosed.reason!}, nil-tolerance included; the two are kept
+      # identical on purpose, because a guard that refuses differently from its
+      # sibling is a guard a reader has to check twice.
+      def self.reason!(reason)
+        symbol = reason.respond_to?(:to_sym) ? reason.to_sym : reason
+        return symbol if REASONS.include?(symbol)
+
+        raise ArgumentError, "reason must be one of #{REASONS.inspect}, got #{reason.inspect}"
       end
     end
 

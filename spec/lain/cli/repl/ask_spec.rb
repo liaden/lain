@@ -16,6 +16,18 @@ RSpec.describe Lain::CLI::Repl::Ask do
   let(:ask) { described_class.new(agent:, tty:, chronicle:) }
   let(:response) { Lain::Response.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :end_turn) }
 
+  # The shape a stall ACTUALLY reaches an ask in. {Provider::HTTP::Streaming::
+  # StalledStreamError} is not a {Lain::Error} and never escapes the provider as
+  # itself: `ErrorWrapping#wrapping_errors` re-raises it as the backend's own
+  # APIError, so the stall survives only as the `cause`. A spec that handed the
+  # raw error in would pin a path production cannot take.
+  let(:stall) { Lain::Provider::HTTP::Streaming::StalledStreamError.new("no chunk for 30.0s") }
+  let(:wrapped_stall) do
+    raise Lain::Provider::Anthropic::APIError.new("no chunk for 30.0s"), cause: stall
+  rescue Lain::Provider::Anthropic::APIError => e
+    e
+  end
+
   describe "#attempt" do
     it "answers what the agent answered when the ask settles" do
       allow(agent).to receive(:ask).with("go").and_return(response)
@@ -66,13 +78,28 @@ RSpec.describe Lain::CLI::Repl::Ask do
       ask.settle(Lain::Error.new("torn"))
 
       expect(chronicle).to have_received(:catch_up).with(timeline).ordered
-      expect(chronicle).to have_received(:interrupted).with(head: "sha-head").ordered
+      expect(chronicle).to have_received(:interrupted).with(head: "sha-head", reason: :torn).ordered
     end
 
     it "leaves the session record alone when nothing was refused" do
       ask.settle(response)
 
       expect(chronicle).not_to have_received(:interrupted)
+    end
+
+    # F26's triage has to be doable from the file: "the model went quiet" and
+    # "the harness stopped the run" are different failures with different
+    # owners, and before this they were one indistinguishable record.
+    it "names a provider stall rather than a generic interruption" do
+      ask.settle(wrapped_stall)
+
+      expect(chronicle).to have_received(:interrupted).with(head: "sha-head", reason: :stalled_stream)
+    end
+
+    it "still says torn for a refusal that is nobody's stall" do
+      ask.settle(Lain::Agent::Budget::Exceeded.new("loop ran 25 iterations, ceiling is 25"))
+
+      expect(chronicle).to have_received(:interrupted).with(head: "sha-head", reason: :torn)
     end
   end
 end

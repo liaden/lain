@@ -468,7 +468,7 @@ RSpec.describe Lain::CLI::Chronicle do
     it "answers itself from catch_up, rewound and interrupted, so a caller can chain off them" do
       expect(chronicle.catch_up(timeline)).to be(chronicle)
       expect(chronicle.rewound(to: nil)).to be(chronicle)
-      expect(chronicle.interrupted(head: timeline.head_digest)).to be(chronicle)
+      expect(chronicle.interrupted(head: timeline.head_digest, reason: :torn)).to be(chronicle)
       # Non-vacuous: the forwards really reached the scribe, so the identity
       # above is a fluent return and not three no-ops agreeing.
       expect(records.map { |record| record["type"] })
@@ -477,11 +477,12 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it "catch_up journals the render chain; interrupted and close record the stop and the anchor" do
       chronicle.catch_up(timeline)
-      chronicle.interrupted(head: timeline.head_digest)
+      chronicle.interrupted(head: timeline.head_digest, reason: :grace_expired)
       chronicle.close(reason: :exit)
 
       expect(of_type("turn").size).to eq(1)
-      expect(of_type("run_interrupted").first).to include("head" => timeline.head_digest)
+      expect(of_type("run_interrupted").first)
+        .to include("head" => timeline.head_digest, "reason" => "grace_expired")
       expect(of_type("session_closed").first).to include("head" => timeline.head_digest, "reason" => "exit")
       expect(journal).to be_closed
     end
@@ -592,7 +593,7 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(null.instrumentation.journal).to be(Lain::Channel::Null.instance)
       expect(null.instrumentation.model_middleware.to_a).to be_empty
       expect(null.catch_up(nil)).to be(null)
-      expect(null.interrupted(head: "x")).to be(null)
+      expect(null.interrupted(head: "x", reason: :torn)).to be(null)
       expect(null.close(reason: :exit)).to be(null)
     end
 

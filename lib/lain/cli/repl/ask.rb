@@ -73,7 +73,7 @@ module Lain
         # A torn ask: journal the turns that did commit, anchor the stop, then
         # say what stopped it in one line and nothing else.
         def refuse(error)
-          record_interruption
+          record_interruption(reason_for(error))
           @tty.render_error(error.message)
           nil
         end
@@ -81,10 +81,34 @@ module Lain
         # B5 (panel amendment): catch_up FIRST -- a raise can land AFTER commits
         # (the ask tore mid-loop), so the committed turns are journaled before
         # the stop is recorded, and interrupted then names the true last commit.
-        def record_interruption
+        def record_interruption(reason)
           @chronicle.catch_up(@agent.timeline)
-          @chronicle.interrupted(head: @agent.timeline.head_digest)
+          @chronicle.interrupted(head: @agent.timeline.head_digest, reason:)
         end
+
+        # This is the catch-all frame, so it is the only place that can tell the
+        # record WHICH failure tore the ask -- and the one distinction the record
+        # owed a reader is whether the MODEL went quiet or the HARNESS stopped
+        # (round 6's F26, which was untriageable from the file because both
+        # landed as the same bare run_interrupted).
+        def reason_for(error) = stalled?(error) ? :stalled_stream : :torn
+
+        # By the cause chain, because a stall never arrives as itself:
+        # {Provider::HTTP::Streaming::StalledStreamError} is not a {Lain::Error}
+        # -- deliberately, so the vendored retry allowlist cannot match it -- and
+        # `ErrorWrapping#wrapping_errors` re-raises it as the backend's own
+        # APIError. `raise` inside a rescue records the original as the cause, so
+        # the stall survives there and nowhere else. Matching on the message
+        # string was the alternative and it is not one: the text is the
+        # provider's to change.
+        def stalled?(error)
+          causes(error).any?(Provider::HTTP::Streaming::StalledStreamError)
+        end
+
+        # The exception and everything that caused it, innermost last. `produce`
+        # is lazy, so `take_while` stops the walk at the first nil rather than
+        # asking a nil for its cause.
+        def causes(error) = Enumerator.produce(error, &:cause).take_while(&:itself)
       end
     end
   end

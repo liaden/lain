@@ -265,9 +265,9 @@ RSpec.describe Lain::SessionRecord::Scribe do
     it "marks run_interrupted on an unadjudicated seed for the same reason" do
       scribe = seeded(digests.first(2))
 
-      scribe.interrupted
+      scribe.interrupted(reason: :torn)
 
-      expect(of_type("run_interrupted").first).to include("head" => digests[1])
+      expect(of_type("run_interrupted").first).to include("head" => digests[1], "reason" => "torn")
     end
 
     # Panel probe P2e: the legitimate resume. A seed naming a mid-chain head is
@@ -475,9 +475,19 @@ RSpec.describe Lain::SessionRecord::Scribe do
   describe "a run that a stop beat" do
     it "marks run_interrupted anchored at the last committed turn" do
       scribe.catch_up(timeline)
-      scribe.interrupted
+      scribe.interrupted(reason: :torn)
 
-      expect(of_type("run_interrupted").first).to include("head" => timeline.head_digest)
+      expect(of_type("run_interrupted").first).to include("head" => timeline.head_digest, "reason" => "torn")
+    end
+
+    # The record has to carry WHY, not just that: a Ctrl-C, an expired grace
+    # window and a provider that went quiet are three different failures, and
+    # the file was previously unable to tell a reader which one it held.
+    it "carries the reason it was handed, so a reader can tell the three stops apart" do
+      scribe.catch_up(timeline)
+      scribe.interrupted(reason: :stalled_stream)
+
+      expect(of_type("run_interrupted").first).to include("reason" => "stalled_stream")
     end
   end
 

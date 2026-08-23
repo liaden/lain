@@ -99,6 +99,7 @@ Style/Documentation:
     - RequestReview
     - Resolution
     - Ruling
+    - RunInterrupted
     - SessionClosed
     - Shutdown
     - SpawnPolicy

@@ -24,7 +24,7 @@ RSpec.describe Lain::CLI::Conductor do
       attr_reader :events
 
       def catch_up(_timeline) = tap { @events << :catch_up }
-      def interrupted(head:) = tap { @events << [:interrupted, head] }
+      def interrupted(head:, reason:) = tap { @events << [:interrupted, head, reason] }
       def close(reason:) = tap { @events << [:close, reason] }
     end.new
   end
@@ -115,7 +115,8 @@ RSpec.describe Lain::CLI::Conductor do
       expect(outcome.closed?).to be(true)
       expect(outcome.response).to be_nil
       head = agent.timeline.head_digest
-      expect(chronicle.events).to eq([:catch_up, [:interrupted, head], %i[close grace_expired]])
+      expect(chronicle.events)
+        .to eq([:catch_up, [:interrupted, head, :grace_expired], %i[close grace_expired]])
       expect(tty.stops).to be >= 1
     ensure
       signals.uninstall
@@ -134,7 +135,8 @@ RSpec.describe Lain::CLI::Conductor do
 
       expect(outcome.closed?).to be(true)
       head = agent.timeline.head_digest
-      expect(chronicle.events).to eq([:catch_up, [:interrupted, head], %i[close interrupted]])
+      expect(chronicle.events)
+        .to eq([:catch_up, [:interrupted, head, :interrupted], %i[close interrupted]])
     ensure
       signals.uninstall
     end

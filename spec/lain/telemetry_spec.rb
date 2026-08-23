@@ -634,6 +634,16 @@ RSpec.describe Lain::Telemetry do
                         "reason must be one of [:exit, :interrupted, :grace_expired, :salvaged], got :kaput")
     end
 
+    # nil is not a hypothetical offender: it is what `record["reason"]&.to_sym`
+    # hands a reconstruction of a line written before the field existed, and it
+    # has to arrive as the enum's refusal rather than a NoMethodError from inside
+    # the guard. Pinned on BOTH lifecycle enums, which are deliberately identical.
+    it "refuses a nil reason as the enum's own ArgumentError, not a NoMethodError" do
+      expect { described_class.new(head: nil, reason: nil) }
+        .to raise_error(ArgumentError,
+                        "reason must be one of [:exit, :interrupted, :grace_expired, :salvaged], got nil")
+    end
+
     it "tolerates a nil head (a session that committed nothing) and stays a frozen value" do
       event = described_class.new(head: nil, reason: :interrupted)
       expect(event.head).to be_nil
@@ -642,11 +652,43 @@ RSpec.describe Lain::Telemetry do
   end
 
   describe Lain::Telemetry::RunInterrupted do
-    it "journals as run_interrupted anchored at the last committed turn" do
-      event = described_class.new(head: "blake3:def")
+    it "journals as run_interrupted anchored at the last committed turn, naming what stopped it" do
+      event = described_class.new(head: "blake3:def", reason: :interrupted)
       expect(event.journal_type).to eq("run_interrupted")
-      expect(event.to_journal).to eq("type" => "run_interrupted", "head" => "blake3:def")
-      expect(described_class.new(head: nil)).to be_deeply_frozen
+      expect(event.to_journal)
+        .to eq("type" => "run_interrupted", "head" => "blake3:def", "reason" => :interrupted)
+      expect(described_class.new(head: nil, reason: :torn)).to be_deeply_frozen
+    end
+
+    # Its own enum, NOT {SessionClosed}'s. That one has nowhere to put a
+    # provider stall, and its `:exit`/`:salvaged` describe how a SESSION ended,
+    # which no interrupted run can be. The overlap is exactly
+    # {CLI::Conductor::INTERRUPT_REASONS}, the two a signal-driven close carries.
+    it "pins its own reason enum, distinct from a session's" do
+      expect(described_class::REASONS).to eq(%i[interrupted grace_expired stalled_stream torn])
+      expect(described_class::REASONS).not_to eq(Lain::Telemetry::SessionClosed::REASONS)
+      expect(described_class::REASONS).to include(*Lain::CLI::Conductor::INTERRUPT_REASONS)
+    end
+
+    it "refuses a reason outside the enum at construction, echoing the offender" do
+      expect { described_class.new(head: nil, reason: :nonsense) }
+        .to raise_error(ArgumentError,
+                        "reason must be one of [:interrupted, :grace_expired, :stalled_stream, :torn], " \
+                        "got :nonsense")
+    end
+
+    it "refuses a nil reason the same way, for the reason SessionClosed's twin gives" do
+      expect { described_class.new(head: nil, reason: nil) }
+        .to raise_error(ArgumentError,
+                        "reason must be one of [:interrupted, :grace_expired, :stalled_stream, :torn], " \
+                        "got nil")
+    end
+
+    # The generic value is the default because it is the one thing every torn
+    # run has in common -- a record built without a classification says the
+    # unclassified thing rather than borrowing a narrower one it cannot support.
+    it "defaults to the unclassified reason" do
+      expect(described_class.new(head: nil).reason).to eq(:torn)
     end
   end
 

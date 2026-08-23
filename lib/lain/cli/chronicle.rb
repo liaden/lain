@@ -289,8 +289,18 @@ module Lain
         self
       end
 
-      def interrupted(head:)
-        scribe.interrupted(head:)
+      # The two call paths that reach here classify differently: {Conductor#close}
+      # already holds the signal's own reason, {Repl::Ask#refuse} derives one from
+      # the error that tore the ask. Neither argument defaults -- a caller that
+      # cannot say which stop this was is a caller whose record would be a guess,
+      # and an ArgumentError on its first run is cheaper than a plausible lie in
+      # the file.
+      #
+      # @param head [String, nil] the last committed turn the torn run ran from
+      # @param reason [Symbol] one of {Telemetry::RunInterrupted::REASONS}
+      # @return [self]
+      def interrupted(head:, reason:)
+        scribe.interrupted(head:, reason:)
         self
       end
 
