@@ -102,18 +102,67 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
     def flags(**overrides) = { provider: "ollama", model: "qwen3:4b", max_tokens: 64 }.merge(overrides)
 
     it "reads --compact-strategy out of the flag set it is handed" do
-      strategy = described_class.resolve(backend: summarizing_backend, options: flags(compact_strategy: "elide"))
+      chosen = described_class.resolve(backend: summarizing_backend, options: flags(compact_strategy: "elide"))
 
-      expect(strategy).to be_a(Lain::Compaction::Strategy::Elide)
+      expect(chosen.policy).to be_a(Lain::Compaction::Strategy::Elide)
     end
 
-    it "answers nil for a flag set naming none, exactly as the constructor does" do
-      expect(described_class.resolve(backend: summarizing_backend, options: flags)).to be_nil
+    # F51. The policy alone cannot be journalled by name: `Strategy::Base#name`
+    # answers a CLASS name, and a composition answers two of them joined by
+    # ` | `, neither of which is what an operator typed or what a bench groups
+    # its arms by. So the flag's own string travels beside the policy, in the
+    # slot {Lain::Compaction::Source} already takes -- {Lain::CLI::Backend} is
+    # at the `Metrics/ClassLength` cap and can carry no second keyword.
+    it "carries the operator's own word beside the policy it resolved" do
+      chosen = described_class.resolve(backend: summarizing_backend,
+                                       options: flags(compact_strategy: "elide-tools+summarize-conversation"))
+
+      expect(chosen.name).to eq("elide-tools+summarize-conversation")
+      expect(chosen.policy).to be_a(Lain::Compaction::Strategy::Composed)
+    end
+
+    # The policy is still nil for an un-flagged run -- naming a strategy is what
+    # opts into the seam, and resolving one here would retire the eager tier in
+    # silence. What is NOT nil is the name: that run is the control arm, and a
+    # nil there would be indistinguishable in the journal from a record written
+    # before the field existed.
+    it "answers the eager control arm for a flag set naming none, rather than nothing at all" do
+      chosen = described_class.resolve(backend: summarizing_backend, options: flags)
+
+      expect(chosen.policy).to be_nil
+      expect(chosen.name).to eq(Lain::Telemetry::Compaction::EAGER_CONTROL_ARM)
     end
 
     it "refuses an unknown name in the flag's own words" do
       expect { described_class.resolve(backend: summarizing_backend, options: flags(compact_strategy: "nope")) }
         .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /--compact-strategy/)
+    end
+  end
+
+  # The examples above pin what `.resolve` ANSWERS. This one pins that the
+  # answer survives the one hop that matters: {Lain::CLI::Backend
+  # #compaction_source} drops it into the slot {Lain::Compaction::Source}
+  # already took a bare policy in, so the built pipeline source -- the object a
+  # compacting turn journals from -- can name the arm without {Lain::CLI::
+  # Backend} growing a second keyword it has no `Metrics/ClassLength` left for.
+  describe "the arm the built pipeline source names" do
+    # `elide-tools` and not `summarizing`: it resolves with no oracle tier, so
+    # what this example measures is the wiring and nothing about a summarizer.
+    it "carries the operator's own word through to the source the run compacts with" do
+      backend = Lain::CLI::Backend.new(provider: "ollama", model: "qwen3:4b", max_tokens: 64,
+                                       compact_strategy: "elide-tools")
+
+      built = backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:, sink:)
+
+      expect(built.collapse_strategy).to eq("elide-tools")
+    end
+
+    it "names the eager control arm for a run launched with no flag at all" do
+      backend = Lain::CLI::Backend.new(provider: "ollama", model: "qwen3:4b", max_tokens: 64)
+
+      built = backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:, sink:)
+
+      expect(built.collapse_strategy).to eq(Lain::Telemetry::Compaction::EAGER_CONTROL_ARM)
     end
   end
 

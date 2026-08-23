@@ -108,6 +108,76 @@ module Lain
         def held(_digest) = nil
       end
 
+      # WHAT collapses a span this run, and what to CALL the arm it makes.
+      #
+      # One value in one slot rather than two arguments, and the reason is a
+      # measured one: {CLI::Backend} sits AT the `Metrics/ClassLength` cap, so
+      # `--compact-strategy`'s own string cannot reach here as a second keyword
+      # (CLAUDE.md: extract, never loosen a Max). It has to reach here because
+      # the {Scheduler} that journals a compaction is handed a PIPELINE rather
+      # than a policy, and so can name neither.
+      #
+      # `policy` is the {Strategy::Base} the flag resolved to, or nil for a run
+      # that named none -- the eager tool-result tier, which {Derived} builds
+      # per turn from that turn's {SummarySnapshot} and which nothing here can
+      # hold. `name` is what a bench groups on.
+      #
+      # NAME IS NEVER NIL, and that is the whole point. An unflagged run is not
+      # "no arm", it is the CONTROL arm ({CLI::Backend::SpanSummarizer}'s doc
+      # argues why), so it is named {Telemetry::Compaction::EAGER_CONTROL_ARM};
+      # a policy handed in with no word of its own answers {Strategy::Base#name}
+      # ({Strategy::Composed#name} for a composition). nil would fold the
+      # control arm into "a record written before this field existed", which is
+      # the one thing {Telemetry::Compaction}'s nil is reserved for.
+      #
+      # The policy travels no further than this value: {Source} reads it out at
+      # construction and hands it to {Derived} exactly as it was handed a bare
+      # strategy before, so nothing that is frozen or made shareable ever holds
+      # it -- what travels onward is `name`, an interned String.
+      #
+      # == Why this value is SHALLOW-frozen, and is not a Data
+      #
+      # It cannot be either of the things CLAUDE.md asks of a value object, and
+      # the reason is the thing it carries. `Ractor.shareable?` would have to
+      # deep-freeze the policy, and {Strategy::Summarizing} holds a live oracle
+      # and a mutable memo that must never be frozen (`summarizing.rb:51-73`) --
+      # the exact hazard {Scheduler::COMPOSE}'s `make_shareable` is kept away
+      # from. So this freezes SHALLOW, {Strategy::Composed}'s own discipline for
+      # the same reason, and is as shareable as whatever policy it was handed
+      # and no more. `Data` is refused for a second, unrelated reason: a
+      # `Data.define ... do` block's body counts toward THIS class's
+      # `Metrics/ClassLength` where a nested class counts as one line, and
+      # {Source} is close enough to that cap that the difference is four lines
+      # of a budget CLAUDE.md forbids raising.
+      #
+      # Neither costs anything real. Nothing compares two of these, and the one
+      # member that outlives construction -- `name` -- is a frozen, interned
+      # String, which IS deeply frozen and IS shareable.
+      class Collapse
+        # The conversion function for {Source}'s `strategy:` slot, which takes a
+        # choice, a bare strategy (a caller with a policy but no word for it) or
+        # nil (a caller that named no arm at all).
+        #
+        # @param value [Collapse, Strategy::Base, nil]
+        # @return [Collapse]
+        def self.of(value) = value.is_a?(self) ? value : new(policy: value)
+
+        # The name is interned for {Strategy::Base#name}'s reason: an anonymous
+        # class's `to_s` is a freshly built MUTABLE String, and this one is read
+        # back into a journalled record.
+        #
+        # The freeze is SHALLOW, {Strategy::Composed}'s discipline: it fixes
+        # this object's own two references and says nothing about the policy,
+        # which may legitimately hold a live oracle and a mutable memo.
+        def initialize(policy: nil, name: nil)
+          @policy = policy
+          @name = -(name || policy&.name || Telemetry::Compaction::EAGER_CONTROL_ARM).to_s
+          freeze
+        end
+
+        attr_reader :policy, :name
+      end
+
       # A turn whose derived chain the Messages API would have rejected, and
       # the uncompacted render it fell back to.
       #
@@ -143,9 +213,43 @@ module Lain
       end
       private_constant :IdleGap
 
+      # How this run prices a compaction and when it must have one: everything
+      # a {Scheduler} is built from except the pipeline it schedules.
+      #
+      # Its own object because those four values are one decision, read at one
+      # site -- and because {Source#initialize} sits AT the
+      # `Metrics/MethodLength` cap, which CLAUDE.md answers with an extraction
+      # rather than a raised Max. `Integer(hard_cap)` stays at CONSTRUCTION: a
+      # mis-wired cap must fail where it was wired and not on the first
+      # compacting turn of a live chat, the same rule `keep_last` keeps.
+      class Scheduling
+        def initialize(hard_cap:, journal:, model:, price_book:)
+          @hard_cap = Integer(hard_cap)
+          @journal = journal
+          @model = model
+          @price_book = price_book
+        end
+
+        # @param compact [#call] this turn's pipeline combinator
+        # @return [Scheduler]
+        def call(compact)
+          Scheduler.new(compact:, hard_cap: @hard_cap, journal: @journal, model: @model, price_book: @price_book)
+        end
+      end
+      private_constant :Scheduling
+
       # The run's shared summary store; readable so callers can check they hold the
       # same one the tool observer fires into.
       attr_reader :eager
+
+      # The arm this run collapses spans under, by the name a bench groups on:
+      # `--compact-strategy`'s own string, or {Telemetry::Compaction
+      # ::EAGER_CONTROL_ARM} for a run that named none. Read by whoever
+      # journals a compaction, since the {Scheduler} that writes the record is
+      # handed a pipeline and cannot name the policy behind it.
+      #
+      # @return [String] frozen, and never nil -- see {Collapse}
+      attr_reader :collapse_strategy
 
       # @param need [Need] the detector bank; owns the byte threshold and the
       #   approaching-window RATIO, so this object never restates either
@@ -163,12 +267,16 @@ module Lain
       #   measures must be computed from the SAME keep_last, and two copies is
       #   how they drift.
       # @param eager [#held] the live summary store; the Null holds nothing
-      # @param strategy [Strategy::Base, nil] which policy collapses a span,
-      #   `--compact-strategy`'s answer. nil is the un-flagged wiring, which
+      # @param strategy [Collapse, Strategy::Base, nil] which policy collapses a
+      #   span, `--compact-strategy`'s answer -- as a {Collapse}, which carries
+      #   the operator's own word for the arm as well, or as the bare policy for
+      #   a caller with no word to give. nil is the un-flagged wiring, which
       #   collapses into the run's own eager tier exactly as {Context::Compact}
       #   did -- see {Derived}. Injected ONCE, never fetched per turn: a
       #   model-backed strategy holds a memo whose absence turns one range's two
-      #   questions into two model calls (`summarizing.rb:220-239`).
+      #   questions into two model calls (`summarizing.rb:220-239`). Whatever
+      #   arrives, the POLICY reaches {Derived} unwrapped; only the name is kept
+      #   here (see {#collapse_strategy}).
       # @param journal [#<<] where the decision lands; the Null channel by
       #   default, so no caller guards `if journal`
       # @param model [String, nil] priced for {Scheduler}'s cost accounting
@@ -189,16 +297,16 @@ module Lain
       def initialize(need:, cold:, hard_cap:, keep_last:, eager: NoSummaries, strategy: nil,
                      journal: Channel::Null.instance, model: nil, price_book: PriceBook.default,
                      clock: -> { Time.now }, context_window: ContextWindow.default)
+        arm = Collapse.of(strategy)
         @need = need
         @context_window = context_window
         @cold = cold
-        @hard_cap = Integer(hard_cap)
         @eager = eager
         @journal = journal
-        @model = model
-        @price_book = price_book
+        @collapse_strategy = arm.name
         @idle = IdleGap.new(clock:)
-        @derived = Derived.new(keep_last: Compaction.validate_keep_last(keep_last), strategy:, journal:)
+        @scheduling = Scheduling.new(hard_cap:, journal:, model:, price_book:)
+        @derived = Derived.new(keep_last: Compaction.validate_keep_last(keep_last), strategy: arm.policy, journal:)
       end
 
       # The observe half's response leg. A turn's own usage carries the
@@ -436,8 +544,9 @@ module Lain
       # did not ship would be a corrupted measurement, not a stale comment.
       # `ran_under:` is `base.model` off the LIVE Context -- the same read
       # {#window_for} makes, and the other half of the pair C1 opened. The
-      # scheduler is priced for `@model` at CONSTRUCTION, so naming what is
-      # actually answering is what lets it refuse a stale quote after a
+      # scheduler is priced at CONSTRUCTION for the model {Scheduling} was
+      # built with -- this class holds no `@model` of its own -- so naming what
+      # is actually answering is what lets it refuse a stale quote after a
       # `/model` switch rather than journal opus dollars for a sonnet turn.
       def commit(base:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:, provenance:)
         provider = BASE_PROVIDER.call(flattened_twin(base))
@@ -480,9 +589,7 @@ module Lain
 
       # A fresh Scheduler per turn, because the combinator it is frozen around
       # is this turn's. Both are cheap frozen values.
-      def scheduler_for(compact)
-        Scheduler.new(compact:, hard_cap: @hard_cap, journal: @journal, model: @model, price_book: @price_book)
-      end
+      def scheduler_for(compact) = @scheduling.call(compact)
 
       # The base render strategy as a `->(workspace)` provider, asked of the
       # Context PER RENDER.

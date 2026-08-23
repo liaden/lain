@@ -72,10 +72,12 @@ module Lain
         # @param options [Hash] the invoked command's parsed flags
         # @option options [String, nil] :compact_strategy the flag itself
         # @param sink [Lain::Sink] where a resolved policy reports a DOWN tier
-        # @return [Compaction::Strategy::Base, nil] nil when no flag was given
+        # @return [Compaction::Source::Collapse] the resolved policy and the
+        #   word for the arm it makes; the eager control arm when no flag was
+        #   given, never nil
         # @raise [CompactionStrategy::Unknown] on a name outside its set
         def self.resolve(backend:, options:, sink: Sink::Null.new)
-          new(backend:, name: options[:compact_strategy], sink:).strategy
+          new(backend:, name: options[:compact_strategy], sink:).collapse
         end
 
         # @param backend [#summarizer_provider, #summarizer_model,
@@ -98,6 +100,30 @@ module Lain
 
           CompactionStrategy.resolve(@name, tier: method(:tier), sink: @sink, journal: @backend.journal)
         end
+
+        # The CHOICE, not merely the policy: {Compaction::Source} takes this in
+        # the slot the strategy alone used to ride in, which is how
+        # `--compact-strategy`'s own string reaches the compaction record
+        # without a second keyword on {Backend#compaction_source} -- {Backend}
+        # is at the `Metrics/ClassLength` cap and can carry none (CLAUDE.md:
+        # extract, never loosen).
+        #
+        # It has to travel because the {Compaction::Scheduler} that journals a
+        # compaction is handed a PIPELINE rather than a policy, and because the
+        # policy could not answer for itself anyway: {Compaction::Strategy::Base
+        # #name} is a CLASS name and a composition's is two of them joined by
+        # ` | `, neither of which is what an operator typed or what a bench
+        # groups its arms by (F51).
+        #
+        # `@name` VERBATIM. {CompactionStrategy} has already refused anything
+        # outside its own set by the time `#strategy` answers, so what is left
+        # is exactly the flag's value, `+`-composition and all. A nil name is
+        # the un-flagged run, which {Compaction::Source::Collapse} names the
+        # eager control arm rather than nil -- see its doc, and this class's own
+        # argument above for why that run is an arm and not an absence.
+        #
+        # @return [Compaction::Source::Collapse]
+        def collapse = Compaction::Source::Collapse.new(policy: strategy, name: @name)
 
         private
 

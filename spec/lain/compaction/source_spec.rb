@@ -1152,6 +1152,77 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
+  # F51. A journalled compaction has to name the ARM it ran under -- the one
+  # axis `--compact-strategy` exists to vary -- and the {Lain::Compaction::Scheduler}
+  # that writes the record cannot: it is handed a pipeline, not a policy. So the
+  # operator's word rides in the slot the policy already rides in, and this
+  # object answers it for whoever journals. {Lain::CLI::Backend::SpanSummarizer
+  # .resolve} is what fills that slot on the live path.
+  describe "the collapse arm it can name" do
+    def collapse(policy: nil, name: nil) = Lain::Compaction::Source::Collapse.new(policy:, name:)
+
+    def forcing(**overrides) = source(need: build_need(byte_threshold: 100), hard_cap: 100, **overrides)
+
+    # The disjoint pair {Lain::CLI::CompactionStrategy} recommends, composed the
+    # way that resolver composes it -- so what is under test here is the same
+    # object `--compact-strategy elide-tools+summarize-conversation` builds.
+    def composed
+      Lain::Compaction::Strategy::ElideToolObservations.new |
+        Lain::Compaction::Strategy::SummarizeConversation.new(oracle: SourceSpecSpanOracle.new("a span summary"))
+    end
+
+    def rendered(built, line) = Lain::Canonical.dump(render(context_for(built, line), line).cache_payload)
+
+    it "derives exactly what the same policy derives with no word attached" do
+      line = timeline
+      named = forcing(strategy: collapse(policy: composed, name: "elide-tools+summarize-conversation"))
+      plain = forcing(strategy: composed)
+
+      expect(rendered(named, line)).to eq(rendered(plain, line))
+      expect(decisions.map { |record| record["compacted"] }).to eq([true, true])
+    end
+
+    # Verbatim, `+` and all: a bench groups `bytes_before - bytes_after` by this
+    # string with no launch command to hand, so a normalisation of it would be a
+    # second vocabulary for one arm.
+    it "names the composition as the operator typed it" do
+      built = source(strategy: collapse(policy: composed, name: "elide-tools+summarize-conversation"))
+
+      expect(built.collapse_strategy).to eq("elide-tools+summarize-conversation")
+    end
+
+    # An unflagged run is not "no arm". It is the CONTROL arm -- the eager
+    # tool-result tier every `--compact-strategy` run is measured against
+    # ({Lain::CLI::Backend::SpanSummarizer}'s own doc argues it) -- and nil is
+    # reserved for a record written before the field existed.
+    it "names the eager control arm for a run that set no flag" do
+      expect(source.collapse_strategy).to eq(Lain::Telemetry::Compaction::EAGER_CONTROL_ARM)
+    end
+
+    it "falls back to the policy's own name for a caller that gave no word" do
+      built = source(strategy: Lain::Compaction::Strategy::Elide.new)
+
+      expect(built.collapse_strategy).to eq("Lain::Compaction::Strategy::Elide")
+    end
+
+    # What travels onward is a String and only a String: the policy may hold a
+    # live oracle and a mutable memo, and the record it ends up in is journalled
+    # from a scheduler whose combinator is `Ractor.make_shareable`d.
+    it "answers a frozen String" do
+      expect(source(strategy: collapse(policy: composed, name: "elide")).collapse_strategy).to be_frozen
+    end
+
+    # The policy reaches the derivation UNWRAPPED -- `spec/lain/cli/backend_spec.rb`
+    # and `spec/lain/cli/chat_flags_spec.rb` read it back along this exact path,
+    # and a choice object standing in its place would change what they find.
+    it "hands the derivation the policy itself, never the choice around it" do
+      policy = composed
+      built = source(strategy: collapse(policy:, name: "elide-tools+summarize-conversation"))
+
+      expect(built.instance_variable_get(:@derived).instance_variable_get(:@strategy)).to equal(policy)
+    end
+  end
+
   # T9. What a compacting turn actually renders is the projection of a SECOND
   # LINEAGE -- a derived chain materialized in the source's own Store, whose
   # replacement events name the source turns they subsume. These are the claims
