@@ -134,6 +134,10 @@ negative check cannot see it because the repo is outside `~/.local/state/lain`.
 ```bash
 LAIN_REPO=/home/tara/dev/lain   # the lain checkout itself, NOT $QA -- the repo the run launched from
 git -C "$LAIN_REPO" status --porcelain   # the OTHER close-out: must be empty
+# ^^ RUN THIS IN A SHELL THAT HAS NOT SOURCED THE SANDBOX ENV. A redirected HOME (which
+#    secret-boundary REQUIRES) hides git's global ignore at $HOME/.config/git/ignore, so every
+#    globally-ignored file reports as untracked -- four false positives in round 9 (P16), and the
+#    obvious "cleanup" response would commit the operator's .envrc and local settings.
 ```
 
 **And a THIRD close-out check, because the two above are BOTH blind to it (P11, round 9).**
@@ -492,6 +496,48 @@ The `\e[38;2;R;G;Bm` / `\e[48;2;R;G;Bm` pairs are 24-bit foreground/background S
 "is this rendered in colour" — a torn-turn error highlight, a refusal rail's colour, a diff's
 red/green — none of which a `getbufline` or a plain `capture-pane -p` can answer.
 
+### `capture-pane` cannot page back in the chat pane — it is on the alternate screen
+
+`-S -<n>` is the flag a driver reaches for to read more than the visible pane, and **on the chat
+pane it does nothing**. The TUI runs on tmux's alternate screen, which has no scrollback at all.
+Measured 2026-08-23, with `history-limit` at 2000:
+
+```
+alternate_on=1
+capture-pane -S -50   -> 50 lines
+capture-pane -S -400  -> 50 lines
+capture-pane -S -2000 -> 50 lines
+```
+
+**This manufactures false findings, and it did (P14, round 9).** `/help` renders ~44 command lines
+plus a skill catalog into a 50-row pane; the top scrolls away irrecoverably. Reading it back showed
+four commands "absent from `/help`" — and they were exactly the first four in registration order,
+both of which then dispatched correctly when typed. So: any check needing more than one screenful of
+chat output cannot be driven this way. Narrow the output, or read a `lain://` buffer, which is a
+real buffer with real lines that `getbufline` can page through. **And treat a "missing" item at the
+very start or end of a long render as a capture artifact until proven otherwise.**
+
+**Worse for a ONE-SHOT `lain chat`: the alternate screen is TORN DOWN on exit**, so a capture after
+the process ends reads `Pane is dead` or the empty primary screen -- even with `remain-on-exit on`.
+Round 10 lost a probe's final line this way repeatedly, including by polling every 0.4s: the last
+render and the exit race each other and the exit always wins.
+
+**The recipe P14 stops one line short of: `pipe-pane` captures the output STREAM, and survives the
+teardown.**
+
+```bash
+LOG=$QA/records/probe.log; : > "$LOG"
+tmux -L "$QA_SOCK" new-window -d -n probe "cd <dir> && exec $QA/shim/lain chat ... < /dev/null"
+tmux -L "$QA_SOCK" pipe-pane -o -t probe "cat >> $LOG"
+# ...wait for the window to disappear...
+sed -e 's/\x1b\[[0-9;?]*[a-zA-Z]//g' "$LOG"        # strip SGR for reading
+cat -A "$LOG"                                       # or keep them: this is how F58 was measured
+```
+
+This is the only way round 10 could read the `attempt 4, giving up` line, and `cat -A` on the same
+log is what showed four retry lines sharing ONE newline (F58). Use it for any check about what a
+non-interactive run actually printed.
+
 ### Fold state: `foldlevel()`/`foldclosed()` over RPC, not `getbufline`
 
 A fold is a WINDOW-local rendering decision, not a buffer property `getbufline` exposes — the
@@ -661,6 +707,26 @@ The 2026-08-17 run found **six orphaned `while :; do :; done` spinners at ~98% C
 left by a sub-agent from the *previous* chunk. **Orphans from agent work are the expected
 contaminant here**, not other people's jobs.
 
+**Round 10 found TWENTY-FOUR of them, 4 hours old, at load average 25.84** -- from
+`.claude/worktrees/t13/probes-t13/stress.sh`, whose `kill $SPIN` never ran because its parent died
+first. They were **reparented to init**, which is the cheap way to identify them:
+
+```bash
+ps -eo pid,ppid,args | awk '$2==1 && /while :; do :; done/'    # ppid 1 == nobody is coming back
+```
+
+**Judge this gate on INSTANTANEOUS idle, not on `uptime`.** The 1-minute load average lags badly --
+it still read 14.00 several minutes after all 24 were killed, which would read as a failed gate on a
+machine that was 92% idle. Use:
+
+```bash
+top -bn2 -d2 | command grep '^%Cpu' | tail -1      # the SECOND sample; the first is since-boot
+```
+
+Round 10 is the first round where this gate actually fired, and the stakes are concrete: 24 busy
+cores would have been attributed to lain by `bench-arms` (entirely wall-clock) and by every stall
+reading, which is the F26 class.
+
 **Ask with `pgrep -P` or the exe path, never a bare `pgrep -f` -- it matches YOUR OWN shell.** An
 agent shell's command line contains the pattern you are grepping for, so `pgrep -f 'pre-commit'`
 matches the `echo "=== pre-commit ==="` in the very command asking the question. Round 6 hit this
@@ -680,6 +746,21 @@ ls -l /proc/<pid>/exe                                 # what it really is
 clear a hung `ollama run`: the pattern matched the agent shell's own command line and killed the
 command issuing it (exit 144). Treat it as a standing hazard, not a lesson anyone has absorbed --
 the safe form is one line longer and works first try.
+
+**Round 10 hit it a SEVENTH time, in the QUIET-MACHINE GATE ITSELF** (P17). `pgrep -cf '[p]re-commit'`
+returned 1 and `pgrep -cf '[l]ain'` returned 1, both matching the driver's own shell -- because the
+gate command contained `echo "pre-commit: ..."`, so the literal string was on its command line even
+though the bracket trick protected the pattern. **The bracket trick does not help when YOUR OWN
+command line contains the word.** Two consequences: the gate reported contention that did not exist,
+and it would equally have MISSED real contention behind a false positive nobody investigates twice.
+
+The form that actually works is to exclude the issuing process rather than to keep re-spelling the
+pattern:
+
+```bash
+pgrep -f 'pre-commit' | grep -v "^$$\$"              # drop the issuing shell by pid
+pgrep -c -f 'pre-commit' --older 1                    # or: ignore anything younger than 1s
+```
 
 ### The driver shell here is zsh, and zsh does not word-split unquoted parameters
 

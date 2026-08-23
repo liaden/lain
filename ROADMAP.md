@@ -1439,6 +1439,58 @@ relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
    OOM that no in-process handler sees. Findings in
    [`planning/qa-findings-round8-2026-08-21.md`](planning/qa-findings-round8-2026-08-21.md).
 
+35. **Planned (2026-08-23, panel-reviewed)** —
+   `planning/specs/chunk-qa-round9-where-the-record-lives.md`: discharge QA round 9. **Most of its
+   findings are one shape — a fact written somewhere it does not belong, or under a name that is not
+   its own.** Machine state that changes every turn is written into the user's source tree with no
+   ignore path, so every session dirties a git repo (F50); the compaction record names its trigger,
+   its cache state, its bytes and its dollars and never the **strategy that ran**, which is the one
+   axis `--compact-strategy` exists to vary and the bench exists to compare (F51); a refusal about a
+   survey reasons about "a branch" (F56); a receipt for one note says "their markers" (F53); an
+   approval's key-hint line wears fold-fill characters because the padding fix landed on its blank
+   neighbour and not on it (F52).
+   **F57 is not that shape and leads the chunk.** `Exec::Docker` hardcodes
+   `--user "#{uid}:#{gid}"` — correct for docker, and **exactly inverted for rootless podman**, where
+   the host user is already container root. On a `podman-docker` host the backend mounts the project
+   and can then neither read nor write it, measured both ways on one bind mount. It is also the first
+   round-9 finding to leave the suite **red**: two `:seam` specs that passed only because they were
+   *skipped* for want of a client. **13 cards, 3 waves.**
+   **The panel overturned four of the plan's own premises**, each verified against the tree: the
+   container client cannot be identified in `CLI::ExecBackend` (`#on_path?` returns a Boolean and
+   discards the path, its `filesystem:` duck answers two messages, and `resolve` runs twice per
+   launch), so resolution moved inside `Exec::Docker`, lazily, where a subprocess is already being
+   spawned; threading the operator's `--compact-strategy` string through `CLI::Backend` is
+   **forbidden by the cops** — measured at `ClassLength [111/110]` and `MethodLength [11/10]`, both
+   at cap today, with CLAUDE.md forbidding either `Max` being raised, so the word rides inside the
+   value `SpanSummarizer` already returns; a seam AC needing an image "not present locally" is
+   unreachable because the gate's own message is *"a :seam spec must not pull it"*; and
+   `plugin/nvim`'s half of F50 was **already written and already cross-pinned**
+   (`init.lua:68` computes the same `sha256(cwd)[0,12]`), leaving POSIX `sh` — where reproducing it
+   would add `realpath` and a sha256 binary to the one renderer designed to degrade with nothing
+   installed — as the only real risk, and settled at plan level by telling the renderer its path.
+
+36. **Planned (2026-08-23, panel-reviewed)** —
+   `planning/specs/chunk-qa-round10-one-gate-one-record.md`: discharge QA round 10, **delete
+   `--yolo`**, and absorb the unlanded remainder of item 35. **The headline is that lain's
+   protected-path argv check already exists and has never run.** `Escalation::Triage#literal`
+   classifies every word of a parsed `bash` argv and denies with *"the command's argv names a path
+   no approval may lift"*, and it is dead because `Switchboard#build_ladder` builds the ladder with
+   no `triage:`, so the rung falls back to `AnyPath` — which answers `:ordinary` for everything, as
+   its own comment admits ("Inert until wired"). That is **F63 (HIGH)**: `cat ~/.ssh/id_rsa` reaches
+   the human as an *ordinary* approval and under an approve-all policy simply runs, which is how a
+   round-10 probe read a private key. The fix is wiring, not invention. `--yolo` itself goes: read in
+   exactly one place, doing two things `/mode auto` already does, and taking two now-unreachable
+   branches with it — while the nil-queue family it shares with `--non-interactive` is renamed, not
+   removed. The rest are refusals that mislead: a record that cannot say *why* a run stopped (F59), a
+   retry line with no line ending (F58), a `read_file` that kills the ask instead of refusing a file
+   (F62), and four CLI messages naming the wrong command, the wrong noun, or an empty store that is
+   not empty (F60, F61, F64, F65, F66). **23 cards, 3 waves.** The panel returned four blockers, all
+   verified against the tree: a wave-1 card that could not green its own suite, a card whose stated
+   predicate contradicted its own acceptance criterion (and exposed a second unreported defect — a
+   good UTF-8 file already dies under `LC_ALL=C`), a wave-1 card with a wave-2 criterion, and a
+   **silently dropped round-9 card** that would have left `collapse_strategy` shipped and never
+   written. Findings in `planning/qa-findings-round10-2026-08-23.md`.
+
 ---
 
 ## Map of the documents

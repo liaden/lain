@@ -204,11 +204,29 @@ the cop.
 - **`ls-files` truncates against the PROCESS directory**, so a home-repo surface read from a
   subdirectory is both short and rejoins to the wrong file. `-C <dir>` is the fix; `--full-name`
   is not sufficient.
+- **Under starvation the example COUNT can go UP, not just down — and an inflated count is itself
+  the tell.** The count rule elsewhere warns that a dead worker, an OOM kill or a `SystemExit`
+  reports FEWER examples with zero failures. 2026-08-23 produced the opposite shape twice, from two
+  independent agents on a box at load 82-214 with rival `parallel_rspec` runs in flight: a tree
+  whose true count was 15209 reported **15217 examples, 28 failures**, and one whose true count was
+  15229 reported **15233 examples, 17 failures**. Neither number is evidence; the *movement* of the
+  count away from the true one is what says so.
+  **`bundle exec rspec --dry-run` is the ground truth for the count.** It collects every example
+  without executing any, takes seconds, and is immune to load — so it answers "did a worker die, or
+  did the packer double-count?" without paying for a run. Take a dry-run count first, and only then
+  read a `pspec` line against it.
 - **`rake pspec` can exit 0 while printing `rake aborted!`.** Observed 2026-08-23: the task printed
   `15172 examples, 2 failures` followed by `rake aborted! Command failed with status (1)`, and the
   calling shell still saw exit status **0**. So the exit code is not a gate. **Score a suite run on
   the printed `N examples, M failures` line and nothing else** -- together with the example-COUNT
   rule in CLAUDE.md that is two independent ways a red suite reads green.
+- **This box's shell is zsh, and `cmd 2>&1 1>/dev/null | sed` does NOT swap descriptors there.**
+  zsh's MULTIOS **tees** instead, so a probe written to isolate stderr silently reports stdout's
+  content as if it were stderr. Measured 2026-08-23 while checking that a renderer prints its
+  "never blank" sentence to stdout: the idiom said stderr, plain file redirection said 0 bytes on
+  stderr, and the second answer was the true one. Use file redirection (`cmd >out 2>err`) when the
+  question is WHICH stream a thing came out of -- the pipeline idiom is a bash habit and it lies
+  here.
 - **A `SystemExit` inside an example truncates the run and still reports "0 failures".** Thor
   turns a refusal into `exit(1)` and RSpec does not rescue `SystemExit` inside an example — one
   regression took a file from 32 examples to 22 while reporting a clean pass, and the truncation

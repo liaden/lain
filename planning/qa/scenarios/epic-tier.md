@@ -118,7 +118,7 @@ on a gate nobody is there to answer.
 ```bash
 printf '[epics.gates]\nreserch = "deferred"\n'        # UnknownStages, naming the pipeline
 printf '[epics.gates]\nresearch = "defered"\n'        # UnknownPolicies, naming the known set
-printf '[epics.gates]\ngates = "deferred"\n'          # NotATable
+printf '[epics]\ngates = "deferred"\n'                # NotATable -- note [epics], NOT [epics.gates]:
 ```
 
 Expected: `[epics.gates] has no stages "reserch"; the pipeline is research -> epic_plan ->

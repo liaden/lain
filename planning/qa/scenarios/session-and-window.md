@@ -285,6 +285,13 @@ unattended in 91 days — so drive the stale branch that way rather than by edit
 (The day count is computed as `today - marker`, so it is not a fixed 200 -- driving this on
 2026-08-23 prints **205**. Only the arithmetic is the assertion.)
 
+**The marker's actual text is `Reviewed YYYY-MM-DD`** (`price_book.rb:60`), *not* "reviewed-on" —
+that phrase appears only in the failure MESSAGE. Round 10 grepped the document's wording, found
+nothing, and built a `gsub` probe that stripped nothing and therefore "passed"; the deleted-marker
+case below is worthless unless it removes the real string. Verified 2026-08-23: a genuinely deleted
+marker DOES fail (`no "Reviewed YYYY-MM-DD" marker found near the price table`), and the horizon
+boundary is exact — 90 days ok, 91 stale.
+
 `load`, not `require_relative`: the file has no `.rb` extension. **What wrong looks like:** the lint
 exiting 0 with a marker it never found — check that a *deleted* marker fails too, since a regex that
 stops matching silently turns the lint into a no-op that passes forever.

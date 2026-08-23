@@ -26,6 +26,24 @@ drives it.
 
 ## 0 — The fixture, and the one rule about writing it
 
+**⚠️ REDIRECT `HOME` FIRST, and it takes four exports, not one (P15, round 9).** This section writes
+fake private keys into `$HOME/.ssh/`, and `qa-sandbox.sh` redirects the `XDG_*` set and `TMPDIR` but
+**not** `HOME` — so following the recipe below literally writes into the operator's REAL `~/.ssh`,
+and every home-anchored rule under test resolves against their real home. Redirecting `HOME` alone
+breaks the toolchain (mise's install root is `$HOME/.local/share/mise`, so `lain` reinstalls Ruby
+and then finds no gems at all). The working set:
+
+```bash
+export HOME="$QA/home"; mkdir -p "$HOME"
+export MISE_DATA_DIR=/home/tara/.local/share/mise
+export GEM_HOME=/home/tara/.local/share/mise/installs/ruby/4.0.6/lib/ruby/gems/4.0.0
+export GEM_PATH=/home/tara/.gem/ruby/4.0.0:$GEM_HOME
+```
+
+`HOME` is **not** in `PANE_ENV`, so export it before the tmux server starts and verify per pane. And
+take the close-out `git status` in a shell that has NOT sourced this — a redirected `HOME` hides
+git's global ignore and reports false untracked files (P16).
+
 ```bash
 S="$(mktemp -d)/secrets"; mkdir -p "$S"; cd "$S"; git init -q .
 printf 'API_KEY=sk-live-0000000000000000000000000000\nPORT=3000\n' > .env

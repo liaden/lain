@@ -139,8 +139,28 @@ omission is now *visible* for the first time; it is recorded, not fixed.
   generalise to lain's own launches. And **"warm the model before the run" is not enough if you warm
   it with `ollama run`** -- that produces a `-b 512` runner which lain reloads on the first arm, at
   `bench.md`'s own ~27s, which is a better explanation of the first-arm outlier below than generic
-  first-load cost. Warm through a lain request, or one whose `num_batch` matches. Round 9 did, and
-  saw **no outlier at all**: single-thread max 1.8422s against a 1.3935s median.
+  first-load cost.
+
+  **⚠️ Round 10 refines this again: warming through a lain CHAT is ALSO not enough.** Round 9's
+  advice was "warm through a lain request", and round 9 saw no outlier. Round 10 warmed through an
+  entire bowling cockpit session and verified the model resident at `ctx=32768` immediately before
+  the run, and the first arm **still** paid the re-key:
+
+  ```
+  run 1 (after a full chat session, model verified resident):
+    single-thread  mean 4.8138  median 1.3232  max 28.2800
+  run 2, identical suite immediately after:
+    single-thread  mean 1.3171  median 1.3179  max  1.3412     <- gone
+  ```
+
+  So the warm-up must match what **`bench arms` itself** requests, not merely be *a* lain request --
+  a chat resolves a different key than the bench does. The reliable procedure is to **run the suite
+  twice and read the second**, which is also round 8's remedy. A lone ~27s max on the FIRST arm of a
+  FIRST run is the re-key; anywhere else it is still a finding.
+
+  (Round 10 could not re-take the runner-argv control above: no separate `ollama runner` process is
+  visible on ollama 0.32.12 on this box, so `-b`/`-c`/`-np` are unreadable from `ps`. Recorded as
+  unreachable rather than as agreed.)
 
 ## What the arms cannot do today
 

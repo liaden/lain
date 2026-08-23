@@ -212,7 +212,12 @@ of either would lie:
 
 - **`StaleEmbeddings`** — the committed embeddings were recorded under a different model than the
   sweep asks for. A silent stale fixture measures the wrong model's geometry. The refusal must name
-  **both** ids. Provoke it by asking for a model the fixture was not recorded under.
+  **both** ids. **⚠️ There is no way to provoke it from the CLI.** This line used to say "provoke it
+  by asking for a model the fixture was not recorded under"; round 10 found `lain bench sweep` takes
+  **no `--model` flag** (`ERROR: "lain bench sweep" was called with arguments ["--model", ...]`), so
+  `StaleEmbeddings` is unreachable from any command a driver can type and still rests on specs
+  alone. Either that is a feature gap worth filing, or this bullet is asking for something the
+  surface cannot do — settle which before spending turns here.
 - **a missing corpus or embeddings path** — a packaging mistake, named rather than surfacing as a
   bare `ArgumentError`. The gold corpus ships **with the gem** (`lib/lain/bench/corpus/`) rather
   than under `spec/`, precisely so a sweep in an installed gem still has them; move one aside and

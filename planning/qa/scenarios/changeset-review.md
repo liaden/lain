@@ -54,7 +54,11 @@ mkdir -p doc; printf '# Tally\n\nCounts words.\n' > doc/README.md
 git add -A; git commit -qm 'doc: say what it is'
 ```
 
-**Record `git rev-parse main feature` in the findings.** Every line number and every hunk count
+**Do not hard-code `main`.** `git init` gives `master` on some boxes (it does on this one), and every
+`git rev-parse main` in this section then fails. Capture it: `BASE=$(git symbolic-ref --short HEAD)`
+before the `git switch -c feature`.
+
+**Record `git rev-parse $BASE feature` in the findings.** Every line number and every hunk count
 below is against these three commits; a round that regenerates the subject differently cannot
 compare against the last one.
 

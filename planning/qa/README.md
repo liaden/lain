@@ -54,12 +54,17 @@ the six above are **not appended to the full round below**. They are placed:
   cheap set even when the feature it guards is not.
 - `secret-boundary`, `changeset-review`, `subagents-and-backends` and `memory-and-dogfood` are
   **owned rounds**, on `rails-blog`'s precedent: a scenario that owns its context has no position in
-  a list to be unlucky about. Schedule one per round alongside the full round, rotating. **Round 9
-  was scheduled to take `secret-boundary` and did NOT run it** — the full round was driven in one
-  context and no owned round was invoked alongside it. So `secret-boundary` carries to **round 10**,
-  and it is still the largest untested surface here: every claim about the three-place split rests
-  on specs alone. **Do not let the rotation advance past it** — a rotating slot that slips one round
-  and then rotates anyway is how `rails-blog` went unrun for three rounds.
+  a list to be unlucky about. Schedule one per round alongside the full round, rotating.
+
+  **`secret-boundary` is DISCHARGED as of round 10.** It slipped round 9, carried, and round 10
+  drove §3, §4 and §5 — so the three-place split is now **3 of 3 driven** rather than resting on
+  specs, and §5 produced the round's HIGH finding (F63). The rotation may now advance.
+
+  **The rotation slot for round 11 is `rails-blog`**, which is the only scenario still driven **zero
+  times end to end**, and whose §2 (unbounded tool output) no round has ever reached. It has a real
+  precondition round 11 must handle deliberately rather than improvise: **`rails` is absent from
+  this box** (not on `PATH`, gem not installed), and installing it collides with P15's `GEM_HOME`
+  question. Budget the install as part of that round, or say plainly that it slipped again.
 
 **A full round — the default when no scope is named** (`.claude/skills/manual-qa` defers to this
 line for the order): `session-and-window` → `rust-cli` → a subject with `cockpit-surfaces`
@@ -118,7 +123,11 @@ call per turn.
 
 Written per round, kept in `planning/` alongside the chunk specs that discharge them:
 
+- [`../qa-findings-round10-2026-08-23.md`](../qa-findings-round10-2026-08-23.md) — round 10
 - [`../qa-findings-round9-2026-08-23.md`](../qa-findings-round9-2026-08-23.md) — round 9
+- [`../qa-findings-round9-remaining-2026-08-23.md`](../qa-findings-round9-remaining-2026-08-23.md)
+  — round 9, the continuation: the first drives of `repl-commands`, `epic-tier`, `secret-boundary`
+  and `changeset-review`
 - [`../qa-findings-round8-2026-08-21.md`](../qa-findings-round8-2026-08-21.md) — round 8
 - [`../qa-findings-round7-2026-08-20.md`](../qa-findings-round7-2026-08-20.md) — round 7
 - [`../qa-findings-round7-survey-2026-08-20.md`](../qa-findings-round7-survey-2026-08-20.md) — round 7,
@@ -141,7 +150,20 @@ first exercised the section rather than what the section asks for:
   round 8's second pass to fill the subject slot properly), `bench-arms`, and `failure-injection`
   §1/§2/§3/§11a. It drove **none of the six added that day**, and no owned round.
 
-- **The six scenarios added on 2026-08-23 have been driven ZERO times.** `repl-commands`,
+- **Round 10 (2026-08-23) drove nine of the thirteen**, all thirteen having been in scope: the full
+  round's first four steps (`session-and-window` complete, `rust-cli`, **`bowling-ruby` as the
+  subject at 5/5 oracles with `cockpit-surfaces` piggybacked on it**, `bench-arms` with a warm
+  control), plus first-ever coverage of `secret-boundary` §3/§4/§5, `changeset-review` §3/§4,
+  `epic-tier` §6 (both halves), `subagents-and-backends` §1, and `memory-and-dogfood` §5/§6.
+  **It did NOT run `failure-injection`** — the full round's fifth step, traded for the four owned
+  scenarios; that is the one departure from the order above and it carries a specific debt, because
+  **the F26 stall recurred** in `rust-cli` and `§12`'s proxy reading is what would settle it.
+  `rails-blog` was unreachable (no Rails on the box).
+
+- **The six scenarios added on 2026-08-23 have now each been driven at least once** (rounds 9 and
+  10 between them), so they are no longer coverage-on-paper. What follows is the original note,
+  kept because its warning about predictions-vs-defects still applies to their many undriven
+  sections. Originally: **driven ZERO times.** `repl-commands`,
   `epic-tier`, `secret-boundary`, `changeset-review`, `subagents-and-backends` and
   `memory-and-dogfood` were written from the code rather than from a round, so every expected string,
   every record name and every ceiling in them is a **prediction**. The first round to drive each
