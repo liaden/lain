@@ -270,9 +270,24 @@ module Lain
       # an answer, see {Frontend::TTY::Inbox#settled}); the `strip.empty?`
       # check keeps the property local to the resolve as well.
       #
+      # EOF ends this read as a blank line does, and settles nothing for the
+      # same reason: NOTHING IS PARKED ON IT. The inline prompt refuses a set
+      # on EOF because a run is parked on that set and the only read that could
+      # ever answer it has ended -- and that reason is precisely what this
+      # prompt does not have. Here the questions are listed because the fleet
+      # outlives an ask; a stray Ctrl-D closing the listing says nothing about
+      # whether they can be answered, and they are still answerable at the
+      # editor, at the next `/inbox`, and at the reply prompt of whichever run
+      # is parked on them. Refusing `@inbox.oldest` here destroyed one of them
+      # permanently -- tombstoned in the directory, so a later real answer
+      # raised -- and, with N listed, gave exactly one an unanswered record and
+      # N-1 nothing, which is one doctrine applied to an arbitrary question.
+      # {Reply#at_prompt} is where that is said in code.
+      #
       # @return [String] the answer as it will be delivered -- for a question
       #   carrying a set that is the answer set's rendering, not the line the
-      #   human typed -- or "" (nothing pending, or they typed nothing)
+      #   human typed -- or "" (nothing pending, they typed nothing, or the
+      #   stream ended under a read nothing was waiting on)
       def drain_at_prompt
         @inbox.gather(@questions)
         answer, answered = @reply.at_prompt
@@ -609,6 +624,13 @@ module Lain
         # Both exits it has of its own are settled; the third, an unwind, does
         # not return at all and so cannot say so, which is exactly what
         # {#serve}'s ensure reads.
+        #
+        # EOF is the one thing that is not an answer at all. It arrives at the
+        # same read as a blank line and used to be collapsed into one
+        # ({Reply#read} records the whole of it), and the difference is that a
+        # human pressed Enter where a stream simply ended: the first is a
+        # decision, the second is nobody left to make one. The second resolves
+        # this set as unanswerable instead, and no record claims a human spoke.
         #
         # A blank line here IS an answer, and deliberately not what the same
         # keystroke means at `you>`: this prompt exists because a run is PARKED
@@ -1026,20 +1048,36 @@ module Lain
         # Any other line answers this item directly, which is the no-inbox
         # fallback and the common path.
         #
-        # @return [Array(String, InboxItem)] the answer, and the item it answers
+        # @return [Array(String, InboxItem)] the answer -- or the answer nobody
+        #   gave, when the stream ended under this read ({#unanswered}) -- and
+        #   the item it answers
         def for(item) = accepted { read(item) }
 
         # `/inbox` at `you>`: nothing is parked on this read, so one typed
-        # answer answers the oldest item listed.
-        def at_prompt = accepted { drained(answering: @inbox.oldest) }
+        # answer answers the oldest item listed -- and a read that ENDS answers
+        # nothing at all. `ended: ""` is that said in the one place it differs
+        # from {#for}: the two prompts read EOF identically and dispose of it
+        # differently, because only one of them has a run waiting on the
+        # answer. See {HumanReplies#drain_at_prompt} for what refusing here
+        # destroyed.
+        def at_prompt = accepted { drained(answering: @inbox.oldest, ended: "") }
 
         private
 
         # The read routes through the conductor's #read_reply (not the tty
         # directly) so the conductor KNOWS Reline owns stdin for the span and
-        # suppresses its countdown ticker's render + key-read. `.to_s` is
-        # load-bearing: EOF returns nil, and an empty answer is honest where
-        # `Tool::Result.ok(nil)` would raise.
+        # suppresses its countdown ticker's render + key-read.
+        #
+        # nil is EOF, and it is NOT `""`. It used to be `.to_s`ed into one,
+        # which is the same value a human who presses Enter types -- and this
+        # prompt delivers that as their answer on purpose (see {#typed}), so a
+        # session whose stdin went away wrote a `message` record `from:
+        # "human"` carrying `{"answer" => ""}`: an utterance in a session with
+        # nobody in it. The two are one keystroke apart at the terminal and
+        # could not be further apart in the record, so this is one of the two
+        # places the difference is drawn and {#unanswered} is the one fact both
+        # of them name.
+        #
         # `legible` runs BEFORE the registry is consulted, not after:
         # `String#strip` on invalid bytes raises Encoding::CompatibilityError,
         # which is not the ArgumentError the refusal path rescues, so it would
@@ -1047,8 +1085,33 @@ module Lain
         # the line while leaving the promise pending, which is the exact end
         # state `legible` exists to prevent, reached one line above it.
         def read(item)
-          line = legible(@conductor.read_reply(@tty, "human> ").to_s)
-          typed(line, item)
+          line = heard("human> ")
+          return [unanswered, item] if line.nil?
+
+          typed(legible(line), item)
+        end
+
+        # ONE read, and the one place this class decides a stream is over.
+        # `read_reply` ANSWERS nil at end-of-file -- but a terminal that dies
+        # mid-read does not politely return: Reline raises `EOFError`, and a
+        # PTY whose far end has gone raises `Errno::EIO`, which is what a
+        # closing tmux pane actually produces. All three are the same fact, and
+        # answering them all as nil is what keeps this class to one reading of
+        # it. Left to climb they were worse than a wrong answer: both are
+        # StandardErrors, so {AnswerLoop#exchange} rendered them and reported
+        # the line SETTLED, retiring the inbox row while the asker stayed
+        # parked forever -- the exact end state {#serve}'s re-queue rule exists
+        # to prevent, reached by the one path that rule does not cover.
+        #
+        # Narrow on purpose, and `IOError` is deliberately NOT here: the
+        # example "keeps answering after the reply read raises" pins a read
+        # that failed for a reason which is not the end of the stream as
+        # rendered-and-re-read, and widening this would turn every transient
+        # terminal fault into a question nobody can ever answer.
+        def heard(prompt)
+          @conductor.read_reply(@tty, prompt)
+        rescue EOFError, Errno::EIO
+          nil
         end
 
         # `:unmatched` answers HERE and refuses in the drain, and that is the one
@@ -1066,7 +1129,7 @@ module Lain
           arm = classify(line)
           case arm
           when :prose, :unmatched then [line, item]
-          when :replies then drained(answering: item)
+          when :replies then drained(answering: item, ended: unanswered)
           when :handled then nil
           else raise UnknownArm, unknown_arm(arm)
           end
@@ -1195,21 +1258,42 @@ module Lain
         # had already been fixed for, surviving behind the detour that opens
         # this. {Frontend::TTY::Inbox} learns nothing about commands; it asks
         # for a line and gets one.
-        def drained(answering:)
+        #
+        # `ended:` is what a stream that ran out leaves behind, and it is a
+        # PARAMETER because it is the one thing this surface's two prompts
+        # genuinely disagree about. Both read EOF the same way -- one value,
+        # named once ({#unanswered}) -- but only {#for}'s caller has a run
+        # parked on the set, which is what makes "no answer will ever come
+        # back" true there and a guess at `you>`. A type test in the caller
+        # would have been the same branch with the reason left out.
+        #
+        # `answer` starts at `""` for the other way a drain ends with nothing:
+        # a blank line the human typed, which {Frontend::TTY::Inbox#settled}
+        # reads as "nothing typed" and which the inline prompt reads as a
+        # deliberate answer.
+        def drained(answering:, ended:)
           answer = ""
-          @tty.drain_inbox(@inbox, answering:, reader: method(:replied)) { |typed| answer = typed }
+          reading = drain_reader(-> { answer = ended })
+          @tty.drain_inbox(@inbox, answering:, reader: reading) { |typed| answer = typed }
           [answer, answering]
         end
 
-        # One line the drain can treat as an answer, read through {#classify} --
-        # the SAME classification {#typed} uses, so a command runs at either
-        # prompt and the registry's order is decided in one place.
+        # ONE drain's line reader, each line read through {#classify} -- the SAME
+        # classification {#typed} uses, so a command runs at either prompt and
+        # the registry's order is decided in one place.
+        #
+        # A lambda built per drain rather than the bare `method(:replied)` it
+        # replaces, because a drain ends on the line the human did NOT type and
+        # the two ways of not typing one are different facts. The drain cannot
+        # carry that difference: it `to_s`es whatever this hands back, which
+        # would strip an {Unanswered} back to a plain String and deliver the
+        # refusal sentence as the human's own prose. So the read that saw the
+        # nil is what says so, through `on_eof`, and it lives exactly as long as
+        # the drain it was built for.
         #
         # Lazy and iterative for {#accepted}'s reasons: a command answers
         # nothing, so the prompt comes round again, and a human who runs six of
-        # them before replying should not cost six frames. EOF terminates it --
-        # `read_reply` returns nil, `.to_s` makes it "", and an empty line is
-        # `prose?`, which the drain reads as "nothing typed" and ends on.
+        # them before replying should not cost six frames.
         #
         # ⚠️ A reply that opens with a registered-looking `/word` cannot be
         # typed here -- `/tmp is fine` is classified, not answered. That is the
@@ -1217,10 +1301,33 @@ module Lain
         # reaching the model as a considered reply is unrecoverable, while a
         # refusal is one retype. The inline prompt keeps the opposite rule, and
         # {#typed} records why.
-        def replied(prompt)
-          Enumerator.produce { @conductor.read_reply(@tty, prompt).to_s }
-                    .lazy.filter_map { |line| answerable(line) }.first
+        def drain_reader(on_eof)
+          lambda do |prompt|
+            Enumerator.produce { heard(prompt) }
+                      .lazy.filter_map { |line| answerable_or_eof(line, on_eof) }.first
+          end
         end
+
+        # EOF ends the drain the way a blank line does -- with `""`, which is
+        # what {Frontend::TTY::Inbox} reads as "nothing typed" -- and tells the
+        # caller WHY on the way past, because this read is the only thing that
+        # can still tell the two apart.
+        def answerable_or_eof(line, on_eof)
+          return answerable(line) unless line.nil?
+
+          on_eof.call
+          ""
+        end
+
+        # The answer nobody gave, and the one name this class has for EOF. It
+        # rides the ordinary reply seam because it IS a String:
+        # {HumanReplies#deliver} hands it on, the directory routes it by digest
+        # without reading it,
+        # and the asker that wrote the question is the one object that asks
+        # what it is -- so there is no second delivery path to keep in step
+        # with the first, and no surface between here and the record learns a
+        # new word.
+        def unanswered = Lain::Tools::AskHuman::Unanswered.new
 
         # The line if the drain should treat it as the answer, or nil to read
         # again. Both refusals NAME the word, {Repl#called}'s attribution rule:

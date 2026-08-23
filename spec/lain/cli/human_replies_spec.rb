@@ -1193,6 +1193,223 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
+  # T9. `read_reply` answers nil when the stream it reads is closed, and until
+  # this card that nil was `.to_s`ed into "" -- the SAME value a human who
+  # presses Enter types, and a value this surface delivers as their answer
+  # because a parked run has to be told something. So a session whose stdin
+  # went away wrote a `message` record `from: "human"` carrying
+  # `{"answer" => ""}`: a human utterance in a session with no human attached.
+  #
+  # The two are one keystroke apart at the terminal and could not be further
+  # apart in the record, so the distinction is drawn at the ONE place this
+  # class reads a line, and EOF becomes {Lain::Tools::AskHuman::Unanswered} --
+  # the answer nobody gave, riding the ordinary reply seam.
+  describe "EOF at a reply prompt" do
+    let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
+
+    # The parked call, run to completion under the real surfaces: what comes
+    # back is the tool_result the model is handed. `run.wait` rather than
+    # `run.stop`, deliberately -- a call that PARKED instead of coming back is
+    # the defect, so the wait is the assertion and the watchdog is its failure.
+    def dispatched
+      Sync do |task|
+        surfaces = replies.surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        begin
+          pumped_until(task) { !ask_human.pending? }
+          run.wait
+        ensure
+          surfaces.each(&:stop)
+        end
+      end
+    end
+
+    it "returns an error result saying nobody will answer, rather than parking forever" do
+      allow(conductor).to receive(:read_reply).and_return(nil)
+
+      result = dispatched
+
+      expect(result).to be_error
+      expect(result.content).to include("ask_human").and include("no answer will ever come back")
+    end
+
+    it "writes no message record attributed to the human" do
+      allow(conductor).to receive(:read_reply).and_return(nil)
+
+      dispatched
+
+      expect(ask_human.last_answer).to be_nil
+    end
+
+    # Open decision 6, answered where the plan asked for it: the Q event is
+    # written before the park, so by the time EOF is seen a question with no
+    # possible answer is already in the record. Its disposition is a MATCHING
+    # record -- from nobody, chained to the Q, carrying no "answer" key -- so a
+    # reader of the journal can tell it from a question a human answered
+    # emptily without knowing which surface was attached.
+    it "records the question's fate rather than leaving the Q with nothing beside it" do
+      allow(conductor).to receive(:read_reply).and_return(nil)
+
+      dispatched
+      record = ask_human.last_unanswered
+
+      expect(record.from).to eq(Lain::Tools::AskHuman::Unanswered::NOBODY)
+      expect(record.causal_parents).to include(ask_human.last_question.digest)
+      expect(record.body).not_to have_key("answer")
+    end
+
+    # The deliberate behaviour this card must NOT collapse: a human who presses
+    # Enter on an empty line HAS answered -- the run is parked on this set and
+    # declining to answer still has to reach the model -- and the record says a
+    # human said it.
+    it "keeps a typed blank line an answer, attributed to the human" do
+      allow(conductor).to receive(:read_reply).and_return("")
+
+      dispatched
+
+      expect(ask_human.last_answer.from).to eq("human")
+      expect(ask_human.last_answer.body.fetch("answer")).to eq("")
+      expect(ask_human.last_unanswered).to be_nil
+    end
+
+    # Review FIX 1. Ctrl-D on an empty line at a live Reline prompt returns the
+    # SAME nil a vanished stdin does, and the human is still sitting there --
+    # so a refusal claiming the session is unattended is false in its commonest
+    # trigger, and that false clause lands in the journal under
+    # `body["unanswered"]`, which is the record this card exists to keep honest.
+    # The sentence may say what happened; it may not say who left.
+    it "says only that this read ended, and the human it does not blame answers the next question" do
+      allow(conductor).to receive(:read_reply).and_return(nil, "postgres")
+
+      refused = dispatched
+      answered = dispatched
+
+      expect(refused).to be_error
+      expect(refused.content).not_to match(/nobody is attached|no human is attached|human went away/)
+      expect(answered).to be_ok
+      expect(answered.content).to eq("postgres")
+    end
+
+    # Review FIX 3. A dying PTY does not politely return nil mid-read: it
+    # raises. Both raises are StandardErrors, so they climbed to
+    # {AnswerLoop#exchange}, which rendered them and settled the line -- the
+    # inbox row deleted while the asker stayed parked forever, which is the
+    # exact end state this surface's own comments say must never happen.
+    %w[EOFError Errno::EIO].each do |raised|
+      it "refuses the parked set when the read raises #{raised} rather than returning nil" do
+        allow(conductor).to receive(:read_reply).and_raise(Object.const_get(raised))
+
+        result = dispatched
+
+        expect(result).to be_error
+        expect(ask_human.last_answer).to be_nil
+        expect(ask_human.last_unanswered.from).to eq(Lain::Tools::AskHuman::Unanswered::NOBODY)
+      end
+    end
+
+    # The other half of FIX 3, and the reason the rescue names two classes
+    # rather than IOError: a read that failed for a reason which is NOT the end
+    # of the stream keeps the surface's own error path -- rendered where the
+    # human typed, and left to {AnswerLoop#exchange}'s documented rescue -- and
+    # is never turned into "nobody will ever answer this". Widening the rescue
+    # to IOError would make every transient terminal fault a question the model
+    # is told is dead, which is the fabrication this card exists to remove
+    # pointing the other way.
+    #
+    # What this deliberately does NOT assert is that the first question
+    # survives: `exchange` reports a raise SETTLED and `serve` retires the line
+    # without re-queueing, which is a reasoned, documented trade (the
+    # alternative is a hot loop rendering one error forever) and is untouched
+    # by this card. The sibling example "keeps answering after the reply read
+    # raises" pins the half that IS guaranteed -- the surface lives on.
+    it "leaves an ordinary read failure to the surface's own error path rather than refusing" do
+      allow(conductor).to receive(:read_reply).and_raise(IOError, "terminal hiccuped")
+
+      Sync do |task|
+        surfaces = replies.surfaces(task)
+        run = task.async { ask_human.call({ "question" => "which db?" }, invocation) }
+        begin
+          pumped_until(task) { output.string.include?("terminal hiccuped") }
+        ensure
+          surfaces.each(&:stop)
+          run.stop
+        end
+      end
+
+      expect(ask_human.last_unanswered).to be_nil
+      expect(ask_human.last_answer).to be_nil
+    end
+
+    # The asymmetry this card reconciles: the drain already read "" as "nothing
+    # typed" where the inline prompt read it as an answer, and neither could see
+    # EOF at all. EOF now means one thing at both prompts, so a stream that ends
+    # while the human is inside the `/inbox` detour refuses the set it is parked
+    # on instead of answering it emptily.
+    it "refuses the parked set when the stream ends inside the /inbox drain" do
+      allow(conductor).to receive(:read_reply).and_return("/inbox", nil)
+
+      result = dispatched
+
+      expect(result).to be_error
+      expect(ask_human.last_answer).to be_nil
+      expect(ask_human.last_unanswered.from).to eq(Lain::Tools::AskHuman::Unanswered::NOBODY)
+    end
+  end
+
+  # Review FIX 2. `/inbox` at `you>` is the prompt where NOTHING is parked on
+  # the read -- the whole reason it exists is that the fleet outlives an ask --
+  # so "the run is parked on this set, and declining still has to reach the
+  # model" is the inline prompt's reason and is false here. A read that ends
+  # without an answer settles nothing at this prompt, exactly as a blank line
+  # already did: the questions are still listed, still answerable at the
+  # editor or at the next `/inbox`, and nothing has been told they are dead.
+  #
+  # The uneven half matters as much as the destroyed half: with N questions
+  # listed, refusing `@inbox.oldest` gave ONE of them a decision-6 record and
+  # left N-1 with nothing -- the same doctrine applied to an arbitrary one.
+  describe "EOF closing the `/inbox` listing at you>" do
+    it "settles nothing, and leaves every listed question answerable" do
+      Sync do
+        announced(ask_human, "which db?")
+        announced(other_asker, "which port?")
+        allow(conductor).to receive(:read_reply).and_return(nil)
+
+        replies.drain_at_prompt
+      end
+
+      expect(ask_human.last_unanswered).to be_nil
+      expect(ask_human.pending?).to be(true)
+      expect(replies.pending?).to be(true)
+    end
+
+    it "lets a later real answer reach the question a stray Ctrl-D would have destroyed" do
+      Sync do
+        announced(ask_human, "which db?")
+        allow(conductor).to receive(:read_reply).and_return(nil)
+        replies.drain_at_prompt
+
+        allow(conductor).to receive(:read_reply).and_return("postgres")
+        replies.drain_at_prompt
+      end
+
+      expect(ask_human.last_answer.body.fetch("answer")).to include("postgres")
+      expect(ask_human.last_unanswered).to be_nil
+    end
+
+    it "writes no refusal record for any of the listed questions" do
+      other = other_asker
+      Sync do
+        announced(ask_human, "which db?")
+        announced(other, "which port?")
+        allow(conductor).to receive(:read_reply).and_return(nil)
+
+        replies.drain_at_prompt
+      end
+
+      expect([ask_human.last_unanswered, other.last_unanswered]).to eq([nil, nil])
+    end
+  end
+
   # The editor leg, from the wire IN. Everything here starts from a command
   # shaped EXACTLY as runtime.lua sends it -- `[verb, args]`, args an Array,
   # annotations String-keyed because they crossed msgpack -- because the defect

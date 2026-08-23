@@ -81,6 +81,77 @@ module Lain
       # two surfaces to name an asker the same way.
       ASKED_BY = "asked_by"
 
+      # The answer nobody gave, riding the seam an answer rides.
+      #
+      # A String subclass, which is {Announcement}'s justification for the same
+      # shape: the reply seam is String-shaped end to end -- {CLI::HumanReplies}
+      # hands it on, {Directory} routes it by digest without reading it, and an
+      # `#ask`-shaped duck awaiting the promise renders whatever resolves it --
+      # so a value that is not a String would either need every one of those to
+      # learn about it or would surface as an inspect where a sentence belongs.
+      # As a String it degrades to the refusal sentence, which is the right
+      # thing for a reader that only renders, and only {AskHuman} -- the one
+      # object that writes the record and builds the tool_result -- asks what
+      # it is.
+      #
+      # It carries its own vocabulary (the sentence, the attribution, the body)
+      # rather than leaving three constants on the tool, because all three are
+      # facts about ONE thing -- what "nobody answered" looks like. Both exits
+      # read the wording off {REFUSAL} rather than off the instance, so the
+      # invariant belongs to the class; `#initialize` still freezes, but that
+      # is a courtesy to a reader rather than the thing being relied on.
+      class Unanswered < String
+        # What the model is told when the set it is parked on can never be
+        # answered -- {Unattended::REFUSAL}'s doctrine at the other door, and
+        # deliberately its second half word for word: that no answer is coming,
+        # and the instruction that keeps the model from simply asking again.
+        #
+        # It says WHAT HAPPENED, never WHO LEFT, and that is not a stylistic
+        # choice. The nil this is written from cannot tell a vanished stdin
+        # from a human pressing Ctrl-D on an empty line at a live Reline
+        # prompt -- both are `nil`, and in the second case the human is still
+        # sitting there and answers the next question. A sentence claiming the
+        # session is unattended is therefore false in its COMMONEST trigger,
+        # and it is false in two places that cannot check it: the model, and
+        # `body["unanswered"]` in the journal, which is the record this whole
+        # path exists to keep honest. So it claims only the one thing true in
+        # every case -- this read ended at end-of-file with nothing typed.
+        #
+        # {Unattended} may name its door because it knows it: the run was
+        # STARTED `--non-interactive`, which is a fact about the process rather
+        # than a guess about a terminal.
+        REFUSAL = "the reply prompt for this question reached end-of-file with no answer typed, so " \
+                  "ask_human has nobody to put this to and no answer will ever come back. Decide with what " \
+                  "you have, or stop and say what you needed."
+
+        # The `from` a record of this wears. Nobody said it and the record must
+        # not imply anybody did, so it is a NAME rather than a nil or an
+        # omitted record -- {Approval::Queue::ABANDONED_SURFACE}'s doctrine for
+        # a decision nobody made: a name, so a journal reader never guards.
+        NOBODY = "nobody"
+
+        def initialize
+          super(REFUSAL)
+          freeze
+        end
+
+        # The body a record of this carries. Deliberately NOT under `"answer"`:
+        # that key is the human's own words to every reader of an A event, and
+        # an empty string under it is exactly the utterance nobody made that
+        # this record exists instead of.
+        #
+        # {REFUSAL} rather than `to_s`, and the difference is the whole
+        # invariant: freezing in `#initialize` binds the wording to `.new`, not
+        # to the CLASS -- `+U.new`, `#dup`, `Marshal.load` and `.allocate` all
+        # yield unfrozen instances that pass the guard, so a mutated one
+        # journalled arbitrary bytes under `from: "nobody"`, which is a record
+        # nobody wrote and nobody can contradict. Read off the constant, the
+        # bytes are the class's and no instance can put words in this record's
+        # mouth. {AskHuman#perform} reads it for the same reason, so the model
+        # cannot be handed forged bytes either.
+        def recorded = { "unanswered" => REFUSAL }
+      end
+
       class NoPendingQuestion < Error; end
       class QuestionOutstanding < Error; end
 
@@ -362,9 +433,12 @@ module Lain
       input_model Input
 
       # The most recent exchange, exposed for observability (the study bench reads
-      # the orchestration events): the last Q and A :message events. `nil` until
-      # the corresponding half happens.
-      attr_reader :name, :last_question, :last_answer
+      # the orchestration events): the last Q and A :message events, and the last
+      # record saying a question went unanswered ({#recorded_reply}). `nil` until
+      # the corresponding half happens -- and an exchange leaves EITHER an answer
+      # or an unanswered record, never both, which is what makes the pair of
+      # readers the two facts they are rather than one field with a flag.
+      attr_reader :name, :last_question, :last_answer, :last_unanswered
 
       # `observer` rides the ChainWriter this tool builds: Q and A are
       # exactly the events a Timeline walk can never find, so the session
@@ -460,20 +534,25 @@ module Lain
       # record, so a reply this method is about to refuse must leave no A event
       # behind -- the refusal happens or the event lands, never both.
       #
-      # @param answer [String] what the human typed
+      # An {Unanswered} is an answer in every way this method cares about -- it
+      # names a set, it resolves that set's promise, and it leaves a record --
+      # and in exactly one way it is not: nobody said it. So it comes down this
+      # path rather than down a second one, and {#recorded_reply} is the single
+      # place the difference is drawn.
+      #
+      # @param answer [String, Unanswered] what the human typed, or the answer
+      #   nobody gave
       # @param digest [String] the Q event of the set this answers
-      # @return [Lain::Event] the A :message event
+      # @return [Lain::Event] the A :message event, or the record that says the
+      #   question went unanswered
       # @raise [NoPendingQuestion] naming the digest, when no set of that name
       #   is awaiting a reply
       # @raise [Promise::AlreadyResolved] when that set was already answered
       def reply(answer, digest)
         pending = @outstanding.answerable!(digest)
-        parent = parent_timeline
-        @last_answer = write_message(parent, from: HUMAN, to: identity(parent),
-                                             body: { "answer" => answer },
-                                             causal_parents: [pending.digest])
+        recorded = recorded_reply(answer, pending)
         pending.resolve(answer)
-        @last_answer
+        recorded
       end
 
       # Whether a question is emitted and still unanswered -- what a frontend
@@ -506,9 +585,17 @@ module Lain
       # digest of THIS set -- read off the promise, never off `@last_question` --
       # is remembered for the delivery commit to cite (see
       # {#take_answered_questions}).
+      #
+      # An {Unanswered} never reaches the delivery-commit harvest: nothing was
+      # answered, so no committed :turn may cite this question as one the human
+      # retired -- the same posture {#awaited}'s unwind already takes, and the
+      # reason the record written for it ({#recorded_reply}) is what says what
+      # became of the Q instead.
       def perform(input, _invocation)
         pending = ask(Announcement.new(requested_set(input)))
         answer = awaited(pending)
+        return Tool::Result.error(Unanswered::REFUSAL) if answer.is_a?(Unanswered)
+
         (@answered_questions ||= []) << pending.digest
         Tool::Result.ok(answer)
       end
@@ -525,6 +612,39 @@ module Lain
         pending.await
       ensure
         @outstanding.abandon(pending)
+      end
+
+      # The record one reply leaves behind, and the ONE branch this class draws
+      # between an answer and the absence of one. `is_a?` rather than a duck
+      # test, for {#announcement_for}'s reason: {Unanswered} is this class's own
+      # currency and nobody outside implements it.
+      #
+      # Open decision 6, answered: the Q event is written before the park, so a
+      # question with no possible answer is already in the record by the time
+      # EOF is seen -- and the disposition of it is a MATCHING record rather
+      # than a silence. Chained to the Q exactly as an A is, so a reader walks
+      # from the question to what became of it; attributed to {Unanswered::NOBODY} and
+      # carrying no `"answer"` key at all, so no reader can mistake it for the
+      # human, and so a question nobody could answer reads differently from one
+      # a human answered emptily.
+      def recorded_reply(answer, pending)
+        return unanswered_record(answer, pending) if answer.is_a?(Unanswered)
+
+        @last_answer = written(pending, from: HUMAN, body: { "answer" => answer })
+      end
+
+      # Its own method rather than the other arm of a ternary, so the two
+      # records read side by side: same chain, same recipient, different
+      # attribution and a different key.
+      def unanswered_record(answer, pending)
+        @last_unanswered = written(pending, from: Unanswered::NOBODY, body: answer.recorded)
+      end
+
+      # Both halves of an exchange's second event: addressed back to the asker,
+      # chained to the Q the set is named by.
+      def written(pending, from:, body:)
+        parent = parent_timeline
+        write_message(parent, from:, to: identity(parent), body:, causal_parents: [pending.digest])
       end
 
       # Q, and the digest {Outstanding} names its set by.
