@@ -18,7 +18,7 @@ module Lain
   # resolves through {ProjectDir}, the locator for that tree, and never through
   # {Paths}, which is XDG only.
   #
-  # Eleven fields, all JOURNALED or derived from the run's own clock -- never
+  # Thirteen fields, all JOURNALED or derived from the run's own clock -- never
   # an in-process registry, and in particular never a live {Agent}: this
   # object is constructed in `ChatLaunch#open_chronicle`, BEFORE `Wiring`
   # exists, so anything it can only learn by asking a collaborator that does
@@ -172,6 +172,24 @@ module Lain
   # * `compactions` -- how many compactions this run has seen. The EVENT half
   #   of `since_compaction`'s age, and the only reason a compaction is
   #   publishable at all: see {#observed}.
+  # * `derivation_refusal_streak` -- how many derivations in a ROW
+  #   {Compaction::Source::Derived} has refused, zero while they are
+  #   succeeding. A STREAK, not a running total, which is the difference
+  #   between it and `compactions` beside it: one refusal is an awkward
+  #   history, a rising streak is a session that has stopped compacting, and
+  #   until this field nothing in `lib/` read the number at all (F47).
+  #
+  #   Both ends ride ONE channel, and that is what makes the field real rather
+  #   than a slot nothing feeds. `CLI::Backend#compaction_source` hands the
+  #   Source the journal `CLI::CompactionMount#destination` reads off the
+  #   chronicle's instrumentation -- which is the {CLI::JournalTee} this sink
+  #   sits in ({CLI::LiveViews#initialize}). So a
+  #   {Compaction::Source::DerivationRefused} arrives here carrying the
+  #   Source's own `consecutive`, and the {Telemetry::ContextDerived} a
+  #   SUCCESSFUL derivation writes to the same journal arrives to clear it.
+  #   The count is taken off the record and never tallied here: the Source
+  #   owns the increment and the reset, and a second tally could only come to
+  #   disagree with it.
   #
   # Recognizing an event is duck-typed (`#usage`, `#kind`), not a class check:
   # a caller can feed this a real {Telemetry::TurnUsage}/{Event} or any object
@@ -268,6 +286,7 @@ module Lain
       @mode = ModeState::NONE
       @approvals_pending = 0
       @compactions = 0
+      @derivation_refusal_streak = 0
       # Insertion-ordered, keyed by digest: a Hash (not an Array) is what
       # makes a redelivered :spawn a no-op update instead of a second entry.
       @fleet = {}
@@ -297,6 +316,15 @@ module Lain
       # event, not a clock reading, and the difference is what keeps a
       # compaction publishable (see {#observed}).
       @compactions += 1 if event.is_a?(Telemetry::Compaction)
+      # The two ends of {Compaction::Source::Derived}'s refusal streak, both
+      # arriving down the journal that Source is handed (see the class doc for
+      # the channel). Matched by CLASS, the approval pair's own exception and
+      # for the same reason: a `#consecutive` duck would be a guess, and these
+      # two records are the whole vocabulary. ASSIGNED from the record, never
+      # incremented here -- the Source owns the increment and the reset, and a
+      # tally kept here could only come to be a second opinion about it.
+      @derivation_refusal_streak = event.consecutive if event.is_a?(Compaction::Source::DerivationRefused)
+      @derivation_refusal_streak = 0 if event.is_a?(Telemetry::ContextDerived)
       observe_usage(event) if event.respond_to?(:usage)
       observe(event) if event.respond_to?(:kind)
       # Matched by class, for {Telemetry::Compaction}'s reason and not the
@@ -452,11 +480,20 @@ module Lain
     # flag so a SECOND compaction is a change too, and a bench gets a number
     # worth having for free.
     #
+    # `derivation_refusal_streak` is here for exactly that argument, and it is
+    # not in tension with `since_compaction`'s exclusion: that exclusion is
+    # about CLOCKS -- a running clock makes "did anything happen" answer yes
+    # once a second forever -- while this streak moves only when a record moved
+    # it. A refusal that changed no compared field would earn no write, and the
+    # published state would go on saying compaction was healthy while the
+    # session had stopped compacting, which is F47 with an extra step.
+    #
     # @return [Hash] string-keyed, JSON-shaped
     def observed
       { "cache_deadline" => @cache_deadline, "fleet" => @fleet.keys, "inbox_count" => @pending.size,
         "approvals_pending" => @approvals_pending, "occupancy" => @occupancy,
-        "compactions" => @compactions }.merge(@mode.published)
+        "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak }
+        .merge(@mode.published)
     end
 
     # The run's own measures, read at the instant of the call. Never compared

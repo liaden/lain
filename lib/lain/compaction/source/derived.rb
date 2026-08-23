@@ -45,6 +45,34 @@ module Lain
       # not the repair -- a session pinned that way stops compacting for as
       # long as the pin stands -- which is why the record carries the streak.
       class Derived
+        # The streak at which "one awkward turn" has become "this session has
+        # stopped compacting".
+        #
+        # TWO, not one, and the reason is that a refusal is deterministic: the
+        # same strategy over the same history refuses identically, so what a
+        # SECOND refusal adds is that it survived a change of history -- a turn
+        # was committed in between and the chain still will not derive. One
+        # refusal is genuinely the awkward turn the class doc above describes.
+        #
+        # PRIVATE, and reached only through {.stalled?}. F47 was a number
+        # nothing read, and the way that recurs is a second reader growing its
+        # own copy of the comparison: exporting the integer would put a `>=`
+        # in {Frontend::PromptComposer::RunState} today and another in
+        # `cli/up/hud.rb` the day it projects the field.
+        STALLED_STREAK = 2
+        private_constant :STALLED_STREAK
+
+        # @param streak [Integer] consecutive refusals, as journaled on
+        #   {Source::DerivationRefused} and published by {StatusFeed}
+        # @return [Boolean] whether a session with that streak has stopped
+        #   compacting, rather than merely having met one awkward turn
+        #
+        # A class method because the ASKER never has a Derived: this object is
+        # per-turn and lives inside the render path, while the readers are a
+        # prompt line and a status bar reading a published number back. What is
+        # shared between them is the judgement, and this is where it lives.
+        def self.stalled?(streak) = streak >= STALLED_STREAK
+
         Outcome = Data.define(:replay, :hits, :misses) do
           # The derivation refused this turn's chain; the caller renders
           # uncompacted.
@@ -157,8 +185,12 @@ module Lain
         # silent-stop mode wearing a badge -- but raising inside the render
         # path over a history that is perfectly legal is worse than not
         # compacting ({Boundary}'s own argument). So the STREAK is on the
-        # record instead: a bench arm reads `consecutive` rising and knows the
-        # difference between one awkward turn and a session that has stopped.
+        # record instead: `consecutive` rising is the difference between one
+        # awkward turn and a session that has stopped. It is read live as well
+        # as offline -- {StatusFeed} takes the count off this very record (the
+        # journal below IS the tee that sink rides) and publishes it, and the
+        # prompt line says "compaction stalled" for any streak {.stalled?}
+        # answers true for.
         def refused(policy, error)
           @consecutive += 1
           @journal << DerivationRefused.new(strategy: policy.name, violations: error.message,

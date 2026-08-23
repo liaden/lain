@@ -549,6 +549,61 @@ RSpec.describe Lain::Frontend::PromptComposer do
       expect(state["fleet"]).to be_nil
     end
 
+    # T10/F47. `Compaction::Source::Derived` counts consecutive refused
+    # derivations and journals the streak; the StatusFeed publishes it; this is
+    # where it becomes something a human sees. What length of streak IS a stall
+    # is the Source's judgement and is asked of it -- the number itself is
+    # private over there, so no reader can grow its own copy of the comparison.
+    describe "compaction that has stopped" do
+      def with_streak(streak)
+        allow(status_feed).to receive(:state).and_return({ "fleet" => [], "derivation_refusal_streak" => streak })
+        state["compaction"]
+      end
+
+      it "says nothing while derivations are succeeding" do
+        expect(with_streak(0)).to be_nil
+      end
+
+      it "says nothing after one awkward turn, which is not a stall" do
+        expect(with_streak(1)).to be_nil
+      end
+
+      it "reports a stall once the streak reaches the threshold" do
+        expect(with_streak(2)).to eq("stalled")
+      end
+
+      it "goes on reporting it while the streak rises" do
+        expect(with_streak(7)).to eq("stalled")
+      end
+
+      # The drift guard, and the reason the threshold is not a number exported
+      # across two namespaces: `cli/up/hud.rb` would have to repeat the
+      # comparison the day it projects this field. One object answers, every
+      # reader asks.
+      it "asks the Source whether a streak is a stall rather than comparing a number of its own" do
+        allow(Lain::Compaction::Source::Derived).to receive(:stalled?).with(1).and_return(true)
+
+        expect(with_streak(1)).to eq("stalled")
+      end
+
+      # The reading clears because the streak does: a `context_derived` resets
+      # it at the StatusFeed, so this end has nothing to remember.
+      it "stops reporting once a derivation succeeds and the streak resets" do
+        with_streak(2)
+
+        expect(with_streak(0)).to be_nil
+      end
+
+      # A feed that has published no streak at all -- a state file written
+      # before this field existed, or a --no-journal run whose feed sees
+      # nothing. Absence reads as healthy, never as a stall.
+      it "says nothing when the feed carries no streak at all" do
+        allow(status_feed).to receive(:state).and_return({ "fleet" => [] })
+
+        expect(state["compaction"]).to be_nil
+      end
+    end
+
     describe "idle, as a run goes quiet" do
       let(:ticking) { [0.0] }
       let(:clock) { Lain::RunClock.new(clock: -> { ticking.first }) }
@@ -687,7 +742,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
 
     it "answers a plain string-keyed Hash the formatter can render" do
-      expect(state.keys).to contain_exactly("model", "occupancy", "fleet", "idle", "mode")
+      expect(state.keys).to contain_exactly("model", "occupancy", "fleet", "idle", "mode", "compaction")
     end
 
     # T7: the posture the human is in must live in chrome they cannot lose,
@@ -847,7 +902,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
     it "ships a default that parses, and names the variables the run supplies" do
       shipped = Lain::Ext::Prompt.from_toml(File.read(described_class::DEFAULT_CONFIG))
 
-      expect(shipped.variables).to contain_exactly("model", "occupancy", "fleet", "idle", "mode")
+      expect(shipped.variables).to contain_exactly("model", "occupancy", "fleet", "idle", "mode", "compaction")
     end
   end
 

@@ -34,6 +34,17 @@
 #               otherwise read "idle 0s" mid-turn. Keep it inside a group, as
 #               below -- the group is what takes the literal word "idle" with
 #               the reading; ungrouped, an absent reading strands it.
+#   $compaction the reading "stalled", and nothing else, once
+#               `Compaction::Source::Derived` has refused that many derivations
+#               in a ROW (it owns the threshold; ask `.stalled?`). Absent for a
+#               healthy session, so the group elides and the prompt is exactly
+#               today's. A stalled session is not broken -- it renders
+#               uncompacted and keeps going -- but it stops shrinking, and
+#               until this variable nothing said so. The streak's own count is
+#               in `.lain/state.json` for a reader with room for a number.
+#               It says no derivation has SUCCEEDED since that many refusals;
+#               it does not say one was attempted this turn, and it clears only
+#               when one succeeds. See RunState#compaction for why it latches.
 #   $mode       the posture's lighter, then every active layer's, space
 #               separated -- e.g. "PLAN" or "MAN AA". Absent whenever there is
 #               nothing to say: no mode is wired yet, or the session is in
@@ -45,7 +56,7 @@
 # Colour is NOT resolved here. Ruby owns the stream, so it decides whether this
 # renders with escape sequences at all; a `(bold cyan)` on a piped stdout emits
 # plain bytes.
-format = "[$model](bold cyan)( [$mode](bold yellow))( [ctx $occupancy](dim))( [fleet $fleet](dim))( [idle $idle](dim))"
+format = "[$model](bold cyan)( [$mode](bold yellow))( [compaction $compaction](bold red))( [ctx $occupancy](dim))( [fleet $fleet](dim))( [idle $idle](dim))"
 
 # [settings]
 # The composed line is dropped, rather than wrapped, when it is wider than the

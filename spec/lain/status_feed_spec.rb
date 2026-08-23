@@ -48,6 +48,22 @@ RSpec.describe Lain::StatusFeed do
   # published durations.
   def frozen_run_clock(at: 1000.0) = Lain::RunClock.new(clock: -> { at })
 
+  # The Source's own refusal record: a derivation the Messages API would have
+  # rejected, carrying the consecutive streak that says whether this was one
+  # awkward turn or a session that has stopped compacting.
+  def derivation_refused(consecutive:)
+    Lain::Compaction::Source::DerivationRefused.new(strategy: "spans", violations: "unanswered tool_use",
+                                                    consecutive:)
+  end
+
+  # What a SUCCESSFUL derivation journals, on the same leg -- the record that
+  # clears the streak.
+  def context_derived
+    Lain::Telemetry::ContextDerived.new(source_head: "blake3:src", derived_head: "blake3:drv",
+                                        strategy: "spans", spans: [%w[blake3:a blake3:b]], cut: :offered,
+                                        moved: 0, keep_last: 2)
+  end
+
   def compaction_record
     Lain::Telemetry::Compaction.new(trigger: "token_threshold", cache_state: :cold, bytes_before: 100,
                                     bytes_after: 10, cost_saved: nil, cost_spent: nil, model: nil)
@@ -381,6 +397,58 @@ RSpec.describe Lain::StatusFeed do
       feed << compaction_record
 
       expect(published["compactions"]).to eq(2)
+    end
+  end
+
+  # T10/F47. `Compaction::Source::Derived` counts consecutive derivation
+  # refusals and journals the streak, and until this card nothing in `lib/`
+  # read it. Both ends of the streak ride ONE channel -- the journal the
+  # Backend hands the Source is the tee this feed sits in -- so a refusal
+  # raises the streak here and the `context_derived` of a successful
+  # derivation clears it.
+  describe "the derivation refusal streak" do
+    it "starts at zero, because nothing has refused yet" do
+      feed = described_class.new(path:)
+
+      feed << spawn_event("a")
+
+      expect(published["derivation_refusal_streak"]).to eq(0)
+    end
+
+    # The streak the RECORD carries, never a count kept here: the Source owns
+    # the reset and the increment, and a second tally in this sink could only
+    # ever come to disagree with it.
+    it "reports the streak the refusal record carries" do
+      feed = described_class.new(path:)
+
+      feed << derivation_refused(consecutive: 3)
+
+      expect(published["derivation_refusal_streak"]).to eq(3)
+    end
+
+    # The compactions/since_compaction argument, one field over: the streak is
+    # derived from an EVENT, so it belongs in the change token. Without it a
+    # refusal would move nothing compared, earn no write, and the file would go
+    # on saying compaction was healthy.
+    it "publishes on the refusal itself, not on the next unrelated event" do
+      feed = described_class.new(path:)
+      feed << spawn_event("a")
+
+      feed << derivation_refused(consecutive: 1)
+
+      expect(published["derivation_refusal_streak"]).to eq(1)
+    end
+
+    # The other end of the same channel. A successful derivation journals a
+    # `context_derived` to the journal that carried the refusals, which is what
+    # lets the reading clear without this sink guessing at a timeout.
+    it "clears the streak when a derivation succeeds" do
+      feed = described_class.new(path:)
+      feed << derivation_refused(consecutive: 2)
+
+      feed << context_derived
+
+      expect(published["derivation_refusal_streak"]).to eq(0)
     end
   end
 
@@ -718,6 +786,22 @@ RSpec.describe Lain::StatusFeed do
       expect(published["since_compaction"]).to eq(0)
     end
 
+    # T10: ARRIVAL, not derivation. `Backend#compaction_source` hands the
+    # Source the very journal `CompactionMount#destination` reads off this
+    # chronicle's instrumentation, and that is the tee this feed rides -- so a
+    # refusal written by `Compaction::Source::Derived` lands here. Driven down
+    # that leg rather than into `feed <<` for the same reason the mode example
+    # below drives a real Mode::Switch: the derivation is proven in
+    # spec/lain/compaction/source_spec.rb, and what is unproven is the channel.
+    it "publishes a refusal streak sent down the leg the compaction Source is given" do
+      feed = described_class.new(path:)
+      telemetry = chronicle_teed_to(feed).instrumentation.journal
+
+      telemetry << derivation_refused(consecutive: 2)
+
+      expect(published["derivation_refusal_streak"]).to eq(2)
+    end
+
     # T8: the same wiring question for the mode. Every other mode example hands
     # a Telemetry::ModeSwitch straight to `feed <<`, which proves the
     # derivation and proves nothing about ARRIVAL -- and arrival is exactly
@@ -841,7 +925,8 @@ RSpec.describe Lain::StatusFeed do
       feed << turn_usage(cache_read: 1)
 
       expect(published.keys).to contain_exactly("cache_deadline", "fleet", "inbox_count", "approvals_pending",
-                                                "occupancy", "compactions", "posture", "layers", "mode_lighter",
+                                                "occupancy", "compactions", "derivation_refusal_streak",
+                                                "posture", "layers", "mode_lighter",
                                                 "elapsed", "idle", "since_compaction")
     end
 

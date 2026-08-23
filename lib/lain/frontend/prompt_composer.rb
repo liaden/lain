@@ -363,8 +363,9 @@ module Lain
         #   and so a dispatch in flight can silence a reading that would lie
         # @param clock [Lain::RunClock] the run's own, the instance
         #   {CLI::Conductor} records input on
-        # @param status_feed [#state] the published struct; `"fleet"` is the
-        #   only reading this class takes from it
+        # @param status_feed [#state] the published struct; `"fleet"` and
+        #   `"derivation_refusal_streak"` are the readings this class takes
+        #   from it
         # @param mode [#posture, #layers, nil] the session's live mode -- a
         #   {Lain::Mode} value or a {Mode::Switch} both answer this duck.
         #   `nil` until the mode ladder is wired into a live chat (T5/T10),
@@ -381,7 +382,7 @@ module Lain
 
         def to_h
           { "model" => @agent.context.model, "occupancy" => occupancy, "fleet" => fleet, "idle" => idle,
-            "mode" => mode }
+            "mode" => mode, "compaction" => compaction }
         end
 
         private
@@ -408,6 +409,59 @@ module Lain
         def fleet
           size = @status_feed.state["fleet"].size
           size.positive? ? size.to_s : nil
+        end
+
+        # F47: {Compaction::Source::Derived} has been counting consecutive
+        # refused derivations and journaling the streak, and nothing read it.
+        # This is the reading, and it is ABSENT for a healthy session --
+        # {#fleet}'s convention, so the `( ... )` group elides rather than
+        # rendering a standing "compaction ok" nobody asked for.
+        #
+        # {Compaction::Source::Derived.stalled?} decides WHETHER a streak is a
+        # stall -- asked, never re-implemented here. The threshold is private
+        # over there for the reason F47 exists: a number exported across two
+        # namespaces grows a second `>=` in the next reader (`cli/up/hud.rb`,
+        # the day it projects this field) and the two drift.
+        #
+        # `to_i` rather than a nil guard: a feed that has published no streak
+        # reads as zero, which is healthy, and absence must never render as a
+        # stall. That covers a state struct written before the field existed
+        # AND a `--no-journal --no-nvim` run, where no tee is built, the feed
+        # observes nothing at all, and this reads absent for the life of the
+        # session -- F47's silence, unchanged, exactly as `#fleet` behaves on
+        # the same run. The card's promise holds for a journaling run.
+        #
+        # == THE READING LATCHES, deliberately
+        #
+        # {Compaction::Source#context_for} reaches a derivation only when
+        # `need.needed?` and `#timely?` both say so, and only a SUCCESSFUL
+        # derivation clears the streak. So a session that refused twice and
+        # then settled into the warm-cache defer band -- what `Source#timely?`
+        # itself calls "the steady state" -- goes on reporting a stall while
+        # nothing is being refused.
+        #
+        # What "stalled" therefore says: no derivation has succeeded since
+        # {Compaction::Source::Derived.stalled?}'s worth of consecutive
+        # refusals. An operator should conclude that this session has stopped
+        # shrinking its context and is rendering the full history -- true in
+        # the defer band too -- and should NOT conclude that a derivation was
+        # attempted and failed on this turn.
+        #
+        # Decaying it was considered and refused. `Source#record` journals a
+        # {Compaction::Source::CompactionDecision} on EVERY turn, deferred or
+        # not, so the signal is reachable from {StatusFeed} -- but
+        # `compacted: false` covers both a defer and a refusal, and a refusing
+        # turn writes both records, so a sink clearing on it would clear the
+        # streak on the very turn that just refused. And a defer is no evidence
+        # the chain became derivable: refusals are deterministic over a history
+        # that only grows, so clearing on one trades a reading that is LATE for
+        # one that is WRONG. A live reading needs a record that distinguishes
+        # "not attempted" from "attempted and succeeded", which is a change to
+        # what `Source` journals and a card of its own.
+        def compaction
+          streak = @status_feed.state["derivation_refusal_streak"].to_i
+
+          Compaction::Source::Derived.stalled?(streak) ? "stalled" : nil
         end
 
         # The posture's own lighter, then every active layer's, in the same
