@@ -101,31 +101,29 @@ module Lain
           raise Refusal, "#{prefix.inspect} is ambiguous on this session's chain: #{matches.join(", ")}"
         end
 
-        # Mirrors {CLI::Resume#refuse_mid_tool!}: a target that is an
-        # assistant tool_use turn still awaiting its results must not become
-        # the head -- the next ask would render a dangling tool_use (the real
-        # API rejects it), and the journaled file would then refuse to resume
-        # through the very guard this command would have skipped. Both forms
-        # funnel through the count, so both meet the guard.
+        # Shares {Event.pending_tool_use?} with {CLI::Resume#refuse_mid_tool!}:
+        # a target that is an assistant tool_use turn still awaiting its
+        # results must not become the head -- the next ask would render a
+        # dangling tool_use (the real API rejects it), and the journaled file
+        # would then refuse to resume through the very guard this command
+        # would have skipped. Both forms funnel through the count, so both
+        # meet the guard.
         def settled_target!(count, timeline)
           heads = timeline.ancestors.to_a
-          return unless pending_tool_use?(heads[count])
+          return unless Event.pending_tool_use?(heads[count])
 
           raise Refusal, "/rewind #{count} lands on an assistant tool_use turn still awaiting its tool " \
                          "results; the next request would dangle it (nearest valid targets: " \
                          "#{nearest_valid(count, heads).join(", ")})"
         end
 
-        def pending_tool_use?(head)
-          !head.nil? && head.role == "assistant" &&
-            head.content.any? { |block| block.is_a?(Hash) && block["type"] == "tool_use" }
-        end
-
         # The valid counts adjacent to the refused one -- consistent with the
         # range message's shape. Never empty: distance `length` is the empty
-        # session, which no tool_use can occupy.
+        # session, which no tool_use can occupy. `heads[heads.length]` is
+        # nil (one past the end), which is exactly what
+        # {Event.pending_tool_use?}'s nil guard exists for.
         def nearest_valid(count, heads)
-          valid = (1..heads.length).reject { |candidate| pending_tool_use?(heads[candidate]) }
+          valid = (1..heads.length).reject { |candidate| Event.pending_tool_use?(heads[candidate]) }
           [valid.reverse.find { |candidate| candidate < count }, valid.find { |candidate| candidate > count }].compact
         end
 

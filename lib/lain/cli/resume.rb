@@ -45,19 +45,11 @@ module Lain
         # would only die on it -- one predicate, one wording, wherever the
         # user meets it.
         def refuse_mid_tool!(path, timeline)
-          head = timeline.head
-          return if head.nil? || !pending_tool_use?(head)
+          return unless Event.pending_tool_use?(timeline.head)
 
           raise Refusal, "cannot resume #{File.basename(path)}: its head is an assistant tool_use turn " \
                          "still awaiting tool results (the run stopped mid-tool); fabricating results " \
                          "would falsify the record -- re-ask the question in a new session"
-        end
-
-        private
-
-        def pending_tool_use?(head)
-          head.role == "assistant" &&
-            head.content.any? { |block| block.is_a?(Hash) && block["type"] == "tool_use" }
         end
       end
 

@@ -73,6 +73,24 @@ module Lain
       new(kind: :turn, carried_payload: payload, render_parent: parent, correlation:, causal_parents:)
     end
 
+    # Whether `event` is an assistant turn still carrying an unanswered
+    # tool_use block -- the shape that must never become a resume head, a fork
+    # point, or a rewind target, because the next request would render a
+    # dangling tool_use the API rejects. Shared by every door that has to
+    # refuse the same head the same way (CLI::Resume#refuse_mid_tool!,
+    # CLI::Command::Fork#anchor!, CLI::Command::Rewind#settled_target!) --
+    # this used to be two separately maintained copies that had quietly
+    # drifted (one guarded a nil event, one did not).
+    #
+    # Nil-safe on purpose: CLI::Command::Rewind#nearest_valid evaluates this
+    # over `(1..heads.length)`, and `heads[heads.length]` is nil by
+    # construction (an off-the-end index), so a caller walking arbitrary
+    # events needs no separate guard.
+    def self.pending_tool_use?(event)
+      !event.nil? && event.role == "assistant" &&
+        event.content.any? { |block| block.is_a?(Hash) && block["type"] == "tool_use" }
+    end
+
     def initialize(kind:, payload_digest: nil, body: nil, carried_payload: nil, from: nil, to: nil,
                    render_parent: nil, causal_parents: [], correlation: nil)
       @kind = self.class.normalize_kind(kind)

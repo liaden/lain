@@ -244,6 +244,47 @@ RSpec.describe Lain::Event do
     end
   end
 
+  # T4: one definition of "the head is a tool_use awaiting results", shared by
+  # resume, fork, and rewind -- previously duplicated in resume.rb and
+  # rewind.rb with a load-bearing difference (rewind's guarded the nil case,
+  # resume's did not).
+  describe ".pending_tool_use?" do
+    def torn
+      described_class.turn(role: :assistant,
+                           content: [{ "type" => "tool_use", "id" => "tu_1", "name" => "echo", "input" => {} }])
+    end
+
+    def settled = described_class.turn(role: :user, content: block("tool result"))
+
+    def prose_only = described_class.turn(role: :assistant, content: block("all done"))
+
+    # Mechanical check for the AC's own wording: exactly one `def` (class or
+    # instance) named pending_tool_use? anywhere under lib/.
+    it "is defined exactly once in lib/" do
+      lib_root = File.expand_path("../../lib", __dir__)
+      definitions = Dir.glob("#{lib_root}/**/*.rb").sum do |file|
+        File.read(file).scan(/\bdef\s+(?:self\.)?pending_tool_use\?/).size
+      end
+      expect(definitions).to eq(1)
+    end
+
+    it "answers true for a torn head: an assistant tool_use with no result" do
+      expect(described_class.pending_tool_use?(torn)).to be(true)
+    end
+
+    it "answers false for no event at all, rather than raising" do
+      expect(described_class.pending_tool_use?(nil)).to be(false)
+    end
+
+    it "answers false for a settled head: the user event carrying the tool results" do
+      expect(described_class.pending_tool_use?(settled)).to be(false)
+    end
+
+    it "answers false for an ordinary text answer" do
+      expect(described_class.pending_tool_use?(prose_only)).to be(false)
+    end
+  end
+
   # AC: payloads are content-addressed, never inline in the envelope.
   describe Lain::Event::Payload do
     it "is content-addressed and kind-tagged" do
