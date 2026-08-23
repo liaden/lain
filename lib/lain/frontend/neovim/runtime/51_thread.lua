@@ -595,9 +595,26 @@ end
 --
 -- ORDER IS THE CORRECTNESS. The rpcrequest goes first and 'modified' is cleared
 -- only once it returns, so a question that reached nobody leaves the buffer
--- dirty with the human's words in it and `:w` FAILS -- which is the standing
--- obligation this card owns outright, since Ruby can only answer and cannot
--- make a write fail.
+-- dirty with the human's words in it and the write reports nothing written --
+-- which is the standing obligation this rail owns outright, since Ruby can only
+-- answer and cannot decide what `:w` did.
+--
+-- 'modified' IS THE WHOLE REFUSAL, and it is not set a second time on the
+-- failing leg on purpose: reaching that leg means the human typed something,
+-- which is what made the buffer dirty, and a `vim.bo[buf].modified = true`
+-- beside it would put the same guarantee in two places and make this comment
+-- half the truth. Measured on nvim 0.12: a `BufWriteCmd` that returns without
+-- clearing the flag leaves the buffer dirty, `:w` says nothing was written, and
+-- `:wq` declines to quit -- so the human's words are exactly as safe as a raise
+-- made them.
+--
+-- WHICH RESTS ON AN INVARIANT NO ONE FUNCTION HOLDS: every setter that writes
+-- lines into a thread buffer stamps `lain_thread_rendered` in the same breath
+-- it clears 'modified'. There are exactly two -- `set_thread` and the ASKED IS
+-- RENDERED stamp below -- and a third that cleared the flag without re-stamping
+-- would leave `typed` reporting lain's own lines as the human's over a buffer
+-- presenting as saved, at which point the refusal below becomes the lie it
+-- exists to avoid.
 --
 -- ONE argument after the verb, and it is an ARRAY: every verb on this rail is
 -- destructured Ruby-side as `verb, args`, and 65_review records a verb that
@@ -609,26 +626,20 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
     local question = review_thread.typed(ev.buf)
     if question == nil then
       -- ANSWERED, NOT RAISED, and the two refusals in this callback are not the
-      -- same fact. Nothing was typed, so nothing is at risk: the buffer is
-      -- unmodified, `:w` has nothing to fail to write, and the whole cost of
-      -- raising here was nvim's `stack traceback:` under lain's sentence plus
-      -- the hit-enter prompt behind it -- which queues every non-fast RPC
-      -- request, `:messages` included, until a human presses a key. So it goes
-      -- out on `__lain.review_refused` (`65_review.lua`), which prepends the
-      -- `lain: ` this string therefore does not.
+      -- same fact. No QUESTION was typed, so there is nothing to send and
+      -- nothing to lose, while the whole cost of raising here was nvim's
+      -- `stack traceback:` under lain's sentence plus the hit-enter prompt
+      -- behind it -- which queues every non-fast RPC request, `:messages`
+      -- included, until a human presses a key. So it goes out on
+      -- `__lain.review_refused` (`65_review.lua`), which prepends the `lain: `
+      -- this string therefore does not.
       --
-      -- The refusal below STAYS a raise: there a question really was typed and
-      -- really did not reach anyone, and `:w` reporting success over that is
-      -- the one outcome worse than a traceback. Ruby can only answer; whether
-      -- the write fails is decided here (`thread_view_spec.rb` pins it).
-      --
-      -- AND IT STILL COSTS WHAT THIS ONE STOPPED COSTING, which is the half a
-      -- reader must not have to re-derive: a panel measured that leg at
-      -- `{mode = "r", blocking = true}` with the next round trip TIMING OUT, so
-      -- F30's mechanism is still live in this pane on the rarer path. Deliberate,
-      -- not missed -- losing the human's typed question is worse than a locked
-      -- editor they can clear with one keypress -- but it means F30 is only
-      -- PARTLY discharged here, and a later round must not read it as closed.
+      -- IT DOES NOT FOLLOW THAT THE BUFFER IS CLEAN, and an earlier version of
+      -- this comment claimed it was. `typed` trims and reads only past the
+      -- watermark, so whitespace under the conversation, or an edit of lain's
+      -- own rendered lines, reaches this leg with 'modified' set and no question
+      -- to send -- and nothing here clears it. Deliberately: clearing it would
+      -- be this pane's one write that says "saved" over text lain never took.
       _G.__lain.review_refused("nothing has been typed under the conversation, so there is no question to ask -- " ..
         "write it below the last message and :w again")
       return
@@ -636,7 +647,31 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
     local ok, err = pcall(vim.rpcrequest, chan, "lain_command", "review_ask",
       { vim.b[ev.buf].lain_thread_anchor, question })
     if not ok then
-      error("lain: the question was NOT sent and your text is untouched: " .. tostring(err), 0)
+      -- ON THE RAIL AND NOT AS A RAISE, WHICH CLOSES F30 IN THIS PANE. The
+      -- argument that kept this one a raise is answered rather than dropped:
+      -- here a question really was typed and really did not reach anyone, and
+      -- `:w` reporting success over that IS the one outcome worse than a
+      -- traceback -- still true, and it turned out not to need a raise. Leaving
+      -- 'modified' set is already the write not succeeding (the order note
+      -- above). A panel measured this leg at `{mode = "r", blocking = true}`
+      -- with the next round trip TIMING OUT; that cost was accepted only while
+      -- a raise was the sole way to fail a write.
+      --
+      -- `review_refused` is what makes the rail reachable on this leg
+      -- SPECIFICALLY: it is a LOCAL `nvim_echo` (`65_review.lua`), so it still
+      -- delivers when the wire this branch exists to report on has just failed.
+      -- It prepends the `lain: ` this string therefore does not.
+      -- `48_annotate.lua`'s `LainNoteDone` is the same shape.
+      --
+      -- AND IT IS SHORT BECAUSE THE RAIL ELIDES THE MIDDLE. `v:echospace` is 98
+      -- in the cockpit's 110-column pane, so a sentence over 92 characters is
+      -- shown with its middle cut -- which for the first draft of this one was
+      -- exactly `err`, the only part a human cannot guess. At 82 plus `err` the
+      -- cause survives whole for any ordinary wire error, and a long one folds
+      -- into `:messages` rather than over the remedy.
+      _G.__lain.review_refused("the question was NOT sent: " .. tostring(err) ..
+        " -- your text is untouched; :w again")
+      return
     end
     -- ASKED IS RENDERED. `BufWriteCmd` fires on an acwrite buffer whether or
     -- not it is modified, so a second `:w` used to re-send the identical

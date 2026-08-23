@@ -71,6 +71,28 @@ module ThreadFixture
     return { seen = seen, ok = ok, err = tostring(err), modified = vim.bo[target].modified }
   LUA
 
+  # The same deaf wire as `WRITE_PROBE`'s failing leg, but replaced for GOOD:
+  # the examples that drive `:w` as keystrokes have no lua block to restore it
+  # in, because the write happens after the call that set this up has returned.
+  DEAF_RPC = <<~LUA
+    vim.rpcrequest = function() error("no editor took this", 0) end
+  LUA
+
+  # `review_refused` ANSWERS with the line it put on SCREEN, and its own doc
+  # calls that the sole witness of what a human actually saw: the fitted line is
+  # echoed with `history = false`, so `:messages` holds the unshortened sentence
+  # and not the one the human read. Wrapping the rail is the only way to get that
+  # answer back out of a callback that discards it.
+  RAIL_PROBE = <<~LUA
+    _G.__thread_rail = {}
+    local real = _G.__lain.review_refused
+    _G.__lain.review_refused = function(message)
+      local shown = real(message)
+      table.insert(_G.__thread_rail, shown)
+      return shown
+    end
+  LUA
+
   at_exit { FileUtils.remove_entry(PROJECT) if File.directory?(PROJECT) }
 end
 
@@ -84,6 +106,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
     pid = spawn("nvim", "--headless", "--clean", "-n", "--listen", socket,
                 chdir: ThreadFixture::PROJECT, out: File::NULL, err: File::NULL)
     Timeout.timeout(10) { sleep 0.02 until File.exist?(socket) }
+    @socket = socket
     @editor = Neovim.attach_unix(socket)
     @editor.exec_lua(Lain::Frontend::Neovim::RuntimeLoader.new.source,
                      [Lain::VERSION, Lain::Frontend::Neovim::PROTOCOL, @editor.channel_id])
@@ -267,6 +290,85 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
   # and where a `stack traceback:` would land -- so one read answers both halves
   # of "a refusal is not a crash".
   def messages = lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+
+  # `:w` as a human types it, in a real window on the thread buffer.
+  #
+  # KEYSTROKES AND NOT A LUA CALL, because the two spellings witness different
+  # editors. Measured here: an error out of a NOTIFIED `nvim_exec_lua` is
+  # discarded by nvim -- `:messages` stays empty and the editor reads
+  # `blocking = false` -- so a write driven that way cannot see the traceback or
+  # the prompt behind it even when both are there. Typed `:w` reproduces round
+  # 7's `{mode = "r", blocking = true}` exactly. `written` cannot serve either:
+  # its `pcall` is the thing that swallows both.
+  def type_write(buf)
+    lua("vim.api.nvim_open_win(..., true, { split = 'below' })", [buf])
+    @editor.session.notify(:nvim_input, ":w\r")
+  end
+
+  # Input is queued for the main loop, so a request behind it can be answered
+  # before the keystrokes have run. Everything read after a typed `:w` waits for
+  # the editor to have said something first.
+  def said(timeout: 5)
+    deadline = Time.now + timeout
+    text = messages
+    while text.strip.empty? && Time.now < deadline
+      sleep 0.02
+      text = messages
+    end
+    text
+  end
+
+  # The line the rail DISPLAYED, which is not the line `:messages` holds once a
+  # sentence has to be shortened. Waits for the same reason `said` does.
+  def shown_refusal(timeout: 5)
+    deadline = Time.now + timeout
+    seen = lua("return _G.__thread_rail", [])
+    while (seen.nil? || seen.empty?) && Time.now < deadline
+      sleep 0.02
+      seen = lua("return _G.__thread_rail", [])
+    end
+    Array(seen).last.to_s
+  end
+
+  # Insurance, not a gesture: `nvim_input` is one of the two calls answered WHILE
+  # nvim is blocked on a hit-enter prompt, so pressing it before any read means a
+  # failing expectation below reads as the expectation that failed rather than as
+  # a mystery timeout on the read that queued behind the prompt.
+  def press_enter = @editor.session.request(:nvim_input, "\r")
+
+  # `neovim_runtime_spec.rb`'s "the refusal rail's width" apparatus, for its
+  # reason: measured on nvim 0.12, an editor with NO UI never raises the
+  # hit-enter prompt at all, so a headless connection cannot witness this defect.
+  def attach_ui(columns: 60, lines: 20)
+    @editor.session.request(:nvim_ui_attach, columns, lines, { "rgb" => true, "ext_linegrid" => true })
+  end
+
+  # Sampled across a window and never exited early on a `false`: `nvim_get_mode`
+  # is answered while the main loop is busy, so it can answer before the
+  # keystrokes queued ahead of it have run, and an early "not blocking" would be
+  # a pass taken before the subject acted.
+  def settled_mode(window: 0.5)
+    deadline = Time.now + window
+    modes = [@editor.session.request(:nvim_get_mode)]
+    while Time.now < deadline
+      sleep 0.02
+      modes << @editor.session.request(:nvim_get_mode)
+    end
+    modes.find { |mode| mode["blocking"] } || modes.last
+  end
+
+  # The operational half of the finding: a non-fast request queues behind the
+  # main loop and never comes back while a prompt stands. On a SECOND connection
+  # deliberately -- an abandoned request on `@editor` leaves a response pending
+  # there, which the `ensure` clearing the prompt would then read as its own.
+  def round_trip(timeout: 5)
+    probe = Neovim.attach_unix(@socket)
+    Timeout.timeout(timeout) { probe.session.request(:nvim_eval, "1 + 1") }
+  rescue Timeout::Error
+    :timed_out
+  ensure
+    probe&.session&.shutdown
+  end
 
   def notified
     lua(<<~LUA)
@@ -1008,8 +1110,15 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
     end
 
     # The standing obligation, and it is decided entirely here: Ruby can only
-    # answer, and whether `:w` actually FAILS is lua's to get right.
-    it "fails the write and keeps the human's text when the question reaches nobody" do
+    # answer, and whether `:w` reports success is lua's to get right.
+    #
+    # THE WRITE NO LONGER RAISES AND STILL DOES NOT SUCCEED. `ok` is now true --
+    # the callback returns -- and 'modified' carries the whole of the refusal:
+    # measured on nvim 0.12, a `BufWriteCmd` that returns without clearing it
+    # leaves the buffer dirty, `:w` reports nothing written, and `:wq` declines
+    # to quit. So the human's words are as safe as the raise made them, without
+    # the traceback and the prompt the next two examples pin.
+    it "does not clear modified, and keeps the human's text, when the question reaches nobody" do
       open_counter
       set_thread(anchor(id: "a-20", line: 20), ["## you", "why this way?"])
       buf = thread_buf("a-20")
@@ -1017,9 +1126,81 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
 
       wrote = written(buf, fail: true)
 
-      expect(wrote["ok"]).to be(false)
+      expect(wrote["ok"]).to be(true)
       expect(wrote["modified"]).to be(true)
       expect(lines_of(buf).last).to eq("does this reach anyone?")
+    end
+
+    # ROUND 7'S RESIDUE, and it is the same fact the example above pins, told to
+    # the human. The question was typed and reached nobody, so it goes out on
+    # `__lain.review_refused` -- a LOCAL `nvim_echo`, which is what makes it
+    # deliverable on the one leg where `vim.rpcrequest` has just failed -- and
+    # names the wire error rather than an unexplained failure.
+    it "refuses on the rail when the question reaches nobody, naming why it was not sent" do
+      open_counter
+      set_thread(anchor(id: "a-20", line: 20), ["## you", "why this way?"])
+      buf = thread_buf("a-20")
+      append(buf, ["", "does this reach anyone?"])
+      lua(ThreadFixture::DEAF_RPC)
+      lua(ThreadFixture::RAIL_PROBE)
+      # 110 columns is what `lain up` gives this pane, and `v:echospace` there is
+      # 98 -- so this is the width at which "names why" either survives or does
+      # not. An earlier sentence read back as `... the question was NOT sent and
+      # your text  ... ll modified, so :w again ...`, eliding the one part of it
+      # a human cannot guess.
+      attach_ui(columns: 110)
+
+      type_write(buf)
+      press_enter
+
+      expect(shown_refusal).to include("was NOT sent").and include("no editor took this")
+      expect(shown_refusal).not_to include(" ... ")
+
+      # `Error in BufWriteCmd Autocommands` is nvim's own framing for a raise out
+      # of this callback, and pinning its ABSENCE is what makes this example
+      # about the rail rather than about the error text happening to carry the
+      # same words.
+      expect(said).to include("lain:")
+      expect(said).not_to include("stack traceback")
+      expect(said).not_to include("Error in BufWriteCmd")
+      expect(said).not_to include("lain: lain:")
+    end
+
+    # The other half of F30, and the half round 7 left live in this pane: a
+    # raise out of a `BufWriteCmd` reaches the human wearing nvim's
+    # `stack traceback:` with a hit-enter prompt behind it, and that prompt
+    # queues every non-fast RPC request -- `:messages` included -- until
+    # somebody presses a key. Round 7 measured this exact leg at
+    # `{mode = "r", blocking = true}` with the next round trip timing out.
+    it "leaves the editor answering RPC when the question reaches nobody" do
+      open_counter
+      set_thread(anchor(id: "a-20", line: 20), ["## you", "why this way?"])
+      buf = thread_buf("a-20")
+      append(buf, ["", "does this reach anyone?"])
+      lua(ThreadFixture::DEAF_RPC)
+      attach_ui
+
+      # BOTH GUARDS ARE AGAINST A VACUOUS PASS, and both were measured rather
+      # than imagined. With NO UI attached nvim never raises the prompt at all,
+      # so an edit that dropped `attach_ui` would leave this example green over
+      # an editor that cannot fail it.
+      expect(lua("return #vim.api.nvim_list_uis()", [])).to be_positive
+
+      type_write(buf)
+
+      begin
+        expect(settled_mode).to include("blocking" => false)
+        expect(round_trip).to eq(2)
+      ensure
+        # One prompt left standing hangs this example's own teardown and reads
+        # as a mystery timeout rather than as the expectation that failed.
+        press_enter
+      end
+
+      # The second guard: the refusal really did happen. Without it a write that
+      # never reached the callback -- `type_write` respelled as a lua call, whose
+      # errors nvim discards -- would also read as "not blocking".
+      expect(said).to include("was NOT sent")
     end
 
     # `:w` on an acwrite buffer fires BufWriteCmd whether or not the buffer is
