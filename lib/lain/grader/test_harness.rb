@@ -20,10 +20,9 @@ module Lain
     # the parse. Second, the child must not inherit the HOST's framework context:
     # a Lain suite runs under `bundle exec`, whose BUNDLE_*/BUNDLER_*/RSPEC_* vars
     # and RUBYOPT would make the child resolve LAIN's Gemfile and config instead
-    # of the subject's. Every such inherited var is scrubbed to nil (the
-    # {WorkerEnv} explicit-nil delete semantics) -- an env-pollution bug class
-    # that recurred repeatedly in the isolation chunk. GEM_* is kept: the child
-    # needs it to find its test runner.
+    # of the subject's. That scrub now lives on {Lain::Exec}, which is where
+    # every backend that spawns a child reads it -- this class named the hazard
+    # first and was for a while the only place that honoured it.
     #
     # LIMITATION worth stating honestly: because BUNDLE_GEMFILE is scrubbed, the
     # subject's tests run under the HOST's gem resolution, not the subject's own
@@ -58,11 +57,6 @@ module Lain
       # the very line that names the failure.
       ERROR_DETAIL_LINES = 12
 
-      # Inherited env whose presence would bind the child to the HOST's bundler /
-      # rspec context. Scrubbed to nil so it is DELETED in the child (not merely
-      # overridden), leaving the subject's own env and PATH/GEM_* intact.
-      FRAMEWORK_ENV = /\A(?:BUNDLE_|BUNDLER_|RSPEC_|RUBYOPT\z)/
-
       # @param root [String] the project directory whose framework is detected
       # @param adapter [#command,#parse, nil] an explicit adapter; nil auto-detects
       # @param timeout [Numeric] seconds the child suite may run before {Timeout}
@@ -94,7 +88,7 @@ module Lain
         Dir.mktmpdir("lain-test-harness") do |dir|
           out_path = File.join(dir, "result")
           argv = @adapter.command(out_path:)
-          options = { cwd: worker_env.cwd, environment: environment(worker_env), timeout: @timeout }
+          options = { cwd: worker_env.cwd, environment: Exec.child_env(worker_env.env), timeout: @timeout }
           shell = @shell_out_factory.call(*argv, **options)
           capture(shell, argv)
           document = File.exist?(out_path) ? File.read(out_path) : ""
@@ -106,14 +100,6 @@ module Lain
         shell.run_command
       rescue Mixlib::ShellOut::CommandTimeout => e
         raise Timeout, "test command `#{argv.join(" ")}` exceeded the #{@timeout}s timeout: #{e.message}"
-      end
-
-      # mixlib INHERITS this process's ENV and overlays `environment:` per key, so
-      # the scrub must name every framework var actually present to inherit --
-      # hence the union of the live ENV and the subject's own env keys.
-      def environment(worker_env)
-        polluted = (ENV.keys + worker_env.env.keys).grep(FRAMEWORK_ENV).uniq
-        worker_env.env.merge(polluted.to_h { |key| [key, nil] })
       end
 
       def to_grade(result, stderr)

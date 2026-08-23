@@ -63,7 +63,7 @@ RSpec.describe Lain::Tools::Bash do
         end
       end
 
-      result = described_class.new(shell_out_factory: short_grace)
+      result = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: short_grace))
                               .call({ command: %(sh -c "sleep 5"), timeout: 1 }, invocation)
       expect(result).to be_error
       expect(result.content).to include("timed out")
@@ -74,8 +74,9 @@ RSpec.describe Lain::Tools::Bash do
     # a timeout is the tool failing to produce a result rather than a command
     # exiting non-zero.
     it "kills a term that runs past its timeout" do
-      tool = described_class.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1),
-                                 shell_out_factory: ->(*, **) { raise "the term arm must not reach a shell" })
+      backend = Lain::Exec::Local.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1),
+                                      shell_out_factory: ->(*, **) { raise "the term arm must not reach a shell" })
+      tool = described_class.new(exec: backend)
 
       result = tool.call({ command: "sleep 5", timeout: 1 }, invocation)
       expect(result).to be_error
@@ -87,7 +88,7 @@ RSpec.describe Lain::Tools::Bash do
       timed_out = Class.new do
         def run_command = raise Mixlib::ShellOut::CommandTimeout, "Command timed out after 7s"
       end
-      tool = described_class.new(shell_out_factory: ->(*, **) { timed_out.new })
+      tool = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: ->(*, **) { timed_out.new }))
 
       result = tool.call({ command: %(sh -c "sleep 5"), timeout: 7 }, invocation)
       expect(result).to be_error
@@ -203,6 +204,52 @@ RSpec.describe Lain::Tools::Bash do
           .to include("from_worker_env")
       end
     end
+
+    # F45, end to end through the tool the model actually calls. lain runs under
+    # `bundle exec`, so WorkerEnv.default carries BUNDLE_GEMFILE naming LAIN's
+    # own Gemfile -- and a child that inherits it resolves lain's bundle instead
+    # of the project it was pointed at. Lain::Exec is where that is taken away;
+    # these examples pin that the tool goes through it.
+    describe "lain's own toolchain is not lent to the command" do
+      it "reports no BUNDLE_GEMFILE, though this process carries one" do
+        with_env("BUNDLE_GEMFILE" => "/home/tara/dev/lain/Gemfile") do
+          result = tool.call({ command: %(sh -c 'echo "[$BUNDLE_GEMFILE]"') },
+                             invocation_with(Lain::Session.new))
+
+          expect(result.content).to include("[]")
+        end
+      end
+
+      it "takes the whole framework family away, not one variable" do
+        family = { "BUNDLE_GEMFILE" => "/lain/Gemfile", "BUNDLER_SETUP" => "/lain/setup.rb",
+                   "RUBYOPT" => "-rbundler/setup", "RSPEC_OPTS" => "--seed 1" }
+
+        with_env(family) do
+          result = tool.call({ command: %(sh -c 'env | grep -E "^(BUNDLE_|BUNDLER_|RSPEC_|RUBYOPT=)"; echo scanned') },
+                             invocation_with(Lain::Session.new))
+
+          expect(result.content).to include("--- stdout ---\nscanned\n")
+        end
+      end
+
+      it "still delivers a variable the session deliberately lent" do
+        env = ENV.to_h.merge("LAIN_LENT" => "on loan")
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env:))
+
+        result = tool.call({ command: %(sh -c 'echo "[$LAIN_LENT]"') }, invocation_with(session))
+
+        expect(result.content).to include("[on loan]")
+      end
+
+      it "keeps GEM_HOME, because the command still has to find its gems" do
+        with_env("GEM_HOME" => "/tmp/lain-t1-gems") do
+          result = tool.call({ command: %(sh -c 'echo "[$GEM_HOME]"') },
+                             invocation_with(Lain::Session.new))
+
+          expect(result.content).to include("[/tmp/lain-t1-gems]")
+        end
+      end
+    end
   end
 
   # Which arm ran is a decision of Shell::Verdict's, and the tool's job is to
@@ -218,7 +265,8 @@ RSpec.describe Lain::Tools::Bash do
     let(:no_shell) { ->(*, **) { raise "a shell was spawned" } }
 
     it "runs an allowed command as a term, with no shell process at all" do
-      result = described_class.new(shell_out_factory: no_shell).call({ command: "printf hi" }, invocation)
+      result = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: no_shell))
+                              .call({ command: "printf hi" }, invocation)
 
       expect(result).to be_ok
       expect(result.content).to include("exit status: 0", "hi")
@@ -237,8 +285,9 @@ RSpec.describe Lain::Tools::Bash do
         Mixlib::ShellOut.new("true", **opts)
       end
 
-      described_class.new(shell_out_factory: recording).call({ command: "time { echo PWNED; }" }, invocation)
-      described_class.new(shell_out_factory: recording).call({ command: "echo $(id)" }, invocation)
+      tool = described_class.new(exec: Lain::Exec::Local.new(shell_out_factory: recording))
+      tool.call({ command: "time { echo PWNED; }" }, invocation)
+      tool.call({ command: "echo $(id)" }, invocation)
 
       expect(seen).to eq(["time { echo PWNED; }", "echo $(id)"])
     end

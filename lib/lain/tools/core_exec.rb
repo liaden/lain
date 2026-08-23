@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "async"
-
 module Lain
   module Tools
     # Tier 3 (free-form), the SAME command shape as {Bash} -- a String through
@@ -34,6 +32,11 @@ module Lain
     # crates/lain-core/src/exec.rs). Real safety is {#requires_approval?} plus
     # Effect::Handler::Gate, and eventually OS confinement in a later chunk --
     # never this boundary.
+    #
+    # That removal lever is what {Exec.child_env} uses to keep lain's own
+    # bundler context out of the daemon's child, and it has to: the daemon is
+    # lain's own child, so it already carries BUNDLE_GEMFILE and an env map
+    # that merely OMITS the key would leave that copy in place.
     class CoreExec < Tool
       # {Bash}'s Input, SHARED BY IDENTITY rather than copied: one class is
       # what makes schema drift between the two arms structurally impossible,
@@ -41,20 +44,26 @@ module Lain
       input_model Bash::Input
 
       # Seconds past the command's own timeout before this side stops
-      # believing the daemon will enforce it. The caller owns its deadline:
-      # pre-3b8c047, pipe-holding grandchildren held a 0.5s server timeout
-      # for 5.0s -- a boundary that misses its own deadline must fail in the
-      # tool's words, not park the loop. Generous, because on a healthy
-      # daemon it covers only kill+reap+reply latency.
-      GRACE = 5.0
+      # believing the daemon will enforce it. {Exec::Core} owns the number --
+      # it owns the round trip that uses it -- and this is an alias, because it
+      # is part of this tool's published constructor default.
+      #
+      # ⚠️ A LOAD-TIME read, and the only one in this direction: it pins
+      # `lain/exec` ahead of `lain/tools` in lib/lain.rb's manifest. Moving
+      # either entry past the other is a NameError at require time, not a
+      # runtime surprise -- which is the manifest doing its job, but a reader
+      # reordering that list should know this line is why.
+      GRACE = Exec::Core::GRACE
 
       # The started {Core::Client} is injected: the caller owns the daemon's
-      # lifecycle (and the Async reactor it runs in); this tool owns one RPC
-      # round trip per command.
+      # lifecycle (and the Async reactor it runs in). The round trip itself
+      # belongs to {Exec::Core} -- one of {Lain::Exec}'s backends -- so this
+      # tool is the same shape as {Bash}: choose nothing, render what came back.
+      # `grace` is not kept: the backend holds it, and one fact held twice is
+      # two facts the moment a caller constructs them apart.
       def initialize(client:, grace: GRACE)
         super()
-        @client = client
-        @grace = grace
+        @exec = Exec::Core.new(client:, grace:)
       end
 
       def name = "core_exec"
@@ -75,39 +84,48 @@ module Lain
 
       def perform(input, invocation)
         worker_env = session_of(invocation).worker_env
-        outcome = within_deadline(input) { @client.call("exec", [wire_params(input, worker_env)]) }
-        return timeout_error(input, outcome) if outcome.fetch("timed_out")
-
-        format_output(outcome)
+        render(@exec.call(**request(input, worker_env)))
+      rescue Exec::Unenforced => e
+        # The boundary missed its OWN deadline, which is not the command hitting
+        # one -- rescued before its superclass so the two say different things.
+        Tool::Result.error(e.message)
+      rescue Exec::Timeout => e
+        timeout_error(input, e)
       rescue Core::Died, Core::Client::Stopped => e
-        # Boundary death is a tool ERROR, never a raise past the loop (the
-        # Gate convention): loud, named, and immediate -- the client already
-        # failed this in-flight call the moment the daemon went.
-        Tool::Result.error("lain-core boundary failed: #{e.class}: #{e.message}")
+        boundary_failed(e)
       rescue Core::Client::Refused => e
         spawn_refusal(e, input, worker_env)
-      rescue Async::TimeoutError
-        deadline_error(input)
       end
 
       private
 
-      def wire_params(input, worker_env)
-        {
-          "argv" => ["sh", "-c", input.command],
-          "cwd" => worker_env.resolve(input.cwd),
-          # The WorkerEnv hash rides the wire as-is: an explicit-nil value
-          # packs as msgpack nil, the server's remove-the-key marker -- the
-          # same scrub {Bash} gets from mixlib's `ENV[k] = nil` in its child.
-          "env" => worker_env.env,
-          "timeout_ms" => (seconds_of(input) * 1000).to_i
-        }
+      # Cwd resolution lives on {WorkerEnv#resolve} -- the one rule shared with
+      # {Bash}, so the two transports cannot drift apart on it.
+      def request(input, worker_env)
+        { command: input.command, cwd: worker_env.resolve(input.cwd),
+          env: worker_env.env, timeout: seconds_of(input) }
+      end
+
+      # {Bash.render_output} from the daemon's capture. stdout and stderr arrive
+      # BINARY (msgpack bin); the template's ASCII-only literals interpolate
+      # compatibly, so arbitrary bytes survive intact.
+      #
+      # Its whole {Tool::Result} is returned, refusal included: {Bash::OUTPUT_BOUND}
+      # is applied inside that one rendering precisely so this arm cannot have a
+      # different ceiling from the in-process one, and wrapping its answer in a
+      # second `Result.ok` here would relabel a refusal as a success.
+      def render(capture)
+        Bash.render_output(exit_status: capture.exit_status,
+                           stdout: capture.stdout, stderr: capture.stderr)
       end
 
       def seconds_of(input) = input.timeout || Bash::DEFAULT_TIMEOUT
 
-      def within_deadline(input, &rpc)
-        Async::Task.current.with_timeout(seconds_of(input) + @grace, &rpc)
+      # Boundary death is a tool ERROR, never a raise past the loop (the Gate
+      # convention): loud, named, and immediate -- the client already failed
+      # this in-flight call the moment the daemon went.
+      def boundary_failed(error)
+        Tool::Result.error("lain-core boundary failed: #{error.class}: #{error.message}")
       end
 
       # A spawn-shaped refusal (in practice: the cwd does not exist, since
@@ -120,35 +138,11 @@ module Lain
         Tool::Result.error("#{error.message} (cwd: #{worker_env.resolve(input.cwd)})")
       end
 
-      # The kill-time partial capture rides the reply; discarding it would
-      # tell the model less than {Bash} does (mixlib embeds captured output
-      # in CommandTimeout's message, whose shape this mirrors).
-      def timeout_error(input, outcome)
-        Tool::Result.error(
-          "command timed out after #{seconds_of(input)}s: killed server-side by lain-core\n" \
-          "---- Begin output of #{input.command} ----\n" \
-          "STDOUT: #{outcome.fetch("stdout")}\n" \
-          "STDERR: #{outcome.fetch("stderr")}\n" \
-          "---- End output of #{input.command} ----"
-        )
-      end
-
-      def deadline_error(input)
-        Tool::Result.error("lain-core failed to enforce the #{seconds_of(input)}s timeout " \
-                           "within #{@grace}s grace -- no reply from the boundary")
-      end
-
-      # {Bash.render_output} from the wire's fields. stdout and stderr arrive
-      # BINARY (msgpack bin); the template's ASCII-only literals interpolate
-      # compatibly, so arbitrary bytes survive intact.
-      #
-      # It returns the whole {Tool::Result}, refusal included: {Bash::OUTPUT_BOUND}
-      # is applied inside that one rendering precisely so this arm cannot have a
-      # different ceiling from the in-process one, and wrapping its answer in a
-      # second `Result.ok` here would relabel a refusal as a success.
-      def format_output(outcome)
-        Bash.render_output(exit_status: outcome.fetch("exit_status"),
-                           stdout: outcome.fetch("stdout"), stderr: outcome.fetch("stderr"))
+      # Word for word {Bash}'s own timeout sentence, over an {Exec::Timeout}
+      # whose message carries the kill-time partial capture -- which is what
+      # makes the two arms' timeout POSTURE parity rather than an accident.
+      def timeout_error(input, error)
+        Tool::Result.error("command timed out after #{seconds_of(input)}s: #{error.message}")
       end
     end
   end

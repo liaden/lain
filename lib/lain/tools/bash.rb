@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "mixlib/shellout"
-
 module Lain
   module Tools
     # Tier 3 (free-form): runs a shell command via `sh -c`. Passing
@@ -30,6 +28,12 @@ module Lain
     # BUILTIN with no binary -- `exit 3` is `command not found` on the term arm
     # -- and {Shell::Pipeline} documents why closing that gap honestly is not
     # possible.
+    #
+    # Neither arm is run here: both go to an injected {Lain::Exec} backend,
+    # which is what decides the child's environment (and, once a container
+    # backend exists, its machine). This tool owns the CHOICE of arm and the
+    # rendering of what came back; how a command becomes a process is the
+    # backend's question.
     #
     # A PROCESS BOUNDARY IS NOT A SECURITY BOUNDARY. The child inherits our
     # uid, filesystem, and network; Mixlib::ShellOut adds no seccomp, landlock,
@@ -112,26 +116,16 @@ module Lain
                         "--- stderr ---\n#{stderr}")
       end
 
-      # The subprocess machinery is injected as a factory, not constructed
-      # inline: specs substitute a ShellOut whose TERM->KILL grace is short
-      # (mixlib-shellout hardcodes `sleep 3` in reap_errant_child, with no
-      # option) without giving up the real process-group kill.
-      #
-      # @param shell_out_factory [#call] builds the `Mixlib::ShellOut`-shaped
-      #   object {#build_shell_out} runs the command through; substituting it
-      #   is what lets a spec pin a shorter TERM->KILL grace without giving up
-      #   the real process-group kill.
+      # @param exec [#call] the {Lain::Exec} backend a command is run through.
+      #   Injected rather than constructed so the transport is a run's choice
+      #   and a spec can substitute one whose TERM->KILL grace is short.
       # @param verdict [#call] `String -> Shell::Verdict::Decision`, the choice
       #   of arm. Injected rather than constructed so a spec can pin either arm
       #   for one command and compare their bytes.
-      # @param pipeline [#call] runs the term arm's argv-array pipeline
-      #   ({Shell::Pipeline}); the string arm never touches it
-      def initialize(shell_out_factory: Mixlib::ShellOut.public_method(:new),
-                     verdict: Shell::Verdict.new, pipeline: Shell::Pipeline.new)
+      def initialize(exec: Exec::Local.new, verdict: Shell::Verdict.new)
         super()
-        @shell_out_factory = shell_out_factory
+        @exec = exec
         @verdict = verdict
-        @pipeline = pipeline
       end
 
       def name = "bash"
@@ -153,40 +147,34 @@ module Lain
 
       protected
 
+      # Exit status rides in the returned content, not `is_error`: a nonzero
+      # exit is frequently exactly what the model asked to observe (grep with
+      # no matches, a linter reporting findings). `is_error` here means the
+      # tool itself could not produce a result -- a timeout, or output too
+      # large to hand back, not a subprocess's own exit code.
+      #
+      # The same three fields, from the same {WorkerEnv}, through the same
+      # rendering -- so the arm a call took is not observable in its result,
+      # refusals included.
       def perform(input, invocation)
         decision = @verdict.call(input.command)
-        decision.allow? ? run_term(decision.term, input, invocation) : run_string(input, invocation)
+        capture = @exec.call(command: decision.allow? ? decision.term : input.command,
+                             **runtime(input, invocation))
+        self.class.render_output(exit_status: capture.exit_status,
+                                 stdout: capture.stdout, stderr: capture.stderr)
+      rescue Exec::Timeout => e
+        timed_out(input, e)
       end
 
       private
 
-      def run_string(input, invocation)
-        shell_out = build_shell_out(input, invocation)
-        shell_out.run_command
-        # Exit status rides in the returned content, not `is_error`: a
-        # nonzero exit is frequently exactly what the model asked to observe
-        # (grep with no matches, a linter reporting findings). `is_error`
-        # here means the tool itself could not produce a result -- a timeout,
-        # or output too large to hand back, not a subprocess's own exit code.
-        format_output(shell_out)
-      rescue Mixlib::ShellOut::CommandTimeout => e
-        timed_out(input, e)
-      end
-
-      # The same three fields, from the same {WorkerEnv}, through the same
-      # rendering -- so the arm a call took is not observable in its result,
-      # refusals included.
-      def run_term(term, input, invocation)
+      # Cwd resolution lives on {WorkerEnv#resolve} -- one rule shared with
+      # {CoreExec}. Under the default WorkerEnv (`Dir.pwd`) it is
+      # byte-identical to passing the raw `input.cwd` through, nil included.
+      def runtime(input, invocation)
         worker_env = session_of(invocation).worker_env
-        result = @pipeline.call(term,
-                                cwd: worker_env.resolve(input.cwd), env: worker_env.env,
-                                timeout: seconds(input),
-                                stdout_sink: output_sink(invocation, :stdout),
-                                stderr_sink: output_sink(invocation, :stderr))
-        self.class.render_output(exit_status: result.exit_status,
-                                 stdout: result.stdout, stderr: result.stderr)
-      rescue Shell::Pipeline::Timeout => e
-        timed_out(input, e)
+        { cwd: worker_env.resolve(input.cwd), env: worker_env.env, timeout: seconds(input),
+          stdout_sink: output_sink(invocation, :stdout), stderr_sink: output_sink(invocation, :stderr) }
       end
 
       def seconds(input) = input.timeout || DEFAULT_TIMEOUT
@@ -195,32 +183,12 @@ module Lain
         Tool::Result.error("command timed out after #{seconds(input)}s: #{error.message}")
       end
 
-      # Cwd resolution lives on {WorkerEnv#resolve} -- one rule shared with
-      # {CoreExec}. Under the default WorkerEnv (`Dir.pwd`) it is
-      # byte-identical to passing the raw `input.cwd` through, nil included.
-      def build_shell_out(input, invocation)
-        worker_env = session_of(invocation).worker_env
-        @shell_out_factory.call(
-          input.command,
-          cwd: worker_env.resolve(input.cwd),
-          environment: worker_env.env,
-          timeout: input.timeout || DEFAULT_TIMEOUT,
-          live_stdout: output_sink(invocation, :stdout),
-          live_stderr: output_sink(invocation, :stderr)
-        )
-      end
-
       # Bytes are attributed to their tool_use_id AT THE SOURCE, as they are
       # produced, rather than reconstructed after the fact from a buffer
       # shared with whatever else happens to be running -- see Lain::Channel's
       # doc comment on why a shared byte buffer destroys provenance.
       def output_sink(invocation, stream)
         Sink::IOAdapter.new(invocation.channel, tool_use_id: invocation.tool_use_id, stream:)
-      end
-
-      def format_output(shell_out)
-        self.class.render_output(exit_status: shell_out.exitstatus,
-                                 stdout: shell_out.stdout, stderr: shell_out.stderr)
       end
     end
   end
