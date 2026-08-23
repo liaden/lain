@@ -858,6 +858,39 @@ RSpec.describe Lain::Frontend::TTY do
       expect(full.index("closing in", event_index)).not_to be_nil, "expected the countdown to redraw after the event"
     end
 
+    # F58's fix touches ONLY the inactive branch, so these two hold the active
+    # branch still for BOTH decorators: the status line steps aside, the event
+    # prints, and the status line redraws on a row of its own -- true of a
+    # mid-line tool chunk too, because the fresh row is the STATUS LINE's need,
+    # not the content's. (The byte-identity half of the claim is demonstrated
+    # outside RSpec; see the T6 hand-back's before/after capture.)
+    it "prints a provider-retry event above the status line and redraws the line beneath it" do
+      tty = interactive_tty
+      tty.render_countdown(deadline: 103, options: { coordinator: })
+      before_event = output.string.length
+
+      channel.push(Lain::Telemetry::ProviderRetry.new(attempt: 1, will_retry_in: 0.11))
+      tty.drain_and_render
+
+      tail = output.string[before_event..]
+      expect(tail).to start_with(TTY::Cursor.clear_line)
+      expect(tail).to match(/\[retry\] attempt 1[^\n]*\n/)
+      expect(tail.index("closing in")).to be > tail.index("\n")
+    end
+
+    it "still gives the redrawn status line a fresh row after a tool-output chunk with no newline" do
+      tty = interactive_tty
+      tty.render_countdown(deadline: 103, options: { coordinator: })
+      before_event = output.string.length
+
+      channel.push(tool_output(bytes: "no trailing newline"))
+      tty.drain_and_render
+
+      tail = output.string[before_event..]
+      expect(tail).to include("no trailing newline\n")
+      expect(tail.index("closing in")).to be > tail.index("no trailing newline")
+    end
+
     it "degrades to a plain line with no key reading and no escapes when output is not a tty" do
       allow(input).to receive(:tty?).and_return(true)
       input.string = "w"
@@ -995,6 +1028,38 @@ RSpec.describe Lain::Frontend::TTY do
 
       expect(console).not_to have_received(:raw!)
       expect(console).not_to have_received(:console_mode=)
+    end
+  end
+
+  # F58: with no countdown running there is no status line to protect, and the
+  # plain path printed every decorator's bytes bare. A line-shaped decorator's
+  # output then ran together -- four retry lines plus the error that followed
+  # them arrived as one screen row. Here the line ending is the DECORATOR's
+  # question, not the status line's, which is why only this branch changes.
+  describe "line endings with no countdown active" do
+    def provider_retry(attempt:)
+      Lain::Telemetry::ProviderRetry.new(attempt:, will_retry_in: 0.11, status: 503,
+                                         reason: "Faraday::ConnectionFailed")
+    end
+
+    it "gives four retry lines and the error that follows them five line endings, not one" do
+      4.times { |index| channel.push(provider_retry(attempt: index + 1)) }
+
+      tty.drain_and_render
+      tty.render_error("provider gave up")
+
+      lines = output.string.lines
+      expect(lines.size).to eq(5)
+      expect(lines).to all(end_with("\n"))
+      expect(lines.grep(/\[retry\]/).size).to eq(4)
+    end
+
+    it "leaves a streaming tool-output chunk unterminated, since a chunk is not a line" do
+      channel.push(tool_output(bytes: "half a li"))
+
+      tty.drain_and_render
+
+      expect(output.string).to end_with("half a li")
     end
   end
 end

@@ -19,6 +19,12 @@ module Lain
 
         def initialize(event) = @event = event
 
+        # A retry notice is composed whole and rendered once, which is what
+        # {#render} has always claimed. Saying so out loud is what lets the
+        # frontend terminate it (F58): four of these in a row must reach the
+        # screen as four rows, not as one run-together string.
+        def line_shaped? = true
+
         # @param theme [Frontend::Theme]
         # @return [String] one attributed line naming this attempt, whether it
         #   is backing off or exhausted, and what triggered it

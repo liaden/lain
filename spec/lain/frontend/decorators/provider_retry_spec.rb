@@ -80,6 +80,12 @@ RSpec.describe Lain::Frontend::Decorators::ProviderRetry do
     expect(rendered).to include("under 0.01s")
   end
 
+  # F58: the docstring already promised "one attributed line". This makes the
+  # promise answerable, so the frontend can terminate it without a type check.
+  it "calls its output line-shaped, which is what its render has always promised" do
+    expect(described_class.new(event)).to be_line_shaped
+  end
+
   describe ".for" do
     it "returns a ProviderRetry decorator for a ProviderRetry event" do
       expect(Lain::Frontend::Decorators.for(event)).to be_a(described_class)

@@ -352,11 +352,15 @@ module Lain
       # The print routes through {Countdown#print_above} because the countdown
       # owns the bottom line while it is active (T21): the status line steps
       # out of the way, the event prints above, the status line redraws --
-      # never a torn splice. With no countdown active it degrades to the
-      # pre-T21 raw print (live tool-output chunks are not line-shaped).
+      # never a torn splice. With no countdown active there is no status line to
+      # protect, and the only line-ending question left is the decorator's own
+      # -- so its answer travels with its bytes (F58).
+      # The guard covers BOTH ways an event can decline to print: no decorator at
+      # all, and a decorator that rendered nothing.
       def render(event)
-        rendered = Decorators.for(event)&.render(@theme)
-        @countdown.print_above(rendered) unless rendered.nil?
+        decorator = Decorators.for(event)
+        rendered = decorator&.render(@theme)
+        @countdown.print_above(rendered, line_shaped: decorator.line_shaped?) unless rendered.nil?
       end
 
       # Leading `::` is load-bearing: unqualified `TTY::Screen` would resolve
@@ -779,10 +783,16 @@ module Lain
         # {TTY#render}'s seam: print a channel event's bytes without tearing
         # the status line. While a countdown is active it steps off the
         # bottom line, the event prints above (given its own line ending),
-        # and the status line redraws; otherwise this is a plain print.
-        def print_above(rendered)
+        # and the status line redraws; otherwise the decorator's own answer
+        # decides whether the bytes get terminated.
+        #
+        # @param rendered [String] the decorator's bytes
+        # @param line_shaped [Boolean] the decorator's answer to whether those
+        #   bytes are a whole line. Required rather than defaulted: a caller
+        #   that has not asked is exactly the caller F58 was filed against.
+        def print_above(rendered, line_shaped:)
           @lock.synchronize do
-            active? ? above(rendered) : @output.print(rendered)
+            active? ? above(rendered) : plain(rendered, line_shaped)
             @output.flush
           end
         end
@@ -806,11 +816,27 @@ module Lain
 
         def active? = !@line.nil?
 
+        # Unconditionally terminated, for BOTH decorators: the fresh row here
+        # is the redrawn STATUS LINE's need, not the content's, and it is
+        # equally needed after a mid-line tool chunk. Asking the decorator here
+        # would land the bold status line inside such a chunk.
         def above(rendered)
           @output.print(::TTY::Cursor.clear_line)
           @output.print(rendered)
-          @output.puts unless rendered.end_with?("\n")
+          terminate(rendered)
           @output.print(@pastel.bold(@line))
+        end
+
+        # No status line to protect, so the newline is the decorator's question
+        # rather than the terminal's -- and a tool chunk answering no keeps its
+        # bytes exactly where the command put them.
+        def plain(rendered, line_shaped)
+          @output.print(rendered)
+          terminate(rendered) if line_shaped
+        end
+
+        def terminate(rendered)
+          @output.puts unless rendered.end_with?("\n")
         end
 
         # Both output and input must be real terminals: escapes drawn on a

@@ -28,8 +28,15 @@ module Lain
     # rendering, it gets its own decorator here and one more clause below, and
     # TTY does not change.
     module Decorators
+      # Every decorator answers two messages: `render(theme)` for the bytes, and
+      # `line_shaped?` for whether those bytes are a whole line the frontend may
+      # terminate (F58). The second is a message rather than a type check
+      # upstream so that adding a decorator never means editing a list of
+      # classes somewhere else.
+      #
       # @param event [Object] a Channel event
-      # @return [#render, nil] the decorator that presents `event`, or nil if the
+      # @return [#render, #line_shaped?, nil] the decorator that presents `event`
+      #   -- answering BOTH messages above, not just the first -- or nil if the
       #   frontend does not render this event type (it is silently skipped)
       def self.for(event)
         return ToolOutput.new(event) if event.is_a?(Telemetry::ToolOutput)
@@ -50,9 +57,17 @@ module Lain
 
         def initialize(event) = @event = event
 
+        # A chunk is whatever the tool had written when the reader last woke:
+        # {Sink::IOAdapter#write} passes those bytes through untouched, precisely
+        # so a progress bar redrawing itself on one row still redraws on one row.
+        # So this decorator's output is a fragment, and a frontend that
+        # terminated it would break rows the command never broke.
+        def line_shaped? = false
+
         # @param theme [Frontend::Theme] resolves the tokens named below; the
         #   decorator names intent, never a colour
-        # @return [String] one attributed, styled line ready for the terminal
+        # @return [String] the attribution label followed by the chunk's styled
+        #   bytes -- one whole line only when the chunk itself was one
         def render(theme)
           label = theme.paint(:label, "[#{@event.tool_use_id} #{@event.stream}]")
           "#{label} #{styled_stream(theme)}"
