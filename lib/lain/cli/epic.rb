@@ -48,6 +48,13 @@ module Lain
       # truth about which work is where.
       class Ambiguous < Error; end
 
+      # How an ambiguity refusal spells the way out. The caller supplies the
+      # MIDDLE, not the whole sentence, so every verb's advice is the invocation
+      # that just refused with one slug added -- and keeping the trailing `SLUG`
+      # here is what makes "where the slug goes" structural rather than four
+      # strings that can drift apart.
+      REMEDY = "name one: lain %<command>s SLUG"
+
       # The container exists but cannot be listed. Its own class, next to the
       # owner that raises it, for {Epic::Home::UnreadableArtifact}'s reason: an
       # unreadable directory is not "no epics yet", and answering the empty-home
@@ -178,7 +185,7 @@ module Lain
         slugs = slugs_in(container)
         return unstarted(container) if slugs.empty?
 
-        report(chosen(slug, slugs, container))
+        report(chosen(slug, slugs, container, command: "epic status"))
       end
 
       # WHICH epic a bare command means: the sole one in the home, or the named
@@ -190,10 +197,17 @@ module Lain
       # different work -- silently, since neither would raise. The rule lives
       # here, next to the home listing it reads, and the other verbs ask.
       #
+      # `command` has no default on purpose. This is the one question every epic
+      # verb asks, so a default would let the NEXT verb inherit advice for a
+      # command its operator never ran -- silently, and that is the defect the
+      # argument exists to close. Spell it as argv does, minus the slug:
+      # `"epic submit STAGE"`, `"chat --epic"`.
+      #
       # @param slug [String, nil]
+      # @param command [String] what the operator invoked, for {REMEDY}
       # @return [String] the resolved slug
       # @raise [Ambiguous, UnknownEpic, UnreadableHome]
-      def resolve_slug(slug = nil) = chosen(slug, slugs_in(container), container)
+      def resolve_slug(slug = nil, command:) = chosen(slug, slugs_in(container), container, command:)
 
       private
 
@@ -232,8 +246,8 @@ module Lain
         Lain::Epic::Home::NAME.match?(entry) && File.directory?(File.join(container, entry))
       end
 
-      def chosen(slug, slugs, container)
-        return sole(slugs, container) if slug.nil?
+      def chosen(slug, slugs, container, command:)
+        return sole(slugs, container, command:) if slug.nil?
         return slug if slugs.include?(slug)
 
         raise UnknownEpic, "no epic #{slug.inspect} in #{container} -- it holds #{listed(slugs)}"
@@ -243,12 +257,12 @@ module Lain
       # answers {#unstarted} before it ever chooses. A verb that must NAME an
       # epic has no such answer, and "holds 0 epics ()" would be a sentence
       # about nothing -- so the emptiness is said outright.
-      def sole(slugs, container)
+      def sole(slugs, container, command:)
         raise UnknownEpic, "no epics yet in #{container} -- there is nothing to name" if slugs.empty?
         return slugs.first if slugs.one?
 
-        raise Ambiguous, "#{container} holds #{slugs.size} epics (#{listed(slugs)}) -- " \
-                         "name one: lain epic status SLUG"
+        raise Ambiguous, "#{container} holds #{slugs.size} epics (#{listed(slugs)}) -- " +
+                         format(REMEDY, command:)
       end
 
       def listed(slugs) = slugs.map { |slug| "`#{slug}`" }.join(", ")

@@ -106,7 +106,19 @@ RSpec.describe Lain::CLI::EpicMount do
       mount, said = notices_from
 
       expect(mount.tools).to be_empty
-      expect(said.join).to include("alpha", "beta", "--epic")
+      expect(said.join).to include("alpha", "beta", "lain chat --epic SLUG")
+    end
+
+    # A chat is not a subcommand. The refusal used to carry `lain epic status
+    # SLUG` and this class bolted its own sentence on after it, so one notice
+    # named two commands and only the second one would have helped.
+    it "advises the chat flag alone, never the epic subcommand it is not" do
+      create_epic("alpha")
+      create_epic("beta")
+
+      _mount, said = notices_from
+
+      expect(said.join).not_to include("lain epic status")
     end
 
     it "resolves the named epic over the sole-epic default" do

@@ -285,7 +285,8 @@ module Lain
       #   stage boundary
       def submit(stage, slug = nil, issue: nil, digest: nil)
         staged = Lain::Epic::Stage.new(stage)
-        home = Lain::Epic::Home.resolve(config: @config, paths: @paths, root: @root, slug: @epics.resolve_slug(slug))
+        home = Lain::Epic::Home.resolve(config: @config, paths: @paths, root: @root,
+                                        slug: @epics.resolve_slug(slug, command: "epic submit STAGE"))
         decide(staged, Artifacts.new(home:, issue:, digest:).submission(staged))
       end
 

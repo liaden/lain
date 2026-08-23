@@ -3,6 +3,12 @@
 require "fileutils"
 require "tmpdir"
 
+# `exe/lain` is a script, not a lib file; it guards its own `LainCLI.start`, so
+# loading it here defines the Thor commands without running one. Needed by the
+# "the argv a refusal advises" group, which replays each remedy through the
+# REAL command line rather than trusting a literal.
+load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI::Epic)
+
 # `lain epic status` is the read-only projection of the epic tier: the document
 # an author wrote, with the Journal's runtime truth folded over it.
 #
@@ -336,6 +342,27 @@ RSpec.describe Lain::CLI::Epic do
         .to raise_error(Lain::CLI::Epic::Ambiguous, /`alpha`, `beta`.*lain epic status SLUG/m)
     end
 
+    # Every epic verb asks this one question, so the remedy has to name the
+    # command the OPERATOR ran: one shared remedy naming `status` tells a human
+    # who ran `submit` to go read a report instead of re-running what refused.
+    it "advises the command it was asked on behalf of" do
+      write_epic("alpha", chain)
+      write_epic("beta", graph_of(issue("z")))
+
+      expect { command.resolve_slug(nil, command: "chat --epic") }
+        .to raise_error(Lain::CLI::Epic::Ambiguous, /name one: lain chat --epic SLUG/)
+    end
+
+    # The remedy is a keyword with no default: `resolve_slug` is the one
+    # question every verb asks, and a default would let the NEXT verb silently
+    # inherit advice for a command its operator did not run -- which is the
+    # whole defect this argument exists to close.
+    it "refuses to answer for a caller that will not say which command asked" do
+      write_epic("alpha", chain)
+
+      expect { command.resolve_slug(nil) }.to raise_error(ArgumentError, /command/)
+    end
+
     it "names an unknown slug and the epics that do exist" do
       write_epic("alpha", chain)
 
@@ -349,6 +376,59 @@ RSpec.describe Lain::CLI::Epic do
       FileUtils.mkdir_p(File.join(container, "Not A Slug"))
 
       expect(command.status).to include("epic `alpha`")
+    end
+  end
+
+  # Ties each remedy to the argv it advises, which nothing else in the suite
+  # does. The two halves are pinned SEPARATELY -- the message literals in this
+  # file and the three verb specs, the CLI's own arity in epic_land_spec.rb's
+  # "refuses a second selector on the resume command" -- so they can drift apart
+  # with every example still green. Give `--resume` a sha positional again and
+  # `lain epic land --resume ISSUE_ID SLUG` goes stale in silence: the F60
+  # defect this whole card exists to close, recurring one level up, in the file
+  # a future author is most likely to touch.
+  #
+  # So no remedy is retyped here. Each is READ OUT of the refusal that just
+  # emitted it and handed straight back to Thor.
+  describe "the argv a refusal advises" do
+    # What an operator substitutes for the placeholders while reading the
+    # sentence. `SLUG` is one of the two epics the refusal just listed.
+    def concrete = { "SLUG" => "alpha", "ISSUE_ID" => "a1", "SHA" => "b" * 40, "STAGE" => "research" }
+
+    def argv_for(remedy) = remedy.split.map { |word| concrete.fetch(word, word) }
+
+    # A RuntimeError, deliberately: Thor turns an ArgumentError raised under
+    # dispatch INTO an arity refusal, so an ArgumentError sentinel would be
+    # indistinguishable from the very failure this group is looking for.
+    def dispatched = "the CLI dispatched into the command body"
+
+    # `debug: true` because exe/lain sets `exit_on_failure? = true`: without it
+    # Thor answers a rejected argv by calling `exit`, and a SystemExit inside an
+    # example truncates the run while still reporting zero failures.
+    def start_cli(argv)
+      with_env("XDG_STATE_HOME" => state_home, "HOME" => state_home) do
+        Dir.chdir(root) { LainCLI.start(argv, debug: true) }
+      end
+      nil
+    rescue StandardError => e
+      e
+    end
+
+    def remedy_advised_by(argv) = start_cli(argv).message[/name one: lain ([^\n]+)/, 1]
+
+    it "advises argv the CLI accepts, for every verb whose refusal names one" do
+      write_epic("alpha", chain)
+      write_epic("beta", graph_of(issue("z")))
+      triggers = { "status" => %w[epic status], "submit" => %w[epic submit research],
+                   "land" => ["epic", "land", "a1", "b" * 40], "resume" => %w[epic land --resume a1] }
+
+      advised = triggers.transform_values { |argv| remedy_advised_by(argv) }
+      [described_class, Lain::CLI::EpicSubmit,
+       Lain::CLI::EpicLand].each { |klass| allow(klass).to receive(:new).and_raise(dispatched) }
+
+      replayed = advised.transform_values { |remedy| start_cli(argv_for(remedy))&.message }
+
+      expect(replayed).to eq(advised.keys.to_h { |verb| [verb, dispatched] })
     end
   end
 
@@ -512,7 +592,7 @@ RSpec.describe Lain::CLI::Epic do
           subject = instance_exec(&build)
 
           expect(subject.instance_variable_get(:@root)).to eq(project)
-          expect(subject.instance_variable_get(:@epics).resolve_slug(nil)).to eq("alpha")
+          expect(subject.instance_variable_get(:@epics).resolve_slug(nil, command: "epic status")).to eq("alpha")
         end
       end
     end

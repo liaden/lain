@@ -201,7 +201,7 @@ module Lain
       # @raise [Approval::Gate::NotApproved] before any forge intent, when
       #   nothing approved this (slug, issue, sha)
       def land(issue_id, sha, slug = nil)
-        epic_slug = @epics.resolve_slug(slug)
+        epic_slug = @epics.resolve_slug(slug, command: "epic land ISSUE_ID SHA")
         issue = named!(issue_id, "lain epic land names one issue")
         anchor = named!(sha, "lain epic land takes the full object name of the approved commit")
         answer = crewed(epic_slug, issue, anchor, &:land)
@@ -214,7 +214,10 @@ module Lain
       # @raise [NothingToResume] when this issue's journal holds no promote
       #   intent, before anything is journaled
       def resume(issue_id, slug = nil)
-        epic_slug = @epics.resolve_slug(slug)
+        # Its OWN spelling, not `land`'s: `--resume` takes no sha, so the second
+        # positional is the slug and exe/lain refuses a third outright. Advising
+        # `ISSUE_ID SHA SLUG` here would name an argument this command rejects.
+        epic_slug = @epics.resolve_slug(slug, command: "epic land --resume ISSUE_ID")
         issue = named!(issue_id, "lain epic land --resume names one issue")
         records = journals.to_a
         resumed(epic_slug, issue, records, Scoped.new(records:, epic_slug:, issue_id: issue).to_a)

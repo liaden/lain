@@ -328,13 +328,17 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(command.submit("research")).to include("alpha")
     end
 
-    it "refuses when the home holds more than one epic" do
+    # The remedy names THIS command, not the report: a human who typed
+    # `lain epic submit research` and is told to run `lain epic status SLUG`
+    # has been advised to do something other than what they were doing.
+    it "refuses when the home holds more than one epic, advising the submit spelling" do
       write_research
       write_epic
       write_research(slug: "beta")
       write_epic(slug: "beta")
 
-      expect { command.submit("research") }.to raise_error(Lain::CLI::Epic::Ambiguous, /alpha.*beta/m)
+      expect { command.submit("research") }
+        .to raise_error(Lain::CLI::Epic::Ambiguous, /alpha.*beta.*name one: lain epic submit STAGE SLUG/m)
     end
 
     it "submits the named epic when one is given" do

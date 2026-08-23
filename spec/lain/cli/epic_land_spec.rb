@@ -184,6 +184,25 @@ RSpec.describe Lain::CLI::EpicLand do
     expect(forge_intents).to be_empty
   end
 
+  # Which epic a bare `lain epic land` means, and what the refusal tells the
+  # human to type. The two spellings differ because the ARGV does: `--resume`
+  # takes no sha, so its second positional is the SLUG (exe/lain), and advising
+  # `ISSUE_ID SHA SLUG` to somebody who ran `--resume` names a third positional
+  # that same command refuses outright.
+  it "refuses an unnamed choice between epics, advising the land spelling" do
+    home("other").write_epic(graph)
+
+    expect { command.land("a1", sha) }
+      .to raise_error(Lain::CLI::Epic::Ambiguous, /name one: lain epic land ISSUE_ID SHA SLUG/)
+  end
+
+  it "advises the resume spelling when a resume is what refused" do
+    home("other").write_epic(graph)
+
+    expect { command.resume("a1") }
+      .to raise_error(Lain::CLI::Epic::Ambiguous, /name one: lain epic land --resume ISSUE_ID SLUG/)
+  end
+
   it "refuses a resume with no promote intent, naming the issue" do
     session(approval)
 

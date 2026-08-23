@@ -46,11 +46,6 @@ module Lain
       # session a tool.
       UNWIRED = "request_review is not wired for this chat: %<reason>s"
 
-      # Only where naming one would actually help. {CLI::Epic::Ambiguous}'s own
-      # message ends with the `lain epic status SLUG` remedy, which is the right
-      # advice for a report and the wrong flag for a chat.
-      NAME_ONE = " Start the chat with --epic SLUG to say which."
-
       # The startup-notice seam's null, matching {Frontend::PromptComposer::SILENT}.
       SILENT = ->(_message) {}
 
@@ -141,7 +136,7 @@ module Lain
       # @return [EpicMount]
       def self.mount(chronicle:, options:, root: Dir.pwd, paths: Paths.new, config: Config.load(root:),
                      bindings: nil, notify: nil, changesets: nil, surface: nil, view: nil, policy: nil)
-        new(slug: Epic.new(root:, paths:, config:).resolve_slug(options[:epic]),
+        new(slug: Epic.new(root:, paths:, config:).resolve_slug(options[:epic], command: "chat --epic"),
             journal: chronicle.record_journal, root:, paths:, config:, bindings:, notify:,
             changesets:, surface:, view:, policy:)
       end
@@ -160,9 +155,10 @@ module Lain
       # listed -- so it is said.
       def self.worth_saying?(slug, error) = !(slug.nil? && error.is_a?(Epic::UnknownEpic))
 
-      def self.unwired(error)
-        "#{format(UNWIRED, reason: error.message)}#{NAME_ONE if error.is_a?(Epic::Ambiguous)}"
-      end
+      # No sentence of its own bolted on: {CLI::Epic::Ambiguous} is asked on
+      # behalf of `chat --epic`, so its remedy already names the flag a chat can
+      # actually use. Adding one here is what made a notice name two commands.
+      def self.unwired(error) = format(UNWIRED, reason: error.message)
 
       private_class_method :mount, :worth_saying?, :unwired
 
