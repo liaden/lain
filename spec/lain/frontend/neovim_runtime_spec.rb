@@ -440,6 +440,58 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
                                         "verdict" => "approve")
     end
 
+    # T7 / QA round 8 (F40), and the REACHABILITY half of it: the surface that
+    # has to let go of its read is the one {Repl::ApprovalSurfaces} builds for
+    # itself, reading through `conductor.read_reply` -- not one an example wired.
+    #
+    # The editor was never the casualty here; it observes the parked set and
+    # answered both calls before this card as it does after. THE TERMINAL was.
+    # Having taken the first arrival it stayed inside a read no human would ever
+    # answer, so the second gated call of the turn was never rendered at the
+    # terminal at all -- and on `--no-nvim` there would have been nobody else to
+    # ask. So the discriminating assertion is what the TERMINAL was asked to
+    # render, which is why the reader records before it parks.
+    it "asks at the terminal about the second gated call too, once the editor has answered the first" do
+      queue = Lain::Approval::Queue.new(journal:, timeout: 60)
+      settled = Thread::Queue.new
+      prompts = []
+      allow(agent).to receive(:ask) do
+        %w[pwd whoami].each_with_index do |command, index|
+          settled.push(queue.call(ApprovalSeamSupport::Effect.new("bash", { "command" => command },
+                                                                  "tu_#{index + 1}"), nil))
+        end
+        nil
+      end
+      allow(conductor).to receive(:supervise) { |_task, _head, &turn| Struct.new(:response).new(turn.call) }
+      allow(conductor).to receive(:read_prompt).and_return("go", "quit")
+      allow(conductor).to receive(:read_reply) do |_tty, prompt|
+        prompts << prompt
+        Async::Task.current.sleep(60)
+      end
+      presser = Thread.new do
+        approve_in_editor("pwd")
+        approve_in_editor("whoami", after: "pwd")
+      end
+
+      Timeout.timeout(45) { repl_over(queue).run(**repl_session) }
+
+      expect(presser.join(5)).to be_truthy
+      expect(Timeout.timeout(10) { [settled.pop, settled.pop] }).to eq([true, true])
+      expect(prompts.join).to include("pwd").and include("whoami")
+    end
+
+    # Wait for the row to be the one on screen, then press y on it. `after:` is
+    # the row the PREVIOUS press retired: pressing before it leaves the buffer
+    # would land the keystroke on the call that was already approved, and the
+    # example would hang rather than fail.
+    def approve_in_editor(command, after: nil)
+      wait_until(timeout: 20) do
+        text = buffer_lines("lain://approval").join
+        text.include?(command) && !(after && text.include?(after))
+      end
+      press("lain://approval", "y", cursor: [1, 0])
+    end
+
     # The REAL HumanReplies, undelegated: repl_spec wraps it in a double that
     # no-ops `bind_editor` precisely so its own examples keep the rail they set,
     # and that is the wiring under test here.

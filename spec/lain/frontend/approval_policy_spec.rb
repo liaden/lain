@@ -299,6 +299,162 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
   end
 
+  # T7, from manual-QA round 8 (F40). Two human surfaces answer one queue and
+  # the first answer wins -- but this one, having TAKEN the arrival, was still
+  # inside its read when the editor answered, and a read with no human behind it
+  # never returns. So the watch fiber sat on a call that was already decided
+  # while every later gated call queued up behind it, unrendered and
+  # unanswerable: the same session-wide silence T15's stolen arrivals caused,
+  # reached through the other door.
+  #
+  # Neither spec above can see it, and the gap between them is exact. The two
+  # gated calls in the block above go through a reader that ALWAYS returns; the
+  # real-editor example in neovim_runtime_spec parks its reader forever over
+  # exactly ONE call. Seeing this takes both at once -- a reader that never
+  # returns AND a second pending waiting behind it.
+  #
+  # ONE EXAMPLE HERE DISCRIMINATES, AND THE REST ARE PINS. "asks about the
+  # second call once the editor has answered the first" is the only one that
+  # fails against the surface as it was: it is the pairing above, and nothing
+  # weaker reproduces F40. The other four hold the behaviour the fix had to
+  # leave alone -- the sibling's verdict stands, no fault is manufactured, a
+  # human at the terminal still signs their own answer, and an unanswered call
+  # still meets the clock -- so they pass either way BY CONSTRUCTION, and a day
+  # when one of them goes red is a day the release broke something it was not
+  # supposed to touch. Said out loud because the card's own trigger reads on
+  # every new example, and a reader who checks will find five of six green
+  # against the old file; that is the intended shape, not an unexamined one.
+  describe "a call another surface answers while this terminal is still reading" do
+    let(:journal_io) { StringIO.new }
+    let(:journal) { Lain::Journal.new(io: journal_io) }
+    # Long enough that the clock is never what ends an example: under test is a
+    # surface letting go of a prompt, not the queue's fail-closed timer -- which
+    # has its own example below.
+    let(:queue) { Lain::Approval::Queue.new(journal:, timeout: 10) }
+    # The prompts this terminal rendered, as a queue rather than an array, so an
+    # example PARKS until one arrives instead of polling for it.
+    let(:asked) { Async::Queue.new }
+
+    def gated(id)
+      Lain::Effect::ToolCall.new(tool_use_id: id, name: "bash", input: { "command" => "echo #{id}" })
+    end
+
+    # A human who is not at the terminal. The read parks the FIBER and never
+    # answers -- what {Lain::CLI::Conductor#read_reply} does while nobody types
+    # -- rather than blocking the reactor, so the queue's own timer can still
+    # fire underneath it.
+    def absent_human
+      described_class.new(output:, pastel: Pastel.new(enabled: false), reader: lambda { |prompt|
+        asked.enqueue(prompt)
+        Async::Task.current.sleep(30)
+      })
+    end
+
+    def decisions = Lain::Journal.records(journal_io.string.lines, type: "approval_decision").to_a
+
+    # A bounded wait whose expiry is an ANSWER, not a raise: "the terminal asked
+    # nothing more" is the defect itself, so it should read as a failed
+    # expectation rather than as a timeout somewhere in the harness.
+    def eventually_asked(task, seconds)
+      task.with_timeout(seconds) { asked.dequeue }
+    rescue Async::TimeoutError
+      nil
+    end
+
+    # Park two gated calls; let this surface ask about the first; let the editor
+    # answer that first one out from under the outstanding read. Answers the two
+    # prompts the terminal rendered -- the second is nil when it rendered none.
+    def prompts_either_side_of(verdict)
+      Sync do |task|
+        gates = %w[call_1 call_2].map { |id| task.async { queue.call(gated(id), nil) } }
+        watcher = task.async { absent_human.watch(queue) }
+        [answered_elsewhere(task, verdict), eventually_asked(task, 2)]
+      ensure
+        watcher&.stop
+        gates&.each(&:stop)
+      end
+    end
+
+    # The prompt this terminal rendered for the first call -- answered as the
+    # editor decides that same call out from under the read it is parked in.
+    def answered_elsewhere(task, verdict)
+      eventually_asked(task, 5).tap do
+        verdict.call(queue.find { |pending| pending.tool_use_id == "call_1" })
+      end
+    end
+
+    def approved_elsewhere = ->(pending) { pending.approve(surface: "nvim") }
+
+    it "asks about the second call once the editor has answered the first" do
+      first, second = prompts_either_side_of(approved_elsewhere)
+
+      expect(first).to include("echo call_1")
+      expect(second).to include("echo call_2")
+    end
+
+    it "leaves the editor's verdict standing on the call it was reading about" do
+      prompts_either_side_of(approved_elsewhere)
+
+      expect(decisions.first).to include("surface" => "nvim", "verdict" => "approve")
+    end
+
+    # Abandoning a read is not a fault and must not travel as one. {#answered}
+    # rescues StandardError into a denial signed {FAULT_SURFACE}, so an
+    # abandonment raised as an ordinary error would journal a broken terminal
+    # against a call another surface had just APPROVED -- and print a reason for
+    # it to the human, naming a failure that never happened.
+    it "journals no fault against a call another surface answered, and reports none" do
+      prompts_either_side_of(approved_elsewhere)
+
+      expect(decisions.map { |record| record.fetch("surface") }).not_to include(described_class::FAULT_SURFACE)
+      expect(output.string).to be_empty
+    end
+
+    it "answers at this terminal, signed as its own, when the human is there to answer" do
+      policy = described_class.new(output:, pastel: Pastel.new(enabled: false), reader: ->(_prompt) { "y\n" })
+      verdict = Sync do |task|
+        watcher = task.async { policy.watch(queue) }
+        task.with_timeout(5) { task.async { queue.call(gated("call_1"), nil) }.wait }
+      ensure
+        watcher&.stop
+      end
+
+      expect(verdict).to be(true)
+      expect(decisions.last).to include("surface" => described_class::SURFACE, "verdict" => "approve")
+    end
+
+    # The counterfactual for the whole race: letting go of a READ must never let
+    # go of the PENDING. Nobody answers here -- not the editor, not the terminal
+    # -- and the queue's window still refuses, which is gate.rb's doctrine.
+    it "still fails closed when nobody answers at all" do
+      unanswerable = Lain::Approval::Queue.new(journal:, timeout: 0.2)
+      verdict = Sync do |task|
+        watcher = task.async { absent_human.watch(unanswerable) }
+        task.with_timeout(5) { task.async { unanswerable.call(gated("call_1"), nil) }.wait }
+      ensure
+        watcher&.stop
+      end
+
+      expect(verdict).to be(false)
+      expect(decisions.last).to include("surface" => Lain::Approval::Queue::TIMEOUT_SURFACE, "verdict" => "deny")
+    end
+  end
+
+  # The racer belongs to the surface LOOP and to nothing else. `#decide`'s other
+  # two callers -- {Lain::CLI::Command::Approve} and {Lain::CLI::Command::Surface}'s
+  # fallback, the latter on the default thread-blocking reader -- run with no
+  # reactor under them, where `Async::Task.current` raises. A pin, and one whose
+  # whole content is that it was green before this card and is green after: the
+  # AC it comes from asks for "behaves as it did before", so a red here would
+  # mean the racer had leaked out of the one caller that has a reactor.
+  it "decides with no reactor at all, for the two callers that have none" do
+    approval = pending
+
+    expect(Async::Task.current?).to be_nil
+    expect(policy_for("y\n").decide(approval)).to be(true)
+    expect(approval).to have_attributes(decision: :approve, surface: "tty")
+  end
+
   # The conductor seam: the exe injects `-> (prompt) { conductor.read_reply(...) }`
   # so approval prompts serialize with ask_human replies on the one stdin and a
   # blocking gets cannot starve the fail-closed timer.

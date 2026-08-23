@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "async"
 require "pastel"
 
 module Lain
@@ -95,18 +96,75 @@ module Lain
 
       private
 
-      # One arrival, guarded -- because a raise inside a single prompt used to
-      # retire this fiber for the whole session, silently. That is the failure
-      # {Approval::Queue::Pending}'s own comment names, and every sibling
-      # surface already guards it ({Approval::QueueSurface#swept},
+      # One arrival, asked about in a CHILD fiber, and let go of the moment the
+      # pending is decided by anyone -- this surface or another (F40).
+      #
+      # The read is what needed releasing. A y/N read with no human behind it
+      # never returns, so a surface that answered its arrivals inline stayed
+      # inside that read after the editor had already decided the call -- and
+      # every gated call after it queued behind a prompt that was moot,
+      # unrendered and unanswerable. That is T15's session-wide silence reached
+      # through the other door: not an arrival STOLEN, an arrival HELD.
+      #
+      # The race is between two things that both end at {Pending#decide}, which
+      # is why it needs no new primitive. `Async::Variable#resolve` signals
+      # EVERY parked waiter and a waiter arriving after resolution returns at
+      # once, so the ask's own answer and a sibling surface's wake this fiber
+      # identically -- and {Approval::Queue}'s fail-closed timer is a third
+      # decider on the same seam, so releasing the READ never releases the
+      # PENDING.
+      #
+      # It belongs HERE and not in {#decide}, which has two other callers
+      # ({CLI::Command::Approve}, {CLI::Command::Surface}'s fallback on the
+      # default thread-blocking reader) that run with no reactor under them,
+      # where `Async::Task.current` raises. This is the one caller with both a
+      # task and a scheduler-routed reader.
+      #
+      # `stop` rather than a raise, and that distinction is the whole of the
+      # abandonment: `Async::Stop` is not a `StandardError`, so it climbs past
+      # {#asked}'s guard instead of journaling a `tty_fault` denial against a
+      # call another surface just APPROVED. It also unwinds the reader through
+      # its own ensures -- {CLI::Conductor#read_reply} clears the flag that
+      # suppresses the countdown ticker, Reline restores the terminal -- which
+      # is exactly what {CLI::Repl::LineScope#serve} already does to a replier
+      # fiber parked in that same read.
+      # `&.` for exactly one case, so it does not read as a habit: this method
+      # is only ever reached from {#watch} inside a spawned task, but if that
+      # ever stopped being true `Async::Task.current` raises before the
+      # assignment, and the ensure would then be dereferencing a nil that names
+      # a task never spawned.
+      def answered(pending)
+        asking = Async::Task.current.async { asked(pending) }
+        pending.await
+      ensure
+        asking&.stop
+      end
+
+      # The ask itself, guarded -- because a raise inside a single prompt used
+      # to retire this fiber for the whole session, silently. That is the
+      # failure {Approval::Queue::Pending}'s own comment names, and every
+      # sibling surface already guards it ({Approval::QueueSurface#swept},
       # {CLI::HumanReplies::AnswerLoop#exchange}); this is the one it is FATAL
       # for, because a `--no-nvim` chat has no second surface and every later
       # gated call would then reach nobody at all (T15).
       #
+      # THE GUARD COVERS THE ASK, AND ONLY THE ASK. It used to wrap the whole
+      # of one arrival; the race in {#answered} now sits outside it, which is
+      # deliberate and is what keeps an abandonment from being mistaken for a
+      # terminal failure. What is left uncovered is three lines -- taking the
+      # current task, spawning a child, awaiting a promise -- and nothing
+      # `StandardError`-shaped is reachable on any of them: `Async::Task#async`
+      # raises nothing of its own, and `Promise#await` either returns the value
+      # or is unwound by the `Async::Stop` that ends this whole surface. So the
+      # smaller scope loses no coverage; a raise from the READ, which is the
+      # only thing here that talks to a terminal, is still caught.
+      #
       # Fail closed and keep watching: {Effect::Handler::Gate}'s doctrine is
       # that an unanswerable gate refuses rather than wedges, so the pending
       # this surface could not ask about is denied here rather than left to the
-      # clock -- signed {FAULT_SURFACE}, because nobody answered it.
+      # clock -- signed {FAULT_SURFACE}, because nobody answered it. The denial
+      # is also what wakes {#answered}, whose park this guard therefore has to
+      # end on every path.
       # `StandardError`, so an `Async::Stop` ending the line keeps climbing.
       #
       # THE DENIAL LANDS BEFORE THE REPORT, and the order is the whole guard.
@@ -116,7 +174,7 @@ module Lain
       # this fiber dead, which is strictly worse than no guard at all. So the
       # verdict is settled first and the reporting carries its own rescue,
       # {Approval::QueueSurface#journal_fault}'s shape exactly.
-      def answered(pending)
+      def asked(pending)
         decide(pending)
       rescue StandardError => e
         pending.deny(surface: FAULT_SURFACE)
