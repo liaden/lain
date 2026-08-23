@@ -209,17 +209,6 @@ the cop.
   regression took a file from 32 examples to 22 while reporting a clean pass, and the truncation
   point moved with the seed. Under `parallel_rspec` that is indistinguishable from the OOM-kill
   shape above. Pass `debug: true` to any Thor `.start` in a spec, and check the example COUNT.
-
-  **`debug: true` is necessary and not sufficient** (2026-08-22, a second witness). It re-raises
-  refusals *Thor* turns into an exit; it does nothing about an `exit` the COMMAND ITSELF calls.
-  `LainCLI#chat` ends in `exit launch.exit_status if options[:non_interactive]`, so a spec driving
-  `start(%w[chat --non-interactive --prompt hi], debug: true)` — with `ChatLaunch` doubled, so the
-  chat never ran — still exited 0 mid-example. `cli_spec.rb` reported **"7 examples, 0 failures"**
-  having silently dropped 32, and the surviving 7 all genuinely passed, so nothing looked wrong.
-  What catches it is the COUNT and only the count: `grep -cE '^\s+it ' <file>` against what the
-  run reports. Grep the command under test for a bare `exit` before driving it, and either avoid
-  the flag that reaches one or wrap the call in a `raise_error(SystemExit)` matcher, which catches
-  it.
 - **The known load-induced flakes, by name** (2026-08-18; all pass in isolation, all driven by real
   `git`/`tmux`/`nvim` under a loaded box — see the TMPDIR note above before believing any of them):
   `Lain::Frontend::Neovim ... re-attach is idempotent: no duplicate commands, and
@@ -269,3 +258,33 @@ the cop.
   **The rule is general, not `.toml`-specific** (2026-08-22): naming `docs/toolchain-traps.md`
   on a `rubocop` command line makes it parse THIS FILE as Ruby and report offenses in the
   prose. Harmless only because no `-a` was passed. Name Ruby files, and nothing else.
+- **A `let` read from inside `Sync` deadlocks the reactor, and it looks like a hang in your subject.**
+  RSpec memoizes a `let` under a `Mutex`. A `Mutex` acquired inside an `Async` task is owned by the
+  **fiber**, not by the thread — so the *first* read of a `let` from inside a `Sync` block parks the
+  reactor's fiber on a lock the example's own fiber is holding, and neither can move. What you see
+  is the example sitting at ~0% CPU until `spec/support/watchdog.rb` fires at 30s, with a stack
+  ending in `IO::Event::Selector::URing#select` under `Async::Scheduler#run` — which reads as "my
+  async subject wedged", not as "RSpec's memoization did". It is the same fiber-ownership branch
+  that trap-hunt cost hours to find in the editor specs; found again 2026-08-22 in `ToolDelivery`'s
+  spec, and reproduced *by accident* by the reviewer's own probe before the fix was applied — a
+  `Mutex` locked by the example fiber answers `owned? == false` when a sibling fiber on the same
+  thread asks. A read of an **already-memoized** `let` never takes the lock, so the whole fix is to
+  force them before the reactor opens:
+
+  ```ruby
+  before { [response, timeline, session, snapshots, journal] }   # then Sync freely
+  ```
+
+  The tell that separates it from a genuine hang: the same example passes when its `let`s are
+  turned into plain locals. If a spec drives `Sync`/`Async` at all, force every `let` it touches.
+- **`Async::Task#wait` on a CANCELLED task does not raise**, so `expect { run.wait }.to raise_error`
+  asserts nothing at all. Measured on async 2.42.0, 2026-08-22: after `run.stop`, `run.wait` returns
+  `nil` with `run.status == :cancelled` and no exception — the task's own handler has already
+  absorbed the `Async::Cancel`. An example written to prove "the interrupt still ended the run"
+  therefore passes for the wrong reason, and keeps passing if the interrupt stops working. Assert
+  the *state* and the *consequence* instead — `expect(run).to be_cancelled`, plus something the run
+  would have done had it continued (a turn that is absent, a response never requested).
+  Relatedly, `Task#defer_stop` is a deprecated alias for `#defer_cancel` in 2.42, and it guarantees
+  exactly **one** deferral: `#cancel` defers only while its tri-state guard reads `false`, and a
+  second cancel arriving inside the region falls through to an immediate `Fiber.scheduler.raise`.
+  A `defer_stop` region is a shield against *an* interrupt, never against a storm of them.

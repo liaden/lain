@@ -96,6 +96,19 @@ module T22Instrumentation
   end
 end
 
+# T6: the post-dispatch observation seam is the LAST thing
+# {Lain::Agent::ToolRunner#run} does, so an observer that cancels its own task
+# tears the run at the one point where every tool has already answered -- the
+# case a cancellation must not claim, reached deterministically and with no
+# clock. In a module body for the reason the fixtures above are.
+module T6Interrupts
+  # Cancels the task it is observing on, which is exactly what
+  # {Lain::Agent::Budget#interrupt} does from outside.
+  class Cancelling
+    def observe(_block, _tool_name) = Async::Task.current.stop
+  end
+end
+
 RSpec.describe Lain::Agent do
   # ---- fixtures -------------------------------------------------------------
 
@@ -221,6 +234,43 @@ RSpec.describe Lain::Agent do
       a.ask("hi")
 
       expect(a.timeline.to_a[2].causal_parents).to eq([])
+    end
+  end
+
+  # T6/F46. The window a tear strands a tool_use in is #perform_tools: the
+  # assistant turn is committed and its results are not. What the Agent owns
+  # here is WHEN the cancellation is committed, not what it says -- the block
+  # shape belongs to ToolRunner::Answers, and the end-to-end tear (a real cancel
+  # landing inside a real parked tool) is spec/lain/seams/tool_cancellation_spec.rb.
+  describe "a run torn between the assistant turn and its tool results" do
+    it "commits the real results, and journals no cancellation, when every tool had returned" do
+      journal = []
+      a = agent([tool_response(["tu_1", "echo", { "text" => "a" }]), text_response],
+                tool_observer: T6Interrupts::Cancelling.new, journal:)
+
+      Sync { |task| task.async { a.ask("hi") }.wait }
+
+      expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant user])
+      expect(a.timeline.to_a.last.content.map { |block| block["content"] }).to eq(["a"])
+      expect(journal.grep(Lain::Telemetry::ToolCancelled)).to be_empty
+    end
+
+    # The stop still lands. A cancellation commit that swallowed its own
+    # interrupt would leave Ctrl-C and grace expiry unable to end a run at all,
+    # so the commit is followed by a re-raise and never by a `return`.
+    it "re-raises the interrupt after committing, so the loop takes no further turn" do
+      a = agent([tool_response(["tu_1", "echo", { "text" => "a" }]), text_response("second turn")],
+                tool_observer: T6Interrupts::Cancelling.new)
+      run = nil
+
+      Sync do |task|
+        run = task.async { a.ask("hi") }
+        run.wait
+      end
+
+      expect(run).to be_cancelled
+      expect(a.timeline.to_a.map(&:role)).to eq(%w[user assistant user])
+      expect(a).not_to be_done
     end
   end
 

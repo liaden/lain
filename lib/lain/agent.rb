@@ -13,6 +13,7 @@ require_relative "agent/loop_machine"
 require_relative "agent/model_caller"
 require_relative "agent/pipeline_source"
 require_relative "agent/request_override"
+require_relative "agent/tool_delivery"
 require_relative "agent/tool_runner"
 require_relative "agent/transition_listener"
 
@@ -390,6 +391,7 @@ module Lain
       @transition_listener = @instrumentation.transition_listener
       @session = session
       @snapshot_writer = snapshot_writer
+      @deliveries = ToolDelivery.new(runner: @tool_runner, journal: @instrumentation.journal, snapshot_writer:)
       @budget = budget
       @iterations = 0
       @dispatch_lock = Monitor.new
@@ -500,22 +502,15 @@ module Lain
     # stop making parallel tool calls -- a regression with no error attached. The
     # `tool_use` event has already fired (in #transition); this only commits.
     #
-    # The workspace snapshot rides HERE, not in #commit_and_account: the
-    # assistant-turn commit happens BEFORE the tools run, so this commit is the
-    # earliest point where both halves of the snapshot exist -- the written
-    # bytes on disk and the turn digest the event names as its cause. It runs
-    # AFTER the commit (backward causality, ask_human's idiom) and OUTSIDE the
-    # defer_stop atom on purpose: disk is the source of truth a lost snapshot
-    # is re-derived from on the next mutating turn, so unlike a TurnUsage
-    # record it needs no cancellation shield -- and file IO stays out of the
-    # uninterruptible region's heartbeat budget.
-    # The delivery is {ToolRunner#delivery}'s value -- the result blocks plus
-    # the consumption edges an answered ask_human question rides (I6). The
-    # role stays HERE: one USER message holding every result is this class's
-    # statement about the Timeline, exactly as before.
+    # The commit itself, the workspace snapshot that rides after it, and the
+    # cancellation commit an interrupt mid-dispatch owes (F46) all belong to
+    # {ToolDelivery}: this class decides WHEN tools run, and that one decides how
+    # what they produced lands. The Timeline comes back through the block rather
+    # than as a return value because the torn path commits AND re-raises, and a
+    # return value would be discarded by the very interrupt the commit exists to
+    # survive.
     def perform_tools(response)
-      @timeline = @timeline.commit(role: :user, **@tool_runner.delivery(response, context: @session))
-      @snapshot_writer.write(timeline: @timeline, paths: @session.writes)
+      @deliveries.perform(response, timeline: @timeline, session: @session) { |turn| @timeline = turn }
     end
   end
 end

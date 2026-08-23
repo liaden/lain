@@ -267,6 +267,139 @@ RSpec.describe Lain::Agent::ToolRunner do
     end
   end
 
+  # T6/F46: what a torn turn commits, asserted at this collaborator's own
+  # boundary by driving {Answers} directly -- the states an interrupt can leave
+  # it in are reachable here without a clock. The end-to-end tear, a real
+  # `Async` cancel landing inside a real parked tool, is
+  # spec/lain/seams/tool_cancellation_spec.rb.
+  describe "#cancelled_delivery" do
+    let(:response) { tool_response(["tu_1", "echo", {}], ["tu_2", "echo", {}], ["tu_3", "echo", {}]) }
+    let(:answers) { described_class::Answers.for(response) }
+    let(:finished) do
+      { "type" => "tool_result", "tool_use_id" => "tu_1", "content" => "real output", "is_error" => false }
+    end
+
+    def content_of(answers, *tools)
+      toolset = tools.empty? ? Lain::Toolset.new : Lain::Toolset.new(tools)
+      described_class.new(handler: echoing_handler, toolset:).cancelled_delivery(answers)
+    end
+
+    # The first AC, and the reason {Answers} exists: the obvious repair replaces
+    # a finished tool's real output with "cancelled", which fabricates.
+    it "keeps the finished tool's own output and answers only the calls with none" do
+      answers.dispatching(answers.uses.first)
+      answers.answered(answers.uses.first, finished)
+      answers.dispatching(answers.uses[1])
+
+      blocks = content_of(answers).fetch(:content)
+
+      expect(blocks.map { |block| block["tool_use_id"] }).to eq(%w[tu_1 tu_2 tu_3])
+      expect(blocks.first).to eq(finished)
+      expect(blocks.drop(1).map { |block| block["is_error"] }).to eq([true, true])
+    end
+
+    it "tells a call that was running from one that was never dispatched" do
+      answers.dispatching(answers.uses[1])
+
+      blocks = content_of(answers).fetch(:content)
+
+      expect(blocks[1]["content"]).to eq(described_class::Answers.was_running)
+      expect(blocks[2]["content"]).to eq(described_class::Answers.never_dispatched)
+    end
+
+    it "reports which calls were cancelled, which were running, and which completed" do
+      answers.dispatching(answers.uses.first)
+      answers.answered(answers.uses.first, finished)
+      answers.dispatching(answers.uses[1])
+
+      expect(answers.partition).to eq(cancelled: %w[tu_2 tu_3], running: %w[tu_2], completed: %w[tu_1])
+      expect(answers).to be_cancelled
+    end
+
+    # A tear that lands after every tool answered is not a cancellation at all:
+    # it commits the real results and says nothing about being torn.
+    it "reports nothing cancelled once every call has answered" do
+      answers.uses.each { |use| answers.answered(use, finished.merge("tool_use_id" => use.id)) }
+
+      expect(answers).not_to be_cancelled
+      expect(content_of(answers).fetch(:content).map { |block| block["is_error"] }).to eq([false, false, false])
+    end
+
+    # The harvest DECISION: a cancellation commit harvests. The blocks it
+    # commits include any ask_human that completed before the tear, and that
+    # block is the answer's delivery into the conversation -- so this is the
+    # turn whose causal_parents retire the question. Not harvesting would leave
+    # the answer in the record with nothing citing it, and let a later,
+    # unrelated turn claim the edge instead.
+    it "cites the questions answered before the tear as the torn turn's causal_parents" do
+      subject = handover_runner(["blake3:q1"])
+      torn = subject.class::Answers.for(response)
+
+      expect(subject.cancelled_delivery(torn).fetch(:causal_parents)).to eq(["blake3:q1"])
+    end
+
+    # The half-harvest hazard, closed by exclusivity rather than by a memo:
+    # #delivery computes `content` FIRST, so a raise out of #run means it never
+    # reached its own harvest, and exactly one of the two paths ever harvests.
+    it "harvests once, so a settled turn after a torn one cites nothing" do
+      subject = handover_runner(["blake3:q1"])
+      subject.cancelled_delivery(subject.class::Answers.for(response))
+
+      settled = subject.delivery(tool_response(["tu_9", "echo", {}]), context: nil)
+
+      expect(settled.fetch(:causal_parents)).to eq([])
+    end
+
+    # The one way a mixed turn could manufacture the hole `Conversation#valid?`
+    # does not count: two tool_uses sharing an id would answer as two blocks
+    # with one id, which validates here and 400s at the provider. It cannot
+    # happen, because the pairing is refused at the TOP of #run -- before a tool
+    # is dispatched, and therefore before either commit path exists.
+    it "refuses a duplicate id before any tool is dispatched, so no path can commit one twice" do
+      dispatched = []
+      handler = Lain::Effect::Handler::Mock.new do |effect, _context|
+        dispatched << effect.tool_use_id
+        Lain::Tool::Result.ok("ran")
+      end
+      duplicated = tool_response(["dup", "echo", {}], ["dup", "echo", {}])
+
+      expect { described_class.new(handler:).delivery(duplicated, context: nil) }
+        .to raise_error(described_class::DuplicateToolUse)
+      expect(dispatched).to be_empty
+    end
+
+    # Once `answers:` is written, every use comes off the accumulator -- so a
+    # pair from two different turns would answer one turn's calls with the
+    # other's ids and commit it. Loud, at the door.
+    it "refuses answers built for a different turn rather than answering the wrong one" do
+      foreign = described_class::Answers.for(tool_response(["tu_9", "echo", {}]))
+
+      expect { described_class.new(handler: echoing_handler).run(response, context: nil, answers: foreign) }
+        .to raise_error(described_class::ForeignAnswers, /built for a different turn/)
+    end
+
+    # Gate 4 refuses to name a result for an id no result can name. Translated,
+    # not left as the builder's ArgumentError, so {Agent::ToolDelivery} can tell
+    # it from a genuine bug and let the interrupt outrank it -- the same
+    # translation CLI::Resume::Cancellation makes on the load side.
+    it "names an unpairable stranded call rather than leaking the builder's ArgumentError" do
+      unpairable = described_class::Answers.for(tool_response(["", "echo", {}]))
+
+      expect { described_class.new(handler: echoing_handler).cancelled_delivery(unpairable) }
+        .to raise_error(described_class::Answers::Unpairable, /non-empty String id/)
+    end
+
+    def handover_runner(digests)
+      queue = digests.dup
+      fake = Struct.new(:name).new("ask_human")
+      fake.define_singleton_method(:to_schema) do
+        { "name" => "ask_human", "description" => "probe", "input_schema" => { "type" => "object" } }
+      end
+      fake.define_singleton_method(:take_answered_questions) { queue.slice!(0, queue.size) }
+      described_class.new(handler: echoing_handler, toolset: Lain::Toolset.new([fake]))
+    end
+  end
+
   # E2: barrier semantics for mixed turns. The turn partitions into maximal
   # CONTIGUOUS runs of parallel-safe tools; each safe run gathers
   # concurrently, and each unsafe tool is a barrier that runs alone --

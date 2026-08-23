@@ -94,7 +94,10 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
   # A parent Agent whose single scripted assistant turn fans `prompts` out as
   # `prompts.size` subagent tool_uses, then settles. Returns the parent Agent
   # (not yet asked) plus the subagent tool.
-  def fanout_parent(child_provider:, prompts:)
+  # `journal:` is the PARENT's, and it is a keyword because one example asks
+  # which side of the fan-out owns a cancellation record. The children get their
+  # own (Null, from #build_subagent), which is the arrangement under test.
+  def fanout_parent(child_provider:, prompts:, journal: Lain::Channel::Null.instance)
     parent_agent = nil
     tool = build_subagent(child_provider:, parent: -> { parent_agent.timeline })
     calls = prompts.each_with_index.map { |prompt, i| ["call_#{i}", "subagent", { "prompt" => prompt }] }
@@ -102,7 +105,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
       provider: Lain::Provider::Mock.new(responses: [tool_response(*calls), text_response("parent done")]),
       toolset: Lain::Toolset.new([tool]),
       context: Lain::Context.new(model: "parent", max_tokens: 256),
-      timeline: Lain::Timeline.empty(store:)
+      timeline: Lain::Timeline.empty(store:), journal:
     )
     [parent_agent, tool]
   end
@@ -135,10 +138,33 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
 
   # ---- Scenario: cancellation propagates -------------------------------------
 
-  describe "a stop mid-fan-out cancels every child and commits nothing" do
-    it "leaves no tool_result turn and finishes no child" do
+  describe "a stop mid-fan-out cancels every child and answers the parent's calls as cancelled" do
+    # CHANGED BY T6 (F46), deliberately, and the argument belongs here because
+    # this example used to pin the opposite -- "commits nothing", no
+    # tool_result turn at all.
+    #
+    # A fan-out stop is NOT a different fact from a main-loop tear. It arrives
+    # by the ordinary route: `budget.interrupt(run)` stops the PARENT's run
+    # task, so the parent unwinds through its own {Lain::Agent::ToolDelivery}
+    # exactly as any torn turn does -- there is no separate fan-out path. The
+    # model that made these three calls is the parent's, it is still there, and
+    # it is the same model a `--resume` would have told about them later. So it
+    # is told now instead.
+    #
+    # "Commits nothing" was never quite true either. Measured at this tear:
+    # three children STARTED, none finished, and the Store already held 3
+    # `spawn` and 6 `turn` events -- the children's fresh roots and their first
+    # turns, durable and content-addressed. What the run failed to commit was an
+    # ANSWER to the parent's calls, which is exactly the strand F46 names. It is
+    # also why the notice's "its effects may be partly applied" is not hedging
+    # here: three subagent lineages exist with no results behind them.
+    #
+    # What this example guards is unchanged, and is still the point of the file:
+    # cancellation genuinely propagates, and no child's answer is invented.
+    it "finishes no child, and answers every stranded call without inventing a result" do
+      journal = []
       child_provider = BlockingProvider.new
-      parent_agent, = fanout_parent(child_provider:, prompts: %w[go-1 go-2 go-3])
+      parent_agent, = fanout_parent(child_provider:, prompts: %w[go-1 go-2 go-3], journal:)
 
       Sync do |task|
         run = task.async { parent_agent.ask("please spawn") }
@@ -153,12 +179,49 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
       expect(child_provider.started).to be > 0
       expect(child_provider.finished).to eq(0)
 
-      # No partial results committed: only [user, assistant(tool_use)] survive.
-      roles = parent_agent.timeline.to_a.map(&:role)
-      expect(roles).to eq(%w[user assistant])
-      expect(parent_agent.timeline.to_a.none? do |turn|
-        turn.content.any? { |block| block["type"] == "tool_result" }
-      end).to be(true)
+      # One user turn answering the three stranded calls -- gate 2 and gate 4
+      # hold for a cancellation exactly as they do for a real result -- and the
+      # loop took no further turn, so "parent done" was never requested.
+      turns = parent_agent.timeline.to_a
+      expect(turns.map(&:role)).to eq(%w[user assistant user])
+      cancellation = turns.last
+      expect(cancellation.content.map { |block| block["type"] }).to eq(%w[tool_result tool_result tool_result])
+      expect(cancellation.content.map { |block| block["tool_use_id"] }).to eq(%w[call_0 call_1 call_2])
+
+      # Nothing claims a child produced output: every block is an error carrying
+      # the shared notice both repairs mint, never a child's text.
+      expect(cancellation.content.map { |block| block["is_error"] }).to eq([true, true, true])
+      expect(cancellation.content.map { |block| block["content"] })
+        .to all(start_with(Lain::CLI::Resume::Cancellation::NO_RESULT))
+    end
+
+    # Which side owns the record. The parent's calls are the parent's fact, so
+    # the witness names the PARENT's assistant turn and the PARENT's
+    # `subagent` ids and lands in the PARENT's journal -- the children's are
+    # Null here and stay empty. A child torn mid-tool records its own tear
+    # through its own ToolDelivery, onto its own timeline; each side records
+    # the calls it made, and neither reaches across.
+    it "journals the cancellation against the parent's own calls, not the children's" do
+      journal = []
+      child_provider = BlockingProvider.new
+      parent_agent, = fanout_parent(child_provider:, prompts: %w[go-1 go-2], journal:)
+
+      Sync do |task|
+        run = task.async { parent_agent.ask("please spawn") }
+        task.async do
+          sleep(0.05)
+          parent_agent.budget.interrupt(run)
+        end.wait
+        run.wait
+      end
+
+      record = journal.grep(Lain::Telemetry::ToolCancelled).first
+      expect(record.head).to eq(parent_agent.timeline.to_a[1].digest)
+      expect(record.cancelled).to eq(%w[call_0 call_1])
+      # Dispatched, not merely queued: the children really started, so the
+      # notice's claim about effects is the one the record backs.
+      expect(record.running).to eq(%w[call_0 call_1])
+      expect(record.completed).to be_empty
     end
   end
 
