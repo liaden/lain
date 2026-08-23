@@ -5,19 +5,19 @@
 # overrides ONLY the readers it exercises -- the rest are inert doubles. This is
 # what lets the fail-loud placeholders die: there is no NullStatus/NullForkPoint/
 # NullPolicySwitch/NullModelSwitch/NullRoleSpawn to name here, only a real double
-# per reader, and YoloApprovals -- the one genuine Null Object -- for the queue a
-# --yolo session never wires.
+# per reader, and NoApprovals -- the one genuine Null Object -- for the queue an
+# unattended session never wires.
 module CommandEnvHelper
   def build_command_env(**overrides)
     Lain::CLI::Command::Env.new(**command_env_readers, **overrides)
   end
 
   # The inert per-reader defaults, split out so #build_command_env stays under
-  # the method-length cop -- a real double per reader, YoloApprovals for the
-  # queue --yolo never wires.
+  # the method-length cop -- a real double per reader, NoApprovals for the
+  # queue an unattended run never wires.
   def command_env_readers
     { status: instance_double(Lain::StatusFeed), sessions: instance_double(Lain::CLI::Sessions),
-      approvals: Lain::CLI::Command::Env::YoloApprovals, supervisor: Lain::Supervisor::Null,
+      approvals: Lain::CLI::Command::Env::NoApprovals, supervisor: Lain::Supervisor::Null,
       replies: instance_double(Lain::CLI::HumanReplies), fork_point: instance_double(Lain::CLI::ForkPoint),
       tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: instance_double(Lain::Agent),
       policy_switch: instance_double(Lain::Approval::PolicySwitch),

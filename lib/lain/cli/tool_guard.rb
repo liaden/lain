@@ -65,12 +65,13 @@ module Lain
       # re-bindable, this line has to become late too.
       def path_filter(board) = board.sensitivity.filter
 
-      # `--yolo` wires NO queue ({Switchboard#approvals} is nil), and the
-      # stand-in is named HERE rather than defaulted inside the middleware: a
-      # `queue:` with a default is how a forgotten injection becomes silent
+      # An unattended run wires NO queue ({Switchboard#approvals} is nil), and
+      # the stand-in is named HERE rather than defaulted inside the middleware:
+      # a `queue:` with a default is how a forgotten injection becomes silent
       # approval, which is exactly the failure the ledger's own no-default rule
-      # exists to prevent. Under the flag, approving is what every other gate in
-      # the run already does.
+      # exists to prevent. The stand-in approves -- see
+      # {Middleware::RedactSecretReads::Unqueued}, whose docstring records that
+      # as the run's one fail-open and defers the fix to round 11.
       def read_kwargs(chronicle, board)
         { ledger: board.ledger,
           queue: board.approvals || Middleware::RedactSecretReads::Unqueued.instance,

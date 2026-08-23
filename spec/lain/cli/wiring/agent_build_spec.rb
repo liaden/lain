@@ -116,7 +116,7 @@ end
 class AgentBuildSpecBoard
   attr_reader :toolset, :gate_calls, :grafted, :ledger, :approvals, :sensitivity
 
-  # The run's ONE region ledger, the approval queue a `--yolo` board leaves
+  # The run's ONE region ledger, the approval queue an unattended board leaves
   # nil, and the path policy -- all real, because the three tool-phase guards
   # take them as required keywords with no default and a double answering nil
   # for any of them would test a construction production cannot reach.
@@ -253,9 +253,9 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
                 Lain::Middleware::WithholdSecretPaths])
     end
 
-    # `--yolo` leaves {Lain::CLI::Switchboard#approvals} nil, and the read guard
-    # takes its queue as a required keyword -- so the stand-in has to be
-    # substituted HERE, at the wiring, or a yolo run raises on construction.
+    # An unattended run leaves {Lain::CLI::Switchboard#approvals} nil, and the
+    # read guard takes its queue as a required keyword -- so the stand-in has to
+    # be substituted HERE, at the wiring, or the run raises on construction.
     # Selected by CLASS, not by position: this example is about the read guard
     # being constructible without a queue, and indexing at the end of the stack
     # tied it to being the last entry, which a third guard then made false.

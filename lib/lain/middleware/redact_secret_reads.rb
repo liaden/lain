@@ -91,20 +91,30 @@ module Lain
       # because {TEXT} above is a different string that happens to look related.
       PATH_INPUT = "path"
 
-      # The queue a `--yolo` run does not wire. {CLI::Switchboard#approvals} is
-      # nil under the flag, and the three answers available were: return the
-      # full bytes, refuse the read, or mask with no release. The last leaves
-      # the model `<redacted:1>` forever with nobody able to answer, and the
-      # second makes `--yolo` stricter than the default, which inverts what the
-      # flag means. So the stand-in answers what `--yolo` already answers
-      # everywhere else in this harness -- approve, ask nobody -- and the
-      # release is real, because the run genuinely did approve it.
+      # The queue an unattended run does not wire. `--non-interactive` is its
+      # only caller: {CLI::Switchboard#approvals} is nil there, and of the three
+      # answers available -- full bytes, refuse, or mask with no release -- the
+      # last leaves the model `<redacted:1>` forever with nobody able to answer.
+      # This one returns the bytes and records the release as real.
+      #
+      # THIS IS A FAIL-OPEN, and the only one left in such a run: the SAME nil
+      # `Switchboard#approvals` selects DENY at the gate and APPROVE at the
+      # release. Stated as the condition rather than the mechanism -- how the
+      # gate reaches deny is {CLI::Switchboard}'s business and has changed shape
+      # more than once.
+      #
+      # The justification here used to be that `--yolo` answered approve
+      # everywhere else, which held while the flag was the caller; round 10
+      # deleted the flag and left the behaviour. Flipping this to deny is
+      # deferred to round 11 with its own measurement, because it changes what
+      # EVERY unattended run returns for a sensitive read. Both halves are
+      # pinned together on one board in `cli/tool_guard_spec.rb`, so that flip
+      # lands as a red example rather than a lying comment.
       #
       # It is passed EXPLICITLY and `queue:` carries no default, so this cannot
-      # be reached by forgetting an injection. That is {Sensitivity::Ledger}'s
-      # no-Null rule honoured rather than dodged: what it forbids is silent
-      # approval arriving by omission, not a named object that approves on
-      # purpose.
+      # be reached by forgetting an injection -- {Sensitivity::Ledger}'s no-Null
+      # rule honoured rather than dodged: what it forbids is silent approval
+      # arriving by omission, not a named object that approves on purpose.
       class Unqueued
         # The one message this middleware reads off a settled
         # {Approval::Queue::Pending}.
@@ -132,6 +142,13 @@ module Lain
       LEDGER_CONTRACT = "the run has ONE region ledger, built on the Switchboard and injected -- " \
                         "a second one holds releases nobody ever sees"
 
+      # {LEDGER_CONTRACT}'s sibling, and it names the approval OUT LOUD. This
+      # message is read at exactly the moment somebody is hunting for a value to
+      # inject, so "pass Unqueued" on its own would read as an instruction to
+      # open the run's one fail-open without saying that is what it does.
+      QUEUE_CONTRACT = "pass Middleware::RedactSecretReads::Unqueued where a run wires none -- " \
+                       "but it APPROVES every release; see its docstring"
+
       # Readable for {Agent::ToolRunner#handler}'s reason: what a guard was
       # wired to is not private business when the caller did not build it, and
       # the wiring spec has to be able to assert IDENTITY -- that this holds the
@@ -146,16 +163,17 @@ module Lain
       #   "nothing outstanding" forever -- a release control that releases
       #   everything, wearing this codebase's Null idiom as camouflage.
       # @param queue [#adjudicate] where a read parks for release, or
-      #   {Unqueued} under `--yolo`. Required for the same reason.
+      #   {Unqueued} when a run wires none. Required for the same reason.
       # @param journal [#<<] where {Telemetry::ReadRedacted} lands
       # @raise [ArgumentError] on a nil ledger or queue
       def initialize(ledger:, queue:, journal: Channel::Null.instance)
         # A missing KEYWORD is Ruby's error; a nil VALUE is not, and nil is
-        # exactly what `Switchboard#approvals` carries under --yolo -- so
-        # without this the argument that "no default means no silent approval"
-        # rests on nobody ever passing the value the wiring actually holds.
+        # exactly what `Switchboard#approvals` carries in an unattended run --
+        # so without this the argument that "no default means no silent
+        # approval" rests on nobody ever passing the value the wiring actually
+        # holds.
         raise ArgumentError, "a ledger is required: #{LEDGER_CONTRACT}" unless ledger
-        raise ArgumentError, "a queue is required: pass #{Unqueued.name} where a run wires none" unless queue
+        raise ArgumentError, "a queue is required: #{QUEUE_CONTRACT}" unless queue
 
         @ledger = ledger
         @queue = queue

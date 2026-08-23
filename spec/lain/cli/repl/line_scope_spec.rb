@@ -22,7 +22,7 @@ module LineScopeSpecSupport
   end
 
   # The approval seam ({Lain::CLI::Repl::ApprovalSurfaces#watch}), which answers
-  # nil rather than an empty set under --yolo. `terminal:` is RECORDED rather
+  # nil rather than an empty set when no queue was wired. `terminal:` is RECORDED rather
   # than ignored: whether the one stdin-reading approval surface was asked for is
   # the whole of what the scope decides for this seam.
   class Approvals
@@ -89,7 +89,7 @@ RSpec.describe Lain::CLI::Repl::LineScope do
     expect(parked.none?(&:running?)).to be(true)
   end
 
-  # The --yolo shape: no queue was wired, so the approval watcher answers nil
+  # The unattended shape: no queue was wired, so the approval watcher answers nil
   # rather than an empty set, and the splat has to add nothing.
   it "survives an approval set that answers nil" do
     Sync do

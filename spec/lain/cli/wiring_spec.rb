@@ -608,9 +608,9 @@ RSpec.describe Lain::CLI::Wiring do
     let(:wiring) { described_class.new(options: { grace: 5 }, chronicle:, status_feed:) }
 
     # Bash is tier 3 and would otherwise park on the approval gate forever;
-    # this block is about where the bytes go, not who let them run. `--yolo`
-    # used to buy that at construction, and `auto` is the posture it resolved
-    # to -- so the board is flipped there instead. It has to happen HERE, after
+    # this block is about where the bytes go, not who let them run. The
+    # deleted `--yolo` flag used to buy that at construction, and `auto` is the
+    # posture it resolved to -- so the board is flipped there instead. It has to happen HERE, after
     # #wire_agent, because that is where Wiring builds and memoizes the board,
     # and it reaches in for it because the board is Wiring's private
     # collaborator rather than part of its surface.
@@ -1257,10 +1257,10 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    it "wires the queue-shaped YoloApprovals under --non-interactive, so the env reader stays nil-free" do
+    it "wires the queue-shaped NoApprovals under --non-interactive, so the env reader stays nil-free" do
       wiring = run_wiring(options: { grace: 5, non_interactive: true })
 
-      expect(wiring.command_env.approvals).to be(Lain::CLI::Command::Env::YoloApprovals)
+      expect(wiring.command_env.approvals).to be(Lain::CLI::Command::Env::NoApprovals)
     end
 
     # This class is the only object holding the Agent, the RunClock and

@@ -63,12 +63,12 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
-  it "assembles the frozen nil-free Env from the wired collaborators, YoloApprovals for the empty queue" do
+  it "assembles the frozen nil-free Env from the wired collaborators, NoApprovals for the empty queue" do
     with_project do |root|
       env = build_surface(root).env
 
       expect(env).to be_frozen
-      expect(env.approvals).to be(Lain::CLI::Command::Env::YoloApprovals)
+      expect(env.approvals).to be(Lain::CLI::Command::Env::NoApprovals)
       expect(env.status).to be(status_feed)
       expect(env.fork_point).to be_a(Lain::CLI::ForkPoint)
     end

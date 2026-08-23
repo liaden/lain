@@ -691,7 +691,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
     end
 
     # `nil` is not a missing keyword, and nil is exactly what
-    # `Switchboard#approvals` carries under --yolo -- so without these the
+    # `Switchboard#approvals` carries in an unattended run -- so without these the
     # "no default means no silent approval" argument rests on nobody ever
     # passing the value the wiring actually holds.
     it "refuses a nil ledger, which a missing-keyword check never sees" do
@@ -702,15 +702,16 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect { described_class.new(ledger:, queue: nil, journal:) }.to raise_error(ArgumentError, /queue/)
     end
 
-    # --yolo wires no queue at all (Switchboard#approvals is nil). Masking with
-    # nowhere to park would leave the model `<redacted:1>` forever with no move,
-    # so the flag's own meaning -- approve everything, ask nobody -- is what the
-    # stand-in answers.
-    it "sends the whole file under the unqueued stand-in --yolo wires" do
+    # An unattended run wires no queue at all (Switchboard#approvals is nil).
+    # Masking with nowhere to park would leave the model `<redacted:1>` forever
+    # with no move, so the stand-in approves. That is a FAIL-OPEN in a run whose
+    # gate otherwise denies everything -- see the Unqueued docstring; this
+    # example pins the behaviour as it stands, not as it should be.
+    it "sends the whole file under the unqueued stand-in an unattended run wires" do
       path = write("notes.txt", one_secret)
-      yolo = described_class.new(ledger:, queue: described_class::Unqueued.instance, journal:)
+      unqueued = described_class.new(ledger:, queue: described_class::Unqueued.instance, journal:)
 
-      content = Sync { dispatch(effect(path), subject_stack: Lain::Middleware::Stack.new([yolo])) }
+      content = Sync { dispatch(effect(path), subject_stack: Lain::Middleware::Stack.new([unqueued])) }
                 .fetch(:result).content
 
       expect(content).to eq(one_secret)

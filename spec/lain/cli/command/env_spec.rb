@@ -3,7 +3,7 @@
 RSpec.describe Lain::CLI::Command::Env do
   def readers
     { status: instance_double(Lain::StatusFeed), sessions: instance_double(Lain::CLI::Sessions),
-      approvals: described_class::YoloApprovals, supervisor: Lain::Supervisor::Null,
+      approvals: described_class::NoApprovals, supervisor: Lain::Supervisor::Null,
       replies: instance_double(Lain::CLI::HumanReplies), fork_point: instance_double(Lain::CLI::ForkPoint),
       tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: instance_double(Lain::Agent),
       policy_switch: instance_double(Lain::Approval::PolicySwitch),
@@ -42,8 +42,8 @@ RSpec.describe Lain::CLI::Command::Env do
     expect(described_class.new(**readers, mode_switch: switch).mode_switch).to be(switch)
   end
 
-  it "answers the approval queue's read duck with nothing parked under --yolo" do
-    expect(described_class::YoloApprovals.each.to_a).to eq([])
+  it "answers the approval queue's read duck with nothing parked when a run wires none" do
+    expect(described_class::NoApprovals.each.to_a).to eq([])
   end
 
   # The class doc's claim -- "the one value a command reads its collaborators

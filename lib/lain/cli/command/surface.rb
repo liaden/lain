@@ -10,8 +10,8 @@ module Lain
       # * the frozen, nil-free {Env} every command reads, built ONCE from the
       #   collaborators Wiring wired -- every reader but one is a required
       #   collaborator (a mis-wire is a loud ArgumentError here, never a
-      #   fail-open Null), and --yolo wires no approval queue, so the
-      #   queue-shaped {Env::YoloApprovals} keeps that ONE reader nil-free;
+      #   fail-open Null), and an unattended run wires no approval queue, so
+      #   the queue-shaped {Env::NoApprovals} keeps that ONE reader nil-free;
       # * the shipped command {Registry}, bound over that Env ({#commands});
       # * the skill middleware ({#middleware}) over the SAME catalog snapshot
       #   the registry's /help lists, so listing and dispatch can never drift.
@@ -105,13 +105,13 @@ module Lain
         # The one Env assembly -- extracted so initialize stays the plain
         # seeding it reads as (the Metrics trip said so: extract, do not
         # loosen). Every reader is a required live collaborator; only
-        # `approvals` falls back, to the genuine {Env::YoloApprovals} Null when
-        # --yolo wired no queue.
+        # `approvals` falls back, to the genuine {Env::NoApprovals} Null when
+        # the session wired no queue.
         def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:, policy_switch:,
                          model_switch:, mode_switch:)
           Env.new(
             status: status_feed, sessions: Lain::CLI::Sessions.new,
-            approvals: approvals || Env::YoloApprovals, supervisor:,
+            approvals: approvals || Env::NoApprovals, supervisor:,
             replies:, fork_point: ForkPoint.new(dir: Paths.new.sessions_dir),
             tmux_surface: TmuxSurface.new, agent:, chronicle:,
             policy_switch:, model_switch:, mode_switch:, role_spawn: @role_spawn

@@ -16,7 +16,7 @@ class ToolGuardSpecBoard
   # guard filters through the BOARD's policy rather than through a second
   # filter built beside it, and a double answering `filter` cannot tell those
   # apart. The default is the live one because that is what {CLI::Wiring} now
-  # builds; a `--yolo`-shaped board with no classifier passes the Null.
+  # builds; a queueless board with no classifier passes the Null.
   def initialize(approvals: nil, sensitivity: nil)
     @ledger = Lain::Sensitivity::Ledger.new
     @approvals = approvals
@@ -40,6 +40,21 @@ class ToolGuardSpecChronicle
   end
 
   def instrumentation = Lain::Agent::Instrumentation.new(journal: @journal)
+end
+
+# A queue that refuses every release, so the fail-open block below can carry a
+# CONTROL arm. Without one, "the secret came through" is equally well explained
+# by a region detector that never fired, and the example would pin nothing.
+class ToolGuardSpecDecliningQueue
+  module Verdict
+    def self.approved? = false
+  end
+
+  # `outstanding:` is accepted and discarded, but cannot become the unused-
+  # argument underscore: it is a KEYWORD, so the name is the duck.
+  def adjudicate(_effect, _context, outstanding: nil) # rubocop:disable Lint/UnusedMethodArgument
+    Verdict
+  end
 end
 
 # The tool phase's guards, and the wiring line each rests on. The stack itself
@@ -127,9 +142,9 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(read_guard(board).queue).not_to be_a(Lain::Middleware::RedactSecretReads::Unqueued)
     end
 
-    # `--yolo` is the only run with no queue, and the substitution has to happen
-    # HERE: the middleware refuses a nil queue outright, so without it a yolo
-    # chat raises at construction.
+    # An unattended run is the only run with no queue, and the substitution has
+    # to happen HERE: the middleware refuses a nil queue outright, so without it
+    # a `--non-interactive` chat raises at construction.
     it "substitutes the unqueued stand-in only when the board wired none" do
       expect(read_guard(ToolGuardSpecBoard.new).queue)
         .to be(Lain::Middleware::RedactSecretReads::Unqueued.instance)
@@ -182,6 +197,87 @@ RSpec.describe Lain::CLI::ToolGuard do
       read_guard(board).ledger.release("/repo/.env", regions)
 
       expect(board.ledger.released?("/repo/.env", regions.first.digest)).to be(true)
+    end
+  end
+
+  # {Lain::Middleware::RedactSecretReads::Unqueued}'s docstring is the
+  # load-bearing account of this run's ONE fail-open, and until this block
+  # nothing executable joined its two halves: `switchboard_spec` pins the deny,
+  # `redact_secret_reads_spec` pins the approve over a HAND-BUILT Unqueued, and
+  # no board ever reached both. Either half could move and the docstring would
+  # go stale in silence -- the exact failure this card exists to remove.
+  #
+  # So: ONE unattended board, both halves, off the real Switchboard. This cannot
+  # go red today, and that is the point -- round 11's deferred flip to deny
+  # lands here as a red example on purpose, instead of quietly leaving a lying
+  # comment behind.
+  describe "the fail-open an unattended run ships with", :seam do
+    let(:base) { Lain::Toolset.new([Lain::Tools::Bash.new, Lain::Tools::ReadFile.new]) }
+    let(:board) do
+      Lain::CLI::Switchboard.new(journal:, model: "claude-opus-4-8", toolset: base, attended: false)
+    end
+    let(:secret) { "AKIAIOSFODNN7EXAMPLE" }
+    let(:body) { "harmless line\naws_access_key_id = #{secret}\ntail\n" }
+
+    # The real read, driven through a real guard stack over a real file --
+    # a seam, not a double: what is under test is what the BYTES do.
+    def bytes_read_through(stack, path)
+      Sync do
+        stack.call({ effect: read_call(path), context: Lain::Session.new }) do |inner|
+          invocation = Lain::Tool::Invocation.new(tool_use_id: inner.fetch(:effect).tool_use_id,
+                                                  context: inner.fetch(:context))
+          inner.merge(result: Lain::Tools::ReadFile.new.call(inner.fetch(:effect).input, invocation))
+        end
+      end.fetch(:result).content
+    end
+
+    def with_secret_file
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "creds.txt")
+        File.write(path, body)
+        yield path
+      end
+    end
+
+    # The single condition both halves read. Asserted first because if this ever
+    # stops being nil, neither example below is testing what it says.
+    it "wires no approval queue at all" do
+      expect(board.approvals).to be_nil
+    end
+
+    it "DENIES every gated call, because nobody is there to ask" do
+      told = board.gate(inner: Lain::Effect::Handler::Live.new(toolset: board.toolset.current))
+                  .call(Lain::Effect::ToolCall.new(tool_use_id: "tu_gate", name: "bash",
+                                                   input: { "command" => "ls" }),
+                        Lain::Session.new)
+
+      expect(told.is_error).to be(true)
+      expect(told.content).to include("no approval is possible")
+    end
+
+    # The other direction, off the SAME board: the secret is released whole.
+    it "and APPROVES every sensitive region, releasing the bytes verbatim" do
+      with_secret_file do |path|
+        content = bytes_read_through(described_class.stack(chronicle, board), path)
+
+        expect(content).to include(secret)
+        expect(content).not_to include("<redacted")
+      end
+    end
+
+    # The control: identical bytes, identical guard, a queue that says no. It
+    # masks -- so the release above is a real decision, not a detector asleep.
+    it "is a real release -- the same read masks when a queue declines" do
+      with_secret_file do |path|
+        guard = Lain::Middleware::RedactSecretReads.new(ledger: board.ledger,
+                                                        queue: ToolGuardSpecDecliningQueue.new,
+                                                        journal: chronicle.instrumentation.journal)
+
+        content = bytes_read_through(Lain::Middleware::Stack.new([guard]), path)
+
+        expect(content).not_to include(secret)
+        expect(content).to include("<redacted")
+      end
     end
   end
 end

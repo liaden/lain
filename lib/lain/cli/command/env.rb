@@ -22,7 +22,7 @@ module Lain
       # card that needs a new reader adds it here plus one line in Wiring.
       #
       # Nil-free by contract: every reader answers a real collaborator (or the
-      # one genuine Null Object, {YoloApprovals}), and a nil is refused loudly
+      # one genuine Null Object, {NoApprovals}), and a nil is refused loudly
       # at assembly -- no command ever writes `if env.thing`.
       # `mode_switch` sits beside its two siblings deliberately: all three are
       # delegating slots a command WRITES and a construction-fixed collaborator
@@ -32,15 +32,27 @@ module Lain
         # constant written inside that block would land on the enclosing module
         # (Lain::CLI::Command), not on Env.
 
-        # --yolo wires no {Approval::Queue}; this answers the queue's read duck
-        # with nothing parked, so an approvals-reading command degrades to an
+        # An unattended run (`--non-interactive`) wires no {Approval::Queue} --
+        # nobody is there to answer a parked call -- so
+        # {CLI::Switchboard#approvals} is nil and this answers the queue's read
+        # duck with nothing parked. An approvals-reading command degrades to an
         # honest empty listing instead of a nil guard. A GENUINE Null Object --
-        # the domain reason it is empty is "under --yolo nothing queues", which
-        # the name says. A module, like {Supervisor::Null}: no per-instance
-        # state. Every OTHER Env reader is always wired live, so none needs a
-        # Null -- they are required kwargs, and a mis-wire is a loud
-        # ArgumentError at assembly, not a fail-open placeholder.
-        module YoloApprovals
+        # the domain reason it is empty is "a run with no human parks nothing",
+        # which the name says. Named for the QUEUE'S ABSENCE rather than for
+        # whatever caused it: which flags leave a run queueless has already
+        # changed once, and the absence is the part that does not.
+        #
+        # This is a LISTING, not a verdict. Answering "nothing is parked" is
+        # simply true here, so unlike its sibling stand-in
+        # {Middleware::RedactSecretReads::Unqueued} -- which answers APPROVE for
+        # the same queueless run -- it opens nothing. Read that one's docstring
+        # before assuming the two are the same kind of object.
+        #
+        # A module, like {Supervisor::Null}: no per-instance state. Every OTHER
+        # Env reader is always wired live, so none needs a Null -- they are
+        # required kwargs, and a mis-wire is a loud ArgumentError at assembly,
+        # not a fail-open placeholder.
+        module NoApprovals
           def self.each(&block) = [].each(&block)
         end
 

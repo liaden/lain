@@ -38,7 +38,7 @@ end
 # The fan-out {Repl#respond} depends on and no spec exercised: `watch(task)`
 # spawns one fiber per LIVE surface over one queue, splats the opt-in auto
 # surface in without leaving a nil hole, and spawns nothing at all when no
-# queue was wired (--yolo).
+# queue was wired (an unattended run).
 #
 # Every example asserts on an effect a fiber HAD -- a pending approved by a
 # sibling, a queue a spy was handed, a read the conductor served -- because
@@ -89,7 +89,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     end
   end
 
-  # The --yolo shape: no queue was wired. `watch`'s return is handed back for
+  # The unattended shape: no queue was wired. `watch`'s return is handed back for
   # the example to assert on, and anything it DID spawn is stopped -- a fan-out
   # that ignored the guard would otherwise park its fibers forever and hang
   # this Sync instead of failing it.
@@ -256,7 +256,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     expect(fan_out(auto: auto_surface)[:verdict]).to be(true)
   end
 
-  describe "--yolo: no queue was wired" do
+  describe "unattended: no queue was wired" do
     it "spawns nothing at all, and says so by answering nil" do
       expect(watch_without_a_queue).to be_nil
     end
