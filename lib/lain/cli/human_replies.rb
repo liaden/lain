@@ -696,10 +696,17 @@ module Lain
       # The approval list nobody wired -- {NoEditor}, {NoViews} and
       # {NoReview}'s fourth sibling, and a fourth object for {NoReview}'s
       # reason: it is a fourth fact. A run can have an editor, its views and a
-      # changeset review all bound and still have no approval list at all
-      # (`--yolo` wires no queue, and a headless chat no editor), so a human
-      # told "no editor is attached" there would be told something false about
-      # the thing in front of them.
+      # changeset review all bound and still have no approval list at all -- an
+      # unattended run (`--non-interactive`) wires no {Approval::Queue} for a
+      # view to render, and a headless chat has no editor to open one in -- so a
+      # human told "no editor is attached" there would be told something false
+      # about the thing in front of them.
+      #
+      # Named for the LIST'S ABSENCE rather than for whatever caused it, exactly
+      # as {Command::Env::NoApprovals} is: which flags leave a run queueless has
+      # already changed once. That sibling is a LISTING over the session queue;
+      # this one is a VERDICT surface over the EDITOR's view, which is why
+      # {Nothing} answers "no approval list is open in this editor".
       #
       # It sits in THIS body and not beside its three siblings for the reason
       # stated directly above: the body above was over Metrics/ClassLength

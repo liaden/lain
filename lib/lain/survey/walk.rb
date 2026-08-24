@@ -12,7 +12,7 @@ module Lain
     # == The routing is two-way, not three
     #
     # A DENIED path is withheld: denial is not approvable, and no policy,
-    # `--yolo` or approval lifts one. Everything else -- gated and ordinary
+    # `/mode auto` or approval lifts one. Everything else -- gated and ordinary
     # alike -- is listed, with the verdict kept on the listing so a surface can
     # say why a file arrived masked. Withholding a gated file wholesale was this
     # walk's first draft and is wrong in the expensive direction: it would make

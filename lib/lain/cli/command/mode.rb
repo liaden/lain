@@ -4,7 +4,8 @@ module Lain
   module CLI
     module Command
       # `/mode`: reads and writes the {Lain::Mode::Switch} slot every mode-aware
-      # collaborator already holds, the same seam `/yolo` and `/model` write.
+      # collaborator already holds -- the same kind of seam `/model` writes,
+      # which is a live switch slot rather than construction-fixed state.
       # Bare `/mode` is Emacs' `C-h m` -- it reports and changes nothing.
       #
       # == One grammar, three token shapes, folded in order
@@ -37,8 +38,8 @@ module Lain
       # prose. Widening that grammar is a deliberately deferred design decision
       # and is not this command's to make; a spec pins the boundary.
       class Mode
-        # The same attribution `/yolo` and `/model` sign with: the flip came
-        # from the human at the terminal.
+        # The same attribution `/model` signs with: the flip came from the
+        # human at the terminal.
         SURFACE = "tty"
 
         RESET = "!"
@@ -64,11 +65,11 @@ module Lain
             "toggle a layer, or reset to #{FLOOR}"
         end
 
-        # Downcased, as `/yolo` downcases its own argument: the lighters a human
-        # reads off chrome they cannot turn off are upper-case (`PLAN`, `AUTO`,
-        # `MAN`, `AA`), so a HUD that displays `PLAN` beside a command that
-        # refuses `/mode PLAN` is a trap of our own making. Every declared
-        # posture and layer name is lower-case, and a spec holds that.
+        # Downcased, because the lighters a human reads off chrome they cannot
+        # turn off are upper-case (`PLAN`, `AUTO`, `MAN`, `AA`), so a HUD that
+        # displays `PLAN` beside a command that refuses `/mode PLAN` is a trap
+        # of our own making. Every declared posture and layer name is
+        # lower-case, and a spec holds that.
         def call(args, env)
           tokens = args.split.map(&:downcase)
           return env.mode_switch.describe if tokens.empty?

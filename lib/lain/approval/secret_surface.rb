@@ -21,7 +21,7 @@ module Lain
     # no-op, an unrecognised verdict is a no-op, a confidence below the
     # threshold is a no-op, an unreachable or SLOW ollama is a journaled no-op,
     # and {Queue::Pending#decide}'s first-answer-wins makes a human who answered
-    # first the winner. Under `--yolo` no queue exists at all
+    # first the winner. Under `--non-interactive` no queue exists at all
     # ({CLI::Repl::ApprovalSurfaces#watch} spawns nothing), so this surface
     # never runs -- there is no parked call for it to have an opinion about.
     class SecretSurface < QueueSurface

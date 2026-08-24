@@ -33,7 +33,7 @@ module Lain
       class LineScope
         # @param replies [HumanReplies] the ask_human reply surfaces for one line
         # @param surfaces [ApprovalSurfaces] the watchers over the parked-approval
-        #   queue; spawns nothing under --yolo, where there is no queue
+        #   queue; spawns nothing under --non-interactive, where there is no queue
         def initialize(replies:, surfaces:)
           @replies = replies
           @surfaces = surfaces
@@ -95,7 +95,7 @@ module Lain
           Sync do |task|
             live = []
             live.push(*@replies.surfaces(task)) unless owns_terminal
-            # `*nil` adds nothing, which is the --yolo shape: no queue was wired,
+            # `*nil` adds nothing, which is the --non-interactive shape: no queue was wired,
             # so `watch` answers nil rather than an empty set.
             live.push(*@surfaces.watch(task, terminal: !owns_terminal))
             yield

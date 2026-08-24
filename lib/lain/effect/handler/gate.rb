@@ -32,12 +32,13 @@ module Lain
       # `#call(effect, context) -> Boolean` -- never a hardcoded terminal prompt.
       # `lib/` may not touch the terminal (see spec/output_discipline_spec.rb); a
       # real interactive policy belongs to Frontend::TTY and is handed in from
-      # there. {ApproveAll} is the `--yolo` opt-out; {DenyAll} is its Null-Object
-      # opposite and the default -- safer to refuse an unattended gate than to
-      # silently run it.
+      # there. {ApproveAll} is what the `auto` posture (`/mode auto`) resolves
+      # to; {DenyAll} is its Null-Object opposite and the default -- safer to
+      # refuse an unattended gate than to silently run it.
       class Gate < Handler
-        # Approves every gated call without asking. The `--yolo` path: an
-        # explicit, named opt-out rather than a magic nil policy.
+        # Approves every gated call without asking. What {Mode::Posture}'s
+        # `auto` rung selects: an explicit, named opt-out rather than a magic
+        # nil policy.
         class ApproveAll
           def call(_effect, _context) = true
         end

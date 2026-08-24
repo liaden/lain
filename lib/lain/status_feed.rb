@@ -138,7 +138,10 @@ module Lain
   #   (why all three ship, and why an undeclared name renders as itself). All
   #   absent until the first switch, and forced to be: {Mode::Switch} journals
   #   nothing at construction, and this object is built before `Wiring` exists,
-  #   so a guessed `accept_edits` would be wrong for every `--yolo` run.
+  #   so there is no record to derive one from. Publishing a guessed
+  #   `accept_edits` would restate {CLI::Switchboard}'s seed as though a journal
+  #   had witnessed it -- the same claim-from-nothing {ModeState}'s `NONE`
+  #   refuses when it holds nil rather than an empty layer set.
   #
   #   ⚠️ THE MODE DERIVATION NEVER RAISES; THE PUBLISH STILL DOES, and the two
   #   are not in tension. {ModeState.lighter_of} rescues the `ArgumentError` an

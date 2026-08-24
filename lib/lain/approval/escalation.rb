@@ -450,7 +450,7 @@ module Lain
         # two (`Cookies`, `key4.db`) anywhere under `$HOME` -- which is where
         # checkouts live. Denying on a bare word therefore stops
         # `grep -n Cookies lib/lain/sensitivity.rb` in this very repository, and
-        # NOTHING lifts it: not a policy, not `--yolo`, not `ApproveAll`, and not
+        # NOTHING lifts it: not a policy, not `/mode auto`, not `ApproveAll`, and not
         # `[sensitivity] exempt`, which subtracts from the gated half only
         # (`sensitivity.rb:170-175`).
         #

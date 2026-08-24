@@ -43,7 +43,7 @@ module Lain
   #
   # {Approval::Risk}'s rule -- widen, never sharpen (`risk.rb:66-72`) -- applies
   # to the GATED half only, where a spurious match costs one prompt. The DENIED
-  # half is the opposite: no policy, no `--yolo` and no `ApproveAll` lifts a
+  # half is the opposite: no policy, no `/mode auto` and no `ApproveAll` lifts a
   # denial, so a false positive there makes a file permanently unreadable with no
   # move available to anyone. That is why `id_*` carries a `*.pub` exception.
   #
@@ -348,7 +348,7 @@ module Lain
       Rule.named("*.kdbx", level: :denied, reason: :protected),
       # Ambiguous, so anchored under home. `config`, `config.json`, `Cookies`
       # and `key4.db` are all plausible names in a checkout, and a denial cannot
-      # be lifted by any policy, `--yolo` or `ApproveAll` -- so a false positive
+      # be lifted by any policy, `/mode auto` or `ApproveAll` -- so a false positive
       # here makes a source file permanently unreadable with no move available.
       Rule.homed(".config/gh/hosts.yml", level: :denied, reason: :protected),
       Rule.homed(".docker/config.json", level: :denied, reason: :protected),

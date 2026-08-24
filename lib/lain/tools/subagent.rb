@@ -422,7 +422,7 @@ module Lain
       # {CLI::Wiring::ToolsetBuild::spawn_seam}'s board thunk). Resolved once
       # per child chain in {ChildBuilder#gated}, not per call -- the sentence
       # turns on whether a human is attached, which is fixed for a session's
-      # whole life, where the policy beside it flips with `/mode` and `/yolo`.
+      # whole life, where the policy beside it flips with `/mode`.
       #
       # ⚠️ NOT `Sensitivity#denial`, which is a different message about a
       # different axis ({ToolsetBuild::LiveSensitivity} answers

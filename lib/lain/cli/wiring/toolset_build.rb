@@ -86,8 +86,8 @@ module Lain
 
         # The gate half of the same late binding: {Effect::Handler::Gate}'s
         # policy duck, answering through whichever policy the board's ONE
-        # {Approval::PolicySwitch} currently holds -- so `/yolo` and a posture
-        # flip both reach a child's next tier-3 call, exactly as they reach the
+        # {Approval::PolicySwitch} currently holds -- so a `/mode` posture flip
+        # reaches a child's next tier-3 call, exactly as it reaches the
         # parent's.
         #
         # It is also the one object on a child's gate path that knows WHICH

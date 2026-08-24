@@ -19,15 +19,19 @@ module Lain
     # The line is: **the environment may say how the model answers; it may never
     # say what lain is allowed to do, or whether it keeps a record.**
     #
-    # * `--yolo` / auto-approval. A stray `export` in a directory's `.envrc`
-    #   would silently disable the approval gate for every session started
-    #   there, and the failure is invisible -- tool calls simply stop being
-    #   asked about. Approving without being asked is a decision worth typing.
+    # * Auto-approval, in either of its two shapes: the `auto` posture
+    #   (`/mode auto`, which resolves the gate to
+    #   {Effect::Handler::Gate::ApproveAll}) and the `--auto-approve` layer. A
+    #   stray `export` in a directory's `.envrc` would silently disable the
+    #   approval gate for every session started there, and the failure is
+    #   invisible -- tool calls simply stop being asked about. Approving without
+    #   being asked is a decision worth typing.
     # * `--journal`. The Journal is the experiment record and usage accounting
     #   reads it; a session that silently stopped journaling looks exactly like
     #   one that ran cheaply.
     #
-    # Both are reachable by flag, per invocation, where they are visible.
+    # Both are reachable per invocation, by flag or by a typed `/mode` line,
+    # where they are visible.
     #
     # == Garbage fails loudly
     #

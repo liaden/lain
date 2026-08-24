@@ -17,12 +17,13 @@ module Lain
       # some, each by a structural filter of its own.
       #
       # `watch(task)` spawns one fiber per live surface and hands the set back
-      # for {Repl::LineScope#serve}'s ensure to stop. The queue is nil under --yolo (no
-      # queue was wired), so `watch` spawns NOTHING at all; the notifier is Null
-      # with no dunstify, `auto_surface` is nil without --auto-approve,
-      # `secret_surface` is nil without --secret-oracle, and the editor's view
-      # is nil with no editor attached, so the splats add nothing and the human
-      # surfaces are unchanged.
+      # for {Repl::LineScope#serve}'s ensure to stop. The queue is nil under
+      # --non-interactive -- nobody is there to drain a parked call, so
+      # {CLI::Switchboard} wires none -- and then `watch` spawns NOTHING at all;
+      # the notifier is Null with no dunstify, `auto_surface` is nil without
+      # --auto-approve, `secret_surface` is nil without --secret-oracle, and the
+      # editor's view is nil with no editor attached, so the splats add nothing
+      # and the human surfaces are unchanged.
       class ApprovalSurfaces
         # `secret_surface:` is REQUIRED, like `auto_surface:` and for its
         # reason: both are nil-by-default capabilities, and a defaulted keyword
@@ -59,7 +60,7 @@ module Lain
         # being a thread-blocking read -- freezes the whole reactor, so the
         # queue's fail-closed timer could never fire while the prompt sat
         # unanswered. read_reply parks the fiber instead. Memoized lazily so a
-        # --yolo session (no queue, no watch) never builds one.
+        # --non-interactive session (no queue, no watch) never builds one.
         def approval_surface
           @approval_surface ||= Lain::Frontend::ApprovalPolicy.new(
             reader: ->(prompt) { @conductor.read_reply(@tty, prompt) }
@@ -67,7 +68,7 @@ module Lain
         end
 
         # Spawn a watcher fiber per live surface over the one queue; nil under
-        # --yolo, so no fiber spawns at all.
+        # --non-interactive, so no fiber spawns at all.
         #
         # `terminal:` is false for a line that reads the terminal ITSELF
         # (`/inbox`, see {Repl::LineScope#serve}), and then the ONE surface here

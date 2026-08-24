@@ -112,8 +112,9 @@ module Lain
       # Repl and the exe read them here.
       delegate :questions, :directory, to: :askers
 
-      # The parked-approval queue, nil under --yolo -- the {Switchboard}'s now,
-      # kept as a Wiring accessor because the Repl and exe read it here.
+      # The parked-approval queue, nil under --non-interactive -- the
+      # {Switchboard}'s now, kept as a Wiring accessor because the Repl and exe
+      # read it here.
       def approvals = @switchboard&.approvals
 
       # Whether a human is at the terminal this run was started from. ONE
