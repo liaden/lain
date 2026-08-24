@@ -13,8 +13,10 @@ installed. This plugin only owns the conventions around that contract:
   when the project carries a `.lain/` directory. First instance wins; a
   stale socket left by a crash is reclaimed; a live one is respected.
 - **`lain.socket_path()`** — that path, computed, nothing created.
-- **`lain.status()`** — the running session's `.lain/state.json` state feed,
-  decoded, or `nil`.
+- **`lain.state_path()`** — the running session's state feed path, computed
+  under `$XDG_STATE_HOME/lain` (or `$HOME/.local/state/lain`) and keyed by the
+  same project hash as the socket, nothing created.
+- **`lain.status()`** — the decoded contents of `lain.state_path()`, or `nil`.
 - **`:LainStart`** — a window layout over the injected buffers (opens on
   attach if lain isn't connected yet).
 

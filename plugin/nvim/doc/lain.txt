@@ -35,7 +35,8 @@ that contract:
 
   - a deterministic per-project server socket, so `lain chat --nvim` finds
     your editor with no flags (|lain-socket|)
-  - `lain.socket_path()` and `lain.status()`, two read-only conveniences
+  - `lain.socket_path()`, `lain.state_path()` and `lain.status()`, three
+    read-only conveniences
   - `:LainStart`, a window layout over the injected buffers (|lain-api|)
   - this document, which describes the attach contract as a config consumer
     sees it (|lain-contract|)
@@ -74,9 +75,13 @@ use time, so they work even without calling setup().
                                              /tmp/lain)
     project_socket  ".lain/nvim.sock"        in-tree socket path, used when
                                              the project has a .lain/ dir
-    state_path      ".lain/state.json"       where |lain.status()| reads;
-                                             relative paths resolve against
-                                             the editor's cwd
+    state_path      nil                      overrides where |lain.status()|
+                                             reads; nil (the default) computes
+                                             it under $XDG_STATE_HOME/lain,
+                                             keyed by project (see
+                                             |lain.state_path()|); a relative
+                                             override resolves against the
+                                             editor's cwd
     serverstart     true                     serve the socket on VimEnter;
                                              set false to opt out
     layout          journal | timeline,      |:LainStart|'s window layout: a
@@ -91,10 +96,14 @@ The socket path is deterministic from the project directory, so lain (and any
 other tool) can find this editor from the cwd alone:
 
   - if `cwd/.lain` is a directory, the socket lives in-tree at
-    `cwd/.lain/nvim.sock` (the `project_socket` option) -- the same "beside
-    the project, like .git/" convention as `.lain/state.json`;
+    `cwd/.lain/nvim.sock` (the `project_socket` option) -- a project artifact,
+    like `.git/`;
   - otherwise it is `$XDG_RUNTIME_DIR/lain/nvim-<sha256(cwd)[:12]>.sock`
     (falling back to `/tmp/lain/...` without XDG_RUNTIME_DIR).
+
+That `sha256(cwd)[:12]` hash is the SAME project identifier
+|lain.state_path()| uses -- one hash, shared, so the socket and the state feed
+agree on one project without either reading the other.
 
 The first instance in a project wins the socket. A socket file left behind by
 a crashed instance is reclaimed: a live owner answers a probe connect, a
@@ -117,8 +126,22 @@ lain.socket_path()      The deterministic socket path for the current
                         project (|lain-socket|). Pure -- computes the path,
                         creates nothing.
 
+                                                           *lain.state_path()*
+lain.state_path()       The state feed path for the current project:
+                        `<base>/status/<project hash>/state.json`, where
+                        <base> is `$XDG_STATE_HOME/lain` when that variable is
+                        absolute and `$HOME/.local/state/lain` otherwise, and
+                        the hash is the one |lain.socket_path()| uses. Pure --
+                        computes the path, creates nothing.
+
+                        nil when neither variable gives an absolute base: a
+                        relative one would resolve against the editor's cwd
+                        and put machine state back inside your repository.
+                        The `state_path` option (|lain-configuration|)
+                        overrides the computation entirely.
+
                                                                *lain.status()*
-lain.status()           The decoded contents of `.lain/state.json` (the
+lain.status()           The decoded contents of |lain.state_path()| (the
                         state feed the running lain session publishes for
                         the tmux HUD), or nil when no session has published.
                         The gem writes the file atomically, so a read never

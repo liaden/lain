@@ -16,15 +16,21 @@ require "tmpdir"
 # with no plugin installed. Same headless-nvim harness as
 # neovim_runtime_spec.rb: a real editor driven over a control socket.
 RSpec.describe "lain nvim plugin", :nvim do
+  # Four fixture directories, and the last two are not decoration. The state
+  # feed's path is computed from `$XDG_STATE_HOME` (falling back to `$HOME`)
+  # since F50, so an editor booted with the operator's own environment resolves
+  # into the operator's own home -- and this file WRITES at that path. Both
+  # variables are fixture-owned for every boot, on both sides of the cross-pin.
   around do |example|
     @project = socket_tmpdir("lain-plugin-project")
     @runtime_dir = socket_tmpdir("lain-plugin-runtime")
+    @state_home = socket_tmpdir("lain-plugin-state")
+    @home = socket_tmpdir("lain-plugin-home")
     @control = File.join(@runtime_dir, "control.sock")
     example.run
   ensure
     stop_nvim
-    FileUtils.remove_entry(@project) if @project
-    FileUtils.remove_entry(@runtime_dir) if @runtime_dir
+    [@project, @runtime_dir, @state_home, @home].compact.each { |dir| FileUtils.remove_entry(dir) }
   end
 
   def plugin_root
@@ -40,14 +46,23 @@ RSpec.describe "lain nvim plugin", :nvim do
 
   # --clean skips the human's config but still sources plugin/ files from any
   # rtp we add, which is exactly how an installed plugin loads.
-  def boot_nvim(plugin: true, xdg: nil, extra_args: [])
+  # `state:` and `home:` are spelled with an explicit default rather than
+  # `|| @state_home`, because `nil` has to mean UNSET here: a nil value in a
+  # spawn env hash removes the variable from the child, which is how the
+  # XDG-absent branch gets exercised at all.
+  def boot_nvim(plugin: true, xdg: nil, state: :fixture, home: :fixture, extra_args: [])
     args = ["nvim", "--headless", "--clean"]
     args += ["--cmd", "set rtp+=#{plugin_root}"] if plugin
     args += extra_args
     args += ["--listen", @control]
-    @pid = spawn({ "XDG_RUNTIME_DIR" => xdg || @runtime_dir }, *args, chdir: @project, out: File::NULL, err: File::NULL)
+    env = { "XDG_RUNTIME_DIR" => xdg || @runtime_dir,
+            "XDG_STATE_HOME" => fixture_default(state, @state_home),
+            "HOME" => fixture_default(home, @home) }
+    @pid = spawn(env, *args, chdir: @project, out: File::NULL, err: File::NULL)
     Timeout.timeout(10) { sleep 0.02 until File.exist?(@control) }
   end
+
+  def fixture_default(value, fallback) = value == :fixture ? fallback : value
 
   def stop_nvim
     @inspector = nil
@@ -91,12 +106,34 @@ RSpec.describe "lain nvim plugin", :nvim do
     File.join(@runtime_dir, "lain", "nvim-#{Digest::SHA256.hexdigest(nvim_cwd)[0, 12]}.sock")
   end
 
+  # The relocated state feed, from the SAME authority the gem itself reads
+  # ({Lain::ProjectDir}) rather than a hand-rolled third copy of the recipe --
+  # rooted at the editor's own (kernel-resolved) cwd, over the same XDG bases
+  # the editor was spawned with. `paths:` is injected and not defaulted on
+  # purpose: {Lain::Paths} defaults to the real `ENV`, so the bare
+  # `ProjectDir.new(root:)` this helper used to be resolved into the operator's
+  # own `~/.local/state/lain/status/` -- and the two examples below write
+  # there, once per run, keyed by a tmpdir hash nothing ever collects.
+  def deterministic_state_path(state: @state_home, home: @home)
+    paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => home })
+    Lain::ProjectDir.new(root: nvim_cwd, paths:).state_path
+  end
+
   def serverlist
     lua("return vim.fn.serverlist()")
   end
 
   def setup!(lua_opts = "{}")
     lua("require('lain').setup(#{lua_opts})")
+  end
+
+  # A state feed published where the gem publishes it, returning the path so an
+  # example asserts against the file it actually wrote.
+  def publish(state)
+    deterministic_state_path.tap do |path|
+      FileUtils.mkdir_p(File.dirname(path))
+      File.write(path, JSON.generate(state))
+    end
   end
 
   def layout_views
@@ -202,13 +239,86 @@ RSpec.describe "lain nvim plugin", :nvim do
       expect(sock).to eq("/tmp/lain/nvim-#{Digest::SHA256.hexdigest(nvim_cwd)[0, 12]}.sock")
     end
 
-    it "status() reads .lain/state.json, nil when absent" do
+    # T19 relocated the state feed out of the project tree; this pins the
+    # renderer against the file's actual (new) home rather than the retired
+    # in-tree spelling.
+    it "status() reads the relocated XDG state file, nil when absent" do
       boot_nvim
       expect(lua("return require('lain').status()")).to be_nil
-      FileUtils.mkdir_p(File.join(@project, ".lain"))
-      File.write(File.join(@project, ".lain", "state.json"),
-                 JSON.generate({ "cache" => "warm", "inbox" => 2 }))
+      publish("cache" => "warm", "inbox" => 2)
       expect(lua("return require('lain').status()")).to eq("cache" => "warm", "inbox" => 2)
+    end
+
+    # AC: given a session whose state file lives outside the project, the
+    # plugin's own resolver names THAT file -- not merely "some path".
+    it "state_path() resolves to the file at the new XDG location" do
+      boot_nvim
+      published = publish("ok" => true)
+      resolved = lua("return require('lain').state_path()")
+      expect(resolved).to eq(published)
+      expect(File.exist?(resolved)).to be(true)
+      expect(resolved).not_to start_with(@project)
+    end
+
+    # The cross-language pin, with nothing written to disk to make it true --
+    # the property `socket_path()`'s cross-pin holds for the socket, held for
+    # the state path.
+    it "state_path() agrees with Ruby's ProjectDir, byte for byte" do
+      boot_nvim
+      resolved = lua("return require('lain').state_path()")
+      expect(resolved).to eq(deterministic_state_path)
+      expect(File.exist?(resolved)).to be(false)
+    end
+
+    # The branch the default spelling never reaches: with no XDG_STATE_HOME the
+    # base is `$HOME/.local/state/lain`, and Ruby agrees there too.
+    it "state_path() falls back to $HOME/.local/state without XDG_STATE_HOME" do
+      boot_nvim(state: nil)
+      resolved = lua("return require('lain').state_path()")
+      expect(resolved).to eq(deterministic_state_path(state: nil))
+      expect(resolved).to start_with("#{@home}/.local/state/lain/status/")
+    end
+
+    # An absolute XDG_STATE_HOME must never consult $HOME at all -- the refusal
+    # below is a property of the PATH, not of the plugin, and a renderer that
+    # validated $HOME eagerly would go dark on a session that resolves fine.
+    it "state_path() never consults a hostile HOME when XDG_STATE_HOME is absolute" do
+      boot_nvim(home: "not/absolute")
+      expect(lua("return require('lain').state_path()")).to eq(deterministic_state_path)
+    end
+
+    # File.join strips exactly one trailing separator and a `..` concatenation
+    # does not, so a base spelled `/x/state/` is where "byte for byte" stops
+    # being true -- silently, since POSIX collapses `//` and the HUD renders
+    # either way. The fixture is canonical everywhere else in this file, which
+    # is precisely why this needs its own example.
+    it "matches File.join's trailing-separator rule on the XDG base" do
+      trailing = "#{@state_home}/"
+      boot_nvim(state: trailing)
+      resolved = lua("return require('lain').state_path()")
+      expect(resolved).to eq(deterministic_state_path(state: trailing))
+      expect(resolved).not_to include("//")
+    end
+
+    # The trap {Lain::Paths::NonAbsoluteHome} closes on the Ruby side, closed
+    # here too: libuv's os_homedir() reads $HOME first and hands a relative one
+    # straight back, exactly as ruby's `Dir.home` does. A relative base
+    # resolves against the editor's cwd, which is the project -- F50 wearing an
+    # XDG-shaped hat -- so there is NO path rather than a relative one.
+    it "refuses a non-absolute HOME rather than naming a path inside the project" do
+      boot_nvim(state: nil, home: "not/absolute")
+      expect(lua("return require('lain').state_path()")).to be_nil
+      expect(lua("return require('lain').status()")).to be_nil
+    end
+
+    # The retired default, kept settable for anyone who pinned it: an override
+    # bypasses the XDG computation entirely and resolves the legacy way.
+    it "honors a state_path override, absolute as given and relative to cwd" do
+      boot_nvim
+      setup!("{ state_path = '.lain/state.json' }")
+      expect(lua("return require('lain').state_path()")).to eq(File.join(nvim_cwd, ".lain", "state.json"))
+      setup!("{ state_path = '/srv/pinned/state.json' }")
+      expect(lua("return require('lain').state_path()")).to eq("/srv/pinned/state.json")
     end
 
     it ":LainStart lays out windows over the runtime-injected buffers once attached" do
@@ -446,10 +556,16 @@ RSpec.describe "lain nvim plugin", :nvim do
     # follows it. The TOC did exactly that. Only lain's own tags are checked --
     # references to vim's help (|User|, |E89|, |za|) resolve against runtime
     # files this spec has no business indexing.
+    #
+    # `lain[-.]`, not `lain-`: the FUNCTION tags (|lain.status()|,
+    # |lain.socket_path()|, |lain.state_path()|) are spelled with a dot and sat
+    # outside this sweep entirely until they were counted in. All of them
+    # resolve today; the point of the example is that a typo in one could not
+    # have been caught, which is the exact hole it exists to close.
     it "resolves every lain tag it points at" do
       doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
       defined_tags = doc.scan(/\*(lain[^\s*]*|:Lain\w+|b:lain\w+|User-Lain\w+)\*/).flatten
-      referenced = doc.scan(/\|(lain-[^|\s]+)\|/).flatten.uniq
+      referenced = doc.scan(/\|(lain[-.][^|\s]+)\|/).flatten.uniq
 
       expect(referenced).not_to be_empty
       expect(referenced - defined_tags).to be_empty

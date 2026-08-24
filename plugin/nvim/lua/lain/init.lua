@@ -15,7 +15,8 @@
 --
 --   * the deterministic per-project server socket, served on VimEnter
 --     (ported from the reference dotfiles autocmd -- see start_server)
---   * lain.socket_path() / lain.status() -- read-only conveniences
+--   * lain.socket_path() / lain.state_path() / lain.status() -- three
+--     read-only conveniences
 --   * :LainStart -- a window layout over the runtime-injected buffers
 --
 -- doc/lain.txt documents the whole attach contract (User Lain* events, the
@@ -49,12 +50,77 @@ local function project_cwd()
   return vim.fn.getcwd(-1, -1)
 end
 
+-- ONE project identifier, shared by socket_path() and state_path(): the same
+-- recipe Lain::Paths#project_hash names, for the same reason -- the socket, the
+-- session store and the state feed all key on it, and a project resolves to one
+-- identity only if nothing recomputes it its own way. Hashed from project_cwd(),
+-- which the kernel has already resolved, matching ruby's realpath-before-hash.
+--
+-- File-local: this de-duplicates two call sites in this file and has no reader
+-- outside it. A function on M is a documented tag in doc/lain.txt and a pinned
+-- promise, and an unused public name is a promise nothing holds us to.
+local function project_hash()
+  return vim.fn.sha256(project_cwd()):sub(1, 12)
+end
+
+-- An ABSOLUTE $HOME, or nothing. Ruby's Lain::Paths#home REFUSES a $HOME that
+-- is not absolute (Lain::Paths::NonAbsoluteHome) rather than degrading to it,
+-- because every XDG fallback is built on it and a relative state path resolves
+-- against the process cwd -- which is the project, which is the whole bug the
+-- feed was moved out of the tree to fix.
+--
+-- vim.uv.os_homedir() is libuv's HOME-then-getpwuid lookup, the only passwd
+-- fallback this runtime has, and it covers the case vim.env.HOME cannot: a
+-- genuinely unset $HOME. It is GUARDED rather than trusted because it reads
+-- $HOME first and hands a relative one straight back -- byte for byte the trap
+-- ruby's Dir.home sprang on the same code.
+local function home_dir()
+  local home = vim.env.HOME
+  if not (home and home:match("^/")) then
+    home = vim.uv.os_homedir()
+  end
+  if home and home:match("^/") then
+    return home
+  end
+  return nil
+end
+
+-- The one rule ruby's File.join has that a `..` concatenation does not: it
+-- strips exactly ONE trailing separator from a component. `/x/s/` joins to
+-- `/x/s/lain`, `/x/s//` to `/x/s//lain`, and a bare `/` to `/lain`. POSIX
+-- collapses a doubled separator, so getting this wrong renders the same file --
+-- but state_path() below claims to be byte for byte ruby's answer, and a claim
+-- that is only true for canonical input is a claim that is untested where it is
+-- false. An operator's `export XDG_STATE_HOME=$HOME/.local/state/` is canonical
+-- input to everything except a string comparison.
+local function unslashed(base)
+  return (base:gsub("/$", ""))
+end
+
+-- `<base>/lain`, mirroring Lain::Paths#state_home: $XDG_STATE_HOME when it is
+-- absolute, else $HOME/.local/state. Unlike runtime_base() (no $HOME branch --
+-- /tmp is fine for ephemera) state is durable and needs a home, so this is the
+-- one path that can fail to resolve at all. Lazily, and that matters: an
+-- absolute $XDG_STATE_HOME never consults $HOME, so a session whose state
+-- resolves fine keeps rendering under a $HOME the gem itself would refuse.
+local function state_home()
+  local xdg = vim.env.XDG_STATE_HOME
+  if xdg and xdg:match("^/") then
+    return unslashed(xdg) .. "/lain"
+  end
+  local home = home_dir()
+  if home then
+    return unslashed(home) .. "/.local/state/lain"
+  end
+  return nil
+end
+
 -- The deterministic per-project socket path. Pure: no directory or file is
 -- created here (start_server owns the side effects). A project carrying a
--- `.lain/` directory owns its socket in-tree (`.lain/nvim.sock`, the same
--- "beside the project, like .git/" convention as state.json); every other
--- project gets $XDG_RUNTIME_DIR/lain/nvim-<sha256(cwd)[:12]>.sock -- so lain
--- (and any other tool) can find this editor from the cwd alone.
+-- `.lain/` directory owns its socket in-tree (`.lain/nvim.sock`) -- a project
+-- artifact, like `.git/`; every other project gets
+-- $XDG_RUNTIME_DIR/lain/nvim-<project_hash>.sock -- so lain (and any other
+-- tool) can find this editor from the cwd alone.
 function M.socket_path()
   local conf = config.current()
   if conf.socket then
@@ -65,7 +131,35 @@ function M.socket_path()
     return cwd .. "/" .. conf.project_socket
   end
   local dir = conf.socket_dir or (runtime_base() .. "/lain")
-  return ("%s/nvim-%s.sock"):format(dir, vim.fn.sha256(cwd):sub(1, 12))
+  return ("%s/nvim-%s.sock"):format(dir, project_hash())
+end
+
+-- The published state feed, byte for byte Lain::ProjectDir#state_path:
+-- `<state_home>/status/<project_hash>/state.json`, keyed by the SAME hash
+-- socket_path() uses so the editor and the gem agree on one project from one
+-- function. Pure: nothing is created here.
+--
+-- nil when no absolute base resolves. That is the honest answer rather than a
+-- relative path: a relative one would resolve against the editor's cwd and put
+-- the state feed back inside the user's repository.
+--
+-- A `state_path` override (setup opts or vim.g.lain_state_path) bypasses the
+-- computation entirely and resolves the legacy way -- absolute as given,
+-- relative against the editor's cwd -- for anyone who pinned the retired
+-- `.lain/state.json` default explicitly.
+function M.state_path()
+  local override = config.current().state_path
+  if override then
+    if override:match("^/") then
+      return override
+    end
+    return project_cwd() .. "/" .. override
+  end
+  local base = state_home()
+  if not base then
+    return nil
+  end
+  return ("%s/status/%s/state.json"):format(base, project_hash())
 end
 
 -- Faithful port of the reference reclaim logic (the only tested one): first
@@ -103,15 +197,16 @@ local function start_server()
   pcall(vim.fn.serverstart, sock)
 end
 
--- The tmux HUD's state feed, read back: the gem's StatusFeed publishes
--- .lain/state.json atomically (write-to-tmp + rename), so a read never sees
--- a half-written file. Returns the decoded table, or nil when no session has
--- published state -- and nil too on bytes that do not parse, treated as
--- absence rather than an error (the reader polls; the next publish heals it).
+-- The tmux HUD's state feed, read back: the gem's StatusFeed publishes it
+-- atomically (write-to-tmp + rename) at state_path(), so a read never sees a
+-- half-written file. Returns the decoded table, or nil when no session has
+-- published state -- and nil too on a path that does not resolve, and on bytes
+-- that do not parse, both treated as absence rather than as an error (the
+-- reader polls; the next publish heals it).
 function M.status()
-  local path = config.current().state_path
-  if not path:match("^/") then
-    path = project_cwd() .. "/" .. path
+  local path = M.state_path()
+  if not path then
+    return nil
   end
   local file = io.open(path, "r")
   if not file then
