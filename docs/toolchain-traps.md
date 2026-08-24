@@ -255,6 +255,21 @@ the cop.
   lain's own git admin dir, so the number of worktrees registered in this repo is NOT the cause:
   that hypothesis was tested and rejected 2026-08-23.
 
+  **RETIRED BY EVIDENCE 2026-08-24 — the teardown shape is fixed at the fixture.** `git commit` and
+  `git merge` spawn a DETACHED `git maintenance run --auto --quiet --detach` (seen under
+  `GIT_TRACE=2`), and that process outlives the example: `Dir.mktmpdir`'s teardown then races it
+  and dies on `Errno::ENOENT` under `.git/objects/`, which RSpec blames on whichever example the
+  `around` hook was closing. `SeedRepo::PINS` now sets `maintenance.auto=false` and `gc.auto=0` in
+  every seeded repo, so no second process exists to race. Measured on one box, same minute, with a
+  standalone reproducer: **101 teardown failures in 400 unpinned cycles, 0 in 400 pinned**; either
+  pin alone suffices, and both are kept because `maintenance.auto` is git 2.29+. `rerere.enabled=false`
+  is pinned with them for hermeticity — it is a common `~/.gitconfig` setting, and leaving it
+  ambient made this suite's behaviour depend on whose box it ran on.
+
+  **This retires the teardown shape only.** The `we\nird.txt` example below and the
+  `#continue refuses a resolution that is not one` pair above are separate observations that this
+  fix does not explain, so the FILE-not-the-example rule above still stands for them.
+
   Added 2026-08-19, and it is a SECOND example in that same file rather than the teardown shape
   above -- which is why the entry above was not enough to recognise it:
   `Lain::Isolation::Worktree::Handback a conflicted path git would otherwise quote names
