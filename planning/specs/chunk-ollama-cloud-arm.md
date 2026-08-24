@@ -1,6 +1,6 @@
 # Somebody else's ollama: a cloud arm for the provider axis
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -1176,39 +1176,57 @@ After the last wave:
 Appended during `/execute-plan`. Records decisions taken against the plan as written, so a
 reader of the history does not have to reconstruct them from card diffs.
 
-### Card status
+### Card status — ALL LANDED
 
-| card | wave | state |
+| card | wave | commit |
 |---|---|---|
-| T15 T5 T9 T11 T1 T4 | 1 | **landed** |
-| T3 T2 | 2 | **landed** |
-| T10 | 3 | **landed** `135bfbc9` |
-| T14 | 3 | **landed** `55752c86` |
-| T8 | 3 | fixes applied, in re-review |
-| T6 T12 | 4 | not started (both blocked on T8) |
-| T13 | 5 | not started |
-| T7 | — | **folded into T1** |
+| T15 | 1 | `afb1967a` — closed as "already correct"; characterisation only |
+| T5 | 1 | `e77b57bd` — 23 cloud windows |
+| T9 | 1 | `8369aa67` — tag + host-scoped probe stubs |
+| T11 | 1 | `62008649` — factory selectors + singleton pin |
+| T1 | 1 | `60e72693` — absorbed T7; two probe predicates |
+| T4 | 1 | `0568fbf5` — declared width, supersession gated four ways |
+| T3 | 2 | `939cb317` — bearer on the wire; control-char refusal |
+| T2 | 2 | `2c33e429` — the provider asks its deployment |
+| T10 | 3 | `135bfbc9` — cloud arm through the parity gates |
+| T14 | 3 | `55752c86` — the loopback guarantee, pinned forward |
+| T8 | 3 | `4ae438a4` — `--provider ollama-cloud`, reachable |
+| T12 | 4 | `0383b810` — the wire settled, `references/ollama/cloud.md` |
+| T6 | 4 | `31f2a1c8` — response WAL, frames carrying bytes |
+| T13 | 5 | `ce6580ba` — both arms documented, determinism caveat |
+| T7 | — | folded into T1 |
 
-Plus two commits belonging to no card, both credential defects found by review rather than by a
-failing suite: `4d1d389f` (a differ walking instance variables rendered the live Bearer into rspec
-failure output, bypassing `#inspect`/`#to_s`/`#pretty_print`) and `fd5cfa29` (a comment claiming
-three guards closed a path that a *returned* Hash escapes).
+Four commits belong to no card, all defects review found rather than a failing suite:
+`4d1d389f` (a differ walking ivars rendered the live bearer into rspec output), `fd5cfa29` (a
+comment claiming a guard a returned Hash escapes), `e827ce7b` + `94fbdef2` (three `CLOUD_WINDOWS`
+rows over-claiming against their trained maxima, one by 3.8x), plus `79bdcdfd` (the local arm's
+open temperature-0 defect, named).
 
-**Every card so far has needed a fix round; one was approved unchanged (T10).** The recurring
-defect is not broken code -- it is **a guarantee stated in prose and enforced by nothing**:
+**Integration checks: all nine pass.** Suite **15749 / 0 failures / 15 pending**, identical across
+five seeds. Bare rubocop clean at 1387 files; `CLI::Backend` at 109/110, *below* its pre-chunk
+baseline. `pre-commit run --all-files` green. Local arm live: 3/4, the fourth a pre-existing
+known-red. **Cloud arm live: 7/7 against a real key.** Byte-identical encode confirmed by hand.
 
-| card | the claim | how it was found |
-|---|---|---|
-| T1 | two probe predicates are distinct | `alias` mutation left 60 examples green |
-| T5 | cloud keys have a shape rule | a bare `gpt-oss` key passed all 136 |
-| T11 | the factory list matches reality | `Provider::Ollama` defined no factories yet |
-| T4 | "it can only ever TIGHTEN" | silence pinned `Null` and outranked a later declaration |
-| T2 | the two gates are independent | cross-wiring them passed 105 in both directions |
-| T14 | the judge dials loopback | `eq(DEFAULT_API_BASE)` compared a value to itself |
-| T8 | "THE KEY IS NEVER HELD" | planting `@held_key` left 302 examples green |
+Check 4 was run as five seeded full-suite passes rather than `rake spec:flakes`, which exits 1 on
+every invocation for reasons unrelated to this chunk (`docs/toolchain-traps.md`).
 
-Six of the seven were found by **mutation**, not by reading. That is the transferable result of this
-chunk, and it is worth more than the arm.
+### What this chunk actually cost, and what it bought
+
+Thirteen cards, **every one needing at least one fix round; exactly one approved unchanged (T10)**.
+The panel found what green suites did not, and the findings clustered into two shapes:
+
+**A guarantee stated in prose and enforced by nothing** — seven instances, six caught by mutation.
+See the table below.
+
+**A spec that runs a different code path than its name claims** — T6's `stream: true` default meant
+three examples named "non-streaming" were streaming, and AC 1 had zero real coverage. **Mutation
+cannot catch this**: a mutant only reports on paths some example already drives.
+
+Four credential-leak paths were closed, none of which a suite could have failed on: `pretty_print`
+un-redacted, a mixed-state Configuration pairing one deployment's base with another's key, an
+interior CR/LF escaping every rescue with the key in the message, and a differ walking instance
+variables. The pattern across all four: redaction had been applied to the **printers** and the
+leaks came through the **walkers**.
 
 ### Decision 1 — the arm is selected by `--provider ollama-cloud`, not by `--cloud`
 
