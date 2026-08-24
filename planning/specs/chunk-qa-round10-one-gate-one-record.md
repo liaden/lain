@@ -1,6 +1,6 @@
 # One gate, one record: a dead safety seam, a flag that outlived its reason, and four refusals that lie
 
-status: in-progress
+status: done (2026-08-24)
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -334,8 +334,22 @@ Pass a `cwd -> #classify` factory into `Switchboard.for`/`#new`, and thence
 
 **The factory MUST be total.** `escalation.rb:503-521` is explicit: a raise becomes a `RUNG_BROKE`
 fault, and a fault turns a deny into an abstention a human then approves — and `cwd` is
-model-controlled (`bash.rb:73`), so a raising factory is a model-triggerable disarm. Fall back to
-`Triage::AnyPath` on any error, exactly as the reference implementation does.
+model-controlled (`bash.rb:73`), so a raising factory is a model-triggerable disarm.
+
+**CORRECTED 2026-08-23, after review — the original instruction here was WRONG and shipped a
+one-argument bypass.** It said to fall back to `Triage::AnyPath` on any error, as the reference
+implementation does. `AnyPath` protects *nothing*, and `cwd` is model-controlled, so any `cwd` the
+factory cannot digest — `"bad\0dir"`, `42`, `{"a":1}`, `true`, `"~nosuchuser"`, invalid UTF-8, all of
+them JSON a model can emit — discards the whole classifier and returns F63 verbatim: the protected
+key reaches a human as an *ordinary* approval. Driven and confirmed on a real `BoardBuild.for` board.
+The `cwd` contributes nothing to classifying an ABSOLUTE path, so discarding the classifier over a
+bad `cwd` is over-broad as well as unsafe.
+
+**Fall back instead to a session-anchored `Lain::Sensitivity`, built EAGERLY in `#initialize` from
+`home`/`cwd` — both of which are wiring-controlled and never model-controlled.** `Triage::AnyPath`
+remains the fallback only for a wiring-level failure, where nothing better exists. Building eagerly
+also makes a mis-wired `home`/`cwd` fail loudly at construction instead of silently disarming the
+rung for a whole session.
 
 **Acceptance criteria**
 
@@ -355,8 +369,10 @@ Scenario: an ordinary command is untouched
 
 Scenario: an unresolvable cwd disarms nothing
   Given the same board
-  When the agent requests bash with a cwd that cannot be resolved
-  Then the triage rung abstains without recording a fault
+  When the agent requests bash naming a protected absolute path with a cwd that cannot be resolved
+  Then the ladder still denies at the triage rung
+  And no fault is recorded
+  And no approval is parked for a human
 
 Scenario: the board actually passes the classifier, rather than accepting the inert default
   Given a Switchboard built by BoardBuild.for
@@ -1182,6 +1198,71 @@ Scenario: the suite's example count falls only by the examples the audit deleted
   finding but a different card; list it, do not purge it.
 
 
+### T26 — Purge the derived switch Env projects and no command reads   [wave 3] [risk: medium]
+
+**Depends on:** T25 (which found it), T1, T2, T4
+**Files:** `lib/lain/cli/command/env.rb`, `lib/lain/cli/command/surface.rb`,
+`lib/lain/cli/switchboard.rb` (the `surface_kwargs` line only), `lib/lain/approval/policy_switch.rb`
+and `lib/lain/telemetry/switches.rb` (docstrings only), `lib/lain/cli/wiring.rb` (one comment),
+and the specs that construct or read the member.
+**Reuse:** `Switchboard`'s own `attr_reader :policy_switch` (`switchboard.rb:68`), which is live and
+is where the one-queue identity can be re-anchored.
+**Shared-file wiring:** none.
+**Reachable from:** deferred: this removes reach rather than adding it.
+
+T25's audit found `Command::Env#policy_switch` is the **only one of Env's thirteen members with zero
+`lib/` readers**. Its sole reader was `Command::Yolo`, deleted by T2.
+
+**It is not orphaned-but-wanted, and wiring it would be wrong.** `policy_switch` is not a peer of
+`mode_switch` — it is **downstream** of it. `Switchboard#apply` (`:311`) does
+`@policy_switch.switch(resolution.gate_policy, surface:)`, and `#apply` is what `/mode` reaches via
+`mode_switch` → `BoundSwitch`. A mode flip *causes* the policy flip: `mode_switch` is intent,
+`policy_switch` is the derived consequence. Commands express intent; the Switchboard derives the
+gate. `/yolo` was the anomaly — it reached past the derivation and wrote the derived value directly,
+which is the two-writers-for-one-slot problem `/mode` exists to avoid. So Env exposing it flattens a
+derived value next to its own cause, and a `switches:` collaborator merging the three would hide that
+rather than justify it.
+
+**The one assertion worth keeping must survive.** `wiring_spec.rb:1176-1181` reaches through
+`env.policy_switch` to pin that **the session has ONE queue** — the ladder's `surfaces` rung parks on
+the same object `/approve` drains. Re-anchor it through the Switchboard, which owns the switch, so
+the check survives the member.
+
+Also correct the docstrings that record the superseded design as current: `surface.rb:33-34`'s
+fail-open justification is false for this member (`/mode` never reaches the gate through
+`env.policy_switch`); `telemetry/switches.rb:5,13` still say "/yolo's policy" and "A /yolo gate flip";
+and T25 flagged `policy_switch.rb:88-89` and `wiring.rb:430` as making claims that are now false
+rather than merely stale-named.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the command Env no longer carries a switch no command reads
+  Given a command Env assembled by the live wiring
+  Then it exposes no policy_switch reader
+  And every member it does expose has a reader in lib/
+
+Scenario: the session still has exactly one approval queue
+  Given a board built by the live wiring
+  When the ladder's asking rung is asked what queue it parks on
+  Then it is the same object /approve drains
+
+Scenario: a forgotten switch is still a loud failure
+  When a Surface is constructed without one of its required switches
+  Then it raises ArgumentError at construction
+```
+→ spec file: `spec/lain/cli/wiring_spec.rb`, `spec/lain/cli/command/env_spec.rb`,
+`spec/lain/cli/command/surface_spec.rb`
+
+**Escalation triggers**
+- If any reader of `env.policy_switch` turns up in `lib/` or `exe/`, the premise is wrong — stop.
+- If the one-queue assertion cannot be re-anchored without reaching into a private, stop and say so
+  rather than dropping it: that check is what stands between a future rewiring and a session with two
+  queues where `/approve` drains the wrong one.
+- Do NOT touch `Switchboard#policy_switch` itself, or the Gate's use of it (`switchboard.rb:194`), or
+  `toolset_build.rb:105`. Those are live.
+
+
 ## Integration checks
 
 After the last wave:
@@ -1270,3 +1351,79 @@ Scenario: the default strategy is named too, not left blank
   the premise is wrong — stop, because that means `ff53028e` is not what it claims.
 - Compaction needs volume to fire; if the AC cannot be driven without a real compacting session,
   assert at the `Scheduler#pipeline` seam and say so rather than faking a record.
+
+## Close-out (2026-08-24)
+
+**All 24 planned cards landed, plus T25's escalation as T26 and a close-out gap as T27 — 24 commits.**
+Suite `15368 examples, 0 failures, 15 pendings` against a pre-chunk baseline of `15203/0/15`; the
+count rose by 165 and never fell. `rubocop` 1375 files clean; `cargo test` 9 passed, `clippy
+--all-targets -D warnings` clean. `lain chat --yolo` exits 1 with Thor's arity refusal; `lain help
+chat` names no `--yolo` and no longer calls `--isolation` inert; `planning/qa/` has zero flag hits;
+`lib/` retains exactly two, both deliberate.
+
+**F63 is closed at the default posture.** `cat ~/.ssh/id_rsa` denies at the triage rung, journals
+`rung: "triage", verdict: "deny", faulted: false`, and parks nothing for a human.
+
+### What the panel caught that a green suite would have shipped
+
+- **The plan's own T3 instruction was a bypass.** It mandated falling back to `Triage::AnyPath` on
+  any classifier error; `AnyPath` protects nothing and `cwd` is model-controlled, so
+  `cwd: "bad\0dir"` returned F63 verbatim. AC 3 had pinned the bypass as correct, and the first
+  implementation's spec asserted it. Card and code both amended; the fallback is now a
+  session-anchored `Sensitivity` built from wiring-controlled values.
+- **Three cards shipped a green suite over an unexercised AC** (T18, T24, and round 9's T6 half),
+  each found by mutation on the production path rather than by reading.
+- **T11's `--project` escalation was wrong**: `Paths#project_hash` does raise, three ways
+  `rescue SystemCallError` never sees, one of them on the card's own cited line.
+- **T19's `HOME` fix was measurement-invalid** — the probe injected a fake env while the process env
+  was healthy; `Dir.home` returns a relative `HOME` verbatim, so F50 reproduced *after* the fix.
+- **T21 introduced a never-blank violation into the renderer whose job is never being blank**
+  (`dirname` above the degrade logic).
+- **T14 sent the QA driver to the wrong posture**, where `plan`'s read-only permits refuse `bash`
+  before the ladder sees it — silently voiding F63's control arm.
+- **T23 quoted a refusal the binary does not emit**; the rung's reason never leaves the Journal.
+
+### Owed to round 11 — carried, not lost
+
+1. **The triage rung's deny needs the WHOLE command literal.** `Triage#literal` is reached only on
+   `decision.allow?`, so any `Shell::Verdict` abstention — a quote, a tilde, a `$` expansion, a glob,
+   or a second command after `&&` — skips the argv check entirely. `cat <key> && echo hi` carries a
+   bare absolute path byte-identical to the denied spelling and is approved anyway. Five `OPEN:`
+   examples pin each spelling in `auto_surface_spec.rb`.
+2. **`Triage` prices its abstention as "already reaches a human". Under `--auto-approve` it reaches a
+   model** whose prompt is never told a protected path is in the argv, polling every 0.05s.
+3. **`/mode auto` still reaches `Gate::ApproveAll`** — open by decision, as planned.
+   **T13's implementer proposes 1–3 are ONE card:** a pre-gate `Sensitivity::PATH_FIELDS` argv
+   refusal sits outside the Gate, so it is unliftable by `ApproveAll` *and* nothing ever parks for
+   `AutoSurface`. Worth taking.
+4. **Two unliftable refusals, two operator experiences.** `Sensitivity#refuse` names the path and
+   says no approval can lift it; the unliftable ladder rung renders byte-identically to an ordinary
+   posture deny (`Gate::DENIAL`).
+5. **`Paths#sessions_dir` is an accessor that `mkdir_p`s on read** — measured at 8354 directories,
+   8329 empty, in the operator's real home, growing during the round. Call sites:
+   `Journal.default_path`, `cli/command/surface.rb:115`. The spec-author rule ("a spec that builds a
+   `ProjectDir` and asks for `state_path` now reaches the real `ENV`") belongs in
+   `docs/toolchain-traps.md` with it.
+6. **`grep` silently truncates.** `grep.rb:130-139`'s rescue ends the FILE, not the line, and is
+   locale-independent: one binary line makes every later match vanish, `is_error: false`. File it
+   against the **`ArgumentError` arm only** — the `SystemCallError`/`IOError` arm is the documented,
+   intended skip. `grep.rb:131` (the locale half) is a separate one-word fix; `grep.rb:247` is latent
+   only on `CoreSearch`.
+7. **`bash.rb:114`** carries F62's crash on Canonical's *other* arm (not-convertible, ASCII-8BIT),
+   locale-independent. A fix must handle both arms.
+8. **`escalation.rb:150-168` is stale doubly** — says `triage:` "waits on a call site" and that
+   `rules:` "is empty"; both false at the production call site.
+9. **`RedactSecretReads::Unqueued` remains the single fail-open** in an otherwise fail-closed
+   unattended run, now documented and pinned by a seam that will go red when round 11 flips it.
+10. **Cop headroom at zero:** `Frontend::TTY` 110/110 ClassLength, `Source#initialize` 10/10
+    MethodLength. The `Data.define` ClassLength counting trap belongs in `docs/toolchain-traps.md`.
+11. **`lain up --isolation nope`** passes preflight and fails inside the tmux pane, where a dead-pane
+    banner eats the cause.
+12. **A path recipe implemented three times in three languages** drifted the same way twice: T20 and
+    T21 each stripped a trailing `/` from `XDG_STATE_HOME` and forgot `$HOME`. Worth making
+    executable rather than prose.
+
+### Manual pass still owed
+
+`planning/qa/scenarios/secret-boundary.md` §5 and §5b are written and landed but **have not been
+driven by a human against the real binary**. That is the one check no spec makes.

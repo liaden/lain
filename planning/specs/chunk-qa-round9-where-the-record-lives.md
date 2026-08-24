@@ -1,8 +1,7 @@
 # Where the record lives: locations, names, and a backend that only works on one client
 
-status: in-progress (T3/T5/T6/T7/T8/T9 SUPERSEDED — absorbed by
-`chunk-qa-round10-one-gate-one-record.md` as T17/T18/T24/T19/T20/T21; T2 is written and awaiting
-commit, and round 10 has no card for it)
+status: done (2026-08-24) -- T2 committed as a26ee02b; T3/T5/T6/T7/T8/T9 absorbed by
+`chunk-qa-round10-one-gate-one-record.md` as T17/T18/T24/T19/T20/T21 and all landed there
 commit-mode: orchestrator-commits
 language: ruby
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
