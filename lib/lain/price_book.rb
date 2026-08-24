@@ -48,6 +48,19 @@ module Lain
   # An unknown model raises rather than guessing a price of zero: on a bench whose
   # headline metric is cost, a silently-free model is a lie. A deployment that
   # wants graceful degradation passes an explicit `fallback` Price.
+  #
+  # Ruling (chunk-ollama-cloud-arm.md T15): Ollama Cloud is billed by
+  # subscription quota, not per token, so DEFAULT deliberately carries no
+  # ollama row and no fallback -- #price raises {UnknownModel} for one, same
+  # as any other unpriced model (spec/lain/ledger_spec.rb). A row or a
+  # process-wide fallback here would silently price every OTHER unknown
+  # model too (the exact failure this file already records for
+  # `claude-fable-5`/`claude-mythos-5`), so the withholding lives one layer
+  # up instead: {Friction::CacheWaste#price_for} rescues UnknownModel per
+  # model and {Friction::Report::CacheWasteSection#figure_phrase} renders
+  # the gap as an explicit "no price recorded" rather than a fabricated
+  # dollar figure (spec/lain/friction/report_spec.rb) -- verified, not
+  # assumed: this book is not touched to make that true.
   class PriceBook
     class UnknownModel < Error; end
 
