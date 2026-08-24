@@ -125,6 +125,57 @@ RSpec.describe Lain::Oracle::SecretRead do
 
       expect(Lain::Provider::Ollama).to have_received(:new).with(no_args)
     end
+
+    # WHAT `no_args` NOW BUYS, which is no longer the same sentence. The pin
+    # above says the CALL states nothing; it used to follow that no `api_base`
+    # could have been passed and the arm was therefore loopback. Since
+    # `Provider::Ollama.new` gained a `deployment:` keyword, what it means is
+    # "the default decides" -- so the guarantee moved to the default, and a
+    # default is exactly the kind of thing that is edited later without anyone
+    # noticing. These are the two ends of one keyword and neither implies the
+    # other: `no_args` would stay green with a cloud default, and this would
+    # stay green if `.tier` started passing `deployment: Local.new` explicitly.
+    #
+    # THE LITERAL, NOT `Transport::DEFAULT_API_BASE`, and that is not a style
+    # preference. `resolved_endpoint` DERIVES from that constant through three
+    # hops -- `Local#api_base` reads it, `Local#apply` writes it onto
+    # `config.ollama_api_base`, `resolved_endpoint` reads it back -- so an
+    # assertion spelled with the constant compares the value to itself. It
+    # cannot tell "the default deployment is loopback" from "the default
+    # deployment is whatever DEFAULT_API_BASE happens to say". Measured, not
+    # reasoned: with `transport.rb:50` repointed at `https://evil.example.com`
+    # this file stayed at 24 examples, 0 failures, while its own header calls
+    # WHICH endpoint answers the security property this whole rung exists for.
+    # The guarantee names a host, so the spec spells that host. Do not tidy it
+    # back into the constant.
+    it "gets a LOOPBACK endpoint out of that bare construction, whatever the default deployment is" do
+      expect(provider_built.send(:resolved_endpoint)).to eq("http://localhost:11434")
+    end
+
+    # NOT hypothetical: `OLLAMA_API_KEY` is exported into some developers'
+    # shells by direnv, so the suite really does run with it set. Nothing in
+    # `lib/` or `exe/` reads it -- `Deployment::Cloud` only NAMES it in a
+    # refusal message, `Provider::Ollama.cloud` requires `api_key:` explicitly
+    # rather than reaching for the environment, and
+    # `Configuration.register_provider_options` registers `ollama_api_key` with
+    # a nil default rather than an ENV-resolved one. So this cannot fail today,
+    # and that is precisely why it is written down: an ENV-defaulted
+    # `ollama_api_key` or `ollama_api_base` is the one mechanism that could
+    # point this judge at somebody else's server without touching
+    # `secret_read.rb` at all, and it would leave every other example here
+    # green. `@transport`'s own `#headers` is asserted rather than the
+    # deployment's declaration, because `Connection#provider_headers` asks the
+    # transport and that is the only auth that reaches the wire. The host is
+    # spelled out rather than read from `Transport::DEFAULT_API_BASE`, for the
+    # reason the example above states at length.
+    it "stays on loopback with a live OLLAMA_API_KEY in the environment, and sends no bearer" do
+      with_env("OLLAMA_API_KEY" => "sk-this-would-be-the-disclosure") do
+        provider = provider_built
+
+        expect([provider.send(:resolved_endpoint), provider.instance_variable_get(:@transport).headers])
+          .to eq(["http://localhost:11434", {}])
+      end
+    end
   end
 
   describe "the question" do

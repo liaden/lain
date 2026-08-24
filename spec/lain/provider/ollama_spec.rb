@@ -97,6 +97,48 @@ RSpec.describe Lain::Provider::Ollama do
                 Lain::CacheProfile::NO_CACHING])
     end
 
+    # THE DEFAULT IS THE CONTRACT, and it is named here rather than only
+    # implied by an endpoint. `Oracle::SecretRead.tier` constructs this
+    # provider with no arguments at all, and that bare construction IS the
+    # loopback guarantee its module header states (`secret_read.rb:17-40`) --
+    # so the keyword's default is now the thing carrying it. A default is
+    # exactly what gets edited later without anyone noticing, and the example
+    # above cannot notice on its own: `Local` and `Cloud` declare the SAME
+    # capabilities and the same cache profile, so only its endpoint third
+    # discriminates them at all.
+    it "defaults to the Local deployment, which is what a bare construction promises" do
+      provider = described_class.new(transport: transport_sync({}))
+
+      expect(provider.instance_variable_get(:@deployment)).to eq(Lain::Provider::Ollama::Deployment::Local.new)
+    end
+
+    # The end-to-end half, because "loopback" is a claim about what reaches the
+    # WIRE and every other example here reads it off an object instead. This
+    # one asks WebMock which host was dialled and what the request carried.
+    #
+    # The stub is deliberately NOT host-scoped -- the one place in this file
+    # that is. Scoped, a default that moved off loopback would fail as an
+    # UnhandledHTTPRequestError, which reads like suite plumbing; unscoped, the
+    # request is answered and the failure lands on the assertion that names
+    # `localhost:11434` and the absent bearer, which is the sentence a reader
+    # needs. Local to one example, so it cannot silence a probe elsewhere the
+    # way `spec/support/ollama_probe.rb`'s global stubs once did.
+    describe "on a bare construction, over the real transport", :webmock do
+      it "dials loopback and carries no Authorization header" do
+        stub_request(:post, %r{/api/chat})
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate("model" => "qwen3:4b",
+                                         "message" => { "role" => "assistant", "content" => "pong" },
+                                         "done" => true, "done_reason" => "stop"))
+
+        described_class.new.complete(request(stream: false))
+
+        expect(a_request(:post, "http://localhost:11434/api/chat")
+                 .with { |req| req.headers.keys.none? { |name| name.casecmp?("authorization") } })
+          .to have_been_made.once
+      end
+    end
+
     it "dials ollama.com for a cloud provider that was told no base" do
       expect(endpoint_of(cloud)).to eq(Lain::Provider::Ollama::Deployment::Cloud::API_BASE)
     end
