@@ -2,20 +2,34 @@
 # Renders the lain HUD line (warmth / fleet / inbox / approvals / context /
 # mode) for a tmux status bar.
 #
-#   lain-status [DIR]
+#   lain-status [STATE_FILE]
 #
-# Reads DIR/.lain/state.json (DIR defaults to $PWD; lain.tmux passes the
-# pane's cwd via tmux's #{pane_current_path}) -- the struct
-# Lain::StatusFeed publishes. The filter reads six of its keys
-# ("cache_deadline","fleet","inbox_count","approvals_pending","occupancy",
-# "mode_lighter") and ignores the rest; the last three are rendered only when
-# present, so a state.json written by an older lain still renders the line it
-# always did. mode_lighter arrives ALREADY COMPOSED (the posture's lighter
-# plus every active layer's, empty under the silent default posture), so this
-# script carries no copy of the mode ladder -- see Up::Hud::JQ_FILTER.
-# The occupancy percentage is clamped to 100: an unmatched model (every
-# Ollama id, most Bedrock ids) is measured against ContextWindow's 8,192
-# conservative fallback, which can publish a ratio well above 1.0.
+# STATE_FILE is the struct Lain::StatusFeed publishes. This script is TOLD
+# that path and derives nothing: no project directory, no `.lain/`, no
+# `$XDG_STATE_HOME`, and above all no `sha256(realpath(dir))[0, 12]`. That is
+# the point. Since F50 the feed lives at
+# `$XDG_STATE_HOME/lain/status/<project-hash>/state.json`, and resolving a
+# directory to it needs a digest binary POSIX does not mandate -- while THIS
+# file's whole contract is that it never blanks and never errors, with `jq`
+# its one optional dependency. So resolution belongs to whoever already knows
+# the directory: `lain up` interpolates an absolute path into its own
+# session-scoped status-right, and `lain.tmux` resolves `#{pane_current_path}`
+# per pane at render time. Both hand the answer here.
+#
+# No argument, or a path that is not there, is therefore not an error and not
+# a bug -- it is a caller that could not resolve, and it reads as "no state
+# yet" like any other absent file.
+#
+# The filter reads six keys ("cache_deadline","fleet","inbox_count",
+# "approvals_pending","occupancy","mode_lighter") and ignores the rest; the
+# last three are rendered only when present, so a state file written by an
+# older lain still renders the line it always did. mode_lighter arrives
+# ALREADY COMPOSED (the posture's lighter plus every active layer's, empty
+# under the silent default posture), so this script carries no copy of the
+# mode ladder -- see Up::Hud::JQ_FILTER. The occupancy percentage is clamped
+# to 100: an unmatched model (every Ollama id, most Bedrock ids) is measured
+# against ContextWindow's 8,192 conservative fallback, which can publish a
+# ratio well above 1.0.
 #
 # The jq filter below is Lain::CLI::Up::JQ_FILTER, byte for byte -- one HUD,
 # two renderers, pinned by spec (spec/plugin/tmux_plugin_spec.rb). Without
@@ -24,14 +38,14 @@
 # "lain: no state yet", never an error and never a blank status segment.
 set -eu
 
-dir="${1:-$PWD}"
-state="$dir/.lain/state.json"
+state="${1:-}"
 
 # -s, not -f: jq -r (and cat) on a ZERO-BYTE file exits 0 with empty
 # output, which would render a silently blank segment -- the exact
 # never-blank violation this script exists to prevent. A zero-byte state
-# file is a mid-write/truncated state and reads as "no state yet".
-if [ ! -s "$state" ]; then
+# file is a mid-write/truncated state and reads as "no state yet". An empty
+# argument lands in the same branch, and means the caller could not resolve.
+if [ -z "$state" ] || [ ! -s "$state" ]; then
   echo "lain: no state yet"
   exit 0
 fi

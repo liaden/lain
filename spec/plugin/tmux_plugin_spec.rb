@@ -7,11 +7,11 @@ require "fileutils"
 require "time"
 
 # T6: the in-repo tmux plugin -- a tpm-style install surface over the SAME
-# `.lain/state.json` HUD `lain up` builds inline (lib/lain/cli/up.rb). One
+# state feed `lain up` builds inline (lib/lain/cli/up.rb). One
 # `run-shell .../plugin/tmux/lain.tmux` from any tmux.conf must:
 #
 # * interpolate `#{lain_status}` in status-left/-right into a
-#   `#('scripts/lain-status' #{q:pane_current_path})` job -- jq render when
+#   `#('lain.tmux' status #{q:pane_current_path})` job -- jq render when
 #   jq is on PATH, raw-cat fallback when it is not, an honest "lain: no
 #   state yet" when the pane's project has no state file yet;
 # * bind prefix keys for the /btw popup and /fork window, each wrapped in
@@ -25,6 +25,20 @@ require "time"
 # status script can prove alone runs directly through `sh`, on every
 # machine. The --btw/--fork flags themselves land in T3 -- these examples
 # pin the COMMAND LINES the bindings would run, not the flags' effect.
+#
+# T9 splits the plugin's two shell files by what each is ALLOWED to know.
+# Since F50 the feed lives at `$XDG_STATE_HOME/lain/status/<hash>/state.json`,
+# and reproducing `sha256(realpath(dir))[0, 12]` needs a digest binary that
+# POSIX does not mandate -- so `scripts/lain-status` is TOLD a FILE and
+# computes nothing (its whole contract is `[ -s "$state" ]`), while
+# `lain.tmux`, which is bash and is the plugin's own entry point, resolves
+# the pane's directory to that file at RENDER time. It has to be render time:
+# `#{pane_current_path}` is expanded per pane by tmux, long after the
+# run-shell line has finished, so nothing can be precomputed when the plugin
+# is sourced. `lain.tmux state-path` is the resolver alone, and it is
+# cross-pinned against Ruby's locator here for the same reason
+# `nvim_plugin_spec.rb` cross-pins the Lua copy: a third spelling of one
+# recipe drifts into a blank status bar otherwise.
 RSpec.describe "plugin/tmux" do
   def tmux_present? = system("tmux", "-V", out: File::NULL, err: File::NULL)
   def jq_present? = system("jq", "--version", out: File::NULL, err: File::NULL)
@@ -37,16 +51,42 @@ RSpec.describe "plugin/tmux" do
     Dir.mktmpdir { |dir| @dir = dir and example.run }
   end
 
+  # A scratch `$XDG_STATE_HOME` per example, exported into every shell these
+  # examples drive, so nothing here can read or write the real one -- and so
+  # the resolver's answer is checkable rather than being wherever this box
+  # happens to keep its state.
+  def state_home = File.join(@dir, "xdg-state")
+  def plugin_env = { "XDG_STATE_HOME" => state_home }
+
+  # Resolved through the REAL locator, never a hand-built spelling: a spec
+  # that composes the path itself can agree with a plugin that both got wrong.
+  def state_path(dir = @dir)
+    Lain::ProjectDir.new(root: dir, paths: Lain::Paths.new(env: plugin_env)).state_path
+  end
+
   def write_state(cache_deadline:, fleet:, inbox_count:, dir: @dir, **extra)
-    FileUtils.mkdir_p(File.join(dir, ".lain"))
-    File.write(File.join(dir, ".lain", "state.json"),
+    write_json(state_path(dir),
                JSON.generate({ "cache_deadline" => cache_deadline, "fleet" => fleet,
                                "inbox_count" => inbox_count }.merge(extra.transform_keys(&:to_s))))
   end
 
+  def write_json(path, body)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, body)
+    path
+  end
+
+  # Both describes below build a cut-down PATH out of symlinks, so each needs
+  # the real location of a binary before removing it from view.
+  def which(binary)
+    ENV.fetch("PATH").split(File::PATH_SEPARATOR)
+       .map { |dir| File.join(dir, binary) }.find { |path| File.executable?(path) }
+  end
+
   describe "scripts/lain-status" do
-    def run_status(env = {})
-      Open3.capture3(env, status_script, @dir)
+    # One argument, and it is the FILE. The script joins nothing.
+    def run_status(env = {}, path: state_path)
+      Open3.capture3(env, status_script, path)
     end
 
     it "embeds Up::Hud::JQ_FILTER verbatim, so the plugin and `lain up` render one HUD" do
@@ -124,8 +164,7 @@ RSpec.describe "plugin/tmux" do
 
     it "prints 'lain: no state yet', never an error, on a corrupt state file" do
       skip("jq not found on PATH") unless jq_present?
-      FileUtils.mkdir_p(File.join(@dir, ".lain"))
-      File.write(File.join(@dir, ".lain", "state.json"), "{half a jso")
+      write_json(state_path, "{half a jso")
 
       out, _err, status = run_status
 
@@ -138,10 +177,75 @@ RSpec.describe "plugin/tmux" do
     # never-blank violation the script's own contract forbids. Panel probe
     # probe_state_variants.sh, fix round.
     it "prints 'lain: no state yet', never a blank segment, on a zero-byte state file" do
-      FileUtils.mkdir_p(File.join(@dir, ".lain"))
-      FileUtils.touch(File.join(@dir, ".lain", "state.json"))
+      write_json(state_path, "")
 
       out, _err, status = run_status
+
+      expect(out.strip).to eq("lain: no state yet")
+      expect(status.exitstatus).to eq(0)
+    end
+
+    # T9/AC1. The renderer's whole input is a FILE, and it does not care
+    # whose or where: no `.lain` join, no XDG root, no project hash. This is
+    # what lets the two callers that DO know -- `lain up`, which interpolates
+    # an absolute path into a session-scoped status-right, and `lain.tmux`,
+    # which resolves the pane's directory at render time -- share one renderer
+    # without either of them teaching it their own way of finding the file.
+    it "renders the HUD from whatever state file path it is handed" do
+      skip("jq not found on PATH") unless jq_present?
+      arbitrary = write_json(File.join(@dir, "somewhere else", "feed.json"),
+                             JSON.generate({ "cache_deadline" => nil, "fleet" => %w[a b c],
+                                             "inbox_count" => 2 }))
+
+      out, _err, status = run_status({}, path: arbitrary)
+
+      expect(out.strip).to eq("❄ fleet:3 inbox:2")
+      expect(status.exitstatus).to eq(0)
+    end
+
+    # T9/AC2, the mechanism: Open decision 4 protects this script from growing
+    # a hard dependency on a binary POSIX does not mandate. Asserted by
+    # READING it, because a missing-binary runtime check passes vacuously on
+    # the day someone adds the call behind a `command -v` guard.
+    #
+    # Comment lines are dropped first, for the reason `project_dir_spec.rb`
+    # parses instead of grepping: the file's own header explains WHY it may
+    # not call `realpath`, and a scan that cannot tell prose from code makes
+    # the explanation the violation.
+    it "names no digest or path-resolution binary at all" do
+      code = File.read(status_script).lines.grep_v(/^\s*#/).join
+
+      expect(code).not_to match(/sha256sum|shasum|openssl|realpath|readlink/)
+    end
+
+    # T9/AC2, the effect: strip PATH down to jq alone -- no coreutils, no
+    # digest tool -- and the HUD still renders, because resolving the input
+    # was somebody else's job.
+    it "renders with nothing but jq on PATH" do
+      skip("jq not found on PATH") unless jq_present?
+      write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a], inbox_count: 1)
+
+      out, _err, status = run_status({ "PATH" => jq_only_bin })
+
+      expect(out.strip).to eq("🔥 fleet:1 inbox:1")
+      expect(status.exitstatus).to eq(0)
+    end
+
+    # T9/AC3. "Renders nothing" means renders no HUD: the never-blank contract
+    # this script exists for makes the honest sentence the right answer, and
+    # the zero-byte and no-state examples above pin the same one.
+    it "exits 0 with the honest sentence when the path it was given is not there" do
+      out, _err, status = run_status({}, path: File.join(@dir, "no", "such", "state.json"))
+
+      expect(out.strip).to eq("lain: no state yet")
+      expect(status.exitstatus).to eq(0)
+    end
+
+    # The resolver's degrade path hands over an EMPTY argument rather than
+    # inventing a path it could not compute, so no-argument has to be as
+    # honest as a missing file.
+    it "exits 0 with the honest sentence when it is handed no path at all" do
+      out, _err, status = Open3.capture3(status_script)
 
       expect(out.strip).to eq("lain: no state yet")
       expect(status.exitstatus).to eq(0)
@@ -163,6 +267,178 @@ RSpec.describe "plugin/tmux" do
       FileUtils.mkdir_p(bin)
       cat = %w[/bin/cat /usr/bin/cat].find { |path| File.executable?(path) }
       File.symlink(cat, File.join(bin, "cat"))
+      bin
+    end
+
+    # The mirror image: jq and NOTHING else -- no cat, no sha256sum, no
+    # realpath. `/bin/sh` itself is found by its absolute shebang, not
+    # through PATH, so the script still starts.
+    def jq_only_bin
+      bin = File.join(@dir, "jq-only-bin")
+      FileUtils.mkdir_p(bin)
+      File.symlink(which("jq"), File.join(bin, "jq"))
+      bin
+    end
+  end
+
+  # T9. The half of the plugin that IS allowed to compute. These need no tmux
+  # at all: the resolver is an ordinary argument-in, path-out program, and
+  # driving it directly is what makes its agreement with Ruby checkable on
+  # every machine rather than only where tmux is installed.
+  describe "lain.tmux as the pane's resolver" do
+    def resolve(dir = @dir, env: plugin_env)
+      out, _err, status = Open3.capture3(env, plugin_entry, "state-path", dir)
+      [out.strip, status.exitstatus]
+    end
+
+    def render(dir = @dir, env: plugin_env)
+      out, _err, status = Open3.capture3(env, plugin_entry, "status", dir)
+      [out.strip, status.exitstatus]
+    end
+
+    # The cross-language pin CORRECTION 4 asks for, and the reason this
+    # subcommand is worth having at all: one recipe now has three spellings
+    # (Ruby, Lua, bash), and the two that are not Ruby drift into a silently
+    # blank status bar rather than into an error.
+    it "resolves a directory to exactly the file Ruby's locator names" do
+      expect(resolve).to eq([state_path, 0])
+    end
+
+    # `sha256(REALPATH(dir))`, not of the spelling: `lain up PATH` may hand
+    # over a symlink while the pane's own `Dir.pwd` is kernel-resolved, and
+    # the two have to name one file. Done with `cd -- "$dir" && pwd -P`, a
+    # shell builtin, so this costs no `realpath` binary.
+    it "resolves through a symlink the way File.realpath does" do
+      link = File.join(@dir, "link-to-project")
+      File.symlink(@dir, link)
+
+      expect(resolve(link)).to eq([state_path(@dir), 0])
+    end
+
+    # $HOME/.local/state when XDG_STATE_HOME is unset, and the SAME when it is
+    # set to something relative -- the XDG spec says a non-absolute value is
+    # invalid and must be ignored, which is `Paths#present`'s rule and has to
+    # be this copy's too.
+    it "falls back to $HOME/.local/state, and ignores a relative XDG_STATE_HOME" do
+      expect(resolve(env: { "HOME" => @dir, "XDG_STATE_HOME" => nil })).to eq([ruby_state_path("HOME" => @dir), 0])
+      expect(resolve(env: { "HOME" => @dir, "XDG_STATE_HOME" => "relative/state" }))
+        .to eq([ruby_state_path("HOME" => @dir), 0])
+    end
+
+    # Ruby composes these with `File.join`, which collapses ONE separator at
+    # the join, so the shell's `${base%/}` has to sit on BOTH bases and not
+    # just the XDG one. `$HOME=/` is not a hypothetical: it is what root gets
+    # in a container, and `Paths::NonAbsoluteHome`'s docstring accepts it by
+    # name (`/.local/state/lain` is a real answer) while
+    # `Project::Resolver::UnusableHome` refuses it. A leading `//` is
+    # implementation-defined in POSIX rather than merely ugly.
+    it "agrees with Ruby on a base spelled with a trailing separator" do
+      [{ "XDG_STATE_HOME" => "#{state_home}/" },
+       { "HOME" => "#{@dir}/", "XDG_STATE_HOME" => nil },
+       { "HOME" => "/", "XDG_STATE_HOME" => nil }].each do |env|
+        expect(resolve(env:)).to eq([ruby_state_path(env), 0])
+      end
+    end
+
+    # `cd` resolves a RELATIVE operand against $CDPATH when one is exported,
+    # and echoes the directory it landed on -- so `resolved` became two lines
+    # and the hash was of neither directory (measured: the doubled string
+    # hashes to 01825ae7aa81, the right directory to 22b239bea2d3, the decoy
+    # to 33386425385c). `File.expand_path` always resolves against the cwd.
+    # The status bar is safe because #{pane_current_path} is absolute; the
+    # blast radius is the `state-path [DIR]` diagnostic, answering silently
+    # and confidently -- the failure class every rejected alternative lost on.
+    it "ignores an exported CDPATH, which cd would otherwise resolve against" do
+      decoy = File.join(@dir, "decoy")
+      real = File.join(@dir, "proj")
+      [File.join(decoy, "proj"), real].each { |dir| FileUtils.mkdir_p(dir) }
+
+      out, _err, status = Open3.capture3(plugin_env.merge("CDPATH" => decoy),
+                                         plugin_entry, "state-path", "proj", chdir: @dir)
+
+      expect([out.strip, status.exitstatus]).to eq([state_path(real), 0])
+    end
+
+    # The Ruby side of every cross-pin above, built from the SAME env the
+    # shell is handed, so neither side can be tuned to agree with the other.
+    def ruby_state_path(env)
+      Lain::ProjectDir.new(root: @dir, paths: Lain::Paths.new(env: env.compact)).state_path
+    end
+
+    it "renders the HUD for a directory by resolving it and handing the file over" do
+      skip("jq not found on PATH") unless jq_present?
+      write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a b], inbox_count: 3)
+
+      expect(render).to eq(["🔥 fleet:2 inbox:3", 0])
+    end
+
+    it "renders the honest sentence for a directory whose project has published nothing" do
+      expect(render).to eq(["lain: no state yet", 0])
+    end
+
+    # The cost of moving the digest here rather than into the POSIX renderer:
+    # a machine with no sha256 binary cannot resolve. It must then supply NO
+    # path rather than a guessed one -- so the HUD reads "no state yet", which
+    # is true, instead of a confident number from the wrong project.
+    it "degrades to the honest sentence when no digest binary exists to resolve with" do
+      write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a], inbox_count: 1)
+
+      expect(render(env: plugin_env.merge("PATH" => bin_holding("bash", "jq", "cat")))).to eq(
+        ["lain: no state yet", 0]
+      )
+    end
+
+    # T21 put the render path THROUGH this file, so every binary it looks up
+    # before its own degrade logic runs is a new way to blank the segment --
+    # the exact failure the renderer exists to prevent, and one the old job
+    # (which called scripts/lain-status directly, looking nothing up) did not
+    # have. `dirname` was such a binary: CURRENT_DIR ran above every guard, so
+    # a PATH without it exited 1 with EMPTY stdout rather than degrading.
+    # Nothing outside the digest chain may be reachable on PATH now.
+    it "renders with no coreutils on PATH beyond the digest tool" do
+      skip("jq not found on PATH") unless jq_present?
+      write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a], inbox_count: 1)
+
+      expect(render(env: plugin_env.merge("PATH" => bin_holding("bash", "jq", "sha256sum")))).to eq(
+        ["\u{1f525} fleet:1 inbox:1", 0]
+      )
+    end
+
+    # A digest tool can be ON PATH and still produce nothing: `shasum` is a
+    # perl script and dies without perl, a FIPS-restricted `openssl` refuses
+    # digests outright. The realpath leg guards its own emptiness and this one
+    # did not -- and `set -e` does not cover it, because errexit is suppressed
+    # inside `$( )` when the caller tests with `|| return 1`. The answer was
+    # `<state_home>/status//state.json` at exit 0: the diagnostic README
+    # advertises for "which file is my status bar reading" naming nothing, and
+    # naming it confidently.
+    it "refuses to answer when a digest tool is present but yields no digest" do
+      %w[3 0].each do |code|
+        expect(resolve(env: plugin_env.merge("PATH" => bin_with_mute_digest(code)))).to eq(["", 1])
+      end
+    end
+
+    # A PATH holding exactly the named binaries and nothing else, so each
+    # example names the one thing it is taking away. Artificial -- a box with
+    # coreutils has sha256sum -- but a box with neither `shasum` nor `openssl`
+    # either is the one the degrade path exists for.
+    def bin_holding(*names, as: nil)
+      bin = File.join(@dir, as || "bin-#{names.join("-")}")
+      FileUtils.mkdir_p(bin)
+      names.filter_map { |name| which(name) }
+           .each { |path| File.symlink(path, File.join(bin, File.basename(path))) }
+      bin
+    end
+
+    # `sha256sum` is FIRST in the chain, so a shim there is the one the
+    # resolver commits to and the later two are never consulted -- which is
+    # what makes a mute first tool the interesting case rather than an absent
+    # one. Named per exit code so each row of the example gets its own PATH.
+    def bin_with_mute_digest(exit_code)
+      bin = bin_holding("bash", "jq", "cat", as: "mute-#{exit_code}-bin")
+      shim = File.join(bin, "sha256sum")
+      File.write(shim, "#!/bin/sh\nexit #{exit_code}\n")
+      FileUtils.chmod(0o755, shim)
       bin
     end
   end
@@ -194,8 +470,8 @@ RSpec.describe "plugin/tmux" do
         #{extra_conf}
         run-shell "'#{entry}'"
       CONF
-      system("tmux", "-L", socket, "-f", conf_path, "new-session", "-d", "-s", "hud", "-c", @dir,
-             "-x", "80", "-y", "24", out: File::NULL, err: File::NULL) ||
+      system(plugin_env, "tmux", "-L", socket, "-f", conf_path, "new-session", "-d", "-s", "hud",
+             "-c", @dir, "-x", "80", "-y", "24", out: File::NULL, err: File::NULL) ||
         raise("scratch tmux server failed to start")
       wait_for_plugin
     end
@@ -230,16 +506,20 @@ RSpec.describe "plugin/tmux" do
       raw = tmux("show-options", "-gv", "status-right")
       job = raw.strip.delete_prefix("#(").delete_suffix(")")
       expanded = tmux("display-message", "-p", "-t", target, job)
-      out, = Open3.capture3("sh", "-c", expanded)
+      out, = Open3.capture3(plugin_env, "sh", "-c", expanded)
       out.strip
     end
 
-    it "interpolates \#{lain_status} in status-right into a lain-status job on the pane's cwd" do
+    # The job now calls the PLUGIN, not the renderer, and that is the whole
+    # T9 shape: `#{pane_current_path}` is expanded per pane at render time, so
+    # the directory-to-file step has to run then too -- and it runs in the
+    # bash entry point, never in the POSIX renderer.
+    it "interpolates \#{lain_status} in status-right into a resolver job on the pane's cwd" do
       boot
 
       status_right = tmux("show-options", "-gv", "status-right")
 
-      expect(status_right).to eq("#('#{status_script}' \#{q:pane_current_path})")
+      expect(status_right).to eq("#('#{plugin_entry}' status \#{q:pane_current_path})")
     end
 
     it "renders the same warm HUD line `lain up` shows, through the interpolated job" do
@@ -266,7 +546,19 @@ RSpec.describe "plugin/tmux" do
     it "neutralizes a hostile pane cwd -- the HUD renders, the payload never runs" do
       skip("jq not found on PATH") unless jq_present?
       canary = File.join(@dir, "PWNED")
-      evil = File.join(@dir, "x'; touch #{canary}; :'y")
+      # Every metacharacter the status job's shell could act on, not just the
+      # quote the original regression used: `$(...)` substitution and a
+      # backtick both run at expansion time rather than needing the slot to
+      # close first, and T9 widened this surface by making the job carry a
+      # SUBCOMMAND before the path -- so a cwd that escaped the slot would now
+      # land as an argument to a program that dispatches on its first word.
+      evil = File.join(@dir, "x'; touch #{canary}; :'y $(touch #{canary}) " \
+                             "`touch #{canary}` \"q\" $HOME")
+      # Created BEFORE its state is written: the identifier is
+      # sha256(REALPATH(dir)), and realpath of a directory that is not there
+      # yet falls back to the lexical form -- a different hash from the one
+      # the resolver will compute once tmux is sitting in it.
+      FileUtils.mkdir_p(evil)
       write_state(cache_deadline: (Time.now + 300).utc.iso8601, fleet: %w[a], inbox_count: 1, dir: evil)
       boot
       system("tmux", "-L", socket, "new-session", "-d", "-s", "evil", "-c", evil,

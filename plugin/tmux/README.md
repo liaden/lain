@@ -2,10 +2,32 @@
 
 Puts lain's HUD in any tmux status bar and binds prefix keys for the two
 tmux-native lain gestures — without `lain up`'s managed session. It reads the
-same `.lain/state.json` that `Lain::StatusFeed` publishes (three keys:
-`cache_deadline`, `fleet`, `inbox_count`), resolved against the **active
-pane's** working directory, so the segment always describes the project you
-are looking at.
+same state feed `Lain::StatusFeed` publishes (`cache_deadline`, `fleet`,
+`inbox_count`, and the optional `approvals_pending`, `occupancy`,
+`mode_lighter`), resolved against the **active pane's** working directory, so
+the segment describes the project that pane is in rather than a fixed one —
+with the exactness that implies, spelled out below.
+
+That feed lives at
+
+```
+${XDG_STATE_HOME:-$HOME/.local/state}/lain/status/<project-hash>/state.json
+```
+
+where `<project-hash>` is the first twelve hex characters of
+`sha256(realpath(dir))` — the same project identifier lain's nvim socket and
+session store use. `lain.tmux state-path [DIR]` prints it, which is the way to
+answer "which file is my status bar reading" for a directory named by a hash.
+
+**That identity is the pane's exact directory, and there is no walk up to a
+project root.** So a pane sitting in a *subdirectory* of the project your
+session started in hashes to something else and reads `lain: no state yet` —
+`cd src/` blanks the HUD, `cd ..` back restores it. This is the cost of keying
+on the pane rather than on one directory chosen when the plugin was sourced;
+the alternative renders another project's numbers in every pane that has moved,
+and a confidently wrong number is worse than an honest absence. If a bar is
+unexpectedly empty, `lain.tmux state-path` in that pane against
+`lain.tmux state-path <project-root>` shows the two hashes disagreeing.
 
 ## Install
 
@@ -18,10 +40,19 @@ run-shell /path/to/lain/plugin/tmux/lain.tmux
 ```
 
 `lain.tmux` rewrites every `#{lain_status}` placeholder in `status-left` /
-`status-right` into a `#('scripts/lain-status' #{q:pane_current_path})` job —
+`status-right` into a `#('lain.tmux' status #{q:pane_current_path})` job —
 the tpm interpolation idiom, so it composes with any theme. The
 `#{q:...}` shell-quote modifier is what keeps a pane whose path contains a
 quote or a space from breaking (or worse, injecting into) the status shell.
+
+The job re-enters `lain.tmux` rather than calling `scripts/lain-status`
+directly, and the split is deliberate. tmux expands `#{pane_current_path}`
+**per pane, at render time**, so turning a directory into a state file cannot
+happen when the plugin is sourced — a path computed then would be confidently
+wrong in every pane sitting somewhere else. `lain.tmux` is bash and does that
+work each render; `scripts/lain-status` is POSIX `sh` that is simply *told* a
+file, so the one script whose contract is to never blank and never error keeps
+`jq` as its only optional dependency.
 
 **If the plugin's own path contains spaces**, quote it *inside* the
 `run-shell` argument — tmux passes that argument to `sh -c` without
@@ -62,5 +93,8 @@ arguments are fine).
 
 ## Requirements
 
-tmux ≥ 3.2 (`display-popup`); `jq` optional but recommended. The plugin is
-pinned by `spec/plugin/tmux_plugin_spec.rb`.
+tmux ≥ 3.2 (`display-popup`); `jq` optional but recommended; and, to resolve
+a pane's directory to its state file, one of `sha256sum`, `shasum` or
+`openssl` — with none of the three the HUD reads `lain: no state yet` rather
+than guessing. `scripts/lain-status` itself needs none of them: it is handed
+the path. The plugin is pinned by `spec/plugin/tmux_plugin_spec.rb`.
