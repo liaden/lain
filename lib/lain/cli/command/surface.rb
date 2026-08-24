@@ -26,15 +26,14 @@ module Lain
       # register line in {#registry}, and -- when it needs a new Env reader --
       # one line in the {Env} assembly here.
       class Surface
-        # `chronicle:`, `status_feed:`, `policy_switch:`, `model_switch:`,
-        # `mode_switch:`, `role_spawn:` and `library:` are all required, not
-        # defaulted -- each is
+        # `chronicle:`, `status_feed:`, `model_switch:`, `mode_switch:`,
+        # `role_spawn:` and `library:` are all required, not defaulted -- each is
         # always wired in the live path, so a defaulted Null here would only mask
-        # a mis-wire (a permissive policy_switch/model_switch would even fail
-        # OPEN: a silently disconnected gate). The mode switch is the sharpest
-        # case of that rule, not an exception to it: a defaulted one would let
-        # `/mode plan` report success against a slot no gate and no toolset ever
-        # reads. A forgotten keyword must be a loud
+        # a mis-wire. The mode switch is the sharpest case of that rule: it is the
+        # slot that actually reaches the gate, since {CLI::Switchboard#apply}
+        # DERIVES the gate policy from the flip, so a defaulted one would fail
+        # OPEN -- `/mode plan` would report success against a slot no gate and no
+        # toolset ever reads. A forgotten keyword must be a loud
         # ArgumentError at construction, not a quiet degrade far from the bug.
         # That applies to the library exactly as it does to the rest: a from-disk
         # default here would silently be a SECOND read of the same tree, which is
@@ -57,7 +56,7 @@ module Lain
         # become a SECOND ledger whose releases nobody ever sees -- `/survey`
         # would mask regions this run has already released, with every object
         # present and nothing about the wiring looking wrong.
-        def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:, policy_switch:,
+        def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:,
                        model_switch:, mode_switch:, library:, ledger:, approvals: nil, root: Dir.pwd,
                        cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null)
           @role_spawn = role_spawn
@@ -70,7 +69,7 @@ module Lain
           # Wiring hands in one whose reader routes through the conductor.
           @approval_prompt = approval_prompt || Frontend::ApprovalPolicy.new
           @env = assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
-                              policy_switch:, model_switch:, mode_switch:)
+                              model_switch:, mode_switch:)
         end
 
         attr_reader :env, :goal_driver
@@ -107,14 +106,14 @@ module Lain
         # loosen). Every reader is a required live collaborator; only
         # `approvals` falls back, to the genuine {Env::NoApprovals} Null when
         # the session wired no queue.
-        def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:, policy_switch:,
+        def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
                          model_switch:, mode_switch:)
           Env.new(
             status: status_feed, sessions: Lain::CLI::Sessions.new,
             approvals: approvals || Env::NoApprovals, supervisor:,
             replies:, fork_point: ForkPoint.new(dir: Paths.new.sessions_dir),
             tmux_surface: TmuxSurface.new, agent:, chronicle:,
-            policy_switch:, model_switch:, mode_switch:, role_spawn: @role_spawn
+            model_switch:, mode_switch:, role_spawn: @role_spawn
           )
         end
 

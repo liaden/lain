@@ -17,7 +17,6 @@ RSpec.describe Lain::CLI::Command::Surface do
 
   let(:role_spawn) { instance_spy(Lain::Skill::RoleSpawn) }
   let(:status_feed) { instance_double(Lain::StatusFeed) }
-  let(:policy_switch) { instance_double(Lain::Approval::PolicySwitch) }
   let(:model_switch) { instance_double(Lain::Context::ModelSwitch) }
   let(:mode_switch) { instance_double(Lain::Mode::Switch) }
   let(:ledger) { Lain::Sensitivity::Ledger.new }
@@ -30,7 +29,7 @@ RSpec.describe Lain::CLI::Command::Surface do
     described_class.new(agent: instance_spy(Lain::Agent), replies: instance_spy(Lain::CLI::HumanReplies),
                         supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
                         chronicle: Lain::CLI::Chronicle::Null.new, library: Lain::Skill::Library.load(root:),
-                        status_feed:, policy_switch:, model_switch:, mode_switch:, ledger:)
+                        status_feed:, model_switch:, mode_switch:, ledger:)
   end
 
   it "refuses to construct without the run's library, rather than reading one of its own" do
@@ -39,7 +38,7 @@ RSpec.describe Lain::CLI::Command::Surface do
         described_class.new(agent: instance_spy(Lain::Agent), role_spawn:, root:,
                             replies: instance_spy(Lain::CLI::HumanReplies),
                             supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
-                            status_feed:, policy_switch:, model_switch:, mode_switch:, ledger:)
+                            status_feed:, model_switch:, mode_switch:, ledger:)
       end
 
       expect { libraryless.call }.to raise_error(ArgumentError, /library/)
@@ -56,7 +55,7 @@ RSpec.describe Lain::CLI::Command::Surface do
                             replies: instance_spy(Lain::CLI::HumanReplies),
                             supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
                             catalog: Lain::Skill::Catalog.load(root:), slots: Lain::Prompt::Slots.load(root:),
-                            status_feed:, policy_switch:, model_switch:, mode_switch:, ledger:)
+                            status_feed:, model_switch:, mode_switch:, ledger:)
       end
 
       expect { paired.call }.to raise_error(ArgumentError, /catalog|slots|library/)
@@ -94,7 +93,7 @@ RSpec.describe Lain::CLI::Command::Surface do
                             replies: instance_spy(Lain::CLI::HumanReplies),
                             supervisor: Lain::Supervisor::Null, chronicle: Lain::CLI::Chronicle::Null.new,
                             library: Lain::Skill::Library.load(root:),
-                            status_feed:, policy_switch:, model_switch:, ledger:)
+                            status_feed:, model_switch:, ledger:)
       end
 
       expect { switchless.call }.to raise_error(ArgumentError, /mode_switch/)

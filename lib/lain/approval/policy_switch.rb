@@ -6,11 +6,13 @@ require "delegate"
 
 module Lain
   module Approval
-    # The delegating slot `/yolo` flips: {Effect::Handler::Gate}'s policy duck
-    # (`#call(effect, context) -> Boolean`), answering through whichever policy
-    # is current. Gate stays construction-fixed -- it holds this ONE object for
-    # the session, and the flip swaps the delegate inside it, never a setter on
-    # Gate. Deliberately MUTABLE coordination state, like {Approval::Queue::Pending}
+    # The delegating slot a posture flip writes: {Effect::Handler::Gate}'s policy
+    # duck (`#call(effect, context) -> Boolean`), answering through whichever
+    # policy is current. Nothing types at this slot directly -- {CLI::Switchboard#apply}
+    # writes it as the DERIVED consequence of the `/mode` flip it carries, which
+    # is what keeps one slot to one writer. Gate stays construction-fixed -- it
+    # holds this ONE object for the session, and the flip swaps the delegate
+    # inside it, never a setter on Gate. Deliberately MUTABLE coordination state, like {Approval::Queue::Pending}
     # and unlike the frozen value objects: it exists to be switched.
     #
     # Every flip lands in the Journal attributed to the surface that made it
@@ -85,8 +87,12 @@ module Lain
 
       attr_reader :current
 
-      # @param initial [#call] the wired starting policy ({Gate::ApproveAll}
-      #   under --yolo, the {Approval::Queue} otherwise)
+      # @param initial [#call] the starting mode's resolved gate policy --
+      #   {Mode::Resolution}'s `gate_policy`, which is the session's
+      #   {Approval::Escalation} ladder for an asking posture and a
+      #   {Effect::Handler::Gate::ApproveAll}/{Effect::Handler::Gate::DenyAll}
+      #   for a posture that declares one. NOT the bare {Approval::Queue}: the
+      #   queue is the parked list the ladder's asking rung parks ON.
       # @param journal [#record] where each flip lands as evidence
       def initialize(initial, journal:)
         @current = initial

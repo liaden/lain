@@ -221,9 +221,16 @@ module Lain
           "and say what it was for."
       end
 
-      # This board's contribution to the {Command::Surface}: the three switches,
-      # plus /approve's inline drain prompt over the SAME conductor-routed
-      # reader the Repl's watch surface uses (see Repl::ApprovalSurfaces#approval_surface's WHY).
+      # This board's contribution to the {Command::Surface}: the two switches a
+      # command WRITES, plus /approve's inline drain prompt over the SAME
+      # conductor-routed reader the Repl's watch surface uses (see
+      # Repl::ApprovalSurfaces#approval_surface's WHY).
+      #
+      # {#policy_switch} is deliberately NOT among them. It is DERIVED -- {#apply}
+      # writes it as the consequence of the mode flip `mode_switch` carries -- so
+      # handing it to the command surface would put two writers on one slot,
+      # which is what `/mode` exists to avoid. It stays this board's, read by
+      # {#gate} and by every child's seam through the board thunk.
       #
       # `ledger` rides along for the reason the reader above exists: `/survey`
       # projects a corpus through the region model, and a command holding a
@@ -231,7 +238,7 @@ module Lain
       # already released. One ledger, or the release control silently releases
       # nothing.
       def surface_kwargs(conductor:, tty:)
-        { policy_switch:, model_switch:, mode_switch:, ledger:, approval_prompt: prompt(conductor:, tty:) }
+        { model_switch:, mode_switch:, ledger:, approval_prompt: prompt(conductor:, tty:) }
       end
 
       private

@@ -6,19 +6,30 @@ RSpec.describe Lain::CLI::Command::Env do
       approvals: described_class::NoApprovals, supervisor: Lain::Supervisor::Null,
       replies: instance_double(Lain::CLI::HumanReplies), fork_point: instance_double(Lain::CLI::ForkPoint),
       tmux_surface: instance_double(Lain::CLI::TmuxSurface), agent: instance_double(Lain::Agent),
-      policy_switch: instance_double(Lain::Approval::PolicySwitch),
       model_switch: instance_double(Lain::Context::ModelSwitch),
       mode_switch: instance_double(Lain::Mode::Switch),
       chronicle: Lain::CLI::Chronicle::Null.new, role_spawn: instance_double(Lain::Skill::RoleSpawn) }
   end
 
-  it "is a frozen value over the thirteen readers" do
+  it "is a frozen value over the twelve readers" do
     env = described_class.new(**readers)
 
     expect(env).to be_frozen
     expect(env.to_h.keys)
       .to eq(%i[status sessions approvals supervisor replies fork_point tmux_surface agent
-                policy_switch model_switch mode_switch chronicle role_spawn])
+                model_switch mode_switch chronicle role_spawn])
+  end
+
+  # The gate policy is DERIVED from a mode flip, not written by a command:
+  # {CLI::Switchboard#apply} sets it as the consequence of the flip `/mode`
+  # reaches through `mode_switch`. A command that wrote it directly would be a
+  # second writer for one slot -- which is what `/yolo` was, and what `/mode`
+  # exists to avoid. So Env carries the intent and never the derivation, and
+  # the identity between the live policy and the session's one queue is pinned
+  # on the {CLI::Switchboard}, which owns the switch.
+  it "carries no policy_switch -- the gate policy is derived from a mode flip, never a command's to write" do
+    expect(described_class.members).not_to include(:policy_switch)
+    expect(described_class.new(**readers)).not_to respond_to(:policy_switch)
   end
 
   it "refuses a nil reader loudly, naming it -- Null collaborators, never nil" do

@@ -5,7 +5,7 @@ module Lain
     module Command
       Env = Data.define(:status, :sessions, :approvals, :supervisor,
                         :replies, :fork_point, :tmux_surface, :agent,
-                        :policy_switch, :model_switch, :mode_switch, :chronicle, :role_spawn) do
+                        :model_switch, :mode_switch, :chronicle, :role_spawn) do
         def initialize(**readers)
           absent = readers.select { |_name, reader| reader.nil? }.keys
           raise ArgumentError, "Command::Env readers must not be nil (wire a Null collaborator): #{absent.inspect}" \
@@ -24,9 +24,14 @@ module Lain
       # Nil-free by contract: every reader answers a real collaborator (or the
       # one genuine Null Object, {NoApprovals}), and a nil is refused loudly
       # at assembly -- no command ever writes `if env.thing`.
-      # `mode_switch` sits beside its two siblings deliberately: all three are
+      # `mode_switch` sits beside `model_switch` deliberately: both are
       # delegating slots a command WRITES and a construction-fixed collaborator
-      # READS, so they are one family, not three unrelated readers.
+      # READS, so they are one family, not two unrelated readers. The gate's
+      # policy switch is NOT a third: it is DERIVED from a mode flip --
+      # {CLI::Switchboard#apply} writes it as that flip's consequence -- so a
+      # command expresses the intent and never the derivation. A slot here
+      # would flatten a derived value next to its own cause, and give one slot
+      # two writers.
       class Env
         # Reopened after the `Data.define` block: per CLAUDE.md's known trap, a
         # constant written inside that block would land on the enclosing module

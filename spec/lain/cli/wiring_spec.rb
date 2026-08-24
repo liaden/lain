@@ -1167,23 +1167,39 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     # The load-bearing identity AC1/AC3 stand on (a review panel's probe): a dropped
-    # surface_kwargs would leave these readers on their Nulls and silently
-    # disconnect /mode from the Gate and /model from the Agent's Context.
-    it "hands the Env the SAME switches the Gate and the Agent's context hold" do
+    # surface_kwargs would leave this reader on its Null and silently
+    # disconnect /model from the Agent's Context.
+    it "hands the Env the SAME model switch the Agent's context holds" do
       wiring = run_wiring
       env = wiring.command_env
-
-      expect(env.policy_switch).to be_a(Lain::Approval::PolicySwitch)
-      # What the Gate holds is the LADDER, and the identity that matters is
-      # one rung down -- its asking rung must park on the session's ONE queue,
-      # the same object /approve drains.
-      expect(env.policy_switch.current).to be_a(Lain::Approval::Escalation)
-      expect(env.policy_switch.current.find { |rung| rung.name == "surfaces" }.queue).to be(wiring.approvals)
 
       expect(env.model_switch).to be_a(Lain::Context::ModelSwitch)
       expect(env.agent.context.model).to eq(env.model_switch.current)
       env.model_switch.switch("probe-model-x", surface: "probe")
       expect(env.agent.context.model).to eq("probe-model-x")
+    end
+
+    # The session's ONE queue, pinned on the {Lain::CLI::Switchboard} because
+    # that is what owns the policy switch: the gate policy is DERIVED from a
+    # mode flip (#apply writes it as the consequence of the flip /mode reaches
+    # through `mode_switch`), so no command reads it and Command::Env no longer
+    # carries it. What the Gate holds is the LADDER, and the identity that
+    # matters is one rung down -- its asking rung must park on the same object
+    # /approve drains, or a rewiring gives the run two queues and the drain
+    # empties the wrong one.
+    #
+    # Reached for privately, on the same terms as `board_for` below: the board
+    # IS this run's authority and nothing in lib/ asks Wiring for it, so a
+    # public reader would exist only for this example.
+    it "parks the ladder's asking rung on the SAME queue /approve drains" do
+      wiring = run_wiring
+      board = wiring.instance_variable_get(:@switchboard)
+
+      expect(board.policy_switch).to be_a(Lain::Approval::PolicySwitch)
+      expect(board.policy_switch.current).to be_a(Lain::Approval::Escalation)
+      expect(board.policy_switch.current.find { |rung| rung.name == "surfaces" }.queue).to be(wiring.approvals)
+      # The queue /approve actually drains, reached the way the command does.
+      expect(wiring.command_env.approvals).to be(wiring.approvals)
     end
 
     # BEFORE the threading below, a wired session read the project tree FIVE

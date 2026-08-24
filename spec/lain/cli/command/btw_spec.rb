@@ -208,7 +208,6 @@ RSpec.describe "the /btw and /keep registration" do
         agent: instance_spy(Lain::Agent), replies: instance_spy(Lain::CLI::HumanReplies), supervisor: Lain::Supervisor::Null,
         role_spawn: instance_spy(Lain::Skill::RoleSpawn), root:, chronicle: Lain::CLI::Chronicle::Null.new,
         status_feed: instance_double(Lain::StatusFeed),
-        policy_switch: instance_double(Lain::Approval::PolicySwitch),
         model_switch: instance_double(Lain::Context::ModelSwitch),
         mode_switch: instance_double(Lain::Mode::Switch),
         library: Lain::Skill::Library.load(root:), ledger: Lain::Sensitivity::Ledger.new

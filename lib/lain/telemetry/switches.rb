@@ -2,7 +2,7 @@
 
 module Lain
   module Telemetry
-    # The three live-switch flips (/yolo's policy, /model's model, /mode's mode).
+    # The three live-switch flips (the gate's policy, /model's model, /mode's mode).
     # Each is a DUMB CARRIER: the switch that emits it ({Approval::PolicySwitch}/
     # {Context::ModelSwitch}/{Mode::Switch}) owns the from/to naming and keeps its
     # own live `@current`; the record only serializes the flip. The discriminator
@@ -10,9 +10,12 @@ module Lain
     # basename ({Journalable#journal_type}), and journal readers and replay match
     # on them, so the class names must not drift.
 
-    # A /yolo gate flip, attributed to the surface that made it -- "who turned
-    # the gate off, and when" is evidence on a study bench, not incident
-    # detail. `from`/`to` are the snake_case policy names {Approval::PolicySwitch}
+    # A gate-policy flip, attributed to the surface that made it -- "who changed
+    # what the gate answers, and when" is evidence on a study bench, not incident
+    # detail. The flip is DERIVED rather than typed: {CLI::Switchboard#apply}
+    # writes the posture's gate policy as the consequence of a `/mode` flip, so
+    # `surface` names the surface that flipped the MODE.
+    # `from`/`to` are the snake_case policy names {Approval::PolicySwitch}
     # derives; `surface` names the deciding surface. Deeply frozen (interned
     # strings) so the record stays Ractor-shareable.
     PolicySwitch = Data.define(:from, :to, :surface) do

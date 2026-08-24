@@ -426,9 +426,11 @@ module Lain
       # could see it.
       def replies = -> { @replies }
 
-      # I4: the {Switchboard} owns Gate's policy now -- the queue (or
-      # ApproveAll under --yolo) behind the ONE PolicySwitch /yolo flips; Gate
-      # itself stays construction-fixed. It resolves its own journal from the
+      # I4: the {Switchboard} owns Gate's policy now -- the posture's resolved
+      # gate policy (the {Approval::Escalation} ladder for an asking posture)
+      # behind the ONE PolicySwitch, which the board WRITES itself as the
+      # derived consequence of a `/mode` flip; Gate itself stays
+      # construction-fixed. It resolves its own journal from the
       # chronicle (the null device under --no-journal). Memoized because
       # #wire_agent resolves it and {AgentBuild} is handed what came back.
       #
