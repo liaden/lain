@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 require "async"
+require "fileutils"
 require "stringio"
+require "tmpdir"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module AutoSurfaceSpecSupport
@@ -283,6 +285,183 @@ RSpec.describe Lain::Approval::AutoSurface do
 
       expect(spawn.calls.size).to eq(1)
       expect(settled.surface).to eq(described_class::SURFACE)
+    end
+  end
+
+  # T13/F63. What this surface will and will not judge, over a `bash` argv --
+  # pinned from both sides, because the two halves mean nothing apart.
+  #
+  # {#judges?} asks about a pending's outstanding sensitive REGIONS, and regions
+  # are a `read_file`/{Middleware::RedactSecretReads} concept: a gated `bash`
+  # carries {Queue::Outstanding::NONE} whatever its argv names. So this surface's
+  # own filter answers TRUE for a command reading an ssh key and WOULD approve
+  # it -- the region partition was never meant to cover an argv, and does not.
+  # Nothing about the tool NAME is consulted anywhere on the path from
+  # {#judges?} through {QueueSurface#mine?}.
+  #
+  # What stands between the two is ORDER, and only for one spelling.
+  # {Approval::Escalation.for} puts {Escalation::Triage} ahead of
+  # {Escalation::Surfaces}, so where the rung denies, nothing ever parks and
+  # this surface has no pending to see. That is the first example.
+  #
+  # == The rung's reach is NARROW, and under --auto-approve that is a hole
+  #
+  # {Triage#literal} -- the only branch that reads an argv at all -- runs solely
+  # on {Shell::Verdict}'s ALLOW, because `term` is `NO_TERM` on a deny and on
+  # every abstention. {Shell::Verdict} abstains on quotes and escapes
+  # ({Verdict::ESCAPING}), on a tilde or a glob ({Verdict::EXPANDING}), on `$`
+  # expansion, and on `;`/`&&`/`||`/`&`. So the deny needs the WHOLE command to
+  # be literal AND the path written with a separator, and everything else
+  # abstains without ever looking at the path.
+  #
+  # {Triage}'s own docstring prices that abstention as safe -- "the call still
+  # reaches a human because Triage downgrades every allow anyway". THAT PRICE IS
+  # WRONG UNDER `--auto-approve`: the abstention reaches THIS surface, whose
+  # one-word prompt is never told a protected path is in the argv, and whose
+  # 50ms poll beats any human racing it on the same queue. The examples below
+  # pin that as it stands, one per spelling. They are `OPEN:` rather than
+  # aspirational on this card's own rule -- record what the code does, do not
+  # assert a hypothesis it refutes. Closing it belongs to a later card, beside
+  # the `/mode auto` hole in the plan doc's Open decisions.
+  #
+  # The `&&` example is the sharpest of them: the path there is bare, unquoted
+  # and absolute -- the exact spelling the first example denies -- and it is
+  # approved anyway, because a SECOND command elsewhere in the string cost the
+  # rung its allow. The hole is not about how the path is spelled.
+  describe "a bash argv naming a path no approval may lift" do
+    let(:spawn) { AutoSurfaceSpecSupport::ScriptedRoleSpawn.new { Lain::Tool::Result.ok("APPROVE") } }
+    let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+    # A REAL Toolset, on board_build_spec's terms: the ladder's rungs read the
+    # tier off the live capability set, so a call that is not gated at all never
+    # reaches a rung and every example here would pass vacuously.
+    let(:toolset) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
+
+    def in_tree
+      Dir.mktmpdir("lain-auto-surface") do |dir|
+        base = File.realpath(dir)
+        root = File.join(base, "repo")
+        FileUtils.mkdir_p(File.join(root, ".lain"))
+        yield(root, File.join(base, "home"))
+      end
+    end
+
+    def project_at(root) = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+
+    def paths_at(home) = Lain::Paths.new(env: { "HOME" => home })
+
+    # The real construction path, nothing injected: {CLI::Wiring::BoardBuild} is
+    # what hands the triage rung a classifier at all.
+    #
+    # `--auto-approve` is deliberately NOT in `options:`, because the board does
+    # not read it -- {Switchboard.for} reads `:non_interactive` and nothing
+    # else, and the flag is wired one module over at
+    # {Wiring::ToolsetBuild#build}. Passing it here would read as the variable
+    # under test while changing nothing. The live {AutoSurface} watching
+    # `board.approvals` below IS `--auto-approve`, faithfully: it is the same
+    # object {Repl::ApprovalSurfaces#watch} spawns when the flag is set.
+    def armed_board(root, home)
+      Lain::CLI::Wiring::BoardBuild.for(chronicle:, options: {}, model: "m", toolset:,
+                                        project: project_at(root), paths: paths_at(home))
+    end
+
+    # The SAME board with `classifiers:` -- and only `classifiers:` -- dropped,
+    # so the contrast discriminates one variable rather than three.
+    # {BoardBuild.for} is a thin adapter that compiles the `[sensitivity]` table
+    # once, derives `rules:`/`sensitivity:`/`classifiers:` from it and delegates
+    # to {Switchboard.for}; this composes the first two exactly as it does and
+    # lets the third default to {Triage::AnyPath}, which protects nothing and is
+    # what every board had before F63 was wired. Same entry point, one layer
+    # down, one argument changed.
+    def disarmed_board(root, home)
+      project = project_at(root)
+      table = Lain::CLI::Wiring::BoardBuild.rules(project:)
+      Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "m", toolset:,
+                                 rules: Lain::Project::Consent.for(project:).rules,
+                                 sensitivity: Lain::CLI::Wiring::BoardBuild.policy(project:, paths: paths_at(home),
+                                                                                   table:))
+    end
+
+    def key_under(home) = File.join(home, ".ssh", "id_rsa")
+
+    def bash_of(command)
+      Lain::Effect::ToolCall.new(tool_use_id: "tu_bash", name: "bash", input: { "command" => command })
+    end
+
+    def rulings = Lain::Journal.records(journal_io.string.lines, type: "escalation").to_a
+
+    def rungs = rulings.map { |ruling| ruling.values_at("rung", "verdict") }
+
+    def signatures = decisions.map { |decision| decision.values_at("surface", "verdict") }
+
+    # Watching the way {Repl::ApprovalSurfaces} does -- a fiber over the live
+    # queue -- rather than a direct `sweep`, because the assertion is that this
+    # surface never gets a pending, and a hand-driven sweep could only say that
+    # about the moment it was called.
+    def while_watching(board, &block)
+      surface = described_class.new(role_spawn: spawn, poll_interval: 0.005)
+      Sync do |task|
+        watcher = task.async { surface.watch(board.approvals) }
+        task.with_timeout(2, &block)
+      ensure
+        watcher&.stop
+      end
+    end
+
+    # The one spelling the rung actually reaches: every word literal, the path
+    # written with separators.
+    def answered_for(board, command)
+      while_watching(board) do
+        answer = board.policy_switch.call(bash_of(command), nil)
+        # Many polls at 5ms: the surface had every chance to see a pending.
+        Async::Task.current.sleep(0.05)
+        answer
+      end
+    end
+
+    it "is denied at triage, so nothing parks and the auto-approver is never asked" do
+      in_tree do |root, home|
+        board = armed_board(root, home)
+        allowed = answered_for(board, "cat #{key_under(home)}")
+
+        expect(allowed).to be(false)
+        expect(spawn.calls).to be_empty
+        expect(board.approvals.count).to eq(0)
+        expect(rulings.map { |ruling| ruling.values_at("rung", "verdict", "faulted") })
+          .to eq([["triage", "deny", false]])
+      end
+    end
+
+    it "reaches this surface and is APPROVED when the triage rung is the inert AnyPath" do
+      in_tree do |root, home|
+        board = disarmed_board(root, home)
+        allowed = answered_for(board, "cat #{key_under(home)}")
+
+        expect(allowed).to be(true)
+        expect(spawn.calls.size).to eq(1)
+        expect(signatures).to eq([%w[auto_approver approve]])
+      end
+    end
+
+    # One example per spelling rather than a loop inside one, so a later card
+    # that closes ONE of these turns exactly one example red and names it.
+    {
+      "a double-quoted path" => ->(key) { %(cat "#{key}") },
+      "a single-quoted path" => ->(key) { "cat '#{key}'" },
+      "a tilde" => ->(_key) { "cat ~/.ssh/id_rsa" },
+      "a $HOME expansion" => ->(_key) { "cat $HOME/.ssh/id_rsa" },
+      "a bare path beside a second command" => ->(key) { "cat #{key} && echo hi" }
+    }.each do |spelling, command|
+      it "OPEN: #{spelling} abstains at triage, reaches this surface, and is approved with no human" do
+        in_tree do |root, home|
+          board = armed_board(root, home)
+          allowed = answered_for(board, command.call(key_under(home)))
+
+          expect(allowed).to be(true)
+          expect(spawn.calls.size).to eq(1)
+          expect(rungs).to eq([%w[triage abstain], %w[rules abstain], %w[surfaces allow]])
+          expect(signatures).to eq([%w[auto_approver approve]])
+        end
+      end
     end
   end
 
