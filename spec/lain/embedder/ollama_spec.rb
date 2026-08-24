@@ -106,8 +106,15 @@ RSpec.describe Lain::Embedder::Ollama do
       expect(described_class::Transport.ancestors).to include(Lain::Provider::Ollama::Transport)
     end
 
+    # Asserted on an INSTANCE, because that is where the answer lives now: the
+    # endpoint is a constructor argument, so `Provider::Ollama::Transport`
+    # answers `local?` off the base it will really dial rather than off a class
+    # predicate that was true for every instance at once. The embedder inherits
+    # that, and inheriting it is the point of the subclass.
     it "inherits the local, keyless posture" do
-      expect(described_class::Transport.local?).to be(true)
+      transport = described_class::Transport.new(Lain::Provider::HTTP::Configuration.new)
+
+      expect(transport.local?).to be(true)
       expect(described_class::Transport.configuration_requirements).to be_empty
     end
   end
@@ -125,6 +132,39 @@ RSpec.describe Lain::Embedder::Ollama do
 
       expect(vectors).to eq([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
       expect(stub).to have_been_requested
+    end
+
+    # The superclass grew an `#headers` that can carry a bearer. The embedder
+    # has no key and no way to be given one, so this pins that the capability
+    # did not leak down the hierarchy as a default -- an embed request to a
+    # loopback server still sends no credential.
+    it "sends no authorization header, having no key and no way to be given one" do
+      stub = stub_request(:post, "http://localhost:11434/api/embed")
+             .with { |req| !req.headers.key?("Authorization") }
+             .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                        body: JSON.generate(embed_body([0.1, 0.2, 0.3])))
+
+      described_class.new.embed(%w[a])
+
+      expect(stub).to have_been_requested
+    end
+
+    # THE BYPASS PATH, reproduced end to end. No deployment anywhere: a
+    # Configuration is built directly, given a key with an interior CRLF, and
+    # handed to this embedder. `Deployment::Cloud`'s refusal cannot reach here,
+    # so before the transport's wire-format guard this raised a bare
+    # `ArgumentError` from inside Net::HTTP -- outside `Lain::Error`, outside
+    # `Embedder::Error`, outside `wrapping_errors` and therefore outside every
+    # rescue in the codebase -- with the LIVE KEY quoted in its message.
+    it "refuses a CRLF key as a Lain::Error rather than letting Net::HTTP leak it" do
+      config = Lain::Provider::HTTP::Configuration.new
+      config.ollama_api_key = "sk-paste\r\nCANARY9876"
+
+      expect { described_class.new(config:).embed(%w[a]) }.to raise_error(Lain::Error) do |error|
+        expect(error).not_to be_a(ArgumentError)
+        expect(error.message).not_to include("CANARY9876")
+        expect(error.message).not_to include("sk-paste")
+      end
     end
 
     # AC: a non-2xx body is loud -- wrapped into APIStatusError with the status

@@ -10,15 +10,33 @@ module Lain
       # `complete`/`sync_response`: the payload is already rendered by
       # {Ollama::Encoding}, so the body is posted as-is and handed straight back.
       #
-      # Unlike {Provider::HTTP::Providers::Anthropic} this is a LOCAL provider --
-      # no api key, no auth header, no configuration requirement -- so `local?`
-      # is true and `configuration_requirements` stays empty. Its
-      # `ollama_api_base` Configuration option is registered at load (below) via
+      # Which server, and with whose credential, are both answered PER INSTANCE
+      # here, because both are read off a Configuration handed to the
+      # constructor. A class predicate cannot describe an object whose endpoint
+      # is an argument, so {#local?} delegates to
+      # {Provider::Admission::Endpoint.local?} over {#api_base} and {#headers}
+      # builds its bearer from `ollama_api_key`.
+      #
+      # `configuration_requirements` nonetheless stays EMPTY, and that is not an
+      # oversight: it is a class-level list `Connection#ensure_configured!`
+      # refuses construction over, so requiring the key would refuse every
+      # loopback connection -- the default arm, which wants no credential at
+      # all. The refusal that names `OLLAMA_API_KEY` belongs to
+      # {Deployment::Cloud}, where it is per-deployment.
+      #
+      # Its `ollama_api_base` and `ollama_api_key` Configuration options are
+      # registered at load (below) via
       # `register_provider_options` directly, NOT `Provider::HTTP::Provider.register`:
       # this is a Lain-native provider reusing the transport base, not a member
       # of the vendored slice's slug registry, so it takes the option seam
       # without adding a `resolve(:ollama)` entry the vendored code never looks up.
       class Transport < Provider::HTTP::Provider
+        # Rooted at {Lain::Error} so `exe/lain`'s top-level rescue maps it
+        # instead of dumping a trace, and so it cannot escape the way the bare
+        # `ArgumentError` it replaces did. NOT a {Provider::HTTP::Error}: that
+        # family means "the server said no", and nothing was ever sent here.
+        class UnusableCredential < Lain::Error; end
+
         COMPLETION_PATH = "api/chat"
         # The loaded-runner listing. It is the ONLY endpoint that states the
         # window a model is actually being served with -- `/api/show` reports
@@ -30,6 +48,30 @@ module Lain
         # references/ollama/api-show-and-context.md.
         SHOW_PATH = "api/show"
         DEFAULT_API_BASE = "http://localhost:11434"
+
+        # What an HTTP header field value cannot carry. `[[:cntrl:]]` is the
+        # whole class Net::HTTP refuses -- CR, LF, tab, NUL and the rest of
+        # \x00-\x1F plus \x7F -- not just the two spellings that motivated the
+        # guard; a rule matching only `\r\n` leaves a lone `\r` and a lone `\n`
+        # open, and the adapter refuses all three alike.
+        #
+        # It lives HERE, in the object that puts a value into a header, and
+        # {Deployment::Cloud} reads it from here rather than keeping a second
+        # copy: "what a header cannot carry" is one fact and belongs in one
+        # place, even though the two guards that consult it are not duplicates
+        # (see {#headers}).
+        UNUSABLE_IN_HEADER = /[[:cntrl:]]/
+
+        # Deliberately says nothing about the value. This is the one string in
+        # the process that must never reach a log line, and an exception message
+        # is a log line waiting to happen -- quoting the key here would only
+        # move the leak out of Net::HTTP's `ArgumentError` and into ours, which
+        # is worse, because ours is the one callers are told to rescue and
+        # report.
+        UNUSABLE_CREDENTIAL = "ollama_api_key contains a line break or control character, which an " \
+                              "HTTP header field value cannot carry (a key pasted from a " \
+                              "soft-wrapped page, or read from a CRLF file, carries one " \
+                              "invisibly). Its value is withheld here because it is a live credential"
 
         # A metadata probe is not a completion and must not inherit a
         # completion's patience. `/api/ps` answers in ~0.3ms when ollama is up;
@@ -85,8 +127,10 @@ module Lain
         end
 
         # The models currently resident, each with the context length its runner
-        # was loaded with. A GET, so it takes no payload and no headers -- Ollama
-        # is local and this transport sends no auth.
+        # was loaded with. A GET, so it takes no payload; auth is not its
+        # business either way, since {Connection} merges {#headers} into every
+        # request it makes on this transport's behalf, probe connection
+        # included.
         def process_status
           probe_connection.get(PROCESS_PATH)
         end
@@ -120,7 +164,79 @@ module Lain
           @config.ollama_api_base || DEFAULT_API_BASE
         end
 
+        # Auth in the vendored idiom (`Provider::HTTP::Providers::Bedrock:28-33`):
+        # built from Configuration, because Configuration is the only thing the
+        # wire path can reach. `Connection#provider_headers` asks THIS object and
+        # merges the result into every request, so this is the sole live auth
+        # path; a {Deployment}'s own `#headers` is a declaration checked against
+        # it by a spec, and is merged nowhere.
+        #
+        # An absent key answers with no header rather than an empty bearer.
+        # Whether a key is any GOOD is deliberately not asked here, because
+        # asking would be a SECOND definition of "there is a key" and two of
+        # those is how they drift. Two guards already stand in front:
+        #
+        # 1. {Deployment::Cloud} refuses a nil, non-String, whitespace-only or
+        #    control-character key BY NAME, naming `OLLAMA_API_KEY`. That is
+        #    the door every shipped caller comes through.
+        # 2. On the bypass path -- a Configuration built directly, no
+        #    deployment in it -- `Configuration`'s generated setter
+        #    (`http/configuration.rb:38-41`) coerces a blank String to nil, so
+        #    `"   "` arrives here already absent.
+        #
+        # Guard 2 special-cases `String` and nothing else, so a non-String key
+        # set directly still reaches the wire as `Bearer 12345` (verified). It
+        # is a backstop, not a validator; {Deployment::Cloud} is the validator.
+        def headers
+          key = @config.ollama_api_key
+          key.nil? ? {} : { "Authorization" => "Bearer #{wire_safe(key)}" }
+        end
+
+        # Delegated, not re-derived, so the gate that decides this transport's
+        # concurrency and the transport describing itself cannot disagree --
+        # {Provider::Admission::Endpoint.local?} is the codebase's one
+        # definition of local, and it already folds every loopback spelling.
+        def local? = Provider::Admission::Endpoint.local?(api_base)
+
+        # The base pair delegate to the CLASS, and overriding only half of it
+        # would leave a loopback transport answering `local?` true and `remote?`
+        # true at the same time.
+        def remote? = !local?
+
         private
+
+        # TWO GUARDS, AND THEY ARE NOT DUPLICATES. They answer different
+        # questions, owned in different places, known at different times -- the
+        # same shape as the secret boundary's gate/filter/mask split:
+        #
+        # - POLICY -- "is this a credential a human plausibly meant to set?"
+        #   Owned by {Deployment::Cloud}, which refuses nil, non-String,
+        #   whitespace-only and unusable keys BY NAME, naming `OLLAMA_API_KEY`
+        #   and pointing at the settings page. That is the door every shipped
+        #   caller comes through.
+        # - WIRE FORMAT -- "may this value go into an HTTP header at all?" Owned
+        #   HERE, because this is the object that puts it there, and CR/LF being
+        #   illegal in a field value is a fact about HTTP rather than about
+        #   Ollama.
+        #
+        # The wire guard is what stands on the BYPASS path, where a
+        # Configuration is built directly and no deployment is involved --
+        # `Embedder::Ollama.new(config:)` is the reachable one. There Net::HTTP
+        # raised a bare `ArgumentError`, outside {Lain::Error} and so outside
+        # every rescue in the codebase, with the live key quoted in its message.
+        # Deleting either guard reopens a case the other never covered.
+        #
+        # A NON-STRING KEY IS DELIBERATELY NOT REFUSED HERE. `Bearer 12345` is a
+        # perfectly legal header value, so it is not a wire-format fault; it is
+        # a policy fault, and importing that judgement into this method is
+        # exactly the second policy validator that must not exist.
+        # {Deployment::Cloud} refuses it by name, and a Configuration written
+        # directly with an Integer is the caller's own bypass.
+        def wire_safe(key)
+          raise UnusableCredential, UNUSABLE_CREDENTIAL if key.to_s.match?(UNUSABLE_IN_HEADER)
+
+          key
+        end
 
         # `dup` rather than a fresh Configuration, so an operator's `api_base`,
         # proxy and adapter still reach the probe; only the two budget numbers
@@ -158,9 +274,10 @@ module Lain
         end
 
         class << self
-          def configuration_options = %i[ollama_api_base]
-
-          def local? = true
+          # `ollama_api_key` is declared here and NOT in
+          # `configuration_requirements` -- see the class docstring for why
+          # requiring it would refuse the loopback arm.
+          def configuration_options = %i[ollama_api_base ollama_api_key]
         end
       end
     end

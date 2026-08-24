@@ -88,6 +88,86 @@ RSpec.describe Lain::Provider::Ollama::Deployment::Cloud do
     end
   end
 
+  # BLOCKER: an interior line break is not SURROUNDING whitespace, so the trim
+  # leaves it in place and `Bearer sk-real\r\nCANARY` reaches Net::HTTP, which
+  # raises a bare `ArgumentError` -- not a {Lain::Error}, so it escapes
+  # `wrapping_errors` and every rescue in the codebase, carrying THE LIVE KEY
+  # in its message past all three redaction guards (`#inspect`,
+  # `#pretty_print`, `Configuration#instance_variables`).
+  #
+  # The realistic input is a key copied from a soft-wrapped web page or read
+  # from a CRLF file -- the same settings page the refusal points at. The block
+  # above closes only the leading/trailing case, which is the case nobody hits;
+  # this one closes the case they do.
+  describe "refusing a key that cannot go in a header" do
+    # `\r\n`, `\r` and `\n` each on their own: the adapter refuses all three,
+    # and a fix that pattern-matched only the pair would leave two open. The
+    # tab and NUL are here because the same header rule refuses every control
+    # character, not only the line breaks that motivated the finding.
+    {
+      "an interior CRLF" => "sk-paste\r\nCANARY9876",
+      "an interior CR" => "sk-paste\rCANARY9876",
+      "an interior LF" => "sk-paste\nCANARY9876",
+      "an interior tab" => "sk-paste\tCANARY9876",
+      "an interior NUL" => "sk-paste\u0000CANARY9876"
+    }.each do |description, hostile|
+      it "refuses #{description}, naming the variable" do
+        expect { described_class.new(api_key: hostile) }
+          .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey, /OLLAMA_API_KEY/)
+      end
+
+      # THE POINT OF THE WHOLE FINDING. A refusal that quotes the value it
+      # refused has only moved the leak out of the adapter's ArgumentError and
+      # into our own exception -- which is worse, because ours is the one
+      # callers are told to rescue, log and report.
+      it "puts no fragment of #{description}'s key in the message" do
+        expect { described_class.new(api_key: hostile) }
+          .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey) do |error|
+            expect(error.message).not_to include("CANARY9876")
+            expect(error.message).not_to include("sk-paste")
+          end
+      end
+    end
+
+    # Already closed by the trim, because `[[:space:]]` covers `\r`. Pinned so
+    # a future rewrite of the trim cannot quietly reopen it while the interior
+    # cases go on passing.
+    it "accepts a trailing CR, which the surrounding-space trim strips today" do
+      expect { described_class.new(api_key: "sk-real\r") }.not_to raise_error
+    end
+
+    it "keeps a key a header can actually carry" do
+      expect { described_class.new(api_key: "sk-ollama-perfectly-ordinary") }.not_to raise_error
+    end
+
+    # The refusal must say what is WRONG, not merely that something is. "is not
+    # set" would send an operator who can SEE the value to look in the wrong
+    # place -- the misdirection the block above exists to prevent, arriving
+    # through a different branch.
+    it "does not claim the variable is unset when it holds an unusable key" do
+      expect { described_class.new(api_key: "sk-paste\r\nCANARY9876") }
+        .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey, /^(?!.*is not set).*$/m)
+    end
+
+    it "names the line break as the problem, so the operator knows what to look for" do
+      expect { described_class.new(api_key: "sk-paste\r\nCANARY9876") }
+        .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey, /line break|control character/)
+    end
+
+    it "still says where a key comes from, so this refusal is as actionable as the others" do
+      expect { described_class.new(api_key: "sk-paste\r\nCANARY9876") }
+        .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey, %r{ollama\.com/settings/keys})
+    end
+
+    # The end-to-end statement: with the refusal at construction there is no
+    # instance to ask for headers, so the bare ArgumentError that escapes every
+    # rescue is unreachable through this door rather than merely unlikely.
+    it "never lets a CR/LF key reach the header builder at all" do
+      expect { described_class.new(api_key: "sk-paste\r\nCANARY9876").headers }
+        .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey)
+    end
+  end
+
   it "dials ollama.com, the cloud base for the same native endpoints" do
     expect(deployment.api_base).to eq("https://ollama.com")
   end

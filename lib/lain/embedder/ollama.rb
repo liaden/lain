@@ -4,9 +4,16 @@ module Lain
   class Embedder
     # Batch embeddings over Ollama's native `/api/embed`. A free, local bench arm
     # -- the real-backend counterpart to {Static}. It REUSES {Provider::Ollama}'s
-    # base-url/env posture: the same `ollama_api_base` Configuration option (no
-    # api key -- Ollama is local) and the same vendored Faraday stack, differing
-    # only in the path it posts to (`api/embed`, not `api/chat`).
+    # base-url/env posture: the same `ollama_api_base` Configuration option and
+    # the same vendored Faraday stack, differing only in the path it posts to
+    # (`api/embed`, not `api/chat`).
+    #
+    # THIS EMBEDDER sends no credential -- it exposes no key seam, so the
+    # Configuration it builds carries no `ollama_api_key` and the inherited
+    # `#headers` answers empty. That is a fact about this class, not about the
+    # transport it inherits: the transport gained the ability to carry a Bearer
+    # when {Provider::Ollama::Deployment::Cloud} arrived, and a caller who hands
+    # `config:` a key-bearing Configuration will send it.
     #
     # The wire is `{ "model": ..., "embeddings": [[float, ...], ...], ... }` --
     # one vector per input text, in input order (verified against a local server;
@@ -17,9 +24,15 @@ module Lain
     class Ollama < Embedder
       # APIError / APIStatusError, plus both error arms of the round trip, nested
       # here as on the three Providers that share this concern -- but rooted at
-      # {Embedder::Error}, not {Lain::Error}, so `rescue Embedder::Error` still
-      # catches every embedding failure. That difference in base is why the
+      # {Embedder::Error}, not {Lain::Error}, so `rescue Embedder::Error` catches
+      # every failure of the round TRIP. That difference in base is why the
       # concern is parameterized.
+      #
+      # It does NOT catch every failure of `#embed`: {Transport::UnusableCredential}
+      # is a {Lain::Error} and propagates past it, deliberately. This family means
+      # the server said no, and a credential that cannot go in a header never
+      # reached one -- so wrapping it here would report a round trip that did not
+      # happen, and let a caller degrade past a misconfiguration it should hear.
       #
       # An {Embedder} reaching into `Provider::` is deliberate, not an accident
       # of where the file landed: what gets wrapped is a {Provider::HTTP::Error}
@@ -37,8 +50,13 @@ module Lain
 
       # {Provider::Ollama::Transport} with one more round trip on it: same
       # vendored Faraday stack, same `ollama_api_base`/DEFAULT_API_BASE posture,
-      # same local/keyless class predicates -- all INHERITED, not copied --
-      # differing only in the path it posts to. Subclassing also makes the
+      # same per-instance `#local?` and `#headers` -- all INHERITED, not copied
+      # -- differing only in the path it posts to.
+      #
+      # PER-INSTANCE, and the distinction bites here: `local?` is read off the
+      # base an instance will really dial, so the CLASS method is the vendored
+      # base's conservative `false` even though every instance this embedder
+      # builds is loopback. Ask an instance, never this class. Subclassing also makes the
       # `ollama_api_base` option registration explicit rather than a hidden
       # load-order coupling: the superclass's file registers it at its own load,
       # and this class cannot even be DEFINED until that file has loaded.
@@ -61,7 +79,8 @@ module Lain
       #   {Provider::Ollama}'s own posture.
       # @param sink [Lain::Sink] where the transport's debug/log lines go
       # @param api_base [String, nil] overrides `ollama_api_base` (default
-      #   http://localhost:11434); no api key -- Ollama is local.
+      #   http://localhost:11434). There is deliberately no key parameter: the
+      #   embed arm is the free local one, and nothing here builds a credential.
       def initialize(model: DEFAULT_MODEL, transport: nil, config: nil, sink: Sink::Null.new, api_base: nil)
         super()
         @model = model

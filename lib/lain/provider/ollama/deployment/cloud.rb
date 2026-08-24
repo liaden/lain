@@ -53,17 +53,18 @@ module Lain
         # == Which credential path is authoritative
         #
         # The key is expressed TWICE, and that is deliberate but only safe
-        # while the split is stated. `#headers` is the auth path: it is what
-        # {Provider::HTTP::Connection} merges into every request, and it is the
-        # one a reader should follow. `config.ollama_api_key`, written by
-        # {#apply}, exists so {Transport} can build the same header from
-        # Configuration in the vendored idiom
-        # (`Provider::HTTP::Providers::Bedrock:28-33`).
+        # while the split is stated.
         #
-        # Exactly one of the two may be live. If {Transport} grows a `#headers`
-        # reading `ollama_api_key`, that becomes the single path and the
-        # provider must stop passing `deployment.headers` -- two sources for
-        # one header is how they drift, and the wire shows only the winner.
+        # `config.ollama_api_key`, written by {#apply}, is the LIVE path.
+        # {Transport} builds the wire header from it in the vendored idiom
+        # (`Provider::HTTP::Providers::Bedrock:28-33`), and
+        # `Connection#provider_headers` asks the transport -- so the transport's
+        # headers are the only ones that reach the wire.
+        #
+        # This class's own `#headers` is a DECLARATION, merged nowhere. It says
+        # what the header the transport builds must look like, and a spec checks
+        # the two agree. That is its whole job: a reader who follows it must
+        # follow it to {Transport}, not mistake it for the sender.
         #
         # == What still carries the key in plaintext
         #
@@ -101,6 +102,25 @@ module Lain
           # wire as a bare `Bearer`. `[[:space:]]` is Unicode-aware and covers
           # both that and the trailing newline a key read from a file carries.
           SURROUNDING_SPACE = /\A[[:space:]]+|[[:space:]]+\z/
+
+          # NEITHER message may quote the value. A refusal that echoed the key
+          # would only move the leak out of the adapter's `ArgumentError` and
+          # into our own exception -- which is worse, because ours is the one
+          # callers are told to rescue, log and report, and it would defeat the
+          # three redaction guards (`#inspect`, `#pretty_print`,
+          # `Configuration#instance_variables`) from inside.
+          #
+          # Interpolated, so `frozen_string_literal` does not reach them and the
+          # `.freeze` is load-bearing rather than decorative.
+          BLANK_DIAGNOSIS = "#{API_KEY_ENV_KEY} holds only whitespace, so there is no key in it " \
+                            "(a non-breaking space pasted from a web page looks identical to a " \
+                            "real character)".freeze
+
+          UNUSABLE_DIAGNOSIS = "#{API_KEY_ENV_KEY} holds a line break or control character, which " \
+                               "an HTTP header field value cannot carry (a key copied from a " \
+                               "soft-wrapped page, or read from a CRLF file, carries one " \
+                               "invisibly). Its value is withheld here because it is a live " \
+                               "credential".freeze
 
           # Same list as {Local}: the cut on the provider axis is only clean
           # while these agree.
@@ -281,11 +301,19 @@ module Lain
           # coerced: `to_s` would put `Bearer {a: 1}` on the wire and earn a
           # 401 that names nothing, and {.width} above is already loud about a
           # mistyped integer -- a credential deserves at least as much.
+          # {Transport::UNUSABLE_IN_HEADER} rather than a second copy of the
+          # regex: "what a header cannot carry" is one fact, owned by the object
+          # that builds headers. This refusal is still a POLICY one and still
+          # belongs here -- it names `OLLAMA_API_KEY`, points at the settings
+          # page, and refuses at CONSTRUCTION so no unusable deployment can
+          # exist -- but it has no business restating an HTTP rule.
           def credential(api_key)
             return nil unless api_key.is_a?(String)
 
             trimmed = self.class.trim(api_key)
-            trimmed.empty? ? nil : trimmed.freeze
+            return nil if trimmed.empty? || trimmed.match?(Transport::UNUSABLE_IN_HEADER)
+
+            trimmed.freeze
           end
 
           # "is not set" is a claim about the environment, and it is false for
@@ -302,19 +330,12 @@ module Lain
           def diagnosis(api_key)
             return "#{API_KEY_ENV_KEY} is not set" if api_key.nil?
             return "#{API_KEY_ENV_KEY} is #{api_key.class}, not a String key" unless api_key.is_a?(String)
+            return BLANK_DIAGNOSIS if self.class.trim(api_key).empty?
 
-            "#{API_KEY_ENV_KEY} holds only whitespace, so there is no key in it " \
-              "(a non-breaking space pasted from a web page looks identical to a real character)"
+            UNUSABLE_DIAGNOSIS
           end
         end
       end
     end
   end
 end
-
-# `ollama_api_key` is registered HERE rather than alongside `ollama_api_base` in
-# {Transport}, because this is the object that decides a key exists at all: a
-# local deployment must never be able to write one. `register_provider_options`
-# is idempotent (`configuration.rb:32-35` early-returns on a known key), so the
-# transport declaring it as well costs nothing.
-Lain::Provider::HTTP::Configuration.register_provider_options(%i[ollama_api_key])
