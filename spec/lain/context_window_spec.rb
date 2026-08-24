@@ -274,7 +274,7 @@ RSpec.describe Lain::ContextWindow do
         "deepseek-v4-flash:preview-cloud" => 1_000_000,
         "deepseek-v4-pro:cloud" => 1_000_000,
         "deepseek-v4-pro:0813-cloud" => 1_000_000,
-        "deepseek-v4-pro:preview-cloud" => 1_000_000,
+        "deepseek-v4-pro:preview-cloud" => 524_288,
         "kimi-k3:cloud" => 1_000_000,
         "kimi-k2.7-code:cloud" => 256_000,
         "kimi-k2.6:cloud" => 256_000,
@@ -398,7 +398,13 @@ RSpec.describe Lain::ContextWindow do
         measured_ceilings = {
           "nemotron-3-nano:30b-cloud" => 262_144,
           "minimax-m2.7:cloud" => 196_608,
-          "gpt-oss:20b-cloud" => 131_072
+          "gpt-oss:20b-cloud" => 131_072,
+          "deepseek-v4-pro:preview-cloud" => 524_288,
+          "deepseek-v4-pro:0813-cloud" => 1_048_576,
+          "deepseek-v4-flash:0731-cloud" => 1_048_576,
+          "deepseek-v4-flash:preview-cloud" => 1_048_576,
+          "kimi-k2.7-code:cloud" => 262_144,
+          "gemma4:31b-cloud" => 262_144
         }
         over_claiming = measured_ceilings.select do |id, ceiling|
           described_class::CLOUD_WINDOWS.fetch(id) > ceiling
