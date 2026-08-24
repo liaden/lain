@@ -1170,3 +1170,108 @@ After the last wave:
 9. **A manual QA scenario** for the cloud arm added under `planning/qa/scenarios/`, in the shape
    `planning/qa/README.md` describes — the arm is not exercised by any default-on suite, so
    without a scenario it has no standing verification at all.
+
+## Execution log
+
+Appended during `/execute-plan`. Records decisions taken against the plan as written, so a
+reader of the history does not have to reconstruct them from card diffs.
+
+### Card status
+
+| card | wave | state |
+|---|---|---|
+| T1 | 1 | in progress (absorbed T7; gained a `/api/show` predicate) |
+| T4 | 1 | implemented, awaiting review |
+| T5 | 1 | implemented, awaiting review |
+| T9 | 1 | in progress (gained `spec/support/ollama_probe.rb`) |
+| T11 | 1 | implemented, in review |
+| T15 | 1 | implemented, awaiting review — closed as "already correct" |
+| T2 T3 T6 T8 T10 T12 T13 T14 | 2–5 | not started |
+| T7 | — | **folded into T1** |
+
+### Decision 1 — the arm is selected by `--provider ollama-cloud`, not by `--cloud`
+
+**Supersedes Open decision 4.** The panel overturned it on an argument the plan did not consider:
+`lain bench arms` and `lain bench record` build their `CLI::Backend` from *closed literal maps*
+(`ARMS_FLAGS`, `exe/lain:496`; `RECORD_FLAGS`, `exe/lain:424`), neither of which carries a
+`:cloud` key. A boolean `--cloud` is therefore **silently dropped by the bench**, which sweeps the
+local arm instead — and the Intent's stated reason for the whole chunk is the bench case.
+
+`--provider ollama-cloud` costs one entry in `Backend::PROVIDERS` and is forwarded by both flag
+maps for free. Consequences for T8: its AC 3 (the cross-flag refusal) **disappears**, and with it
+the fifth eager call in `Backend#initialize` that AC 3 would have required — which is what
+Correction 3's 110/110 `Metrics/ClassLength` budget could not have absorbed. T8 still owes the
+`MissingAPIKey` refusal, the https refusal, and the per-deployment default model.
+
+### Decision 2 — T7 is folded into T1
+
+T7's Files are `deployment/cloud.rb` and its spec, both **created by T1**, and its content
+(`request_timeout`, `max_retries`, `#apply`) is already inside T1's declared message set. A wave-2
+card that adds nothing to a wave-1 card's file is scheduling overhead and a merge hazard. T1 took
+its three ACs.
+
+One correction to T7's rationale, verified against faraday-retry 2.4.0 (`Gemfile.lock:129`): the
+`.compact` in `MiddlewareStack#retry_callbacks` is **inert**. faraday-retry coalesces nil to its
+default at read time (`middleware.rb:221`), so passing nil is byte-identical to omitting the key.
+T7's ACs asserting `nil == nil` on a fresh Configuration would have pinned nothing; the decision
+is recorded as a comment in `Deployment::Cloud` instead.
+
+### Decision 3 — `/api/show` is a second probe the plan missed, and T1 gates it
+
+`CLI::Backend#initialize` (`backend.rb:143-148`) eagerly calls `num_ctx`; `NumCtx#tokens`
+(`backend/num_ctx.rb:73`) is `@value && refuse_above_trained(...)` → `trained_maximum` (`:91-97`)
+→ `provider.trained_context_tokens` → `Ollama::Transport#model_details`, a **POST to `/api/show`**.
+So `--num-ctx N` on a cloud arm dials `https://ollama.com/api/show` at launch, before the
+chronicle opens — an endpoint the Grounding **explicitly refuses to assume answers**.
+
+T2's `runner_status?` gates only `/api/ps`. T1 gained a second predicate for model metadata, false
+on `Cloud`. The two are kept separate deliberately: `/api/ps` is a loaded runner, `/api/show` is
+the weights' trained maximum.
+
+### Decision 4 — the probe stubs are host-unscoped, and T9 owns the fix
+
+The Grounding's claim that "a cloud provider that probed would reach VCR's gate unstubbed" is
+**false**. `spec/support/ollama_probe.rb` registers `stub_request(:get, %r{/api/ps})` and
+`stub_request(:post, %r{/api/show})` — regexes over the whole normalized URI, **not host-scoped** —
+so a probe to `ollama.com` is matched and answered. The one mechanism meant to make an accidental
+cloud probe loud is what silences it, and T9's AC 3 is not true today for those two paths.
+
+`spec/support/ollama_probe.rb` added to T9's Files. The stubs must scope to the local base
+(honouring `OLLAMA_API_BASE`), keep the match-time cassette-yielding predicate, and move no
+existing measurement.
+
+### Decision 5 — T15 lands as characterisation, not as a change
+
+The panel argued for cutting T15 on the grounds that both ACs were already green. They were:
+`lain friction` over an ollama session withholds gracefully via
+`cache_waste.rb:500-503` → `:366` → `report.rb:326`/`:301`, and `PriceBook::DEFAULT` still raises
+`UnknownModel` naming the model. That is a planning critique, not a reason to discard finished,
+correct work: the card converts an unverified assumption into a pin, at the cost of six examples,
+one comment and **zero production change**. It lands.
+
+### Correction to the allowlist arithmetic (bears on T8)
+
+`APPROVED` is `{path => {constant => reason}}` and normalizes every spelling of a class to one
+constant string, so two constructions of `Provider::Ollama` in one file collapse to **one entry**.
+The plan's "3 keys / 5 entries" is wrong: moving `Provider::Ollama` out of `backend.rb` into
+`ollama_tier.rb` lands at **3 keys / 4 entries**, against ceilings of 3 and 6. T8's escalation
+trigger demanding a distinct cloud entry "in its own words" describes a row that is not
+representable — drop it. The key ceiling is still reached exactly, so the conversation that
+ceiling exists to force still happens.
+
+### Other stale citations found (bear on T13)
+
+- The Provider / model axis is `ROADMAP.md:50`, not `:52` (`:52` is the Orchestration row).
+- There is no `WindowBook::Source`; the method is `WindowBook#book`
+  (`cli/backend/window_book.rb:271-280`), consumed by `WindowBook::Live`.
+- `context_window.rb:334` is the `GUESSED` branch; the `PUBLISHED` table hit is `:332`.
+- T2's "roughly ten spec sites" list names three files that do not exist
+  (`spec/lain/provider/vcr_ollama_posture_spec.rb`, `spec/lain/backend/summarizer_spec.rb`,
+  `spec/lain/integration/provider/ollama_spec.rb`) and omits
+  `spec/lain/provider/admission_spec.rb`, which holds ~11 such constructions and is the file most
+  exposed to both T2 and T4. Regenerate the list before T2 runs.
+
+### Operational note for every remaining card
+
+A fresh worktree has **no compiled Rust extension** — `bundle exec rake compile` is required
+before any spec loads.
