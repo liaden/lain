@@ -55,6 +55,30 @@
 # default answers a body with no `model_info`, which means "no ceiling
 # discoverable": a provider that cannot state one must not block a launch, so
 # again nothing an example measures moves.
+#
+# HOST-SCOPED, not just path-matched -- found by chunk-ollama-cloud-arm's T9. The
+# path-only regex above answered these two probes for ANY host, so a provider
+# wrongly built against a hosted deployment (Ollama Cloud, or any future
+# non-local one) that called `/api/ps` or `/api/show` would get a quiet
+# `{"models":[]}`/`{}` back instead of reaching VCR's gate -- indistinguishable
+# from a normal local probe of an empty server. That silence is exactly what
+# this file's own header says the OTHER path-matching failure mode (an
+# unstubbed local probe) must never do. "Local" is not the literal string
+# `localhost:11434`: `OLLAMA_API_BASE` is a spec-level knob a developer points at
+# a non-default local server (spec/support/ollama_tag.rb), and the stub must
+# still answer THAT host too, or their `:ollama` run breaks.
+#
+# "Local" is answered by folding through {Provider::Admission::Endpoint.canonical}
+# -- the repo's ONE existing answer to "which server does this endpoint name" --
+# rather than by a second, narrower definition invented here. A `[host, port]`
+# equality check against two literal strings disagreed with both
+# `spec/support/network_access.rb`'s `LOOPBACK_HOSTS` and `Endpoint.canonical`
+# itself: the identical server spelled `127.0.0.1` or `::1` failed to match
+# `localhost`, so the SAME `--api-base http://127.0.0.1:11434` that Admission
+# already treats as one server with `localhost:11434` (`admission_spec.rb:290`)
+# would have gotten no stub and reached VCR's gate instead. Found in review, not
+# by the suite -- see `probes/t9_loopback_alias_spec.rb` for the reproduction on
+# the real launch path.
 module OllamaProbeStub
   PATH = "/api/ps"
   SHOW_PATH = "/api/show"
@@ -62,6 +86,35 @@ module OllamaProbeStub
   def self.cassette_answers?(path = PATH)
     VcrCassetteStack.serves?(path)
   end
+
+  # The two bases a genuine local probe can land on: the library's own default
+  # (a provider built with no `api_base:` at all -- most of the suite) and the
+  # spec-level override (a provider a developer or an :ollama example pointed
+  # explicitly at OLLAMA_API_BASE). Not memoized: two constant lookups and an
+  # array literal cost nothing, and there is no correctness reason to cache them
+  # -- OLLAMA_API_BASE is itself a constant, fixed once at load, not something
+  # that changes mid-run.
+  def self.local_bases
+    [::Lain::Provider::Ollama::Transport::DEFAULT_API_BASE, OLLAMA_API_BASE]
+  end
+
+  # Same SERVER, not same spelling. Delegates the "which host" question
+  # entirely to {Provider::Admission::Endpoint.canonical}, which already folds
+  # every loopback spelling (`127.0.0.1`, `::1`, `localhost`, a trailing-dot
+  # FQDN) to one name and never raises on a malformed endpoint -- so this
+  # inherits that safety rather than re-deriving it. `server_key` then drops the
+  # scheme from canonical's result: these stubs exist to keep the suite's own
+  # local traffic quiet and have no opinion on http vs. https, so two spellings
+  # that differ only in scheme must still match.
+  def self.local?(uri)
+    candidate = server_key(uri.to_s)
+    local_bases.any? { |base| server_key(base) == candidate }
+  end
+
+  def self.server_key(uri_string)
+    ::Lain::Provider::Admission::Endpoint.canonical(uri_string).split("://", 2).last.split("/", 2).first
+  end
+  private_class_method :server_key
 end
 
 RSpec.configure do |config|
@@ -75,13 +128,16 @@ RSpec.configure do |config|
   #
   # WebMock evaluates a `with` block when the REQUEST is made, by which point
   # the cassette is inserted; returning false there makes this stub simply not
-  # match, and the request falls through to VCR's global stub -- the cassette.
+  # match, and the request falls through to VCR's global stub -- a cassette for
+  # a local recording, or (now) an ordinary refusal for a non-local host.
   config.before do
     stub_request(:get, %r{/api/ps})
-      .with { !OllamaProbeStub.cassette_answers? }
+      .with { |request| OllamaProbeStub.local?(request.uri) && !OllamaProbeStub.cassette_answers? }
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: '{"models":[]}')
     stub_request(:post, %r{/api/show})
-      .with { !OllamaProbeStub.cassette_answers?(OllamaProbeStub::SHOW_PATH) }
+      .with do |request|
+        OllamaProbeStub.local?(request.uri) && !OllamaProbeStub.cassette_answers?(OllamaProbeStub::SHOW_PATH)
+      end
       .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: "{}")
   end
 end

@@ -258,3 +258,54 @@ RSpec.describe "the :ollama tag's offline default" do
       .to raise_error(VCR::Errors::UnhandledHTTPRequestError)
   end
 end
+
+RSpec.describe "the :ollama_cloud tag's offline default" do
+  it "excludes :ollama_cloud examples unless LAIN_OLLAMA_CLOUD=1 and OLLAMA_API_KEY are both set" do
+    skip "LAIN_OLLAMA_CLOUD=1 and OLLAMA_API_KEY opt :ollama_cloud examples in" if OLLAMA_CLOUD_ENABLED
+
+    expect(RSpec.configuration.exclusion_filter[:ollama_cloud]).to be(true)
+  end
+
+  # OLLAMA_CLOUD_ENABLED is fixed for this process by whatever ENV held at load
+  # time, so the "one half without the other" scenarios go through
+  # OllamaCloudTag.enabled? directly rather than by mutating a process-wide ENV --
+  # the same reason VcrRecording's methods take their input as an argument
+  # (see vcr_configuration.rb).
+  it "stays excluded when the opt-in var is set but the key is not" do
+    expect(OllamaCloudTag.enabled?(env: { "LAIN_OLLAMA_CLOUD" => "1" })).to be(false)
+  end
+
+  it "stays excluded when the key is set but the opt-in var is not" do
+    expect(OllamaCloudTag.enabled?(env: { "OLLAMA_API_KEY" => "sk-fake" })).to be(false)
+  end
+
+  it "is enabled only when both halves are present" do
+    expect(OllamaCloudTag.enabled?(env: { "LAIN_OLLAMA_CLOUD" => "1", "OLLAMA_API_KEY" => "sk-fake" }))
+      .to be(true)
+  end
+
+  it "blocks an Ollama Cloud call from any untagged example" do
+    # Same shape as the :ollama guard above: no :ollama_cloud tag, so
+    # NetworkAccess.permit never runs and VCR refuses the request before it
+    # ever leaves the machine -- whether or not the endpoint would answer.
+    expect { Net::HTTP.get(URI("https://ollama.com/api/tags")) }
+      .to raise_error(VCR::Errors::UnhandledHTTPRequestError)
+  end
+
+  # Not vacuous the way the /api/tags guard above is: spec/support/ollama_probe.rb
+  # registers GLOBAL stubs for /api/ps and /api/show, matched by a regex over the
+  # PATH only -- unscoped, they answer any host's request, including this one.
+  # An untagged example probing the cloud host for runner status must be REFUSED,
+  # not quietly answered `{"models":[]}`/`{}` as if it had reached an empty local
+  # server -- that would make an accidental cloud probe look identical to a
+  # normal local one instead of loudly failing.
+  it "blocks an Ollama Cloud runner-status probe, not just a chat request" do
+    expect { Net::HTTP.get(URI("https://ollama.com/api/ps")) }
+      .to raise_error(VCR::Errors::UnhandledHTTPRequestError)
+  end
+
+  it "blocks an Ollama Cloud model-info probe, not just a chat request" do
+    expect { Net::HTTP.post(URI("https://ollama.com/api/show"), "{}") }
+      .to raise_error(VCR::Errors::UnhandledHTTPRequestError)
+  end
+end
