@@ -345,6 +345,25 @@ RSpec.describe Lain::Provider::Ollama::Deployment::Cloud do
       expect(PP.pp(deployment, +"")).not_to include(key)
     end
 
+    # The third kind of renderer, and the one that bypasses BOTH overrides: a
+    # differ that walks instance variables directly. super_diff 0.19.0 does
+    # exactly that, so before {#instance_variables} hid it, a failing `eq` on a
+    # Cloud rendered `@headers={"Authorization" => "Bearer <live key>"}` into
+    # rspec's failure output -- and from there into a CI log, which is the one
+    # place a credential is hardest to withdraw. Asserting on the ivar list
+    # rather than on super_diff's output keeps this pinned to the property
+    # instead of to a gem's formatting.
+    it "keeps the memoized header Hash out of reach of a differ that walks ivars" do
+      expect(deployment.instance_variables).not_to include(:@headers)
+    end
+
+    it "leaves nothing among its instance variables that carries the key" do
+      leaking = deployment.instance_variables.select do |ivar|
+        deployment.instance_variable_get(ivar).inspect.include?(key)
+      end
+      expect(leaking).to be_empty
+    end
+
     it "still says what it is when pretty-printed" do
       expect(deployment.pretty_inspect).to include("Cloud")
     end

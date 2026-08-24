@@ -292,6 +292,20 @@ module Lain
           # reaches for. `Provider::HTTP::Configuration` had to close both
           # halves for this reason, and closing one of the two is closing
           # neither.
+          # The memoized header Hash is the one piece of reachable mutable-looking
+          # state holding the credential, and an inspector that walks instance
+          # variables reaches it WITHOUT going through {#inspect}. super_diff
+          # 0.19.0 does exactly that: a failing `eq` on a Cloud renders
+          # `@headers={"Authorization" => "Bearer <live key>"}` into the failure
+          # output, and from there into a CI log. Hiding it here is the same move
+          # {Provider::HTTP::Connection#instance_variables} makes, for the same
+          # reason -- the redaction has to cover the walkers, not just the
+          # printers, because there is no `#inspect` in that path to override.
+          #
+          # `api_key` needs no such treatment: it is a Data member, not an ivar,
+          # so it is not reachable this way.
+          def instance_variables = super - %i[@headers]
+
           def pretty_print(printer) = printer.text(inspect)
 
           private
