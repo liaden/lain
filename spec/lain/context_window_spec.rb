@@ -280,13 +280,13 @@ RSpec.describe Lain::ContextWindow do
         "kimi-k2.6:cloud" => 256_000,
         "glm-5.2:cloud" => 976_000,
         "glm-5.1:cloud" => 198_000,
-        "minimax-m2.7:cloud" => 200_000,
+        "minimax-m2.7:cloud" => 196_608,
         "minimax-m3:cloud" => 512_000,
         "gemma4:cloud" => 256_000,
         "gemma4:31b-cloud" => 256_000,
         "nemotron-3-ultra:cloud" => 256_000,
         "nemotron-3-super:cloud" => 256_000,
-        "nemotron-3-nano:30b-cloud" => 1_000_000,
+        "nemotron-3-nano:30b-cloud" => 262_144,
         "mistral-large-3:675b-cloud" => 256_000
       }.each do |model, window|
         it "measures #{model} against its published #{window}-token window, authoritatively" do
@@ -376,6 +376,35 @@ RSpec.describe Lain::ContextWindow do
         cloud_tag = /\A[^:\s]+:[^:\s]*cloud\z/
 
         expect(%w[gpt-oss gemma4 qwen3 cloud gpt-oss:20b].grep(cloud_tag)).to be_empty
+      end
+
+      # Two rows were published from a library label that the WEIGHTS contradict:
+      # `/api/show` reported a trained maximum of 262,144 for a row this table
+      # claimed 1,000,000 for, a 3.8x over-claim, and 196,608 against a claimed
+      # 200,000. A trained maximum is a hard ceiling -- no runner serves a window
+      # the weights were not trained for -- so where a label and a measured
+      # maximum disagree, the label is what is wrong.
+      #
+      # This matters in exactly one direction. An over-claimed window makes
+      # occupancy read LOW, which is the state where
+      # {Compaction::Need::ApproachingWindow} never fires at all -- the failure
+      # this file's own header ranks as worse than the crash the conservative
+      # fallback replaces. An under-claimed one only compacts early.
+      #
+      # Measured 2026-08-24 over a 17-model `/api/show` sweep. Listed rather
+      # than looped so a future row added from a library page has to be typed
+      # in here beside a measurement.
+      it "never claims a window above the trained maximum the weights report" do
+        measured_ceilings = {
+          "nemotron-3-nano:30b-cloud" => 262_144,
+          "minimax-m2.7:cloud" => 196_608,
+          "gpt-oss:20b-cloud" => 131_072
+        }
+        over_claiming = measured_ceilings.select do |id, ceiling|
+          described_class::CLOUD_WINDOWS.fetch(id) > ceiling
+        end
+
+        expect(over_claiming).to be_empty
       end
     end
 

@@ -136,7 +136,6 @@ module Lain
       "deepseek-v4-pro:0813-cloud" => 1_000_000,
       "deepseek-v4-pro:preview-cloud" => 1_000_000,
       "kimi-k3:cloud" => 1_000_000,
-      "nemotron-3-nano:30b-cloud" => 1_000_000,
 
       # Ollama publishes "976K". Its own page's prose says "1M" in the next
       # breath; the spec field is the narrower of the two and so is the one
@@ -166,8 +165,19 @@ module Lain
       "nemotron-3-super:cloud" => 256_000,
       "mistral-large-3:675b-cloud" => 256_000,
 
-      # Ollama publishes "200K".
-      "minimax-m2.7:cloud" => 200_000,
+      # Ollama publishes "200K", but `/api/show` reports a trained maximum of
+      # 196,608 (192Ki) -- 1.7% under the label. The weights bound the label,
+      # so the narrower figure is the one that cannot over-report occupancy.
+      "minimax-m2.7:cloud" => 196_608,
+
+      # `/api/show` reports 262,144 (256Ki) where the library page says "1M" --
+      # a 3.8x gap, measured 2026-08-24 across a 17-model sweep. A trained
+      # maximum is a hard ceiling: no runner serves a window the weights were
+      # not trained for, so the published label cannot be right. Keyed here
+      # rather than left to the 8,192 fallback because 262,144 is a MEASURED
+      # bound and the fallback is a guess -- but it is the model's ceiling, not
+      # a promise about what any given request is served.
+      "nemotron-3-nano:30b-cloud" => 262_144,
 
       # Ollama publishes "198K".
       "glm-5.1:cloud" => 198_000,
