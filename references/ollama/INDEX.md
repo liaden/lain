@@ -5,6 +5,11 @@ Built for T1 (plan: `planning/specs/code-review-ollama-test-infra.md`), groundin
 carries the ⚠️ LLM-generated header; verbatim excerpts inside them cite their source URL and a
 2026-07-14 retrieval date.
 
+Extended 2026-08-24 by T12 (plan: `planning/specs/chunk-ollama-cloud-arm.md`) with
+[cloud.md](cloud.md), which is a different KIND of document from its neighbours: the four files
+above it are syntheses of published sources, while cloud.md is a record of what a **live paid
+subscription actually returned on the wire**. Prefer it over any of them where they overlap.
+
 ## Files
 
 ### [api-chat.md](api-chat.md) ⚠️ LLM-generated
@@ -29,6 +34,21 @@ only endpoint that states the served figure is `GET /api/ps`'s `context_length` 
 `docs/api.md`, present in `api/types.go`, and only for models currently resident. Also covers
 ollama's VRAM-tier default `num_ctx`, name matching against `DisplayShortest()`/`:latest`, and the
 measured cost of the lookup (0.31 ms warm; **781 ms when ollama is down**, from faraday-retry).
+
+### [cloud.md](cloud.md) ⚠️ LLM-generated — but **measured**, not synthesized
+Added for T12 (the `--provider ollama-cloud` arm). Answers on the wire, against a live paid
+subscription on 2026-08-24, the three questions the cloud chunk refused to assume. Headlines:
+**`/api/show` DOES answer on `ollama.com`** (all 23 shipped cloud models — 17 probed by T12, the
+last 6 by review) but reports the GGUF **trained maximum**, so it must never become an occupancy
+denominator — while the sweep also caught the shipped `ContextWindow::CLOUD_WINDOWS` table
+**over-claiming on three rows**, by 1.7x, 1.9x and 3.8x; all three are now corrected.
+**A 200 carries no rate-limit headers but a 429 carries five**, in a concurrency-and-queue
+vocabulary (`x-ratelimit-max-concurrent`, `x-ratelimit-queued`, `retry-after`, …) with no reset
+header at all — which is what makes faraday-retry's untouched `Retry-After` default the correct
+handling. **No cached-input signal exists**, settling the `:prompt_caching` question regardless of
+backend behaviour. And the finding most likely to mislead: **temperature-0 does NOT reproduce on
+the cloud arm** (three distinct completions from three warm same-seed runs), so the local arm's
+determinism does not transfer and the cloud arm is not a reproducible bench arm.
 
 ### [rubyllm-ollama.md](rubyllm-ollama.md) ⚠️ LLM-generated
 Reads `crmne/ruby_llm`'s actual `Ollama < OpenAI` provider source (tag `1.16.0`, the version
