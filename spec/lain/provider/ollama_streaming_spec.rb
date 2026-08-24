@@ -73,9 +73,14 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
   # `--tag '~seam'` as the inner loop, so deleting the discard from
   # #stream_body was green across every non-seam example in spec/lain/provider/.
   # A developer running the loop the project recommends was told nothing.
+  #
+  # `frame:` is DECLARED for the same reason `attempt:` is, and it earned the
+  # declaration the same way: adding the WAL made all six examples over these
+  # doubles fail with "unknown keyword: :frame" rather than pass on a payload
+  # that had quietly become a Hash of keywords.
   def stream_transport(chunks, abandon_after: nil)
     Class.new do
-      define_method(:stream) do |_payload, _headers = {}, attempt: nil, &block|
+      define_method(:stream) do |_payload, _headers = {}, attempt: nil, frame: nil, &block|
         chunks.each_with_index do |chunk, index|
           block.call(chunk)
           attempt&.abandon if index == abandon_after
@@ -91,7 +96,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
     Class.new do
       attr_reader :payload
 
-      define_method(:stream) do |payload, _headers = {}, attempt: nil, &block|
+      define_method(:stream) do |payload, _headers = {}, attempt: nil, frame: nil, &block|
         @payload = payload
         chunks.each { |chunk| block.call(chunk) }
       end
@@ -101,7 +106,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
   # A transport double returning a scripted single body (the non-streaming path).
   def transport_sync(body)
     Class.new do
-      define_method(:sync_post) { |_payload, _headers = {}, attempt: nil| Struct.new(:body).new(body) }
+      define_method(:sync_post) { |_payload, _headers = {}, attempt: nil, frame: nil| Struct.new(:body).new(body) }
     end.new
   end
   # rubocop:enable Lint/UnusedBlockArgument
@@ -567,6 +572,152 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       end
 
       expect(connections).to eq(4)
+    end
+  end
+
+  # T6. The arm's absence of a response WAL was argued from "free and local";
+  # on a metered arm a lost round trip is SPENT. These read the WAL back through
+  # a FRESH ResponseWal, never the writer, which is the only way the terminator
+  # and the record framing are actually exercised.
+  describe "spooling a response into a real WAL" do
+    around do |example|
+      Dir.mktmpdir("ollama-wal") { |dir| @dir = dir and example.run }
+    end
+
+    def path = File.join(@dir, "session.wal")
+
+    def wal = Lain::Provider::ResponseWal.new(path)
+
+    def frames = Lain::Provider::ResponseWal.new(path).frames.to_a
+
+    describe "a completed round trip", :webmock do
+      it "leaves exactly one complete frame under the request's digest, non-streaming" do
+        body = JSON.generate(single_body)
+        stub_request(:post, "http://localhost:11434/api/chat")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body:)
+        # EXPLICIT, and the whole point of this example: Request defaults
+        # `stream: true` (`request.rb:21`), so omitting it silently ran the
+        # STREAMING path here and left the sync path with no real-WAL pin at
+        # all -- stripping `wal_frame:` from the sync context wrote a zero-byte
+        # complete frame with 296 of 297 examples still green.
+        req = request(stream: false)
+
+        described_class.new(spool: wal).complete(req)
+
+        expect(frames.map(&:request_digest)).to eq([req.digest])
+        expect(frames.fetch(0)).to be_complete
+        expect(frames.fetch(0).bytes).to eq(body.b) # Entry#bytes is binread ASCII-8BIT by contract
+      end
+
+      it "leaves exactly one complete frame carrying the verbatim NDJSON, streaming" do
+        body = ndjson(stream_lines)
+        stub_request(:post, "http://localhost:11434/api/chat")
+          .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" }, body:)
+        req = request(stream: true)
+
+        described_class.new(spool: wal).complete(req)
+
+        expect(frames.map(&:request_digest)).to eq([req.digest])
+        expect(frames.fetch(0)).to be_complete
+        expect(frames.fetch(0).bytes).to eq(body.b) # Entry#bytes is binread ASCII-8BIT by contract
+      end
+
+      # The digest is the REQUEST's, not something the transport re-derived from
+      # an encoded payload -- that is why the Provider opens the frame.
+      it "keys the frame by the request digest rather than by any payload hash" do
+        stub_request(:post, "http://localhost:11434/api/chat")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: JSON.generate(single_body))
+        req = request(model: "qwen3:8b", stream: false)
+
+        described_class.new(spool: wal).complete(req)
+
+        expect(frames.fetch(0).request_digest).to eq(req.digest)
+      end
+    end
+
+    # AC: a provider with no spool is unaffected -- no WAL file, same bytes.
+    describe "a provider with no spool", :webmock do
+      it "creates no WAL file and returns the same response" do
+        body = JSON.generate(single_body)
+        stub_request(:post, "http://localhost:11434/api/chat")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body:)
+
+        spooled = described_class.new(spool: wal).complete(request(stream: false))
+        File.delete(path)
+        unspooled = described_class.new.complete(request(stream: false))
+
+        expect(File.exist?(path)).to be(false)
+        expect(unspooled.text).to eq(spooled.text)
+        expect(unspooled.stop_reason).to eq(spooled.stop_reason)
+      end
+    end
+
+    # The keyword the tap owns cannot be silently swallowed by the tap.
+    it "refuses retries: and spool: together rather than dropping the spool" do
+      expect { described_class.new(retries: described_class::RetryTap.new(channel: Lain::Channel::Null.instance), spool: wal) }
+        .to raise_error(ArgumentError, /owns the spool/)
+    end
+
+    # AC: a retried stream does not splice two attempts into ONE frame. This is
+    # F7b one layer out -- the terminator's byte count cannot detect two
+    # attempts concatenated, so a complete-marked frame would simply lie.
+    describe "a severed and retried stream", :seam do
+      let(:script) { StreamingUpstream.script }
+      let(:wire) { StreamingUpstream::Wire }
+
+      # The envelope must be shaped BEFORE construction (spec/support/zero_retry.rb).
+      def provider_for(upstream, spool:)
+        described_class.new(config: zero_retry_config.tap { |config| config.ollama_api_base = upstream.url },
+                            spool:)
+      end
+
+      it "writes two frames under one digest: the abandoned one incomplete, the retry complete" do
+        req = request(stream: true)
+        response = nil
+
+        StreamingUpstream.ndjson(
+          script.chunks(wire.ollama_content("PARTIAL-alpha")).sever,
+          script.chunks(wire.ollama_content("RETRY-one"), wire.ollama_done(text_response(""))).close
+        ) do |upstream|
+          response = provider_for(upstream, spool: wal).complete(req)
+        end
+
+        expect(frames.map(&:request_digest)).to eq([req.digest, req.digest])
+        expect(frames.fetch(0)).not_to be_complete
+        expect(frames.fetch(1)).to be_complete
+        # The splice this exists to prevent, asserted on the BYTES: the
+        # abandoned attempt's text must not appear in the surviving frame.
+        expect(frames.fetch(1).bytes).to include("RETRY-one")
+        expect(frames.fetch(1).bytes).not_to include("PARTIAL-alpha")
+        expect(frames.fetch(0).bytes).to include("PARTIAL-alpha")
+        # RULING 3: the assembler discard must STILL fire on the same retry.
+        expect(response.text).to eq("RETRY-one")
+      end
+
+      # The two discards are registered on two different context keys, so a
+      # caller's own retry_block cannot displace either. `ollama_spec.rb` ships
+      # exactly such a config; it brought the whole F7b splice back once.
+      it "keeps both the assembler discard and the frame rotation when the caller owns retry_block" do
+        req = request(stream: true)
+        counted = []
+        response = nil
+
+        StreamingUpstream.ndjson(
+          script.chunks(wire.ollama_content("PARTIAL-alpha")).sever,
+          script.chunks(wire.ollama_content("RETRY-one"), wire.ollama_done(text_response(""))).close
+        ) do |upstream|
+          config = zero_retry_config.tap do |shaped|
+            shaped.ollama_api_base = upstream.url
+            shaped.retry_block = ->(retry_count:, **) { counted << retry_count }
+          end
+          response = described_class.new(config:, spool: wal).complete(req)
+        end
+
+        expect(counted).to eq([0])
+        expect(response.text).to eq("RETRY-one")
+        expect(frames.map(&:complete)).to eq([false, true])
+        expect(frames.fetch(1).bytes).not_to include("PARTIAL-alpha")
+      end
     end
   end
 end

@@ -73,8 +73,9 @@ module Lain
           def abandon = @on_abandon.call
         end
 
-        def initialize(channel:)
+        def initialize(channel:, spool: Spool::Null.new)
           @channel = channel
+          @spool = spool
         end
 
         # Opens the boundary for ONE round trip and returns it; the Provider
@@ -82,10 +83,33 @@ module Lain
         # again (see {Transport}).
         def open_attempt(&on_abandon) = Attempt.new(on_abandon)
 
-        # The block faraday-retry calls on every retry. It does two things that
-        # are NOT of equal rank, and the ordering says so: it ABANDONS the
+        # Opens the WAL frame for ONE round trip and returns it; like an
+        # {Attempt} it is threaded onto the request context rather than held
+        # here, for the same reentrancy reason, and {#retry_block} rotates ITS
+        # request's frame off the retried env.
+        #
+        # A frame and an attempt are DELIBERATELY two objects on two context
+        # keys, not one. The attempt's rollback is F7b's retried-stream discard
+        # -- a correctness invariant with its own registration -- and folding
+        # the rotation into `on_abandon` would put the two on one seam where
+        # either could displace the other. They are independent lookups so that
+        # neither can.
+        def open_frame(request_digest:)
+          Spool::RotatingFrame.new(spool: @spool, request_digest:)
+        end
+
+        # The block faraday-retry calls on every retry. It does three things
+        # that are NOT of equal rank, and the ordering says so: it ABANDONS the
         # attempt (a correctness invariant -- T10, the discard that stops two
-        # attempts sharing an assembler) and then it JOURNALS (a record).
+        # attempts sharing an assembler), it ROTATES this request's WAL frame
+        # (the same invariant one layer out -- a retried attempt's bytes must
+        # not concatenate onto the abandoned attempt's in one complete-marked
+        # frame, which the terminator's byte count cannot catch), and only then
+        # does it JOURNAL (a record).
+        #
+        # The discard runs before the rotation because it is the older
+        # guarantee and the one a regression here would silently reinstate;
+        # both are documented as unable to raise, so neither can cost the other.
         #
         # == Why a caller's callback is composed rather than allowed to replace
         #
@@ -115,6 +139,7 @@ module Lain
         def retry_block(then_call: nil)
           lambda do |env:, retry_count:, exception:, will_retry_in:, **rest|
             attempt_on(env)&.abandon
+            frame_on(env)&.rotate
             @channel.push(Telemetry::ProviderRetry.new(attempt: retry_count + 1, will_retry_in:,
                                                        status: env[:status], reason: exception.class.name))
             then_call&.call(env:, retry_count:, exception:, will_retry_in:, **rest)
@@ -142,6 +167,15 @@ module Lain
         def attempt_on(env)
           context = env[:request]&.context
           context && context[:retry_attempt]
+        end
+
+        # This request's {Spool::RotatingFrame}, read the same nil-safe way and
+        # off its own key -- see {#open_frame} for why it is not the attempt's
+        # rollback. A request opened over the Null spool still rotates; the Null
+        # frame simply discards, so no caller writes `if spool`.
+        def frame_on(env)
+          context = env[:request]&.context
+          context && context[:wal_frame]
         end
       end
     end

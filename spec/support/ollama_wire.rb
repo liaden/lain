@@ -96,7 +96,7 @@ module OllamaWire
     # `frame:`. The cop's `_attempt:` correction would rename the KEYWORD and
     # restore that silence, so it is disabled rather than applied.
     # rubocop:disable Lint/UnusedMethodArgument
-    def sync_post(payload, _headers = {}, attempt: nil)
+    def sync_post(payload, _headers = {}, attempt: nil, frame: nil)
       @calls << payload
       Struct.new(:body).new(OllamaWire.body_hash(next_response))
     end
@@ -106,7 +106,7 @@ module OllamaWire
     # The whole body is serialized as one x-ndjson line (already carrying
     # `done: true`); StreamAssembler reassembles it to the same shape sync_post
     # returns, so both paths land on identical Responses.
-    def stream(payload, _headers = {}, attempt: nil)
+    def stream(payload, _headers = {}, attempt: nil, frame: nil)
       @calls << payload
       yield "#{JSON.generate(OllamaWire.body_hash(next_response))}\n"
     end

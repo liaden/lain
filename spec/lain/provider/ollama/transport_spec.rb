@@ -21,6 +21,119 @@ RSpec.describe Lain::Provider::Ollama::Transport do
     end
   end
 
+  # RULING 1: opening a frame is not filling one. A tap that opened frames the
+  # transport never appended to and never closed would be a WAL of empty or
+  # never-terminated records -- green under every spec that injects its own
+  # spool. These examples are the transport's half of that contract.
+  describe "spooling into a WAL frame", :webmock do
+    # Records the whole frame protocol so an example can assert on ORDER, not
+    # just on the final state: bytes that arrive after a close, or a close that
+    # never arrives, are both invisible to a "what did it collect" double.
+    def recording_frame(log)
+      Class.new do
+        define_method(:append) { |bytes| log << [:append, bytes] and self }
+        define_method(:close) { |complete:| log << [:close, complete] and nil }
+        define_method(:rotate) { log << [:rotate] and self }
+      end.new
+    end
+
+    let(:transport) { described_class.new(config_with) }
+    let(:url) { "http://localhost:11434/api/chat" }
+
+    # The sync path copies NOTHING itself: the shared WalResponseTee sits below
+    # `response :json` in MiddlewareStack for every provider, so this asserts
+    # the wire string arrived through machinery this card did not build.
+    it "tees the raw sync body through the shared response middleware and closes complete" do
+      body = '{"message":{"content":"hi"},"done":true}'
+      stub_request(:post, url).to_return(status: 200, headers: { "Content-Type" => "application/json" }, body:)
+      log = []
+
+      transport.sync_post({}, frame: recording_frame(log))
+
+      expect(log).to eq([[:append, body], [:close, true]])
+    end
+
+    it "tees every raw streamed chunk before the assembler sees it, then closes complete" do
+      stub_request(:post, url).to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" },
+                                         body: "{\"a\":1}\n{\"b\":2}\n")
+      log = []
+
+      transport.stream({}, frame: recording_frame(log)) { |_chunk| nil }
+
+      expect(log.last).to eq([:close, true])
+      expect(log.select { |entry| entry.first == :append }.map(&:last).join).to eq("{\"a\":1}\n{\"b\":2}\n")
+    end
+
+    # A frame nothing terminates is not merely an incomplete record. A
+    # ResponseWal::BufferedFrame -- what a round trip gets whenever a sibling
+    # fiber holds the streaming slot, i.e. once a subagent shares the session's
+    # one spool -- accumulates in memory and reaches the file ONLY at close. So
+    # an unclosed frame loses a metered round trip's bytes entirely.
+    it "closes the frame ABORTED when the sync round trip raises" do
+      stub_request(:post, url).to_return(status: 404, body: "nope")
+      log = []
+
+      expect { transport.sync_post({}, frame: recording_frame(log)) }.to raise_error(Lain::Provider::HTTP::Error)
+      expect(log.last).to eq([:close, false])
+    end
+
+    it "closes the frame ABORTED when the streaming round trip raises" do
+      stub_request(:post, url).to_return(status: 404, body: "nope")
+      log = []
+
+      expect { transport.stream({}, frame: recording_frame(log)) { |_chunk| nil } }
+        .to raise_error(Lain::Provider::HTTP::Error)
+      expect(log.last).to eq([:close, false])
+    end
+
+    # A non-2xx body belongs to StreamedFailure, which keeps it for the human.
+    # Teeing it would put an error page into a frame a reader takes for a turn's
+    # bytes.
+    it "does not tee a failed response's body into the frame" do
+      stub_request(:post, url).to_return(status: 500, body: "upstream exploded")
+      log = []
+
+      expect { transport.stream({}, frame: recording_frame(log)) { |_chunk| nil } }
+        .to raise_error(Lain::Provider::HTTP::Error)
+      expect(log.select { |entry| entry.first == :append }).to be_empty
+    end
+
+    # Both keys on ONE context, which is what makes the tap's two lookups
+    # independent -- RULING 3's requirement that a frame rotation cannot
+    # displace the F7b assembler discard.
+    # A REAL retry, because that is the only way faraday-retry hands the block
+    # the env and so the only way this reads the context the tap really sees.
+    # It was written against a 200 first, and was vacuous: nothing retried, the
+    # block never fired, and the example rebuilt its own expectation from the
+    # objects it had just passed in. Dropping `wal_frame:` from BOTH merges left
+    # it green.
+    it "puts the frame and the attempt on the request context under separate keys" do
+      seen = nil
+      stub_request(:post, url).to_raise(Faraday::ConnectionFailed).then
+                              .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: "{}")
+      config = zero_retry_config
+      config.retry_block = ->(env:, **) { seen = env[:request].context.dup }
+      frame = recording_frame([])
+      attempt = Lain::Provider::Ollama::RetryTap::Attempt.new
+
+      described_class.new(config).sync_post({}, attempt:, frame:)
+
+      expect(seen).to include(retry_attempt: attempt, wal_frame: frame)
+    end
+
+    # The default is the Null frame, and it must satisfy the ROTATING duck as
+    # well as the append/close one: the retry hook rotates whatever it finds.
+    it "leaves a caller that passed no frame able to be retried" do
+      stub_request(:post, url).to_raise(Faraday::ConnectionFailed).then
+                              .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: "{}")
+      channel = RecordingChannel.new
+      config = zero_retry_config
+      config.retry_block = Lain::Provider::Ollama::RetryTap.new(channel:).retry_block
+
+      expect { described_class.new(config).sync_post({}) }.not_to raise_error
+    end
+  end
+
   describe "#headers" do
     it "sends no authorization when the configuration carries no key" do
       expect(described_class.new(config_with).headers).to eq({})

@@ -189,11 +189,21 @@ module Lain
         # @param channel [Lain::Channel] where retries and stalls are narrated
         # @param queue [Boolean] the caller's willingness to wait for a slot
         # @param journal [#<<] where a {Telemetry::ProviderWait} lands
+        # @param spool [#open_frame] the run's response WAL. Forwarded to
+        #   BOTH arms, not just the metered one: the spool a caller hands over
+        #   is the caller's decision, and a local arm that silently discarded it
+        #   would make `lain resume` answer differently depending on which
+        #   ollama the session dialled. The Null spool is what a bench or a
+        #   `--no-journal` chat passes. A real Null Object rather
+        #   than nil, matching {Backend#provider}'s own default, so this arm
+        #   states a spool either way and nothing downstream coalesces.
         # @return [Provider::Ollama] dialling whichever ollama this arm names
-        def provider(channel:, queue:, journal:)
-          return Provider::Ollama.local(api_base: @api_base, channel:, queue:, journal:) unless cloud?
+        def provider(channel:, queue:, journal:, spool: Provider::Spool::Null.new)
+          return Provider::Ollama.local(api_base: @api_base, channel:, queue:, journal:, spool:) unless cloud?
 
-          naming_the_flag { Provider::Ollama.cloud(api_key: key, api_base: @api_base, channel:, queue:, journal:) }
+          naming_the_flag do
+            Provider::Ollama.cloud(api_key: key, api_base: @api_base, channel:, queue:, journal:, spool:)
+          end
         end
 
         # A CLASS method, and deliberately not an instance one: which model an

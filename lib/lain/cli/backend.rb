@@ -176,12 +176,11 @@ module Lain
       # @param spool [#open_frame] the chronicle's response spool -- a real
       #   {Provider::ResponseWal} only when journaling is on ({CLI::Chronicle::Null}
       #   answers {Provider::Spool::Null}, never nil, so this is never an `if
-      #   spool` guard). Threaded straight into {Provider::Anthropic}, the
-      #   only backend wired to tee to it: the Null spool -- no chronicle
-      #   asked, e.g. bench (never passes spool: at all) or --no-journal chat
-      #   -- just means nothing gets teed. Ollama and Bedrock never see the
-      #   keyword at all: neither constructor accepts it, so nothing here
-      #   risks handing it to them.
+      #   spool` guard). Threaded into {Provider::Anthropic} and, since the
+      #   ollama arm became metered, into {OllamaTier} as well: the Null spool
+      #   -- no chronicle asked, e.g. bench (never passes spool: at all) or
+      #   --no-journal chat -- just means nothing gets teed. BEDROCK still never
+      #   sees the keyword, because its constructor does not accept one.
       #
       # Both hosted names mean a RAW (vendored-transport) provider here:
       # "anthropic" is {Provider::Anthropic} and "bedrock" is
@@ -209,7 +208,7 @@ module Lain
       #   and there is never a slot to wait for.
       def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance, queue: true)
         case name
-        when *OllamaTier::NAMES then ollama_tier(name).provider(channel:, queue:, journal: run_journal)
+        when *OllamaTier::NAMES then ollama_tier(name).provider(channel:, queue:, journal: run_journal, spool:)
         when "bedrock" then Provider::Bedrock.new(channel:)
         else anthropic_provider(spool, channel, queue:, flag: OllamaTier.flag_for(chat: chat_name?(name)))
         end

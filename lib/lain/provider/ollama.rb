@@ -86,13 +86,21 @@ module Lain
     # {Deployment#model_metadata?} gate them and a deployment that has neither
     # concept answers nil without spending a round trip to discover it.
     #
+    # no longer absent: a response WAL. `spool:` reached this class only after
+    # the arm stopped being free, because that is when the absence stopped being
+    # cheap: a lost local round trip costs a retry, a lost metered one is SPENT.
+    # The bytes land the same way Anthropic's do -- the shared
+    # {Anthropic::WalResponseTee} on the sync path, an explicit tee on the
+    # streaming one -- and a retry ROTATES the frame, so a severed attempt and
+    # its replacement are two frames rather than one that lies. That is F7b
+    # again, in the spool instead of the assembler, and the two discards are
+    # registered independently so neither can displace the other.
+    #
     # STILL ABSENT, and now recorded rather than argued from free-ness:
     # rate-limit backoff, because the header vocabulary the native cloud path
     # returns is unverified and naming an unseen header would replace
     # faraday-retry's working default with a guess ({Deployment::Cloud} states
-    # the case); and a `spool:` -- no response WAL, so nothing on either arm is
-    # salvageable after a crash, which is the one absence that got WORSE when
-    # the arm stopped being free.
+    # the case).
     class Ollama < Provider
       # One mixin per wire direction: {Encoding} out, {Decoding} back.
       include Encoding
@@ -104,6 +112,12 @@ module Lain
       include Admitted
 
       DEFAULT_MODEL = "qwen3:4b"
+
+      # Same refusal shape as {.deployment_free}: a keyword whose effect another
+      # keyword silently swallows is refused rather than resolved, because the
+      # resolution is invisible from every assertion the caller could write.
+      RETRIES_OWN_THE_SPOOL = "retries: already owns the spool it was built with; " \
+                              "pass spool: to the RetryTap instead"
 
       # The NDJSON streaming path (below) makes :streaming honest. :thinking is
       # honest too: `think` rides Request#extra onto its own top-level
@@ -242,14 +256,35 @@ module Lain
       #   than the session's record. The Null channel by default, so a caller
       #   with no record (bench, a bare construction) journals nowhere and needs
       #   no `if journal` guard.
+      # @param spool [#open_frame, nil] where each round trip's raw response
+      #   bytes are teed for salvage. Nil means the Null spool, so no WAL file
+      #   exists unless a session opts in, and a bench or bare construction is
+      #   byte-for-byte unaffected.
+      #
+      #   THE NIL DEFAULT IS LOAD-BEARING and is not the missing Null Object it
+      #   looks like: it is the only thing that tells "passed no spool" apart
+      #   from "passed a Null spool", which is what the refusal below needs. A
+      #   `Spool::Null.new` default would make the two indistinguishable and the
+      #   contradiction unrefusable. Every CALLER still hands over a real Null
+      #   Object ({CLI::Backend#provider}, {CLI::Backend::OllamaTier#provider}),
+      #   so the coalesce is reached only by a bare construction. A metered round trip is SPENT, which is what
+      #   makes this worth its cost on this arm and did not while both arms were
+      #   free and local.
+      # @raise [ArgumentError] when `retries:` and `spool:` are both given --
+      #   the tap is what OWNS the spool, so an injected tap makes the spool
+      #   unreachable. Silently dropping it would build the WAL, hand it a real
+      #   chronicle, and record nothing, which no assertion in a spec that
+      #   injected both could see.
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, retries: nil,
                      sink: Sink::Null.new, api_base: nil, queue: true, journal: Channel::Null::INSTANCE,
-                     deployment: Deployment::Local.new)
+                     deployment: Deployment::Local.new, spool: nil)
         super()
+        raise ArgumentError, RETRIES_OWN_THE_SPOOL if retries && spool
+
         @queue = queue
         @journal = journal
         @deployment = deployment
-        @retries = retries || RetryTap.new(channel:)
+        @retries = retries || RetryTap.new(channel:, spool: spool || Spool::Null.new)
         @config = journaled_retries(config || build_config(api_base:))
         @transport = transport || Transport.new(@config, sink:)
       end
@@ -306,7 +341,7 @@ module Lain
       # than freeing it between them. {Admission::Busy} is not an API failure and
       # deliberately passes {ErrorWrapping} by, naming the saturated endpoint.
       def complete(request)
-        admitted { wrapping_errors { build_response(request.stream ? stream_body(request) : sync_body(request)) } }
+        admitted { wrapping_errors { build_response(dispatch(request)) } }
       end
 
       # The window this server is actually serving `model` with, or nil.
@@ -531,13 +566,26 @@ module Lain
         [model, "#{model}:latest"].include?(entry["model"])
       end
 
+      # The Provider opens the frame because the Provider is what holds the
+      # REQUEST -- the digest a frame is keyed by is `request.digest`, and the
+      # transport is handed an encoded payload it cannot re-derive one from.
+      # Keeping the transport digest-blind is the same rule that put the
+      # rotation in {RetryTap} rather than in the connection.
+      #
+      # One frame per round trip, opened here and threaded down, so the two body
+      # paths cannot disagree about how many frames a request gets.
+      def dispatch(request)
+        frame = @retries.open_frame(request_digest: request.digest)
+        request.stream ? stream_body(request, frame) : sync_body(request, frame)
+      end
+
       # Each body path opens its OWN attempt, which is what makes the retry hook
       # reentrant across round trips sharing this Provider -- see {RetryTap}. A
       # sync body is one parsed Hash, so an abandoned attempt leaves nothing
       # behind and registers no rollback; the streaming path below is the one
       # with something to discard.
-      def sync_body(request)
-        @transport.sync_post(encode(request), attempt: @retries.open_attempt).body || {}
+      def sync_body(request, frame)
+        @transport.sync_post(encode(request), attempt: @retries.open_attempt, frame:).body || {}
       end
 
       # The assembler is built out here while faraday-retry runs INSIDE
@@ -556,10 +604,15 @@ module Lain
       # trusted). It is wrapped in APIError rather than escaping as a bare
       # JSON::ParserError for the same reason transport errors are: callers
       # rescue one provider-error family, and the original stays on `#cause`.
-      def stream_body(request)
+      # The frame rotates on the SAME retry that resets the assembler, and they
+      # are registered independently ({RetryTap#retry_block}): the reset rides
+      # the attempt, the rotation rides `wal_frame`. So the WAL's two frames and
+      # the assembler's one discarded buffer describe the same event from two
+      # sides, and neither registration can displace the other.
+      def stream_body(request, frame)
         assembler = StreamAssembler.new
         attempt = @retries.open_attempt { assembler.reset }
-        @transport.stream(encode(request), attempt:) { |chunk| assembler.feed(chunk) }
+        @transport.stream(encode(request), attempt:, frame:) { |chunk| assembler.feed(chunk) }
         assembler.result
       rescue JSON::ParserError => e
         raise APIError, "corrupt NDJSON line in stream: #{e.message}"

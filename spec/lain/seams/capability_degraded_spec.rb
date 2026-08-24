@@ -48,8 +48,8 @@ RSpec.describe "capability degradation on the chat path", :seam do
       # `attempt:` declared, not swallowed -- see ollama_spec.rb's
       # #transport_sync, including why `_attempt:` would undo the point.
       # rubocop:disable Lint/UnusedBlockArgument
-      define_method(:stream) { |_payload, _headers = {}, attempt: nil, &block| block.call(ndjson) }
-      define_method(:sync_post) do |_payload, _headers = {}, attempt: nil|
+      define_method(:stream) { |_payload, _headers = {}, attempt: nil, frame: nil, &block| block.call(ndjson) }
+      define_method(:sync_post) do |_payload, _headers = {}, attempt: nil, frame: nil|
         Struct.new(:body).new(JSON.parse(ndjson.lines.last))
       end
       # rubocop:enable Lint/UnusedBlockArgument

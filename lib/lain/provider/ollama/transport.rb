@@ -95,10 +95,19 @@ module Lain
         # the transport stays retry-blind and never learns what abandoning one
         # means. It defaults to an attempt with nothing to discard, so a caller
         # with no tap (the embedder, a spec) is unaffected.
-        def sync_post(payload, headers = {}, attempt: RetryTap::Attempt.new)
-          connection.post(COMPLETION_PATH, payload) do |req|
-            req.headers = headers.merge(req.headers) unless headers.empty?
-            req.options.context = (req.options.context || {}).merge(retry_attempt: attempt)
+        # `frame` is the round trip's opened WAL frame, put on the SAME context
+        # under `wal_frame`. The bytes are not copied here: the shared
+        # {Provider::Anthropic::WalResponseTee} sits below `response :json` in
+        # {Connection::MiddlewareStack} for every provider, so it captures
+        # `env.body` while it is still the wire string. This method's own job is
+        # to open the context slot and to TERMINATE the frame -- a frame nothing
+        # closes is the empty-record shape a WAL is worthless for.
+        def sync_post(payload, headers = {}, attempt: RetryTap::Attempt.new, frame: Spool::Null::Frame.new)
+          terminating(frame) do
+            connection.post(COMPLETION_PATH, payload) do |req|
+              req.headers = headers.merge(req.headers) unless headers.empty?
+              req.options.context = (req.options.context || {}).merge(retry_attempt: attempt, wal_frame: frame)
+            end
           end
         end
 
@@ -113,14 +122,19 @@ module Lain
         # because the middleware that raises it sits INSIDE this call and by then
         # the body it would quote has already streamed past into
         # {StreamedFailure}. See that class for what the body loss costs a human.
-        def stream(payload, headers = {}, attempt: RetryTap::Attempt.new, &on_chunk)
+        # Unlike the sync path this one tees its OWN bytes: the response
+        # middleware never sees a streamed body, so the raw chunk is copied to
+        # `frame` in {#install_on_data} on its way to the assembler.
+        def stream(payload, headers = {}, attempt: RetryTap::Attempt.new, frame: Spool::Null::Frame.new, &on_chunk)
           failure = StreamedFailure.new(self)
-          connection.post(COMPLETION_PATH, payload) do |req|
-            req.headers = headers.merge(req.headers) unless headers.empty?
-            # On the context so RetryTap#retry_block reaches THIS request's
-            # attempt off the retried env, exactly as #sync_post does.
-            req.options.context = (req.options.context || {}).merge(retry_attempt: attempt)
-            install_on_data(req, failure, &on_chunk)
+          terminating(frame) do
+            connection.post(COMPLETION_PATH, payload) do |req|
+              req.headers = headers.merge(req.headers) unless headers.empty?
+              # On the context so RetryTap#retry_block reaches THIS request's
+              # attempt and frame off the retried env, exactly as #sync_post does.
+              req.options.context = (req.options.context || {}).merge(retry_attempt: attempt, wal_frame: frame)
+              install_on_data(req, failure, frame, &on_chunk)
+            end
           end
         rescue Provider::HTTP::Error => e
           failure.reraise(e)
@@ -205,6 +219,42 @@ module Lain
 
         private
 
+        # Writes the frame's terminator on BOTH exits and lets only the
+        # `complete:` flag differ, then re-raises untouched.
+        #
+        # The `ensure`-shaped alternative -- close only on success, let a raise
+        # leave the frame open -- is what {ResponseWal}'s reader tolerates
+        # (a terminator-less frame resyncs and is emitted incomplete), so it
+        # looks free. It is not, and the cost is invisible from here: a
+        # {ResponseWal::BufferedFrame} -- what a round trip gets whenever a
+        # SIBLING FIBER already holds the streaming slot, i.e. the ordinary case
+        # once a subagent shares the session's one spool -- accumulates in
+        # memory and is handed to the file by `#close` and NOWHERE ELSE. An
+        # unclosed buffered frame is not an incomplete record; it is no record
+        # at all, and the bytes of the failed round trip are simply gone.
+        #
+        # So closing aborted is not tidiness about a flag. It is the difference
+        # between salvaging a metered round trip that raised and losing it.
+        #
+        # A CONSEQUENCE WORTH NAMING, because it looks like corruption at 3am:
+        # a failed SYNC round trip writes one EMPTY aborted frame per attempt,
+        # so a retried 500 leaves four zero-byte frames marked incomplete. That
+        # is normal and inert. {SessionRecord::Salvage#call} selects
+        # `matching.reverse.find(&:complete?)` -- the last COMPLETE frame for
+        # the digest -- so aborted siblings are history, never candidates; and
+        # when a round trip failed outright there IS no complete frame, which is
+        # reported as Incomplete because that is the truth about it. On a
+        # rate-limited metered arm a run of zero-byte frames means the server
+        # kept saying no, not that the WAL tore.
+        def terminating(frame)
+          result = yield
+          frame.close(complete: true)
+          result
+        rescue StandardError
+          frame.close(complete: false)
+          raise
+        end
+
         # TWO GUARDS, AND THEY ARE NOT DUPLICATES. They answer different
         # questions, owned in different places, known at different times -- the
         # same shape as the secret boundary's gate/filter/mask split:
@@ -265,9 +315,22 @@ module Lain
         # response already known to have FAILED there is nothing to raise from
         # in here at all, so this arm only accumulates and the one raise happens
         # in #stream, where the real status is what maps it.
-        def install_on_data(req, failure, &on_chunk)
+        # The frame is appended BEFORE the assembler is fed, so the WAL records
+        # what came off the wire rather than what survived parsing -- a chunk
+        # that makes the assembler raise is exactly the one a salvage wants.
+        #
+        # The failed-response arm deliberately does NOT tee. A non-2xx body is
+        # not a response this WAL exists to replay; it belongs to
+        # {StreamedFailure}, which already keeps it for the human, and copying
+        # it here would put an error page into a frame a reader takes for a
+        # turn's bytes. The frame still terminates -- aborted -- via
+        # {#terminating}.
+        def install_on_data(req, failure, frame, &on_chunk)
           handler = Provider::HTTP::Streaming::FaradayHandlers.build(
-            on_chunk: ->(chunk, _env) { yield(chunk) },
+            on_chunk: lambda { |chunk, _env|
+              frame.append(chunk)
+              yield(chunk)
+            },
             on_failed_response: ->(chunk, _env) { failure.feed(chunk) }
           )
           assign_on_data(req, handler)

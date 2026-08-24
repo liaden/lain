@@ -28,7 +28,7 @@ RSpec.describe Lain::Provider::Ollama do
   def transport_sync(body)
     Class.new do
       # rubocop:disable Lint/UnusedBlockArgument
-      define_method(:sync_post) { |_payload, _headers = {}, attempt: nil| Struct.new(:body).new(body) }
+      define_method(:sync_post) { |_payload, _headers = {}, attempt: nil, frame: nil| Struct.new(:body).new(body) }
       # rubocop:enable Lint/UnusedBlockArgument
     end.new
   end
@@ -1267,7 +1267,7 @@ RSpec.describe Lain::Provider::Ollama do
   def v2_handler_stream_transport(chunks)
     Class.new do
       # rubocop:disable Lint/UnusedBlockArgument -- see #transport_sync
-      define_method(:stream) do |_payload, _headers = {}, attempt: nil, &on_chunk|
+      define_method(:stream) do |_payload, _headers = {}, attempt: nil, frame: nil, &on_chunk|
         handler = Lain::Provider::HTTP::Streaming::FaradayHandlers.build(
           on_chunk: ->(chunk, _env) { on_chunk.call(chunk) },
           on_failed_response: ->(*_args) { raise "on_failed_response must not be called for a 200 response" }
@@ -1285,7 +1285,7 @@ RSpec.describe Lain::Provider::Ollama do
       attr_reader :payload
 
       # rubocop:disable Lint/UnusedMethodArgument -- see #transport_sync
-      def sync_post(payload, _headers = {}, attempt: nil)
+      def sync_post(payload, _headers = {}, attempt: nil, frame: nil)
         @payload = payload
         Struct.new(:body).new({ "message" => { "role" => "assistant", "content" => "ok" }, "done_reason" => "stop" })
       end

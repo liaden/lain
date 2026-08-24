@@ -833,7 +833,7 @@ RSpec.describe Lain::Provider::Admission do
     # Provider's `attempt:` as its HEADERS and says nothing.
     def ollama_transport(&body_block)
       Class.new do
-        define_method(:sync_post) do |_payload, _headers = {}, attempt: nil| # rubocop:disable Lint/UnusedBlockArgument
+        define_method(:sync_post) do |_payload, _headers = {}, attempt: nil, frame: nil| # rubocop:disable Lint/UnusedBlockArgument
           Struct.new(:body).new(yield || {})
         end
       end.new

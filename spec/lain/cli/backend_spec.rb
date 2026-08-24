@@ -348,10 +348,22 @@ RSpec.describe Lain::CLI::Backend do
       expect(provider.instance_variable_get(:@retries).instance_variable_get(:@spool)).to be(spool)
     end
 
-    it "never hands ollama or bedrock the spool keyword -- their constructors don't accept it" do
+    # T6 INVERTED THIS. Ollama used to be listed here as a provider whose
+    # constructor took no spool, and "not_to raise_error" was the whole
+    # assertion -- which is also what a silently DISCARDED spool looks like.
+    # Now the ollama arm is metered and must actually receive it, so the
+    # assertion is on the object, not on the absence of an exception.
+    it "carries the SAME spool object into the ollama arm, which is now metered" do
+      spool = Lain::Provider::ResponseWal.new("/tmp/lain-backend-spec-session.wal")
+      provider = backend_for(provider: "ollama").provider(spool:)
+
+      expect(provider).to be_a(Lain::Provider::Ollama)
+      expect(provider.instance_variable_get(:@retries).instance_variable_get(:@spool)).to be(spool)
+    end
+
+    it "never hands bedrock the spool keyword -- its constructor doesn't accept it" do
       spool = Lain::Provider::ResponseWal.new("/tmp/lain-backend-spec-session.wal")
 
-      expect { backend_for(provider: "ollama").provider(spool:) }.not_to raise_error
       expect do
         with_env("AWS_BEARER_TOKEN_BEDROCK" => "tok", "AWS_REGION" => "us-east-1") do
           backend_for(provider: "bedrock").provider(spool:)

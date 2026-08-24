@@ -118,6 +118,65 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
       end
       expect(endpoint_of(provider)).to eq("https://ollama.example")
     end
+
+    # T6 AC: the run's chronicle must reach the ollama provider, not a Null
+    # spool. This is the line that decides whether the whole WAL is live or
+    # dormant -- every OTHER spec in this card injects its own spool, so all of
+    # them stay green if this forwarding is missing. Asserted on the spool
+    # OBJECT reaching the tap, which is the only assertion a dropped keyword
+    # cannot satisfy.
+    describe "forwarding the run's spool" do
+      def spool_of(provider) = provider.instance_variable_get(:@retries).instance_variable_get(:@spool)
+
+      def built(tier, spool)
+        tier.provider(channel: Lain::Channel::Null.instance, queue: true,
+                      journal: Lain::Channel::Null.instance, spool:)
+      end
+
+      it "hands the local arm the very spool it was given" do
+        spool = Lain::Provider::ResponseWal.new("/tmp/lain-ollama-tier-spec-session.wal")
+
+        expect(spool_of(built(local, spool))).to be(spool)
+      end
+
+      it "hands the metered cloud arm the very spool it was given" do
+        spool = Lain::Provider::ResponseWal.new("/tmp/lain-ollama-tier-spec-session.wal")
+
+        expect(with_key { spool_of(built(cloud, spool)) }).to be(spool)
+      end
+
+      # Nil is the Null spool, not a crash and not a silently absent tap: bench
+      # and --no-journal both arrive this way.
+      it "falls back to the Null spool when the caller has no chronicle" do
+        provider = local.provider(channel: Lain::Channel::Null.instance, queue: true,
+                                  journal: Lain::Channel::Null.instance)
+
+        expect(spool_of(provider)).to be_a(Lain::Provider::Spool::Null)
+      end
+
+      # Object identity above proves the keyword arrives. This proves the whole
+      # path WORKS: a round trip completed through a tier-built provider leaves
+      # a readable, complete frame in the file the run would salvage from.
+      it "leaves a complete frame in the WAL file after a round trip", :webmock do
+        Dir.mktmpdir("tier-wal") do |dir|
+          path = File.join(dir, "session.wal")
+          body = '{"message":{"role":"assistant","content":"hi"},"done":true,"done_reason":"stop"}'
+          stub_request(:post, "http://localhost:11434/api/chat")
+            .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body:)
+          # stream: false is EXPLICIT -- Request defaults it to true
+          # (`request.rb:21`), and the stubbed body here is a single JSON
+          # object, i.e. the sync path this example means to drive.
+          request = Lain::Request.new(model: "qwen3:4b", max_tokens: 16, stream: false,
+                                      messages: [{ role: "user", content: "hi" }])
+
+          built(local, Lain::Provider::ResponseWal.new(path)).complete(request)
+
+          frames = Lain::Provider::ResponseWal.new(path).frames.to_a
+          expect(frames.map(&:request_digest)).to eq([request.digest])
+          expect(frames.fetch(0)).to be_complete
+        end
+      end
+    end
   end
 
   describe "the key refusal" do
