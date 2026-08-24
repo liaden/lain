@@ -20,7 +20,8 @@ require "pathname"
 # source is parsed with Ripper and the SYNTAX TREE is inspected, so the names
 # are never matched inside comments or string literals, and a receiver that
 # merely reads a constant (`Provider::Ollama::DEFAULT_MODEL`, which is
-# `oracle/secret_read.rb`'s default argument) is not mistaken for a `.new`.
+# `oracle/secret_read.rb`'s default argument) is not mistaken for a
+# construction. Which selectors ARE a construction is {FACTORY_SELECTORS}.
 #
 # == Why the scope is a class list and not an allowlist
 #
@@ -77,6 +78,19 @@ require "pathname"
 #     flag is a fair question rather than a false positive, because a forwarded
 #     hash is exactly where a `journal:` goes missing unnoticed.
 #   * **A bare constant outside `lain/provider/`.** See {Scanner#provider_constant}.
+#   * **A factory this file has not heard of.** {FACTORY_SELECTORS} is a
+#     hand-maintained list of NAMES, with no link to the singleton methods a
+#     provider actually defines. A factory under an unknown name produces no
+#     {Site} at all, so its file needs no allowlist entry and every rule here
+#     passes by ABSENCE -- green, and failed open. The tree-level example
+#     "classifies every singleton method an endpoint provider defines" is what
+#     makes that drift loud. It reads the singleton methods DEFINED ON an
+#     {ENDPOINT_PROVIDERS} class or on the {Lain::Provider} base all three
+#     inherit from -- however they were defined, `def self.` and
+#     `define_singleton_method` alike. What still escapes it is a method the
+#     class did not define but can answer: one reached through an `extend`ed
+#     module, or inherited from further up the ancestry than that base. Either
+#     would be a live factory this guard cannot see.
 # The READING half: source text in, {Site} values out. It knows Ripper and
 # the shape of a construction, and nothing whatever about which ones are
 # allowed -- that is {ProviderConstructionDiscipline}'s job below. The split
@@ -92,6 +106,21 @@ module ProviderConstruction
 
   # Every class name this scan reacts to at all.
   PROVIDER_CLASSES = (ENDPOINT_PROVIDERS + [JOURNALING_DECORATOR]).freeze
+
+  # Every spelling of a construction: `.new`, plus the intention-revealing
+  # factories a provider offers for its deployments. A factory is invisible to a
+  # rule that matches `.new` alone, so the file holding one would silently stop
+  # being covered by the allowlist -- a guard that fails open and looks green.
+  #
+  # `local` and `cloud` are singleton methods on the PROVIDER class, and are not
+  # the `Deployment::Local` / `Deployment::Cloud` value objects that share the
+  # words -- those are a different thing, constructed nowhere this guard looks.
+  #
+  # Named one at a time rather than "any method on a provider constant", which
+  # is shorter and wrong: the broad rule reads a class-level reader or a
+  # predicate as a construction, and this guard is worth exactly as much as the
+  # next person's lack of a reason to excuse it.
+  FACTORY_SELECTORS = %w[new local cloud].freeze
 
   # The oracle round trip nothing else records. {Lain::Oracle::Model} calls
   # `#complete` directly, with no middleware stack anywhere near it, which is
@@ -112,10 +141,11 @@ module ProviderConstruction
   # qualifier, because they are lexically inside it.
   PROVIDER_NAMESPACE = "lain/provider/"
 
-  # One `.new` on a provider constant, with everything the rules ask about it.
-  # `position` is the `new` token's own `[line, column]`, which is both how a
-  # construction is deduplicated across the nested Ripper nodes that describe it
-  # and how a wrapped provider is matched to the decorator wrapping it.
+  # One construction on a provider constant, with everything the rules ask
+  # about it. `position` is the selector token's own `[line, column]`, which is
+  # both how a construction is deduplicated across the nested Ripper nodes that
+  # describe it and how a wrapped provider is matched to the decorator wrapping
+  # it.
   Site = Struct.new(:path, :constant, :position, :journal_keyword, :wrapped, keyword_init: true) do
     def line = position.first
     def provider? = constant.start_with?("Provider::")
@@ -179,7 +209,7 @@ module ProviderConstruction
     end
 
     def record(call, args)
-      position = new_token_position(call)
+      position = construction_token_position(call)
       return if position.nil? || @seen_positions.include?(position)
 
       @seen_positions << position
@@ -206,13 +236,14 @@ module ProviderConstruction
       "Oracle::#{ORACLE_MODEL}"
     end
 
-    # The `[line, column]` of the `new` in a `.new` call, or nil for any other
-    # call. Doubles as the identity a construction is deduplicated by.
-    def new_token_position(call)
+    # The `[line, column]` of the selector in a construction, or nil for any
+    # other call. Doubles as the identity a construction is deduplicated by.
+    def construction_token_position(call)
       return nil unless call.is_a?(Array) && call[0] == :call
 
       ident = call[3]
-      return nil unless ident.is_a?(Array) && ident[0] == :@ident && ident[1] == "new"
+      return nil unless ident.is_a?(Array) && ident[0] == :@ident &&
+                        FACTORY_SELECTORS.include?(ident[1])
 
       ident[2]
     end
@@ -264,12 +295,12 @@ module ProviderConstruction
     # source happens to nest them.
     def note_wrapped_provider(args)
       wrapped = keyword_value(args, PROVIDER_KEYWORD)
-      position = new_token_position(call_node(wrapped))
+      position = construction_token_position(call_node(wrapped))
       @wrapped_positions << position unless position.nil?
     end
 
-    # A `.new` may arrive bare, parenthesised, or with a block; all three carry
-    # the same `[:call, ...]` somewhere obvious.
+    # A construction may arrive bare, parenthesised, or with a block; all three
+    # carry the same `[:call, ...]` somewhere obvious.
     def call_node(node)
       return nil unless node.is_a?(Array)
 
@@ -377,6 +408,19 @@ module ProviderConstructionDiscipline
     }.freeze
   }.freeze
 
+  # Singleton methods on an endpoint-reaching provider that build no provider,
+  # and why each is not a construction. Shape:
+  #
+  #   "Provider::Ollama" => { "probe" => "asks /api/tags what exists; builds nothing" }
+  #
+  # Empty because neither the three classes nor the base they inherit from
+  # defines a singleton method at all today. The emptiness is a pin rather than
+  # a gap -- see the tree-level example that reads this, which is what stops a
+  # factory landing under a name {ProviderConstruction::FACTORY_SELECTORS} has
+  # never heard of. A value here must be a non-empty String: the reason IS the
+  # entry, and a key with nothing written against it excuses nothing.
+  NON_CONSTRUCTING_SINGLETONS = {}.freeze
+
   module_function
 
   def violations(sources = ProviderConstruction.lib_sources)
@@ -470,6 +514,30 @@ module ProviderConstructionDiscipline
 end
 
 RSpec.describe "provider construction discipline" do
+  # Every class whose singleton methods could be a construction: the endpoint
+  # providers, and the base they inherit from.
+  def reflected_providers
+    ProviderConstruction::ENDPOINT_PROVIDERS
+      .map { |name| ["Provider::#{name}", Lain::Provider.const_get(name, false)] }
+      .unshift(["Provider", Lain::Provider])
+  end
+
+  def unclassified_singletons(constant, klass)
+    klass.singleton_class.public_instance_methods(false).map(&:to_s).sort
+         .reject { |method| ProviderConstruction::FACTORY_SELECTORS.include?(method) }
+         .reject { |method| non_constructing?(constant, method) }
+         .map { |method| "#{constant}.#{method}" }
+  end
+
+  # A WRITTEN reason, not merely a key. Presence alone would let `=> false` or
+  # `=> ""` excuse a real factory with no justification, and read as green --
+  # the entry has to say something for the exemption to count.
+  def non_constructing?(constant, method)
+    reason = ProviderConstructionDiscipline::NON_CONSTRUCTING_SINGLETONS.dig(constant, method)
+
+    reason.is_a?(String) && !reason.strip.empty?
+  end
+
   describe "the tree as it stands" do
     it "constructs an endpoint-reaching provider only where the allowlist says, and only with a journal" do
       violations = ProviderConstructionDiscipline.violations
@@ -498,6 +566,81 @@ RSpec.describe "provider construction discipline" do
 
       expect(approved.keys.size).to(be <= 3, escalate)
       expect(approved.values.sum(&:size)).to(be <= 6, escalate)
+    end
+
+    it "keeps the non-constructing exemptions small enough to stay exceptions" do
+      # The same escalation trigger APPROVED carries, for the same reason. This
+      # list is the one place a factory can be excused from the guard, so it is
+      # also the one place the guard can be hollowed out an entry at a time.
+      # The ceilings sit above an empty list rather than a populated one: a
+      # provider or two growing a class-level method that builds nothing is
+      # unremarkable, but a guard needing exemptions on every class is a guard
+      # asking the wrong question.
+      exemptions = ProviderConstructionDiscipline::NON_CONSTRUCTING_SINGLETONS
+      escalate = "The non-constructing exemptions have outgrown being exceptions. Each one is a " \
+                 "class method the construction guard agrees not to look at, so a list this size " \
+                 "says the guard is asking the wrong question -- the fix is a narrower rule, not " \
+                 "one more excused name. Raise these ceilings only alongside that argument."
+
+      expect(exemptions.keys.size).to(be <= 2, escalate)
+      expect(exemptions.values.sum(&:size)).to(be <= 3, escalate)
+    end
+
+    it "counts an exemption only when it carries a written reason" do
+      # Without this the reason field is decorative: `=> false` or `=> ""`
+      # would excuse a real factory, and nothing would ever say so.
+      stub_const("ProviderConstructionDiscipline::NON_CONSTRUCTING_SINGLETONS",
+                 { "Provider::Ollama" => { "hollow" => "", "probe" => "reads /api/tags; builds nothing" } })
+
+      expect(non_constructing?("Provider::Ollama", "hollow")).to be(false)
+      expect(non_constructing?("Provider::Ollama", "probe")).to be(true)
+    end
+
+    it "classifies every singleton method an endpoint provider defines" do
+      # The link FACTORY_SELECTORS does not have. That list is hand-maintained
+      # NAMES, so a factory added under a name it does not carry builds a
+      # provider that produces no Site -- its file then needs no allowlist
+      # entry and every rule above passes by absence. This refuses to let such
+      # a method exist unclassified: a construction is added to
+      # FACTORY_SELECTORS, and anything else to NON_CONSTRUCTING_SINGLETONS
+      # with the reason it is not one. Vacuously true today, which is the only
+      # honest state for it while none of these classes defines one.
+      #
+      # The BASE is in the set for a measured reason: all three providers
+      # subclass Lain::Provider, and an inherited singleton is not visible to
+      # `public_instance_methods(false)` on the subclass. A `def self.hosted`
+      # written once on the base makes Provider::Ollama.hosted a live factory
+      # while every subclass still reflects as empty -- which is this pin's own
+      # fail-open shape, relocated one class up, and the likeliest place a
+      # shared factory would really be written.
+      unclassified = reflected_providers.flat_map do |constant, klass|
+        unclassified_singletons(constant, klass)
+      end
+
+      expect(unclassified).to be_empty, lambda {
+        "A provider gained a singleton method this guard cannot classify: " \
+          "#{unclassified.join(", ")}. If it builds a provider, add its name to " \
+          "ProviderConstruction::FACTORY_SELECTORS -- otherwise every file calling it becomes " \
+          "invisible to the allowlist. If it builds nothing, say so in " \
+          "ProviderConstructionDiscipline::NON_CONSTRUCTING_SINGLETONS with the reason."
+      }
+    end
+
+    it "still sees the constructions the allowlist was written for" do
+      # The pin under the selector list. Every rule above is stated as an
+      # ABSENCE of violations, so a detector that stopped recognizing a
+      # construction would pass all of them by vacuum. Spelled out here rather
+      # than derived from APPROVED, so that deleting a row cannot quietly
+      # delete the assertion that the row was ever matched.
+      live = ProviderConstruction.sites(ProviderConstruction.lib_sources)
+                                 .select(&:endpoint?).map { |site| [site.path, site.constant] }
+
+      expect(live).to include(
+        %w[lain/cli/backend.rb Provider::Anthropic],
+        %w[lain/cli/backend.rb Provider::Ollama],
+        %w[lain/cli/backend.rb Provider::Bedrock],
+        %w[lain/oracle/secret_read.rb Provider::Ollama]
+      )
     end
   end
 
@@ -542,6 +685,28 @@ RSpec.describe "provider construction discipline" do
       expect(scan("Provider::Ollama.new(journal: j)\n").size).to eq(1)
     end
 
+    it "reads a factory construction and its keywords" do
+      site = scan("Provider::Ollama.cloud(api_base: base, journal: run_journal)\n").first
+
+      expect(site.constant).to eq("Provider::Ollama")
+      expect(site.line).to eq(1)
+      expect(site.journal_keyword).to be(true)
+    end
+
+    it "reads every named factory selector, and no other method on a provider constant" do
+      # A NAMED list rather than "any method on a provider constant". The broad
+      # match would read a predicate and a class-level reader as constructions,
+      # and a guard with false positives is a guard that gets excused -- which
+      # is the failure mode this file's header already worries about.
+      expect(scan("Provider::Ollama.new\nProvider::Ollama.local\nProvider::Ollama.cloud\n").size).to eq(3)
+      expect(scan("Provider::Ollama.default_model\nProvider::Ollama.local?\nProvider::Ollama.build(x)\n"))
+        .to be_empty
+    end
+
+    it "ignores a factory named in a comment" do
+      expect(scan("# the cloud arm is built by Provider::Ollama.cloud, one tier down\n")).to be_empty
+    end
+
     it "normalizes a fully qualified and a root-qualified constant to the same name" do
       constants = scan("::Lain::Provider::Ollama.new\nLain::Provider::Anthropic.new\n").map(&:constant)
 
@@ -563,6 +728,9 @@ RSpec.describe "provider construction discipline" do
     end
 
     it "ignores a constant that is read rather than constructed" do
+      # Load-bearing twice over: widening `.new` into a list of selector NAMES
+      # must not widen it into a constant read, and this is the only example
+      # that says so. Weaken it and the factory rule loses its floor.
       expect(scan("model = Provider::Ollama::DEFAULT_MODEL\n")).to be_empty
     end
 
@@ -599,6 +767,15 @@ RSpec.describe "provider construction discipline" do
 
       expect(found.map(&:to_s)).to eq(
         ["lain/wiring.rb:2 -> constructs Provider::Anthropic, and no provider construction " \
+         "is approved in this file"]
+      )
+    end
+
+    it "reports a factory construction in a file where nothing is approved, by file and line" do
+      found = construction_violations_for("class Wiring\n  def build = Provider::Ollama.cloud(journal:)\nend\n")
+
+      expect(found.map(&:to_s)).to eq(
+        ["lain/wiring.rb:2 -> constructs Provider::Ollama, and no provider construction " \
          "is approved in this file"]
       )
     end
