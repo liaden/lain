@@ -1180,14 +1180,25 @@ reader of the history does not have to reconstruct them from card diffs.
 
 | card | wave | state |
 |---|---|---|
-| T1 | 1 | in progress (absorbed T7; gained a `/api/show` predicate) |
-| T4 | 1 | implemented, awaiting review |
-| T5 | 1 | implemented, awaiting review |
-| T9 | 1 | in progress (gained `spec/support/ollama_probe.rb`) |
-| T11 | 1 | implemented, in review |
-| T15 | 1 | implemented, awaiting review — closed as "already correct" |
-| T2 T3 T6 T8 T10 T12 T13 T14 | 2–5 | not started |
+| T15 | 1 | **landed** `afb1967a` — closed as "already correct"; characterisation only |
+| T5 | 1 | **landed** `e77b57bd` — 23 cloud windows, shape rule proven red |
+| T9 | 1 | **landed** `8369aa67` — tag + host-scoped probe stubs |
+| T11 | 1 | **landed** `62008649` — factory selectors + singleton pin |
+| T1 | 1 | **landed** `60e72693` — absorbed T7; two probe predicates |
+| T4 | 1 | **landed** `0568fbf5` — declared width; supersession gated four ways |
+| T3 | 2 | implemented, in review |
+| T2 | 2 | implemented, fixes applied, **awaiting T3's merge** (leaf-first) |
+| T8 T10 T12 T13 T14 | 3–5 | not started |
 | T7 | — | **folded into T1** |
+
+Wave 1 landed at **15549 examples, 0 failures, 15 pending**, reproduced at two seeds, rubocop
+clean at 1383 files, every worktree retired.
+
+**Every wave-1 card needed a fix round; none was approved unchanged.** The recurring defect class
+was not broken code — it was a **guarantee stated in prose and enforced by nothing**: T1's second
+probe predicate was aliasable with the suite green, T5's shape rule was comment-only, T11's
+selector list was a forward bet, T4's invariant did not match its own justification, and T2's two
+gates could be cross-wired invisibly. Four of those were found by mutation, not by reading.
 
 ### Decision 1 — the arm is selected by `--provider ollama-cloud`, not by `--cloud`
 
@@ -1258,6 +1269,41 @@ The plan's "3 keys / 5 entries" is wrong: moving `Provider::Ollama` out of `back
 trigger demanding a distinct cloud entry "in its own words" describes a row that is not
 representable — drop it. The key ceiling is still reached exactly, so the conversation that
 ceiling exists to force still happens.
+
+### Decision 6 — the three unverified cloud facts are measured, not assumed
+
+Settled 2026-08-24 against a live key, two requests, `gpt-oss:20b-cloud`. Full evidence and the
+exact header set are recorded for T12; the rulings that follow:
+
+- **`/api/show` answers on `ollama.com`** (HTTP 200) but returns `gptoss.context_length: 131072` —
+  128Ki of GGUF **architecture metadata**, i.e. the trained maximum, not a served window. This is
+  the case T12's escalation trigger names, and the ruling stands: it must never become a
+  denominator. It IS the right source for `trained_context_tokens`, which exists to refuse a
+  `--num-ctx` above what the weights allow. **T5's table is vindicated and cannot be replaced by a
+  probe** — the probe says 131,072, the published label says "128K", T5 recorded 128,000, and the
+  conservative figure is the correct one to denominate with.
+- **No rate-limit headers on a 200**, on either endpoint. Stated precisely: absence on success does
+  **not** prove absence on a 429, and forcing a real 429 remains T12's job. What it settles is that
+  T7's nil knobs need no follow-up card to name a header. `x-request-id` is present on every
+  response and is the field worth journaling on a cloud error.
+- **No cached-input signal** in the native response — only `prompt_eval_count`, `eval_count` and
+  durations. So it does not matter whether the backend caches: lain declares capabilities it can
+  *demonstrate*, and there is nothing on this wire to demonstrate one from. `NO_CACHING` and the
+  absence of `:prompt_caching` are correct regardless, which closes Open decision 1 more cheaply
+  than a cache measurement would have.
+
+**Recorded, deliberately not acted on:** `Cloud#model_metadata?` ships `false` because `/api/show`
+was unverified. It answers, so the cloud arm currently gives **no `--num-ctx` refusal** at all.
+Flipping it is a one-line follow-up once T12 establishes it across models with a spec — one manual
+request for one model, mid-wave, against a value object a sibling card was building on, is not the
+evidence standard for changing shipped behaviour.
+
+### Decision 7 — `resolved_endpoint` does NOT delegate to the deployment
+
+T2's card lists `resolved_endpoint` alongside `capabilities` and `cache_profile` as delegating.
+That is wrong and was not done: delegating it would make an explicit `api_base:` unobservable and
+break the 46 existing construction sites the card itself insists must stay green. It keeps reading
+`@config`. Recorded so a later reader does not "restore" it.
 
 ### Other stale citations found (bear on T13)
 
