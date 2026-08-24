@@ -258,6 +258,161 @@ RSpec.describe Lain::ContextWindow do
       end
     end
 
+    # T5. Every id here is one the cloud arm can actually be launched with, so
+    # the numbers are pinned rather than merely the provenance: a PUBLISHED tag
+    # on a wrong denominator is the fable/mythos defect wearing a better label.
+    describe "the ollama cloud arm keeps its authority" do
+      subject(:book) { described_class.default }
+
+      {
+        "gpt-oss:20b-cloud" => 128_000,
+        "gpt-oss:120b-cloud" => 128_000,
+        "qwen3.5:cloud" => 256_000,
+        "qwen3.5:397b-cloud" => 256_000,
+        "deepseek-v4-flash:cloud" => 1_000_000,
+        "deepseek-v4-flash:0731-cloud" => 1_000_000,
+        "deepseek-v4-flash:preview-cloud" => 1_000_000,
+        "deepseek-v4-pro:cloud" => 1_000_000,
+        "deepseek-v4-pro:0813-cloud" => 1_000_000,
+        "deepseek-v4-pro:preview-cloud" => 1_000_000,
+        "kimi-k3:cloud" => 1_000_000,
+        "kimi-k2.7-code:cloud" => 256_000,
+        "kimi-k2.6:cloud" => 256_000,
+        "glm-5.2:cloud" => 976_000,
+        "glm-5.1:cloud" => 198_000,
+        "minimax-m2.7:cloud" => 200_000,
+        "minimax-m3:cloud" => 512_000,
+        "gemma4:cloud" => 256_000,
+        "gemma4:31b-cloud" => 256_000,
+        "nemotron-3-ultra:cloud" => 256_000,
+        "nemotron-3-super:cloud" => 256_000,
+        "nemotron-3-nano:30b-cloud" => 1_000_000,
+        "mistral-large-3:675b-cloud" => 256_000
+      }.each do |model, window|
+        it "measures #{model} against its published #{window}-token window, authoritatively" do
+          resolution = book.resolve(model)
+
+          expect(resolution.window_tokens).to eq(window)
+          expect(resolution.provenance).to eq(described_class::PUBLISHED)
+          expect(resolution).to be_authoritative
+        end
+      end
+
+      # The rows are a snapshot of somebody else's catalogue, so the honest
+      # answer for an id it does not carry is still the floor -- publishing a
+      # cloud section must not turn "-cloud" itself into evidence.
+      it "still guesses for a cloud-shaped id nobody shipped" do
+        resolution = book.resolve("some-model-nobody-shipped:7b-cloud")
+
+        expect(resolution.window_tokens).to eq(described_class::CONSERVATIVE_FALLBACK)
+        expect(resolution.provenance).to eq(described_class::GUESSED)
+        expect(resolution).not_to be_authoritative
+      end
+
+      # T5's escalation trigger, kept as a live assertion rather than a
+      # one-time eyeball: DEFAULTS is ONE table shared with the Anthropic arms
+      # and `matched_key` scans it by substring, so a cloud id containing a
+      # tier word would quietly take an Anthropic window.
+      it "shares no substring with an Anthropic family token" do
+        anthropic_tokens = Regexp.union(%w[opus sonnet fable mythos haiku])
+
+        expect(described_class::CLOUD_WINDOWS.keys.grep(anthropic_tokens)).to be_empty
+      end
+
+      # The other direction of the same shared-table worry, and the one a
+      # reader is likelier to get wrong: `matched_key` tests what the QUERIED
+      # NAME contains, so a new key can only move an existing answer if some
+      # Anthropic id contains that key.
+      it "adds no key that an Anthropic id contains" do
+        stolen = described_class::CLOUD_WINDOWS.keys.select do |id|
+          described_class::ANTHROPIC_WINDOWS.keys.any? { |name| name.include?(id) }
+        end
+
+        expect(stolen).to be_empty
+      end
+
+      # The collision that is actually plausible is ollama-to-ollama, not
+      # ollama-to-Anthropic: a bare "qwen3" or a bare "cloud" key would capture
+      # the LOCAL arm's own default by the longest-token rule, handing a
+      # 4-billion-parameter local runner a hosted model's denominator. The
+      # local default is not covered by "every key that existed before" -- it
+      # never had a key, it resolves by FALLBACK -- so it is pinned separately.
+      it "leaves the local arm's default model resolving by fallback" do
+        resolution = book.resolve(Lain::Provider::Ollama::DEFAULT_MODEL)
+
+        expect(resolution.window_tokens).to eq(described_class::CONSERVATIVE_FALLBACK)
+        expect(resolution.provenance).to eq(described_class::GUESSED)
+      end
+
+      it "adds no key that the local arm's default model contains" do
+        capturing = described_class::CLOUD_WINDOWS.keys.select do |id|
+          Lain::Provider::Ollama::DEFAULT_MODEL.include?(id)
+        end
+
+        expect(capturing).to be_empty
+      end
+
+      # The SHAPE rule, not another word-specific pin. The two examples above
+      # catch the capture they were written for and nothing else: a probe
+      # against this table added a bare "gpt-oss" key and all 136 examples
+      # stayed green, while `--model gpt-oss:20b` -- a LOCAL runner -- then
+      # resolved 128,000 tagged PUBLISHED and authoritative, which is precisely
+      # the state that lets {Compaction::Source} spend an irreversible lossy
+      # rewrite on a hosted model's denominator.
+      #
+      # So the invariant the comment on {described_class::CLOUD_WINDOWS} claims
+      # is asserted as itself: every key names ONE tag of ONE model, and its tag
+      # ends in "cloud". A bare family token has no colon and fails; a bare
+      # "cloud" has no model and fails; "gpt-oss:20b" (local) fails. The keys
+      # are listed in the failure so a bad row names itself.
+      it "keys only ever name a single cloud tag, never a family token" do
+        cloud_tag = /\A[^:\s]+:[^:\s]*cloud\z/
+        malformed = described_class::CLOUD_WINDOWS.keys.grep_v(cloud_tag)
+
+        expect(malformed).to be_empty
+      end
+
+      it "rejects the shapes that would capture a local model" do
+        cloud_tag = /\A[^:\s]+:[^:\s]*cloud\z/
+
+        expect(%w[gpt-oss gemma4 qwen3 cloud gpt-oss:20b].grep(cloud_tag)).to be_empty
+      end
+    end
+
+    # AC 3, pinned as the whole pre-T5 table rather than a sample: the claim is
+    # that NO Anthropic answer moved, and a sample cannot say that.
+    describe "the rows that existed before the cloud section" do
+      subject(:book) { described_class.default }
+
+      {
+        "opus" => 1_000_000,
+        "sonnet" => 1_000_000,
+        "fable" => 1_000_000,
+        "mythos" => 1_000_000,
+        "haiku" => 200_000,
+        "claude-opus-4-5" => 200_000,
+        "claude-opus-4-1" => 200_000,
+        "claude-sonnet-4-5" => 200_000,
+        "claude-sonnet-4-20250514" => 200_000,
+        "claude-3-5-sonnet" => 200_000
+      }.each do |model, window|
+        it "answers #{model} with an unmoved #{window}, still published" do
+          resolution = book.resolve(model)
+
+          expect(resolution.window_tokens).to eq(window)
+          expect(resolution.provenance).to eq(described_class::PUBLISHED)
+        end
+      end
+
+      it "carries exactly those ten rows in its Anthropic half" do
+        expect(described_class::ANTHROPIC_WINDOWS.keys).to contain_exactly(
+          "opus", "sonnet", "fable", "mythos", "haiku", "claude-opus-4-5",
+          "claude-opus-4-1", "claude-sonnet-4-5", "claude-sonnet-4-20250514",
+          "claude-3-5-sonnet"
+        )
+      end
+    end
+
     # The whole point of the value: only the guess is denied.
     it "is authoritative when probed or published, and not when guessed" do
       probed = described_class::WindowResolution.new(window_tokens: 32_768,

@@ -125,6 +125,41 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
       expect(resolution).not_to be_authoritative
     end
 
+    # T5 / Correction 4, end to end: the cloud arm's window needs NO provider
+    # change. `ollama.com` has no resident runner to probe, so the provider
+    # reports nil and `#book` hands back the shipped book -- which now carries
+    # the cloud catalogue, so the answer is authoritative rather than the 8,192
+    # floor the same path gives `qwen3:4b` two examples above. Asserted as
+    # `authoritative?`, not merely non-nil: authority is what
+    # {Lain::Compaction::Source} spends on an irreversible rewrite.
+    def cloud_backend(num_ctx:)
+      provider = instance_double(Lain::Provider::Ollama, context_window_tokens: nil)
+      instance_double(Lain::CLI::Backend, model: "gpt-oss:120b-cloud", num_ctx:, provider:)
+    end
+
+    it "resolves a shipped cloud model authoritatively, given no --num-ctx" do
+      resolution = described_class.new(backend: cloud_backend(num_ctx: nil)).book.resolve("gpt-oss:120b-cloud")
+
+      expect(resolution).to be_authoritative
+      expect(resolution.provenance).to eq(Lain::ContextWindow::PUBLISHED)
+      expect(resolution.window_tokens).to eq(128_000)
+    end
+
+    # The other half of the same path, recorded rather than fixed: `narrowest`
+    # only returns nil when BOTH ceilings are absent, so a `--num-ctx` skips the
+    # early return and `vouched_by(nil)` tags the answer GUESSED -- the shipped
+    # table is never consulted and {Lain::Compaction::Source} declines
+    # `:approaching_window` on it. That is pre-existing and identical on the
+    # local arm; T5 publishes windows, it does not change who vouches for one.
+    # Pinned so the day it changes, it changes here first.
+    it "falls back to an unauthoritative --num-ctx for the same cloud model" do
+      resolution = described_class.new(backend: cloud_backend(num_ctx: 16_384)).book.resolve("gpt-oss:120b-cloud")
+
+      expect(resolution.window_tokens).to eq(16_384)
+      expect(resolution.provenance).to eq(Lain::ContextWindow::GUESSED)
+      expect(resolution).not_to be_authoritative
+    end
+
     it "resolves the served model as probed once a runner answers" do
       resolution = described_class.new(backend: backend(served_window: 32_768)).book.resolve("qwen3:4b")
 

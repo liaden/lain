@@ -17,13 +17,22 @@ module Lain
       #
       # == Why this exists at all
       #
-      # {ContextWindow::DEFAULTS} is an Anthropic-shaped table, so every ollama
-      # and most bedrock model ids fall to
+      # {ContextWindow::DEFAULTS} carries only what somebody has PUBLISHED, so
+      # a model id nobody published falls to
       # {ContextWindow::CONSERVATIVE_FALLBACK}'s 8,192. The POC measured that
       # cost exactly: 86.4% occupancy published while the context was 2.7% full,
       # with a numerator that reproduced the provider's own `input_tokens` to
       # the token. Only the denominator was ever wrong, and only the server
       # knows it.
+      #
+      # That USED to read "an Anthropic-shaped table, so every ollama and most
+      # bedrock model ids fall to 8,192", and it is no longer true: the table
+      # now also carries {ContextWindow::CLOUD_WINDOWS}, so a shipped Ollama
+      # Cloud tag resolves {ContextWindow::PUBLISHED} and authoritative without
+      # any server being asked. LOCAL ollama ids and arbitrary bedrock ids do
+      # still fall to the guess, which is what keeps this class necessary --
+      # `ollama.com` has no resident runner to probe, but a local one does, and
+      # only {Served} can state what it is actually serving.
       class WindowBook
         # A book that answers for ONE model and delegates every other name.
         #

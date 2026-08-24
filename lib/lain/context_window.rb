@@ -26,6 +26,12 @@ module Lain
     # (4.6/4.7/4.8) and Sonnet 4.6 are 1,000,000 tokens at standard pricing
     # (no long-context premium); Haiku 4.5 is 200,000.
     #
+    # One of the two halves of {DEFAULTS}; the ollama cloud arm's half is
+    # {CLOUD_WINDOWS}. They are named apart rather than written as one literal
+    # because the table is SHARED and matched by substring, so "did a new row
+    # move an old answer?" has to be a question a reader -- and a spec -- can
+    # actually ask.
+    #
     # Legacy dated/aliased ids get their OWN longer keys, more specific than
     # the bare family token: PriceBook can price a legacy Anthropic model at
     # its family's rate (an accepted approximation -- pricing is close enough
@@ -57,7 +63,7 @@ module Lain
     # read live rather than transcribed; it is a future card, not this one.
     # Until then, `context_window_spec.rb`'s "the hosted arms keep their
     # authority" table is the tripwire, and a new family means a new row there.
-    DEFAULTS = {
+    ANTHROPIC_WINDOWS = {
       "opus" => 1_000_000,
       "sonnet" => 1_000_000,
       "fable" => 1_000_000,
@@ -69,6 +75,114 @@ module Lain
       "claude-sonnet-4-20250514" => 200_000,
       "claude-3-5-sonnet" => 200_000
     }.freeze
+
+    # Ollama Cloud's catalogue, read from Ollama's own model library
+    # (`https://ollama.com/search?c=cloud` and each model's `ollama.com/library`
+    # page) on **2026-08-24**. Every key is an EXACT tag, never a family token
+    # and never a bare "cloud": {#matched_key} scans by substring and takes the
+    # longest hit, so a "qwen3" key would capture the local arm's own
+    # `Provider::Ollama::DEFAULT_MODEL` and measure a 4B local runner against a
+    # hosted model's window. The ollama-to-ollama capture is the real hazard
+    # here; the shared table's Anthropic tokens are checked too, and none of
+    # these ids contains one.
+    #
+    # EVERY NUMBER BELOW IS A FLOOR, NOT A MEASUREMENT. Do not read 128_000 as
+    # a figure anyone read off the model. Ollama publishes only a ROUNDED LABEL
+    # per model -- "128K context window", "1M", "976K" -- and no exact integer
+    # anywhere a client can reach without a key: `/api/show`'s `model_info`
+    # carries the cloud model's own `ContextLen`, but that costs a subscription
+    # (see `references/ollama/api-show-and-context.md`). So each label is read
+    # as its DECIMAL FLOOR, and the rows are GROUPED BY THAT LABEL so the
+    # published string and the derived integer are never separated: "128K" ->
+    # 128_000, "1M" -> 1_000_000, "976K" -> 976_000.
+    #
+    # The floor is deliberate, and the direction is not a preference. This table
+    # has ONE hard requirement -- never over-estimate -- because an
+    # over-estimated window means {Compaction::Need::ApproachingWindow} never
+    # fires at all, which `CONSERVATIVE_FALLBACK` below ranks as worse than the
+    # crash it replaces. A decimal floor sits at or below the true figure under
+    # EITHER reading of the same label (128,000 <= 131,072; 976,000 <= 999,424),
+    # so it cannot breach that requirement; a binary reading could. The price is
+    # that compaction may fire up to ~2.4% early. The alternative -- no rows at
+    # all -- is a 16x under-report that ALSO switches window-pressure compaction
+    # off entirely, which is the damage case this card exists to close.
+    #
+    # {PUBLISHED} is still the honest provenance for these, and it is worth
+    # being precise about what it claims: "Ollama published this figure for this
+    # model", NOT "this is exact to the token". The tag governs whether a number
+    # may authorise an irreversible rewrite, and a publisher's own rounded
+    # figure, floored, is evidence about the model actually named -- which is
+    # exactly what {GUESSED} is not.
+    #
+    # A model whose window could not be established is simply ABSENT, and falls
+    # to the tagged-{GUESSED} fallback like any other unknown. Absent for that
+    # reason today: `nemotron-3-super`'s and `nemotron-3-nano`'s remaining tags
+    # (their library pages advertise more tags than they render), and every id
+    # retired from the cloud on 2026-06-16 and 2026-07-15
+    # (`https://docs.ollama.com/cloud`) -- publishing a window for a model the
+    # host no longer serves is a row that can only ever be wrong.
+    #
+    # This section is a SNAPSHOT of a moving catalogue, and a faster-moving one
+    # than the Anthropic half above: Ollama retired sixteen cloud models in a
+    # single day two months before these rows were read. It will go stale, the
+    # same way that table already has twice, and the same durable fix applies --
+    # read the window live rather than transcribing it.
+    CLOUD_WINDOWS = {
+      # Ollama publishes "1M".
+      "deepseek-v4-flash:cloud" => 1_000_000,
+      "deepseek-v4-flash:0731-cloud" => 1_000_000,
+      "deepseek-v4-flash:preview-cloud" => 1_000_000,
+      "deepseek-v4-pro:cloud" => 1_000_000,
+      "deepseek-v4-pro:0813-cloud" => 1_000_000,
+      "deepseek-v4-pro:preview-cloud" => 1_000_000,
+      "kimi-k3:cloud" => 1_000_000,
+      "nemotron-3-nano:30b-cloud" => 1_000_000,
+
+      # Ollama publishes "976K". Its own page's prose says "1M" in the next
+      # breath; the spec field is the narrower of the two and so is the one
+      # this table may use.
+      "glm-5.2:cloud" => 976_000,
+
+      # Ollama publishes "512K" for the served tag, while the prose offers "up
+      # to 1M tokens with a guaranteed minimum of 512K". A guaranteed minimum
+      # is the only half of that sentence a denominator may be built on.
+      "minimax-m3:cloud" => 512_000,
+
+      # Ollama publishes "256K".
+      "qwen3.5:cloud" => 256_000,
+      "qwen3.5:397b-cloud" => 256_000,
+      "kimi-k2.7-code:cloud" => 256_000,
+      "kimi-k2.6:cloud" => 256_000,
+      "gemma4:cloud" => 256_000,
+      "gemma4:31b-cloud" => 256_000,
+
+      # Also "256K" on the served tag, against a readme prose claim of "1M
+      # token context" -- a 4x split, the widest of the three here. The spec
+      # field wins for the same reason it does above; do not "correct" this
+      # upward from the prose.
+      "nemotron-3-ultra:cloud" => 256_000,
+
+      # Back to an undisputed "256K".
+      "nemotron-3-super:cloud" => 256_000,
+      "mistral-large-3:675b-cloud" => 256_000,
+
+      # Ollama publishes "200K".
+      "minimax-m2.7:cloud" => 200_000,
+
+      # Ollama publishes "198K".
+      "glm-5.1:cloud" => 198_000,
+
+      # Ollama publishes "128K".
+      "gpt-oss:20b-cloud" => 128_000,
+      "gpt-oss:120b-cloud" => 128_000
+    }.freeze
+
+    # The shipped book's table: both halves, one flat namespace, because
+    # {#resolve} matches a free-form `--model` string against every key it has
+    # without knowing or caring which arm the name came from. `merge` is safe
+    # only while the halves stay disjoint, which the specs assert in both
+    # directions rather than trusting to inspection.
+    DEFAULTS = ANTHROPIC_WINDOWS.merge(CLOUD_WINDOWS).freeze
 
     # Ollama's `DEFAULT_MODEL` (`qwen3:4b`) and arbitrary Bedrock ids never
     # match a token above. 8,192 is comfortably below Haiku's 200,000 -- the
