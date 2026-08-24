@@ -45,6 +45,17 @@ provider or a forge:
 | [`subagents-and-backends.md`](scenarios/subagents-and-backends.md) | When the loop stops being one process, does anything still tell the truth — `actor` mode, `--isolation worktree`'s real-`git` seams, `--exec docker`, `lain watch`, `--windows`? Also settles whether `--isolation`'s "inert in chat" help text is still true. | minutes |
 | [`memory-and-dogfood.md`](scenarios/memory-and-dogfood.md) | Does what a session learned **come back**? The memory ceiling and its chain, the `memory_root` pairing, `lain consolidate` / `improve` / `improvements`, and `bench sweep`'s offline five-arm recall@k. | cheap–minutes |
 
+**Added 2026-08-24** — the first scenario that needs a **remote, metered** provider, which is why
+it sits apart from the six above rather than joining them:
+
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`ollama-cloud-arm.md`](scenarios/ollama-cloud-arm.md) | Does `--provider ollama-cloud` **refuse correctly before it spends anything**, denominate with a published window rather than a guess, keep the subscription key off hosts it did not choose, and leave a paid round trip recoverable after a crash? The wire is byte-identical to the local arm by construction, so everything findable is in auth, window, admission and the WAL. **Steps 1–4 cost nothing**; the whole scenario budgets under ten completions. | quota |
+
+Its step 7 is the one to read before using this arm for anything: **neither ollama arm is a
+determinism-comparable bench arm on this machine right now**, so a `bench variance` number taken
+from either is measuring the server rather than the change.
+
 **Thirteen scenarios do not fit in one round, and pretending otherwise is how a slot gets
 substituted** — that is the failure rounds 7 and 8 made with `cockpit-surfaces`, one level out. So
 the six above are **not appended to the full round below**. They are placed:
