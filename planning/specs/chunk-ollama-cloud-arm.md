@@ -1360,7 +1360,8 @@ break the 46 existing construction sites the card itself insists must stay green
 
 ### Other stale citations found (bear on T13)
 
-- The Provider / model axis is `ROADMAP.md:50`, not `:52` (`:52` is the Orchestration row).
+- The Provider / model axis is `ROADMAP.md:50`, not `:52`. (My first note here said `:52` was
+  Orchestration; it is not — `:51` is Orchestration and `:52` is Decorrelation. Caught by T13.)
 - There is no `WindowBook::Source`; the method is `WindowBook#book`
   (`cli/backend/window_book.rb:271-280`), consumed by `WindowBook::Live`.
 - `context_window.rb:334` is the `GUESSED` branch; the `PUBLISHED` table hit is `:332`.

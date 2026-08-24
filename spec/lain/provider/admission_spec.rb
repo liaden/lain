@@ -800,7 +800,7 @@ RSpec.describe Lain::Provider::Admission do
   # The gate above is only worth having if EVERY round trip goes through it,
   # and the enumeration that would guarantee that cannot be written: there are six
   # provider construction sites on the chat path and {Oracle::SecretRead.tier}
-  # (`oracle/secret_read.rb:134`) is structurally forbidden from accepting an
+  # (`oracle/secret_read.rb:140`) is structurally forbidden from accepting an
   # injected collaborator -- that seam IS the disclosure the rung exists to
   # prevent. So admission is taken by the PROVIDER, keyed by the endpoint the
   # provider resolves for itself, and capacity becomes a property of the server
@@ -902,7 +902,7 @@ RSpec.describe Lain::Provider::Admission do
         events = []
         chat = Lain::Provider::Ollama.new(api_base: base, transport: ollama_transport(&marking(events, :chat,
                                                                                                hold: 0.15)))
-        # Exactly what `oracle/secret_read.rb:134` builds: no api_base, no seam.
+        # Exactly what `oracle/secret_read.rb:140` builds: no api_base, no seam.
         secret_read = Lain::Provider::Ollama.new(transport: ollama_transport(&marking(events, :oracle)))
 
         Sync do |task|

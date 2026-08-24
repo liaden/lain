@@ -317,7 +317,7 @@ module Lain
       # This is the ONE boundary every round trip crosses, and taking capacity
       # anywhere else means enumerating callers. There are six provider
       # construction sites on the chat path and {Oracle::SecretRead.tier}
-      # (`oracle/secret_read.rb:134`) builds this class bare and accepts no
+      # (`oracle/secret_read.rb:140`) builds this class bare and accepts no
       # injected collaborator on purpose -- that seam is the disclosure the whole
       # rung exists to prevent -- so a gate handed in by {CLI::Backend} could
       # never cover it. Keyed by the endpoint this provider resolved for itself,

@@ -47,7 +47,7 @@ milestone exists to make an axis swappable and measured.
 | **Tool design (ACI)** | terse vs. verbose vs. guardrailed feedback; tier 1/2/3; **tolerant/repair · prereq-enforced · phase-narrowed** | correct-call rate; recovery-from-error; **compounding accuracy over N steps** |
 | **Tool disclosure** | upfront-JSON vs. deferred/searchable vs. code-API | tokens; correct-call rate |
 | **Prompt slots** | base template vs. user-filled holes (persona · domain framing · output contract) | correct-call rate; grader; cache-hit |
-| **Provider / model** | Anthropic vs. OpenAI-compatible vs. local (ollama) vs. Bedrock (work key — `planning/specs/bedrock-provider.md`) | grader score; cost; latency |
+| **Provider / model** | Anthropic vs. OpenAI-compatible vs. **local ollama** (`--provider ollama`) vs. **cloud ollama** (`--provider ollama-cloud`) vs. Bedrock (work key — `planning/specs/bedrock-provider.md`). The two ollama arms are the cleanest cut on this axis: same native `/api/chat`, same encoder and decoder, so only hosted-ness and model class vary. **The cloud arm is a provider-axis arm and NOT a determinism-comparable one** — measured 2026-08-24, `temperature 0` + fixed seed + warm runs returned **three distinct completions from three runs** (`references/ollama/cloud.md`), so any cloud comparison is over samples, not points, and needs `n > 1` and a variance treatment. The local arm's temperature-0 reproducibility — itself high-probability rather than guaranteed — does not transfer. | grader score; cost; latency |
 | **Orchestration** | single-thread · orchestrator-worker · **fork-worker** · **cache-sibling fan-out** · dual-ledger · handoff · LATS · MoA · adaptive router · **shared-artifact (CRDT)** · **control-flow-as-code (coded FSM vs prompt-ReAct)** | grader; tokens (~15× risk); cache-write; context-loss events; **loop-depth / no-progress**; **merge fraction** `[exp]` |
 | **Decorrelation** (within a fan-out) `[exp]` | identical prompts · seeded prompt variation · role-differentiated · model-heterogeneous | **distinct approaches; inter-child diff distance; unique files touched** — diversity, *not* mean score (agents are low-variance: 18/30 chose one branch name, `planning/hn-agent-landscape-2026-08.md` T1-2) |
 | **Verification** `[exp]` | no verifier · test suite · suite + profiler · metamorphic/property oracle · **harness-generated oracle** (recorded reference state) | grader score; turns-to-green; wall-clock share spent verifying |
@@ -1497,6 +1497,34 @@ XDG path relative, which put machine state back inside the user's repository)
    good UTF-8 file already dies under `LC_ALL=C`), a wave-1 card with a wave-2 criterion, and a
    **silently dropped round-9 card** that would have left `collapse_strategy` shipped and never
    written. Findings in `planning/qa-findings-round10-2026-08-23.md`.
+
+37. **Landed 2026-08-24** (24 commits, `c46c1a6c`..this one; planned 2026-08-24, panel-reviewed) —
+   `planning/specs/chunk-ollama-cloud-arm.md`: **a second ollama arm, so the provider axis has a cut
+   that changes only hosted-ness.** `https://ollama.com` serves the same native `/api/chat` lain
+   already speaks, so `Provider::Ollama` gained a `Deployment` (`Local` / `Cloud`) rather than a
+   second provider class — encoder, decoder and wire format stay byte-identical, and
+   `--provider ollama-cloud` is the whole operator surface. What the arm cost is everything that
+   stops being true when the server stops being ours: a Bearer the transport must carry and the
+   redaction guards must never let escape, an https refusal, an admission width locality cannot
+   infer (`LAIN_OLLAMA_CLOUD_CONCURRENCY`), a published context-window table instead of the 8,192
+   guess, a response WAL so a crash does not lose a metered round trip, and a refusal to quote a
+   dollar figure this arm does not have. **The chunk then measured the three facts it had refused to
+   assume** (`references/ollama/cloud.md`, live paid subscription, 2026-08-24), and the answers
+   overturned two planning assumptions: `/api/show` answers on `ollama.com` but reports the GGUF
+   **trained maximum**, which caught the shipped `CLOUD_WINDOWS` table over-claiming on three rows —
+   one by **3.8x** — all since corrected against measured trained maxima; and a 429 carries five
+   **concurrency-shaped** headers (`x-ratelimit-max-concurrent: 4`, `x-ratelimit-queue-limit: 15`)
+   with **no reset header at all**, rather than the 1/3/10 concurrency the pricing page advertised.
+   **The finding most likely to mislead a bench reader is that `temperature 0` does not reproduce
+   here** — three distinct completions from three warm same-seed runs, cause unestablished — so the
+   cloud arm is not a reproducible bench arm, and the Provider / model row above says so. 15 cards,
+   5 waves. **The transferable result is not the arm**: every card but one needed a fix round, and
+   the recurring defect was always one shape — *a guarantee stated in prose and enforced by nothing*.
+   Six of seven were caught by **mutation**, not by reading; the table is in the plan's Execution
+   log. A second shape the panel found is worse, because mutation cannot catch it: *a spec that runs
+   a different code path than its name claims* — three examples named "non-streaming" ran the
+   streaming path, leaving one acceptance criterion with zero real coverage while 296 of 297 examples
+   stayed green.
 
 ---
 

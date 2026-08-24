@@ -41,7 +41,8 @@ flowchart LR
   TTY -.->|msgpack-RPC · unix socket<br/>off default path · opt-in| CORE["crates/lain-core (Rust · tokio)<br/>out-of-process exec daemon<br/>bench exec-comparison arm"]
   TTY -->|HTTPS| ANTH["api.anthropic.com (default: vendored transport)"]
   TTY -->|HTTPS| BR["AWS Bedrock"]
-  TTY -->|HTTP| OLL["local Ollama"]
+  TTY -->|HTTP| OLL["local Ollama (--provider ollama)"]
+  TTY -->|HTTPS · Bearer| OCL["ollama.com (--provider ollama-cloud)<br/>same native wire, someone else's server"]
   TTY -->|own fd, append-only| J[("$XDG_STATE_HOME/lain/sessions/&lt;hash&gt;/*.ndjson")]
   EXT -->|dup'd fd| J
 ```
@@ -456,6 +457,20 @@ missing server capability was considered and is not built.
 `Provider::AnthropicRaw` and `anthropic_encoding.rb` are the forked-transport path being
 byte-diffed against it. `Provider::Bedrock` with `bedrock_raw.rb`, and `Provider::Ollama`, are
 the other 2 live backends. `Provider::Mock` is the deterministic test double.
+
+**The round trip is deployment-neutral, and `Provider::Ollama` is where that stops being an
+abstract claim.** It serves 2 arms — `--provider ollama` against a local `ollama serve`, and
+`--provider ollama-cloud` against `ollama.com` — as one class holding an
+`Ollama::Deployment` (`Local` or `Cloud`), not as 2 provider classes. `ollama.com` speaks the same
+native `/api/chat`, so the encoder, the decoder and the wire bytes are identical across the pair
+and only the endpoint, the credential and the model class differ. What the deployment owns is
+exactly what locality used to answer for free: where to dial, whether a Bearer is carried, whether
+https is required, how wide admission may open, and whether a probe endpoint (`/api/ps` for a
+resident runner, `/api/show` for the weights' trained maximum) means anything on that host. The
+2 arms consequently differ at the bench in hosted-ness and model class and nothing else — but
+**they are not comparable on determinism**: measured 2026-08-24, `temperature 0` with a fixed seed
+returns 3 distinct completions from 3 warm runs on the cloud host, so the local arm's
+reproducibility does not transfer (`references/ollama/cloud.md`).
 
 Provider-specific detail (setup, capability masks, wire quirks, local smoke-testing) lives in
 `docs/providers/` (one doc per provider), and the porting trace in

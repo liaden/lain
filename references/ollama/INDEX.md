@@ -74,6 +74,19 @@ and know where they stand. Full citations are in `api-chat.md`.
 | (c) | `done_reason` stays `"stop"` on tool-call turns, so `:tool_use` must be derived from the presence of `tool_calls` | **CONFIRMED, and sharper than stated** | The live tool-call example in `docs/api.md` shows `"tool_calls": [...], "done_reason": "stop"` together. Traced to the Go source (`llm/server.go`): `DoneReason` is a **closed 3-value enum** — `DoneReasonStop → "stop"`, `DoneReasonLength → "length"`, `DoneReasonConnectionClosed → ""` (default arm, empty string). There is no tool-call-specific value at all, unlike OpenAI's `finish_reason: "tool_calls"` or Anthropic's `stop_reason: "tool_use"`. `("load"/"unload"` are separate string literals `server/routes.go` sets only on empty-prompt preload/unload requests — never on a real completion.) |
 | (d) | `seed` + `temperature: 0` is the determinism recipe, and it has known limits | **CONFIRMED as the recipe; limits are real and documented in the wild, not in Ollama's own docs** | The recipe itself is implied throughout `docs/api.md`'s options and is the standard local-inference practice. Ollama's docs do **not** claim it's airtight. Two GitHub issues corroborate concrete failures: [#586](https://github.com/ollama/ollama/issues/586) (closed) and [#5321](https://github.com/ollama/ollama/issues/5321) (open, retrieved 2026-07-14) — first-run-after-load divergence even with fixed seed/temperature/num_ctx; runs are stable among themselves after that. Root causes are general to any local GPU inference (floating-point non-associativity, batch-size-dependent kernel paths, seed being a no-op once temperature is already 0 and decoding is greedy) — not something a client-side fix resolves. Practical guidance for T15/T17: treat determinism as *high-probability within one warm environment*, not a mathematical guarantee. |
 
+**Scope note added 2026-08-24 — every verdict above is about a LOCAL server**, which is all that
+existed when the table was written. `ollama.com` serves the same native surface, so the wire
+verdicts are **expected** to carry over to `--provider ollama-cloud` — but check what was actually
+measured before relying on one. (b) and (c) are exercised end to end there: a real `Agent` turn
+with a tool decoded its `tool_calls` and settled, three times ([cloud.md](cloud.md), "The
+tool-call path works"). **(a) is not measured on the cloud host at all** — every cloud request in
+that document was non-streaming, and cloud.md's own open-questions table lists the `stream: true`
+path as unmeasured. **Verdict (d) does not carry over.** Its practical guidance — "treat
+determinism as high-probability within one warm environment" — is a claim about a warm local load
+generation, and there is no such thing on a serverless host: the same protocol measured against
+`ollama.com` on 2026-08-24 returned **three distinct completions from three warm same-seed runs**.
+Read (d) as the local arm's verdict only, and cloud.md's determinism section for the other arm.
+
 **No escalation triggers fired.** Belief (a) held (NDJSON, not SSE) — T17's streaming design can
 proceed as planned. RubyLLM 1.16.0's Ollama integration has not materially diverged from
 Ollama's current API in a way that matters to T15, because RubyLLM's integration was never

@@ -55,6 +55,7 @@ Everything below is optional, and lain runs without any of it.
 | **tmux** | A plain TTY chat in your terminal. | `lain up`, the status HUD, `/fork` into a sibling window, `/btw` popups, `--windows` subagent viewers. |
 | **Neovim** | No editor integration. | `lain up --nvim`, live `lain://` buffers, the editable `lain://request` buffer that round-trips a hand-edited prompt back to the provider. |
 | **Ollama** | Compaction still fires, but drops tool results to an elision line instead of a summary. | Local tool-result summarization, and `--provider ollama` as a free offline arm. |
+| **An Ollama Cloud key** | The local ollama arm, on whatever your box can serve. | `--provider ollama-cloud`: the same native wire against hosted models. Reads `OLLAMA_API_KEY` (create one at [ollama.com/settings/keys](https://ollama.com/settings/keys)). Costs a subscription, and is **not** determinism-comparable with the local arm — see [Providers](#providers). |
 | **`dunstify`** | Approvals wait at the `you>` prompt. | Desktop notification approvals, racing the terminal surface. Opt-in: on for `lain chat`, off everywhere else, because your specs and subagents share your `PATH` (`--no-desktop`, `LAIN_DESKTOP=0/1`). |
 | **AWS Bedrock creds** | Anthropic and Ollama. | `--provider bedrock`. Reads `AWS_BEARER_TOKEN_BEDROCK` and `AWS_REGION`. |
 | **`rake core:build`** | `bash` runs in-process. | `crates/lain-core`, the out-of-process exec daemon, for the bench's exec-comparison arm. |
@@ -503,7 +504,7 @@ and a journal.
 | Bedrock says a model does not exist | Almost always a region or endpoint mismatch, not a bad id. Bare `anthropic.`-prefixed Mantle ids are correct as written. Check `AWS_REGION` first. |
 | `--windows` opens no subagent viewers | It needs `$TMUX` and a session journal. It is incompatible with `--no-journal`. |
 | HUD freezes, `lain watch` stops updating, tools stop overlapping | Something is blocking the reactor. See [Slow middleware blocks the reactor](#slow-middleware-blocks-the-reactor). |
-| Ollama output differs run to run at `--temperature 0` | Greedy decoding is necessary, not sufficient. First-run-after-load divergence and GPU float non-associativity both perturb it; see [docs/providers/ollama.md](docs/providers/ollama.md#determinism-the-honest-version). |
+| Ollama output differs run to run at `--temperature 0` | On the **local** arm this is a defect worth chasing: greedy decoding is necessary, not sufficient, and first-run-after-load divergence and GPU float non-associativity both perturb it; see [docs/providers/ollama.md](docs/providers/ollama.md#determinism-the-honest-version). On **`--provider ollama-cloud` it is expected** — measured 2026-08-24, three warm same-seed runs gave three distinct completions ([references/ollama/cloud.md](references/ollama/cloud.md)). Nothing is wrong; the arm is not reproducible. |
 
 `lain friction SESSION` reads a finished session back and reports which knobs the run was fighting.
 It is offline, deterministic, and needs no API key.
@@ -572,12 +573,15 @@ There is nothing to fall back to, so lain says so and stops rather than guessing
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `Provider::AnthropicRaw`, `Provider::Anthropic` | Required for the Claude path. Refused before construction if unset. |
 | `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION` | `Provider::Bedrock` | Read by the Bedrock client, not by a lain flag. |
+| `OLLAMA_API_KEY` | `Provider::Ollama` on its cloud deployment | Required for `--provider ollama-cloud`. Create one at [ollama.com/settings/keys](https://ollama.com/settings/keys). Refused before construction if unset, and the refusal names the variable without quoting its value. Four guards (`#inspect`, `#pretty_print`, and both `#instance_variables`) keep the key out of a rendered deployment or configuration; they do **not** cover a header Hash once it has left the object, which is documented where that Hash is built. |
+| `LAIN_OLLAMA_CLOUD_CONCURRENCY` | the cloud deployment's admission gate | How many cloud requests may be in flight. Defaults to **1**, the only width safe on every plan; a typo raises rather than degrading. |
 | `LAIN_STREAM_DEBUG` | the SSE accumulator | Dumps raw stream frames while debugging a provider. |
-| `LAIN_INTEGRATION`, `LAIN_OLLAMA`, `LAIN_SPIKE` | the test suite | Opt in to the specs that cost money, need a local Ollama, or run a spike. |
+| `LAIN_INTEGRATION`, `LAIN_OLLAMA`, `LAIN_OLLAMA_CLOUD`, `LAIN_SPIKE` | the test suite | Opt in to the specs that cost money, need a local Ollama, spend Ollama Cloud quota, or run a spike. |
 
 The library does **not** read `OLLAMA_API_BASE`. The Ollama base is a constructor argument or the
-`--api-base` flag; the env var is a convenience for the specs only. Everything else is a CLI flag,
-documented in [`docs/commands.md`](docs/commands.md).
+`--api-base` flag; the env var is a convenience for the specs only. `OLLAMA_API_KEY` is the
+exception — the cloud deployment reads it, because a key is not something a flag should carry.
+Everything else is a CLI flag, documented in [`docs/commands.md`](docs/commands.md).
 
 ## Architecture
 
@@ -738,7 +742,9 @@ byte-diffed and reasoned about for caching), and completes a request into a prov
 response. `Lain::Request` and `Lain::Response` are the value objects each provider translates to and
 from.
 
-Four live backends ship on that seam, plus `Provider::Mock` for specs. Each doc covers setup, that
+Four live backends ship on that seam, plus `Provider::Mock` for specs. They are reachable as the
+four `--provider` values below — the two ollama rows are one backend under two deployments, and
+`anthropic` covers two implementations of one wire (see below). Each doc covers setup, that
 provider's capability mask, and the wire quirks that cost real debugging.
 
 | Provider | `--provider` | Default model | Doc |
@@ -746,6 +752,36 @@ provider's capability mask, and the wire quirks that cost real debugging.
 | Anthropic | `anthropic` | `claude-opus-4-8` | [docs/providers/anthropic.md](docs/providers/anthropic.md) |
 | AWS Bedrock | `bedrock` | `anthropic.claude-opus-4-8` | [docs/providers/bedrock.md](docs/providers/bedrock.md) |
 | Ollama (local) | `ollama` | `qwen3:4b` | [docs/providers/ollama.md](docs/providers/ollama.md) |
+| Ollama Cloud | `ollama-cloud` | `gpt-oss:20b-cloud` | [references/ollama/cloud.md](references/ollama/cloud.md) |
+
+The two ollama rows are **one backend with two deployments**, not two providers. `ollama.com`
+serves the same native `/api/chat` a local `ollama serve` does, so `Provider::Ollama` picks a
+`Deployment` and the encoder, decoder and wire format stay byte-identical across the pair. That is
+what makes them the cleanest cut on the [provider axis](#the-bench): only hosted-ness and model
+class vary.
+
+Running the cloud arm needs a key:
+
+```bash
+export OLLAMA_API_KEY=...                  # create one at https://ollama.com/settings/keys
+exe/lain chat --provider ollama-cloud      # defaults to gpt-oss:20b-cloud
+exe/lain bench arms --provider ollama-cloud FIXTURE
+```
+
+With `OLLAMA_API_KEY` unset the arm refuses before it constructs anything, and the refusal names
+the variable, the flag that asked for it, and where a key comes from. `--api-base` still moves the
+arm, but the cloud deployment **requires https** — it will not send a bearer token in plaintext.
+Concurrency is one request at a time by default, which is safe on every plan;
+`LAIN_OLLAMA_CLOUD_CONCURRENCY` raises it.
+
+> **The cloud arm is not a reproducible bench arm.** Measured against a live subscription on
+> 2026-08-24: `temperature 0`, a fixed seed and warm runs returned **three distinct completions
+> from three measured runs** — run deliberately as the same protocol the local determinism probe
+> uses, so the two are comparable. The cause is **not established**. Treat a cloud comparison as
+> being over samples rather than points — `n > 1` and a variance treatment — and do not carry the
+> local arm's reproducibility (itself high-probability, not guaranteed) over to it. The full
+> measurement, including the hypothesis it rules out, is in
+> [references/ollama/cloud.md](references/ollama/cloud.md).
 
 The Anthropic doc covers both implementations behind `anthropic`: `Provider::AnthropicRaw` on
 Lain's vendored Faraday transport, which is the default path, and `Provider::Anthropic` on the

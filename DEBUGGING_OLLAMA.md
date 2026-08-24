@@ -364,3 +364,39 @@ after it — **they are not the same measurement:**
 
 Any arm-sweep table recorded before 2026-08-17 should be treated as pre-methodology-change and
 re-run, not compared directly against new output.
+
+## 2026-08-24 — there is a second ollama arm now, and this file is not its log
+
+`--provider ollama-cloud` dials `https://ollama.com` through the same `Provider::Ollama` class,
+picking an `Ollama::Deployment::Cloud` instead of the `Local` this file has always meant. The wire
+is byte-identical, so everything above about the *protocol* still applies to both arms. Nothing
+above about the *serving stack* does — `num_batch`, `num_ctx`, the KV-cache tier, ROCm vs Vulkan,
+thermals, the GPU generation: none of it is ours on the cloud arm, and none of it is observable
+from here.
+
+**The cloud arm's record is [`references/ollama/cloud.md`](references/ollama/cloud.md)**, which is
+a different kind of document from this one — it is what a live paid subscription returned on the
+wire on 2026-08-24, method and request counts stated, rather than a debugging narrative. Go there
+first for anything cloud-shaped. The three findings most likely to send someone hunting a local
+cause for a remote behaviour:
+
+- **`temperature 0` does not reproduce.** Three warm same-seed runs, three distinct completions.
+  This is not the first-run-after-load divergence documented above and it is not fixed by warming
+  the model — there is no model of ours to warm. The cause is **not established**; a batching
+  hypothesis was raised and then retracted, because the `thinking` channel came back byte-identical
+  across all four runs while only `content` diverged, which is not what a batch-composition effect
+  would do. What is established is the observation, and it is enough: **the cloud arm is not a
+  reproducible bench arm.**
+- **A 429 is concurrency-shaped, not a token bucket.** Five headers appear on a refusal and on no
+  success — `x-ratelimit-max-concurrent` (4 on the measured plan), `x-ratelimit-active`,
+  `x-ratelimit-queue-limit` (15), `x-ratelimit-queued`, and `retry-after` in integer seconds —
+  with **no reset header of any kind**. faraday-retry already honours `Retry-After` untouched, so
+  a 429 is retried rather than surfaced. The header *names* are the durable finding; the numbers
+  are one plan on one date, and are **inferred** to be plan-dependent.
+- **A cloud response is narrower than a local one.** `load_duration`, `prompt_eval_duration` and
+  `eval_duration` are all absent — `total_duration` comes alone. Anything decoding cloud responses
+  must not reach for the sibling duration fields, and there is no cached-input field to read.
+
+`/api/ps` has no meaning on this host (there is no resident runner to report), and `/api/show`
+answers but returns the weights' **trained maximum**, not a served window — so it is the right
+source for a `--num-ctx` refusal and must never become an occupancy denominator.
