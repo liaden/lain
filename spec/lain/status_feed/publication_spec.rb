@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "tmpdir"
 require "json"
 
@@ -69,7 +70,7 @@ RSpec.describe Lain::StatusFeed::Publication do
 
     allow(File).to receive(:write).and_raise(Errno::ENOSPC)
 
-    expect { publication.call("second") { { "n" => 2 } } }.to raise_error(Errno::ENOSPC)
+    expect { publication.call("second") { { "n" => 2 } } }.to raise_error(described_class::Unpublishable)
     expect(File.read(path)).to eq(good)
   end
 
@@ -79,11 +80,67 @@ RSpec.describe Lain::StatusFeed::Publication do
   it "does not remember a token whose write failed, so the next attempt still publishes" do
     publication = described_class.new(path)
     allow(File).to receive(:write).and_raise(Errno::ENOSPC)
-    expect { publication.call("t") { { "n" => 1 } } }.to raise_error(Errno::ENOSPC)
+    expect { publication.call("t") { { "n" => 1 } } }.to raise_error(described_class::Unpublishable)
 
     allow(File).to receive(:write).and_call_original
 
     expect(publication.call("t") { { "n" => 1 } }).to be true
     expect(published).to eq({ "n" => 1 })
+  end
+
+  # F50 moved this file from `<project>/.lain/`, which is essentially always
+  # writable because the user is working in it, to a state home that can be
+  # read-only, owned by someone else, or have a plain file sitting where the
+  # directory belongs. The raise is right -- a feed that cannot write must not
+  # pretend it did -- but a bare `Errno` names a path the operator never typed
+  # and says nothing about lain, so it reads as a crash rather than as a
+  # misconfiguration with a lever.
+  describe "when the state home cannot be written" do
+    it "refuses by name when the directory cannot be created" do
+      readonly = File.join(@dir, "readonly")
+      FileUtils.mkdir_p(readonly)
+      FileUtils.chmod(0o500, readonly)
+
+      publication = described_class.new(File.join(readonly, "status", "abc", "state.json"))
+
+      expect { publication.call("t") { { "n" => 1 } } }
+        .to raise_error(described_class::Unpublishable, /state feed/)
+    ensure
+      FileUtils.chmod(0o700, readonly)
+    end
+
+    # The other shape, and the one a `find`-happy cleanup script produces: a
+    # plain FILE where the per-project directory belongs. EEXIST, not EACCES.
+    it "refuses by name when a file sits where the directory belongs" do
+      File.write(File.join(@dir, "occupied"), "not a directory\n")
+
+      publication = described_class.new(File.join(@dir, "occupied", "state.json"))
+
+      expect { publication.call("t") { { "n" => 1 } } }
+        .to raise_error(described_class::Unpublishable)
+    end
+
+    it "names the path, the cause, and the variable that moves it" do
+      allow(File).to receive(:write).and_raise(Errno::EACCES)
+
+      described_class.new(path).call("t") { { "n" => 1 } }
+    rescue described_class::Unpublishable => e
+      expect(e.message).to include(path, "Permission denied", "XDG_STATE_HOME")
+    end
+
+    # Wrapping must not lose what actually happened: `#cause` is how a
+    # `rescue Errno::ENOSPC` upstream, or a human reading a backtrace, still
+    # gets the kernel's answer.
+    it "keeps the original errno as the cause" do
+      allow(File).to receive(:write).and_raise(Errno::ENOSPC)
+
+      described_class.new(path).call("t") { { "n" => 1 } }
+    rescue described_class::Unpublishable => e
+      expect(e.cause).to be_a(Errno::ENOSPC)
+    end
+
+    it "is a Lain::Error, so the CLI boundary presents it rather than dumping it" do
+      expect(described_class::Unpublishable.ancestors).to include(Lain::Error)
+    end
   end
 end

@@ -12,6 +12,12 @@ module Lain
   # is a separate, non-XDG concern and out of scope here -- {ProjectDir} is its
   # locator, and answers the same class-names/instance-resolves split.
   #
+  # {ProjectDir} sits on BOTH sides of that line and reads this class for the
+  # half that is XDG: the state feed it resolves is rewritten every turn, which
+  # makes it machine state rather than a project artifact, so it is composed
+  # from {#state_home} and {#project_hash} here rather than written into the
+  # user's source tree (F50).
+  #
   # `env:` is injected (defaulting to the real `ENV`) rather than read globally,
   # so a spec builds an isolated Hash instead of mutating process-wide state --
   # the real `$HOME` is never touched by this class or by its specs.
@@ -21,6 +27,30 @@ module Lain
     class Unwritable < Error
       def initialize(path, cause)
         super("cannot create #{path}: #{cause.message}")
+      end
+    end
+
+    # Every XDG accessor falls back to `$HOME`, so a `$HOME` that is not an
+    # absolute path makes all of them relative -- and a relative state path
+    # resolves against the process's cwd, which puts machine state back inside
+    # the user's repository (F50). Named after the value rather than after the
+    # accessor because the operator fixes it in one place, their environment.
+    #
+    # **Not {Project::Resolver::UnusableHome}, and the two are not
+    # interchangeable.** That one guards a home used as the STOP of an upward
+    # project walk, so it is strictly narrower: it also refuses `"/"`, because a
+    # root of `/` makes every directory on the machine a project. This one
+    # guards a home used as a JOIN BASE, and `/` joins fine -- `$HOME=/` is what
+    # root gets in a container, and `/.local/state/lain` is a real answer. So
+    # `$HOME=/` is ACCEPTED here and REFUSED there, deliberately. They are two
+    # classes rather than one because load order forces it: `paths.rb` is
+    # manifest line 11 and `project.rb` is line 43, so this file cannot name
+    # that one.
+    class NonAbsoluteHome < Error
+      def initialize(value)
+        super("$HOME is #{value.inspect}, which is not an absolute path -- " \
+              "lain resolves its XDG directories under it and cannot use a relative one. " \
+              "Export an absolute HOME, or set XDG_STATE_HOME/XDG_CONFIG_HOME/XDG_CACHE_HOME.")
       end
     end
 
@@ -162,8 +192,25 @@ module Lain
     # substitutable environment. It reads no filesystem and creates nothing, so
     # exposing it hands out a naming and no authority.
     #
+    # `Dir.home` goes through {#present} TOO, and that second guard is the
+    # whole of F50's return leg. Ruby's `Dir.home` hands back `$HOME` verbatim
+    # with no absoluteness check of its own, and this class defaults
+    # `env: ENV` -- so a relative `$HOME` was read twice, passed the first
+    # guard by failing it, and came back through the fallback unexamined. The
+    # answer then made every XDG accessor relative, and a relative
+    # {ProjectDir#state_path} resolves against the project's cwd, which is the
+    # repository this card exists to keep clean.
+    #
+    # Refusing beats degrading here: there is no home to invent, an unusable
+    # one poisons the session store and {Sensitivity}'s `~` anchor alike, and a
+    # silently relative path is exactly the failure {Lain::StringInquirer} was
+    # rejected for (CLAUDE.md).
+    #
     # @return [String]
-    def home = present(@env["HOME"]) || Dir.home
+    # @raise [NonAbsoluteHome] when neither the env nor `Dir.home` is absolute
+    def home
+      present(@env["HOME"]) || present(Dir.home) || raise(NonAbsoluteHome, @env["HOME"] || Dir.home)
+    end
 
     def config_home = xdg_dir("XDG_CONFIG_HOME", ".config")
     def cache_home = xdg_dir("XDG_CACHE_HOME", ".cache")
@@ -183,7 +230,12 @@ module Lain
     # hashed lexically would name a different socket/session id than the editor
     # serves (T10's hash_agreement probe). Isolation keys WORKER IDS through
     # here too -- strings naming no real path -- so an unresolvable argument
-    # falls back to the lexical expansion instead of raising.
+    # falls back to the lexical expansion instead of raising. That fallback is
+    # hash-UNSTABLE by construction: `link/app` hashes lexically while `app`
+    # does not exist and post-resolution once it does, so an answer taken for a
+    # path that is not there yet is provisional. Unreachable for
+    # {ProjectDir#state_path}, whose callers pass a checked directory
+    # ({CLI::Up::Workdir}) or `Dir.pwd`.
     def project_hash(dir = Dir.pwd)
       Digest::SHA256.hexdigest(resolved(dir))[0, 12]
     end
@@ -211,6 +263,10 @@ module Lain
 
     # Expansion first (`~`, relative segments), THEN kernel resolution, so the
     # fallback hashes the same lexical form realpath would have started from.
+    # The rescue covers the RESOLUTION only: `File.expand_path` itself raises
+    # ArgumentError on an unknown `~user`, which is deliberately not caught --
+    # that is a malformed name rather than an absent directory, and no CLI door
+    # reaches this method with one.
     def resolved(dir)
       expanded = File.expand_path(dir)
       File.realpath(expanded)

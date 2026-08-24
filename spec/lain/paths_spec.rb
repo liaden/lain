@@ -65,6 +65,83 @@ RSpec.describe Lain::Paths do
     end
   end
 
+  # The example above passes for a reason that does not generalise, and the
+  # generalisation is where F50 came back. {Lain::Paths#present}'s "absolute or
+  # ignored" rule guards the XDG variables; `$HOME`'s fallback is `Dir.home`,
+  # which on ruby 4.0.6 hands back `$HOME` VERBATIM with no absoluteness check
+  # of its own. A fixture env hides that -- it injects a hostile `HOME` while
+  # the PROCESS env stays healthy, so `Dir.home` quietly supplies a good
+  # answer -- but `Paths.new` defaults `env: ENV`, so in production the same
+  # hostile value is read twice and the guard is a no-op.
+  #
+  # The consequence is not cosmetic: a relative state_home makes
+  # {Lain::ProjectDir#state_path} relative, which resolves against the
+  # project's cwd, which puts the state feed back inside the user's repository
+  # (F50). `with_env`, not an injected Hash, precisely because `Dir.home` is
+  # the half an injected Hash cannot reach.
+  describe "a $HOME that is not absolute" do
+    it "refuses a relative HOME rather than answering a relative state_home" do
+      with_env("HOME" => "rel") do
+        expect { described_class.new.state_home }
+          .to raise_error(described_class::NonAbsoluteHome, /HOME/)
+      end
+    end
+
+    it "refuses a HOME of `.`, which would resolve against whatever cwd is" do
+      with_env("HOME" => ".") do
+        expect { described_class.new.state_home }.to raise_error(described_class::NonAbsoluteHome)
+      end
+    end
+
+    # Empty is the worst of the three: `File.join("", ".local/state")` is
+    # `/.local/state`, the filesystem ROOT, which fails with EACCES at write
+    # time and names no cause a human can act on.
+    it "refuses an empty HOME rather than anchoring at the filesystem root" do
+      with_env("HOME" => "") do
+        expect { described_class.new.state_home }.to raise_error(described_class::NonAbsoluteHome)
+      end
+    end
+
+    it "names the offending value and the variable to fix" do
+      with_env("HOME" => "rel") do
+        expect { described_class.new.home }
+          .to raise_error(described_class::NonAbsoluteHome, /"rel"/)
+      end
+    end
+
+    # The refusal is on the value, not on the accessor: an injected env still
+    # wins when it is absolute, and that is the whole substitutability seam.
+    it "accepts an absolute injected HOME while the process HOME is hostile" do
+      with_env("HOME" => "rel") do
+        expect(described_class.new(env: { "HOME" => "/home/nobody" }).state_home)
+          .to eq("/home/nobody/.local/state/lain")
+      end
+    end
+
+    # Every XDG accessor shares the fallback, so every one of them shared the
+    # bug; the guard is in {Lain::Paths#home}, once, rather than in each of the
+    # three.
+    it "guards config_home and cache_home by the same rule" do
+      with_env("HOME" => "rel") do
+        expect { described_class.new.config_home }.to raise_error(described_class::NonAbsoluteHome)
+        expect { described_class.new.cache_home }.to raise_error(described_class::NonAbsoluteHome)
+      end
+    end
+
+    # The line between this refusal and {Lain::Project::Resolver::UnusableHome},
+    # pinned rather than left to two docstrings to agree by hand. `/` is a real
+    # join base -- it is what root gets in a container -- so this class takes
+    # it; it is NOT a usable walk stop, because a root of `/` makes every
+    # directory a project, so the resolver refuses the same value.
+    it "accepts a HOME of `/`, which the project resolver refuses" do
+      with_env("HOME" => "/") do
+        expect(described_class.new.state_home).to eq("/.local/state/lain")
+        expect { Lain::Project::Resolver.new(home: "/", paths: described_class.new) }
+          .to raise_error(Lain::Project::Resolver::UnusableHome)
+      end
+    end
+  end
+
   describe "#project_hash" do
     it "is a stable 12-hex-char digest of the expanded cwd" do
       first = paths.project_hash("/some/project")

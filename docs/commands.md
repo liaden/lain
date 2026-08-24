@@ -152,7 +152,9 @@ lain up -- --provider ollama --no-compact
 | `--nvim-socket PATH` | derived | Listen on this nvim socket instead of the per-project one lain derives. Must be absolute — the socket is the one name both panes have to agree on, and a relative one resolves against whichever pane reads it. |
 
 One directory feeds all three of the places `up` names one: both panes' `-c`, the nvim socket's
-hash, and the HUD's `.lain/state.json`.
+hash, and the HUD's state file — which lives under `$XDG_STATE_HOME/lain/status/`, keyed by that
+same directory's hash, rather than inside the project. `up` prints the resolved path on every
+launch, because nothing else in the program names it.
 
 **Write a value-taking flag with an `=` when it is the last thing before `--`.** `lain up /tmp
 --nvim-socket -- --provider ollama` is refused, because the option parser skips the separator and

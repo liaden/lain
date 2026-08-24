@@ -41,7 +41,7 @@
 #               today's. A stalled session is not broken -- it renders
 #               uncompacted and keeps going -- but it stops shrinking, and
 #               until this variable nothing said so. The streak's own count is
-#               in `.lain/state.json` for a reader with room for a number.
+#               in the published state feed for a reader with room for a number.
 #               It says no derivation has SUCCEEDED since that many refusals;
 #               it does not say one was attempted this turn, and it clears only
 #               when one succeeds. See RunState#compaction for why it latches.

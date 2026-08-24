@@ -74,6 +74,17 @@ module Lain
 
       # `home:` was not a usable absolute directory. Loud rather than
       # degrading, per the class docstring.
+      #
+      # **Narrower than {Lain::Paths::NonAbsoluteHome}, which guards the same
+      # variable for a different job.** This home is the STOP of an upward
+      # project walk, so `"/"` is refused too: a root of `/` would make every
+      # directory on the machine a project. {Paths} uses home as a JOIN BASE
+      # for the XDG directories, where `/` is a real answer -- it is what root
+      # gets in a container -- so it accepts what this refuses. Two classes
+      # rather than one because load order forces it (`paths.rb` is manifest
+      # line 11, `project.rb` line 43); the bare `rescue UnusableHome` in
+      # {.default_project} resolves lexically to THIS one and deliberately does
+      # not catch the other, which reaches the CLI boundary on its own.
       class UnusableHome < Error
         def initialize(home)
           super("home must be an absolute path other than \"/\", got #{home.inspect}")

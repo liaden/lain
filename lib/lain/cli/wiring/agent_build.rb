@@ -99,7 +99,7 @@ module Lain
           # T10: the run's ONE window book, the same instance the compaction
           # source above and the StatusFeed below the launcher divide by. It is
           # what {Agent#occupancy} answers with no keyword, which is the `ctx`
-          # segment of the REPL prompt -- so the prompt and `.lain/state.json`
+          # segment of the REPL prompt -- so the prompt and the state feed
           # cannot report two occupancies for one turn.
           #
           # T6 made the ANSWER inside it refreshable and put the trigger here,

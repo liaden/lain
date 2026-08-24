@@ -152,7 +152,7 @@ module Lain
     #   one caller that renders the figure to a human --
     #   {Frontend::PromptComposer::RunState} -- calls `#occupancy` with no
     #   keyword; a per-call default left the REPL prompt dividing by
-    #   {ContextWindow::CONSERVATIVE_FALLBACK} while `.lain/state.json` divided
+    #   {ContextWindow::CONSERVATIVE_FALLBACK} while the state feed divided
     #   by the served window, and two surfaces disagreeing about one turn is
     #   worse than both being uniformly wrong. A wired chat is handed
     #   {CLI::Backend#context_window}; the default degrades as it always did.

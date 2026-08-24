@@ -76,7 +76,7 @@ module Lain
             # {Agent#occupancy} divides using `context.model` (the operator's
             # string) while {StatusFeed#occupancy_of} divides using
             # `event.model` (what the provider ECHOED). Measured before the two
-            # sets were joined: prompt 22%, `.lain/state.json` 0.8641, on one
+            # sets were joined: prompt 22%, the state feed 0.8641, on one
             # turn -- the half-fixed number this card exists to prevent,
             # reappearing in the untagged case this object was written for.
             @names = [@model, -"#{@model}:latest"].freeze

@@ -524,9 +524,14 @@ the others.
 
 `StatusFeed` (`lib/lain/status_feed.rb`) is one such sink. It derives a small state struct
 (cache-warmth deadline, the fleet of live spawns, the human-inbox count) from the events it
-observes and republishes it to `.lain/state.json` for the tmux, TTY, and nvim renderers. That
-path is a project artifact next to `.git/`, so it is resolved through `ProjectDir`
-(`lib/lain/project_dir.rb`) rather than `Paths`, which is XDG only. `ProjectDir#state_path` is the
+observes and republishes it for the tmux, TTY, and nvim renderers. That file used to sit in
+`.lain/`, argued as a project artifact next to `.git/`; it is machine state by behaviour — rewritten
+every turn, with nothing in `lib/` writing a `.gitignore` for it — so every session left permanent
+`git status` noise in the user's repository (F50). It now resolves to
+`$XDG_STATE_HOME/lain/status/<project-hash>/state.json`, the same `<state_home>/<kind>/<hash>` shape
+`Epic::Home.container` and `Paths#sessions_dir` already use, which puts `ProjectDir`
+(`lib/lain/project_dir.rb`) on both sides of the line it draws: it names the `.lain/` tree AND reads
+`Paths` for the one file that left it. `ProjectDir#state_path` is the
 one Ruby resolver *for that file*: `StatusFeed`, `CLI::Up`'s HUD and `Frontend::TTY`'s prompt all
 default through it, and `spec/lain/project_dir_spec.rb` parses every file in `lib/` with Ripper and
 fails on any expression that recomposes the path, in any spelling. It is **not** yet the authority

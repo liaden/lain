@@ -24,9 +24,9 @@ module Lain
   #   matching {StatusFeed#<<}'s tolerance of the fan-out's full event mix.
   #
   # No ivar here is mutex-guarded, and that is deliberate, not an oversight.
-  # {StatusFeed} never faces this question -- it publishes to
-  # `.lain/state.json` and every renderer reads the FILE, so it is never read
-  # cross-thread in-process. `RunClock` is the first of this family actually
+  # {StatusFeed} never faces this question -- it publishes to a file
+  # ({ProjectDir#state_path}) and every renderer reads the FILE, so it is never
+  # read cross-thread in-process. `RunClock` is the first of this family actually
   # meant to be read directly from another thread/fiber than the one writing
   # it (T7's status line reading `#elapsed`/`#idle` while `#<<` and
   # `#record_input` are written from elsewhere; T13's channel wiring). That is

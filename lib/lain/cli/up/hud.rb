@@ -91,7 +91,9 @@ module Lain
         # sessions, windows or attaching.
         DEFAULT_INTERVAL = 5
 
-        # @param state_path [String] the `.lain/state.json` the job reads
+        # @param state_path [String] the state file the job reads, resolved by
+        #   {Lain::ProjectDir#state_path} -- since F50 that is under
+        #   `$XDG_STATE_HOME/lain`, not in the project
         # @param interval [Integer] seconds between re-renders; tmux's
         #   `status-interval`, which {Up} writes as a session option
         def initialize(state_path:, interval: DEFAULT_INTERVAL)
@@ -99,7 +101,11 @@ module Lain
           @interval = interval
         end
 
-        attr_reader :interval
+        # `state_path` is public because this renderer is no longer the only
+        # thing that needs to NAME the file: it sits in a directory named by
+        # twelve hex characters of a hash, so {Up::Report#hud_line} tells the
+        # operator where it is. Reading it hands out a naming and no authority.
+        attr_reader :interval, :state_path
 
         # @return [Array(String, String), Array(String, nil)] the status-right
         #   value, paired with the named warning when jq is absent -- so a
@@ -131,7 +137,7 @@ module Lain
           "#(cat #{escaped_state_path} 2>/dev/null || echo 'lain: no state yet')"
         end
 
-        def escaped_state_path = Shellwords.escape(@state_path)
+        def escaped_state_path = Shellwords.escape(state_path)
       end
     end
   end

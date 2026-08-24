@@ -50,7 +50,7 @@ module Lain
       #   the project has not already settled
       # @param status_feed_factory [#call] the HUD's feed. Takes the run's
       #   `context_window:` as well as its `run_clock:`, so the occupancy
-      #   published to `.lain/state.json` divides by the window the provider
+      #   published to the state feed divides by the window the provider
       #   says it is serving rather than by {ContextWindow}'s conservative
       #   fallback -- see {Backend#context_window}.
       # @option options [Boolean] :journal whether the run records one
@@ -144,8 +144,8 @@ module Lain
       # two processes would put that repair in the history twice. Their
       # refusals stay the pane's to report.
       #
-      # @raise [Lain::Error] whatever the flags refuse, in the flag's own name
       # @return [nil]
+      # @raise [Lain::Error] whatever the flags refuse, in the flag's own name
       def preflight(&notice)
         refuse_windows_without_journal!
         refuse_headless_without_prompt!

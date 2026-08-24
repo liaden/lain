@@ -272,7 +272,7 @@ module Lain
       # The ONE window book this run measures occupancy against, resolved by
       # {WindowBook} out of the window the provider says it is actually SERVING
       # (see there for why the shipped table cannot answer). Read by three
-      # places that must agree -- the {StatusFeed} publishing `.lain/state.json`
+      # places that must agree -- the {StatusFeed} publishing the state feed
       # ({ChatLaunch} threads it), {Compaction::Source}'s per-turn threshold
       # ({#compaction_source}), and {Agent#occupancy}, which is the `ctx` figure
       # in the REPL prompt line. MEMOIZED for the same reason {#pipeline_source}

@@ -970,7 +970,13 @@ RSpec.describe Lain::StatusFeed do
 
       now = t2
       allow(File).to receive(:write).and_raise(Errno::ENOSPC)
-      expect { feed << turn_usage(cache_read: 2) }.to raise_error(Errno::ENOSPC)
+      # The refusal is NAMED since F50: the destination moved from the
+      # project's own `.lain/`, which the user is by definition working in, to
+      # a state home that can be read-only or occupied, so a bare errno now
+      # reaches a human as a crash about a path they never typed. The kernel's
+      # answer survives as `#cause`.
+      expect { feed << turn_usage(cache_read: 2) }
+        .to raise_error(Lain::StatusFeed::Publication::Unpublishable) { |e| expect(e.cause).to be_a(Errno::ENOSPC) }
 
       expect(File.read(path)).to eq(good_bytes)
     end

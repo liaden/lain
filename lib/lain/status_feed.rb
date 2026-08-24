@@ -10,13 +10,16 @@ module Lain
   # state struct (cache warmth, fleet, inbox count, ...) from the events it
   # observes, for the tmux status-right / TTY prompt / nvim lualine renderers
   # ROADMAP describes (planning/interface-integration.md § "One state feed,
-  # three renderers"). {Publication} is what lands it on `.lain/state.json`:
-  # deriving and writing change for different reasons, and the atomic-replace
-  # discipline that keeps a polling reader from ever seeing half a struct is
-  # documented there. `.lain/` is a project artifact, like `.git/`, not an XDG
-  # concern -- see ROADMAP's "XDG conformance" entry -- so the default path
-  # resolves through {ProjectDir}, the locator for that tree, and never through
-  # {Paths}, which is XDG only.
+  # three renderers"). {Publication} is what lands it on disk: deriving and
+  # writing change for different reasons, and the atomic-replace discipline
+  # that keeps a polling reader from ever seeing half a struct is documented
+  # there. The default path resolves through {ProjectDir}, the ONE locator all
+  # three renderers default through, and it is deliberately NOT in the project:
+  # this struct is rewritten on every turn, so writing it beside the code left
+  # permanent `git status` noise in the user's repository, with no ignore path
+  # and nothing in `lib/` that writes one (F50). It lives under
+  # `$XDG_STATE_HOME/lain`, keyed by project, beside the sessions and the
+  # epics; {ProjectDir}'s own comment carries the recipe and what it costs.
   #
   # Thirteen fields, all JOURNALED or derived from the run's own clock -- never
   # an in-process registry, and in particular never a live {Agent}: this
@@ -247,8 +250,9 @@ module Lain
     INBOX_RECIPIENT = "human"
 
     # @param path [String] where the state struct is atomically published;
-    #   defaults to the project-scoped `.lain/state.json`, matching `.git/`'s
-    #   convention of living beside the project rather than under XDG state.
+    #   defaults to this project's file under `$XDG_STATE_HOME/lain`, resolved
+    #   by {ProjectDir#state_path} -- machine state that moves every turn, kept
+    #   out of the source tree it describes (F50).
     # @param clock [#call] answers the current Time; injectable so a spec
     #   never races the real clock to compute a deadline.
     # @param cache_profile [Hash] a provider's `#cache_profile` (CAC-2) --
@@ -449,7 +453,7 @@ module Lain
 
     # The whole struct, as published -- exposed (T13) so a live in-process
     # reader (Command::Env's `status`, the `/status` command) reads the SAME
-    # derivation the JSON file carries, without touching `.lain/state.json`
+    # derivation the JSON file carries, without touching the published file
     # (absent under --no-journal, where a headless run's StatusFeed is still
     # live and answerable).
     #

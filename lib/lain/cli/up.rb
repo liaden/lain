@@ -7,7 +7,7 @@ module Lain
     # `lain up`: create (idempotently) or attach to the "lain" tmux session,
     # and give it the session-scoped HUD planning/interface-integration.md §
     # "One state feed, three renderers" designs -- status-right/status-interval
-    # reading I1's `.lain/state.json` via jq, `monitor-bell` on the spawned
+    # reading I1's published state file via jq, `monitor-bell` on the spawned
     # chat window. Session-scoped, never global (`set-option -t SESSION`,
     # never `-g`): tmux's own inheritance rule (session beats global) is what
     # keeps the theme plugin's globals untouched, so this needs zero
@@ -51,10 +51,10 @@ module Lain
       # The PATH argument: a directory a user typed, expanded against the
       # shell's own and checked ONCE. Everything below that names a directory
       # reads the result -- both panes' tmux `-c`, the nvim socket's hash, and
-      # the HUD's `.lain/state.json` -- so a PATH honoured by only some of them
-      # would leave a cockpit in the project the user asked for beside a status
-      # bar reading the shell's, which looks like a stale HUD rather than the
-      # wrong project.
+      # the HUD's state file -- so a PATH honoured by only some of them would
+      # leave a cockpit in the project the user asked for beside a status bar
+      # reading the shell's, which since F50 is a status bar with nothing to
+      # read at all rather than a stale one.
       class Workdir
         # Refused BY NAME rather than left to tmux, whose answer to `-c <file>`
         # is a pane that dies before anything reaches the screen -- and rather
@@ -132,13 +132,14 @@ module Lain
       DETACHED_WIDTH = 200
       DETACHED_HEIGHT = 50
 
-      Report = Data.define(:session, :created, :warnings)
+      Report = Data.define(:session, :created, :warnings, :state_path)
 
       # `created` tells the caller whether a fresh session was just built (so
       # it can say so before attaching) or one was already running (so a
       # second `lain up` reads as "reattaching", never "duplicating").
       # `warnings` carries the jq-missing notice, if any -- the exe `say`s it
       # before attaching so a degraded HUD is never a SILENT one.
+      # `state_path` is the file the HUD polls, carried for {#hud_line}.
       class Report
         # The created-vs-reattaching line is the Report's OWN knowledge (it
         # already carries exactly the two fields that decide it), not exe
@@ -147,6 +148,20 @@ module Lain
         def announcement
           created ? "created tmux session '#{session}'" : "reattaching to '#{session}'"
         end
+
+        # The one place a human is told where the state feed is. Before F50 the
+        # answer was `ls .lain/`; the file now sits in a directory named by
+        # twelve hex characters of a hash, which nobody can guess, and the
+        # degraded HUD line ("lain: no state yet") names no path at all. So if
+        # this is not printed there is nothing, anywhere, that answers "which
+        # file is my status bar reading" -- and a HUD stuck on that line is
+        # undiagnosable rather than merely unhelpful.
+        def hud_line = "HUD state: #{state_path}"
+
+        # Everything the exe `say`s, in print order: warnings first (a degraded
+        # HUD is explained before anything scrolls past), then where the file
+        # is, then created/reattaching last.
+        def messages = warnings + [hud_line, announcement]
       end
 
       # {#launch_plan}'s return shape: `messages` is everything the exe
@@ -638,14 +653,19 @@ module Lain
       # socket/pane planning.
       #
       # `cwd:` is declared BEFORE `state_path:` so the HUD's default can read
-      # it. `.lain/` is a project artifact like `.git/`, not an XDG concern,
-      # and the file is a fact about the directory the PANES sit in rather than
+      # it. The file is a fact about the directory the PANES sit in rather than
       # about the shell that typed `lain up PATH` -- the chat pane publishes it
-      # from its own cwd ({StatusFeed}'s `default_path`), so a HUD defaulted
-      # independently reads another project's file and merely looks stale.
-      # {ProjectDir} is a THIRD object both this class and {StatusFeed} name,
-      # never one reaching into the other's private path helper; threading a
-      # root through it is what that separation was left room for.
+      # from its own cwd ({StatusFeed}'s `default_path`), and both panes are
+      # pinned to `@cwd` with tmux's `-c`, which is what makes the writer and
+      # this HUD name one file. They now HAVE to: since F50 the feed lives
+      # under `$XDG_STATE_HOME/lain`, keyed by `sha256(realpath(dir))[0, 12]`,
+      # so a HUD defaulted from a different directory would poll a path nothing
+      # writes rather than merely look stale. The realpath is what absorbs the
+      # difference between the two spellings -- the PATH argument this class
+      # expands, and the kernel-resolved `Dir.pwd` the pane reads. {ProjectDir}
+      # is a THIRD object both this class and {StatusFeed} name, never one
+      # reaching into the other's private path helper; threading a root through
+      # it is what that separation was left room for.
       #
       # `chat_preflight:` is injected on the `shell_out_factory:` model, and
       # for a reason a spec cannot get around: the real one SPAWNS the
@@ -677,7 +697,7 @@ module Lain
         created = !session_exists?
         created ? create_session : reattach_session
         configure_session
-        Report.new(session: @session, created:, warnings: @warnings.dup)
+        Report.new(session: @session, created:, warnings: @warnings.dup, state_path: @hud.state_path)
       end
 
       # Everything the exe needs to finish `lain up`, in the order it needs
@@ -717,7 +737,7 @@ module Lain
         died = @corpse&.call
         raise ChatDied, died if died
 
-        LaunchPlan.new(messages: report.warnings + [report.announcement], argv: attach_command(nested:))
+        LaunchPlan.new(messages: report.messages, argv: attach_command(nested:))
       end
 
       # The argv the exe hands to `Kernel.exec` to reattach: `switch-client`

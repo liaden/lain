@@ -740,12 +740,18 @@ verified machine checks in `planning/interface-integration.md` § Approved exper
 **XDG conformance** `[landed]` (added 2026-07-11; landed 2026-07-16 via
 chunk-fixes-xdg-resume-signals: `Lain::Paths` resolver, journal + reline history under
 `$XDG_STATE_HOME/lain/`, session discovery directory-derived, `/tmp/lain` runtime fallback;
-relative/blank `$XDG_*`/`$HOME` treated as unset per spec)
+relative/blank `$XDG_*` treated as unset per spec; relative/blank `$HOME` **refused**
+by `Paths::NonAbsoluteHome` since F50 — there is no further fallback, and a relative home made every
+XDG path relative, which put machine state back inside the user's repository)
 - Lain the CLI is an XDG Base Directory citizen: user config in `$XDG_CONFIG_HOME/lain/`, caches in
   `$XDG_CACHE_HOME/lain/`, durable state (reline history, session index) in `$XDG_STATE_HOME/lain/`,
   sockets and other ephemera in `$XDG_RUNTIME_DIR/lain/` (the nvim socket convention already assumes
   this; fall back to `/tmp/lain` when unset). Project-scoped `.lain/` is like `.git/` — a project
   artifact, not an XDG concern. Nothing lain-related ever lands as a bare `$HOME` dotfile.
+  **Amended by F50 (2026-08-23):** the test of "project artifact" is what a file DOES, not where it
+  reads well. The HUD's `state.json` was argued into `.lain/` by the `.git/` analogy and is rewritten
+  every turn, so it belongs under `$XDG_STATE_HOME/lain/status/<project-hash>/` with the sessions and
+  the epics. What stays in `.lain/` is what a user writes, reads back, and may commit.
 
 **Onboarding — interview the user** `[exp]` (TODO 107–109)
 - A first-run interview elicits the user's habits, domain, and working preferences, and **populates

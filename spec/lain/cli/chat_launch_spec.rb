@@ -200,10 +200,15 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
 
     # I1 wiring: the state feed is a live-view tee sink even without --nvim, so
-    # `.lain/state.json` publishes for the tmux HUD (`lain up`'s chat window
-    # carries no --nvim). A turn that touched the cache slides the deadline; a
+    # the state file publishes for the tmux HUD (`lain up`'s chat window carries
+    # no --nvim). A turn that touched the cache slides the deadline; a
     # journal-only run still fans telemetry through the tee to the state feed.
-    it "publishes .lain/state.json when telemetry flows, under --journal even with no --nvim" do
+    #
+    # Globbed, not composed: since F50 the feed lands under
+    # `$XDG_STATE_HOME/lain/status/<project hash>/state.json`, and spelling that
+    # hash here would be this fixture rebuilding the recipe
+    # `spec/lain/project_dir_spec.rb` forbids `lib/` from rebuilding.
+    it "publishes the state feed when telemetry flows, under --journal even with no --nvim" do
       Dir.mktmpdir do |dir|
         with_env("XDG_STATE_HOME" => dir) do
           Dir.chdir(dir) do
@@ -218,7 +223,11 @@ RSpec.describe Lain::CLI::ChatLaunch do
             )
             chronicle.close
 
-            state = JSON.parse(File.read(File.join(dir, ".lain", "state.json")))
+            published = Dir.glob(File.join(dir, "lain", "status", "*", "state.json"))
+            expect(published.size).to eq(1)
+            expect(Dir.exist?(File.join(dir, ".lain"))).to be(false)
+
+            state = JSON.parse(File.read(published.first))
             expect(state).to include("cache_deadline", "fleet", "inbox_count")
             expect(state["cache_deadline"]).not_to be_nil
           end
@@ -227,15 +236,20 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
 
     # Pure --no-journal --no-nvim opens no tee at all, so a headless-ish run
-    # stays byte-identical: no state feed, no state.json written.
-    it "opens no live-view tee (and no state.json) under --no-journal --no-nvim" do
+    # stays byte-identical: no state feed, no state file written. `dir` is BOTH
+    # the working directory and `$XDG_STATE_HOME` here, so the absence covers
+    # the relocated feed and the retired in-project one at once -- otherwise the
+    # example would go vacuous the moment the path moved.
+    it "opens no live-view tee (and no state file) under --no-journal --no-nvim" do
       Dir.mktmpdir do |dir|
-        Dir.chdir(dir) do
-          instance = launch({ journal: false })
-          instance.open_chronicle
+        with_env("XDG_STATE_HOME" => dir) do
+          Dir.chdir(dir) do
+            instance = launch({ journal: false })
+            instance.open_chronicle
 
-          expect(instance.live_views).to be_nil
-          expect(File.exist?(File.join(dir, ".lain", "state.json"))).to be(false)
+            expect(instance.live_views).to be_nil
+            expect(Dir.glob(File.join(dir, "**", "state.json"), File::FNM_DOTMATCH)).to be_empty
+          end
         end
       end
     end

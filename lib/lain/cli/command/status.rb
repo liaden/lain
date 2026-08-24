@@ -6,7 +6,7 @@ module Lain
   module CLI
     module Command
       # `/status` (T13): the live {Lain::StatusFeed}'s own derivation
-      # (`#state`), rendered inline -- never `.lain/state.json`. Command::Env's
+      # (`#state`), rendered inline -- never the published file. Command::Env's
       # `status` reader IS the one StatusFeed instance {ChatLaunch} threads
       # through both the tee (when one exists) and {Wiring}, so this renders
       # truthfully under --no-journal too: no tee ever fed it an event, so

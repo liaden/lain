@@ -18,7 +18,7 @@ module Lain
     # Atomic replace: the new bytes land in a sibling file in the SAME
     # directory (so the rename is a same-filesystem, single-inode-swap
     # operation), and only `File.rename` -- never a partial `File.write` --
-    # ever lands on the published path. A reader polling `.lain/state.json`
+    # ever lands on the published path. A reader polling that path
     # (tmux's `#(jq …)`) therefore only ever observes a WHOLE, valid struct,
     # never a half-written one; a failed write (ENOSPC, permissions) leaves
     # the prior good state in place instead of corrupting it, and raises,
@@ -29,6 +29,21 @@ module Lain
     # which of its fields are events and which are clock readings, and this
     # object only has to remember the last token it was given and compare.
     class Publication
+      # The state feed could not be written. Named per the error-taxonomy
+      # convention -- a refusal subclasses {Lain::Error} next to the owner that
+      # raises it, as {Paths::Unwritable} does. Distinct from that one rather
+      # than reusing it: `Unwritable` answers "a directory could not be
+      # created", which is one of the three ways this fails, and the sentence
+      # an operator needs here is about the state feed and the variable that
+      # moves it. The kernel's own error stays reachable as `#cause`.
+      class Unpublishable < Error
+        def initialize(path, cause)
+          super("lain cannot publish the state feed to #{path}: #{cause.message}. " \
+                "This is machine state, rewritten every turn and kept out of your project " \
+                "on purpose; XDG_STATE_HOME chooses where it lives.")
+        end
+      end
+
       # @param path [String] the published file
       def initialize(path)
         @path = path
@@ -58,11 +73,22 @@ module Lain
 
       private
 
+      # Every kernel refusal on this path becomes ONE named error, because F50
+      # changed which refusals are reachable. Under `<project>/.lain/` the
+      # destination was essentially always writable -- the user is working in
+      # it -- so a bare `Errno` escaping here was a disk-full curiosity. Under
+      # `$XDG_STATE_HOME` it can be read-only, owned by someone else, or have a
+      # plain file where the per-project directory belongs, and the raw errno
+      # names a path the operator never typed, in a directory named by twelve
+      # hex characters, with no mention of lain. That reads as a crash; it is a
+      # misconfiguration, and it has a lever.
       def write(struct)
         FileUtils.mkdir_p(File.dirname(@path))
         tmp = "#{@path}.tmp-#{Process.pid}-#{object_id}"
         File.write(tmp, JSON.generate(struct))
         File.rename(tmp, @path)
+      rescue SystemCallError => e
+        raise Unpublishable.new(@path, e)
       end
     end
   end

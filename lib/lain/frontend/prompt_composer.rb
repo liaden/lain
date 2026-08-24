@@ -187,7 +187,9 @@ module Lain
       # Where a run's prompt format comes from: the project's own, then the
       # machine's, then what we ship. Narrowest scope that answered wins, and
       # `.lain/` is the project-scoped convention `services.rb` and
-      # `state.json` already follow.
+      # `summarizers.rb` already follow. NOT the state feed, which left this
+      # tree for `$XDG_STATE_HOME/lain` (F50, {ProjectDir}): a prompt format is
+      # something a user writes and may commit, and machine state is not.
       def self.config_path(paths: Paths.new, project: Dir.pwd)
         [File.join(project, ".lain", "prompt.toml"), File.join(paths.config_home, "prompt.toml")]
           .find { |candidate| File.exist?(candidate) } || DEFAULT_CONFIG
@@ -390,7 +392,7 @@ module Lain
         # NO keyword, deliberately: the book is the AGENT's, set once when the
         # chat was wired ({CLI::Backend#context_window}, the same instance the
         # {StatusFeed} and {Compaction::Source} divide by), so this segment and
-        # `.lain/state.json` report one occupancy for one turn. Passing a book
+        # the state feed report one occupancy for one turn. Passing a book
         # here would be this class deciding a denominator it has no way to
         # resolve, which is how the two surfaces came to disagree.
         #

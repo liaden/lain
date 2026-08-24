@@ -5,7 +5,7 @@ module Lain
     # The live-view tee, lifted out of the Thor class the way Wiring was (the
     # Metrics trip said so: extract, do not loosen): telemetry, spawn, and Q/A
     # message records fan onto the session journal (durable, first) and every
-    # live-view sink. I1's StatusFeed is always a sink so `.lain/state.json`
+    # live-view sink. I1's StatusFeed is always a sink so the state feed
     # publishes for the tmux HUD (the primary renderer -- `lain up`'s chat
     # window carries no --nvim); the nvim Channel joins it when an editor is
     # attached.
@@ -126,6 +126,12 @@ module Lain
       # would silently get an event-blind /status (the T9 panel's exact trap).
       # ChatLaunch constructs the ONE feed and threads it here AND into Wiring,
       # so the tee's sink and the command's reader are the same live instance.
+      #
+      # @param options [Hash] the chat command's parsed flags
+      # @param chronicle [Chronicle] the run's chronicle, teed alongside the journal
+      # @param status_feed [StatusFeed] the ONE feed ChatLaunch also threads into Wiring
+      # @option options [String, nil] :nvim the editor socket to attach a live
+      #   Channel to; absent means no nvim sink and no Channel is built at all
       def initialize(options:, chronicle:, status_feed:)
         @options = options
         @channel = Lain::Channel::DropOldest.new if options[:nvim]

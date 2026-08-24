@@ -68,11 +68,11 @@ module Lain
       #   {CLI::Shutdown} use, so a countdown's remaining seconds are testable
       #   without a real clock tick (T21)
       # @param state_path [String] {StatusFeed}'s published state, under
-      #   `.lain/state.json` by default -- resolved through {ProjectDir}, the one
-      #   locator {StatusFeed} and {CLI::Up} default through too, so the three
-      #   renderers of one feed cannot name three different files (see
-      #   {StatusFeed}'s class comment on why this is not an XDG path).
-      #   Injectable so specs use a tmpdir (I3)
+      #   `$XDG_STATE_HOME/lain` by default -- resolved through {ProjectDir}, the
+      #   one locator {StatusFeed} and {CLI::Up} default through too, so the
+      #   three renderers of one feed cannot name three different files (see
+      #   {ProjectDir} on why the feed is XDG state and the rest of `.lain/` is
+      #   not). Injectable so specs use a tmpdir (I3)
       # @param wall_clock [#call] absolute time source for {#prompt}'s warmth
       #   snapshot, separate from `clock:` above -- {StatusFeed} publishes an
       #   absolute deadline (wall time), while `clock:` is {RunClock::MONOTONIC}
@@ -476,8 +476,8 @@ module Lain
         end
       end
 
-      # I3's warmth collaborator: reads {StatusFeed}'s published
-      # `.lain/state.json` directly -- the same "one state feed, three
+      # I3's warmth collaborator: reads {StatusFeed}'s published state file
+      # directly ({ProjectDir#state_path}) -- the same "one state feed, three
       # renderers" split I1 established for tmux's status-right (never an
       # in-process registry; StatusFeed and TTY may even be different
       # processes). Split out of TTY proper for the same reason

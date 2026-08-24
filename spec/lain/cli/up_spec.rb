@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "digest"
 require "tmpdir"
 require "fileutils"
 require "json"
@@ -17,7 +18,7 @@ load File.expand_path("../../../exe/lain", __dir__)
 
 # I2: `lain up` -- create/attach the "lain" tmux session, session-scoped so the
 # global theme is untouched, with a status-right HUD (warmth/fleet/inbox) read
-# from I1's `.lain/state.json` (see lib/lain/status_feed.rb for the exact
+# from I1's published state file (see lib/lain/status_feed.rb for the exact
 # keys). Two kinds of examples:
 #
 # * "against a real tmux server" shells out to an ACTUAL tmux on a scratch
@@ -399,7 +400,7 @@ RSpec.describe Lain::CLI::Up do
         plan = up.launch_plan(nested: false)
 
         expect(session_count).to eq(1)
-        expect(plan.messages).to eq(["created tmux session '#{session}'"])
+        expect(plan.messages).to eq(["HUD state: #{state_path}", "created tmux session '#{session}'"])
         expect(plan.argv).to eq(["tmux", "-L", socket, "attach", "-t", session])
       end
     end
@@ -483,16 +484,22 @@ RSpec.describe Lain::CLI::Up do
   end
 
   describe "Report#announcement" do
-    it "announces a fresh creation" do
-      report = described_class::Report.new(session: "lain", created: true, warnings: [])
+    def report(created:) = described_class::Report.new(session: "lain", created:, warnings: [], state_path: "/s.json")
 
-      expect(report.announcement).to eq("created tmux session 'lain'")
+    it "announces a fresh creation" do
+      expect(report(created: true).announcement).to eq("created tmux session 'lain'")
     end
 
     it "announces reattaching to an already-running session" do
-      report = described_class::Report.new(session: "lain", created: false, warnings: [])
+      expect(report(created: false).announcement).to eq("reattaching to 'lain'")
+    end
 
-      expect(report.announcement).to eq("reattaching to 'lain'")
+    # F50 moved the state feed to `$XDG_STATE_HOME/lain/status/<12 hex>/state.json`.
+    # An operator used to find it with `ls .lain/`; now this line is the only
+    # thing in the whole program that names it, and a HUD stuck on "lain: no
+    # state yet" is undiagnosable without it.
+    it "names the file the HUD polls, which nothing else in the program does" do
+      expect(report(created: true).hud_line).to eq("HUD state: /s.json")
     end
   end
 
@@ -521,8 +528,20 @@ RSpec.describe Lain::CLI::Up do
       expect(plan.messages).to eq(
         ["jq not found on PATH -- status-right falls back to raw state.json " \
          "(install jq for the formatted warmth/fleet/inbox HUD)",
+         "HUD state: #{state_path}",
          "created tmux session 'lain'"]
       )
+    end
+
+    # The path is printed on EVERY launch, not only a degraded one: a HUD that
+    # renders fine still leaves the operator with no way to find the file it is
+    # rendering from.
+    it "names the state file even when nothing is wrong" do
+      always_ok = ->(*args) { FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "") }
+
+      plan = described_class.new(session: "lain", state_path:, shell_out_factory: always_ok).launch_plan(nested: false)
+
+      expect(plan.messages).to eq(["HUD state: #{state_path}", "created tmux session 'lain'"])
     end
 
     it "branches the exec argv on nested:, independent of the warnings" do
@@ -1791,16 +1810,22 @@ RSpec.describe Lain::CLI::Up, "opening a PATH" do
 
   # The HUD half of the same value. The chat pane publishes its state file from
   # its OWN cwd (StatusFeed#default_path), so a status bar reading the shell's
-  # project shows a file nothing is writing -- which renders as a HUD frozen at
-  # its startup values, not as an error.
-  it "points the HUD at the PATH's own .lain/state.json, not the shell's" do
+  # project polls a path nothing writes -- and since F50 relocated the feed to
+  # `$XDG_STATE_HOME/lain/status/<project>/state.json` there is no file at that
+  # path at all, so it renders as a HUD that never leaves "no state yet".
+  #
+  # Asserted through the PROJECT HASH rather than through {Lain::ProjectDir}:
+  # a fixture that asks the locator for the expected path would pass whatever
+  # the locator answered, including the shell's.
+  it "points the HUD at the PATH's own project, not the shell's" do
     scratch_dir do |dir|
       repo = File.join(dir, "repo")
       FileUtils.mkdir_p(repo)
 
-      calls = tmux_calls(path: repo)
+      calls = Dir.chdir(dir) { tmux_calls(path: repo) }
 
-      expect(status_right_call(calls).last).to include(File.join(repo, ".lain", "state.json"))
+      expect(status_right_call(calls).last).to include("#{Digest::SHA256.hexdigest(repo)[0, 12]}/state.json")
+      expect(status_right_call(calls).last).not_to include(Digest::SHA256.hexdigest(dir)[0, 12])
     end
   end
 
