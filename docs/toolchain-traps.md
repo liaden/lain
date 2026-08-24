@@ -255,6 +255,19 @@ the cop.
   lain's own git admin dir, so the number of worktrees registered in this repo is NOT the cause:
   that hypothesis was tested and rejected 2026-08-23.
 
+- **The `:ollama` live suite has a KNOWN-RED example, and it predates this chunk.**
+  `Lain::Provider::Ollama temperature-0 reproducibility produces identical text across three warm
+  same-seed runs` (`spec/integration/provider/ollama_spec.rb`) fails on this box: three warm
+  same-seed runs at temperature 0 give **three distinct completions**. Measured 2026-08-24 at HEAD
+  **and at `f63dae70`**, the commit before the ollama-cloud chunk began — so it is environmental or
+  server-side, not a regression from any card. It only runs under `LAIN_OLLAMA=1`, which is why no
+  default suite sees it.
+  Recorded by NAME so the next person to run the live tier does not read it as something they just
+  broke. The honest consequence: **neither ollama arm is currently a determinism-comparable bench
+  arm on this machine** — the cloud arm's non-reproducibility is measured and expected
+  (`references/ollama/cloud.md`), and the local arm's is a real defect that is still open. Do not
+  draw a variance conclusion from either without re-establishing this first.
+
 - **`rubocop -a` rewrites UNTRACKED files too, and there is no copy to restore.** A bare
   `bundle exec rubocop -a` inspects the whole working tree, not just tracked or staged files, so
   scratch scripts, probe specs and anything else sitting untracked in a worktree get autocorrected
