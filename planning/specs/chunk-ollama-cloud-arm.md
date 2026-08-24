@@ -1270,6 +1270,49 @@ The panel argued for cutting T15 on the grounds that both ACs were already green
 correct work: the card converts an unverified assumption into a pin, at the cost of six examples,
 one comment and **zero production change**. It lands.
 
+### CORRECTION 3's premise about `spool:` was FALSE (found by T6)
+
+Correction 3 and T6's card both assert that `Backend#provider` "already accepts `spool:` and
+already ignores it on the ollama arm, so the change is inside `OllamaTier` and nowhere else."
+
+It did not. It **bound** `spool:` and dropped it, so without a one-keyword change at the call site
+the WAL never reached the arm at all — and exactly **1 of 297 examples** noticed. T6 measured this
+and made the change, correctly, outside its stated Files list. Recorded here so a later card does
+not inherit the premise; the escalation trigger forbade *adding lines*, and a keyword on an
+existing call adds none.
+
+### Follow-ups owed, none blocking this chunk
+
+1. **`Provider::Anthropic`'s transport closes its frame only on the success path.**
+   `ResponseWal::BufferedFrame#close` is the sole route to `flush_buffered`, so an unclosed
+   buffered frame is not an incomplete record — it is **no record**. Anthropic is the arm most
+   likely to have a subagent holding the streaming slot. The two transports now disagree about
+   termination, with the ollama side carrying a comment explaining why the other is wrong. That
+   asymmetry wants a card, not a comment.
+2. **`Cloud#model_metadata?` is `false`, so the cloud arm performs no `--num-ctx` refusal**, even
+   though `/api/show` is now measured to answer. A one-line flip, with `references/ollama/cloud.md`
+   as its grounding and a live example already pinned so it has something to turn red.
+3. **`num_predict` is unreachable from a `Request`** — there is no way to cap output cost on
+   *either* ollama arm. `max_tokens` on a Context is decorative here, which bit T12's own spec.
+4. **`rake spec:flakes` exits 1 on every invocation** — `bin/spec-flakes` rewrites `$HOME`/`XDG_*`
+   per forked run, colliding deterministically with six examples. It cannot serve as a gate until
+   its isolation stops fighting the specs that assert on the variable it rewrites.
+5. **A `references/ollama/` catalogue snapshot**, so the next window refresh is a diff rather than
+   a re-sweep.
+
+### A second defect shape, distinct from the prose-guarantee one (found by T6's panel)
+
+**A spec that runs a different code path than its name claims.** `Request` defaults `stream: true`,
+so every T6 example omitting `stream:` ran the STREAMING path — including three named
+"non-streaming". AC 1 had zero real coverage: stripping `wal_frame:` from the sync context wrote a
+**zero-byte frame marked complete** while 296 of 297 examples stayed green.
+
+**Mutation testing cannot catch this**, and that is the point worth carrying forward: a mutant only
+reports on paths some example already drives, so it proves what the code does and never that a spec
+exercises the path its name claims. The fingerprint was in the evidence — the mutant meant to prove
+the sync path had been measured against a mutation of *both* paths, so its failure count did not
+match its name.
+
 ### Correction to the allowlist arithmetic (bears on T8)
 
 `APPROVED` is `{path => {constant => reason}}` and normalizes every spelling of a class to one
