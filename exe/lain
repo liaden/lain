@@ -412,8 +412,10 @@ class LainCLI < Thor
                                desc: "max_tokens per model turn"
     method_option :system, type: :string, desc: "system prompt"
     method_option :provider, type: :string, default: "anthropic",
-                             desc: "Model provider: anthropic, ollama, or bedrock"
-    method_option :api_base, type: :string, desc: "Override the Ollama API base (ollama provider only)"
+                             desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
+    method_option :api_base, type: :string,
+                             desc: "Override the Ollama API base (ollama arms only; https " \
+                                   "required on ollama-cloud)"
     method_option :temperature, type: :numeric, desc: "Sampler temperature, threaded into Request#extra"
     method_option :seed, type: :numeric, desc: "Sampler seed, threaded into Request#extra"
     # Flag name → Lain::CLI::Backend option. One declarative map, so adding a
@@ -454,7 +456,9 @@ class LainCLI < Thor
     # provider name means.
     method_option :provider, type: :string, default: "anthropic",
                              desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
-    method_option :api_base, type: :string, desc: "Override the Ollama API base (ollama provider only)"
+    method_option :api_base, type: :string,
+                             desc: "Override the Ollama API base (ollama arms only; https " \
+                                   "required on ollama-cloud)"
     method_option :model, type: :string,
                           desc: "Model id; defaults to the selected provider's own default when unset"
     method_option :max_tokens, type: :numeric, default: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS,
@@ -601,9 +605,10 @@ class LainCLI < Thor
     # See EnvDefaults for what is deliberately NOT env-configurable, and why.
     def self.endpoint(thor)
       thor.method_option :provider, type: :string, default: Lain::CLI::EnvDefaults.string("LAIN_PROVIDER", "anthropic"),
-                                    desc: "Model provider: anthropic, ollama, or bedrock [$LAIN_PROVIDER]"
+                                    desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")} [$LAIN_PROVIDER]"
       thor.method_option :api_base, type: :string, default: Lain::CLI::EnvDefaults.string("LAIN_API_BASE"),
-                                    desc: "Override the Ollama API base (ollama provider only) [$LAIN_API_BASE]"
+                                    desc: "Override the Ollama API base (ollama arms only; https " \
+                                          "required on ollama-cloud) [$LAIN_API_BASE]"
       thor.method_option :model, type: :string, default: Lain::CLI::EnvDefaults.string("LAIN_MODEL"),
                                  desc: "Model id; defaults to the selected provider's own default when unset " \
                                        "[$LAIN_MODEL]"
@@ -638,10 +643,14 @@ class LainCLI < Thor
     def self.throughput(thor)
       thor.method_option :num_batch, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_BATCH"),
                                      desc: "Ollama prompt batch size; ollama's own default of 512 costs ~1.31x " \
-                                           "prefill on this box, 2048 is the measured setting [$LAIN_NUM_BATCH]"
+                                           "prefill on this box, 2048 is the measured setting. A local-SERVER " \
+                                           "knob: it is sent on ollama-cloud too, where its effect is " \
+                                           "unmeasured [$LAIN_NUM_BATCH]"
       thor.method_option :num_ctx, type: :numeric, default: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_CTX"),
-                                   desc: "Ollama context length for the request; unset serves the model's own " \
-                                         "[$LAIN_NUM_CTX]"
+                                   desc: "Ollama context length for the request; unset serves the model's own. " \
+                                         "A local-SERVER knob: it is sent on ollama-cloud too, where its effect " \
+                                         "is unmeasured and nothing refuses a value above the model's trained " \
+                                         "maximum [$LAIN_NUM_CTX]"
     end
   end
 
@@ -729,7 +738,7 @@ class LainCLI < Thor
     def self.summarizer_endpoint(thor)
       thor.method_option :summarizer_provider, type: :string, default: summarizer_provider_default,
                                                desc: "Provider for the compaction summarizer, chosen separately " \
-                                                     "from --provider: anthropic, ollama, or bedrock " \
+                                                     "from --provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")} " \
                                                      "[$LAIN_SUMMARIZER_PROVIDER]"
       thor.method_option :summarizer_model, type: :string,
                                             default: Lain::CLI::EnvDefaults.string("LAIN_SUMMARIZER_MODEL"),
@@ -979,7 +988,7 @@ class LainCLI < Thor
     def self.declare(thor, dry_run:, turn:)
       thor.method_option :dry_run, type: :boolean, default: false, desc: dry_run
       thor.method_option :provider, type: :string, default: "anthropic",
-                                    desc: "Model provider: anthropic, ollama, or bedrock"
+                                    desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
       thor.method_option :model, type: :string, desc: "Model id; the provider's own default when unset"
       thor.method_option :max_tokens, type: :numeric, default: 4_096, desc: "max_tokens per #{turn}"
     end

@@ -2,6 +2,7 @@
 
 require_relative "backend/ceiling"
 require_relative "backend/endpoint"
+require_relative "backend/ollama_tier"
 require_relative "backend/summarizer"
 require_relative "backend/span_summarizer"
 require_relative "backend/num_ctx"
@@ -55,7 +56,7 @@ module Lain
 
       # The providers `--provider` selects between. The unknown-name guard names
       # this set, matching Capability::Policy.for's voice.
-      PROVIDERS = %w[anthropic ollama bedrock].freeze
+      PROVIDERS = %w[anthropic ollama ollama-cloud bedrock].freeze
 
       # Which of those the SUMMARIZER tier defaults to. Local, because an eager
       # summary fires once per large tool result, off the turn's critical path,
@@ -144,12 +145,20 @@ module Lain
         @options = options
         summarizer_name
         summarizer_max_tokens
-        api_base
+        # BOTH arms, built for their refusals and dropped. `--summarizer-provider
+        # ollama-cloud` is the same credential on the same wire as `--provider`
+        # is, and it is refused here for the reason `summarizer_max_tokens`
+        # above already is: the summarizer flags are construction-time refusals
+        # whatever `--no-compact` says, so `lain up` cannot open a pane that
+        # dies at the first compaction. It also evaluates {#api_base} on the way
+        # in, so that flag stays validated for EVERY provider.
+        [@options[:provider], summarizer_name].each { |name| ollama_tier(name) }
         num_ctx
       end
 
-      # Anthropic reads its key from the environment; Ollama is local and takes an
-      # optional `--api-base` override; Bedrock is also env-configured
+      # Anthropic reads its key from the environment; the two ollama arms are
+      # {OllamaTier}'s whole subject, since "which server, whose key, which
+      # default model" differs between them; Bedrock is also env-configured
       # ({Provider::Bedrock} reads AWS_BEARER_TOKEN_BEDROCK / AWS_REGION
       # itself, so no flag threads through here). An unknown name fails loudly,
       # naming the valid set, as {UnknownProvider} (a bad flag is user error,
@@ -159,6 +168,10 @@ module Lain
       #   PROVIDERS -- the chat's by default. {#summarizer_provider} passes its
       #   own name here rather than carrying a second copy of this case, so the
       #   two flags cannot come to disagree about what a provider name means.
+      #   The ollama arm keys off {OllamaTier::NAMES} rather than a literal for
+      #   that same reason: `--provider ollama-cloud` is a name, not a boolean,
+      #   which is what lets `bench arms` and `bench record` reach it through
+      #   the `provider:` their closed flag maps already forward.
       #
       # @param spool [#open_frame] the chronicle's response spool -- a real
       #   {Provider::ResponseWal} only when journaling is on ({CLI::Chronicle::Null}
@@ -196,9 +209,9 @@ module Lain
       #   and there is never a slot to wait for.
       def provider(name: provider_name, spool: Provider::Spool::Null.new, channel: Channel::Null.instance, queue: true)
         case name
-        when "ollama" then Provider::Ollama.new(api_base: @options[:api_base], channel:, queue:, journal: run_journal)
+        when *OllamaTier::NAMES then ollama_tier(name).provider(channel:, queue:, journal: run_journal)
         when "bedrock" then Provider::Bedrock.new(channel:)
-        else anthropic_provider(spool, channel, queue:)
+        else anthropic_provider(spool, channel, queue:, flag: OllamaTier.flag_for(chat: chat_name?(name)))
         end
       end
 
@@ -330,6 +343,9 @@ module Lain
       # refusal cannot depend on which collaborator a given run happens to
       # build -- {#provider} is the only other reader of this flag, and it
       # would not run at all for `bench record` on a non-ollama provider.
+      # {#initialize} reaches it through {OllamaTier}, which takes the validated
+      # value as an argument, so the eager refusal still fires whatever
+      # `--provider` says.
       def api_base = @options[:api_base] && Endpoint.new(flag: "--api-base", value: @options[:api_base]).url
 
       # `--model` resolved once, so {#context}, {WindowBook} and the compaction
@@ -437,8 +453,14 @@ module Lain
       # the exe's clean Thor::Error mapping. Checking here keeps that mapping
       # intact for the one refusal an anthropic chat run can hit before any
       # request goes out.
-      def anthropic_provider(spool, channel, queue: true)
-        raise MissingAPIKey, "ANTHROPIC_API_KEY is not set; --provider anthropic needs it to build a client" \
+      # `flag` is whichever one SELECTED this arm, resolved by the caller that
+      # knows. `--summarizer-provider anthropic` used to be refused in
+      # `--provider`'s name -- a flag the operator never typed -- and the
+      # pre-flight's new summarizer enumeration made that reachable at launch
+      # rather than at the first compaction. The default keeps every other
+      # caller (bench, a hand-built Backend) saying what it always said.
+      def anthropic_provider(spool, channel, queue: true, flag: OllamaTier::CHAT_FLAG)
+        raise MissingAPIKey, "ANTHROPIC_API_KEY is not set; #{flag} anthropic needs it to build a client" \
           if ENV["ANTHROPIC_API_KEY"].to_s.empty?
 
         Provider::Anthropic.new(spool:, channel:, queue:, journal: run_journal)
@@ -471,7 +493,7 @@ module Lain
         raise UnknownProvider, "unknown #{flag} #{name.inspect}, expected one of #{PROVIDERS.inspect}"
       end
 
-      def tier_default_model = same_provider? ? model : default_model(summarizer_name)
+      def tier_default_model = chat_name?(summarizer_name) ? model : default_model(summarizer_name)
 
       # The one raw `--provider` read in this class, and it does NOT weaken
       # {#provider_name}'s seam: equality with an already-validated name IS the
@@ -482,14 +504,32 @@ module Lain
       # option hash naming no chat provider, rather than refusing about a flag
       # this method does not read -- {#provider}, which does read it, still
       # refuses loudly, and there is an example for both halves.
-      def same_provider? = summarizer_name == @options[:provider]
+      #
+      # Generalized from a `same_provider?` predicate that asked only about the
+      # summarizer: two callers now need the same question about an arbitrary
+      # name, and one predicate is what keeps them agreeing about it.
+      def chat_name?(name) = name == @options[:provider]
 
+      # WHOSE arm a tier is -- which decides the flag a refusal names -- and,
+      # separately, whether `--api-base` is this tier's to use. They are NOT the
+      # same question: {OllamaTier.claims_base?} carries the case that proves it
+      # (`--provider anthropic --api-base http://my-ollama:11434`, where the
+      # summarizer is not the chat's arm and the base is still plainly for it).
+      #
+      # The base is filtered HERE, so the tier is never handed one it will drop.
+      def ollama_tier(name) = OllamaTier.new(name:, chat: chat_name?(name), api_base: ollama_base(name))
+
+      def ollama_base(name) = OllamaTier.claims_base?(name, @options[:provider]) ? api_base : nil
+
+      # The ollama arms answer from {OllamaTier}, and from its CLASS rather
+      # than an instance: which model an arm defaults to is a pure function of
+      # the name, so this must not build a tier, read ENV, or be able to raise
+      # about a missing key -- {#model} is read per turn by three collaborators.
+      # The other two names are one constant each and stay here.
       def default_model(name)
-        case name
-        when "ollama" then Provider::Ollama::DEFAULT_MODEL
-        when "bedrock" then Provider::Bedrock::DEFAULT_MODEL
-        else Provider::Anthropic::DEFAULT_MODEL
-        end
+        return OllamaTier.default_model(name) if OllamaTier::NAMES.include?(name)
+
+        name == "bedrock" ? Provider::Bedrock::DEFAULT_MODEL : Provider::Anthropic::DEFAULT_MODEL
       end
 
       # `--max-tokens`, through the same {Ceiling} the summarizer tier's flag goes

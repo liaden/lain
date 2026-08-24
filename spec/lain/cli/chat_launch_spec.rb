@@ -636,6 +636,65 @@ RSpec.describe Lain::CLI::ChatLaunch, "the construction-only pre-flight" do
     it "leaves --compact-strategy alone under --no-compact, exactly as chat does" do
       expect { preflighting(offline(compact: false, compact_strategy: "nosuchstrategy")) }.not_to raise_error
     end
+
+    # The SUMMARIZER tier is a second provider with a second key, and nothing
+    # else here asked it to exist. `--summarizer-provider ollama-cloud` with no
+    # key used to pre-flight clean and exit 0, then die at the first
+    # compaction -- in a pane whose dead-pane banner eats the cause, which is
+    # the exact failure this whole method exists to prevent.
+    it "refuses a cloud SUMMARIZER arm with no key, not just the chat arm" do
+      with_env("OLLAMA_API_KEY" => nil) do
+        expect { preflighting(offline(provider: "ollama", summarizer_provider: "ollama-cloud")) }
+          .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey, /OLLAMA_API_KEY/)
+      end
+    end
+
+    # Not an ollama-cloud fact, and the enumeration is load-bearing on its own
+    # because of it: a Backend refuses its own ollama arms at construction, but
+    # nothing refuses an ANTHROPIC-summarizer beside an ollama chat until the
+    # first compaction tries to build one.
+    it "refuses an anthropic SUMMARIZER arm beside a local chat with no key" do
+      with_env("ANTHROPIC_API_KEY" => "") do
+        expect { preflighting(offline(provider: "ollama", summarizer_provider: "anthropic")) }
+          .to raise_error(Lain::CLI::Backend::MissingAPIKey, /ANTHROPIC_API_KEY/)
+      end
+    end
+
+    it "refuses a cloud CHAT arm with no key" do
+      with_env("OLLAMA_API_KEY" => nil) do
+        expect { preflighting(offline(provider: "ollama-cloud")) }
+          .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey, /OLLAMA_API_KEY/)
+      end
+    end
+
+    # The mechanical half of the same finding: Backend::MissingAPIKey and
+    # Deployment::MissingAPIKey are SIBLINGS under Lain::Error -- neither is an
+    # ancestor of the other -- so a rescue naming one caught nothing of the
+    # other and the cloud arm lost the tmux hint. That hint is not an edge case
+    # for `lain up --provider ollama-cloud`: it is the modal failure, a key
+    # exported in the operator's shell and absent from the tmux server's.
+    it "gives the cloud arm the same tmux-environment hint the anthropic arm gets" do
+      with_env("OLLAMA_API_KEY" => nil) do
+        expect { preflighting(offline(provider: "ollama-cloud")) }
+          .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey, /tmux server/)
+      end
+    end
+
+    it "keeps each arm's own error class through the annotation" do
+      expect(Lain::CLI::Backend::MissingAPIKey.ancestors)
+        .not_to include(Lain::Provider::Ollama::Deployment::MissingAPIKey)
+      expect(Lain::Provider::Ollama::Deployment::MissingAPIKey.ancestors)
+        .not_to include(Lain::CLI::Backend::MissingAPIKey)
+    end
+
+    # SUBSET, in the direction that bites: a cloud summarizer WITH a key must
+    # pre-flight clean, or `lain up` refuses a chat that would have run.
+    it "accepts a cloud summarizer arm when the key is there" do
+      with_env("OLLAMA_API_KEY" => "sk-preflight-test") do
+        expect { preflighting(offline(provider: "ollama", summarizer_provider: "ollama-cloud")) }
+          .not_to raise_error
+      end
+    end
   end
 
   describe "the network boundary" do

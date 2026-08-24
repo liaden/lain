@@ -78,6 +78,241 @@ RSpec.describe Lain::CLI::Backend do
     it "raises a Lain::Error for a missing key too (so the exe's rescue presents it cleanly)" do
       expect(Lain::CLI::Backend::MissingAPIKey).to be < Lain::Error
     end
+
+    # The refusal must name the flag that SELECTED this arm. Pre-existing, and
+    # made reachable at launch rather than at the first compaction by the
+    # pre-flight's new summarizer enumeration -- so an operator who typed
+    # `--summarizer-provider anthropic` was told to change `--provider`.
+    it "names --summarizer-provider when that is the flag that asked for anthropic" do
+      with_env("ANTHROPIC_API_KEY" => "") do
+        expect { backend_for(provider: "ollama", summarizer_provider: "anthropic").summarizer_provider }
+          .to raise_error(Lain::CLI::Backend::MissingAPIKey, /--summarizer-provider anthropic needs it/)
+      end
+    end
+
+    it "still names --provider when that is the flag that asked" do
+      with_env("ANTHROPIC_API_KEY" => "") do
+        expect { backend_for(provider: "anthropic").provider }
+          .to raise_error(Lain::CLI::Backend::MissingAPIKey, /--provider anthropic needs it/)
+      end
+    end
+  end
+
+  # The arm is selected by a PROVIDER NAME rather than by a boolean `--cloud`,
+  # and that is what makes it reachable from `lain bench arms` / `lain bench
+  # record`: both build their Backend from closed literal maps (ARMS_FLAGS,
+  # RECORD_FLAGS) that forward `provider:` and carry no key a boolean could
+  # ride in on. These examples drive the same seam those maps do.
+  describe "the ollama-cloud arm" do
+    def with_key(value = "sk-ollama-test", &) = with_env("OLLAMA_API_KEY" => value, &)
+
+    it "is a name --provider accepts" do
+      expect(Lain::CLI::Backend::PROVIDERS).to include("ollama-cloud")
+    end
+
+    it "builds a provider resolving the cloud endpoint" do
+      provider = with_key { backend_for(provider: "ollama-cloud").provider }
+      expect(provider).to be_a(Lain::Provider::Ollama)
+      expect(provider.send(:resolved_endpoint)).to eq("https://ollama.com")
+    end
+
+    # Same claim the anthropic and ollama arms already carry: a round trip that
+    # queues for capacity has to reach the run's record.
+    it "hands the cloud provider the run's journal" do
+      provider = with_key { backend_for(provider: "ollama-cloud").provider }
+      expect(provider.send(:wait_journal)).to be_a(Lain::CLI::Backend::Summarizer::RunJournal)
+    end
+
+    it "leaves the local arm resolving loopback" do
+      expect(backend_for(provider: "ollama").provider.send(:resolved_endpoint)).to eq("http://localhost:11434")
+    end
+
+    # BEFORE the chronicle opens, with `--api-base` and `--num-ctx`: the one
+    # path every command takes, so the refusal cannot depend on which
+    # collaborator a given run happens to build.
+    it "refuses a missing OLLAMA_API_KEY at construction, not at the first turn" do
+      with_env("OLLAMA_API_KEY" => nil) do
+        expect { backend_for(provider: "ollama-cloud") }
+          .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey,
+                          %r{OLLAMA_API_KEY is not set.*settings/keys}m)
+      end
+    end
+
+    it "refuses a plaintext --api-base at construction, naming the key as the reason" do
+      with_key do
+        expect { backend_for(provider: "ollama-cloud", api_base: "http://ollama.example") }
+          .to raise_error(Lain::CLI::Backend::PlaintextEndpoint, /OLLAMA_API_KEY/)
+      end
+    end
+
+    it "still refuses a malformed --api-base as a flag error rather than a cloud one" do
+      with_key do
+        expect { backend_for(provider: "ollama-cloud", api_base: "localhost:11434") }
+          .to raise_error(Lain::CLI::Backend::InvalidEndpoint)
+      end
+    end
+
+    it "refuses nothing about the cloud for a local run with a plaintext base" do
+      with_env("OLLAMA_API_KEY" => nil) do
+        expect { backend_for(provider: "ollama", api_base: "http://localhost:11434") }.not_to raise_error
+      end
+    end
+
+    describe "the default model" do
+      it "defaults a cloud run to a cloud model" do
+        expect(with_key { backend_for(provider: "ollama-cloud").model })
+          .to eq(Lain::CLI::Backend::OllamaTier::CLOUD_DEFAULT_MODEL)
+      end
+
+      it "leaves a local run on qwen3:4b" do
+        expect(backend_for(provider: "ollama").model).to eq("qwen3:4b")
+      end
+
+      # The summarizer tier is LOCAL by default and must stay local when the
+      # chat is on the cloud -- the names differ, so it resolves the local
+      # arm's own default rather than inheriting the chat's cloud model.
+      it "keeps the summarizer tier on the local default when the chat is on the cloud" do
+        expect(with_key { backend_for(provider: "ollama-cloud").summarizer_model }).to eq("qwen3:4b")
+      end
+
+      # #model is read per turn by #context, WindowBook and
+      # Compaction::Source#window_for. It must not be able to raise about a
+      # credential, so it must not build a tier at all.
+      it "answers #model on a cloud backend built while a key existed, after the key is gone" do
+        backend = with_key { backend_for(provider: "ollama-cloud") }
+        expect(with_env("OLLAMA_API_KEY" => nil) { backend.model }).to eq("gpt-oss:20b-cloud")
+      end
+    end
+
+    # BLOCKER 1. `--api-base` is ONE flag and there are TWO tiers that can be
+    # ollama. Handing the chat's base to a tier built for the summarizer's name
+    # sent OLLAMA_API_KEY, as a bearer token, to a host the operator chose for
+    # the other arm -- silently, because every value involved was valid alone.
+    # THE WHOLE RULE, as a table, because the first version of it was wrong in a
+    # direction no single example would have caught: it closed the leak and
+    # silently moved a LOCAL summarizer off the host `--api-base` named, which
+    # is a regression on the path this card promised not to touch. Every row is
+    # here so that changing the rule cannot quietly change one of them --
+    # DEFAULT_SUMMARIZER_PROVIDER is "ollama", so most operators are in the
+    # anthropic or bedrock row without ever typing `--summarizer-provider`.
+    describe "which arm --api-base reaches" do
+      internal = "http://my-ollama.internal:11434"
+      # The cloud row needs its own, because an http base on a cloud CHAT arm is
+      # refused at construction and no summarizer is ever reached -- which is
+      # itself the plaintext rule doing its job, not a gap in this table.
+      secure = "https://my-ollama.internal"
+
+      # chat provider => [the --api-base, where the DEFAULT summarizer resolves, why]
+      [
+        # The base is the chat's own, and the summarizer shares the arm.
+        ["ollama", internal, internal, "one ollama arm, and it is the chat's"],
+        # NO --summarizer-provider is typed in any of these three: the default
+        # is "ollama", so the summarizer is the only ollama-shaped arm there is
+        # and the flag is plainly for it. This is the row the first rule broke.
+        ["anthropic", internal, internal, "the only ollama arm there is"],
+        ["bedrock", internal, internal, "the only ollama arm there is"],
+        [nil, internal, internal, "a hand-built Backend naming no chat provider"],
+        # --provider names an ollama arm, so the base is THAT arm's. Nothing is
+        # lost: the chat provider receives it, as the example below this pins.
+        ["ollama-cloud", secure, "http://localhost:11434", "the base belongs to the cloud arm"]
+      ].each do |chat_provider, base, expected, why|
+        it "resolves the default summarizer at #{expected} for --provider #{chat_provider.inspect} (#{why})" do
+          backend = with_key { backend_for(provider: chat_provider, api_base: base, max_tokens: 64) }
+          expect(with_key { backend.summarizer_provider }.send(:resolved_endpoint)).to eq(expected)
+        end
+      end
+
+      # The row above, from the other side: the base the cloud CHAT arm claimed
+      # is a base it actually uses. "Not the summarizer's" would be a hollow
+      # claim if it turned out to be nobody's.
+      it "gives the cloud chat arm the base its summarizer was denied" do
+        backend = with_key { backend_for(provider: "ollama-cloud", api_base: secure, max_tokens: 64) }
+        expect(with_key { backend.provider }.send(:resolved_endpoint)).to eq(secure)
+      end
+
+      # The leak row, which needs an explicit --summarizer-provider to reach.
+      it "does not reach a cloud summarizer beside a chat that named a different ollama arm" do
+        backend = with_key do
+          backend_for(provider: "ollama", api_base: "https://internal.example",
+                      summarizer_provider: "ollama-cloud")
+        end
+        expect(with_key { backend.summarizer_provider }.send(:resolved_endpoint)).to eq("https://ollama.com")
+      end
+
+      it "never lets the bearer header and that host meet" do
+        backend = with_key do
+          backend_for(provider: "ollama", api_base: "https://internal.example",
+                      summarizer_provider: "ollama-cloud")
+        end
+        provider = with_key { backend.summarizer_provider }
+        headers = provider.instance_variable_get(:@transport).headers
+        expect(headers["Authorization"]).to include("sk-ollama-test")
+        expect(provider.send(:resolved_endpoint)).not_to include("internal.example")
+      end
+
+      # The chat arm always keeps it, on every row above.
+      it "still reaches the chat arm itself" do
+        backend = backend_for(provider: "ollama", api_base: "http://127.0.0.1:11500")
+        expect(backend.provider.send(:resolved_endpoint)).to eq("http://127.0.0.1:11500")
+      end
+
+      it "still reaches the chat arm when the chat IS the cloud one" do
+        backend = with_key { backend_for(provider: "ollama-cloud", api_base: "https://ollama.example") }
+        expect(with_key { backend.provider }.send(:resolved_endpoint)).to eq("https://ollama.example")
+      end
+
+      # THE ROW THAT LOOKS LIKE THE LEAK AND IS NOT, kept explicit because a
+      # future reader will otherwise rediscover the alarm and "fix" it.
+      # `--provider anthropic --api-base X --summarizer-provider ollama-cloud`
+      # sends the bearer token to X -- and should: there is exactly ONE
+      # ollama-shaped arm, so X can only ever have been meant for it (a proxy
+      # in front of ollama.com is the real case). What made the actual leak a
+      # leak was that `--provider ollama` named a DIFFERENT arm which obviously
+      # owned the flag. The guard here is the plaintext rule, not ownership.
+      it "lets an explicit cloud summarizer use the base when it is the only ollama arm" do
+        backend = with_key do
+          backend_for(provider: "anthropic", api_base: "https://my-ollama.internal",
+                      summarizer_provider: "ollama-cloud")
+        end
+        expect(with_key { backend.summarizer_provider }.send(:resolved_endpoint)).to eq("https://my-ollama.internal")
+      end
+
+      # And that guard fires on the reachable path, naming the flag the
+      # operator actually typed -- which is what the flag being a FIELD buys.
+      it "refuses a plaintext base for that same arm, naming --summarizer-provider" do
+        with_key do
+          expect do
+            backend_for(provider: "anthropic", api_base: "http://my-ollama.internal:11434",
+                        summarizer_provider: "ollama-cloud")
+          end
+            .to raise_error(Lain::CLI::Backend::PlaintextEndpoint, /--summarizer-provider ollama-cloud/)
+        end
+      end
+    end
+
+    # The summarizer flags are construction-time refusals whatever --no-compact
+    # says -- `summarizer_max_tokens` already is -- so `lain up` cannot open a
+    # pane that dies at the first compaction.
+    describe "the summarizer arm's own refusals" do
+      it "refuses a cloud summarizer with no key, at construction" do
+        with_env("OLLAMA_API_KEY" => nil) do
+          expect { backend_for(provider: "ollama", summarizer_provider: "ollama-cloud") }
+            .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey, /OLLAMA_API_KEY/)
+        end
+      end
+
+      it "refuses it under --no-compact too, matching --summarizer-max-tokens' own posture" do
+        with_env("OLLAMA_API_KEY" => nil) do
+          expect { backend_for(provider: "ollama", summarizer_provider: "ollama-cloud", compact: false) }
+            .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey)
+        end
+      end
+
+      it "builds a cloud summarizer when the key is there" do
+        backend = with_key { backend_for(provider: "ollama", summarizer_provider: "ollama-cloud") }
+        expect(with_key { backend.summarizer_provider }.send(:resolved_endpoint)).to eq("https://ollama.com")
+      end
+    end
   end
 
   # THE CONVERGENCE: "anthropic" always means {Provider::Anthropic} for
@@ -1082,7 +1317,7 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
-  # {Backend#same_provider?} compares the RAW `--provider` value rather than
+  # {Backend#chat_name?} compares the RAW `--provider` value rather than
   # going through {Backend#provider_name}, and that is the one place in this
   # class that reads a provider flag outside the validated seam. The reason is
   # testable rather than merely argued, so it is tested: with no chat provider in

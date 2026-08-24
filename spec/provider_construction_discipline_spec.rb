@@ -380,11 +380,17 @@ module ProviderConstructionDiscipline
     "lain/cli/backend.rb" => {
       "Provider::Anthropic" =>
         "the run's hosted arm. #anthropic_provider is its only builder and hands it the run's journal.",
-      "Provider::Ollama" =>
-        "the run's local arm, resolved from --provider/--api-base and handed the run's journal.",
       "Provider::Bedrock" =>
         "the run's Mantle arm. It resolves a hosted endpoint, so it has no admission gate and " \
         "nothing to wait for; see UNJOURNALED, which records that as a property rather than a gap."
+    }.freeze,
+    "lain/cli/backend/ollama_tier.rb" => {
+      "Provider::Ollama" =>
+        "BOTH ollama arms, local and cloud, and one entry because the allowlist normalizes a " \
+        "class to one constant however it is spelled. The tier is where --provider ollama / " \
+        "ollama-cloud is turned into a deployment, so it is also where the run's journal is " \
+        "attached to either. It moved OUT of cli/backend.rb rather than being added beside it: " \
+        "two files allowed to build the same provider is the drift this list exists to refuse."
     }.freeze,
     "lain/oracle/secret_read.rb" => {
       "Provider::Ollama" =>
@@ -637,10 +643,18 @@ RSpec.describe "provider construction discipline" do
 
       expect(live).to include(
         %w[lain/cli/backend.rb Provider::Anthropic],
-        %w[lain/cli/backend.rb Provider::Ollama],
         %w[lain/cli/backend.rb Provider::Bedrock],
+        %w[lain/cli/backend/ollama_tier.rb Provider::Ollama],
         %w[lain/oracle/secret_read.rb Provider::Ollama]
       )
+
+      # BOTH ollama doors, not one. The tier picks between `.local` and
+      # `.cloud` on a `--provider` name, and a detector that saw only the
+      # branch it happened to visit first would leave the other one
+      # unallowlisted and invisible -- which is the vacuum this example exists
+      # to refuse. They collapse to one APPROVED entry (the list normalizes a
+      # class to one constant); they must not collapse to one SITE.
+      expect(live.count(%w[lain/cli/backend/ollama_tier.rb Provider::Ollama])).to eq(2)
     end
   end
 
@@ -825,11 +839,11 @@ RSpec.describe "provider construction discipline" do
     end
 
     it "reports an approved construction that reaches no journal" do
-      found = construction_violations_for("Provider::Ollama.new(api_base: base)\n",
-                                          path: "lain/cli/backend.rb")
+      found = construction_violations_for("Provider::Ollama.local(api_base: base)\n",
+                                          path: "lain/cli/backend/ollama_tier.rb")
 
       expect(found.map(&:to_s))
-        .to eq(["lain/cli/backend.rb:1 -> constructs Provider::Ollama with no journal"])
+        .to eq(["lain/cli/backend/ollama_tier.rb:1 -> constructs Provider::Ollama with no journal"])
     end
 
     it "accepts an approved construction wrapped by the decorator instead" do

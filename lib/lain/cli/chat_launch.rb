@@ -259,6 +259,16 @@ module Lain
       # therefore says where it looked and what to do, rather than asserting a
       # global fact it is not in a position to know -- a refusal that states a
       # false cause is the thing this codebase's refusals exist to prevent.
+      #
+      # TWO classes are caught, and they are SIBLINGS -- neither is an ancestor
+      # of the other, so naming one catches nothing of the other. Backend's is
+      # the anthropic arm's; {Provider::Ollama::Deployment::MissingAPIKey} is
+      # the cloud arm's, raised where the header that would carry the damage is
+      # built. `--provider ollama-cloud` under `lain up` is the modal case for
+      # this hint, not an edge one: the key is exported in the operator's shell
+      # and absent from the tmux server's, which is the exact split the message
+      # exists to name. Re-raised as `e.class` so the arm's own error survives
+      # the annotation.
       def constructed
         backend.provider
         backend.context
@@ -266,11 +276,17 @@ module Lain
         # refuses and never a superset: under --no-compact chat resolves no
         # strategy, so a refusal here would reject a chat that would have run.
         Backend::SpanSummarizer.resolve(backend:, options: @options) if backend.compaction?
-      rescue Backend::MissingAPIKey => e
-        raise Backend::MissingAPIKey, "#{e.message} -- looked for in the environment this pre-flight " \
-                                      "ran in, which is not the one a tmux server started elsewhere " \
-                                      "hands its panes; export it here, or start that server from a " \
-                                      "shell that has it"
+        # Gated for the same reason, and enumerated for this method's own: the
+        # summarizer tier is a SECOND provider with a second key, and nothing
+        # above asked it to exist. `--summarizer-provider` naming an arm whose
+        # credential is missing used to pre-flight clean and die at the first
+        # compaction, in a pane whose dead-pane banner eats the cause.
+        backend.summarizer_provider if backend.compaction?
+      rescue Backend::MissingAPIKey, Provider::Ollama::Deployment::MissingAPIKey => e
+        raise e.class, "#{e.message} -- looked for in the environment this pre-flight " \
+                       "ran in, which is not the one a tmux server started elsewhere " \
+                       "hands its panes; export it here, or start that server from a " \
+                       "shell that has it"
       end
 
       # --windows observes the live-view tee, which --no-journal never builds;
