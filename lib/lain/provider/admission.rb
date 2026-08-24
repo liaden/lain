@@ -216,12 +216,128 @@ module Lain
       # all) overlapped two round trips on one ollama. F26, still live, through
       # the exact construction sites this card exists to cover.
       #
+      # == FIRST DECLARATION WINS -- among DECLARATIONS. SILENCE IS NOT ONE.
+      #
+      # A declared width is READ AT BUILD TIME AND PINNED BY THE MEMOISATION,
+      # NEVER FOLDED INTO THE KEY: {.canonical} is the whole key, before this
+      # keyword existed and after it. So a second caller declaring a different
+      # number for an endpoint that already has a REAL gate is handed the gate
+      # that exists and its number is ignored -- a later declaration may not
+      # widen a gate other callers are already inside, which is the one thing a
+      # capacity claim cannot do.
+      #
+      # That argument covers a WIDENING and nothing else, and an earlier draft
+      # of this comment over-claimed by stopping there. Silence pinning {Null}
+      # is not a widening to preserve, it is the absence of a claim: the first
+      # caller to resolve a hosted endpoint WITHOUT a width -- which
+      # `--provider ollama --api-base https://ollama.com` builds today, since a
+      # provider with no cloud deployment answers no width -- would otherwise
+      # leave every later round trip in the process unbounded against a plan
+      # that permits 3, with no error raised and nothing journaled. That is this
+      # card's own failure wearing its other face.
+      #
+      # So A DECLARATION REPLACES AN UNBOUNDED ENTRY THAT IS IDLE, and nothing
+      # else -- see {.supersedable?}, which holds the four conditions and the
+      # window that remains open. Idle is the whole of the safety argument:
+      # {Null} declines to GATE its callers but it counts them, so an occupied
+      # one may not be swapped. {.reset!} remains how a process re-reads
+      # everything.
+      #
       # @param endpoint [String] the endpoint the provider resolved for itself
+      # @param width [Integer, nil] what the caller knows its server's capacity
+      #   to be, for a hosted endpoint {Endpoint.local?} cannot classify; nil
+      #   when the caller does not know
       # @return [Admission, Admission::Null]
-      def self.for(endpoint:)
+      # @raise [Error] when `width` is neither nil nor a positive Integer
+      def self.for(endpoint:, width: nil)
+        declared = declared_width(width, endpoint)
         key = canonical(endpoint)
-        @registry_lock.synchronize { @registry[key] ||= build(key) }
+        @registry_lock.synchronize do
+          @registry[key] = build(key, declared) if supersedable?(@registry[key], declared)
+          @registry[key]
+        end
       end
+
+      # Whether {.build} should run for this key at all. Four conditions, and
+      # every one of them is load-bearing.
+      #
+      # NOTHING MEMOISED -- the ordinary first resolution, and the only one that
+      # is not a supersession.
+      #
+      # A WIDTH WAS DECLARED. Silence supersedes nothing: a caller that knows
+      # nothing about the server takes whatever is already there.
+      #
+      # {ENV_KEY} SAID NOTHING. An env-set endpoint's arm is the operator's
+      # choice and a declaration cannot move it, so there is nothing here to
+      # supersede. Without this clause the off switch's {Null} is supersedable
+      # FOREVER -- {.build} re-reads the env, answers another {Null}, and that
+      # one qualifies again -- so the gate is rebuilt on EVERY round trip, since
+      # {Admitted#admitted} resolves it per request. Measured before the clause
+      # existed: 5 resolutions, 5 distinct objects; 2000 resolutions, ~33
+      # allocations each, every one carrying a fresh Mutex.
+      #
+      # THE ENTRY IS UNBOUNDED AND IDLE. `width.finite?` asks the entry what it
+      # IS rather than what class it is -- {Null} answers {Float::INFINITY}
+      # precisely so that it can be asked -- which keeps the two arms
+      # indistinguishable to everyone except the factory that chose between
+      # them. `in_flight.zero?` is the safety condition, and it is the one an
+      # earlier draft of this comment got wrong by asserting that "{Null} holds
+      # nobody". IT DOES HOLD THEM. It declines to GATE them and counts them
+      # exactly, which its own docstring insists on because
+      # {Telemetry::ProviderWait} reads {#in_flight} and a flat zero would
+      # report an idle endpoint under load. So replacing an OCCUPIED entry
+      # installs a gate whose count starts at zero and admits a full declared
+      # width on top of the callers already inside -- measured at peak 6 against
+      # a declared 3.
+      #
+      # A WINDOW REMAINS, and it is stated rather than denied. {#in_flight} is a
+      # snapshot, and {Admitted#admitted} resolves the gate and enters it as two
+      # steps, so a caller handed the old entry can still enter it after the
+      # swap -- inside an object the registry no longer names, invisible to the
+      # new gate's count. It is one caller wide, it closes when that round trip
+      # ends, and it can only happen on an endpoint's first declaration. Closing
+      # it needs a gate that can hand its occupants over, which is a different
+      # object than this one.
+      # @return [Boolean]
+      def self.supersedable?(existing, declared)
+        return true if existing.nil?
+
+        !declared.nil? && width_from_env.nil? && !existing.width.finite? && existing.in_flight.zero?
+      end
+      private_class_method :supersedable?
+
+      # A declaration's FORMAT AND DOMAIN, checked the way {.width_from_env}
+      # checks the environment's -- same class of input, same care.
+      #
+      # IT IS CHECKED HERE, BEFORE THE REGISTRY AND BEFORE LOCALITY, and both
+      # are load-bearing. Inside {.build} the check would be skipped whenever
+      # the key was already memoised, making the refusal depend on what ran
+      # first; and it would sit BELOW the locality branch, so a provider whose
+      # `#admission_width` computed a bad value would raise against a cloud
+      # endpoint and pass in silence against localhost -- loudness inverted from
+      # where a developer debugging that provider is looking.
+      #
+      # A String is the shape that will really arrive: the cloud width is
+      # configured from the environment, and `ENV.fetch` answers Strings.
+      # Unchecked it reaches `width.positive?` and dies as `undefined method
+      # 'positive?' for an instance of String`, from inside a gate the caller
+      # never mentioned and naming neither the endpoint nor the fix. A Float is
+      # the quieter one: `3.5` passes every check `0` fails and builds a gate
+      # 3.5 callers wide, which is not a capacity any server has.
+      # The refusal names the value, the ENDPOINT and the way out -- built
+      # inline the way {.width_from_env} builds its own, three methods down --
+      # because whoever meets it is a provider author who mis-typed a capacity,
+      # not an operator reading {ENV_KEY}'s.
+      # @return [Integer, nil] nil when nothing was declared
+      def self.declared_width(width, endpoint)
+        return nil if width.nil?
+        return width if width.is_a?(Integer) && width.positive?
+
+        raise Error, "declared admission width #{width.inspect} for #{endpoint} is not an Integer >= 1 " \
+                     "(a provider's #admission_width answers a positive Integer, or nil to let locality " \
+                     "decide; #{ENV_KEY}=0 is how admission is disabled)"
+      end
+      private_class_method :declared_width
 
       # The SERVER identity `endpoint` names, delegated to {Endpoint.canonical}.
       # @param endpoint [String]
@@ -252,20 +368,36 @@ module Lain
         nil
       end
 
-      # Three-way, and the ORDER is the policy: an explicit {ENV_KEY} wins in
-      # BOTH directions -- `0` unbounds a local endpoint, a positive `N` gates a
-      # hosted one -- and only an unset variable lets {.local?} decide. An
-      # operator who has said a number has said it about this process, not about
-      # this half of it.
+      # `env > declared > locality`, and the ORDER is the policy: an explicit
+      # {ENV_KEY} wins in BOTH directions -- `0` unbounds a local endpoint, a
+      # positive `N` gates a hosted one -- an operator who has said a number has
+      # said it about this process, not about this half of it; a caller who
+      # knows its own server's capacity is believed next; and only silence from
+      # both lets {.local?} decide.
+      #
+      # A LOCAL ENDPOINT IGNORES `declared`, DELIBERATELY. {DEFAULT_WIDTH} is
+      # F26 -- a one-slot local server handed two requests -- and a caller that
+      # could declare its way past it would re-open exactly that, from inside
+      # the process rather than from the environment. So a declaration only ever
+      # reaches the arm locality has no answer for: hosted, where the alternative
+      # is the unbounded {Null}. It can therefore only ever TIGHTEN.
+      #
+      # `declared` arrives ALREADY CHECKED -- {.declared_width} refuses a
+      # non-Integer or non-positive one up in {.for}, above the locality branch
+      # here, so a bad width is refused on every endpoint rather than only on
+      # the arm that happens to read it. A declaration is not a second way to
+      # build a gate that could never admit anyone, and {ENV_KEY}'s `0` remains
+      # the one way to ask for {Null}.
       #
       # @return [Admission, Admission::Null] Null when the off switch is set, or
-      #   when the endpoint is not local and nothing overrode that
-      def self.build(endpoint)
+      #   when the endpoint is neither local nor given a width and nothing overrode that
+      def self.build(endpoint, declared)
         configured = width_from_env
         return new(endpoint:, width: configured) if configured&.positive?
         return Null.new(endpoint:) unless configured.nil?
+        return new(endpoint:, width: DEFAULT_WIDTH) if local?(endpoint)
 
-        local?(endpoint) ? new(endpoint:, width: DEFAULT_WIDTH) : Null.new(endpoint:)
+        declared.nil? ? Null.new(endpoint:) : new(endpoint:, width: declared)
       end
       private_class_method :build
 

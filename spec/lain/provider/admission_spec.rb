@@ -313,6 +313,380 @@ RSpec.describe Lain::Provider::Admission do
         expect(described_class.for(endpoint:)).to be_a(described_class::Null)
       end
     end
+
+    # Ollama Cloud is the first endpoint here that is REMOTE AND
+    # HARD-CAPACITY-BOUNDED -- a subscription plan permits 1/3/10 concurrent
+    # models -- and the local?/hosted dichotomy above has no room for it.
+    # {ENV_KEY} cannot express it either: it is one process-wide number, so
+    # raising it to 3 for the cloud endpoint also raises the LOCAL one off
+    # {DEFAULT_WIDTH} and re-opens F26.
+    describe "a width the caller declares, where locality cannot classify the endpoint" do
+      let(:cloud) { "https://ollama.com" }
+
+      # THE RESETS ARE LOAD-BEARING, exactly as `ollama_spec.rb`'s
+      # `without_admission` says of its own -- and for a reason that helper
+      # could not have covered, since it resets around {ENV_KEY} and a DECLARED
+      # width did not exist when it was written.
+      #
+      # These examples name ONE endpoint on purpose, because what several of
+      # them are about is the pinning itself, and a fresh random endpoint per
+      # example would test the memoisation by dodging it. So: reset on the way
+      # in, so this example's declaration really is the first this process has
+      # made about `ollama.com`, and again on the way out, so it is not the one
+      # a later example inherits. Remove either and this block becomes
+      # order-dependent under a different `--seed`.
+      #
+      # {.reset!} is the whole seam. The registry needed no test-only door cut
+      # into it for a declared width, which is the mechanical statement that the
+      # key did not change: it is still {.canonical}, and a declaration is
+      # something {.build} reads rather than something the key folds in.
+      def unpinned
+        described_class.reset!
+        yield
+      ensure
+        described_class.reset!
+      end
+
+      # Each caller's OWN reading of how long it queued, which is what
+      # {Admission#enter} yields and the only direct evidence that anyone
+      # waited. Occupancy cannot answer that question.
+      def waits_of(gate, callers:)
+        seen = []
+        Sync do |task|
+          holders = Array.new(callers) { task.async { gate.enter { |waited| queue_briefly(seen, waited, task) } } }
+          holders.each(&:wait)
+        end
+        seen
+      end
+
+      def queue_briefly(seen, waited, task)
+        seen << waited
+        task.sleep(0.1)
+      end
+
+      # The same peak measurement as {#peak_concurrency}, driven by real OS
+      # threads instead of fibers on one reactor -- see the example that uses
+      # it for why that difference is the whole point.
+      def threaded_peak(gate, callers:)
+        lock = Mutex.new
+        gauge = { inside: 0, peak: 0 }
+        Array.new(callers) { Thread.new { gate.enter { occupy_briefly(gauge, lock) } } }.each(&:join)
+        gauge[:peak]
+      end
+
+      def occupy_briefly(gauge, lock)
+        lock.synchronize do
+          gauge[:inside] += 1
+          gauge[:peak] = [gauge[:peak], gauge[:inside]].max
+        end
+        sleep(0.02)
+        lock.synchronize { gauge[:inside] -= 1 }
+      end
+
+      it "gates a hosted endpoint at the width its caller declared" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            gate = described_class.for(endpoint: cloud, width: 3)
+
+            expect(gate).to be_a(described_class)
+            expect(gate.width).to eq(3)
+            expect(peak_concurrency(gate, callers: 4)).to eq(3)
+          end
+        end
+      end
+
+      # What an unmodified caller gets, unchanged: a declared width is opt-in,
+      # so hosted-and-silent is still the unbounded arm.
+      it "leaves a hosted endpoint with no declared width unbounded" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            hosted = described_class.for(endpoint: "https://api.anthropic.com")
+
+            expect(hosted).to be_a(described_class::Null)
+            expect(hosted.width).to eq(Float::INFINITY)
+          end
+        end
+      end
+
+      # THE ASYMMETRY IS THE POINT, not an oversight. F26 is a one-slot local
+      # server, and a caller that could declare its way past {DEFAULT_WIDTH}
+      # would re-open exactly that from inside the process.
+      it "ignores a declared width on a local endpoint" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            local = described_class.for(endpoint: "http://localhost:11434", width: 3)
+
+            expect(local.width).to eq(described_class::DEFAULT_WIDTH)
+          end
+        end
+      end
+
+      it "still lets the off switch unbound an endpoint that declared a width" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => "0") do
+            expect(described_class.for(endpoint: cloud, width: 3)).to be_a(described_class::Null)
+          end
+        end
+      end
+
+      it "lets the operator's width override a declared one" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => "1") do
+            expect(described_class.for(endpoint: cloud, width: 3).width).to eq(1)
+          end
+        end
+      end
+
+      # FIRST DECLARATION WINS, inherited from the registry's per-endpoint
+      # memoisation rather than added on top of it: the env is already pinned at
+      # an endpoint's first resolution, and a second caller raising the width
+      # would widen a gate someone is already inside.
+      it "pins the first declared width for an endpoint against a later one" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            first = described_class.for(endpoint: cloud, width: 3)
+            second = described_class.for(endpoint: cloud, width: 10)
+
+            expect(second).to be(first)
+            expect(second.width).to eq(3)
+          end
+        end
+      end
+
+      it "reads a declared width afresh after a reset, the way it re-reads the env" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            described_class.for(endpoint: cloud, width: 3)
+            described_class.reset!
+
+            expect(described_class.for(endpoint: cloud, width: 10).width).to eq(10)
+          end
+        end
+      end
+
+      # Loud on a width that could never admit anyone, the same refusal
+      # `new(width: 0)` gets -- a declaration is not a second way in. The check
+      # now lives in {.for} rather than in the constructor, so that it happens
+      # before the registry and before locality; the examples below pin both.
+      it "refuses a declared width that could never admit anyone" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            expect { described_class.for(endpoint: cloud, width: 0) }.to raise_error(Lain::Error, /width/)
+          end
+        end
+      end
+
+      # The AC's second half. Occupancy alone does not say anyone QUEUED -- a
+      # peak of 3 is what a broken gate that admitted everyone instantly would
+      # also report if only three happened to overlap. {Admission#enter} yields
+      # the seconds its caller spent queued, so the fourth caller's own reading
+      # is the direct evidence, and {NO_WAIT} being exactly zero is what makes
+      # "queued" and "did not" separable without picking a threshold.
+      it "makes the fourth concurrent caller on a declared width queue for its slot" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            gate = described_class.for(endpoint: cloud, width: 3)
+
+            expect(waits_of(gate, callers: 4).count(&:positive?)).to eq(1)
+          end
+        end
+      end
+
+      # EVERY OTHER EXAMPLE HERE RACES FIBERS ON ONE REACTOR, while `#complete`
+      # is reached from TWO OS THREADS on the `--nvim` path -- so the thread
+      # path had no coverage at all. This drives it, through the DECLARED arm,
+      # which is the one a cloud fan-out will take.
+      #
+      # WHAT IT DOES NOT PROVE, measured rather than assumed: it does not
+      # discriminate the Mutex in `#take_slot`. With that lock removed the peak
+      # stays 3 at 12, 64 and 256 threads, because `@count < @width` and the
+      # increment that follows compile to adjacent bytecode with no yield point
+      # between them. So no REALISTIC input separates the locked gate from the
+      # unlocked one on CRuby.
+      #
+      # A synthetic collaborator does, with no edit to the subject at all:
+      # `#initialize` injects `width`, and `@count < @width` dispatches through
+      # `Integer#<` to `width.coerce` for a non-Integer operand -- a real yield
+      # point. Measured with a width whose `#coerce` calls `Thread.pass`: lock
+      # intact, peak 3 at 12 and 64 threads; lock removed, peak 12 and 64. The
+      # property is therefore testable and deliberately not tested here -- a
+      # width object that yields is not a width any caller can pass, so the
+      # example would pin the probe rather than the gate. Recorded so the next
+      # reader knows the lock is load-bearing AND why no example here says so.
+      it "holds a declared width against real OS threads, not only fibers" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            gate = described_class.for(endpoint: cloud, width: 3)
+
+            expect(threaded_peak(gate, callers: 12)).to eq(3)
+          end
+        end
+      end
+
+      # THE DEFECT THE PANEL FOUND, and the one this card exists to prevent
+      # wearing its other face. Silence is not a declaration: a caller that
+      # resolves the cloud endpoint without a deployment object -- which
+      # `--provider ollama --api-base https://ollama.com` builds today -- answers
+      # no width, pins {Null}, and would otherwise leave every later cloud round
+      # trip in the process unbounded against a plan that permits 3, with no
+      # error raised and nothing journaled.
+      #
+      # Replacing a {Null} cannot widen a gate anyone is inside, because {Null}
+      # holds nobody. So the pinning rule keeps the direction that matters and
+      # gives up only the direction it was never argued for.
+      it "lets a declaration replace the Null an earlier silent caller pinned" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            expect(described_class.for(endpoint: cloud)).to be_a(described_class::Null)
+
+            declared = described_class.for(endpoint: cloud, width: 3)
+
+            expect(declared).to be_a(described_class)
+            expect(declared.width).to eq(3)
+            expect(described_class.for(endpoint: cloud)).to be(declared)
+          end
+        end
+      end
+
+      # The half that must NOT follow from it -- and BY IDENTITY, not by class.
+      # An earlier version of this example asserted only `be_a(Null)`, which a
+      # freshly REBUILT Null satisfies, and so it passed while the gate was
+      # being rebuilt on every single call. Under the off switch {.build}
+      # returns another {Null}, which was supersedable again, forever.
+      it "keeps the very Null the off switch chose when a later caller declares a width" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => "0") do
+            first = described_class.for(endpoint: cloud)
+
+            expect(described_class.for(endpoint: cloud, width: 3)).to be(first)
+            expect(described_class.for(endpoint: cloud, width: 3)).to be(first)
+          end
+        end
+      end
+
+      # The churn that identity failure produced, pinned as its own reading
+      # because the cost is per ROUND TRIP: {Admitted#admitted} resolves the
+      # gate on every provider request, so a supersedable-forever entry
+      # allocates a gate and a fresh Mutex each time, on the hot path.
+      it "does not rebuild the off switch's gate on every resolution" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => "0") do
+            gates = Array.new(5) { described_class.for(endpoint: cloud, width: 3) }
+
+            expect(gates.uniq.size).to eq(1)
+          end
+        end
+      end
+
+      # The other half: a REAL gate is never replaced, so F26's one slot cannot
+      # be talked out of by a later declaration any more than by a first one.
+      it "keeps a local endpoint at one slot when a later caller declares a width" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            local = "http://localhost:11434"
+            first = described_class.for(endpoint: local)
+
+            expect(described_class.for(endpoint: local, width: 3)).to be(first)
+            expect(first.width).to eq(described_class::DEFAULT_WIDTH)
+          end
+        end
+      end
+
+      # THE SHAPE THAT WILL ACTUALLY ARRIVE. Open decision 3 configures the
+      # cloud width from `LAIN_OLLAMA_CLOUD_CONCURRENCY`, and `ENV.fetch`
+      # answers a String. Unchecked it reaches `width.positive?` and dies as
+      # `undefined method 'positive?' for an instance of String` -- naming
+      # neither the endpoint nor the fix, from inside a gate the caller never
+      # mentioned.
+      it "refuses a declared width that is not an Integer, naming the value, the endpoint and the fix" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            expect { described_class.for(endpoint: cloud, width: "3") }
+              .to raise_error(Lain::Error, /"3".*#{Regexp.escape(cloud)}.*admission_width/m)
+          end
+        end
+      end
+
+      # The quieter one: `3.5` passes every check `0` fails and builds a gate
+      # 3.5 callers wide, which is not a capacity any server has.
+      it "refuses a fractional declared width rather than building a gate 3.5 wide" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            expect { described_class.for(endpoint: cloud, width: 3.5) }
+              .to raise_error(Lain::Error, /3\.5/)
+          end
+        end
+      end
+
+      # LOUDNESS MUST NOT DEPEND ON WHICH ARM READS THE VALUE. The locality
+      # branch answers before the declared one, so a check that lived in
+      # {.build}'s hosted arm would refuse a bad width against the cloud and
+      # accept it in silence against localhost -- inverted from where a
+      # developer debugging a misconfigured provider is looking.
+      it "refuses a non-positive declared width on a local endpoint too, not only a hosted one" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            expect { described_class.for(endpoint: "http://localhost:11434", width: 0) }
+              .to raise_error(Lain::Error, /width/)
+          end
+        end
+      end
+
+      # And it is refused whatever the environment says, because a declaration
+      # that could never admit anyone is a misconfiguration in the caller rather
+      # than a preference the operator can settle.
+      it "refuses a non-positive declared width even when the off switch is set" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => "0") do
+            expect { described_class.for(endpoint: cloud, width: -1) }
+              .to raise_error(Lain::Error, /width/)
+          end
+        end
+      end
+
+      # {Null} GATES nobody, but it HOLDS AND COUNTS them -- its own docstring
+      # says so, because {Telemetry::ProviderWait} reads {#in_flight} and "a
+      # flat zero would report an idle endpoint under load". So swapping an
+      # OCCUPIED one installs a gate whose count starts at 0 and lets a full
+      # declared width of new callers in on top of those already inside:
+      # measured at peak 6 against a declared 3.
+      #
+      # Idle is therefore the whole of the safety argument. "Null holds nobody"
+      # was a false one, and it is what licensed the over-admission.
+      it "waits for an unbounded gate to drain before a declaration may replace it" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            held = described_class.for(endpoint: cloud)
+
+            Sync do |task|
+              occupied = task.async { held.enter { task.sleep(0.15) } }
+              task.sleep(0.03)
+              expect(described_class.for(endpoint: cloud, width: 3)).to be(held)
+              occupied.wait
+            end
+
+            expect(described_class.for(endpoint: cloud, width: 3).width).to eq(3)
+          end
+        end
+      end
+
+      # THE PLACEMENT OF THE DOMAIN CHECK, pinned. {.declared_width} runs in
+      # {.for} above the registry, so a refusal cannot depend on what ran first.
+      # Every other refusal example here starts from an empty registry and so
+      # reaches the same path either way -- move the check down inside the
+      # supersession branch and they all stay green while the guarantee is gone.
+      # This one resolves the endpoint FIRST, so only the placement saves it.
+      it "refuses a garbage declaration on an endpoint that is already memoised" do
+        unpinned do
+          with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
+            described_class.for(endpoint: cloud, width: 3)
+
+            expect { described_class.for(endpoint: cloud, width: "3") }
+              .to raise_error(Lain::Error, /admission_width/)
+          end
+        end
+      end
+    end
   end
 
   describe "a width that could never admit anyone" do

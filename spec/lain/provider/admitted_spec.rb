@@ -13,13 +13,18 @@ RSpec.describe Lain::Provider::Admitted do
   # the two real arms resolve their endpoints differently -- and what lets each
   # of them name a journal of its own without this module knowing how a session
   # comes by one.
-  def caller_for(endpoint:, queue: true, journal: Lain::Channel::Null::INSTANCE)
+  # `width:` is sentinel-defaulted rather than nil-defaulted because "declared
+  # nothing" and "declared nil" have to stay distinguishable here: the mixin's
+  # own nil default is what keeps {Provider::Anthropic} untouched, and an
+  # includer that always overrode the method would never exercise it.
+  def caller_for(endpoint:, queue: true, journal: Lain::Channel::Null::INSTANCE, width: :undeclared)
     Class.new do
       include Lain::Provider::Admitted
 
       define_method(:queue_for_capacity?) { queue }
       define_method(:resolved_endpoint) { endpoint }
       define_method(:wait_journal) { journal }
+      define_method(:admission_width) { width } unless width == :undeclared
       # `#admitted` is private, so the double needs a public way in.
       define_method(:run) { |&block| admitted(&block) }
     end.new
@@ -102,6 +107,69 @@ RSpec.describe Lain::Provider::Admitted do
     end
 
     expect(Lain::Provider::Admission.for(endpoint:).in_flight).to eq(0)
+  end
+
+  # The fourth message, and the only optional one: an includer that knows its
+  # server's capacity says so, and one that does not says nothing. The default
+  # lives in the mixin so a provider whose endpoint locality already classifies
+  # correctly -- {Provider::Anthropic}, which includes this module -- needs no
+  # edit at all to keep the arm it has.
+  describe "a width the includer declares for its own endpoint" do
+    let(:cloud) { "https://ollama.com" }
+
+    # THE RESETS ARE LOAD-BEARING, the same posture `ollama_spec.rb`'s
+    # `without_admission` takes and for the same reason: {Admission.for} pins
+    # whatever an endpoint's FIRST resolution decided, now including a declared
+    # width. These examples name one endpoint deliberately -- two includers
+    # declaring different things about `ollama.com` is the case that matters --
+    # so each one has to be the first this process resolved it, and must not be
+    # what a later example inherits. Remove either reset and this block becomes
+    # order-dependent under a different `--seed`.
+    def unpinned
+      Lain::Provider::Admission.reset!
+      yield
+    ensure
+      Lain::Provider::Admission.reset!
+    end
+
+    it "gates the endpoint at the declared width" do
+      unpinned do
+        Sync { caller_for(endpoint: cloud, width: 3).run { :answered } }
+
+        expect(Lain::Provider::Admission.for(endpoint: cloud).width).to eq(3)
+      end
+    end
+
+    it "leaves the endpoint unbounded when the includer declares nothing" do
+      unpinned do
+        Sync { caller_for(endpoint: cloud).run { :answered } }
+
+        expect(Lain::Provider::Admission.for(endpoint: cloud)).to be_a(Lain::Provider::Admission::Null)
+      end
+    end
+
+    # The join's share of the panel's FIX 1: a provider that declares nothing
+    # about the cloud endpoint -- which `--provider ollama --api-base
+    # https://ollama.com` builds today -- pins {Admission::Null}, and a later
+    # provider that DOES know its plan's capacity has to be able to take that
+    # endpoint over. Otherwise the first silent round trip of a process decides
+    # that every metered one after it runs unbounded.
+    it "lets a declaring includer take over an endpoint a silent one left unbounded" do
+      unpinned do
+        Sync { caller_for(endpoint: cloud).run { :silent } }
+        Sync { caller_for(endpoint: cloud, width: 3).run { :declared } }
+
+        expect(Lain::Provider::Admission.for(endpoint: cloud).width).to eq(3)
+      end
+    end
+
+    it "still serialises a local endpoint the includer declared a width for" do
+      unpinned do
+        Sync { caller_for(endpoint:, width: 3).run { :answered } }
+
+        expect(Lain::Provider::Admission.for(endpoint:).width).to eq(Lain::Provider::Admission::DEFAULT_WIDTH)
+      end
+    end
   end
 
   # {Admission::Journal} was written, spec'd at its own mirror path, and never

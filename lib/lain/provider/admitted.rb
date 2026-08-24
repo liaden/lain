@@ -11,12 +11,19 @@ module Lain
     # lives in the gate, while WILLINGNESS TO WAIT IS A PROPERTY OF THE CALLER
     # and arrives as a constructor keyword. This module is only the join.
     #
-    # It depends on three MESSAGES rather than on an includer's ivars --
-    # `#resolved_endpoint`, `#queue_for_capacity?` and `#wait_journal` -- so a
-    # provider that resolves its endpoint differently (Ollama borrows
-    # {Ollama::Transport::DEFAULT_API_BASE}; Anthropic restates a vendored
-    # literal it has no constant for) satisfies the same duck without this
-    # knowing how.
+    # It depends on four MESSAGES rather than on an includer's ivars --
+    # `#resolved_endpoint`, `#queue_for_capacity?`, `#wait_journal` and
+    # `#admission_width` -- so a provider that resolves its endpoint differently
+    # (Ollama borrows {Ollama::Transport::DEFAULT_API_BASE}; Anthropic restates
+    # a vendored literal it has no constant for) satisfies the same duck without
+    # this knowing how.
+    #
+    # The fourth is the only one this module answers itself, and the only
+    # optional one: most endpoints are classified correctly by
+    # {Admission::Endpoint.local?}, so the default is to say nothing and let it
+    # decide. An includer overrides it only where locality gets the answer wrong
+    # -- a hosted server with a hard capacity bound, which the unbounded arm
+    # would let a caller run straight past.
     #
     # {Admission#enter} and {Admission#try_enter} are called directly rather than
     # asking the gate to choose between them, deliberately: those two are the
@@ -36,6 +43,22 @@ module Lain
     # exists.
     module Admitted
       private
+
+      # What this provider knows its server's concurrent capacity to be, when
+      # {Admission::Endpoint.local?} cannot work it out -- an Ollama Cloud plan
+      # permits 1, 3 or 10 concurrent models, and none of that is inferable from
+      # the address.
+      #
+      # nil HERE IS WHY {Provider::Anthropic} NEEDS NO EDIT: it includes this
+      # module, declares nothing, and keeps the unbounded arm its hosted
+      # endpoint already gets. Only a provider that would otherwise be
+      # misclassified overrides this.
+      #
+      # It is asked on each round trip because {#admitted} is, and that costs
+      # nothing: {Admission.for} pins the first declaration an endpoint sees, so
+      # an includer that answered differently later would be ignored anyway.
+      # @return [Integer, nil]
+      def admission_width = nil
 
       # Runs `block` inside a slot on this provider's endpoint, journaling the
       # wait if there was one.
@@ -62,7 +85,7 @@ module Lain
       # @raise [Admission::Busy] when the endpoint is busy -- at the deadline for
       #   a caller that queues, immediately for one that does not
       def admitted(&block)
-        gate = Admission::Journal.new(admission: Admission.for(endpoint: resolved_endpoint),
+        gate = Admission::Journal.new(admission: Admission.for(endpoint: resolved_endpoint, width: admission_width),
                                       journal: wait_journal)
         return gate.enter(&block) if queue_for_capacity?
 
