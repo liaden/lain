@@ -107,8 +107,20 @@ module Lain
           # would only move the leak out of the adapter's `ArgumentError` and
           # into our own exception -- which is worse, because ours is the one
           # callers are told to rescue, log and report, and it would defeat the
-          # three redaction guards (`#inspect`, `#pretty_print`,
-          # `Configuration#instance_variables`) from inside.
+          # four redaction guards (`#inspect`, `#pretty_print`,
+          # `#instance_variables`, `Configuration#instance_variables`) from
+          # inside.
+          #
+          # Those four cover this object. They do NOT cover a credential that
+          # has already LEFT it: `Transport#headers` RETURNS a plain Hash, and
+          # no override on any object can redact a returned value once a caller
+          # holds it. A failing expectation on `transport.headers`, or on an
+          # array containing it, renders the live Bearer -- measured, not
+          # supposed. Nothing in `lib/` does that, and every spec asserting on
+          # those headers uses a literal fake key, so there is no exposure
+          # today; the constraint is on whoever writes the first spec that
+          # holds a REAL key. Stated here because the sentence above would
+          # otherwise read as a guarantee covering more than it does.
           #
           # Interpolated, so `frozen_string_literal` does not reach them and the
           # `.freeze` is load-bearing rather than decorative.
