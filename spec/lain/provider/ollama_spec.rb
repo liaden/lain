@@ -79,6 +79,139 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
+  # Which server this provider is talking to, asked of a {Deployment} rather
+  # than assumed. The bare construction is the one that must not move: it is
+  # what `Oracle::SecretRead.tier` builds, and the loopback guarantee stated at
+  # `secret_read.rb:17-40` is the reason `deployment:` has a default at all.
+  describe "the deployment it dials" do
+    def cloud(**) = described_class.cloud(api_key: "sk-test", transport: transport_sync({}), **)
+
+    def endpoint_of(provider) = provider.send(:resolved_endpoint)
+
+    it "is the loopback arm for a bare construction, so every existing measurement stands" do
+      provider = described_class.new(transport: transport_sync({}))
+
+      expect([endpoint_of(provider), provider.capabilities, provider.cache_profile])
+        .to eq([Lain::Provider::Ollama::Transport::DEFAULT_API_BASE,
+                %i[streaming thinking structured_output],
+                Lain::CacheProfile::NO_CACHING])
+    end
+
+    it "dials ollama.com for a cloud provider that was told no base" do
+      expect(endpoint_of(cloud)).to eq(Lain::Provider::Ollama::Deployment::Cloud::API_BASE)
+    end
+
+    # `api_base:` keeps ONE meaning across both arms -- "the base this
+    # deployment resolves to" -- which is what lets the ~46 existing
+    # `Provider::Ollama.new(api_base:)` sites stay green untouched. `apply`
+    # writes a complete position unconditionally, so the flag has to be
+    # re-applied AFTER it; the opposite order discards `--api-base` in silence.
+    it "lets an explicit api_base override the deployment's own base, on the cloud arm" do
+      expect(endpoint_of(cloud(api_base: "https://staging.example"))).to eq("https://staging.example")
+    end
+
+    it "lets an explicit api_base override the deployment's own base, on the local arm" do
+      provider = described_class.new(api_base: "https://staging.example", transport: transport_sync({}))
+
+      expect(endpoint_of(provider)).to eq("https://staging.example")
+    end
+
+    # The deployment states the envelope, and the two arms disagree about it:
+    # 300s/3 is a local model thinking for six minutes, 120s/5 is a metered
+    # host whose ordinary failure is a 429.
+    it "takes its timeout and retry envelope from the deployment, not from the vendored default" do
+      config = cloud.instance_variable_get(:@config)
+
+      expect([config.request_timeout, config.max_retries])
+        .to eq([Lain::Provider::Ollama::Deployment::Cloud::REQUEST_TIMEOUT,
+                Lain::Provider::Ollama::Deployment::Cloud::MAX_RETRIES])
+    end
+
+    # `Deployment#headers` is the deployment's DECLARATION of its auth;
+    # `config.ollama_api_key` is what `Transport#headers` builds the live
+    # Bearer from. Two expressions of one credential is how they drift, so
+    # this pins them to agree at the seam where both are in scope. A local
+    # provider declares no header and must carry no key: a stray credential
+    # beside a loopback base is an ollama.com Bearer sent in plaintext to
+    # whatever is listening on port 11434.
+    it "declares, on the cloud arm, exactly the credential the live auth path reads" do
+      provider = cloud
+
+      expect(provider.instance_variable_get(:@deployment).headers)
+        .to eq({ "Authorization" => "Bearer #{provider.instance_variable_get(:@config).ollama_api_key}" })
+    end
+
+    it "declares no credential on the local arm, and carries none either" do
+      provider = described_class.new(transport: transport_sync({}))
+
+      config = provider.instance_variable_get(:@config)
+
+      expect([provider.instance_variable_get(:@deployment).headers, config.ollama_api_key]).to eq([{}, nil])
+    end
+
+    # Third in `Admission`'s precedence, behind the env key and ahead of
+    # locality. nil is not "1": it is "nobody said", which is what lets the
+    # locality rule keep answering for the loopback arm.
+    it "forwards the deployment's declared admission width, and stays silent for the local one" do
+      expect([cloud.send(:admission_width), described_class.new(transport: transport_sync({})).send(:admission_width)])
+        .to eq([Lain::Provider::Ollama::Deployment::Cloud::DEFAULT_ADMISSION_WIDTH, nil])
+    end
+
+    # A factory NAMES its deployment. Ruby's later-wins keyword rule would
+    # otherwise resolve the contradiction silently and in the dangerous
+    # direction: the cloud key is validated, the `Cloud` is discarded, and the
+    # caller gets a loopback provider with an unbounded admission width from a
+    # call that reads as explicitly cloud.
+    it "refuses a second deployment rather than letting the last keyword win" do
+      expect { described_class.cloud(api_key: "sk-test", deployment: Lain::Provider::Ollama::Deployment::Local.new) }
+        .to raise_error(ArgumentError, /already states its deployment/)
+    end
+
+    it "refuses one on the local door too, which has the identical hazard" do
+      cloud_deployment = Lain::Provider::Ollama::Deployment::Cloud.new(api_key: +"sk-test")
+
+      expect { described_class.local(deployment: cloud_deployment) }
+        .to raise_error(ArgumentError, /already states its deployment/)
+    end
+  end
+
+  # THE TWO GATES READ TWO PREDICATES, and nothing else in the suite can say so:
+  # `Local` answers true to both and `Cloud` answers false to both, so every
+  # other example passes just as well with the gates cross-wired. Deleting a
+  # gate is caught; swapping one for the other is not. These drive a deployment
+  # that answers the two DIFFERENTLY, which is the only shape that discriminates
+  # them -- and it is the collapse `deployment.rb`'s docstring says "comes back
+  # later as a bug", so it is worth a spec rather than a comment.
+  #
+  # `config:` is injected because the double stubs only the predicates; a real
+  # `build_config` would call `apply` on it.
+  describe "the probe gates, told apart" do
+    let(:exploding) do
+      Class.new do
+        def process_status = raise("asked /api/ps")
+        def model_details(_model) = raise("asked /api/show")
+      end.new
+    end
+
+    def provider_for(runner_status:, model_metadata:)
+      deployment = instance_double(Lain::Provider::Ollama::Deployment::Local,
+                                   runner_status?: runner_status, model_metadata?: model_metadata)
+      described_class.new(deployment:, transport: exploding, config: Lain::Provider::HTTP::Configuration.new)
+    end
+
+    it "does not probe /api/ps for a deployment that has metadata but no runners" do
+      provider = provider_for(runner_status: false, model_metadata: true)
+
+      expect(provider.context_window_tokens("m")).to be_nil
+    end
+
+    it "does not probe /api/show for a deployment that has runners but no metadata" do
+      provider = provider_for(runner_status: true, model_metadata: false)
+
+      expect(provider.trained_context_tokens("m")).to be_nil
+    end
+  end
+
   # AC 1: a tool-call round trip normalizes to the Lain contract.
   describe "#complete on a tool-call turn" do
     it "yields a tool_use block with Hash input, a synthesized id, and :tool_use despite done_reason stop" do
@@ -660,6 +793,24 @@ RSpec.describe Lain::Provider::Ollama do
       expect(provider.context_window_tokens("qwen3-coder:30b")).to eq(served)
     end
 
+    # `/api/ps` lists LOADED RUNNERS, a concept a serverless host does not
+    # have. The deployment answering false is what stops the request being
+    # MADE -- not made and rescued: a rescue would still cost a round trip on
+    # every window lookup, and would turn an unverified endpoint into live
+    # traffic against somebody's quota to learn a 404.
+    #
+    # The transport EXPLODES rather than recording, and the raised class is
+    # outside both rescue arms above on purpose: a double that merely answered
+    # an empty body would let a missing gate pass, since "no runners loaded"
+    # and "no runners concept" both come out nil.
+    it "makes no loaded-runner request at all on an arm that has no runners" do
+      transport = Class.new do
+        define_method(:process_status) { raise "the cloud arm must not ask /api/ps" }
+      end.new
+
+      expect(described_class.cloud(api_key: "sk-test", transport:).context_window_tokens("qwen3-coder:30b")).to be_nil
+    end
+
     it "picks the entry for the model asked about, not the first one loaded" do
       transport = transport_ps(ps_entry("qwen3:4b", context_length: 4_096),
                                ps_entry("qwen3-coder:30b"))
@@ -939,6 +1090,21 @@ RSpec.describe Lain::Provider::Ollama do
       provider = described_class.new(transport: transport_show(show_body))
 
       expect(provider.trained_context_tokens("qwen3-coder:30b")).to eq(trained)
+    end
+
+    # THE SECOND PROBE, and the one with the worse failure. `/api/show` is
+    # reached EAGERLY at launch -- `CLI::Backend#initialize` -> `num_ctx` ->
+    # here -- whenever `--num-ctx` is set, so an ungated cloud arm fires a live
+    # request before the chronicle is even open, to an endpoint nothing has yet
+    # verified answers it. `model_metadata?` is a separate predicate from
+    # `runner_status?` because these are two endpoints with two meanings, and
+    # one predicate covering both is the shape that comes back later as a bug.
+    it "makes no model-metadata request at all on an arm whose /api/show is unverified" do
+      transport = Class.new do
+        define_method(:model_details) { |_model| raise "the cloud arm must not ask /api/show" }
+      end.new
+
+      expect(described_class.cloud(api_key: "sk-test", transport:).trained_context_tokens("qwen3-coder:30b")).to be_nil
     end
 
     # The architecture key is not a constant: `general.architecture` names

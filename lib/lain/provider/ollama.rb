@@ -64,17 +64,35 @@ module Lain
     # explicitly out of this file's scope). Bounding the wait itself, rather
     # than narrating it, is the stall clock's job, not this arm's.
     #
-    # deliberately absent: a timeout/retry envelope of its own -- unlike
-    # {Anthropic#build_config}, this leaves the vendored ruby_llm defaults
-    # (300s, 3 retries). A local model that thinks for six minutes is a real
-    # shape, so the 300s is a live limit rather than a formality.
+    # The list that used to stand here argued every absence from "free and
+    # local", and that premise now holds for only one of the two arms this
+    # class serves. So the absences are the DEPLOYMENT's to state, and what is
+    # recorded here is which of them moved:
     #
-    # deliberately absent: rate-limit backoff -- a local server sends no
-    # `anthropic-ratelimit-*` headers, so there is nothing for
-    # {AnthropicWire::RESET_HEADER_PARSER} to read.
+    # no longer absent: a timeout/retry envelope of its own. It is not restated
+    # here either -- {Deployment#request_timeout} and {Deployment#max_retries}
+    # answer it, and the two arms disagree. 300s/3 is a local model thinking
+    # for six minutes (F7a); 120s/5 is a metered host whose ordinary failure is
+    # a 429, trading patience for attempts.
     #
-    # deliberately absent: a `spool:` -- no response WAL, so nothing on this arm
-    # is salvageable after a crash.
+    # no longer absent: authentication. A loopback server asks for no
+    # credential and {Deployment::Local#apply} actively CLEARS one, because the
+    # dangerous state is not a missing key but a hosted key left beside a
+    # loopback base -- that is a Bearer sent in plaintext to whatever holds
+    # port 11434.
+    #
+    # no longer universal: the two metadata probes. `/api/ps` and `/api/show`
+    # are loopback facts, so {Deployment#runner_status?} and
+    # {Deployment#model_metadata?} gate them and a deployment that has neither
+    # concept answers nil without spending a round trip to discover it.
+    #
+    # STILL ABSENT, and now recorded rather than argued from free-ness:
+    # rate-limit backoff, because the header vocabulary the native cloud path
+    # returns is unverified and naming an unseen header would replace
+    # faraday-retry's working default with a guess ({Deployment::Cloud} states
+    # the case); and a `spool:` -- no response WAL, so nothing on either arm is
+    # salvageable after a crash, which is the one absence that got WORSE when
+    # the arm stopped being free.
     class Ollama < Provider
       # One mixin per wire direction: {Encoding} out, {Decoding} back.
       include Encoding
@@ -99,13 +117,96 @@ module Lain
       # `structured_output` here is grammar-CONSTRAINED decoding (the native `format`
       # field) -- a stronger guarantee than Anthropic's tool-forcing under the same
       # capability name. See Provider::AnthropicReference::CAPABILITIES.
-      CAPABILITIES = %i[streaming thinking structured_output].freeze
+      #
+      # READ FROM THE LOOPBACK DEPLOYMENT rather than written out a third time.
+      # `#capabilities` now delegates, so a literal here would be a copy nothing
+      # consults -- free to drift from the value actually answered while every
+      # spec asserting against it stayed green. The name survives because it is
+      # what an outside reader asks for (`oracle/secret_read_spec.rb:235`) and
+      # because "the ollama arm's capabilities" is a real question with a
+      # deployment-independent answer: the cut on the provider axis is only
+      # clean while both arms agree, which is a fact their own specs pin.
+      CAPABILITIES = Deployment::Local::CAPABILITIES
 
+      # The intention-revealing doors, for a caller who has a deployment in mind
+      # rather than a default to accept.
+      #
+      # `.local` is exactly `.new` and deliberately adds nothing: the bare
+      # construction has to keep meaning loopback, because
+      # `spec/provider_construction_discipline_spec.rb` matches `.new` with
+      # Ripper and `Oracle::SecretRead.tier` relies on that static guard. So
+      # this is a synonym a NEW caller can reach for, never a replacement at an
+      # existing site -- renaming one would delete the guard while looking like
+      # a strengthening.
+      #
+      # Both names are load-bearing beyond readability: the same guard keeps a
+      # hand-maintained list of factory selectors, so a door named anything else
+      # would slip past the construction check entirely rather than trip it.
+      #
+      # @param options [Hash] forwarded verbatim to {#initialize}
+      # @option options [String] :api_base override the base this arm dials
+      # @option options [Channel] :channel where retries and stalls are narrated
+      # @option options [Channel] :journal where each round trip is recorded;
+      #   omitting it yields an UNJOURNALED provider
+      # @return [Ollama] a loopback provider, identical to `.new`
+      def self.local(**options) = new(**deployment_free(options, "local"))
+
+      # `api_key:` is REQUIRED rather than read from the environment here.
+      # {Deployment::Cloud} refuses a blank key by naming `OLLAMA_API_KEY` and
+      # where to get one, which is the right message only if the caller that
+      # read the variable is the one being told -- and that caller is the CLI,
+      # not this class. A provider that reached for ENV itself would also make
+      # its own construction untestable without mutating the environment.
+      #
+      # @param api_key [String] the subscription key, refused blank by {Deployment::Cloud}
+      # @param admission_width [Integer, nil] concurrent round trips this plan permits
+      # @param options [Hash] forwarded verbatim to {#initialize}
+      # @option options [String] :api_base override the base this arm dials
+      # @option options [Channel] :channel where retries and stalls are narrated
+      # @option options [Channel] :journal where each round trip is recorded;
+      #   omitting it yields an UNJOURNALED provider
+      # @return [Ollama] a provider dialling the cloud host
+      def self.cloud(api_key:, admission_width: nil, **options)
+        new(deployment: Deployment::Cloud.new(api_key:, admission_width:),
+            **deployment_free(options, "cloud"))
+      end
+
+      # A factory NAMES its deployment, so a second one in the same call is a
+      # contradiction rather than an override.
+      #
+      # Forwarded blind, Ruby's later-wins keyword rule resolves it silently and
+      # in the more dangerous direction: `Ollama.cloud(api_key:, deployment:
+      # Deployment::Local.new)` validates the cloud credential, discards the
+      # `Cloud` it just built, and hands back a LOOPBACK provider whose
+      # `admission_width` is nil -- an unbounded caller against a metered plan,
+      # from a call that reads as explicitly cloud. Nothing downstream can
+      # notice, which is {CLI::Backend::Endpoint}'s test for what must be
+      # refused at construction.
+      #
+      # @param options [Hash] the forwarded keywords a factory was handed
+      # @param factory [String] the factory's name, for the refusal message
+      # @option options [Deployment] :deployment the contradiction this refuses
+      # @return [Hash] `options` unchanged when it states no deployment
+      # @raise [ArgumentError] when it does
+      def self.deployment_free(options, factory)
+        return options unless options.key?(:deployment)
+
+        raise ArgumentError, "Ollama.#{factory} already states its deployment; " \
+                             "pass deployment: to .new instead"
+      end
+      private_class_method :deployment_free
+
+      # @param deployment [#api_base] WHOSE ollama this is, and every value that
+      #   changes with the answer. {Deployment::Local} by DEFAULT, and the
+      #   default is the contract: a bare construction still means loopback, so
+      #   `Oracle::SecretRead.tier`'s guarantee and every existing measurement
+      #   are untouched by this keyword existing.
       # @param transport [#sync_post] injected in specs; a real {Transport} over
       #   the vendored connection otherwise.
       # @param config [Provider::HTTP::Configuration, nil] injected in specs; otherwise built by
-      #   {#build_config}, which sets only `ollama_api_base` -- no api key option, since Ollama
-      #   is local.
+      #   {#build_config} from the deployment. An injected one is taken AS GIVEN and the
+      #   deployment never rewrites it -- a caller who hands in a whole configuration has
+      #   already said what it is.
       # @param channel [Lain::Channel] where {RetryTap}'s retry events land. The
       #   Null instance by default, so bench (which passes none) records exactly
       #   what it recorded before this arm learned to journal retries.
@@ -115,8 +216,11 @@ module Lain
       #   is snapshotted when the transport is built, so a tap swapped in after
       #   construction is never the one faraday-retry calls.
       # @param sink [Lain::Sink] where the transport's debug/log lines go
-      # @param api_base [String, nil] overrides `ollama_api_base` (default
-      #   http://localhost:11434); no api key -- Ollama is local.
+      # @param api_base [String, nil] overrides the base the deployment resolves
+      #   to. ONE meaning on both arms -- "the server this deployment is really
+      #   dialling" -- which is what lets every existing call site keep passing
+      #   it and mean what it always meant. It is applied AFTER the deployment;
+      #   see {#build_config} for why the other order loses it silently.
       # @param queue [Boolean] whether this provider may WAIT for {Admission} to
       #   free a slot. Capacity is a property of the server; willingness to wait
       #   is a property of the caller, and that is the whole reason this is a
@@ -139,23 +243,27 @@ module Lain
       #   with no record (bench, a bare construction) journals nowhere and needs
       #   no `if journal` guard.
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, retries: nil,
-                     sink: Sink::Null.new, api_base: nil, queue: true, journal: Channel::Null::INSTANCE)
+                     sink: Sink::Null.new, api_base: nil, queue: true, journal: Channel::Null::INSTANCE,
+                     deployment: Deployment::Local.new)
         super()
         @queue = queue
         @journal = journal
+        @deployment = deployment
         @retries = retries || RetryTap.new(channel:)
         @config = journaled_retries(config || build_config(api_base:))
         @transport = transport || Transport.new(@config, sink:)
       end
 
-      def capabilities = CAPABILITIES
+      def capabilities = @deployment.capabilities
 
       # No :prompt_caching capability, so no cache economics to report --
       # {CacheProfile::NO_CACHING} is the honest, flat-cost Null Object answer,
       # promoted off what used to be a per-provider `NO_CACHING_PROFILE` Hash
       # constant here into the neutral {Lain::CacheProfile} home shared with
-      # every other provider.
-      def cache_profile = CacheProfile::NO_CACHING
+      # every other provider. Both deployments answer it today, and the
+      # delegation is what makes that a claim either arm could revise on its own
+      # evidence rather than a fact welded to the class.
+      def cache_profile = @deployment.cache_profile
 
       # One round trip into a neutral Response. Streaming and non-streaming
       # converge on the same body Hash -- {StreamAssembler} reassembles the NDJSON
@@ -294,9 +402,16 @@ module Lain
       # rather than dropping packets -- and a server that answers settles the
       # book on its first reply, after which this method is not called again.
       #
+      # A deployment with no loaded-runner concept answers before the request is
+      # MADE, not by rescuing one: `/api/ps` is asked on the render path, so a
+      # rescue would spend a round trip per denominator lookup against somebody
+      # else's quota purely to rediscover a 404.
+      #
       # @param model [String]
       # @return [Integer, nil]
       def context_window_tokens(model)
+        return nil unless @deployment.runner_status?
+
         served_context_length(model, wrapping_errors { @transport.process_status.body })
       rescue APIError
         nil
@@ -333,9 +448,17 @@ module Lain
       # a launch; a transport that cannot answer at all is a wiring bug and
       # stays loud, told apart by the error's receiver.
       #
+      # Gated by its OWN predicate, and the separation from the one above is not
+      # tidiness: `/api/ps` and `/api/show` are two endpoints with two meanings,
+      # and this one is reached EAGERLY at launch (`CLI::Backend#num_ctx`, only
+      # when `--num-ctx` is set) -- before the chronicle is open, which is the
+      # worst possible place to learn that a host does not serve it.
+      #
       # @param model [String]
       # @return [Integer, nil]
       def trained_context_tokens(model)
+        return nil unless @deployment.model_metadata?
+
         trained_context_length(wrapping_errors { @transport.model_details(model).body })
       rescue APIError
         nil
@@ -355,6 +478,14 @@ module Lain
       def queue_for_capacity? = @queue
 
       def wait_journal = @journal
+
+      # {Admitted}'s optional fourth, and the only one that is the SERVER's
+      # property rather than the caller's -- which is why it comes from the
+      # deployment and not from a constructor keyword. The loopback arm answers
+      # nil, meaning "nobody said", so {Admission}'s locality rule keeps
+      # deciding for it exactly as before; only an endpoint locality gets wrong
+      # -- hosted, and hard-capacity-bounded -- states a number.
+      def admission_width = @deployment.admission_width
 
       # The endpoint THIS provider will really talk to, which is the only honest
       # key: `@options[:api_base]` is one flag shared by every tier
@@ -434,8 +565,20 @@ module Lain
         raise APIError, "corrupt NDJSON line in stream: #{e.message}"
       end
 
+      # THE DEPLOYMENT FIRST, THE FLAG SECOND, and the order is the whole
+      # correctness of this method.
+      #
+      # `apply` writes a COMPLETE position unconditionally -- base, credential
+      # and envelope -- so that a configuration always describes exactly one
+      # deployment and one arm's Bearer can never end up beside another's base.
+      # The cost of that guarantee is that `apply` cannot honour `--api-base`:
+      # it cannot tell an operator's flag from the previous deployment's write,
+      # and only this method can, because only this method knows whether
+      # `api_base:` was passed. So the flag is re-applied AFTERWARDS. Reversed,
+      # the deployment silently overwrites `--api-base` and the operator's flag
+      # vanishes with no error anywhere.
       def build_config(api_base:)
-        config = Provider::HTTP::Configuration.new
+        config = @deployment.apply(Provider::HTTP::Configuration.new)
         config.ollama_api_base = api_base unless api_base.nil?
         config
       end

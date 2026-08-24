@@ -39,12 +39,21 @@ RSpec.describe Lain::Provider::Ollama::Deployment::Local do
     expect(described_class.instance_method(:model_metadata?).original_name).to eq(:model_metadata?)
   end
 
-  # The restatement guarantee, pinned against the provider's own constant
-  # rather than a copy of its contents: if the two ever disagree, `Local` has
-  # stopped being a pure restatement of today's arm and the arm's measurements
-  # have moved underneath the bench.
+  # The restatement guarantee, pinned against a LITERAL. It was pinned against
+  # `Provider::Ollama::CAPABILITIES` while the provider held its own list, and
+  # that was right then; now that `#capabilities` delegates here and the
+  # constant reads back from this class, the old form compared a value with
+  # itself and would have stayed green through any change to either. The
+  # literal is the only version of this assertion that can still fail.
   it "restates the arm's capability list unchanged" do
-    expect(deployment.capabilities).to eq(Lain::Provider::Ollama::CAPABILITIES)
+    expect(deployment.capabilities).to eq(%i[streaming thinking structured_output])
+  end
+
+  # The delegation itself, stated separately so the pair above cannot silently
+  # become the same assertion twice: what an outside reader asks the PROVIDER
+  # for is what this deployment answers.
+  it "is what a bare provider answers when asked for its capabilities" do
+    expect(Lain::Provider::Ollama.new.capabilities).to eq(described_class.new.capabilities)
   end
 
   it "does not cache, which is the honest flat-cost answer for a local server" do
