@@ -255,6 +255,23 @@ the cop.
   lain's own git admin dir, so the number of worktrees registered in this repo is NOT the cause:
   that hypothesis was tested and rejected 2026-08-23.
 
+  Added 2026-08-24, found by a nine-run `spec:flakes` sweep: `Lain::Tools::ReadFile refusing a read
+  that is too large to hand back reads at most a bounded probe of the file it refuses, and never
+  slurps it` went red in **1 run of 9** and green in the other eight, on an otherwise quiet box.
+  One observation, so the mechanism is not established -- recorded by name now precisely so the
+  second sighting is recognised as a second rather than mistaken for a regression.
+
+  **`rake spec:flakes` currently exits 1 on EVERY invocation, and it is the harness, not the
+  suite.** `bin/spec-flakes` rewrites `$HOME` and `XDG_*` inside each forked run, which collides
+  with the spec group that asserts on `$HOME`: five examples in `Lain::Paths a $HOME that is not
+  absolute` (`refuses a HOME of '.'`, `refuses a relative HOME`, `refuses an empty HOME`, `guards
+  config_home and cache_home by the same rule`, `accepts a HOME of '/'`) plus `Lain::Frontend::Neovim
+  the thread pane's write refusal delivers a nothing-typed write refusal on the review rail` fail in
+  **all nine** runs, deterministically. `rake pspec`, which does not rewrite `$HOME`, is green at the
+  same commit across three runs. So a red `spec:flakes` is not evidence of anything until those six
+  are subtracted, and the tool cannot serve as a gate until its own isolation stops fighting the
+  specs that assert on the variable it rewrites. Measured 2026-08-24 during the ollama-cloud chunk.
+
   **RETIRED BY EVIDENCE 2026-08-24 — the teardown shape is fixed at the fixture.** `git commit` and
   `git merge` spawn a DETACHED `git maintenance run --auto --quiet --detach` (seen under
   `GIT_TRACE=2`), and that process outlives the example: `Dir.mktmpdir`'s teardown then races it
