@@ -255,6 +255,15 @@ the cop.
   lain's own git admin dir, so the number of worktrees registered in this repo is NOT the cause:
   that hypothesis was tested and rejected 2026-08-23.
 
+- **`rubocop -a` rewrites UNTRACKED files too, and there is no copy to restore.** A bare
+  `bundle exec rubocop -a` inspects the whole working tree, not just tracked or staged files, so
+  scratch scripts, probe specs and anything else sitting untracked in a worktree get autocorrected
+  in place. Safe cops only, so behaviour does not change -- but the file is no longer what its
+  author left, and an untracked file has no `git checkout` to undo it. Observed 2026-08-24 when a
+  lint pass rewrote three of a review agent's probe scripts. Scope the command
+  (`bundle exec rubocop lib spec exe`) when the tree holds work you have not committed. This is
+  separate from the never-name-a-`.toml` rule above, which is about what gets parsed as Ruby.
+
   Added 2026-08-24, found by a nine-run `spec:flakes` sweep: `Lain::Tools::ReadFile refusing a read
   that is too large to hand back reads at most a bounded probe of the file it refuses, and never
   slurps it` went red in **1 run of 9** and green in the other eight, on an otherwise quiet box.

@@ -1180,25 +1180,35 @@ reader of the history does not have to reconstruct them from card diffs.
 
 | card | wave | state |
 |---|---|---|
-| T15 | 1 | **landed** `afb1967a` — closed as "already correct"; characterisation only |
-| T5 | 1 | **landed** `e77b57bd` — 23 cloud windows, shape rule proven red |
-| T9 | 1 | **landed** `8369aa67` — tag + host-scoped probe stubs |
-| T11 | 1 | **landed** `62008649` — factory selectors + singleton pin |
-| T1 | 1 | **landed** `60e72693` — absorbed T7; two probe predicates |
-| T4 | 1 | **landed** `0568fbf5` — declared width; supersession gated four ways |
-| T3 | 2 | implemented, in review |
-| T2 | 2 | implemented, fixes applied, **awaiting T3's merge** (leaf-first) |
-| T8 T10 T12 T13 T14 | 3–5 | not started |
+| T15 T5 T9 T11 T1 T4 | 1 | **landed** |
+| T3 T2 | 2 | **landed** |
+| T10 | 3 | **landed** `135bfbc9` |
+| T14 | 3 | **landed** `55752c86` |
+| T8 | 3 | fixes applied, in re-review |
+| T6 T12 | 4 | not started (both blocked on T8) |
+| T13 | 5 | not started |
 | T7 | — | **folded into T1** |
 
-Wave 1 landed at **15549 examples, 0 failures, 15 pending**, reproduced at two seeds, rubocop
-clean at 1383 files, every worktree retired.
+Plus two commits belonging to no card, both credential defects found by review rather than by a
+failing suite: `4d1d389f` (a differ walking instance variables rendered the live Bearer into rspec
+failure output, bypassing `#inspect`/`#to_s`/`#pretty_print`) and `fd5cfa29` (a comment claiming
+three guards closed a path that a *returned* Hash escapes).
 
-**Every wave-1 card needed a fix round; none was approved unchanged.** The recurring defect class
-was not broken code — it was a **guarantee stated in prose and enforced by nothing**: T1's second
-probe predicate was aliasable with the suite green, T5's shape rule was comment-only, T11's
-selector list was a forward bet, T4's invariant did not match its own justification, and T2's two
-gates could be cross-wired invisibly. Four of those were found by mutation, not by reading.
+**Every card so far has needed a fix round; one was approved unchanged (T10).** The recurring
+defect is not broken code -- it is **a guarantee stated in prose and enforced by nothing**:
+
+| card | the claim | how it was found |
+|---|---|---|
+| T1 | two probe predicates are distinct | `alias` mutation left 60 examples green |
+| T5 | cloud keys have a shape rule | a bare `gpt-oss` key passed all 136 |
+| T11 | the factory list matches reality | `Provider::Ollama` defined no factories yet |
+| T4 | "it can only ever TIGHTEN" | silence pinned `Null` and outranked a later declaration |
+| T2 | the two gates are independent | cross-wiring them passed 105 in both directions |
+| T14 | the judge dials loopback | `eq(DEFAULT_API_BASE)` compared a value to itself |
+| T8 | "THE KEY IS NEVER HELD" | planting `@held_key` left 302 examples green |
+
+Six of the seven were found by **mutation**, not by reading. That is the transferable result of this
+chunk, and it is worth more than the arm.
 
 ### Decision 1 — the arm is selected by `--provider ollama-cloud`, not by `--cloud`
 
