@@ -321,7 +321,7 @@ module Lain
         # second caller the move of that guard onto `Session#present` deleted.
         def drawn(resolved, session, scope)
           refusal = session.present(scope:)
-          [Lain::Review::OpenedBanner.call(headline(resolved, session, scope)),
+          [Lain::Review::OpenedBanner.call(headline(resolved, session, scope), sides: session.changeset.sides),
            refusal.is_a?(String) ? refusal : nil].compact.join("\n")
         end
 

@@ -37,9 +37,12 @@ require_relative "review/session"
 # and {Review::Docent} -- both from METHOD bodies only, so neither binds load
 # order the way `annotations` above does.
 require_relative "review/handover"
-# Reads `VERDICTS` from a METHOD body only ({OpenedBanner.call}), so it does
-# not have to sit after `vocabulary` -- placed here anyway, beside `handover`,
-# because both are what a human sees once a review is open and drawn.
+# AFTER `source`, and that is a real edge now rather than a preference:
+# `VERDICTS` is still read from a METHOD body ({OpenedBanner.call}), but
+# `OpenedBanner::FILE_SIDE` selects the file's side out of
+# `Source::HEAD_SIDE_ONLY` while its CLASS body runs. It sits beside `handover`
+# for the reason it always did -- both are what a human sees once a review is
+# open and drawn -- and `source` above happens to satisfy the new edge.
 require_relative "review/opened_banner"
 
 # The ONE wiring line the diagnostics capability costs, and it is nested rather

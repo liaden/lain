@@ -413,7 +413,7 @@ module Lain
           files = session.changeset.files
           headline = format(Lain::CLI::Survey::HEADLINE, root: walk.root, scope:, count: files.size,
                                                          noun: noun(files.size))
-          [Lain::Review::OpenedBanner.call(headline),
+          [Lain::Review::OpenedBanner.call(headline, sides: session.changeset.sides),
            disclosure(walk.withheld),
            answer.is_a?(String) ? answer : nil].compact.join("\n")
         end

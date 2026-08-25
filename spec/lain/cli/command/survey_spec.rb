@@ -349,6 +349,24 @@ RSpec.describe Lain::CLI::Command::Survey do
       expect(command.call(@root, env)).to include(":LainNote annotates")
     end
 
+    # {Lain::Review::OpenedBanner} owns how many motions a round's banner
+    # teaches; this is what proves THIS command hands it the round to decide
+    # from. A survey draws `sidebar | file`, so the second `<C-w>l` the two-hop
+    # motion carries would take a human out of the layout -- and the banner is
+    # the documented way in (`planning/survey-dogfood-2026-08-25.md:68`), so
+    # the overshoot is a human following instructions into nothing.
+    #
+    # The NEGATIVE is the load-bearing half: `<C-w>l<C-w>l` contains `<C-w>l`,
+    # so the positive assertion alone passes on the unchanged two-hop string.
+    it "teaches the one-window motion a survey's own layout has, not the changeset review's two" do
+      attached
+
+      answer = command.call(@root, env)
+
+      expect(answer).to include("<C-w>l reaches the file where :LainNote annotates")
+      expect(answer).not_to include("<C-w>l<C-w>l")
+    end
+
     # The survey is part of the chat's RECORD, not a second journal beside it:
     # `/survey` inside a cockpit is one session, and a round opened in another
     # file could never be resumed from the session the human was in.
@@ -1194,9 +1212,16 @@ RSpec.describe Lain::CLI::Command::Survey do
       # (`runtime/47_diff.lua`'s `landing`), so that the review's own keys are
       # under the cursor and the `x` its banner teaches cannot reach the real
       # file on disk. The banner's claim below is about the BUFFER the row
-      # opened, not about where `<CR>` parks the cursor, so this walks to that
-      # buffer the way a human does -- `<C-w>l<C-w>l`, slot order sidebar, old,
-      # new -- rather than inheriting whatever focus the open happened to leave.
+      # opened, not about where `<CR>` parks the cursor, so this finds that
+      # buffer by its stamp rather than inheriting whatever focus the open
+      # happened to leave.
+      #
+      # BY THE STAMP and deliberately not by counting `<C-w>l`s: how many
+      # motions the banner teaches is per-round now
+      # ({Lain::Review::OpenedBanner} reads the round's sides), and an example
+      # that re-derived the count here would be a second answer to that
+      # question, free to disagree with the sentence it is checking. The unit
+      # example above pins the motion; this one pins where it has to land.
       #
       # The stamp is returned and CHECKED, because both commands below read
       # `nvim_get_current_buf`: arriving in the wrong window would test them
