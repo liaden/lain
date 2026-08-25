@@ -384,4 +384,108 @@ RSpec.describe "a survey of a subdirectory, from the walk to the editor's buffer
       expect(File.file?(File.join(@here, named.to_s))).to be(true)
     end
   end
+
+  # T11, end to end: a survey is a review of files AS THEY STAND, so the round
+  # presents one side and the layout opens two windows rather than three. The
+  # fact rides {Frontend::Neovim::RpcThread::SET_REVIEW}'s third argument, which
+  # is the render that PRECEDES the layout -- so nothing is built and then
+  # hidden.
+  #
+  # Driven through the real `/survey`, a real corpus and a real editor for this
+  # file's own reason: every object between the walk and the window has a spec,
+  # and the one that mattered was the seam between them.
+  describe "the layout a survey opens" do
+    # The review tabpage as nvim holds it: each window's slot marker, in
+    # left-to-right window order, which `41_layout.lua` keeps equal to slot
+    # order.
+    def review_tab
+      @editor.exec_lua(<<~LUA, [])
+        for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+          if vim.t[tab].lain_review then return tab end
+        end
+        return nil
+      LUA
+    end
+
+    def review_slots
+      @editor.exec_lua(<<~LUA, [review_tab])
+        local slots = {}
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(...)) do
+          table.insert(slots, vim.w[win].lain_review_slot or "")
+        end
+        return slots
+      LUA
+    end
+
+    # Every buffer `47_diff.lua` would have built for an old side. A survey's
+    # old side is structurally empty, so the question is whether one was made at
+    # all -- not whether a window is showing it.
+    def old_side_buffers
+      @editor.exec_lua(<<~LUA, [])
+        local held = {}
+        for _, b in ipairs(vim.api.nvim_list_bufs()) do
+          local name = vim.api.nvim_buf_get_name(b)
+          if name:sub(1, #"lain://review/OLD/") == "lain://review/OLD/" then
+            table.insert(held, name)
+          end
+        end
+        return held
+      LUA
+    end
+
+    it "holds the navigator and the file, and nothing else" do
+      surveyed("lib")
+      opened("greeter.rb")
+
+      expect(review_slots).to eq(%w[sidebar new])
+    end
+
+    it "shows the file on disk in the window it did open" do
+      surveyed("lib")
+      opened("greeter.rb")
+
+      expect(new_side.fetch("name")).to eq(greeter)
+      expect(new_side.fetch("lines")).to eq(source.lines.map(&:chomp))
+    end
+
+    it "builds no old-side buffer for a round that has no old side" do
+      surveyed("lib")
+      opened("greeter.rb")
+
+      expect(old_side_buffers).to be_empty
+    end
+
+    # The sidebar's own render is what carries the fact, so the layout is the
+    # round's shape from the FIRST paint -- before any `<CR>`, which is the
+    # whole reason the fact rides this rail rather than the open.
+    it "is the round's shape on the first paint, before any row is opened" do
+      surveyed("lib")
+
+      expect(review_slots).to eq(%w[sidebar new])
+    end
+
+    # AC: marking still works from the sidebar. The gestures are unchanged by
+    # the layout, and this is where that is worth pinning -- the sidebar is a
+    # window the new arrangement still has to place and size.
+    it "still takes the mark the human presses in the sidebar" do
+      surveyed("lib")
+      gesture("greeter.rb") { |row, generation| editor.bound.open(row, generation:) }
+
+      marked = gesture("greeter.rb") { |row, generation| editor.bound.mark(row, "reviewed", generation:) }
+
+      expect(marked).to have_attributes(marked?: true)
+      expect(sidebar.fetch("lines")).to eq(["[x] lib/greeter.rb"])
+      expect(review_slots).to eq(%w[sidebar new])
+    end
+
+    # The gesture helpers belong to the group above them; repeated here because
+    # a `describe` does not inherit another's `def`.
+    def gesture(name)
+      drawn = sidebar
+      line = drawn.fetch("lines").index { |row| row.end_with?(name) }
+      raise "no sidebar row names #{name} in #{drawn.fetch("lines").inspect}" if line.nil?
+
+      yield(line + 1, drawn.fetch("generation")).tap { inlet.drain(@editor) }
+    end
+  end
 end

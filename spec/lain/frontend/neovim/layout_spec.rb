@@ -379,6 +379,128 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(message).to include("sidbar").and include("sidebar, old, new")
     end
   end
+
+  # T11. The slot VOCABULARY is fixed at three; what a round OPENS is not. A
+  # survey of files as they stand has no old side for anything it will ever
+  # hold, so the window and its buffer would be a third of the screen given to
+  # something structurally guaranteed empty -- and `set_review` is where the
+  # fact arrives, because the layout is built on the first sidebar render,
+  # before any row is opened.
+  describe "a round that presents fewer sides than the vocabulary has slots" do
+    # The wire's third argument, exactly as `RpcThread::SET_REVIEW` sends it: a
+    # list of {Lain::Review::SIDES}, never a layout instruction.
+    def set_review(lines, generation, sides) = lua("_G.__lain.set_review(...)", [lines, generation, sides])
+
+    def slot_of(win) = lua("return vim.w[...].lain_review_slot", [win])
+
+    def slots_in(tab) = windows(tab).map { |win| slot_of(win) }
+
+    it "opens only the slots the round has, in slot order" do
+      set_review(%w[one], 1, ["new"])
+
+      expect(slots_in(review_tab)).to eq(%w[sidebar new])
+    end
+
+    # The default is the whole vocabulary, and it is what every round that says
+    # nothing gets -- including `open_changeset` driven with no sidebar render
+    # in front of it, which is how `diff_mode_spec.rb` drives this module.
+    it "opens the whole vocabulary when no round has said otherwise" do
+      layout
+
+      expect(slots_in(review_tab)).to eq(%w[sidebar old new])
+    end
+
+    it "opens both sides again for a round that presents both" do
+      set_review(%w[one], 1, %w[old new])
+
+      expect(slots_in(review_tab)).to eq(%w[sidebar old new])
+    end
+
+    # THE CARD'S REASON FOR EXISTING. On a survey the human stands in the `new`
+    # side, so `:LainThread` computes the OPPOSITE slot and the thread pane IS
+    # `old` -- a slot this round did not open. Removing it from the vocabulary
+    # would make `review_place` refuse it by name inside a `define`d command:
+    # an `error()`, a traceback and a blocking hit-enter prompt, which is round
+    # 7's F31 shape on the surface this chunk exists to repair. It is in the
+    # vocabulary, so it opens on demand instead.
+    it "opens a slot this round did not, rather than raising, when a render asks for it" do
+      set_review(%w[one], 1, ["new"])
+      buf = scratch(["a conversation"])
+
+      ok, landed = lua("local ok, win = pcall(_G.__lain.review_place, ...); return { ok, win }", ["old", buf])
+
+      expect(ok).to be(true)
+      expect(buf_in(landed)).to eq(buf)
+    end
+
+    # `index_of` still drives `anchor`, so the on-demand window lands where slot
+    # order puts it rather than wherever a bare split would have.
+    it "puts the on-demand window where slot order puts it" do
+      set_review(%w[one], 1, ["new"])
+
+      place("old", scratch(["a conversation"]))
+
+      expect(slots_in(review_tab)).to eq(%w[sidebar old new])
+    end
+
+    # And it survives: `ensure` opens what is missing and closes nothing, so the
+    # sidebar's next redraw does not take the thread pane away again.
+    it "keeps the on-demand window across the round's next render" do
+      set_review(%w[one], 1, ["new"])
+      place("old", scratch(["a conversation"]))
+
+      set_review(%w[one two], 2, ["new"])
+
+      expect(slots_in(review_tab)).to eq(%w[sidebar old new])
+    end
+
+    # The repair path, and it needs no `<CR>` first: the fact is written through
+    # to the tabpage the instant the layout is built, so a render arriving after
+    # the human closed a window rebuilds the ROUND's shape rather than the
+    # vocabulary's.
+    it "repairs to the round's shape rather than to the whole vocabulary" do
+      set_review(%w[one], 1, ["new"])
+      close(lua("return _G.__lain.review_layout()")["new"])
+
+      set_review(%w[one two], 2, ["new"])
+
+      expect(slots_in(review_tab)).to eq(%w[sidebar new])
+    end
+
+    # A chat opens a changeset review, settles it, and then surveys -- reusing
+    # the same review tabpage. The previous round's old side would otherwise be
+    # left showing a diff of a file nobody is reviewing any more.
+    it "sheds the window the previous round opened when the round changes" do
+      set_review(%w[one], 1, %w[old new])
+      place("old", scratch(["the previous review"]))
+
+      set_review(%w[one], 2, ["new"])
+
+      expect(slots_in(review_tab)).to eq(%w[sidebar new])
+    end
+
+    # A slot that is NOT in the vocabulary still refuses by name, which is the
+    # distinction a shrunken `SLOTS` would have destroyed: "misspelled" and "not
+    # opened by this round" are different states and get different answers.
+    it "still refuses a slot outside the vocabulary rather than opening one" do
+      set_review(%w[one], 1, ["new"])
+      buf = scratch(["x"])
+
+      ok, message = lua("local ok, err = pcall(_G.__lain.review_place, ...); return { ok, err }", ["sidbar", buf])
+
+      expect(ok).to be(false)
+      expect(message).to include("sidbar").and include("sidebar, old, new")
+    end
+
+    # A Ruby nil crosses msgpack as `vim.NIL` -- USERDATA, and therefore truthy
+    # -- so a round that sends no sides at all must be told from one that sends
+    # a list, by type and not by truthiness.
+    it "opens the whole vocabulary for a round whose sides did not cross the wire" do
+      set_review(%w[one], 1, nil)
+
+      expect(slots_in(review_tab)).to eq(%w[sidebar old new])
+    end
+  end
 end
 
 # The two diff slots ARE {Lain::Review::SIDES}, restated in lua because a static

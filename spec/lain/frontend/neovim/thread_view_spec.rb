@@ -903,7 +903,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
       move_to(20)
       close_window(slots["old"])
 
-      lua("_G.__lain.set_review(...)", [["[ ] docs/counter.txt"], 1])
+      lua("_G.__lain.set_review(...)", [["[ ] docs/counter.txt"], 1, Lain::Review::SIDES])
 
       expect(name_of(buf_in(slots["old"]))).to include("lain://review/OLD/docs/counter.txt")
     end
@@ -1644,6 +1644,132 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
 
       expect(buffer_maps(buf, "[[")).to eq(["lain: previous message in this thread"])
       expect([lines_of(buf)[back - 1], lines_of(buf)[further - 1]]).to eq(["## docent", "## you"])
+    end
+  end
+
+  # T11. A survey presents ONE side, so the layout opens `sidebar | new` and the
+  # `old` slot -- still in the vocabulary, still ordered, simply not opened --
+  # is where `OPPOSITE["new"]` sends the thread. The pane therefore has to be
+  # opened ON DEMAND, by the gesture that asks for it, and the alternative is
+  # what this group exists to keep out: `review_place` handing
+  # `nvim_win_set_buf` a nil window inside a `define`d command, which is an
+  # `error()`, a traceback and a blocking hit-enter prompt -- round 7's F31
+  # shape, on the surface this chunk exists to repair.
+  describe "the docent thread pane on a round that presents one side" do
+    # The fact rides the SIDEBAR rail, because that render precedes the layout:
+    # the panes are built on the first sidebar paint, before any row is opened.
+    def set_review(lines, generation, sides) = lua("_G.__lain.set_review(...)", [lines, generation, sides])
+
+    # `/survey docs`, as far as the editor is concerned: one side named, and an
+    # old side that is `[]` rather than absent -- {Review::Changeset#old_side}
+    # answers `[]` for every corpus file.
+    def surveyed(line = 1)
+      set_review(["[ ] docs/counter.txt"], 1, ["new"])
+      lua("_G.__lain.open_changeset(...)", ["docs/counter.txt", [], line, revisions])
+    end
+
+    # `:LainThread` as a human types it, answering the settled mode and the
+    # slice of `:messages` this one command added. `typed_refusal`'s shape, with
+    # the wait it cannot borrow: a command that succeeds says nothing, so there
+    # is no sentence to poll for and the window is what separates "did not
+    # block" from "has not run yet". The example's own assertion that the pane
+    # opened is what makes that non-vacuous.
+    def typed_thread
+      before = messages
+      @editor.session.notify(:nvim_input, ":LainThread\r")
+      mode = settled_mode
+      clear_prompt
+      [mode, messages[before.length..]]
+    end
+
+    it "opens the pane the round did not, and puts the human in it" do
+      surveyed
+      set_thread(anchor(id: "a-20", line: 20), ["twenty"])
+      enter(slots["new"])
+      move_to(20)
+
+      @editor.command("LainThread")
+
+      expect(here).to eq(slots["old"])
+      expect(buffer_var(buf_in(slots["old"]), "lain_thread_anchor")).to eq("a-20")
+    end
+
+    # Slot order is still what places it, so the pane lands BETWEEN the
+    # navigator and the file rather than wherever a bare split would have put
+    # it: `sidebar | thread | file`, which is the same left-to-right reading a
+    # changeset gives.
+    it "puts it where slot order puts it, between the navigator and the file" do
+      surveyed
+      set_thread(anchor(id: "a-20", line: 20), ["twenty"])
+      enter(slots["new"])
+      move_to(20)
+
+      @editor.command("LainThread")
+
+      expect(lua("return vim.api.nvim_tabpage_list_wins(0)").map do |win|
+        lua("return vim.w[...].lain_review_slot", [win])
+      end).to eq(%w[sidebar old new])
+    end
+
+    # A DIFF NEEDS TWO. With the pane open the file window is still the only
+    # review SIDE in the layout, and `rediff` runs on every swap the cursor
+    # causes -- so an implementation gated on the WINDOW rather than on the
+    # ROUND runs `diffthis` on one window and 'foldmethod=diff' collapses the
+    # whole file the human came to read.
+    it "leaves the file window out of diff mode as the cursor moves the pane" do
+      surveyed
+      set_thread(anchor(id: "a-20", line: 20), ["twenty"])
+      enter(slots["new"])
+      move_to(20)
+      @editor.command("LainThread")
+
+      enter(slots["new"])
+      move_to(7)
+
+      expect(window_options(slots["new"])).to include(diff: false)
+      expect(folded_lines(slots["new"])).to be_empty
+    end
+
+    # AT A REALISTIC WIDTH, and at two of them. A no-error claim measured only
+    # at 120 columns is not the property: `nvim_echo` writes the message AREA,
+    # so a traceback too wide for it raises the hit-enter prompt that queues
+    # every non-fast RPC request -- and the widths a cockpit pane actually has
+    # are 80 and 100.
+    [80, 100].each do |columns|
+      it "opens without raising, without a traceback and without blocking at #{columns} columns" do
+        attach_ui(columns:, lines: 24)
+        # THE NON-VACUITY GUARD: a command that really does `error()`, driven
+        # the same way on the same UI. Without it a "did not block" pass says
+        # only that the apparatus cannot witness the defect.
+        expect(raising_blocks).to be(true)
+        surveyed
+        set_thread(anchor(id: "a-20", line: 20), ["twenty"])
+        enter(slots["new"])
+        move_to(20)
+
+        mode, spoken = typed_thread
+
+        expect(mode["blocking"]).to be(false)
+        expect(spoken).not_to include("stack traceback")
+        expect(spoken).not_to include("Wrong type for argument")
+        expect(buffer_var(buf_in(slots["old"]), "lain_thread_anchor")).to eq("a-20")
+      end
+    end
+
+    # And the two-sided round is untouched: the pane is the old side, already
+    # open, and the thread is an OVERLAY on it rather than a window this card
+    # now has to create.
+    it "still lands in the old side for a round that presents both" do
+      set_review(["[ ] docs/counter.txt"], 1, %w[old new])
+      open_counter
+      set_thread(anchor(id: "a-20", line: 20), ["twenty"])
+      enter(slots["new"])
+      move_to(20)
+
+      @editor.command("LainThread")
+
+      expect(here).to eq(slots["old"])
+      expect(window_options(slots["new"])).to include(diff: true)
     end
   end
 

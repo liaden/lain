@@ -120,7 +120,22 @@ module Lain
       #   ACKED, never answered -- a verdict resolves a promise, which must
       #   happen on the reactor, so it rides the command inbox to the consumer
       #   fiber rather than being served on the RPC thread.
-      PROTOCOL = "12"
+      # "13": __lain.set_review gained a THIRD argument, `sides` -- which of
+      #   {Lain::Review::SIDES} the round presents at all, as a list. A survey
+      #   of files as they stand answers `["new"]`; a changeset answers both,
+      #   including for a file it added. It rides the SIDEBAR render rather than
+      #   __lain.open_changeset because that render precedes the layout: the
+      #   panes are built on the first sidebar paint, before any row is opened,
+      #   so a fact sent with the open arrives after the window it would have
+      #   prevented already exists. A FACT, never an instruction -- the editor
+      #   opens the navigator plus the round's sides and leaves the rest of the
+      #   slot vocabulary unopened, so a survey is `sidebar | file` and its lone
+      #   window is never put in diff mode. The vocabulary itself is unchanged
+      #   at sidebar/old/new: __lain.review_place still refuses a MISSPELLED
+      #   slot by name, and still opens one this round did not -- which is what
+      #   keeps :LainThread working on a survey, where the thread pane is the
+      #   `old` slot the round had no reason to build in advance.
+      PROTOCOL = "13"
 
       # Seconds teardown waits on the resend worker before giving up the join
       # (S3). Since T18 a bridged offer holds that worker for a whole model

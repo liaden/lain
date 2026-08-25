@@ -466,11 +466,28 @@ end
 -- Both windows, for 47_diff `pair`'s reason: closing one of a diff pair takes
 -- the SURVIVOR out of diff mode too, so restoring only the rebuilt one leaves a
 -- diff of one window, which renders as a plain buffer.
+-- A DIFF NEEDS TWO, and the count is taken over the panes that are actually
+-- SHOWING A REVIEW SIDE rather than over the two slot names. On a round that
+-- presents one side the `old` slot is the thread pane -- opened on demand by
+-- `41_layout`'s `review_place`, holding a conversation, carrying no
+-- `lain_review_side` -- while the file window is a review side whose 'diff' is
+-- false because nothing ever paired it. Gated on the WINDOW alone, this would
+-- therefore `diffthis` the file against nothing on every swap the cursor
+-- causes, and 'foldmethod=diff' would collapse the whole file. `refresh`'s
+-- bail-out cannot help: the file window IS a review side.
 function review_thread.rediff()
+  local sides = {}
   for _, slot in ipairs({ "old", "new" }) do
     local win = review_thread.pane(slot)
-    if win ~= nil and not vim.wo[win].diff and
-        vim.b[vim.api.nvim_win_get_buf(win)].lain_review_side ~= nil then
+    if win ~= nil and vim.b[vim.api.nvim_win_get_buf(win)].lain_review_side ~= nil then
+      sides[#sides + 1] = win
+    end
+  end
+  if #sides < 2 then
+    return
+  end
+  for _, win in ipairs(sides) do
+    if not vim.wo[win].diff then
       vim.api.nvim_win_call(win, function() vim.cmd("diffthis") end)
     end
   end

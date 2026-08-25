@@ -1096,6 +1096,150 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       LUA
     end
   end
+
+  # T11. A survey of files as they stand presents ONE side, and Ruby says so on
+  # the sidebar rail before any row is opened ({RpcThread::SET_REVIEW}'s third
+  # argument). The old side is then not a window with an empty buffer in it --
+  # it is not built at all, and neither is the buffer.
+  describe "a round that presents one side" do
+    # The sidebar render that carries the fact. It is what precedes the layout,
+    # so it is also the only place the fact can arrive in time.
+    def set_review(lines, generation, sides) = lua("_G.__lain.set_review(...)", [lines, generation, sides])
+
+    def surveyed(path, line = 1)
+      set_review(["[ ] #{path}"], 1, ["new"])
+      # {Frontend::Neovim::ChangesetDiff#open} reads the old side off
+      # {Review::Changeset#old_side}, which answers `[]` for every corpus file.
+      lua("_G.__lain.open_changeset(...)", [path, [], line, revisions])
+    end
+
+    def slot_names = windows(review_tab).map { |win| lua("return vim.w[...].lain_review_slot", [win]) }
+
+    it "holds the sidebar and the file, and nothing else" do
+      surveyed("docs/guide.txt")
+
+      expect(slot_names).to eq(%w[sidebar new])
+    end
+
+    it "shows the real file on disk in the one window it opened" do
+      surveyed("docs/guide.txt")
+
+      expect(name_of(buf_in(slots["new"]))).to eq(File.join(project, "docs/guide.txt"))
+      expect(lines_of(buf_in(slots["new"]))).to eq(["the guide", "second line", "third line"])
+    end
+
+    # Not merely "no window": the old side's buffer is what `git show` fills and
+    # a survey has nothing to put in it, so building one and then hiding it
+    # would leave a `lain://review/OLD/...` buffer per file opened.
+    it "creates no old-side buffer for the file" do
+      surveyed("docs/guide.txt")
+
+      expect(buffer_named("lain://review/OLD/docs/guide.txt")).to eq(-1)
+    end
+
+    # A DIFF NEEDS TWO WINDOWS. `diffthis` on one alone still sets
+    # 'foldmethod=diff', which folds every line the absent other side did not
+    # change -- the whole file, collapsed, on the surface a survey exists to let
+    # somebody read.
+    it "never puts the lone window in diff mode" do
+      surveyed("docs/counter.txt")
+
+      expect(window_options(slots["new"])).to include(diff: false)
+      expect(folded_lines(slots["new"], 40)).to be_empty
+    end
+
+    it "leaves it out of diff mode after a later render of the same round" do
+      surveyed("docs/counter.txt")
+
+      set_review(["[x] docs/counter.txt"], 2, ["new"])
+
+      expect(window_options(slots["new"])).to include(diff: false)
+      expect(folded_lines(slots["new"], 40)).to be_empty
+    end
+
+    # `landing` falls back to the old side because it is the one window that
+    # cannot be a file. There is no such window here, so the chain has to end
+    # somewhere that exists rather than at `nvim_set_current_win(nil)`.
+    it "lands the human somewhere real rather than raising on a nil window" do
+      surveyed("docs/guide.txt")
+
+      expect(here.last).to eq(slots["sidebar"])
+    end
+
+    # THE FALLBACK, ACTUALLY REACHED -- and the example above does not reach it,
+    # which is why this one exists. `landing` prefers the navigator and REJECTS
+    # it when it is not inert: a `gf` on a row, a `:b#`, a quickfix jump or a
+    # plain `:edit` all leave the window still marked `sidebar` while it displays
+    # a real, writable file, which is F34 wearing the navigator's name. On a
+    # two-sided round the chain then ends on the old side, the one window that
+    # cannot be a file. A survey has no such window, so a fallback of `old_win`
+    # alone hands `nvim_set_current_win` a nil and the render raises
+    # (`Invalid 'win': Expected Lua number`) AFTER it has already drawn the file
+    # correctly -- the worst shape a refusal can take.
+    it "lands on the file when the navigator is unsafe and the round has no old side" do
+      set_review(["[ ] docs/guide.txt"], 1, ["new"])
+      lua("vim.api.nvim_win_call(..., function() vim.cmd('edit docs/counter.txt') end)", [slots["sidebar"]])
+
+      lua("_G.__lain.open_changeset(...)", ["docs/guide.txt", [], 1, revisions])
+
+      expect(here.last).to eq(slots["new"])
+    end
+
+    # THE ROUND AND THE FILE ARE DIFFERENT QUESTIONS. A changeset's added file
+    # has an empty old side and still gets its window; a survey has no old side
+    # at all. Inferring one from `old_lines` would collapse the two.
+    it "still builds three windows for an added file in a two-sided round" do
+      set_review(["[ ] docs/guide.txt"], 1, %w[old new])
+
+      lua("_G.__lain.open_changeset(...)", ["docs/guide.txt", [], 1, revisions])
+
+      expect(slot_names).to eq(%w[sidebar old new])
+      expect(lines_of(buf_in(slots["old"]))).to eq([""])
+      expect(window_options(slots["new"])).to include(diff: true)
+    end
+
+    it "is unchanged for a changeset review that presents both sides" do
+      set_review(["[ ] docs/guide.txt"], 1, %w[old new])
+
+      open_changeset("docs/guide.txt", ["the guide", "was second", "third line"])
+
+      expect(slot_names).to eq(%w[sidebar old new])
+      expect(window_options(slots["old"])).to include(diff: true)
+      expect(window_options(slots["new"])).to include(diff: true)
+    end
+
+    # A chat that reviews a changeset, settles it and then surveys reuses the
+    # review tabpage. The changeset's old side would otherwise be left showing
+    # a diff of a file nobody is reviewing any more.
+    #
+    # ASSERTED AT THE `set_review` PAINT, BEFORE ANY `<CR>`, and that is the
+    # example rather than a tightening of it. `open_changeset` takes the stale
+    # window away too, by a different route entirely -- `drop_stale` wipes the
+    # previous file's old-side BUFFER, and nvim closes the window displaying it
+    # -- so an assertion taken after the open is satisfied with the shed deleted
+    # outright, naming a mechanism it never exercised. The layout is the round's
+    # shape from the first sidebar render, and this is where that is pinned.
+    it "sheds the previous round's old side at the render that changes the round" do
+      set_review(["[ ] docs/guide.txt"], 1, %w[old new])
+      open_changeset("docs/guide.txt", ["the guide", "was second", "third line"])
+
+      set_review(["[ ] docs/other.txt"], 2, ["new"])
+
+      expect(slot_names).to eq(%w[sidebar new])
+    end
+
+    # And the open then lands in the layout it shed down to, which is the half
+    # the example above deliberately does not reach.
+    it "opens the survey's file into the two windows it shed down to" do
+      set_review(["[ ] docs/guide.txt"], 1, %w[old new])
+      open_changeset("docs/guide.txt", ["the guide", "was second", "third line"])
+
+      surveyed("docs/other.txt")
+
+      expect(slot_names).to eq(%w[sidebar new])
+      expect(name_of(buf_in(slots["new"]))).to eq(File.join(project, "docs/other.txt"))
+    end
+  end
 end
 
 # A TRIPWIRE on this module's call sites, and it is worth being exact about what

@@ -926,7 +926,11 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
 
   def lua(source, args = []) = @editor.exec_lua(source, args)
 
-  def set_review(lines, gen) = lua("_G.__lain.set_review(...)", [lines, gen])
+  # THE SIDES ARE THE THIRD ARGUMENT, and defaulted here to both: every example
+  # in this file is about the sidebar's own rows, and a changeset review is the
+  # round they were written against. Passing them is not optional -- an omitted
+  # third argument delivers `nil` to a parameter the layout reads.
+  def set_review(lines, gen, sides = Lain::Review::SIDES) = lua("_G.__lain.set_review(...)", [lines, gen, sides])
 
   def review_lines
     lua("return vim.api.nvim_buf_get_lines(vim.fn.bufnr(...), 0, -1, false)", [review_buffer])
@@ -1230,8 +1234,12 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
     result
   end
 
-  def set_review(lines, generation)
-    inspector.exec_lua("local lines, gen = ...; _G.__lain.set_review(lines, gen)", [lines, generation])
+  # Spelled out rather than through `...` so the rail's whole shape is visible
+  # here, sides included: see the helper above for why the third argument may
+  # not be dropped.
+  def set_review(lines, generation, sides = Lain::Review::SIDES)
+    inspector.exec_lua("local lines, gen, sides = ...; _G.__lain.set_review(lines, gen, sides)",
+                       [lines, generation, sides])
   end
 
   # Seats the cursor in the sidebar and feeds `keys` through nvim's own mapping

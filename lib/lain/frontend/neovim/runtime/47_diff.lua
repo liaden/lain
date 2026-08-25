@@ -382,7 +382,16 @@ end
 -- one window alone diffs it against whatever the other still holds, which on a
 -- second open is the PREVIOUS file -- a diff of two unrelated files that renders
 -- perfectly and means nothing.
+--
+-- A DIFF NEEDS TWO, so fewer than two is not a diff to be made carefully -- it
+-- is no diff at all. On a round that presents one side (a survey) `diffthis`
+-- would still take, still set 'foldmethod=diff', and still fold every line the
+-- absent other side did not change: the whole file, collapsed, on the surface
+-- that exists to let somebody read it.
 function review_diff.pair(wins)
+  if #wins < 2 then
+    return
+  end
   for _, win in ipairs(wins) do
     vim.api.nvim_win_call(win, function() vim.cmd("diffthis") end)
   end
@@ -451,6 +460,14 @@ end
 -- a review which is already correctly drawn. A sidebar the human has wandered
 -- off repairs itself on the next `set_review`, which re-places it every render.
 --
+-- UNLESS THE ROUND HAS NO OLD SIDE, and then the chain ends on the file. A
+-- survey builds no such window, so `old_win` is nil and the fallback would be
+-- `nvim_set_current_win(nil)` -- a raise, taking down a render that had already
+-- drawn correctly. Landing on the file is the F34 risk this decision exists to
+-- avoid, and it is reached only when the navigator is BOTH present and unsafe,
+-- which is the human having wandered off in a layout that has nowhere else to
+-- go. Somewhere real beats a traceback.
+--
 -- FIRST match rather than last, which is where this differs from
 -- `review_panes.map`'s reading of the same marker: that one answers "which
 -- window IS the sidebar" and lets a later claimant win, while this one answers
@@ -462,7 +479,7 @@ function review_diff.landing(old_win, new_win)
       return win
     end
   end
-  return old_win
+  return old_win or new_win
 end
 
 -- Open one changed file as the diff pair.
@@ -524,17 +541,28 @@ function _G.__lain.open_changeset(path, old_lines, line, revisions)
   local new_revision = review_diff.revision_for(revisions, "new")
   local lines = review_diff.checked_lines(old_lines)
 
+  -- THE ROUND, ASKED ONCE, and asked of the LAYOUT rather than inferred from
+  -- `old_lines`. A changeset containing an added file sends `[]` here too, and
+  -- that file still gets its window with an empty history in it -- "this FILE
+  -- has no old side" and "this ROUND has none" are different facts, and only
+  -- the second one may take a window away. Ruby says which round this is
+  -- ({Review::Source#sides}); nothing here reads the content to guess.
+  local sided = review_panes.holds("old")
+
   local new_buf = review_diff.new_side(path)
-  local old_buf = review_diff.old_side(path, lines, vim.bo[new_buf].filetype, vim.bo[new_buf].fileformat)
+  local old_buf = sided and
+      review_diff.old_side(path, lines, vim.bo[new_buf].filetype, vim.bo[new_buf].fileformat) or nil
   review_diff.unstamp(old_buf, new_buf)
   review_diff.stamp(new_buf, "new", new_revision, path)
-  review_diff.stamp(old_buf, "old", old_revision, path)
+  if sided then
+    review_diff.stamp(old_buf, "old", old_revision, path)
+  end
 
-  local old_win = _G.__lain.review_place("old", old_buf)
+  local old_win = sided and _G.__lain.review_place("old", old_buf) or nil
   local new_win = _G.__lain.review_place("new", new_buf)
 
   review_diff.drop_stale(old_buf)
-  review_diff.pair({ old_win, new_win })
+  review_diff.pair(sided and { old_win, new_win } or { new_win })
   review_diff.focus_line(new_win, new_buf, line)
   vim.api.nvim_set_current_win(review_diff.landing(old_win, new_win))
 end

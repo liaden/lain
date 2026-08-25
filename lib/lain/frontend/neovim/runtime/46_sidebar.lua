@@ -81,10 +81,26 @@ end
 -- Written BEFORE the placement, so the window never shows a half-drawn buffer,
 -- and placed on EVERY render rather than only the first: `review_place` is what
 -- repairs a layout the human has since closed windows in, and it moves nobody.
-function _G.__lain.set_review(lines, gen)
+--
+-- `sides` is a FACT about the round -- which of {Lain::Review::SIDES} it
+-- presents at all -- and never a layout instruction: a survey of files as they
+-- stand has no old side for anything it will ever hold, a changeset has both
+-- even where one file is an addition, and what to DRAW out of that is the
+-- editor's own question (`rpc_thread.rb`'s rule for `review_focus`, one rail
+-- over). It rides THIS render because this render precedes the layout -- the
+-- panes are built by the `review_place` below, before any row is opened -- so a
+-- fact sent with the open would arrive after the window it would have
+-- prevented already exists.
+--
+-- Carried onto `review_panes` rather than passed down: on the first paint there
+-- is no review tabpage yet to write it to, and the call below is what creates
+-- one. See `41_layout.lua` for why a value in transit is not the registry that
+-- file's header rules out.
+function _G.__lain.set_review(lines, gen, sides)
   local buf = review_sidebar.buf()
   vim.b[buf].lain_view_generation = gen
   set_lines(buf, 0, -1, lines)
+  review_panes.sides = review_panes.carried(sides)
   _G.__lain.review_place("sidebar", buf)
   announce_render(review_sidebar.NAME, buf)
 end

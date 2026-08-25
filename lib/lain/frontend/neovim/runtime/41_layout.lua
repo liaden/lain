@@ -48,7 +48,32 @@
 -- chunk can derive nothing from Ruby. `layout_spec.rb` pins the two spellings
 -- equal by reading this file, which is the only defence a cross-language
 -- vocabulary has.
+--
+-- SLOTS IS THE VOCABULARY, NOT THE ROUND. What a round OPENS is a subset of it
+-- (`opens`), because a survey of files as they stand presents only a new side --
+-- but `old` stays spelled here, ordered here, and refusable by name here. That
+-- distinction is what keeps four things working at once: `index_of` still gives
+-- `anchor` a total order, `review_place` can still tell a MISSPELLED slot from
+-- one this round did not open, `layout_spec.rb`'s cross-language pin still reads
+-- this literal, and -- the one that matters -- `:LainThread` on a survey still
+-- has an `old` slot to put the docent's conversation in, opened on demand
+-- instead of refused inside a `define`d command.
 local review_panes = { SLOTS = { "sidebar", "old", "new" } }
+
+-- THE ROUND'S SIDES, IN TRANSIT ONLY. `set_review` carries {Review::SIDES} for
+-- the round here, and `ensure` writes them through to `vim.t[tab]` -- because on
+-- the FIRST sidebar paint there is no review tabpage yet to write them to
+-- (`review_place("sidebar")` is what creates it), so there is one hop with
+-- nowhere durable to stand.
+--
+-- This is not the registry the header rules out, and the difference is what it
+-- holds: no window id, no bufnr, no tabpage -- nothing that can dangle, and
+-- nothing anything reads to decide where a render goes. The durable home is the
+-- tabpage variable, which dies with the tabpage exactly as `lain_review` does.
+-- `rpc_thread.rb` states the other half: `set_review` lands on EVERY redraw, so
+-- this is re-posted every paint and a value left here cannot drift from the
+-- round the human is looking at.
+review_panes.sides = nil
 
 -- Slot order IS left-to-right window order, which is what makes "put the
 -- restored window back where it was" a comparison of indices rather than a
@@ -69,6 +94,121 @@ function review_panes.tab()
     end
   end
   return nil
+end
+
+-- The sides off the wire, or nil for a round that said nothing.
+--
+-- THE TYPE TEST DOES REAL WORK: a Ruby nil crosses msgpack as `vim.NIL`, which
+-- is USERDATA and therefore truthy, so a truthiness check would take "this
+-- caller sends no sides" for a list of them. Filtered against the vocabulary as
+-- well, and the navigator dropped from it -- `sides` names {Review::SIDES}, and
+-- a round is not allowed to say the sidebar is optional.
+--
+-- An empty result answers nil rather than "a round with no sides at all": Ruby's
+-- contract is that the list is never empty, and a layout with no file in it is
+-- not a better answer to a wire that broke than the whole vocabulary is.
+function review_panes.carried(sides)
+  if type(sides) ~= "table" then
+    return nil
+  end
+  local kept = {}
+  for _, side in ipairs(sides) do
+    if type(side) == "string" and side ~= review_panes.SLOTS[1] and review_panes.index_of(side) ~= nil then
+      kept[#kept + 1] = side
+    end
+  end
+  if #kept == 0 then
+    return nil
+  end
+  return kept
+end
+
+-- The slots THIS round opens: the navigator, plus the sides the round presents,
+-- in SLOTS order -- so left-to-right placement stays the same reading whether a
+-- round has one side or two. A round that never said gets the whole vocabulary,
+-- which is what every caller driving `open_changeset` with no sidebar render in
+-- front of it relies on.
+function review_panes.opens(tab)
+  local sides = vim.t[tab].lain_review_sides
+  if type(sides) ~= "table" then
+    return review_panes.SLOTS
+  end
+  local wanted = {}
+  for _, side in ipairs(sides) do
+    wanted[side] = true
+  end
+  local opens = {}
+  for index, slot in ipairs(review_panes.SLOTS) do
+    if index == 1 or wanted[slot] then
+      opens[#opens + 1] = slot
+    end
+  end
+  return opens
+end
+
+-- Whether this round opens a slot at all, asked without a tabpage in hand --
+-- `47_diff` needs it before it decides whether to BUILD an old side, and a
+-- buffer nothing will ever show is the waste this card is about.
+--
+-- IT FINDS ITS OWN TABPAGE where `opens` is handed one, and the split is the
+-- question each answers rather than an inconsistency. `opens` is asked BY the
+-- layout, mid-`ensure`, where the tabpage is already resolved and re-resolving
+-- it would be a second answer to a question one line up. `holds` is asked by a
+-- module that has no tabpage and no business acquiring one: threading `tab`
+-- through `open_changeset` purely to ask about the round would make every
+-- caller of a render entry point carry the layout's own bookkeeping.
+function review_panes.holds(slot)
+  local tab = review_panes.tab()
+  local opens = tab ~= nil and review_panes.opens(tab) or review_panes.SLOTS
+  for _, name in ipairs(opens) do
+    if name == slot then
+      return true
+    end
+  end
+  return false
+end
+
+-- The hand-off: what `set_review` carried, written onto the tabpage the moment
+-- there is one. Answers whether the round CHANGED, which is the only moment a
+-- window may be shed -- a round re-posting the same fact on its next redraw must
+-- not take away a pane opened since (the docent's, on a survey).
+--
+-- A tabpage that held nothing is not a change: there is nothing open to shed,
+-- and calling it one would make the first paint of every round a repair.
+--
+-- THE ONE ASYMMETRY, stated so a reader does not have to find it: a round that
+-- sends NO sides writes nothing, so it inherits whatever the tabpage already
+-- held rather than resetting it to the whole vocabulary. That is deliberate --
+-- "the wire said nothing" is not "the round has both sides", and clobbering a
+-- known fact with an absent one is the worse of the two guesses -- and it is
+-- unreachable today: `review/surface/neovim.rb` sends `changeset.sides` on
+-- every sidebar render, and {Review::Source#sides} is never empty.
+function review_panes.carry(tab)
+  local sides = review_panes.sides
+  if sides == nil then
+    return false
+  end
+  local held = vim.t[tab].lain_review_sides
+  vim.t[tab].lain_review_sides = sides
+  return type(held) == "table" and table.concat(held, ",") ~= table.concat(sides, ",")
+end
+
+-- Close the windows this round has no slot for, and forget them, so `ensure`'s
+-- own loop does not read a closed id back. Only ever reached from `carry`
+-- answering true: a changeset review settled and then surveyed reuses the review
+-- tabpage, and the changeset's old side would otherwise be left showing a diff
+-- of a file nobody is reviewing any more.
+function review_panes.shed(tab, found)
+  local opens = {}
+  for _, slot in ipairs(review_panes.opens(tab)) do
+    opens[slot] = true
+  end
+  for slot, win in pairs(found) do
+    if not opens[slot] and vim.api.nvim_win_is_valid(win) then
+      vim.api.nvim_win_close(win, true)
+      found[slot] = nil
+    end
+  end
 end
 
 -- slot -> window, for the slots that are actually still there. Read fresh on
@@ -190,13 +330,28 @@ function review_panes.ensure()
     created.sidebar = true
   end
 
+  -- The round's fact, onto the tabpage, BEFORE anything is opened from it. This
+  -- is the one place it can land on the paint that needs it: the branch above is
+  -- what creates the tabpage, so nothing earlier had a `vim.t` to write to.
+  local changed = review_panes.carry(tab)
+
   local found = review_panes.map(tab)
-  for _, slot in ipairs(review_panes.SLOTS) do
+  for _, slot in ipairs(review_panes.opens(tab)) do
     if found[slot] == nil then
       found[slot] = review_panes.open(tab, found, slot)
       created[slot] = true
     end
   end
+
+  -- AFTER the opens, never before. In a layout the human has closed windows in,
+  -- the slot being shed can be the tabpage's LAST surviving window -- and closing
+  -- that takes the tabpage down in the middle of the repair that was rebuilding
+  -- it. Running second means the round's own windows are already there to
+  -- survive it.
+  if changed then
+    review_panes.shed(tab, found)
+  end
+
   -- After the splits, never between them: each one redistributes width. Only a
   -- sidebar this call CREATED is sized, so a human who widened it keeps that
   -- across every later render.
@@ -214,7 +369,11 @@ end
 -- right when they are handed over and go stale on the human's next gesture. Use
 -- {review_place}, which re-ensures and answers a fresh id, as the seam.
 --
--- @return slot -> window id, for every slot
+-- @return slot -> window id, for every slot THIS ROUND OPENS -- which is the
+--   whole vocabulary for a changeset and the navigator plus the new side for a
+--   survey, so a caller indexing it by name must expect a nil (see
+--   {review_place}, which opens one on demand rather than making every caller
+--   carry that test)
 function _G.__lain.review_layout()
   local tab, found = review_panes.ensure()
   vim.api.nvim_set_current_tabpage(tab)
@@ -239,6 +398,16 @@ end
 -- misspelled slot would otherwise render into nothing at all, and present as a
 -- view that draws nothing rather than as the typo it is.
 --
+-- A slot THIS ROUND DID NOT OPEN is the other case entirely, and it OPENS. On a
+-- survey the human stands in the new side, so `:LainThread` asks for
+-- `OPPOSITE["new"]` and the thread pane IS the `old` slot -- a slot the round
+-- had no reason to build in advance and every reason to build now that
+-- something is asking. Without this the placement would hand
+-- `nvim_win_set_buf` a nil window inside a `define`d command: an `error()`, a
+-- traceback and a blocking hit-enter prompt, which is the shape this whole
+-- surface exists to keep out. The third window appears when there is something
+-- to put in it, and `ensure` closes nothing, so it stays.
+--
 -- @return the window id the buffer landed in
 function _G.__lain.review_place(slot, buf)
   if review_panes.index_of(slot) == nil then
@@ -249,6 +418,9 @@ function _G.__lain.review_place(slot, buf)
   local tab, found = review_panes.ensure()
   if tab ~= was then
     vim.api.nvim_set_current_tabpage(was)
+  end
+  if found[slot] == nil then
+    found[slot] = review_panes.open(tab, found, slot)
   end
   vim.api.nvim_win_set_buf(found[slot], buf)
   review_panes.remember(tab, slot, buf)
