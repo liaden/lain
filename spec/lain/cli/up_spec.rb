@@ -1644,6 +1644,16 @@ RSpec.describe Lain::CLI::Up do
       eval_status_job(value)
     end
 
+    # E8's trailing space is the one thing `eval_status_job` (and every other
+    # example here) deliberately strips, so the padding gets its own unstripped
+    # render rather than a `.strip` removed from the shared helper.
+    def render_raw(state)
+      File.write(state_path, JSON.generate(state))
+      value, = Lain::CLI::Up::Hud.new(state_path:).status_right(jq_present: true)
+      job = value.strip.delete_prefix("#(").delete_suffix(")")
+      Open3.capture3("sh", "-c", job).first.chomp
+    end
+
     def warm_state(**overrides)
       { "cache_deadline" => (Time.now + 300).utc.iso8601, "fleet" => %w[a b], "inbox_count" => 3 }.merge(overrides)
     end
@@ -1695,6 +1705,34 @@ RSpec.describe Lain::CLI::Up do
 
     it "says nothing about the mode before the first switch, when the key is absent" do
       expect(render(warm_state("posture" => nil, "mode_lighter" => nil))).to eq("🔥 fleet:2 inbox:3")
+    end
+
+    # E7: this session's spend on this key. Labelled `session:` rather than
+    # `usage:` on purpose -- the number is what THIS process paid, and another
+    # client on the same subscription is invisible to it, so the label may not
+    # read as the plan's consumption.
+    it "names the session's cumulative token spend" do
+      expect(render(warm_state("run_tokens" => 27_997))).to eq("🔥 fleet:2 inbox:3 run:27997")
+    end
+
+    it "stays quiet before the first turn, when no tokens have been spent at all" do
+      expect(render(warm_state("run_tokens" => nil))).to eq("🔥 fleet:2 inbox:3")
+    end
+
+    # A genuinely zero spend is a real reading, not an absence -- the same
+    # distinction the occupancy segment draws, and only ABSENCE is silent.
+    it "renders a zero spend, since only ABSENCE is silent" do
+      expect(render(warm_state("run_tokens" => 0))).to eq("🔥 fleet:2 inbox:3 run:0")
+    end
+
+    # E8: the line's last character was the `%` of `ctx:NN%`, hard against the
+    # right edge of the bar. The pad is the LAST thing the filter concatenates,
+    # so it is there whatever the optional segments did -- and it lives inside
+    # the jq expression rather than on the tmux option value, where trailing
+    # whitespace is the more fragile of the two.
+    it "ends with exactly one trailing space, so the bar has room to breathe" do
+      expect(render_raw(warm_state("occupancy" => 0.34))).to eq("🔥 fleet:2 inbox:3 ctx:34% ")
+      expect(render_raw(warm_state)).to eq("🔥 fleet:2 inbox:3 ")
     end
   end
 

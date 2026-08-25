@@ -130,6 +130,19 @@ RSpec.describe "plugin/tmux" do
       expect(run_status.first.strip).to eq("❄ fleet:0 inbox:0")
     end
 
+    # E7/E8 ship in the shipped script too, for the same reason the clamp does:
+    # the verbatim-embedding example above is the mechanism, this is the effect.
+    # Chomped rather than stripped, because the trailing pad is the assertion.
+    it "renders the session's token spend, and pads the line with one trailing space" do
+      skip("jq not found on PATH") unless jq_present?
+      write_state(cache_deadline: nil, fleet: [], inbox_count: 0, occupancy: 0.34, run_tokens: 27_997)
+
+      out, _err, status = run_status
+
+      expect(out.chomp).to eq("❄ fleet:0 inbox:0 ctx:34% run:27997 ")
+      expect(status.exitstatus).to eq(0)
+    end
+
     # The clamp ships in the script too, or a status bar reads "ctx:244%". A
     # live chat now divides by the window its provider reports serving (T10,
     # Lain::CLI::Backend#context_window), but a model no book carries and no

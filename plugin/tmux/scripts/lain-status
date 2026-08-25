@@ -20,10 +20,16 @@
 # a bug -- it is a caller that could not resolve, and it reads as "no state
 # yet" like any other absent file.
 #
-# The filter reads six keys ("cache_deadline","fleet","inbox_count",
-# "approvals_pending","occupancy","mode_lighter") and ignores the rest; the
-# last three are rendered only when present, so a state file written by an
-# older lain still renders the line it always did. mode_lighter arrives
+# The filter reads seven keys ("cache_deadline","fleet","inbox_count",
+# "approvals_pending","occupancy","run_tokens","mode_lighter") and ignores
+# the rest; the last four are rendered only when present, so a state file
+# written by an older lain still renders the line it always did. The line
+# always ends with one trailing space, so the last segment does not sit hard
+# against the right edge of the bar. run_tokens is what THIS machine spent on
+# THIS key over THIS run -- not a plan's consumption and not a whole resumed
+# session, which is why it renders as "run:" and never "usage:" or "session:";
+# oracle spend is deliberately not in it. See Up::Hud::JQ_FILTER and
+# Lain::StatusFeed for both rulings. mode_lighter arrives
 # ALREADY COMPOSED (the posture's lighter plus every active layer's, empty
 # under the silent default posture), so this script carries no copy of the
 # mode ladder -- see Up::Hud::JQ_FILTER. The occupancy percentage is clamped
@@ -60,7 +66,9 @@ JQ_FILTER='(if .cache_deadline and (.cache_deadline | fromdateiso8601) > now the
 + " fleet:\(.fleet | length) inbox:\(.inbox_count)"
 + (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end)
 + (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end)
-+ (if (.mode_lighter // "") != "" then " " + .mode_lighter else "" end)'
++ (if .run_tokens then " run:\(.run_tokens)" else "" end)
++ (if (.mode_lighter // "") != "" then " " + .mode_lighter else "" end)
++ " "'
 
 if command -v jq >/dev/null 2>&1; then
   jq -r "$JQ_FILTER" "$state" 2>/dev/null || echo "lain: no state yet"

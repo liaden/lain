@@ -7,11 +7,22 @@
 # just another `#<<` sink (see spec/lain/cli/journal_tee_spec.rb for the
 # fan-out mechanics); this spec covers what it derives and how it publishes.
 RSpec.describe Lain::StatusFeed do
-  def turn_usage(digest: "blake3:turn", cache_read: 0, cache_creation: 0)
+  def turn_usage(digest: "blake3:turn", cache_read: 0, cache_creation: 0, input: 10, output: 5)
     Lain::Telemetry::TurnUsage.new(
       digest:, model: "claude-x", stop_reason: :end_turn,
-      usage: { "input_tokens" => 10, "output_tokens" => 5,
+      usage: { "input_tokens" => input, "output_tokens" => output,
                "cache_read_input_tokens" => cache_read, "cache_creation_input_tokens" => cache_creation }
+    )
+  end
+
+  # Answers `#usage` and names a model, but never says why a turn stopped --
+  # because it is not a turn. It rides the same tee on the default-on
+  # compaction route (Oracle::Recorded::Journaling).
+  def oracle_answer(input: 9_000, output: 300)
+    Lain::Telemetry::OracleAnswer.new(
+      oracle_digest: "blake3:oracle", question: "summarise", answer: { "text" => "..." },
+      model: "claude-x", usage: { "input_tokens" => input, "output_tokens" => output },
+      wall_clock: 1.5
     )
   end
 
@@ -599,19 +610,127 @@ RSpec.describe Lain::StatusFeed do
       expect(prompt.to_h["occupancy"]).to eq("#{(published["occupancy"] * 100).round}%")
     end
 
-    # INPUT_TOKEN_FIELDS restates Usage#total_input_tokens against the JOURNALED
-    # hash. They agree today and nothing structural holds them together, so this
-    # is the pin: both the field NAMES (fetch, not [], so a rename fails loudly)
-    # and the sum.
-    it "sums exactly the fields Usage#total_input_tokens does, so the two cannot drift apart" do
-      usage = Lain::Usage.new(input_tokens: 3, output_tokens: 7,
-                              cache_creation_input_tokens: 11, cache_read_input_tokens: 13)
-      journaled = usage.to_h.transform_keys(&:to_s)
+    # A defect that PRE-DATES the run_tokens field and was live on main: an
+    # oracle answer answers `#usage` and names a model, so `occupancy_of` ran
+    # on it and republished the ORACLE's prompt measured against the CHAT's
+    # window -- a status bar reporting a context that no turn ever filled.
+    # Reproduced at 0.005 -> 0.045 on one oracle answer before the fix. The
+    # `#stop_reason` half of the duck is what shuts it out.
+    it "is not moved by an oracle answer, whose prompt is not this context" do
+      feed = described_class.new(path:)
+      feed << turn_usage(input: 1_000, output: 20)
+      after_turn = published["occupancy"]
 
-      summed = described_class::INPUT_TOKEN_FIELDS.sum { |field| journaled.fetch(field) }
+      feed << oracle_answer(input: 9_000, output: 300)
 
-      expect(summed).to eq(usage.total_input_tokens)
+      expect(published["occupancy"]).to eq(after_turn)
     end
+
+    # The pin that INPUT_TOKEN_FIELDS restates Usage#total_input_tokens exactly
+    # moved with the constant, to
+    # spec/lain/status_feed/journaled_usage_spec.rb.
+  end
+
+  # E7: what this session has spent, summed off the same per-payment records
+  # the Journal keeps. Every example here is about the number being a RUNNING
+  # TOTAL over events -- which is what puts it in #observed rather than the
+  # measures, and what the seam spec pins against Agent::Accounting.
+  describe "run_tokens" do
+    # `#usage` alone is not the duck, and this is the whole reason the feed
+    # asks for `#stop_reason` too -- Compaction::Source#turn_usage? has drawn
+    # the same distinction since 2026-07-25, for a sibling failure on the same
+    # record. Oracle spend is real and is deliberately somebody else's field:
+    # this one's contract is equality with Accounting#usage, which does not
+    # carry it. spec/lain/seams/usage_parity_spec.rb measures the divergence.
+    it "does not count an oracle answer, which answers #usage but is not a turn" do
+      feed = described_class.new(path:)
+
+      feed << turn_usage(input: 100, output: 20)
+      feed << oracle_answer(input: 9_000, output: 300)
+
+      expect(published["run_tokens"]).to eq(120)
+    end
+
+    # The record set this field sums is a CLOSED vocabulary of one, so it is
+    # matched by class -- this file's own convention (Telemetry::Compaction,
+    # ContextDerived, ModeSwitch and DerivationRefused are all matched that
+    # way, each with a comment saying a duck would be a guess). The oracle
+    # example above is what a guess costs. `#usage` + `#stop_reason` would
+    # re-arm exactly that defect for the next Telemetry record that happens to
+    # carry both fields, silently and with this file's specs still green, so
+    # the stand-in below stands in for that future record.
+    it "counts only a real TurnUsage, not merely something shaped like one" do
+      feed = described_class.new(path:)
+      lookalike = Struct.new(:usage, :stop_reason, :model)
+                        .new({ "input_tokens" => 9_000, "output_tokens" => 300 }, :end_turn, "claude-x")
+
+      feed << turn_usage(input: 100, output: 20)
+      feed << lookalike
+
+      expect(published["run_tokens"]).to eq(120)
+    end
+
+    it "is nil before any usage is observed, rather than a zero that reads as a real spend" do
+      feed = described_class.new(path:)
+
+      feed << spawn_event("a")
+
+      expect(published["run_tokens"]).to be_nil
+    end
+
+    it "publishes the sum of two observed TurnUsage records" do
+      feed = described_class.new(path:)
+
+      feed << turn_usage(input: 100, output: 20, cache_read: 3, cache_creation: 1)
+      feed << turn_usage(input: 200, output: 40, cache_read: 5, cache_creation: 2)
+
+      expect(published["run_tokens"]).to eq(371)
+    end
+
+    # The record is a PAYMENT, not content: Telemetry::TurnUsage's own doc says
+    # a regenerated turn lands twice under one digest and both were paid for.
+    # Deduplicating here would undercount exactly what Accounting counts.
+    it "counts a regenerated turn's second payment, since digests are not unique across records" do
+      feed = described_class.new(path:)
+
+      2.times { feed << turn_usage(digest: "blake3:same", input: 100, output: 20) }
+
+      expect(published["run_tokens"]).to eq(240)
+    end
+
+    it "ignores a record whose usage is absent rather than raising" do
+      feed = described_class.new(path:)
+      feed << turn_usage(input: 100, output: 20)
+
+      feed << Lain::Telemetry::TurnUsage.new(digest: "blake3:b", model: "claude-x",
+                                             stop_reason: :end_turn, usage: nil)
+
+      expect(published["run_tokens"]).to eq(120)
+    end
+
+    # The card's third scenario, and the reason the field is in #observed: a
+    # value that lives in #measures republishes once a second forever, which
+    # costs a write+rename per second and destroys the struct as a change token.
+    it "does not move #observed, or earn a republish, when only the clock has ticked" do
+      now = 1000.0
+      feed = described_class.new(path:, run_clock: Lain::RunClock.new(clock: -> { now }))
+      feed << turn_usage(input: 100, output: 20)
+      feed << spawn_event("a")
+      before = feed.observed
+      written_at = File.mtime(path)
+
+      now = 1060.0
+      feed << spawn_event("a")
+
+      expect(feed.observed).to eq(before)
+      expect(feed.observed["run_tokens"]).to eq(120)
+      expect(File.mtime(path)).to eq(written_at)
+    end
+
+    # The pin that TOKEN_FIELDS restates Usage#total_tokens exactly lives with
+    # the constant, in spec/lain/status_feed/journaled_usage_spec.rb; what this
+    # block covers is the ACCRUAL -- that the feed sums those readings over
+    # records, publishes the running total, and does so in #observed.
   end
 
   # T8: the mode, published for the tmux HUD. Two keys, because they answer
@@ -926,7 +1045,7 @@ RSpec.describe Lain::StatusFeed do
 
       expect(published.keys).to contain_exactly("cache_deadline", "fleet", "inbox_count", "approvals_pending",
                                                 "occupancy", "compactions", "derivation_refusal_streak",
-                                                "posture", "layers", "mode_lighter",
+                                                "run_tokens", "posture", "layers", "mode_lighter",
                                                 "elapsed", "idle", "since_compaction")
     end
 

@@ -21,7 +21,7 @@ module Lain
   # `$XDG_STATE_HOME/lain`, keyed by project, beside the sessions and the
   # epics; {ProjectDir}'s own comment carries the recipe and what it costs.
   #
-  # Thirteen fields, all JOURNALED or derived from the run's own clock -- never
+  # Fourteen fields, all JOURNALED or derived from the run's own clock -- never
   # an in-process registry, and in particular never a live {Agent}: this
   # object is constructed in `ChatLaunch#open_chronicle`, BEFORE `Wiring`
   # exists, so anything it can only learn by asking a collaborator that does
@@ -88,7 +88,7 @@ module Lain
   #   zero that would read as an empty context). Derived from the SAME
   #   {Telemetry::TurnUsage} the cache deadline slides on, because that one
   #   record names both halves of the ratio: the tokens billed on the way in
-  #   ({Usage#total_input_tokens}, recomputed here off the journaled Hash) and
+  #   ({Usage#total_input_tokens}, restated by {JournaledUsage}) and
   #   the model whose window {ContextWindow} resolves. {Agent#occupancy}
   #   answers the same question from the live Agent's accounting; this sink
   #   cannot ask it (the construction-order constraint above), so it asks the
@@ -109,6 +109,44 @@ module Lain
   #   rescue only ever catches a BLANK model, which is a wiring bug, not this
   #   common case. A deployment that knows its real local window should inject
   #   a book with the right `fallback:`.
+  # * `run_tokens` -- what THIS RUN has SPENT, cumulative, every billed field
+  #   of every {Telemetry::TurnUsage} summed ({Usage#total_tokens}'s
+  #   definition, restated by {JournaledUsage} the way `occupancy` is).
+  #   nil before the first payment, because "nothing yet" and "billed nothing"
+  #   are different claims and only the renderer's silence suits the first.
+  #
+  #   A RUN, and deliberately not a session: {Session} survives a `--resume`
+  #   and this counter does not, so calling it `session_tokens` would have put
+  #   a surface in contradiction with the record -- a resumed session reading
+  #   0 for a conversation that spent half a million. {Agent::Accounting} is
+  #   already documented as "the run's token ledger", and this is that ledger
+  #   published; one quantity, one noun, and a run legitimately starts at zero.
+  #
+  #   ⚠️ THIS IS THIS MACHINE'S SPEND ON THIS KEY, not a plan's consumption.
+  #   Another client on the same subscription is invisible to it, and no
+  #   provider lain talks to publishes a used/remaining pair to reconcile
+  #   against (E7 settles that for the ollama-cloud arm: the headers carry
+  #   concurrency and queue depth, no bucket over time). So the figure is
+  #   exact about what it measures and silent about what it cannot see -- the
+  #   same discipline {ContextWindow}'s published-versus-guessed provenance
+  #   keeps -- and the HUD labels it `run:` rather than `usage:` so the label
+  #   cannot be read as the quota.
+  #
+  #   ORACLE SPEND IS NOT IN IT, and that is a decision rather than an
+  #   oversight. A {Telemetry::OracleAnswer} rides this same tee and answers
+  #   `#usage` too, so `#usage` alone would sum it here -- real money, really
+  #   spent, but money {Agent::Accounting} does not count, and this field's
+  #   contract is that it equals `Accounting#usage`. Publishing a differently
+  #   scoped total under a name that claims parity is the defect the parity
+  #   seam exists to catch. A second figure that names oracle spend as its own
+  #   is a separate field for a separate card. See {#turn_usage?}.
+  #
+  #   It is a SECOND accumulator for a number {Agent::Accounting} already owns,
+  #   and that is reconciled rather than left to drift: one `Accounting#observe`
+  #   both rolls the response into `Accounting#usage` and journals the record
+  #   this sink sums, so the two are equal by construction.
+  #   spec/lain/seams/usage_parity_spec.rb is the pin, including the
+  #   regenerated turn both sides deliberately count twice (see {#accrue}).
   # * `approvals_pending` -- how many gated tool calls are parked awaiting a
   #   human. Counted, never keyed: {Telemetry::ApprovalPending} carries the
   #   `tool_use_id` of the call it parked, but the matching
@@ -197,9 +235,18 @@ module Lain
   #   owns the increment and the reset, and a second tally could only come to
   #   disagree with it.
   #
-  # Recognizing an event is duck-typed (`#usage`, `#kind`), not a class check:
-  # a caller can feed this a real {Telemetry::TurnUsage}/{Event} or any object
-  # answering the same questions, matching every other sink in this fan-out.
+  # Recognizing an event is DUCK-TYPED WHERE THE VOCABULARY IS OPEN and matched
+  # by CLASS WHERE IT IS CLOSED, and the split is the file's rule rather than an
+  # accident. `#kind` is the open one: any {Event} answers it, a caller may feed
+  # this a stand-in that does too, and nothing about the question narrows to one
+  # record. Everything else here names a closed set -- {Telemetry::Compaction},
+  # {Telemetry::ContextDerived}, {Telemetry::ModeSwitch},
+  # {Compaction::Source::DerivationRefused}, {Telemetry::TurnUsage} -- and each
+  # is matched by class, because a duck over a GROWING namespace is a guess that
+  # silently starts catching the wrong record. Two of those comments record the
+  # duck they refused; {#turn_usage?} records the one that was actually shipped
+  # and what it cost.
+  #
   # The approval pair is the ONE exception, and it is the same exception
   # {Memory::JournalMemoryRoot} documents for the same reason: {Approval::Queue}
   # is the single writer of both records, and no other event in this fan-out
@@ -229,16 +276,6 @@ module Lain
     # because `lib/lain.rb` loads this file BEFORE `lib/lain/provider.rb`;
     # depending forward on a not-yet-loaded unit would invert that order.
     DEFAULT_CACHE_PROFILE = { ttl: 300 }.freeze
-
-    # Either field nonzero means the cache was actually touched this turn
-    # (written OR read) -- that is what "in use" means for a sliding TTL.
-    CACHE_ACTIVITY_FIELDS = %w[cache_read_input_tokens cache_creation_input_tokens].freeze
-
-    # {Usage#total_input_tokens}, spelled out for the JOURNALED hash: this sink
-    # is handed the record, never the {Usage} value it was built from, so the
-    # sum is recomputed here rather than delegated. Cached tokens count -- the
-    # window holds them whether or not they were billed at full rate.
-    INPUT_TOKEN_FIELDS = (CACHE_ACTIVITY_FIELDS + %w[input_tokens]).freeze
 
     # {Journal#encode}'s self-describing failure record, which is also what
     # {Approval::Queue#degrade} writes when it cannot journal a park or a
@@ -290,6 +327,7 @@ module Lain
     def start_empty
       @cache_deadline = nil
       @occupancy = nil
+      @run_tokens = nil
       @mode = ModeState::NONE
       @approvals_pending = 0
       @compactions = 0
@@ -307,10 +345,24 @@ module Lain
     end
     private :start_empty
 
-    # @param event [Object] anything answering `#usage` (a {Telemetry::TurnUsage})
-    #   and/or `#kind` (an {Event}); an event answering neither is inert but
-    #   still checked for a republish, matching every other sink's `<<`
-    #   (though nothing changes, so nothing writes -- see {#publish_if_changed}).
+    # @param event [Object] a record this sink recognizes, or anything at all.
+    #   The recognized set is the one the class doc lists: five journal records
+    #   matched by CLASS -- {Telemetry::TurnUsage}, {Telemetry::Compaction},
+    #   {Telemetry::ContextDerived}, {Telemetry::ModeSwitch} and
+    #   {Compaction::Source::DerivationRefused} -- plus the {Approval::Queue}
+    #   pair, plus anything answering `#kind` (an {Event}), which is the one
+    #   OPEN duck here because any Event answers it and no single record owns
+    #   the question.
+    #
+    #   ⚠️ A LOOKALIKE IS NOT ENOUGH for the class-matched five. An object that
+    #   merely answers `#usage` and `#stop_reason` is NOT read as a turn's
+    #   payment and is silently inert -- deliberately, because reading it as one
+    #   is the defect {#turn_usage?} documents ({Telemetry::OracleAnswer} answers
+    #   both and rides this same tee). Send the real record.
+    #
+    #   An event this sink recognizes nothing about is inert but still checked
+    #   for a republish, matching every other sink's `<<` (though nothing
+    #   changes, so nothing writes -- see {#publish_if_changed}).
     # @return [self]
     def <<(event)
       # The RunClock rides this sink rather than the tee directly: it is not
@@ -332,7 +384,7 @@ module Lain
       # tally kept here could only come to be a second opinion about it.
       @derivation_refusal_streak = event.consecutive if event.is_a?(Compaction::Source::DerivationRefused)
       @derivation_refusal_streak = 0 if event.is_a?(Telemetry::ContextDerived)
-      observe_usage(event) if event.respond_to?(:usage)
+      observe_usage(event) if turn_usage?(event)
       observe(event) if event.respond_to?(:kind)
       # Matched by class, for {Telemetry::Compaction}'s reason and not the
       # approval pair's: a `#to`/`#to_layers` duck would also catch an
@@ -345,11 +397,48 @@ module Lain
 
     private
 
-    # One {Telemetry::TurnUsage} carries both derivations a turn owes this
-    # sink: the cache activity that slides the deadline, and the token count
-    # that -- against the model the SAME record names -- is the occupancy.
+    # A turn's own usage, and only that. Matched by CLASS, which is THIS FILE'S
+    # convention for a closed vocabulary -- the same rule {Telemetry::Compaction},
+    # {Telemetry::ContextDerived}, {Telemetry::ModeSwitch} and
+    # {Compaction::Source::DerivationRefused} are each matched by above, every
+    # one of them carrying a comment saying a duck there would be a guess.
+    # Exactly one record journals a turn's payment, so this is that vocabulary.
     #
-    # A nil `usage` is ignored rather than indexed. {Telemetry::TurnUsage}'s
+    # `#usage` alone was the duck here, and it shipped a live defect:
+    # {Telemetry::OracleAnswer} answers `#usage` too and rides this same tee on
+    # the default-on compaction route. Its usage carries no cache fields and its
+    # model is the ORACLE's, so it broke all three derivations at once --
+    # `run_tokens` inflated past the {Agent::Accounting} total it is contracted
+    # to equal (measured: 10,320 against 1,020 after one eager summary), and
+    # `occupancy` republished the oracle's prompt against the chat's window
+    # (measured: 0.005 -> 0.045).
+    #
+    # ⚠️ DELIBERATE DIVERGENCE from {Compaction::Source#turn_usage?}, which
+    # answers the same question about the same record as
+    # `respond_to?(:usage) && respond_to?(:stop_reason)`. That is not an
+    # inconsistency to tidy: it is that file's local convention, documented and
+    # verified there, and it belongs to a card that owns that file. This file's
+    # convention is the class check, and the reason to prefer it HERE is the
+    # failure mode -- {Telemetry} is a growing namespace, so a two-method duck
+    # silently readmits the next record that happens to carry both fields, with
+    # every spec in this file still green. That is the defect above, re-armed.
+    # `is_a?` makes it impossible rather than unlikely.
+    #
+    # Oracle spend is REAL money and its exclusion here is a decision, not an
+    # oversight: this sink's `run_tokens` is the published form of
+    # `Accounting#usage`, which does not carry oracle spend, so adding it would
+    # buy a bigger number at the cost of the parity that makes the number
+    # trustworthy. A figure that names oracle spend as its own is a separate
+    # field. See spec/lain/seams/usage_parity_spec.rb, which measures both.
+    def turn_usage?(event) = event.is_a?(Telemetry::TurnUsage)
+
+    # One {Telemetry::TurnUsage} carries all three derivations a turn owes this
+    # sink: the cache activity that slides the deadline, the tokens that --
+    # against the model the SAME record names -- are the occupancy, and the
+    # payment that accrues onto the run total. {JournaledUsage} is what
+    # reads the record; this method decides what the readings mean here.
+    #
+    # A nil `usage` is ignored rather than wrapped. {Telemetry::TurnUsage}'s
     # guard checks its digest and stop_reason but not its usage, and
     # `Canonical.normalize(nil)` is nil, so the record is constructible -- and
     # `nil["input_tokens"]` inside a {CLI::JournalTee} sink is a NoMethodError
@@ -357,16 +446,26 @@ module Lain
     # {#occupancy_of}'s rescue, and the same answer: a malformed record makes
     # this sink derive nothing, never raise. (Pre-dates the occupancy field --
     # `slide_cache_deadline` indexed it too; found by a review probe.)
+    #
+    # The accrual is summed over RECORDS with no dedupe, which is deliberate and
+    # is the one place this differs from {Usage}'s "sum over unique turn
+    # digests" rule: that rule is about CONTENT reachable from a branched head,
+    # while {Telemetry::TurnUsage}'s digest is a join key that a regenerated
+    # turn repeats across two records both genuinely paid for. Deduplicating
+    # would undercount exactly what {Agent::Accounting} counts, and the two
+    # agreeing is the whole point (spec/lain/seams/usage_parity_spec.rb).
+    # `to_i` on the nil start keeps absence distinct from a billed zero.
     def observe_usage(event)
-      usage = event.usage
-      return if usage.nil?
+      return if event.usage.nil?
 
+      usage = JournaledUsage.new(event.usage)
       slide_cache_deadline(usage)
-      @occupancy = occupancy_of(usage, event.model) if event.respond_to?(:model)
+      @run_tokens = @run_tokens.to_i + usage.total_tokens
+      @occupancy = occupancy_of(usage, event.model)
     end
 
     def slide_cache_deadline(usage)
-      return unless CACHE_ACTIVITY_FIELDS.any? { |field| usage[field].to_i.positive? }
+      return unless usage.cache_active?
 
       @cache_deadline = (@clock.call + @cache_profile[:ttl]).utc.iso8601
     end
@@ -379,12 +478,10 @@ module Lain
     #   sink's failure, so a raise here would cost the agent its turn over a
     #   status line. Absence is the only honest reading left.
     def occupancy_of(usage, model)
-      @context_window.occupancy(total_input_tokens(usage), model:).ratio
+      @context_window.occupancy(usage.total_input_tokens, model:).ratio
     rescue ContextWindow::UnknownModel, ArgumentError
       nil
     end
-
-    def total_input_tokens(usage) = INPUT_TOKEN_FIELDS.sum { |field| usage[field].to_i }
 
     # See the class doc for why this pair is matched by CLASS and counted
     # rather than joined by id, and which half failing costs what.
@@ -499,7 +596,8 @@ module Lain
     def observed
       { "cache_deadline" => @cache_deadline, "fleet" => @fleet.keys, "inbox_count" => @pending.size,
         "approvals_pending" => @approvals_pending, "occupancy" => @occupancy,
-        "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak }
+        "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak,
+        "run_tokens" => @run_tokens }
         .merge(@mode.published)
     end
 
@@ -533,3 +631,4 @@ end
 # #initialize does, and that runs later.
 require_relative "status_feed/publication"
 require_relative "status_feed/mode_state"
+require_relative "status_feed/journaled_usage"

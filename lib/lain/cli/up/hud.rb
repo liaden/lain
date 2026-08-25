@@ -74,12 +74,34 @@ module Lain
         # `.mode_lighter` on a state published before the key existed is null,
         # so `// ""` covers an older `lain` and the pre-first-switch window
         # alike, both of which must render the line they always did.
+        #
+        # `run:` is E7's cumulative token spend, and BOTH halves of the label
+        # are load-bearing. "usage:" would read as the plan's consumption:
+        # {Lain::StatusFeed} sums what THIS process was billed on THIS key,
+        # another client on the same subscription is invisible to it, and no
+        # provider lain talks to publishes a used/remaining pair to reconcile
+        # against. "session:" would read as the whole conversation: a
+        # {Lain::Session} survives a `--resume` and this counter does not, so
+        # that noun would have a resumed chat rendering 0 over a record showing
+        # half a million. A RUN is the thing that was measured, and it is the
+        # word {Lain::Agent::Accounting} already uses for the same ledger.
+        # Guarded the way occupancy is, and for the same reason: null (an older
+        # `lain`, the window before the first turn) is silent, while a genuine
+        # zero still renders.
+        #
+        # The trailing `+ " "` is E8, and it is the LAST concatenation on
+        # purpose -- whatever the optional segments did, the line ends with one
+        # space so the bar's right edge has room. It lives here rather than on
+        # the tmux `status-right` option value because trailing whitespace in an
+        # option value is the more fragile of the two places to keep it.
         JQ_FILTER = <<~'JQ'.strip
           (if .cache_deadline and (.cache_deadline | fromdateiso8601) > now then "🔥" else "❄" end)
           + " fleet:\(.fleet | length) inbox:\(.inbox_count)"
           + (if (.approvals_pending // 0) > 0 then " approve:\(.approvals_pending)" else "" end)
           + (if .occupancy then " ctx:\([(.occupancy * 100 | floor), 100] | min)%" else "" end)
+          + (if .run_tokens then " run:\(.run_tokens)" else "" end)
           + (if (.mode_lighter // "") != "" then " " + .mode_lighter else "" end)
+          + " "
         JQ
 
         JQ_MISSING_WARNING = "jq not found on PATH -- status-right falls back to raw state.json " \
