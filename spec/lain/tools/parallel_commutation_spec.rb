@@ -6,14 +6,27 @@ require "fileutils"
 # deterministic workspace the sweep reads, one fixed input per tool, and the
 # instance table the pairs are drawn from.
 module ParallelCommutationSpecSupport
-  # The only true-set tool this sweep does not range over. `subagent` spawns a
-  # whole child agent loop -- a Timeline root, a provider round trip, its own
-  # toolset -- so its result is not a read of anything this workspace holds and
-  # two spawns are not two reads whose order could be exchanged. Its
-  # parallel_safe? claim rests on the child's isolation (a FRESH Timeline root,
-  # nothing shared with the parent's), which is a different property, pinned
-  # where subagent's own isolation is: spec/lain/tools/subagent_spec.rb.
-  SPAWNS_INSTEAD_OF_READING = %w[subagent].freeze
+  # The true-set tools this sweep does not range over, each with the reason it
+  # is out -- a table rather than one constant per reason, so a third hold-out
+  # is a row and not a third constant plus a third `+` at the coverage example.
+  # The KEY is what the coverage example counts; the VALUE is what a reader
+  # needs, kept beside the name it explains rather than in a comment above a
+  # bare list.
+  #
+  # Every entry is a tool whose parallel_safe? claim rests on something OTHER
+  # than reading this workspace, so exchanging two of them here would prove
+  # nothing. Each names where its real claim is pinned instead.
+  HELD_OUT = {
+    "subagent" => "spawns a whole child agent loop -- a Timeline root, a provider round trip, its own " \
+                  "toolset -- so its result is not a read of anything this workspace holds, and two spawns " \
+                  "are not two reads whose order could be exchanged. Its claim rests on the child's " \
+                  "isolation (a FRESH Timeline root, nothing shared with the parent's): " \
+                  "spec/lain/tools/subagent_spec.rb.",
+    "session_usage" => "reads the RUN's own Lain::Agent::Accounting, so there is no input that would make " \
+                       "it touch these files and no ordering of two calls to exchange. Its claim is that it " \
+                       "mutates no Session write-set and no process-global state: " \
+                       "spec/lain/tools/parallel_safety_spec.rb."
+  }.freeze
 
   # The workspace, written fresh per example. Small on purpose: every pair
   # re-reads it, so the sweep's cost is 45 pairs x 2 orders x 2 tools of
@@ -188,10 +201,28 @@ RSpec.describe "Tool#parallel_safe?: the exchange law, i.e. pairwise commutation
   # so it must not pay for a workspace it never opens.
 
   describe "coverage of the shipped true-set" do
-    it "sweeps every parallel_safe? tool the toolset ships, bar the spawning one" do
+    it "sweeps every parallel_safe? tool the toolset ships, bar the ones held out by name" do
       support = ParallelCommutationSpecSupport
-      declared = (support::INPUTS.keys + support::SPAWNS_INSTEAD_OF_READING).sort
+      declared = (support::INPUTS.keys + support::HELD_OUT.keys).sort
+
       expect(declared).to eq(support.shipped_parallel_safe_names.sort)
+    end
+
+    # The hold-outs are a JUDGEMENT, so each one owes a reason. Without this,
+    # HELD_OUT is a place to quietly park a tool that is merely inconvenient to
+    # sweep -- which is how a coverage list stops being coverage.
+    #
+    # The second half keeps the table from drifting the other way: a name here
+    # that is not actually parallel_safe? is excusing a tool this sweep was
+    # never going to range over anyway. Asked of THIS file's own derived roster,
+    # never of parallel_safety_spec.rb's TRUE_TOOLS -- a spec that depends on a
+    # sibling spec file having been loaded first passes in a full run and fails
+    # when run alone, which is why the shared table lives in spec/support.
+    it "gives every held-out tool a stated reason, and holds out nothing it need not" do
+      support = ParallelCommutationSpecSupport
+
+      expect(support::HELD_OUT.values).to all(match(/\S/))
+      expect(support::HELD_OUT.keys - support.shipped_parallel_safe_names).to eq([])
     end
   end
 

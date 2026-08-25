@@ -70,7 +70,12 @@ module ToolRegistry
     "request_review" => -> { Lain::Tools::RequestReview.new(home: nil, review: nil) },
     "web_fetch" => -> { Lain::Tools::WebFetch.new },
     "web_search" => -> { Lain::Tools::WebSearch.new },
-    "tool_search" => -> { Lain::Tools::ToolSearch.new(toolset: -> { Lain::Toolset.new([]) }) }
+    "tool_search" => -> { Lain::Tools::ToolSearch.new(toolset: -> { Lain::Toolset.new([]) }) },
+    # Construction-only, the "core_exec" precedent above -- and here the nil is
+    # the POINT: a thunk over `Usage.zero` would be a fabricated zero, which is
+    # the exact defect this tool exists to remove. Every property this table's
+    # readers ask of the instance is a declaration, never #perform.
+    "session_usage" => -> { Lain::Tools::SessionUsage.new(usage: nil) }
   }.freeze
 
   def self.build(name)

@@ -103,11 +103,17 @@ RSpec.describe Lain::Mode::Posture do
     let(:shipped) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
 
     # `BaseTools.build` is the capability floor; `ToolsetBuild#build` appends the
-    # reply seam on top of it, so `ask_human` is in the live chat set and in no
-    # other assembly. A check built from the floor alone would miss it.
+    # main-agent-only tools on top of it, so `ask_human` and `session_usage` are
+    # in the live chat set and in no other assembly. A check built from the floor
+    # alone would miss both.
+    #
+    # This is a RECONSTRUCTION of the live set, so it can fall behind the real
+    # one -- `spec/lain/cli/wiring_spec.rb` drives the same claim through an
+    # actual `/mode plan` flip on the toolset Wiring built, which is the version
+    # that cannot. Kept because it needs no Wiring and fails faster.
     let(:chat) do
       Lain::Toolset.new(Lain::CLI::Wiring::BaseTools.build(Lain::Memory::Recorder.new) +
-                        [ToolRegistry.build("ask_human")])
+                        [ToolRegistry.build("ask_human"), ToolRegistry.build("session_usage")])
     end
 
     it "names no tool the shipped registry lacks" do

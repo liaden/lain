@@ -112,11 +112,11 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
-    it "layers the capability floor, the child seam, and the two main-agent-only tools" do
+    it "layers the capability floor, the child seam, and the three main-agent-only tools" do
       names = toolset_build.build(recorder, ask_human:).names
 
       expect(names).to include(*Lain::CLI::Wiring::BaseTools.build(recorder).map(&:name))
-      expect(names).to include("subagent", "ask_human", "run_skill")
+      expect(names).to include("subagent", "ask_human", "run_skill", "session_usage")
     end
 
     # The layering IS the policy: a child attenuates from the floor, so it must
@@ -137,7 +137,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       inherited = full.fetch("subagent").attenuates_from.names
 
       expect(inherited).to match_array(floor)
-      expect(inherited).not_to include("ask_human", "run_skill", "subagent")
+      expect(inherited).not_to include("ask_human", "run_skill", "subagent", "session_usage")
     end
 
     # A chat outside an epic offers no review tool at all, and the way it
@@ -148,7 +148,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       names = toolset_build.build(recorder, ask_human:).names
 
       expect(names).not_to include("request_review")
-      expect(names).to include("subagent", "ask_human", "run_skill")
+      expect(names).to include("subagent", "ask_human", "run_skill", "session_usage")
     end
 
     context "when the chat resolved an epic" do

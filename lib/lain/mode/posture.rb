@@ -116,7 +116,7 @@ module Lain
       # == Why an allow-list, measured rather than argued
       #
       # Attenuating the whole shipped registry through `plan` leaves these
-      # thirteen standing and drops eleven -- including `subagent` and
+      # fourteen standing and drops eleven -- including `subagent` and
       # `run_skill`, neither of which mutates anything itself and both of which
       # reach whatever tools the child or the skill names. A denial list of the
       # five obvious mutators lets both through. There is no `mutates?` axis to
@@ -142,10 +142,19 @@ module Lain
       # about a plan before acting must keep its blocking channel to the human.
       # It is appended by `Wiring::ToolsetBuild#build` rather than by the
       # capability floor, so it is in the live chat set and in no smaller one.
+      #
+      # `session_usage` is IN for the same shape of reason, and its omission is
+      # the GRANT direction's cost made concrete: reading what the run has spent
+      # changes nothing, and plan mode -- deciding whether a piece of work is
+      # worth doing -- is exactly when a human asks what the session has cost so
+      # far. Left out, the tool would vanish silently under `/mode plan` and the
+      # model would be back to inventing the figure (F77). It rides the same
+      # `ToolsetBuild#build` append as `ask_human`, so the same live-chat-set
+      # caveat applies.
       READ_ONLY = %i[
         read_file list_files glob grep
         ast_search ast_dump code_outline file_symbols test_pattern
-        memory_read web_fetch web_search ask_human
+        memory_read web_fetch web_search ask_human session_usage
       ].freeze
       private_constant :READ_ONLY
 

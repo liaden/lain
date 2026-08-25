@@ -221,6 +221,74 @@ RSpec.describe Lain::CLI::Wiring do
       expect(agent.toolset.fetch("subagent").seam.parent.call).to equal(agent.timeline)
     end
 
+    # ---- session_usage: F77's fix, at the seam that made F77 possible --------
+
+    # Asked what its own session had spent, the agent invented a metrics table
+    # -- wrong model name, fabricated memory/CPU/RTT/network figures -- while
+    # eight `turn_usage` records carrying the true answer sat in the journal it
+    # had just written. Nothing in the shipped toolset could reach the run's own
+    # accounting, so the model answered from nowhere.
+    #
+    # Asserted end to end through a real ask rather than by reaching for the
+    # thunk, for the reason the parent-handle example above states: what matters
+    # is that the tool Wiring hands the model finds the Agent Wiring built. A
+    # spec that constructed its own thunk would pass while the shipped seam
+    # stayed dead, which is exactly how the parent handle went unnoticed.
+    it "hands the chat a session_usage tool reading the accounting of the Agent it built" do
+      spending = Lain::Provider::Mock.new(
+        responses: [Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }], stop_reason: :end_turn,
+                                       usage: Lain::Usage.new(input_tokens: 11, output_tokens: 4))]
+      )
+      recorder, session = wiring.run_state(nil)
+      agent = wiring.wire_agent(channel:, recorder:, session:,
+                                backend: offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
+                                                                   mock: spending))
+      agent.ask("ping")
+
+      report = agent.toolset.fetch("session_usage").call({}, nil)
+
+      expect(report).to be_ok
+      expect(report.content).to include("input: 11", "output: 4", "total: 15")
+    end
+
+    # The reason it is appended by ToolsetBuild rather than added to BaseTools:
+    # a child attenuates from the floor, and the floor is built ONCE and shared,
+    # so a thunk over the chat's Agent placed there would make every subagent
+    # report its PARENT's spend as its own -- F77's shape again, one level down.
+    # The positive half is not decoration: `not_to include` alone passes for a
+    # child attenuated to nothing, and would also pass while the tool was never
+    # wired at all.
+    it "keeps session_usage off the set a child attenuates from, so no child reports its parent's spend" do
+      agent = wire_agent
+
+      expect(agent.toolset.names).to include("session_usage")
+      expect(agent.toolset.fetch("subagent").attenuates_from.names).not_to include("session_usage")
+    end
+
+    # Both directions of Mode::Posture's READ_ONLY allow-list, driven through
+    # the REAL `/mode plan` flip rather than through the approximation
+    # posture_spec.rb assembles (`BaseTools.build` plus `ask_human`), which is
+    # not the set a live chat actually attenuates.
+    #
+    # - AVAILABILITY: a name in READ_ONLY the live set lacks is a hard
+    #   Toolset::UnknownTool at the flip -- the raise-free half.
+    # - GRANT: an omission from READ_ONLY is SILENT. The tool simply vanishes
+    #   while planning, which is precisely when a human asks what the session
+    #   has cost so far -- and a vanished tool is how F77 happened in the first
+    #   place. Hence the second expectation; the first alone would pass with
+    #   session_usage left out entirely.
+    #
+    # It reaches for the board the way `approve_everything` below does, and for
+    # the same reason: the board is Wiring's private collaborator, and the flip
+    # has to happen after #wire_agent built and memoized it.
+    it "keeps session_usage in the set /mode plan resolves to, and flips without refusing" do
+      agent = wire_agent
+      board = wiring.instance_variable_get(:@switchboard)
+
+      expect { board.mode_switch.switch(Lain::Mode.new(posture: :plan), surface: "spec") }.not_to raise_error
+      expect(agent.toolset.names).to include("session_usage")
+    end
+
     # The provider-reported window again, at the third construction site -- the
     # one a human actually reads. `Agent#occupancy` is asked with NO KEYWORD by
     # Frontend::PromptComposer::RunState, so the book has to have arrived when

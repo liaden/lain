@@ -249,8 +249,7 @@ module Lain
       def chat_env = Lain::WorkerEnv.default.with(cwd: project.cwd)
 
       def wire_agent(channel:, recorder:, session:, backend:, resumed: nil, views: nil, notice: nil)
-        agent = nil
-        parent = -> { agent.timeline }
+        parent = -> { @agent.timeline }
         # `desktop:` is CONSENT and it is never inferred: `Notify.for` used to
         # read dunstify-on-PATH as permission, so every spec and probe reaching
         # this line notified the human running the machine (2026-08-05, nine of
@@ -277,13 +276,40 @@ module Lain
         # #build_agent below resolves the same board rather than a second one.
         switchboard(backend, toolset, notice)
         chronicle.start(context: backend.context, toolset:, **resume_start(resumed))
-        # ASSIGNED, not merely returned: `parent` above closes over this local,
-        # and the tools built between here and there read it at CALL time. Left
-        # as a bare return expression the local stays nil forever -- the caller's
-        # `agent = wire_agent(...)` binds a different local in a different scope
-        # -- so the first ask_human question and the first subagent spawn both
-        # raise NoMethodError on nil.
-        agent = build_agent(toolset:, channel:, session:, backend:, resumed:, views:, notice:)
+        # ASSIGNED, not merely returned: the `parent` thunk above and the `usage:`
+        # thunk #build_toolset passes both read this slot at CALL time. Left as a
+        # bare return expression it stays nil forever -- the caller's
+        # `agent = wire_agent(...)` binds a local in a different scope -- so the
+        # first ask_human question, the first subagent spawn and the first
+        # session_usage call all raise NoMethodError on nil.
+        #
+        # An IVAR rather than the `agent = nil` local this used to be. That
+        # placeholder was never state anything wanted -- it existed only to give
+        # the closure above something to capture, because a local read before its
+        # first assignment is not a local at all. A named slot says what is
+        # actually going on: the run has ONE late-bound Agent, and every seam
+        # that needs it late reads the same slot. So a second late reader is now
+        # free -- `usage:` is one thunk in #build_toolset and nothing here --
+        # where the local shape charged a line and a scoping subtlety for each.
+        # It joins the memoized run collaborators beside it (`@notifier`,
+        # `@supervisor`, `@ask_human`, `@switchboard`); a Wiring assembles one
+        # chat, and always did.
+        #
+        # ⚠️ ONE agent per Wiring, and the slot is why it must stay that way.
+        # Calling #wire_agent twice on the same instance RETARGETS the first
+        # agent's thunks -- `parent:` as well as `usage:` -- at the second, so
+        # agent one would answer with agent two's Timeline and agent two's
+        # tokens. Not a crash: a silently wrong number, which is the failure
+        # `session_usage` exists to remove. The `agent = nil` local this
+        # replaced kept two calls apart by accident of scoping; the slot does
+        # not, and no caller relies on it (`chat_launch.rb:332` builds a fresh
+        # Wiring immediately before its single #run, and `wiring.rb:208` is the
+        # only in-lib caller). The guard that would REFUSE a second call is one
+        # `raise unless @agent.nil?` here -- it holds ClassLength at 110/110 but
+        # puts this method over Metrics/AbcSize, so it is owed together with the
+        # extraction this class has been asking for. Whoever pays that debt must
+        # bring this guard with it; the debt was incurred to make room for it.
+        @agent = build_agent(toolset:, channel:, session:, backend:, resumed:, views:, notice:)
       end
 
       private
@@ -392,9 +418,17 @@ module Lain
       # missing INSIDE the container while it still resolves outside one. So a
       # chat started in `services/ingest`, or under `lain chat --root PATH`,
       # shows its commands the project they belong to.
+      # `usage:`'s `&.` is NOT a coalesce, and the distinction is the whole point
+      # of {Lain::Tools::SessionUsage}: it lets the thunk RETURN nil so that
+      # tool's own `|| raise(Unwired)` fires, which is what puts an intelligible
+      # sentence in front of the model instead of `undefined method 'usage' for
+      # nil`. Without it the NoMethodError is raised inside this lambda and the
+      # named refusal is never reached. Nothing is invented either way --
+      # `Lain::Usage.zero` is truthy, so a run that has genuinely spent nothing
+      # still reports zero and cannot be confused with an unassigned slot.
       def build_toolset(recorder, backend:, parent:, journal:, ask_human:, notice: nil)
         @toolset_build = ToolsetBuild.new(backend:, provider: AgentBuild.spooled_provider(backend, chronicle:),
-                                          chronicle:, options:, root: project.root,
+                                          chronicle:, options:, root: project.root, usage: -> { @agent&.usage },
                                           supervisor: @supervisor, parent:, journal:, library: backend.library,
                                           switchboard: -> { @switchboard }, askers: @askers,
                                           epic: epic_mount(notice))

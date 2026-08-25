@@ -297,13 +297,24 @@ module Lain
         #   It resolves at CONSTRUCTION, so an unrecognized `--exec` refuses
         #   before {Chronicle#start} pins the session header -- the
         #   refusal-before-journal ordering {Wiring#fleet_isolation} keeps.
+        # @param usage [#call, nil] a thunk resolving to the live Agent's
+        #   cumulative {Lain::Usage}, for the main-agent-only
+        #   {Lain::Tools::SessionUsage}. Late-bound for `parent:`'s exact reason:
+        #   the Agent is built AFTER the Toolset it is handed.
+        #
+        #   nil for the direct-construction seams the specs drive, where there is
+        #   no Agent and so no session usage to report. Deliberately NOT a thunk
+        #   over {Lain::Usage.zero} -- an unwired build reporting zero tokens is
+        #   indistinguishable from an honest fresh run, and a fabricated zero is
+        #   the exact defect that tool exists to remove. This way it fails loudly
+        #   at the one place that would otherwise invent a number.
         # @option options [Boolean] :auto_approve the ONE key this class reads
         #   for a collaborator, alongside the two `--exec` keys the `exec:`
         #   default reads -- everything else in the parsed options belongs to
         #   somebody further up. Last, after every `@param`, because yard-lint
         #   fixes that order.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
-                       root:, switchboard: -> { NoSwitchboard }, askers: Askers.unwired,
+                       root:, switchboard: -> { NoSwitchboard }, askers: Askers.unwired, usage: nil,
                        exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:))
           @library = library
           @backend = backend
@@ -311,12 +322,13 @@ module Lain
           @exec = exec
           @epic = epic
           @askers = askers
+          @usage = usage
           @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:,
                              observer: chronicle.observer)
         end
 
         # The run's toolset: the capability floor, plus the child seams and
-        # the two main-agent-only tools.
+        # the three main-agent-only tools.
         #
         # @param recorder [Lain::Memory::Recorder] the ONE recorder backing
         #   the memory tools for the whole session
@@ -329,7 +341,7 @@ module Lain
           @role_spawn = role_spawn_seam(base)
           @docent = Lain::Review::Docent::Answerer.new(spawn: @role_spawn)
           @auto_surface = (Lain::Approval::AutoSurface.new(role_spawn: @role_spawn) if options[:auto_approve])
-          Lain::Toolset.new(base.to_a + [research_subagent(base), ask_human, run_skill] + epic.tools)
+          Lain::Toolset.new(base.to_a + [research_subagent(base), ask_human, run_skill, session_usage] + epic.tools)
         end
 
         private
@@ -378,6 +390,13 @@ module Lain
         # that the loads did not keep; the shared composition seam that fixed
         # then lives on the library now ({Skill::Library#renderer}).
         def run_skill = Lain::Tools::RunSkill.new(renderer: library.renderer)
+
+        # Main-agent-only, and appended HERE rather than added to
+        # {BaseTools} for the reason that file states: the floor is what a
+        # subagent role attenuates FROM, built once and shared, so a thunk over
+        # the chat's Agent placed there would make every child report its
+        # PARENT's spend as its own.
+        def session_usage = Lain::Tools::SessionUsage.new(usage: @usage)
 
         # The chat default: an attenuated read-only child (schema posture,
         # depth 1). The observer routes its :spawn/:message lineage events

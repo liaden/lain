@@ -44,7 +44,7 @@ module ParallelSafetySpecSupport
   # state (see each tool file's own WHY comment).
   TRUE_TOOLS = %w[read_file list_files glob grep memory_read
                   ast_search ast_dump test_pattern code_outline file_symbols
-                  subagent].freeze
+                  subagent session_usage].freeze
 
   # Every OTHER tool the toolset actually ships (exe/lain's `base_tools` plus
   # the subagent/ask_human/run_skill layered on top, and tool_search, which
