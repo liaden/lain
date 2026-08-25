@@ -160,7 +160,8 @@ a shadow git). In Lain they are *the same content-addressed substrate*:
 
 **The approval-economics lever.** Cheap per-step rollback is *why* auto-approve is safe ("the cost of
 a mistake drops to nearly zero"). So the Workspace Timeline couples directly to `Handler::Approving`
-/ `--yolo`: with per-step snapshots, tier-3 `bash` can run unattended because undo is one `rewind`.
+/ the `auto` posture: with per-step snapshots, tier-3 `bash` can run unattended because undo is one
+`rewind`.
 The plan treats approval and history separately; this ties them into a swept axis — approval
 strictness × checkpoint granularity → speed vs. safety.
 
