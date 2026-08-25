@@ -43,7 +43,39 @@ class LainCLI < Thor
   # errors (all Lain::Error) onto Thor's exit contract -- clean message to
   # stderr, nonzero exit, no backtrace -- and police trailing argv. One named
   # home rather than a copy per command.
+  #
+  # `include Boundary` carries a CLASS-level effect as well as these instance
+  # methods: {included} declares Thor's `check_unknown_options!` on whatever
+  # includes it. That is the same responsibility rather than a second one --
+  # policing argv is the half of this module's job that {#refuse_strays!}
+  # already does for positionals, and the declaration is what does it for
+  # switches. It has to arrive by the `include` because Thor's own
+  # `check_unknown_options?` answers false for a registered subcommand NAME, so
+  # every nested Thor class needs its own; see {included} for the whole account.
   module Boundary
+    # An unknown switch is an unknown switch, on every command class that
+    # includes this -- which is the whole CLI, and has to be.
+    #
+    # Thor's own `check_unknown_options?` answers FALSE for any name registered
+    # through `subcommand` (thor.rb:363-380), so one declaration on {LainCLI}
+    # would be INERT for `epic`, `review`, `survey` and `bench` -- the four
+    # commands a stray switch was actually reaching, because each is a separate
+    # `< Thor` class dispatched by name. Undeclared, Thor left the switch in the
+    # POSITIONAL remainder: `lain survey PATH --permissive` became an arity
+    # error naming `survey open`, a verb the human never typed and which only
+    # exists because `default_command :open` lets Thor compose one.
+    #
+    # The hook rather than a line per class, for the reason this module exists
+    # at all: policing trailing argv is already its job ({#refuse_strays!}), and
+    # five copies of one declaration is how the fifth subcommand class ships
+    # without it.
+    #
+    # `up`'s post-`--` splat is exempt STRUCTURALLY and needs no `except:`:
+    # `Thor::Options#check_unknown!` inspects only the extras collected before
+    # the separator index, so a forwarded chat flag is not an unknown switch
+    # here. `spec/lain/cli_spec.rb` drives that invocation.
+    def self.included(base) = base.check_unknown_options!
+
     # The one command-body shape every read-only report command shares: say
     # the String the block returns, mapping Lain::Error onto Thor's contract.
     def render(&block)
@@ -271,6 +303,51 @@ class LainCLI < Thor
   end
 
   extend Argv
+
+  # `--help` written AFTER a command name, which Thor routes for a SUBCOMMAND
+  # class and not for a command declared here. `map HELP_MAPPINGS => :help`
+  # (thor.rb:660) only ever matches argv's FIRST token, so `lain chat --help`
+  # reached the option parser as an ordinary switch: an arity error before
+  # {Boundary} declared `check_unknown_options!`, and `Unknown switches
+  # "--help"` after it. The second is the worse sentence of the two -- it tells
+  # a human that a gesture they type constantly is not a thing, while
+  # `lain help chat` answers perfectly well.
+  #
+  # Not a courtesy invented here: Thor's own `subcommand` wrapper already does
+  # it one layer down (`invoke_args.unshift "help" if opts.delete("--help") ||
+  # opts.delete("-h")`, thor.rb:337), which is exactly why `lain survey --help`
+  # worked while `lain chat --help` did not. This gives the commands declared on
+  # THIS class the same answer, off the same HELP_MAPPINGS.
+  #
+  # In `dispatch` and deliberately NOT in {Argv#start}: the forwarded tail is
+  # that module's whole subject, and nothing about help may perturb it. Only the
+  # span BEFORE `--` is read here, so `lain up -- --help` still forwards
+  # `--help` to the chat window verbatim.
+  module Help
+    def dispatch(meth, given_args, given_opts, config)
+      super(meth, help_instead(meth, given_args) || given_args, given_opts, config)
+    end
+
+    # The `help COMMAND` argv an invocation is really asking for, or nothing.
+    #
+    # A nil command name is what says this is argv's own dispatch: `invoke`
+    # names the command it wants, and its arguments do not begin with one.
+    #
+    # @param meth [String, nil]
+    # @param given_args [Array<String>]
+    # @return [Array<String>, nil]
+    def help_instead(meth, given_args)
+      return nil unless meth.nil?
+
+      asked = given_args[0...(given_args.index("--") || given_args.length)]
+      name = asked.first.to_s
+      return nil unless all_commands.key?(name) && !subcommands.include?(name)
+
+      ["help", name] if Thor::HELP_MAPPINGS.intersect?(asked.drop(1))
+    end
+  end
+
+  extend Help
 
   # The epic subcommands, on the same thin-wiring rule as bench: Lain::CLI::Epic
   # resolves the home, folds the Journal, and returns a String; this class parses

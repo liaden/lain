@@ -9,6 +9,54 @@
 # process, so nothing but a subprocess in a foreign directory can see it.
 load File.expand_path("../../exe/lain", __dir__)
 
+require "prism"
+
+# Every Thor class `exe/lain` DEFINES, at any nesting depth, read off the source.
+#
+# Off the SOURCE for two reasons. `LainCLI.constants` would miss a command class
+# written at TOP level rather than nested -- and that is the one most likely to
+# be written without `include Boundary`, since nothing about it looks like the
+# four that already have it. And Thor's own `subclasses` registry is
+# process-global: `probe_class` at the foot of this very file builds anonymous
+# `Class.new(Thor)` doubles, so a sweep of the registry passes or fails on
+# example ORDER. A parse of the file cannot be polluted by either.
+#
+# Prism because `spec/lain/cli/chat_flags_spec.rb` already reads this executable
+# that way, and for its reason: `Thor` appears in prose comments all over the
+# file, and a grep cannot tell a superclass from a sentence.
+class ExeThorClasses < Prism::Visitor
+  EXE = File.expand_path("../../exe/lain", __dir__)
+
+  def self.call(path = EXE)
+    new.tap { |found| Prism.parse_file(path).value.accept(found) }
+       .names.map { |name| Object.const_get(name) }
+  end
+
+  attr_reader :names
+
+  def initialize
+    @names = []
+    @nesting = []
+    super
+  end
+
+  def visit_class_node(node)
+    @names << [*@nesting, node.constant_path.slice].join("::") if node.superclass&.slice == "Thor"
+    within(node) { super }
+  end
+
+  def visit_module_node(node) = within(node) { super }
+
+  private
+
+  def within(node)
+    @nesting.push(node.constant_path.slice)
+    yield
+  ensure
+    @nesting.pop
+  end
+end
+
 RSpec.describe LainCLI do
   let(:toolset) { Lain::Toolset.new }
   let(:channel) { Lain::Channel.new }
@@ -313,24 +361,186 @@ RSpec.describe LainCLI do
   # is that the removal is LOUD -- a flag silently ignored would start a session
   # the operator believes is approving everything.
   #
-  # `check_unknown_options!` is declared nowhere in this class, so Thor answers a
-  # stray switch on a zero-arity command as an ARITY error rather than an
-  # unknown-option one. That is the shape asserted, deliberately, rather than the
-  # words "unknown option" -- pinning a sentence Thor never says would go green
-  # only by accident.
+  # THE PROPERTY, not Thor's phrasing. This used to assert an ARITY error --
+  # `was called with arguments` -- because `check_unknown_options!` was declared
+  # nowhere and Thor read a stray switch on a zero-arity command as a surplus
+  # POSITIONAL. {LainCLI::Boundary} declares it now, so the same argv is refused
+  # as the unknown switch it is. Three things were ever being asserted, and all
+  # three survive the change: refused, nonzero, and the flag named back.
   describe "the removed --yolo flag" do
     # The double is a GUARD, not a subject: if the refusal ever stops happening
     # this example fails on its assertions instead of opening a real session.
     # And no `debug: true`, because what is under test is what an operator meets
     # -- the message on stderr and a nonzero status; `raise_error` catches the
     # SystemExit, so this cannot truncate the run.
-    it "refuses it as a stray argument rather than ignoring it" do
+    it "refuses it by name rather than ignoring it" do
       launch = instance_double(Lain::CLI::ChatLaunch, call: nil, exit_status: 0)
       allow(Lain::CLI::ChatLaunch).to receive(:new).and_return(launch)
 
       expect { described_class.start(%w[chat --yolo]) }
-        .to output(/was called with arguments.*--yolo/m).to_stderr
+        .to output(/--yolo/).to_stderr
         .and raise_error(SystemExit) { |error| expect(error.status).not_to eq(0) }
+    end
+
+    # The other half of "LOUD": a refused flag must not have started anything.
+    # Its own example rather than a second assertion above, because the compound
+    # matcher there runs the block once and would report only the first failure.
+    it "opens no session" do
+      launch = instance_double(Lain::CLI::ChatLaunch, call: nil, exit_status: 0)
+      allow(Lain::CLI::ChatLaunch).to receive(:new).and_return(launch)
+
+      expect { described_class.start(%w[chat --yolo]) }.to raise_error(SystemExit)
+
+      expect(Lain::CLI::ChatLaunch).not_to have_received(:new)
+    end
+  end
+
+  # ONE declaration, every command -- and the reason it cannot be one line on
+  # this class alone. Thor's own `check_unknown_options?` answers FALSE for any
+  # name registered through `subcommand` (thor.rb:363-380), so a declaration
+  # here would be inert for exactly the four commands a stray switch was really
+  # reaching: `survey`, `review`, `bench` and `epic` are separate `< Thor`
+  # classes dispatched by name. {LainCLI::Boundary} is where every one of them
+  # already shares its argv policing, so that is where the declaration lives and
+  # `include Boundary` is what carries it.
+  describe "unknown switches, on every command class" do
+    # WHERE a class is written must not decide whether this guard can see it;
+    # {ExeThorClasses} reads them off the source for the reasons stated there.
+    def thor_classes = ExeThorClasses.call
+
+    it "covers every Thor class the executable defines, wherever it defines it" do
+      expect(thor_classes.reject(&:check_unknown_options).map(&:name)).to eq([])
+    end
+
+    it "finds them all at all, so an empty sweep cannot pass vacuously" do
+      expect(thor_classes).to contain_exactly(described_class, described_class::Survey,
+                                              described_class::Review, described_class::Bench,
+                                              described_class::Epic)
+    end
+
+    # BEHAVIOUR, not merely the declaration, because `subcommands.include?(name)`
+    # is what makes a parent's declaration inert and only real argv can tell a
+    # declared-but-inert class from a refusing one. `debug: true` so Thor
+    # re-raises instead of `exit(1)`: a SystemExit here would truncate the run
+    # and still report "0 failures".
+    {
+      "chat" => %w[chat --nope],
+      "sessions" => %w[sessions --nope],
+      "epic status" => %w[epic status --nope],
+      "review" => %w[review open feature/x --nope],
+      "survey" => %w[survey /tmp --nope],
+      "bench variance" => %w[bench variance /tmp --nope],
+      "up" => %w[up /tmp --nope]
+    }.each do |command, argv|
+      it "refuses an unknown switch on `lain #{command}`, naming it" do
+        expect { described_class.start(argv, debug: true) }
+          .to raise_error(Thor::UnknownArgumentError, /--nope/)
+      end
+    end
+
+    # The other direction, and the one a refusal can silently break: every
+    # switch any command DECLARES must still survive the check that was added.
+    # Driven at `Thor::Options` because `Thor::Base#initialize` is what calls
+    # `check_unknown!` (base.rb:101) and running each command body instead would
+    # spend a session, a tmux exec and an API key to learn the same thing.
+    #
+    # CLASS options merged in, because that is what Thor really parses against
+    # (`config[:class_options]` rides every subcommand dispatch): a sweep over
+    # `command.options` alone parses a narrower surface than the executable does
+    # and would read as a stronger guarantee than it gives.
+    it "still accepts every flag any command declares" do
+      refused = thor_classes.flat_map do |klass|
+        klass.commands.values.filter_map { |command| unaccepted(klass.class_options.merge(command.options)) }
+      end
+      expect(refused).to eq([])
+    end
+
+    # @return [String, nil] what a command refused of its own declared flags
+    def unaccepted(declared)
+      options = Thor::Options.new(declared)
+      options.parse(declared.values.flat_map { |option| spelling(option) })
+      options.check_unknown!
+      nil
+    rescue Thor::UnknownArgumentError => e
+      e.message
+    end
+
+    # How an operator spells one declared option on a command line. A value for
+    # anything that takes one, since a valueless `--model` would eat the next
+    # switch and make this sweep about argv order rather than about the switches.
+    def spelling(option)
+      case option.type
+      when :boolean then [option.switch_name]
+      when :numeric then [option.switch_name, "1"]
+      else [option.switch_name, option.enum&.first&.to_s || "x"]
+      end
+    end
+  end
+
+  # `--help` after a command name, which the refusal above made urgent. Thor
+  # maps HELP_MAPPINGS only as argv's FIRST token, so a leaf command declared on
+  # LainCLI never routed help: an arity error before `check_unknown_options!`,
+  # and `Unknown switches "--help"` after it -- a sentence that tells a human a
+  # gesture they type constantly is not a thing. {LainCLI::Help} answers it the
+  # way Thor's own `subcommand` wrapper already answers it one layer down.
+  describe "--help after a command name" do
+    # Every LEAF command declared on this class, from `commands` rather than a
+    # list: the four subcommand classes get this from Thor and are excluded by
+    # the same registry that makes them different.
+    def leaves = described_class.commands.keys - described_class.subcommands
+
+    it "answers every leaf command's --help rather than refusing the switch" do
+      unhelped = leaves.filter_map do |name|
+        printed = capture_stdout { described_class.start([name, "--help"], debug: true) }
+        name unless printed.include?("Usage:")
+      rescue Thor::Error => e
+        "#{name}: #{e.message}"
+      end
+      expect(unhelped).to eq([])
+    end
+
+    it "says what `lain help chat` says, rather than refusing the switch" do
+      helped = capture_stdout { described_class.start(%w[chat --help], debug: true) }
+
+      expect(helped).to include("Usage:", "chat")
+    end
+
+    it "takes -h as the same request, since Thor's own mappings are what it reads" do
+      helped = capture_stdout { described_class.start(%w[sessions -h], debug: true) }
+
+      expect(helped).to include("Usage:", "sessions")
+    end
+
+    it "starts no session on the way to printing it" do
+      allow(Lain::CLI::ChatLaunch).to receive(:new)
+
+      capture_stdout { described_class.start(%w[chat --help], debug: true) }
+
+      expect(Lain::CLI::ChatLaunch).not_to have_received(:new)
+    end
+
+    # THE HARD CONSTRAINT, pinned: the help rewrite reads only the span BEFORE
+    # `--`, so a forwarded `--help` still reaches the chat window verbatim. If
+    # this ever goes green by printing help instead, the cockpit's own launch
+    # path has been changed.
+    it "forwards a --help written past --, rather than answering it here" do
+      up = instance_double(Lain::CLI::Up, launch_plan: Lain::CLI::Up::LaunchPlan.new(messages: [], argv: %w[tmux]))
+      allow(Lain::CLI::Up).to receive(:new).and_return(up)
+      allow(Kernel).to receive(:exec)
+
+      described_class.start(["up", "--", "--help"], debug: true)
+
+      expect(Lain::CLI::Up).to have_received(:new).with(hash_including(chat_args: ["--help"]))
+    end
+
+    def capture_stdout
+      captured = StringIO.new
+      original = $stdout
+      $stdout = captured
+      yield
+      captured.string
+    ensure
+      $stdout = original
     end
   end
 
@@ -355,6 +565,25 @@ RSpec.describe LainCLI do
 
       expect(Lain::CLI::Up).to have_received(:new)
         .with(hash_including(chat_args: ["--model", "claude-x", "--no-journal"]))
+    end
+
+    # `planning/survey-dogfood-2026-08-25.md` §3's own launch line, and the one
+    # invocation `check_unknown_options!` had to be proved against before it was
+    # declared: a PATH, then a chat flag `up` does not declare, past `--`. Thor
+    # exempts the forwarded tail STRUCTURALLY -- `Thor::Options#check_unknown!`
+    # inspects only the extras collected BEFORE the separator index -- so no
+    # `except:` is needed and none is declared. Nothing else in this file would
+    # say so if that ever changed, and a cockpit that cannot launch outranks the
+    # refusal.
+    it "forwards a chat flag past -- with a PATH in front of it, refusing neither" do
+      up = instance_double(Lain::CLI::Up, launch_plan: plan)
+      allow(Lain::CLI::Up).to receive(:new).and_return(up)
+      allow(Kernel).to receive(:exec)
+
+      described_class.start(["up", "/tmp", "--", "--provider", "ollama-cloud"], debug: true)
+
+      expect(Lain::CLI::Up).to have_received(:new)
+        .with(hash_including(cwd: "/tmp", chat_args: ["--provider", "ollama-cloud"]))
     end
 
     # A SECOND stray positional, because the first is `up`'s PATH now -- a lone

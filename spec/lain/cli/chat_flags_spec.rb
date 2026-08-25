@@ -11,11 +11,15 @@ load File.expand_path("../../../exe/lain", __dir__)
 
 # Mechanical guard: a flag the run READS must be a flag the CLI DECLARES.
 #
-# This exists because the gap it closes is silent in both directions. Thor never
-# calls `check_unknown_options!` here, so an undeclared switch is not refused --
-# `lain chat --isolation worktree` on the code that read `options[:isolation]`
-# without declaring it ran the whole session with Isolation::Null and said
-# nothing. From the other side, every reader falls through to a default
+# This exists because the gap it closes used to be silent in both directions.
+# One of them is loud now: {LainCLI::Boundary} declares `check_unknown_options!`,
+# so `lain chat --isolation worktree` against code that read `options[:isolation]`
+# without declaring it is refused by name at the door, where it once ran the
+# whole session with Isolation::Null and said nothing.
+#
+# The OTHER direction is still silent, and is the whole of why this file
+# survives that fix: a flag declared nowhere and read everywhere is refused only
+# if somebody TYPES it, and every reader falls through to a default
 # (`knob`, `||`, `fetch`), so the flag's absence looks exactly like the operator
 # not passing it. Nothing raises, nothing is journalled, and the feature simply
 # is not there -- which is how four flags shipped unreachable in the
@@ -168,6 +172,21 @@ RSpec.describe "lain chat's flag surface" do
     it "leaves the blind spot exactly where it is pinned" do
       dynamic = reads.select { |read| read.key.nil? }
       expect(dynamic.map(&:path).uniq).to eq(ChatFlags::DYNAMIC.keys)
+    end
+
+    # The half of the header that is no longer silent, asserted rather than
+    # merely claimed: a switch `chat` does not declare is refused at argv, so
+    # the read-implies-declared rule above now has a runtime twin for anything
+    # an operator types. `debug: true` -- Thor renders a refusal as `exit(1)`
+    # and a SystemExit inside an example truncates the run while still
+    # reporting a clean pass.
+    it "refuses a switch chat does not declare, rather than silently ignoring it" do
+      allow(Lain::CLI::ChatLaunch).to receive(:new)
+
+      expect { LainCLI.start(%w[chat --isolatoin worktree], debug: true) }
+        .to raise_error(Thor::UnknownArgumentError, /--isolatoin/)
+
+      expect(Lain::CLI::ChatLaunch).not_to have_received(:new)
     end
   end
 

@@ -429,6 +429,62 @@ RSpec.describe LainCLI, "the survey subcommand" do
     expect(described_class.subcommand_classes["survey"]).to be(LainCLI::Survey)
   end
 
+  # The refusal a human meets for a switch `survey` does not declare, and the
+  # defect this pins: with `check_unknown_options!` declared nowhere, Thor left
+  # `--permissive` in the POSITIONAL remainder, `open` has arity 1, and the
+  # arity error Thor then composed named `survey open` -- `open` being
+  # `default_command`, Thor builds the verb from `ancestor_name` + `name`, so a
+  # word the human never typed entered the sentence they were asked to act on.
+  #
+  # A declaration on LainCLI alone would not have fixed it: Thor's
+  # `check_unknown_options?` returns false for any name registered through
+  # `subcommand`, so `survey` needs its OWN -- which is what makes these
+  # examples worth having here rather than only in `spec/lain/cli_spec.rb`.
+  describe "a switch it does not declare" do
+    it "refuses it, naming the switch" do
+      expect { described_class.start(%w[survey /some/tree --permissive], debug: true) }
+        .to raise_error(Thor::UnknownArgumentError, /--permissive/)
+    end
+
+    # THE AC, and not the same assertion twice: a refusal can name the switch
+    # and still hand the human a verb to go and look up.
+    it "names no verb the human did not type" do
+      message = begin
+        described_class.start(%w[survey /some/tree --permissive], debug: true)
+      rescue Thor::UnknownArgumentError => e
+        e.message
+      end
+
+      expect(message).not_to include("survey open")
+    end
+
+    # What an operator actually meets, with Thor left to render it: a message on
+    # stderr, a nonzero status, and no round opened over the tree regardless.
+    it "exits nonzero and surveys nothing" do
+      allow(Lain::CLI::Survey).to receive(:new)
+
+      expect { described_class.start(%w[survey /some/tree --permissive]) }
+        .to output(/--permissive/).to_stderr
+        .and raise_error(SystemExit) { |error| expect(error.status).not_to eq(0) }
+
+      expect(Lain::CLI::Survey).not_to have_received(:new)
+    end
+
+    # The other direction, in the place a false negative would hurt most: the
+    # two switches `survey` DOES declare still reach the lib. `--scope` carries
+    # an `enum:`, which Thor validates on a different path from `check_unknown!`
+    # -- so a declared flag going quiet here would look exactly like the enum.
+    it "still takes the switches it does declare" do
+      survey = instance_double(Lain::CLI::Survey, present: "drawn")
+      allow(Lain::CLI::Survey).to receive(:new).and_return(survey)
+
+      expect { described_class.start(%w[survey /some/tree --scope by_directory --unbounded], debug: true) }
+        .to output(/drawn/).to_stdout
+
+      expect(survey).to have_received(:present).with("/some/tree", scope: :by_directory, unbounded: true)
+    end
+  end
+
   # What argv MEANS by the time the lib sees it. Doubled at the command class
   # rather than at the filesystem, because the two coercions are the whole
   # subject here and a real survey would answer the same String whichever
