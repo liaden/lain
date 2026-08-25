@@ -1,6 +1,6 @@
 # Chunk: round-11 survey surfaces — what a survey IS, and who may park
 
-status: in-progress
+status: in-progress (wave 1 complete, wave 2 running)
 commit-mode: orchestrator-commits
 language: ruby (with real Lua in the nvim runtime)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson, TJ DeVries (Neovim seat, added for this chunk)
@@ -364,7 +364,7 @@ because merging would join unrelated responsibilities.
 
 ## Tasks
 
-### T1 — Let a Role declare that it answers unattended, and make the child builder honour it   [wave 1] [risk: medium]
+### T1 — Let a Role declare that it answers unattended, and make the child builder honour it   [wave 1] [risk: medium]  ✅ LANDED 5e40f111
 
 **Depends on:** none
 **Files:** modify `lib/lain/role.rb`, `lib/lain/role/catalog.rb`, `lib/lain/tool/spawn_policy.rb`,
@@ -483,7 +483,7 @@ A card that would go green on an empty diff is worse than no card: it passes rev
 
 ---
 
-### T3 — Make an editor-originated reply resolve to its own question   [wave 1] [risk: medium]
+### T3 — Make an editor-originated reply resolve to its own question   [wave 1] [risk: medium]  ✅ LANDED 5cb5545f
 
 **Depends on:** none
 **Files:** modify `lib/lain/frontend/neovim/runtime/70_inbox.lua`, `lib/lain/cli/human_replies.rb`;
@@ -557,7 +557,7 @@ Scenario: a refusal that DOES name a dead question still retires it
 
 ---
 
-### T4 — Let a Review::Source say which sides it presents, and tell the editor   [wave 1] [risk: medium]
+### T4 — Let a Review::Source say which sides it presents, and tell the editor   [wave 1] [risk: medium]  ✅ LANDED 40049380
 
 **Depends on:** none
 **Files:** modify `lib/lain/review/source.rb`, `lib/lain/review/source/corpus.rb`,
@@ -650,7 +650,7 @@ Scenario: a changeset review says two sides on the same rail
 
 ---
 
-### T5 — Tell an unhanded note from no note at all   [wave 1] [risk: low]
+### T5 — Tell an unhanded note from no note at all   [wave 1] [risk: low]  ✅ LANDED e72fdea7
 
 **Depends on:** none
 **Files:** modify `lib/lain/frontend/neovim/runtime/51_thread.lua`;
@@ -711,7 +711,7 @@ Scenario: no refusal raises
 
 ---
 
-### T6 — Stop a settled round from holding the gesture rails   [wave 1] [risk: medium]
+### T6 — Stop a settled round from holding the gesture rails   [wave 1] [risk: medium]  ✅ LANDED 60be33f2
 
 **Depends on:** none
 **Files:** modify `lib/lain/review/submit/outbox.rb`, `lib/lain/cli/command/survey.rb`,
@@ -785,7 +785,7 @@ Scenario: the settled round is still submittable until another replaces it
 
 ---
 
-### T7 — Name a surveyed file the same way in every row that shows it   [wave 1] [risk: low]
+### T7 — Name a surveyed file the same way in every row that shows it   [wave 1] [risk: low]  ✅ LANDED d18b579c
 
 **Depends on:** none
 **Files:** modify `lib/lain/frontend/neovim/review_view.rb`;
@@ -850,7 +850,7 @@ Scenario: an in-project path is unchanged
 
 ---
 
-### T8 — Refuse unknown switches in exe/lain, on every subcommand   [wave 1] [risk: medium]
+### T8 — Refuse unknown switches in exe/lain, on every subcommand   [wave 1] [risk: medium]  ✅ LANDED 380efe62
 
 **Depends on:** none
 **Files:** modify `exe/lain`; modify `spec/lain/cli_spec.rb`, `spec/lain/cli/survey_spec.rb`,
@@ -914,7 +914,7 @@ Scenario: every declared flag still works
 
 ---
 
-### T9 — Name scopes in prose, not in Ruby inspect   [wave 1] [risk: low]
+### T9 — Name scopes in prose, not in Ruby inspect   [wave 1] [risk: low]  ✅ LANDED e08b6cd2
 
 **Depends on:** none
 **Files:** modify `lib/lain/review/session/scope.rb`; modify `spec/lain/review/session_spec.rb`
@@ -973,7 +973,7 @@ Scenario: the vocabulary still comes from the registry
 
 ---
 
-### T10 — Say what Projection actually guarantees   [wave 1] [risk: low]
+### T10 — Say what Projection actually guarantees   [wave 1] [risk: low]  ✅ LANDED 0669d378
 
 **Depends on:** none
 **Files:** modify `lib/lain/survey/projection.rb` (documentation);
@@ -1323,7 +1323,7 @@ Scenario: the sentence keeps the shape every other ceiling uses
 - **If the advice starts naming a specific subdirectory, stop.** That needs a `Changeset` the
   constructor does not have and a walk the card exists to avoid.
 
-### T14 — Purge stale `--yolo` prose from live code comments and design docs   [wave 1] [risk: low]
+### T14 — Purge stale `--yolo` prose from live code comments and design docs   [wave 1] [risk: low]  ✅ LANDED 12de4d37
 
 **Depends on:** none
 **Files:** modify `planning/first-class-concepts.md`
