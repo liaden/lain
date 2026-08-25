@@ -95,7 +95,13 @@ end
 
 define("LainOpen", function()
   if vim.api.nvim_buf_get_name(0) ~= INBOX then
-    vim.notify("lain: :LainOpen opens the question set under the cursor in " .. INBOX, vim.log.levels.WARN)
+    -- ON THE RAIL, NOT ON `vim.notify`: `51_thread.lua` carries the measurement
+    -- -- a plain notify blocks at roughly `#sentence + 12 > columns`, so it
+    -- raises the very hit-enter prompt a refusal must not. The rail fits the
+    -- line, keeps the whole sentence in `:messages`, and prepends the `lain: `
+    -- this string therefore does not.
+    -- `spec/refusal_delivery_discipline_spec.rb` is the gate.
+    _G.__lain.review_refused(":LainOpen opens the question set under the cursor in " .. INBOX)
     return
   end
   local buf = vim.api.nvim_get_current_buf()
@@ -163,7 +169,12 @@ local function submit_reply(answer)
   local buf = vim.api.nvim_get_current_buf()
   local line = vim.api.nvim_win_get_cursor(0)[1]
   if inbox_row(cached_lines(buf), line) == nil then
-    vim.notify("lain: that line names no question set -- answer from a listed row", vim.log.levels.WARN)
+    -- ON THE RAIL, NOT ON `vim.notify`, for the reason `:LainOpen` above
+    -- records: a plain notify raises the hit-enter prompt a refusal must not.
+    -- `submit_reply` is a helper, but its callers are `define`d callbacks, so
+    -- the door it reaches is theirs. The rail prepends the `lain: ` this
+    -- string therefore does not.
+    _G.__lain.review_refused("that line names no question set -- answer from a listed row")
     return
   end
   vim.rpcrequest(chan, "lain_command", "reply", { answer, line, vim.b[buf].lain_view_generation })

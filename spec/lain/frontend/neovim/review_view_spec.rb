@@ -1102,6 +1102,23 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       expect(keys.uniq.size).to eq(Lain::Review::MARK_STATES.size)
     end
 
+    # ON THE RAIL RATHER THAN RAISED (F72), and what is asserted about the WIRE
+    # is untouched: nothing is sent, which is the rule this example exists for.
+    # What changed is `ok`. This used to `error()` out of the callback, and nvim
+    # appends its own `stack traceback:` to anything escaping a `define`d one --
+    # then raises a hit-enter prompt behind which every non-fast RPC request
+    # queues, so the editor answers nothing at all while the refusal is up. It
+    # answers through `__lain.review_refused` now, so the command COMPLETES and
+    # the vocabulary is read off nvim's message history instead of off the
+    # error. `spec/refusal_delivery_discipline_spec.rb` is the mechanical half;
+    # this is what a human actually sees.
+    #
+    # `width` comes back beside the text because this sentence splices a closed
+    # vocabulary in with `table.concat`: the discipline spec can measure only
+    # its literal FRAME, and `refusal_width_discipline_spec.rb` is pure Ripper
+    # and cannot read a lua string at all. So the 80-column budget is enforced
+    # for this sentence HERE and nowhere else -- it shipped at 91 until it was
+    # measured. `strdisplaywidth`, because columns are what page.
     it "refuses a state Ruby has no spelling for rather than putting it on the wire" do
       set_review(%w[one two], 7)
       outcome = lua(<<~LUA, [review_buffer])
@@ -1110,14 +1127,27 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
         vim.api.nvim_set_current_buf(vim.fn.bufnr(...))
         local original = vim.rpcrequest
         vim.rpcrequest = function() seen = true end
-        local ok, err = pcall(vim.cmd, "LainReviewMark revewed")
+        local ok = pcall(vim.cmd, "LainReviewMark revewed")
         vim.rpcrequest = original
         vim.api.nvim_set_current_buf(restore)
-        return { sent = seen, ok = ok, err = tostring(err) }
+        local shown = vim.api.nvim_exec2("messages", { output = true }).output
+        local rail = vim.split(shown, "\\n")
+        local line = ""
+        for _, one in ipairs(rail) do
+          if vim.startswith(one, "lain: ") then line = one end
+        end
+        return { sent = seen, ok = ok, shown = shown, line = line, width = vim.fn.strdisplaywidth(line) }
       LUA
 
-      expect(outcome).to include("sent" => false, "ok" => false)
-      expect(outcome["err"]).to include(*Lain::Review::MARK_STATES)
+      expect(outcome).to include("sent" => false, "ok" => true)
+      expect(outcome["line"]).to start_with("lain: :LainReviewMark's state is one of")
+      expect(outcome["line"]).to include(*Lain::Review::MARK_STATES)
+      # 80 is `RefusalWidthDiscipline::BAR` (spec/refusal_width_discipline_spec.rb),
+      # spelled out because that constant is not loaded here. If the budget ever
+      # moves, `grep -rn 'be <= 80' spec/` is what finds this and its two siblings.
+      expect(outcome["width"]).to be <= 80
+      expect(outcome["shown"]).not_to include("stack traceback")
+      expect(outcome["shown"]).not_to include("lain: lain:")
     end
 
     it "refuses :LainReviewMark outside lain://review rather than marking a row nobody looked at" do

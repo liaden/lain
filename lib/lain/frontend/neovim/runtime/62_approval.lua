@@ -210,8 +210,21 @@ end
 local function submit_approval(verdict)
   local buf = vim.api.nvim_get_current_buf()
   if vim.api.nvim_buf_get_name(buf) ~= lain_approval.NAME then
-    vim.notify("lain: :LainApprove and :LainDeny answer the call under the cursor in " .. lain_approval.NAME,
-      vim.log.levels.WARN)
+    -- ON THE RAIL, NOT ON `vim.notify`, exactly as the sentence above promises
+    -- a REFUSED answer arrives: `51_thread.lua` measured a plain notify blocking
+    -- at roughly `#sentence + 12 > columns`, which is the hit-enter prompt this
+    -- module's own comment says an answer must never sit behind. The rail
+    -- prepends the `lain: ` this string therefore does not.
+    --
+    -- `spec/refusal_delivery_discipline_spec.rb` does NOT reach this line:
+    -- it bounds itself to what is written inside a `define(...)` call, and this
+    -- is one call further down, in the helper both commands share. Converted by
+    -- hand, and recorded here because a reviewer is the only thing that catches
+    -- the next refusal placed in a helper.
+    -- `need the cursor on a call in` rather than `answer the call under the
+    -- cursor in`, which measured 84 against the 80-column budget.
+    _G.__lain.review_refused(":LainApprove and :LainDeny need the cursor on a call in " ..
+      lain_approval.NAME)
     return
   end
   local line = vim.api.nvim_win_get_cursor(0)[1]

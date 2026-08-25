@@ -127,11 +127,21 @@ end
 -- that can say so. It answers with a refusal the human sees on the same rail a
 -- refused :LainReviewDone answers on, which is a better outcome than a lua-side
 -- pattern match on rendered text that would have to be kept in step with it.
+--
+-- AND SO DOES THE BUFFER GUARD BELOW, which used to `vim.notify`. THE SAME RAIL
+-- FOR BOTH IS THE POINT -- a refusal that comes back from Ruby and one this
+-- command makes for itself are the same thing to the human reading it, and
+-- `51_thread.lua` measured what the other door costs: a plain notify blocks at
+-- roughly `#sentence + 12 > columns`, which is the hit-enter prompt every
+-- non-fast RPC request then queues behind. `review_refused` fits the line,
+-- folds the rest into `:messages`, supplies its own highlight (so there is no
+-- level argument) and prepends the `lain: ` these strings therefore do not.
+-- Every refusal in this module rides it now, and
+-- `spec/refusal_delivery_discipline_spec.rb` is what keeps it that way.
 define("LainReviewOpen", function()
   local buf = vim.api.nvim_get_current_buf()
   if vim.api.nvim_buf_get_name(buf) ~= review_sidebar.NAME then
-    vim.notify("lain: :LainReviewOpen opens the file under the cursor in " .. review_sidebar.NAME,
-      vim.log.levels.WARN)
+    _G.__lain.review_refused(":LainReviewOpen opens the file under the cursor in " .. review_sidebar.NAME)
     return
   end
   local line = vim.api.nvim_win_get_cursor(0)[1]
@@ -156,17 +166,33 @@ end)
 --
 -- ACKED, so nothing here reads a return value: a refusal comes back on the
 -- rail `__lain.review_refused` renders, exactly as a refused open does.
+--
+-- AND SO DOES THE ONE RAISED HERE, which is what makes that sentence true of
+-- BOTH refusals rather than only the far side's. A state lain has no spelling
+-- for used to `error()` out of this callback, and nvim appends its own
+-- `stack traceback:` to anything that escapes one -- `error(msg, 0)` included --
+-- then raises a hit-enter prompt that queues every non-fast RPC request. So the
+-- editor stopped answering lain exactly while a refusal naming the vocabulary
+-- was on screen. `spec/refusal_delivery_discipline_spec.rb` is the gate that
+-- keeps it that way.
 define("LainReviewMark", function(opts)
   local buf = vim.api.nvim_get_current_buf()
   if vim.api.nvim_buf_get_name(buf) ~= review_sidebar.NAME then
-    vim.notify("lain: :LainReviewMark marks the row under the cursor in " .. review_sidebar.NAME,
-      vim.log.levels.WARN)
+    _G.__lain.review_refused(":LainReviewMark marks the row under the cursor in " .. review_sidebar.NAME)
     return
   end
   local state = opts.fargs[1]
   if review_sidebar.MARK_KEYS[state] == nil then
-    error("lain: :LainReviewMark's argument is the state -- one of " ..
-      table.concat(review_sidebar.states(), ", ") .. " -- got " .. tostring(state), 0)
+    -- NO `lain: ` PREFIX: the rail prepends one (`65_review.lua`), and spelling
+    -- it here too reached the human as `lain: lain: ...`.
+    --
+    -- `'s state is one of` rather than `'s argument is the state -- one of`,
+    -- which measured 91 with an ordinary mistyped state and so paged. The
+    -- vocabulary is 20 columns, the frame 39, and the word they typed goes
+    -- LAST, where a shortened echo truncates their text and not lain's.
+    _G.__lain.review_refused(":LainReviewMark's state is one of " ..
+      table.concat(review_sidebar.states(), ", ") .. " -- got " .. tostring(state))
+    return
   end
   local line = vim.api.nvim_win_get_cursor(0)[1]
   vim.rpcrequest(chan, "lain_command", "review_mark", { line, state, vim.b[buf].lain_view_generation })
@@ -320,8 +346,8 @@ define("LainSurveyAdd", function()
   local buf = vim.api.nvim_get_current_buf()
   local name = vim.api.nvim_buf_get_name(buf)
   if name == "" or vim.bo[buf].buftype ~= "" then
-    vim.notify("lain: :LainSurveyAdd needs a real file buffer, not " ..
-      (name == "" and "an unnamed one" or name), vim.log.levels.WARN)
+    _G.__lain.review_refused(":LainSurveyAdd needs a real file buffer, not " ..
+      (name == "" and "an unnamed one" or name))
     return
   end
   vim.rpcrequest(chan, "lain_command", "survey_add",

@@ -26,7 +26,12 @@
 -- up BY NAME rather than reading whatever window happens to be current.
 define("LainPin", function()
   if vim.api.nvim_buf_get_name(0) ~= TIMELINE then
-    vim.notify("lain: :LainPin pins the turn under the cursor in " .. TIMELINE, vim.log.levels.WARN)
+    -- ON THE RAIL, NOT ON `vim.notify`: `51_thread.lua` carries the measurement
+    -- -- a plain notify blocks at roughly `#sentence + 12 > columns`, so it
+    -- raises the very hit-enter prompt a refusal must not. The rail fits the
+    -- line and prepends the `lain: ` this string therefore does not.
+    -- `spec/refusal_delivery_discipline_spec.rb` is the gate.
+    _G.__lain.review_refused(":LainPin pins the turn under the cursor in " .. TIMELINE)
     return
   end
   vim.rpcrequest(chan, "lain_command", "pin", { vim.api.nvim_win_get_cursor(0)[1] })

@@ -183,6 +183,21 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
   # every assertion added since is anchored rather than merely containing.
   def echoed = messages.lines.map(&:chomp)
 
+  # The one rail sentence this example provoked, ANCHORED -- `echoed`'s reason,
+  # applied where the assertion needs the line's text rather than its presence.
+  # Fails loudly on none and on two, because "which sentence did the human
+  # read" has no answer in either case.
+  def rail_line
+    found = echoed.grep(/\Alain: /)
+    raise "expected exactly one rail line, got #{found.inspect}" unless found.one?
+
+    found.first
+  end
+
+  # COLUMNS, not characters: `65_review.lua`'s `fitted` pages on display width,
+  # so that is what a budget in columns has to be measured in.
+  def displayed_width(line) = lua("return vim.fn.strdisplaywidth(...)", [line])
+
   # The refusal rail's OPERATIONAL half, which `messages` alone cannot state.
   # F25 measured the mechanism and `neovim_runtime_spec.rb` pins it: a message
   # the area cannot hold raises a hit-enter prompt, and every non-fast RPC
@@ -271,6 +286,14 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
     # buffer is not a review buffer forever -- reading the variable IS the check,
     # and there is no buffer-name parsing anywhere in this module for exactly
     # that reason.
+    #
+    # ON THE RAIL RATHER THAN RAISED (F72), `:LainNoteDone`'s correction one
+    # function up applied to the three refusals `:LainNote` makes itself: an
+    # `error()` escaping a `define`d callback wears nvim's own
+    # `stack traceback:` however it was raised, and with a UI attached raises a
+    # hit-enter prompt behind which every non-fast RPC request queues. So the
+    # command COMPLETES (`ok` true) and the sentence is read off the message
+    # rail. What is asserted about the notes and the wire is untouched.
     it "refuses a buffer lain does not have open for review" do
       open_changeset("docs/guide.txt", guide_old_lines)
 
@@ -280,8 +303,10 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
         return { ok, tostring(err) }
       LUA
 
-      expect(answer.first).to be(false)
-      expect(answer.last).to include("review")
+      expect(answer.first).to be(true)
+      expect(echoed).to include(a_string_starting_with("lain: :LainNote needs a buffer lain has open"))
+      expect(messages).not_to include("stack traceback")
+      expect(messages).not_to include("lain: lain:")
     end
 
     # The kind is a closed set, and an unrecognised one must fail HERE rather
@@ -293,9 +318,28 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
 
       answer = refusal("new", 3, "praise this is lovely")
 
-      expect(answer.first).to be(false)
-      expect(answer.last).to include("note", "question", "blocker", "praise")
+      expect(answer.first).to be(true)
+      expect(rail_line).to include("blocker, note, question").and include("praise")
+      expect(messages).not_to include("stack traceback")
       expect(marks_on(buf_in(slots.fetch("new")))).to be_empty
+    end
+
+    # THE ONLY PLACE THIS SENTENCE'S REAL WIDTH IS MEASURED. It splices a closed
+    # vocabulary in with `table.concat`, so
+    # `spec/refusal_delivery_discipline_spec.rb` can only measure its literal
+    # FRAME -- and `refusal_width_discipline_spec.rb` is pure Ripper and cannot
+    # see a lua string at all. Between them the budget was unenforced here, and
+    # this sentence shipped at 92 columns until it was measured. `strdisplaywidth`
+    # rather than `String#length`, because columns are what page.
+    it "keeps the kind refusal inside the 80-column budget the rail is written to" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+
+      refusal("new", 3, "praise this is lovely")
+
+      # 80 is `RefusalWidthDiscipline::BAR` (spec/refusal_width_discipline_spec.rb),
+      # spelled out because that constant is not loaded here. If the budget ever
+      # moves, `grep -rn 'be <= 80' spec/` is what finds this and its two siblings.
+      expect(displayed_width(rail_line)).to be <= 80
     end
 
     it "refuses a note with no words in it" do
@@ -303,8 +347,25 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
 
       answer = refusal("new", 3, "blocker")
 
-      expect(answer.first).to be(false)
+      expect(answer.first).to be(true)
+      expect(echoed).to include(a_string_starting_with("lain: :LainNote blocker needs the note itself"))
       expect(marks_on(buf_in(slots.fetch("new")))).to be_empty
+    end
+
+    # The sibling of the measurement above, and the sentence that made the
+    # panel's case: at 109 columns it was elided even in the cockpit's own
+    # 110-column pane, and because `fitted` keeps HEAD AND TAIL the clause it
+    # dropped was the instruction -- a human read `lain: :LainNote question
+    # needs  ... nothing in it records no opinion`.
+    it "keeps the empty-note refusal inside the 80-column budget" do
+      open_changeset("docs/guide.txt", guide_old_lines)
+
+      refusal("new", 3, "question")
+
+      # 80 is `RefusalWidthDiscipline::BAR` (spec/refusal_width_discipline_spec.rb),
+      # spelled out because that constant is not loaded here. If the budget ever
+      # moves, `grep -rn 'be <= 80' spec/` is what finds this and its two siblings.
+      expect(displayed_width(rail_line)).to be <= 80
     end
 
     # AC5. Right-aligned is what keeps the marker off the code -- the whole

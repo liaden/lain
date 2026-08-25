@@ -273,7 +273,14 @@ vim.api.nvim_create_autocmd("BufUnload", {
 define("LainAnnotate", function()
   local buf = vim.api.nvim_get_current_buf()
   local namespace = vim.b[buf].lain_annotation_namespace
-  if namespace == nil then error("lain: :LainAnnotate needs an open lain review", 0) end
+  -- ON THE RAIL AND RETURN, never `error()`: nvim appends `stack traceback:` to
+  -- anything escaping a `define`d callback and raises a hit-enter prompt behind
+  -- which every non-fast RPC request queues. No `lain: ` prefix -- the rail
+  -- above prepends one. `spec/refusal_delivery_discipline_spec.rb` is the gate.
+  if namespace == nil then
+    _G.__lain.review_refused(":LainAnnotate needs an open lain review")
+    return
+  end
   local row = vim.api.nvim_win_get_cursor(0)[1] - 1
   vim.ui.input({ prompt = "Annotation: " }, function(text)
     if text and text ~= "" then

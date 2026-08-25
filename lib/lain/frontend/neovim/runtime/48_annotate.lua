@@ -431,21 +431,44 @@ end
 -- command returns -- harmless there because nothing is sent, but here it would
 -- put the placement SEQUENCE at the mercy of how fast the human types into two
 -- overlapping prompts, and the sequence is this card's whole output.
+-- ALL THREE REFUSALS RIDE `__lain.review_refused` AND RETURN, which is
+-- `:LainNoteDone`'s rail one function down and F72's fix. They used to
+-- `error()`, and nvim appends its own `stack traceback:` to anything escaping a
+-- `define`d callback -- `error(msg, 0)` included, because the traceback is
+-- nvim's outer wrapper's doing -- then raises a hit-enter prompt behind which
+-- every non-fast RPC request queues. That is F30's shape at a second site: the
+-- editor answers nothing at all, including the `:messages` the refusal tells
+-- them to read, until a human presses a key. NONE OF THE THREE SPELLS `lain: `
+-- any more, for `assert_saved`'s reason above: the rail prepends one.
+-- `spec/refusal_delivery_discipline_spec.rb` is the gate.
 define("LainNote", function(opts)
   local buf = vim.api.nvim_get_current_buf()
   local stamp = review_notes.stamp(buf)
   if stamp == nil then
-    error("lain: :LainNote needs a buffer lain has open for review", 0)
+    _G.__lain.review_refused(":LainNote needs a buffer lain has open for review")
+    return
   end
   local kind = opts.fargs[1]
   if review_notes.MARKERS[kind] == nil then
-    error("lain: :LainNote's first argument is the kind -- one of " ..
-      table.concat(review_notes.kinds(), ", ") .. " -- got " .. tostring(kind), 0)
+    -- THE VOCABULARY IS 23 COLUMNS AND THE FRAME IS 33, so the whole sentence
+    -- fits the 80-column budget with a word of theirs on the end. It used to
+    -- read `:LainNote's first argument is the kind`, which was 92 with an
+    -- ordinary mistyped kind -- over the bar, and paged.
+    _G.__lain.review_refused(":LainNote's kind is one of " ..
+      table.concat(review_notes.kinds(), ", ") .. " -- got " .. tostring(kind))
+    return
   end
   local text = opts.args:match("^%S+%s+(.*)$")
   if text == nil or text:match("^%s*$") ~= nil then
-    error("lain: :LainNote " .. kind .. " needs the note itself after the kind -- " ..
-      "a note with nothing in it records no opinion", 0)
+    -- THE REMEDY IS THE WHOLE SENTENCE NOW, and the `why` it used to carry --
+    -- `a note with nothing in it records no opinion` -- lives here instead.
+    -- That clause put the sentence at 109 columns, so `fitted` elided its
+    -- MIDDLE, and because `fitted` keeps head and tail the part it dropped was
+    -- the instruction: at 80 columns a human read `lain: :LainNote question
+    -- needs  ... nothing in it records no opinion`. 51_thread's rule, paid for
+    -- here: a sentence over the budget loses the thing it exists to say.
+    _G.__lain.review_refused(":LainNote " .. kind .. " needs the note itself after the kind")
+    return
   end
   review_notes.place(buf, stamp, kind, text)
 end, {

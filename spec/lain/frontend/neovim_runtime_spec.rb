@@ -2294,4 +2294,114 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
   end
+
+  # C1/F72, and the operational half of
+  # `spec/refusal_delivery_discipline_spec.rb`. `define`
+  # (`runtime/30_commands.lua:8-11`) does not rescue -- its only `pcall` guards
+  # the idempotent delete -- so an `error()` inside a user-command callback
+  # escapes into nvim, which appends its own `stack traceback:` and, with a UI
+  # attached, raises the hit-enter prompt the block above measures. Behind that
+  # prompt every non-fast RPC request queues, so the editor answers nothing at
+  # all while a refusal naming the recovery is on screen. F31 fixed that at
+  # `:LainNoteDone`; F72 found the same defect at `:LainNote`, and
+  # `:LainReviewMark` and `:LainAnnotate` carried it too.
+  #
+  # THE OTHER DOOR IS `vim.notify`, and it reaches the same prompt by WIDTH
+  # rather than by a raise -- `51_thread.lua` carries the measurement, roughly
+  # `#sentence + 12 > columns`. Six such refusals were converted with the
+  # raising ones, so the last example here drives one of those instead.
+  #
+  # THE UI ATTACH IS LOAD-BEARING for the reason the width block records:
+  # measured on nvim 0.12, with no UI attached nvim never raises the prompt, so
+  # a headless assertion here would be a pass taken over nothing. TYPED rather
+  # than sent for the neighbouring reason -- an error escaping an
+  # `nvim_exec_lua` NOTIFY is dropped on the floor, and only keys fed to the
+  # main loop put a callback's failure where a human sees it.
+  describe "a user command that refuses" do
+    def attach_ui(columns: 60, lines: 20)
+      inspector.session.request(:nvim_ui_attach, columns, lines, { "rgb" => true, "ext_linegrid" => true })
+    end
+
+    def typed(keys) = inspector.session.request(:nvim_input, keys)
+
+    def message_history
+      inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+    end
+
+    # The width block's sampler, for its reason: `nvim_get_mode` is one of the
+    # two calls nvim answers WHILE it is blocked, so it can be answered before
+    # the keys queued ahead of it have run, and an early "not blocking" would be
+    # a pass taken before the subject acted.
+    def settled_mode(window: 0.5)
+      deadline = Time.now + window
+      modes = [inspector.session.request(:nvim_get_mode)]
+      while Time.now < deadline
+        sleep 0.02
+        modes << inspector.session.request(:nvim_get_mode)
+      end
+      modes.find { |mode| mode["blocking"] } || modes.last
+    end
+
+    # `mode` is read beside `blocking` because nvim spells the hit-enter family
+    # with a leading "r" -- "r" for the prompt, "rm" for `-- More --`, "r?" for
+    # a confirm query -- and only one of the three is what this raises today.
+    it "refuses :LainNote outside a review buffer without a traceback or a hit-enter prompt" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        attach_ui
+        typed(":LainNote note hello\r")
+        mode = settled_mode
+
+        expect(mode).to include("blocking" => false)
+        expect(mode["mode"]).not_to start_with("r")
+        expect(message_history).not_to include("stack traceback")
+      ensure
+        typed("\r")
+      end
+    end
+
+    # The prefix lives in ONE place -- `review_refused` prepends it
+    # (`runtime/65_review.lua`) -- so a converted sentence that still spells its
+    # own reached a human as `lain: lain: ...` for a whole card before it was
+    # caught. Anchored at the start of a LINE rather than merely contained,
+    # which is what makes "exactly once" sayable at all.
+    it "prefixes the refusal exactly once, on one line of the message history" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        attach_ui
+        typed(":LainNote note hello\r")
+        settled_mode
+
+        history = message_history
+        expect(history).to include("lain: :LainNote needs a buffer lain has open for review")
+        expect(history).not_to include("lain: lain:")
+        expect(history.lines.map(&:chomp).grep(/\Alain: /).size).to eq(1)
+      ensure
+        typed("\r")
+      end
+    end
+
+    # The notified half. `:LainPin` reads the CURRENT window's cursor, so fired
+    # from anywhere but lain://timeline it would pin a turn the human never
+    # looked at -- it refuses instead, and used to do that through `vim.notify`,
+    # which writes the same message area with none of the rail's fitting. The
+    # editor is on lain://journal here, which is where attach leaves it.
+    it "refuses :LainPin off the timeline on the rail, prefixed once" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        attach_ui
+        typed(":LainPin\r")
+        mode = settled_mode
+
+        expect(mode).to include("blocking" => false)
+        expect(message_history).to include("lain: :LainPin pins the turn under the cursor")
+        expect(message_history).not_to include("lain: lain:")
+      ensure
+        typed("\r")
+      end
+    end
+  end
 end

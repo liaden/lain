@@ -1089,17 +1089,28 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # human -- thread_view_spec's idiom, and the only way to read a `vim.notify`
   # back out of a headless nvim. The command is run INSIDE the swap so the
   # notify cannot escape to the real one between the two statements.
-  def notified_reply(bufname, cursor, answer = "postgres")
-    seat(bufname, cursor)
-    inspector.exec_lua(<<~LUA, [answer])
-      local answer = ...
+  # A refusal reaches the human through one of two doors, and which one is a
+  # property of the site: `submit_reply`'s moved to the rail (C1/F72) because a
+  # helper one call down from a `define`d callback raises the same hit-enter
+  # prompt, while its siblings here still notify. Capturing both keeps a
+  # reading honest whichever door a given refusal uses. The rail's argument
+  # carries no `lain: ` -- `review_refused` prepends that itself.
+  def capturing_refusals(command)
+    inspector.exec_lua(<<~LUA, [command])
+      local command = ...
       local seen = {}
-      local original = vim.notify
-      vim.notify = function(message) table.insert(seen, message) end
-      pcall(vim.cmd, "LainReply " .. answer)
-      vim.notify = original
+      local capture = function(message) table.insert(seen, message) end
+      local notify, rail = vim.notify, _G.__lain.review_refused
+      vim.notify, _G.__lain.review_refused = capture, capture
+      pcall(vim.cmd, command)
+      vim.notify, _G.__lain.review_refused = notify, rail
       return seen
     LUA
+  end
+
+  def notified_reply(bufname, cursor, answer = "postgres")
+    seat(bufname, cursor)
+    capturing_refusals("LainReply #{answer}")
   end
 
   def parent_chain(seed)
