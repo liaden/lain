@@ -38,11 +38,28 @@ module Lain
     #
     # {Middleware::RedactSecretReads}' argument, one layer over: unreleased bytes
     # must never exist above the thing that remembers them. Above the source,
-    # the session, the surfaces, the journal and the docent see only released
+    # the session, the journal, the docent and the model see only released
     # bytes, so no survey artifact can carry an unreleased secret -- and unit
     # keys and the corpus address digest the PROJECTION, so a release
     # legitimately changes what the survey can show and the affected units
     # honestly demand a re-read.
+    #
+    # One surface is NOT that artifact and this guarantee does not cover it:
+    # on a SURVEY, the window `:LainNote` operates on -- the diff's `new`
+    # slot, the only slot a survey ever opens, since a corpus has no old
+    # side -- shows the file on disk, unprojected, deliberately. A survey is
+    # a survey of project STATE, and the note rail needs the real file: that
+    # slot is a REAL file buffer the human can edit (`51_thread.lua:140-144`),
+    # not a rendering this class produced. (This is deliberately a
+    # SURVEY-specific claim, not a general one about "the annotation pane" --
+    # there is no such slot; `41_layout.lua:51`'s vocabulary is `sidebar`,
+    # `old`, `new`. A changeset review's note rail can also mark `old`, a
+    # `nofile` git-show buffer, which is NOT the file on disk.) The survey
+    # case is the same fact stated below in different words: a human can
+    # always open their own file in their own editor. Unprojected bytes
+    # there are correct, not a leak -- what WOULD be a leak is unprojected
+    # bytes inside the artifact itself: the journal, the docent brief, a
+    # `/critique` prefill.
     #
     # == The ledger is the run's one ledger
     #

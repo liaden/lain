@@ -183,10 +183,21 @@ Then the disclosure's own rule, both directions:
 - over `$T` with the planted files removed: **nothing at all**. A note on every ordinary survey is
   the noise the requirement was written against.
 
-**And open `deploy.pem`'s row.** `<redacted:1>` must be what is in the buffer — not the key with a
-marker beside it. The masked bytes are what the session, the surfaces, the journal and the docent
-see; a survey artifact carrying an unreleased secret is the highest-severity finding this scenario
-can produce.
+**The projection guarantee above is about the survey ARTIFACT** — the banner's disclosure block just
+checked, the corpus digest, the journal, and anything a docent question sends to the model. Confirm
+`<redacted:1>` there, not raw bytes, and that is the highest-severity finding this scenario can
+produce if it goes wrong.
+
+**Then open `deploy.pem`'s row anyway, and expect the raw key.** A corpus has no old side, so a
+survey's row always opens on the diff's `new` slot — the buffer that opens is a REAL file buffer
+read straight from disk (`review_diff.new_side`, `47_diff.lua:184-191`) — not a rendering this
+survey produced. (This is specific to a survey's `new` slot, not "the note rail" in general: a
+changeset review's note rail can also mark `old`, a `nofile` git-show buffer, not the file on
+disk.) Seeing the raw key there is
+**correct, not a leak**: `/survey` opens the raw file on purpose (round-11 ruling) because a survey
+is a survey of project *state* and the human is opening their own file in their own editor
+(`projection.rb:79-80`). **Do not re-file this as a leak** — it is only a finding if the *artifact*
+checked in the paragraph above carries the raw key, not if the opened buffer does.
 
 ## 5. One review surface per chat
 
