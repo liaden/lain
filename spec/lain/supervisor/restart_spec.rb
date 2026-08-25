@@ -385,6 +385,31 @@ RSpec.describe Lain::Supervisor::Restart do
       end
     end
 
+    # #call's own raise contract (@raise Bench::Session::Corrupt) names ONE
+    # currency, but #replay's rescue wraps the fold's own Corrupt in a second,
+    # role-attributed one -- so the fold's refusal must survive as the CAUSE,
+    # never silently dropped, or an operator chasing the digest this names
+    # loses the fold's own reasoning about which record and edge it was.
+    it "raises with the fold's own refusal preserved as the cause, not a bare re-raise" do
+      provider = Lain::Provider::Mock.new(responses: life_responses)
+
+      Sync do |task|
+        record_killed_actor(task, provider:)
+        supervisor = Lain::Supervisor.new.run(task)
+        error = nil
+
+        begin
+          restart_over(dangling_parent_record, supervisor:)
+        rescue Lain::Bench::Session::Corrupt => e
+          error = e
+        end
+
+        expect(error.cause).to be_a(Lain::Bench::Session::Corrupt)
+        expect(error.cause.message).to include("cites a causal parent this fold never landed")
+        supervisor.stop
+      end
+    end
+
     it "refuses a malformed causal parent in the SAME currency, never a raw store complaint" do
       provider = Lain::Provider::Mock.new(responses: life_responses)
 
@@ -417,6 +442,49 @@ RSpec.describe Lain::Supervisor::Restart do
         expect(supervisor.map(&:role)).to eq(["researcher"])
         supervisor.stop
       end
+    end
+  end
+
+  # ---- The MissingObject arm, pinned synthetically -----------------------
+  #
+  # #replay's rescue also names Store::MissingObject beside Corrupt
+  # (restart.rb:148), and the investigation behind this card (see the
+  # hand-back) found it is NOT reachable through any journal this suite can
+  # construct: both ChainFold and MessageReplay now shape-check the causal
+  # edge before it ever reaches the Store, closing the one gap that used to
+  # let it through. The arm is kept anyway -- restart.rb's own comment says
+  # so, pointing at CLI::Resume#fork's reasoning -- because "provably
+  # unreachable" was believed here once before and was wrong: 6e86c1a1
+  # (2026-08-19) is the commit that closed the gap AND is the commit that
+  # deliberately kept this exact arm, the same author, the same diff, citing
+  # a real prior incident (resume_spec.rb's own account) where the identical
+  # belief left `--resume` leaking a raw Store::MissingObject backtrace while
+  # `--fork`'s sibling arm refused the SAME damaged file namedly -- which
+  # door a user came through decided whether they were told anything useful.
+  #
+  # So this is driven SYNTHETICALLY, on purpose, and says so: the Loader is
+  # stubbed to raise the bare Store error directly, because nothing organic
+  # does. What this pins is the NORMALIZATION contract the defensive arm
+  # exists to guarantee -- if the Store's own refusal ever reaches #replay,
+  # it lands as Corrupt, naming the role, with the original message intact --
+  # so a future pass that re-runs this card's reachability analysis, reaches
+  # the same "unreachable" conclusion, and deletes the arm on that basis
+  # alone gets a red example here instead of silently repeating the
+  # `--resume`/`--fork` asymmetry a third time.
+  it "normalizes a bare Store::MissingObject into Corrupt naming the role (the defensive arm, pinned)" do
+    loader = instance_double(Lain::Bench::Session::Loader)
+    allow(Lain::Bench::Session::Loader).to receive(:new).and_return(loader)
+    allow(loader).to receive(:recording)
+      .and_raise(Lain::Store::MissingObject, "no object \"blake3:deadbeef\" in store")
+
+    Sync do |task|
+      supervisor = Lain::Supervisor.new.run(task)
+
+      expect { restart_over([], supervisor:) }.to raise_error(Lain::Bench::Session::Corrupt) do |error|
+        expect(error.message).to include("researcher", "no object \"blake3:deadbeef\" in store")
+      end
+
+      supervisor.stop
     end
   end
 
