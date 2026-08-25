@@ -502,7 +502,30 @@ RSpec.describe "plugin/tmux" do
     # the async status-bar refresh timing up_spec.rb records as the flake to
     # avoid. This is what makes the hostile-cwd regression below honest: the
     # expansion, not the spec, decides what the shell sees.
+    def pane_path(target) = tmux("display-message", "-p", "-t", target, "\#{pane_current_path}")
+
+    # tmux resolves a pane's cwd by reading the /proc entry of the pane's
+    # FOREGROUND PROCESS GROUP, at expansion time -- so a pane whose shell has
+    # not been made that group yet expands `#{pane_current_path}` to nothing,
+    # and nothing is not a visible failure here: the job then carries no path
+    # argument at all, `lain.tmux` falls back to `$PWD` (the rspec process's
+    # cwd, this repository), and the render is a perfectly honest
+    # "lain: no state yet" -- for the WRONG directory. Every example below
+    # would then be comparing renders of a project it never wrote state for.
+    #
+    # Polled, with the deadline as the assertion, exactly like
+    # `wait_for_plugin`: `boot` happens to give the "hud" pane that time by
+    # accident, but an example that opens its OWN session has none, which is
+    # how this reached CI green here and red there.
+    def wait_for_pane_cwd(target)
+      deadline = Time.now + 5
+      sleep(0.05) while Time.now < deadline && pane_path(target).empty?
+      raise "pane #{target.inspect} never reported a cwd; the status job would resolve $PWD" \
+        if pane_path(target).empty?
+    end
+
     def eval_status_job(target)
+      wait_for_pane_cwd(target)
       raw = tmux("show-options", "-gv", "status-right")
       job = raw.strip.delete_prefix("#(").delete_suffix(")")
       expanded = tmux("display-message", "-p", "-t", target, job)
@@ -563,11 +586,33 @@ RSpec.describe "plugin/tmux" do
       boot
       system("tmux", "-L", socket, "new-session", "-d", "-s", "evil", "-c", evil,
              "-x", "80", "-y", "24", out: File::NULL, err: File::NULL)
+      wait_for_pane_cwd("evil")
 
       rendered = eval_status_job("evil")
 
+      # The half that is about LAIN, and it holds on every tmux: nothing in
+      # that cwd ever reached a shell as code.
       expect(File.exist?(canary)).to be false
-      expect(rendered).to eq("🔥 fleet:1 inbox:1")
+
+      # The other half is about TMUX, and tmux 3.4 gets it wrong. It reports
+      # `#{pane_current_path}` with a backslash inserted before every `$` -- a
+      # pane sitting in `a$b` formats as `a\$b`, while `/proc/<pane_pid>/cwd`,
+      # where that pane's shell demonstrably IS, says `a$b`. Fixed upstream by
+      # 3.7. Ubuntu 24.04 LTS ships 3.4, so every GitHub runner has it and no
+      # developer box does: this example was green here and red there for three
+      # runs before the difference was measured rather than guessed at.
+      #
+      # It cannot be spelled around, because the `$` is the attack: `$(...)`
+      # substitution is precisely what this example exists to prove inert. And
+      # lain cannot resolve a path tmux misreports -- so where tmux lies, the
+      # RIGHT answer is the plugin's honest fallback, and that is what gets
+      # pinned. Compared against the pane rather than parsed out of `tmux -V`,
+      # because a distro backport makes the version string lie.
+      if pane_path("evil") == File.realpath(evil)
+        expect(rendered).to eq("🔥 fleet:1 inbox:1")
+      else
+        expect(rendered).to eq("lain: no state yet")
+      end
     end
 
     # The other half of the same quoting hole: the SCRIPT-PATH side of the
