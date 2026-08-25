@@ -513,7 +513,7 @@ module Lain
         # gives: for a commit they are the only numbers on this row that are
         # certainly the commit's own -- with the merge caveat the class doc
         # states and {WALK_LEGEND} points at.
-        def partition_header(group) = plain("#{accounting(group)}  #{legible(group.label)}")
+        def partition_header(group) = plain("#{accounting(group)}  #{displayed_path(group.label)}")
 
         # {UNREAD_SIZE} or the pair, and the group decides -- see the class doc.
         def accounting(group)
@@ -525,11 +525,17 @@ module Lain
         # A leading climb ("../../../etc/foo/bar.rb") is `Corpus::Prefix.between`
         # joining the hops from the chat's cwd out to a tree merely BESIDE it,
         # ahead of the file's own path -- so a row surveyed outside the project
-        # root reads as a traversal rather than a name. Dropped for DISPLAY
-        # only: `path:` below stays `file.path` untouched, since every gesture
-        # and `47_diff.lua`'s old-side buffer resolve through THAT, not the text.
+        # root reads as a traversal rather than a name. Dropped for DISPLAY only,
+        # by both a group's label here and a file's path in {#file_row} below --
+        # alongside `Surface::Text#legible`'s force-encode-and-scrub, kept here
+        # for the same reason its own doc gives: git answers BYTES, and a
+        # rendering is not the diff itself.
+        def displayed_path(path) = path.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?").sub(%r{\A(?:\.\./)+}, "")
+
+        # `path:` stays `file.path` untouched -- every gesture and
+        # `47_diff.lua`'s old-side buffer resolve through THAT, not {#displayed_path}'s text.
         def file_row(file, indent)
-          plain("#{indent}#{state_marker(file)} #{legible(file.path).sub(%r{\A(?:\.\./)+}, "")}")
+          plain("#{indent}#{state_marker(file)} #{displayed_path(file.path)}")
             .with(path: file.path.to_s, line: first_line(file), hunk_keys: file.hunk_keys, read: file.chunked?)
         end
 
@@ -562,13 +568,6 @@ module Lain
         # what this returns; the clamp is the editor's and is where to look if a
         # deleted file ever opens somewhere surprising.
         def first_line(file) = (file.chunked? && file.hunks.first&.new_start) || 1
-
-        # `Surface::Text#legible`'s force-encode-and-scrub, and its doc is where
-        # the reasoning lives: git answers BYTES, a rendering is not the diff
-        # itself, and a String that is not validly UTF-8 breaks things far from
-        # here. Display only -- the TARGET keeps `file.path`'s own bytes, since
-        # that is what has to name a file on disk.
-        def legible(string) = string.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?")
       end
     end
   end

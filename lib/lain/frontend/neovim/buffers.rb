@@ -313,7 +313,7 @@ module Lain
         # nothing above rescues, so it takes {Surfaces#prime}'s whole view set
         # dark at attach rather than costing one reminder its accents. Same
         # scrub, same reason, as {Review::Surface::Text#legible} and
-        # {ReviewView#legible}.
+        # {ReviewView#displayed_path}.
         def legible(block) = block.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?")
 
         def diff_update(event)

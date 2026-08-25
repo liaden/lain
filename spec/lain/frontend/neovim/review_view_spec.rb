@@ -227,6 +227,39 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     end
   end
 
+  # T7: `partition_header` and `file_row` render the SAME path two different
+  # ways for a `by_directory` survey outside the project root -- the header
+  # keeps its climb, the file rows beneath it drop theirs. Both must go
+  # through the one owner now.
+  describe "a by_directory group header, alongside the rows beneath it" do
+    it "names the path the same way the file rows beneath it do" do
+      groups = [commit_entry(subject: "../../../etc/foo", added: 2, deleted: 1,
+                             files: [file_entry(path: "../../../etc/foo/bar.rb")])]
+
+      rendered = view.render(changeset(commits: groups), scope: :by_directory)
+
+      expect(rendered.lines).to eq(["+2 -1  etc/foo", "  [ ] etc/foo/bar.rb"])
+    end
+
+    it "still opens the file by the climbing path the corpus named it with" do
+      groups = [commit_entry(subject: "../../../etc/foo", added: 2, deleted: 1,
+                             files: [file_entry(path: "../../../etc/foo/bar.rb")])]
+
+      rendered = view.render(changeset(commits: groups), scope: :by_directory)
+      view.open(2, generation: rendered.generation)
+
+      expect(opener.calls).to eq([["../../../etc/foo/bar.rb", 1]])
+    end
+
+    it "leaves an in-project group exactly as it was drawn before" do
+      groups = [commit_entry(subject: "lib", added: 2, deleted: 1, files: [file_entry(path: "lib/a.rb")])]
+
+      rendered = view.render(changeset(commits: groups), scope: :by_directory)
+
+      expect(rendered.lines).to eq(["+2 -1  lib", "  [ ] lib/a.rb"])
+    end
+  end
+
   # The BLOCKER a review panel found: `Partition::ByCommit::Commit#numstat` is an
   # `Array<Source::FileStat>` and answers neither `#added` nor `#deleted`, so a
   # walk reaching through it raises NoMethodError against the real object while
