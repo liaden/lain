@@ -50,7 +50,7 @@ module Lain
         def self.resolve(scope)
           candidate = scope.respond_to?(:to_sym) ? scope.to_sym : scope
           strategy = Partition::STRATEGIES.fetch(candidate) do
-            raise UnknownScope, "scope must be one of #{SCOPES.inspect}, got #{scope.inspect}"
+            raise UnknownScope, "scope must be one of #{SCOPES.join(", ")}, got #{scope.inspect}"
           end
 
           new(name: candidate, strategy:)
@@ -78,8 +78,8 @@ module Lain
           return if changeset.supports?(strategy)
 
           offered = SCOPES.select { |scope| changeset.supports?(Partition::STRATEGIES.fetch(scope)) }
-          raise UnsupportedScope, "scope #{name.inspect} is not available for the #{source} source -- it does " \
-                                  "not answer what that grouping reads. #{offered.inspect} do present this one"
+          raise UnsupportedScope, "scope #{name} is not available for the #{source} source -- it does " \
+                                  "not answer what that grouping reads. #{offered.join(", ")} do present this one"
         end
       end
     end

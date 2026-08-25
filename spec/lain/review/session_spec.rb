@@ -514,11 +514,22 @@ RSpec.describe Lain::Review::Session do
         .exactly(Lain::Review::Partition::STRATEGIES.size).times
     end
 
+    # The registry rendered as WORDS, matching Thor's own enum wording
+    # ("cumulative, commits, by_directory") -- not `Array#inspect`'s
+    # `[:cumulative, :commits, :by_directory]`. The expected string is built
+    # from {Session::SCOPES} itself, never restated as a literal, so this
+    # example cannot pass by coincidence if the registry's membership or order
+    # ever moves.
     it "names the whole registry when it refuses, so a reader learns what they could have said" do
       session = open_session
 
       expect { session.present(scope: :by_size) }
-        .to raise_error(described_class::UnknownScope, /by_directory/)
+        .to raise_error(described_class::UnknownScope) { |error|
+          expect(error.message).to include(described_class::SCOPES.join(", "))
+          expect(error.message).not_to include(":cumulative")
+          expect(error.message).not_to include(":commits")
+          expect(error.message).not_to include(":by_directory")
+        }
     end
 
     # A name and the strategy it names are ONE value, and the reason is this
@@ -602,14 +613,25 @@ RSpec.describe Lain::Review::Session do
     # worked. The alternatives are MEASURED against this very source, so the
     # message cannot recommend a second grouping it would also refuse -- and
     # the scope that failed is not among them.
+    #
+    # Asserted against the RENDERED SENTENCE, not a bracket extraction: once
+    # the message carries no brackets, a regex hunting for `[...]` finds
+    # nothing, and a `not_to include` built on that empty capture would pass
+    # vacuously against ANY wording, including the old one. The positive
+    # assertion pins the exact joined-and-comma-separated form (derived from
+    # {Session::SCOPES}, never restated), so this example can only pass
+    # against prose that actually lists the two supported scopes as words.
     it "names the scopes this source DOES support, so the refusal is actionable" do
       session = open_session(over: commitless_changeset)
 
       expect { session.present(scope: :commits) }
         .to raise_error(described_class::UnsupportedScope) { |error|
-          offered = error.message[/\[(.*?)\]/, 1]
-          expect(offered).to include(":cumulative", ":by_directory")
-          expect(offered).not_to include(":commits")
+          offered = (described_class::SCOPES - [:commits]).join(", ")
+
+          expect(error.message).to include(offered)
+          expect(error.message).not_to include(":cumulative")
+          expect(error.message).not_to include(":by_directory")
+          expect(error.message).not_to include(":commits")
         }
     end
 
