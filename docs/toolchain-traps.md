@@ -433,3 +433,52 @@ the cop.
   exactly **one** deferral: `#cancel` defers only while its tri-state guard reads `false`, and a
   second cancel arriving inside the region falls through to an immediate `Fiber.scheduler.raise`.
   A `defer_stop` region is a shield against *an* interrupt, never against a storm of them.
+
+## CI is a different box, and both of these were green here and red there
+
+Two examples went red on every GitHub runner while passing on every developer machine, for three
+consecutive pushes (2026-08-24, 2026-08-25). Neither was a flake and neither was a regression: both
+were **new specs that had never run anywhere but a workstation**, each carrying an unstated
+assumption about the environment. The runner image was identical across the last green run and the
+first red one — checked, not assumed — so "CI changed under us" was ruled out before anything else.
+
+- **A spec that leaves `$XDG_*` to the ambient environment tests nothing on a box that exports one.**
+  `Lain::Paths a $HOME that is not absolute guards config_home and cache_home by the same rule`
+  overrode only `HOME`. But {Lain::Paths#xdg_dir} returns an absolute `$XDG_CONFIG_HOME` **verbatim**
+  and never consults `#home` at all, so the `$HOME` guard it was asserting is unreachable whenever
+  that variable is set — the accessor answers instead of refusing. Runners export it; this box does
+  not. Reproduce the CI failure locally in one line:
+
+  ```bash
+  XDG_CONFIG_HOME=/tmp/cfg bundle exec rspec spec/lain/paths_spec.rb   # red, everywhere
+  ```
+
+  The fix is `with_hostile_home`, which clears `XDG_CONFIG_HOME`/`XDG_CACHE_HOME`/`XDG_STATE_HOME`
+  alongside setting `HOME`. **Any example asserting the `$HOME` fallback must clear the variable
+  that shadows it**, or it is vacuous on half the machines that run it. This is the same collision
+  `bin/spec-flakes` hits from the other direction (see the `spec:flakes` note above): there the
+  harness *sets* `$HOME` and `XDG_*` and five of these examples go red in all nine runs.
+
+- **tmux 3.4 misreports `#{pane_current_path}`, inserting a backslash before every `$`.** A pane
+  sitting in `a$b` formats as `a\$b`, while `readlink /proc/<pane_pid>/cwd` — where that pane's
+  shell demonstrably *is* — says `a$b`. Measured directly in an `ubuntu:24.04` container against
+  the plugin itself; the pane's real cwd is correct, so this is a **reporting** defect, not a
+  session-creation one. Fixed upstream by 3.7. Ubuntu 24.04 LTS ships 3.4, which is what
+  `.github/actions/spec-binaries` installs from apt, so **every runner has it and no dev box does**.
+
+  The consequence for `plugin/tmux`: the resolver hashes `sha256(realpath(dir))`, so a path tmux
+  spells differently hashes to a project nobody wrote state for, and the HUD renders its honest
+  `lain: no state yet`. That is the *correct* behaviour — lain cannot resolve what tmux misreports —
+  and it is what `neutralizes a hostile pane cwd` now pins on such a tmux, while asserting the
+  payload-never-runs half unconditionally on every version. The `$` cannot be spelled out of that
+  example: `$(...)` substitution is the attack it exists to prove inert.
+
+  Ruled out along the way, so nobody re-runs them: the `#{q:}` shell-quote escape set is
+  **byte-identical** in 3.4, 3.5 and 3.7 (`format_quote_shell` in `format.c`); `/bin/sh` being dash
+  on Ubuntu and bash here makes **no** difference (both render identically against the same expanded
+  job); and it is not a race on the pane's cwd — 80 consecutive sessions under a fully loaded box
+  never once reported an empty path.
+
+  **Probe the behaviour, never parse `tmux -V`** — a distro backport makes the version string lie,
+  and the pane is already there to ask. The general rule this is an instance of: an example that
+  drives a real binary is pinned to *that binary's* bugs, and CI's copy is older than yours.
