@@ -75,11 +75,26 @@ RSpec.describe Lain::Review::Submit::Outbox do
     )
   end
 
-  def round
-    Lain::Review::Session.open(changeset:, journal: Lain::Journal.new(io: StringIO.new), source: "github_pr")
+  # `policy:` is a keyword rather than a second helper because the ONE thing a
+  # settled round needs is a policy that will admit a verdict over a changeset
+  # nobody marked -- which is `--permissive`, spelled the way the flag resolves.
+  def round(policy: Lain::Review::Verdict::Policy.default)
+    Lain::Review::Session.open(changeset:, journal: Lain::Journal.new(io: StringIO.new), source: "github_pr",
+                               policy:)
   end
 
   def session = @session ||= round
+
+  # A round a human has already judged. The verdict goes through
+  # `Session#submit`, never onto a double, because what this file has to be able
+  # to say is that the outbox reads the SESSION's word rather than one of its
+  # own -- and a stubbed reader could say that about an object no `/review` ever
+  # builds.
+  def settled(on = session)
+    annotate(on)
+    on.submit("approve")
+    on
+  end
 
   def annotate(on = session, text: "kaboom")
     on.annotate(Lain::Review::Anchor.new(path: "app.rb", side: :new, line: 42,
@@ -118,6 +133,110 @@ RSpec.describe Lain::Review::Submit::Outbox do
       expect(executor.calls.last.fetch(:number)).to eq(99)
       expect(executor.calls.last.fetch(:review).fetch("comments").map { |c| c.fetch("body") })
         .to eq(["the second round"])
+    end
+  end
+
+  # WHETHER THE ROUND IS STILL LIVE, asked of the session this object already
+  # holds. It is a forward and not a state: nothing here judges, so nothing here
+  # may remember a judgement, and the answer has to keep coming from the one
+  # object a `/review-submit` would post.
+  #
+  # The reason a chat needs the question at all is next door -- `/review` and
+  # `/survey` share one set of gesture rails and each refuses to draw over the
+  # other's LIVE round. Once a verdict is in, there is nothing left to draw over.
+  describe "whether the round it holds is still awaiting judgement" do
+    # The null-object half, and the whole of why no caller nil-checks: with
+    # nothing held there is no judgement, which is what `Verdict::None` IS.
+    it "answers an empty verdict with nothing held, so a caller asks one question rather than two" do
+      expect(outbox.held_verdict).to be_empty
+    end
+
+    it "answers empty while the held round is still awaiting one" do
+      held
+
+      expect(outbox.held_verdict).to be_empty
+    end
+
+    it "answers the word the SESSION recorded once the round is judged" do
+      @session = round(policy: Lain::Review::Verdict::Policy.strict_unless(permissive: true))
+      held
+      settled
+
+      expect(outbox.held_verdict).to eq("approve")
+      expect(outbox.held_verdict).not_to be_empty
+    end
+
+    # It forwards; it does not interpret. A round held BEFORE the verdict and
+    # one held after answer the same way, because the answer is read at the
+    # moment of asking off the session rather than latched at `hold`.
+    it "reads the verdict at the moment of asking, not at the moment of holding" do
+      @session = round(policy: Lain::Review::Verdict::Policy.strict_unless(permissive: true))
+      held
+
+      expect { settled }.to change { outbox.held_verdict.empty? }.from(true).to(false)
+    end
+
+    # A REFUSED JUDGEMENT IS NOT A SETTLED ROUND, and the guards downstream must
+    # not be able to read it as one. `Session#submit` assigns `@judgement` only
+    # after `@policy.admit!` has returned and the word is on the journal, so a
+    # policy refusal leaves the round exactly as live as it was -- which is what
+    # keeps a `/survey` that could not be judged from becoming one that reads as
+    # judged. The default policy is what refuses here, so this is the round a
+    # human gets without asking for anything.
+    it "still reads as live after the POLICY refused the verdict, since nothing was judged" do
+      held
+
+      expect { session.submit("approve") }.to raise_error(Lain::Review::Verdict::Policy::Incomplete)
+
+      expect(outbox.held_verdict).to be_empty
+      expect(outbox.held_verdict).to be(Lain::Review::Verdict::None)
+    end
+
+    # The two readers over one held round, agreeing about how much absence they
+    # tolerate. `#hold` validates nothing by design and defers the failure to
+    # its readers, so what must not happen is one reader answering while the
+    # other raises about the same round -- a caller would then have to know
+    # which of the two it was holding.
+    it "tolerates a round with no session exactly as held_source does, and answers the null verdict" do
+      outbox.hold(session: nil, number: nil, label: "branch feature/widget")
+
+      expect(outbox.held_source).to be_nil
+      expect(outbox.held_verdict).to be(Lain::Review::Verdict::None)
+    end
+  end
+
+  # AC 4. Settling is not closing: `/review-submit` reads `#target` AFTER the
+  # send, and the round a human just judged is exactly the one they then post.
+  describe "a settled round, which is still the round this chat would post" do
+    before { @session = round(policy: Lain::Review::Verdict::Policy.strict_unless(permissive: true)) }
+
+    it "still holds the settled round, so /review-submit names its target rather than an absent review" do
+      held
+      settled
+
+      expect(outbox).to be_open
+      expect(outbox.target).to eq("pull request 4271")
+    end
+
+    it "still posts it, because a verdict is what a review is FOR and not a reason to drop it" do
+      held
+      settled
+
+      expect(outbox.submit(executor:)).to be_ok
+      expect(executor.calls.last.fetch(:number)).to eq(4271)
+    end
+
+    # The note on the card, pinned: nothing here reopens or closes anything, so
+    # the settled round leaves the same way every other one does -- replaced.
+    it "lets a later round replace it, which is the only way a held round is ever let go" do
+      held
+      settled
+      other = round
+      annotate(other, text: "the round after the verdict")
+      outbox.hold(session: other, number: 99, label: "pull request 99")
+
+      expect(outbox.held_verdict).to be_empty
+      expect(outbox.target).to eq("pull request 99")
     end
   end
 

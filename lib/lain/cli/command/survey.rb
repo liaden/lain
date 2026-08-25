@@ -334,8 +334,15 @@ module Lain
         #
         # The comparison is against the word THIS command opens rounds under, so
         # the outbox stays a holder rather than acquiring an opinion about kinds.
+        #
+        # And asked of a LIVE round only. The rationale {ALREADY_OPEN} gives is
+        # "a sidebar that review's marks cannot reach" -- once a verdict is in,
+        # the marks have been handed back and judged and there is nothing left
+        # to reach, so a chat that has settled a changeset review may survey
+        # again. Both halves come off the round the outbox already holds, which
+        # is what keeps the holder a holder.
         def refuse_second_surface!
-          return unless @outbox.open? && @outbox.held_source != self.class.source_name
+          return unless @outbox.open? && @outbox.held_verdict.empty? && @outbox.held_source != self.class.source_name
 
           raise Error, format(ALREADY_OPEN, target: @outbox.target)
         end

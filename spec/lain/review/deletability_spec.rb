@@ -62,6 +62,12 @@ Capability = Data.define(:key, :constants, :files, :consumers, :edits, :forces, 
 end
 
 module DeletionMap
+  # Every message BOTH review commands reach the outbox through, named once
+  # because the two rows below would otherwise drift apart one marker at a time
+  # -- which is the failure this whole map is written against. `/survey` adds
+  # `@outbox.open?` to it and nothing else does.
+  OUTBOX_REACH = %w[outbox: @outbox.hold @outbox.held_source @outbox.held_verdict @outbox.target].freeze
+
   # The rows. A Ruby unit's `require` line is spelled here as it appears in the
   # file, because a dangling `require_relative` is a LoadError rather than a
   # missing feature and only a literal finds it.
@@ -152,13 +158,13 @@ module DeletionMap
         # examples beside it go too), and BOTH review commands reach the outbox
         # through keywords and messages that name no constant at all. `/survey`
         # is the heavier of the two -- it holds a round AND reads the held
-        # round's kind back to refuse a second review surface -- and this list
-        # is checked for STALENESS only, never for completeness, so an omitted
-        # row stays green while leaving a human who deleted the capability with
-        # a file still talking to it.
-        "lib/lain/cli/command/review.rb" => ["outbox:", "@outbox.hold", "@outbox.held_source", "@outbox.target"],
-        "lib/lain/cli/command/survey.rb" => ["outbox:", "@outbox.hold", "@outbox.held_source",
-                                             "@outbox.open?", "@outbox.target"],
+        # round's kind and VERDICT back to refuse a second review surface over a
+        # round still awaiting judgement -- and this list is checked for
+        # STALENESS only, never for completeness, so an omitted row stays green
+        # while leaving a human who deleted the capability with a file still
+        # talking to it.
+        "lib/lain/cli/command/review.rb" => OUTBOX_REACH,
+        "lib/lain/cli/command/survey.rb" => OUTBOX_REACH + ["@outbox.open?"],
         "spec/lain/cli/command/surface_spec.rb" => ["review-submit"],
         "spec/lain/forge/intent_spec.rb" => ["promote pr_create pr_merge review_submit"],
         "spec/lain/forge/reconcile_spec.rb" => ['blind(action: "review_submit"']

@@ -481,6 +481,62 @@ RSpec.describe Lain::CLI::Command::Review do
     end
   end
 
+  # THE OTHER SURFACE, from this side of the pair. `/survey` and `/review` share
+  # one outbox and one set of gesture rails, so a changeset review refuses to
+  # draw over a survey that is still LIVE -- and stops refusing the moment a
+  # human has judged that survey, because the marks it was protecting have been
+  # handed back and there is nothing left to draw over.
+  #
+  # The survey is a double: this file's `around` builds a git repository and no
+  # corpus, and the whole of what the guard reads off a held round is the two
+  # questions below. `source_name` is asked of {Lain::CLI::Command::Survey}
+  # rather than spelled, because that is the one place the word is derived.
+  describe "a survey already open in the same chat" do
+    def survey_round(verdict:)
+      instance_double(Lain::Review::Session, source: Lain::CLI::Command::Survey.source_name, verdict:)
+    end
+
+    # AC 3 from this side, and the refusal is the one that shipped: asserted on
+    # the guard's own sentence, since a `Lain::Error` alone is satisfied by half
+    # the refusals this command can raise.
+    it "refuses a changeset review over a LIVE survey, in the guard's own words" do
+      attached
+      outbox.hold(session: survey_round(verdict: Lain::Review::Verdict::None), number: nil,
+                  label: "survey of /tmp/corpus")
+
+      expect { command.call("feature", env) }
+        .to raise_error(Lain::Error, a_string_including("survey of /tmp/corpus")
+                                       .and(include("the gesture rails")))
+      expect(editor.bound).to be_nil
+    end
+
+    # AC 1, end to end against the real repository this file already builds: the
+    # review OPENS, and the round it opened is the one the chat now holds.
+    it "opens a changeset review over a survey that has been settled by a verdict" do
+      attached
+      outbox.hold(session: survey_round(verdict: "approve"), number: nil, label: "survey of /tmp/corpus")
+
+      answer = command.call("feature", env)
+
+      expect(answer).to include("branch feature")
+      expect(editor.bound).to be_a(Lain::Review::Handover)
+    end
+
+    # AC 4's note, pinned where it bites: `hold` REPLACES, so the settled survey
+    # is gone the moment the branch round opens and `/review-submit` names the
+    # branch. That is the correct answer, and it is worth an example because the
+    # alternative reading -- the settled round lingering behind the live one --
+    # is exactly what a "closed" state would have introduced.
+    it "replaces the settled survey with the round it just opened, so a submit names the branch" do
+      attached
+      outbox.hold(session: survey_round(verdict: "approve"), number: nil, label: "survey of /tmp/corpus")
+
+      command.call("feature", env)
+
+      expect(outbox.target).to eq("branch feature")
+    end
+  end
+
   # THE REGRESSION THIS GROUP EXISTS FOR. The size guard was originally called
   # from {Lain::CLI::Review#present} and nowhere else -- the TEXT command -- so
   # the editor path had no ceiling at all and `/review` of an

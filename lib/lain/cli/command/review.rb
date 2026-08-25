@@ -239,8 +239,13 @@ module Lain
         # The word is asked of {Command::Survey}, which is the one place it is
         # derived -- a second spelling of `corpus` here, or an opinion about
         # kinds on the outbox, would each be a place for the two to disagree.
+        # A SETTLED survey is not in the way. {SURVEY_OPEN}'s own rationale is
+        # "a sidebar the survey's marks cannot reach", and marks handed back and
+        # judged have nowhere left to reach -- so the verdict is the second half
+        # of the question, asked of the round the outbox already holds. Without
+        # it a chat that surveyed once could never review a branch again.
         def refuse_over_survey!
-          return unless @outbox.held_source == Survey.source_name
+          return unless @outbox.held_source == Survey.source_name && @outbox.held_verdict.empty?
 
           raise Error, format(SURVEY_OPEN, target: @outbox.target)
         end

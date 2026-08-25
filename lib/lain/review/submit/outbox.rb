@@ -132,6 +132,33 @@ module Lain
         # @return [String, nil]
         def held_source = @held&.session&.source
 
+        # WHAT the held round concluded, in the session's own word -- or
+        # {Verdict::None} while it is still awaiting judgement, and with nothing
+        # held at all.
+        #
+        # The same forwarding {#held_source} is, and held to the same rule: the
+        # question goes to the session this object already holds and the answer
+        # comes back unread. Nothing here judges, so nothing here remembers a
+        # judgement either -- the word is read at the moment of asking, which is
+        # why {Session#submit} needs no outbox to settle a round.
+        #
+        # A verdict answers `#empty?` on both sides ({Verdict::None}, and a
+        # {Review::VERDICTS} String), so a caller asking whether a round is
+        # still live writes `held_verdict.empty?` with no type test -- and
+        # {Verdict::None} with nothing held keeps that from being a nil check
+        # either.
+        #
+        # It navigates the held round EXACTLY as {#held_source} does, so the two
+        # readers tolerate the same amount of absence and no caller has to know
+        # which of them it is holding: `&.` for a round that is not there, and a
+        # loud `NoMethodError` for a `session:` that is not a {Session} -- which
+        # is what {#hold}'s own doc defers to its readers. All that differs is
+        # what stands in for the absence, and only because a verdict HAS a null
+        # object to stand in with and a source word does not.
+        #
+        # @return [String, Verdict::None]
+        def held_verdict = @held&.session&.verdict || Verdict::None
+
         # How the held round's target was named on screen, which is what a
         # report says instead of restating a class or re-deriving a number.
         #

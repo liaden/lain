@@ -740,7 +740,21 @@ RSpec.describe Lain::CLI::Command::Survey do
     # The held round's SOURCE is the whole of what tells the two apart, and it is
     # the value `/review` journals -- so a double answering it is the honest
     # stand-in for a changeset review this tree has no repository for.
-    let(:changeset_round) { instance_double(Lain::Review::Session, source: "local_branch") }
+    #
+    # The VERDICT is the second thing the guard reads, and this one is a round
+    # nobody has judged: `Verdict::None` is what a live session answers, and the
+    # real null object is used rather than a stubbed nil for the reason its own
+    # doc gives -- a nil would let a guard pass by nil-checking instead.
+    let(:changeset_round) do
+      instance_double(Lain::Review::Session, source: "local_branch", verdict: Lain::Review::Verdict::None)
+    end
+
+    # The same round after a human judged it. A judged round is held exactly as
+    # a live one is -- nothing in a chat lets go -- so the only difference
+    # between this double and the one above is the word, which is the point.
+    let(:settled_changeset_round) do
+      instance_double(Lain::Review::Session, source: "local_branch", verdict: "approve")
+    end
 
     it "refuses a survey over an open changeset review, naming the review already open" do
       attached
@@ -820,6 +834,52 @@ RSpec.describe Lain::CLI::Command::Survey do
       expect(outbox).not_to be_open
       expect { Lain::CLI::Command::Review.new(root: @root, outbox:).call("feature", env) }
         .to raise_error(Lain::Review::Source::UnknownRef)
+    end
+
+    # ONCE THE ROUND IS SETTLED the rule stops applying, and the whole of the
+    # reason is in the guard's own rationale: "a sidebar the survey's marks
+    # cannot reach". Marks handed back and judged have nowhere left to reach. A
+    # chat that surveyed once could otherwise never review a branch again for
+    # the rest of its life.
+    #
+    # The survey is settled through the HAND-BACK a human's own `<CR>` reaches
+    # (`Handover#wrote_verdict` -> `Session#submit`) rather than by stubbing a
+    # reader: what has to be true is that the verdict a human writes is the one
+    # the other command sees, and `Session#submit` touches no outbox at all.
+    # `--permissive` is on the line because the default policy refuses an
+    # approve over rows nobody marked, and this example is about the guard.
+    it "lets a changeset review open once the survey has been settled by a verdict" do
+      attached
+      command.call("#{@root} --permissive", env)
+
+      expect(editor.bound.wrote_verdict("approve")).to be_nil
+      expect { Lain::CLI::Command::Review.new(root: @root, outbox:).call("feature", env) }
+        .to raise_error(Lain::Review::Source::UnknownRef)
+    end
+
+    # AC 4 where a chat can see it: settling is not closing. Between the verdict
+    # and whatever round replaces it the survey is still held, so
+    # `/review-submit` names it rather than answering "no changeset review is
+    # open" about the round the human has only just judged.
+    it "still holds the settled survey, so the round a human just judged is still the one held" do
+      attached
+      command.call("#{@root} --permissive", env)
+      editor.bound.wrote_verdict("approve")
+
+      expect(outbox).to be_open
+      expect(outbox.target).to eq("survey of #{@root}")
+    end
+
+    # THE MIRROR of the pair above, and the direction `/survey` owns: a
+    # changeset review that has been judged is not a surface in the way either.
+    it "opens a survey over a changeset review that has already been settled" do
+      attached
+      outbox.hold(session: settled_changeset_round, number: 12, label: "pull request 12")
+
+      command.call(@root, env)
+
+      expect(editor.bound).to be_a(Lain::Review::Handover)
+      expect(outbox.target).to eq("survey of #{@root}")
     end
 
     # THE COUNTER-EXAMPLE to a guard written as `outbox.open?`. Reopening the
