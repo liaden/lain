@@ -1905,9 +1905,39 @@ RSpec.describe Lain::CLI::HumanReplies do
     # the Q event, whose digest is what an answer names.
     def list(asker, question)
       Sync { listed(asker, question) }
+      rendered(asker)
+    end
+
+    # A question RAISED while the human is idle at `you>`: it reaches the inbox
+    # VIEW through the record stream and nothing ever gathers it into
+    # {HumanReplies::Pending}, which is the state the reply path had no answer
+    # for. Deliberately not {#list}, whose drain is what gathers.
+    def raised_at_the_prompt(asker, question)
+      Sync { announced(asker, question) }
+      rendered(asker)
+    end
+
+    # The drain thread's job in production, done inline: the arrival rendered
+    # into the inbox view, answering the Q event whose digest an answer names.
+    def rendered(asker)
       asker.last_question.tap do |event|
         renderings << views.updates(Lain::Telemetry::Message.from_event(event))
                            .fetch(Lain::Frontend::Neovim::InboxView::NAME)
+      end
+    end
+
+    # The session surfaces ALONE -- the editor's command rail with no ask in
+    # flight, which is where a `you>`-time gesture actually lands. The ask's own
+    # loop would dequeue the arrival and list it, which is the state the example
+    # using this exists to stay out of.
+    def idle_at_the_prompt(timeout: 3, &block)
+      Sync do |task|
+        surfaces = replies.session_surfaces(task)
+        begin
+          pumped_until(task, timeout:, &block)
+        ensure
+          surfaces.each(&:stop)
+        end
       end
     end
 
@@ -1923,6 +1953,87 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       expect(nvim.digests).to eq([question.digest])
       expect(nvim.documents.last.join("\n")).to include("which db?")
+      expect(editor.refusals).to be_empty
+    end
+
+    # T3/round 11. An ANSWER names its row exactly as an OPEN does, and it is
+    # resolved through the same index off the same rendering -- which is what
+    # stops :LainReply guessing "the oldest item listed".
+    it "answers the set the reply's row names, not whichever the inbox lists first" do
+      other = other_asker
+      list(ask_human, "which db?")
+      second = list(other, "deploy now?")
+      editor.push(["reply", ["postgres", 2, stamp]])
+
+      with_surfaces { !other.last_answer.nil? }
+
+      expect(other.last_answer.causal_parents).to include(second.digest)
+      expect(other.last_answer.body["answer"]).to eq("postgres")
+      expect(ask_human.last_answer).to be_nil
+      expect(editor.refusals).to be_empty
+    end
+
+    # THE DEFECT ITSELF (F64's reply half). A question raised while the human
+    # sits at `you>` reaches the inbox VIEW through the record stream, and
+    # nothing ever gathers it into {HumanReplies::Pending} -- so the answer's
+    # old fallback was `Unlisted.digest`, i.e. nil, and the human was told the
+    # row they were looking at was stale. Session surfaces ONLY, because the
+    # ask's own loop would dequeue the arrival and list it, which is exactly the
+    # state this example is about NOT being in.
+    it "answers a question raised from the editor while nothing at all is listed" do
+      raised = raised_at_the_prompt(ask_human, "which db?")
+      editor.push(["reply", ["postgres", 1, stamp]])
+
+      idle_at_the_prompt { !ask_human.last_answer.nil? }
+
+      expect(ask_human.last_answer.causal_parents).to include(raised.digest)
+      expect(ask_human.last_answer.body["answer"]).to eq("postgres")
+      expect(editor.refusals).to be_empty
+    end
+
+    # SHOULD-FIX 2 (round-11 panel). A stamp this view no longer holds is the
+    # one refusal that must NOT read as staleness: the asker is still parked and
+    # the row is still live, and "nothing you type here is recorded" is the
+    # exact sentence this card exists to stop a human being shown. `open`
+    # already says the true thing; the answer says it too.
+    it "tells the human to press again when the rendering it answered is one the view no longer holds" do
+      list(ask_human, "which db?")
+      editor.push(["reply", ["postgres", 1, stamp + 999]])
+
+      with_surfaces { editor.refusals.any? }
+
+      expect(editor.refusals).to contain_exactly(a_string_matching(/re-rendered since \d+ .*press again on the row/))
+      expect(editor.refusals.join).not_to include("stale")
+      expect(ask_human.last_answer).to be_nil
+      expect(ask_human).to be_pending # the row is LIVE: nothing about it is stale
+    end
+
+    # The set the row names has been answered already and its row has not
+    # cleared yet -- the state a human is most likely to press into, because the
+    # row stands until a committed turn cites it. Delivered a second time it was
+    # dropped as AlreadyResolved and the human was told NOTHING; `open` refuses
+    # the same row with a sentence, and now so does this.
+    it "says the row is answered rather than swallowing a second reply to it" do
+      list(ask_human, "which db?")
+      editor.push(["reply", ["postgres", 1, stamp]])
+      editor.push(["reply", ["mysql", 1, stamp]])
+
+      with_surfaces { editor.refusals.any? }
+
+      expect(editor.refusals).to contain_exactly(a_string_matching(/line 1 is answered/))
+      expect(ask_human.last_answer.body["answer"]).to eq("postgres")
+    end
+
+    # No row named at all -- a :LainReply hand-typed away from lain://inbox --
+    # keeps the oldest-listed reading, which is the rule the terminal drain
+    # reads a typed answer by. The wire is widened, not replaced.
+    it "still answers the oldest listed set when the reply names no row" do
+      question = list(ask_human, "which db?")
+      editor.push(["reply", ["postgres"]])
+
+      with_surfaces { !ask_human.last_answer.nil? }
+
+      expect(ask_human.last_answer.causal_parents).to include(question.digest)
       expect(editor.refusals).to be_empty
     end
 

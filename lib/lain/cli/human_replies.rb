@@ -93,6 +93,11 @@ module Lain
         def self.open_next = Nothing
         def self.pin(_line) = Nothing
         def self.answered(_digest) = nil
+
+        # No rendering was ever handed out, so no line names a set in one --
+        # and {Nothing} is already the sentence for it, which is what keeps the
+        # reply path from asking whether views were bound.
+        def self.answering(_line, **) = Nothing
       end
 
       # The changeset review nobody wired -- {NoEditor} and {NoViews}'
@@ -380,11 +385,18 @@ module Lain
       # ghosts where a drain finds them. `NoPendingQuestion` means the set is
       # gone, so nothing is lost by letting the line go; it is the same
       # conclusion {AnswerLoop#exchange} already reaches on its own path.
+      #
+      # THE SETTLE IS THE DIGEST'S, and a refusal that named none settles
+      # nothing. Everything above is about a line that outlived its SET; a nil
+      # digest is a reply that named no set at all, and telling the views a nil
+      # was answered puts a nil in the answered set while `retire(nil)` deletes
+      # whatever item is listed without a digest. Nothing is lost by the guard:
+      # there is no line to let go of.
       def resolve_reply(answer, digest)
         deliver(answer, digest)
       rescue Lain::Tools::AskHuman::NoPendingQuestion => e
         @tty.render_error(e.message)
-        settled(digest)
+        settled(digest) unless digest.nil?
       end
 
       # The ONE answer path both surfaces use. AlreadyResolved: the other
@@ -484,10 +496,53 @@ module Lain
       # position and submits nothing.
       def routes
         @routes ||= {
-          "reply" => ->(args) { deliver(args.first.to_s, @inbox.oldest.digest) },
+          "reply" => ->(args) { reply(args) },
           "question_answered" => ->(args) { answer_document(args) },
           "review_done" => ->(args) { @reviews.settle(args) }
         }.merge(@gestures.routes).freeze
+      end
+
+      # :LainReply: the wire's `["reply", [answer, line, generation]]`. The
+      # ROW rides beside the answer for the reason {Gestures#open_set}'s does
+      # -- an inbox row renders no digest, so a line plus the stamp on the
+      # rendering the human is looking at is what names a set -- and it is
+      # resolved through the very same index, so "which set is this an answer
+      # to" and "which set is this an open of" cannot disagree.
+      #
+      # It sent the answer ALONE until T3, and the consumer then guessed: the
+      # oldest item listed. That guess is a set only while one is pending AND
+      # it reached {Pending} at all -- and a question raised from the editor
+      # while the human sits at `you>` never does, so the guess was nil and
+      # the human was told the row in front of them was stale.
+      #
+      # A reply that named NO row keeps the oldest-listed reading, and that is
+      # not a leftover: :Lain* commands are GLOBAL, so :LainReply is typable
+      # from any buffer, and a cursor outside lain://inbox names no row there.
+      # It is the rule the terminal drain reads a typed answer by
+      # ({Reply#at_prompt}), the only other surface that takes an answer
+      # nothing selected. Inside lain://inbox the editor sends no row only when
+      # it has told the human why (`70_inbox.lua`), so the two nils cannot be
+      # confused here.
+      def reply(args)
+        answer, line, generation = args
+        return deliver(answer.to_s, @inbox.oldest.digest) if line.nil?
+
+        replied(answer.to_s, @views.answering(line, generation:))
+      end
+
+      # One answer against the row the view resolved -- delivered when that row
+      # names a set, and otherwise the view's OWN sentence about why it does
+      # not, sent back to the editor the answer came from.
+      #
+      # Every one of those sentences used to arrive as a nil digest and be
+      # explained by {Tools::AskHuman::Directory}, which knows only that no
+      # asker holds the name -- so a rendering this view had merely aged out
+      # was reported as "the inbox line offering it is stale: nothing you type
+      # here is recorded", about a row whose asker was still parked on it.
+      # {#report} and not {#gestured}: this route SUBMITS, so it is not one of
+      # {Gestures}' position-namers, but the refusal goes back the same way.
+      def replied(answer, row)
+        row.opened? ? deliver(answer, row.digest) : report(row.report)
       end
 
       # The written question document ({Neovim::QuestionView}): the wire's

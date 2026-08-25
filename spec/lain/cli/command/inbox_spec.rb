@@ -105,6 +105,52 @@ RSpec.describe Lain::CLI::Command::Inbox do
     expect(command.serves_replies?).to be(true)
   end
 
+  # T3/round 11. The drain resolves its answer through {HumanReplies#resolve_reply},
+  # which SETTLES on a refusal -- deliberately, so a dead question does not list
+  # forever and refuse every time it is offered. What was not deliberate is that
+  # it settled a NIL digest too: an answer naming nothing marked nothing
+  # answered and retired nothing, and asking the views and the list to do so
+  # anyway put nil into both.
+  describe "a refusal's settle" do
+    let(:views) { instance_double(Lain::Frontend::Neovim::Buffers, answered: nil) }
+
+    # An item listed for a set the asker does not hold: the inbox line that
+    # outlived its question, which is what a stopped run leaves behind.
+    def listing(digest)
+      questions.enqueue(Lain::CLI::HumanReplies::InboxItem.new(question: "which db?", from: "orchestrator",
+                                                               digest:, asked_at: Time.now))
+    end
+
+    before { replies.bind_editor(nil, views:) }
+
+    it "retires a refusal that DOES name a dead question, exactly as before" do
+      Sync do
+        dead = parent.commit(role: :assistant, content: [{ "type" => "text", "text" => "gone" }]).head_digest
+        listing(dead)
+        allow(conductor).to receive(:read_reply).and_return("42")
+
+        command.call("", env_with(replies:))
+
+        expect(tty_output.string).to include(dead)
+        expect(views).to have_received(:answered).with(dead)
+        expect(replies.pending?).to be(false)
+      end
+    end
+
+    it "retires nothing, and marks no view answered, when the reply names no question at all" do
+      Sync do
+        listing(nil)
+        allow(conductor).to receive(:read_reply).and_return("42")
+
+        command.call("", env_with(replies:))
+
+        expect(tty_output.string).to include("stale")
+        expect(views).not_to have_received(:answered)
+        expect(replies.pending?).to be(true)
+      end
+    end
+  end
+
   it "answers a one-line usage, and the command file itself never prints (only TTY, the exempted frontend, does)" do
     text = :unset
     expect { text = command.call("", env_with(replies:)) }.not_to output.to_stdout

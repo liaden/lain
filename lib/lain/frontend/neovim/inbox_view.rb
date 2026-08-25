@@ -241,6 +241,17 @@ module Lain
         # @return [Opened]
         def open(line, generation:) = @slot.synchronize { @gestures.open(line, generation) }
 
+        # The :LainReply gesture's Ruby end: which set the cursor's row names,
+        # resolved against the rendering the human is looking at and NOT opened
+        # -- see {Gestures#answering}, which is where the difference between
+        # answering a row and opening it is argued.
+        #
+        # @param line [Integer] 1-based cursor line
+        # @param generation [Integer] the stamp on the buffer the human is
+        #   looking at
+        # @return [Opened]
+        def answering(line, generation:) = @slot.synchronize { @gestures.answering(line, generation) }
+
         # The ADVANCE (T16): the human just submitted a document, so open the
         # next set they have to answer -- of those still pending, the one this
         # view lists FIRST, which is the one they would have pressed enter on.

@@ -107,6 +107,29 @@ module Lain
             listed(@renderings.digest_at(line, generation), line)
           end
 
+          # The :LainReply gesture, which is {#open}'s question asked for an
+          # ANSWER: the same four checks against the same rendering, answering
+          # WHICH SET the human aimed at rather than opening a document for it.
+          # Two gestures, one resolution, so an answer and an open can never
+          # disagree about the row under one cursor.
+          #
+          # It stops before {#offer} and that is the whole of the difference:
+          # opening rebuilds the set into a fresh document, which is precisely
+          # what an answer must not do to the words the human just typed.
+          #
+          # Each refusal it can give is one a bare digest cannot carry, and
+          # every one of them was reaching the human as "the inbox line
+          # offering it is stale: nothing you type here is recorded" -- said
+          # about a LIVE row, by the directory, because a nil digest is all it
+          # was given to explain.
+          # @return [Opened]
+          def answering(line, generation)
+            return unopened(format(UNSHOWN, generation: generation.inspect)) unless
+              @renderings.holds?(generation)
+
+            named(@renderings.digest_at(line, generation), line)
+          end
+
           # The advance: the first listed set the human has NOT answered. A Hash
           # answers `find` in insertion order, which is the order the rows were
           # rendered in, so "the one the inbox lists first" needs no second walk
@@ -140,6 +163,19 @@ module Lain
             return unopened(format(ANSWERED, line)) if @answered.include?(digest)
 
             offer(digest, item) { |why| format(UNREADABLE, line, why) }
+          end
+
+          # {#listed}'s three refusals with the open left off -- the set an
+          # answer names, or the sentence saying why that row cannot take one.
+          # {UNREADABLE} has no counterpart here: nothing is rebuilt, so there
+          # is no body to fail to read, and a set whose record this view cannot
+          # parse is still one the ASKER can be handed prose for.
+          def named(digest, line)
+            return unopened(format(NO_SET, line)) if digest.nil?
+            return unopened(format(RETIRED, line)) if @pending[digest].nil?
+            return unopened(format(ANSWERED, line)) if @answered.include?(digest)
+
+            Opened.new(digest:, report: "answering #{digest}")
           end
 
           # The open itself, shared by the gesture and the advance. The rebuild

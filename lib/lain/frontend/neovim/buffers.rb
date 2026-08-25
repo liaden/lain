@@ -260,6 +260,19 @@ module Lain
         # See {InboxView#open_next} -- the advance after a submitted document.
         def open_next = @inbox.open_next
 
+        # See {InboxView#answering} -- :LainReply's Ruby end, delegated here for
+        # {#open}'s reason. It is what makes an ANSWER name its own question:
+        # the editor sends the row it was typed on and {CLI::HumanReplies}
+        # resolves it through the very index `open` resolves through.
+        #
+        # An OUTCOME rather than a bare digest, and that is not ceremony: every
+        # way a row fails to take an answer -- a rendering this view has aged
+        # out, a line naming no set, a set already answered -- collapses to the
+        # same nil, and the human was then told by the DIRECTORY that their
+        # live row was stale. The outcome carries the sentence that is true.
+        # @return [InboxView::Opened]
+        def answering(line, generation:) = @inbox.answering(line, generation:)
+
         # See {InboxView#answered}: one set answered, by whichever surface took
         # it, so neither gesture offers it again while its row waits for the
         # committed turn that clears it.

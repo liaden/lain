@@ -1,18 +1,11 @@
--- The human inbox drain (I6). :LainReply {answer} submits the typed answer as
--- a "reply" command -- enqueue-and-ack like every command, so the agent-side
--- consumer resolves the pending ask_human promise off its own queue and the
--- editor never blocks on it. The answer rides as the command's argument;
--- per-item targeting waits for the multi-question design step (today one
--- question is pending at a time -- ask_human's single-@pending invariant).
-local function submit_reply(answer)
-  if answer ~= "" then
-    vim.rpcrequest(chan, "lain_command", "reply", { answer })
-  end
-end
-
-define("LainReply", function(opts)
-  submit_reply(opts.args)
-end, { nargs = "+" })
+-- The human inbox drain (I6): lain://inbox's two gestures, an OPEN and an
+-- ANSWER. Both are enqueue-and-ack commands -- the agent-side consumer
+-- resolves the pending ask_human promise off its own queue, so the editor
+-- never blocks on one -- and since T3 both name the row they are about the
+-- same way: the human's own LINE plus the RENDERING STAMP that buffer carries.
+-- :LainOpen's comment below is where that convention is argued; :LainReply,
+-- defined after it, follows it because an answer and an open are the same
+-- question asked about the same row.
 
 -- The cursor-on-an-item OPEN gesture (T15, ruling 12): <CR> -- and `r`,
 -- repointed from the one-line answer prompt it used to raise -- opens the
@@ -112,6 +105,73 @@ define("LainOpen", function()
     vim.rpcrequest(chan, "lain_command", "open", { line, vim.b[buf].lain_view_generation })
   end
 end)
+
+-- :LainReply {answer} submits the typed answer for the question set the cursor
+-- sits on. The answer rides as the command's argument and the ROW rides beside
+-- it -- :LainOpen's line and generation, resolved through :LainOpen's index --
+-- so an answer names its own question rather than leaving the consumer to pick
+-- one. Defined HERE and not at the top of the file because it reads the same
+-- `inbox_row` :LainOpen does, and a local declared later is a global (nil) to
+-- everything above it.
+--
+-- It used to send the answer ALONE, and the consumer then guessed: the OLDEST
+-- item listed. That guess names a set only while one is pending AND it reached
+-- HumanReplies::Pending at all -- and a question raised from the EDITOR while
+-- the human sits at `you>` never does, so the guess was nil and the human was
+-- told the row in front of them was stale. That is what became of the old note
+-- here about one question being pending at a time: the invariant it leaned on
+-- is ask_human's per-ASKER one, and a fleet has an asker per agent.
+--
+-- THREE CASES, NOT TWO, and the middle one is the whole of this gesture's
+-- safety:
+--
+--   * NOT THIS BUFFER -- the answer goes on alone. `define` makes every :Lain*
+--     command GLOBAL and this one reads the CURRENT window, so it is typable
+--     from lain://journal, where a line number names something else entirely
+--     and inventing a row from it is the wrong-set answer the stamp exists to
+--     prevent. With no row named the consumer keeps its oldest-listed reading,
+--     which is the rule the terminal drain reads a typed answer by.
+--   * THIS BUFFER, ON A ROW -- line and stamp ride, and the answer names its
+--     own question.
+--   * THIS BUFFER, NO ROW -- the trailer blank, the keys hint, the empty-state
+--     placeholder. NOTHING is sent. Falling back to oldest-listed HERE would
+--     answer against a different list from the one this buffer renders, in the
+--     one place the human can see the rows and believes they picked one; the
+--     fallback above is honest only because there is no listing in front of
+--     them to contradict.
+--
+-- It NOTIFIES where <CR> stays silent, and the asymmetry is deliberate: a
+-- keystroke that does nothing is self-evident, while an answer the human TYPED
+-- vanishing without a word reads as a reply that was delivered.
+--
+-- `inbox_row` decides all three, so the fold a human sees, the row <CR> opens
+-- and the row an answer names can never disagree.
+--
+-- ⚠️ `{ answer, line, generation }` is a table CONSTRUCTOR, so a buffer with no
+-- `b:lain_view_generation` (never stamped by set_view) builds a two-element
+-- array -- msgpack carries the border, not the nil. Ruby then reads the stamp
+-- as nil, `Renderings#holds?(nil)` is false, and the human is told to press
+-- again: a refusal, never a wrongly-resolved row.
+local function submit_reply(answer)
+  if answer == "" then
+    return
+  end
+  if vim.api.nvim_buf_get_name(0) ~= INBOX then
+    vim.rpcrequest(chan, "lain_command", "reply", { answer })
+    return
+  end
+  local buf = vim.api.nvim_get_current_buf()
+  local line = vim.api.nvim_win_get_cursor(0)[1]
+  if inbox_row(cached_lines(buf), line) == nil then
+    vim.notify("lain: that line names no question set -- answer from a listed row", vim.log.levels.WARN)
+    return
+  end
+  vim.rpcrequest(chan, "lain_command", "reply", { answer, line, vim.b[buf].lain_view_generation })
+end
+
+define("LainReply", function(opts)
+  submit_reply(opts.args)
+end, { nargs = "+" })
 
 -- Bound from a BufEnter autocmd (in a cleared augroup, so re-attach redefines
 -- rather than stacks) because the buffer is created lazily by the first render,

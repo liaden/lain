@@ -1072,6 +1072,36 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     LUA
   end
 
+  # Switches to the buffer and seats the cursor, feeding no keys at all: what a
+  # HAND-TYPED :Lain* command reads is the current window and its cursor, and
+  # nothing else, so the gesture under test must be the `:` line itself.
+  def seat(bufname, cursor)
+    inspector.exec_lua(<<~LUA, [bufname, cursor])
+      local bufname, cursor = ...
+      vim.cmd("buffer " .. bufname)
+      vim.api.nvim_win_set_cursor(0, cursor)
+    LUA
+  end
+
+  def inbox_stamp(handle) = handle.buffers.generation_of(Lain::Frontend::Neovim::InboxView::NAME)
+
+  # Seat the cursor, run :LainReply, and hand back what the command said to the
+  # human -- thread_view_spec's idiom, and the only way to read a `vim.notify`
+  # back out of a headless nvim. The command is run INSIDE the swap so the
+  # notify cannot escape to the real one between the two statements.
+  def notified_reply(bufname, cursor, answer = "postgres")
+    seat(bufname, cursor)
+    inspector.exec_lua(<<~LUA, [answer])
+      local answer = ...
+      local seen = {}
+      local original = vim.notify
+      vim.notify = function(message) table.insert(seen, message) end
+      pcall(vim.cmd, "LainReply " .. answer)
+      vim.notify = original
+      return seen
+    LUA
+  end
+
   def parent_chain(seed)
     Lain::Timeline.empty(store:).commit(role: :user, content: text(seed))
   end
@@ -1126,10 +1156,11 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         push_question(asker)
         wait_until { buffer_lines("lain://inbox").join.include?("which db?") }
 
+        seat("lain://inbox", [1, 0])
         inspector.command("LainReply postgres")
         verb, args = Timeout.timeout(5) { handle.command_inbox.pop }
         expect(verb).to eq("reply")
-        expect(args).to eq(["postgres"])
+        expect(args).to eq(["postgres", 1, inbox_stamp(handle)])
 
         Sync { asker.reply(args.first, asker.last_question.digest) }
         expect(promise.resolved?).to be(true)
@@ -1170,8 +1201,6 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # itself here, because "the editor sends back what the render stamped" is the
   # property, not any particular number.
   describe "the open gesture on lain://inbox" do
-    def inbox_stamp(handle) = handle.buffers.generation_of(Lain::Frontend::Neovim::InboxView::NAME)
-
     def two_pending
       asker_a = Lain::Tools::AskHuman.new(parent: parent_chain("a"))
       asker_b = Lain::Tools::AskHuman.new(parent: parent_chain("b"))
@@ -1239,6 +1268,138 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
+  # T3/round 11 (F64's second-order half). An ANSWER names its own question the
+  # same way an OPEN does -- the human's own line plus the rendering stamp that
+  # buffer carries -- so the consumer never has to guess which set a reply is
+  # for. It used to send the answer alone and the consumer guessed "the oldest
+  # item listed", which is nil for a question raised from the editor while the
+  # human sat at `you>`: nothing ever gathers one into HumanReplies::Pending,
+  # so the human was told the row in front of them was stale.
+  describe "the reply gesture on lain://inbox" do
+    def two_pending
+      asker_a = Lain::Tools::AskHuman.new(parent: parent_chain("a"))
+      asker_b = Lain::Tools::AskHuman.new(parent: parent_chain("b"))
+      Sync { [asker_a.ask("deploy now?"), asker_b.ask("which db?")] }
+      push_question(asker_a)
+      push_question(asker_b)
+      wait_until { buffer_lines("lain://inbox").size == 2 }
+      [asker_a, asker_b]
+    end
+
+    # Two items that SPAN lines, which is the only shape the view draws a
+    # trailing blank and a keys hint under -- the two lines the panel's probe
+    # found sending a bare reply.
+    def two_folded
+      asker_a = Lain::Tools::AskHuman.new(parent: parent_chain("a"))
+      asker_b = Lain::Tools::AskHuman.new(parent: parent_chain("b"))
+      Sync { [asker_a.ask(long_question("a")), asker_b.ask(long_question("b"))] }
+      push_question(asker_a)
+      push_question(asker_b)
+      wait_until { buffer_lines("lain://inbox").last == Lain::Frontend::Neovim::InboxView::HINT }
+    end
+
+    def long_question(seed)
+      "#{seed}: which database should the migration target, and should it run before " \
+        "or after the deploy window closes tonight, given the replica lag?"
+    end
+
+    it "names the row the answer was typed on, with the stamp :LainOpen sends" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        two_pending
+        seat("lain://inbox", [2, 0])
+
+        inspector.command("LainReply postgres")
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop })
+          .to eq(["reply", ["postgres", 2, inbox_stamp(handle)]])
+      end
+    end
+
+    # The whole point of sending the row: the digest that comes back out of the
+    # index is the SECOND asker's, never the oldest listed. Resolved through the
+    # very message `open` resolves through, off the same rendering.
+    it "resolves that row to the digest it carries, as the open gesture does" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        _, asker_b = two_pending
+        seat("lain://inbox", [2, 0])
+
+        inspector.command("LainReply postgres")
+        _, args = Timeout.timeout(5) { handle.command_inbox.pop }
+        answer, line, generation = args
+
+        expect(answer).to eq("postgres")
+        expect(handle.buffers.answering(line, generation:).digest).to eq(asker_b.last_question.digest)
+      end
+    end
+
+    # :Lain* commands are GLOBAL and this one reads the CURRENT window, so a
+    # reply typed away from the inbox names no row -- and must not invent one
+    # from a line number that means something else there. With nothing named the
+    # consumer keeps its oldest-listed reading, which is the terminal drain's
+    # own rule.
+    it "sends the answer alone when it is typed away from the inbox" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        two_pending
+        wait_until { buffer_lines("lain://journal").any? }
+        seat("lain://journal", [1, 0])
+
+        inspector.command("LainReply postgres")
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["reply", ["postgres"]])
+      end
+    end
+
+    # SHOULD-FIX 1 (round-11 panel). THREE cases, not two. Inside the inbox a
+    # line that names no row must send NOTHING: falling back to the oldest
+    # listed item there answers against a DIFFERENT list from the one this
+    # buffer renders, which is the wrong-question defect this card exists to
+    # close, reached from inside the very surface it was closed on.
+    #
+    # It NOTIFIES where `<CR>` stays silent, and the asymmetry is the point: a
+    # keystroke that does nothing is self-evident, while an answer the human
+    # TYPED vanishing without a word reads as a delivered reply.
+    it "sends nothing at all from the empty-state placeholder, and says why" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        wait_until { buffer_lines("lain://inbox").any? }
+
+        expect(notified_reply("lain://inbox", [1, 0])).to include(a_string_matching(/names no question set/))
+        inspector.command("LainSend")
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["send"])
+      end
+    end
+
+    # The probe that found it: a folded two-item listing, cursor on the trailer
+    # blank and on the keys hint under the list. Both are lines the drawing side
+    # did not indent and neither carries an age, so `inbox_row` refuses them --
+    # and both silently sent a bare reply before this.
+    it "sends nothing from the blank and the keys hint under the list" do
+      frontend = described_class.new(channel:, socket_path: @socket, store:)
+
+      frontend.run do |handle|
+        two_folded
+        under = wait_until do
+          lines = buffer_lines("lain://inbox")
+          lines.size if lines.last == Lain::Frontend::Neovim::InboxView::HINT
+        end
+
+        expect(notified_reply("lain://inbox", [under - 1, 0])).to include(a_string_matching(/no question set/))
+        expect(notified_reply("lain://inbox", [under, 0])).to include(a_string_matching(/no question set/))
+        inspector.command("LainSend")
+
+        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to eq(["send"])
+      end
+    end
+  end
+
   # T12, at the editor, and THE FOLD HALF IS ONLY ASSERTABLE FROM HERE: T9
   # shipped two fold acceptance criteria pinned by grepping the runtime source,
   # and a one-word mutant making every line its own record -- nothing folds,
@@ -1250,8 +1411,6 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # runtime) with no double between them, at the mirrored path, which is what a
   # seam with an obvious subject does.
   describe "the fold surface on lain://inbox", :seam do
-    def inbox_stamp(handle) = handle.buffers.generation_of(Lain::Frontend::Neovim::InboxView::NAME)
-
     # Longer than the announcement's headline width, so the row cannot be read
     # on one line and the view folds it -- the only shape that folds at all.
     def long_question(seed)
