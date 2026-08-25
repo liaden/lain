@@ -6,6 +6,12 @@ prompt inside a live session, lib-side, with zero model turns.
 Every flag listed here is also in `lain help <subcommand>`, which reads from the same Thor
 declarations in `exe/lain`.
 
+`lain <subcommand> --help` reaches the same screen. A `--help` written *after* a command name is
+routed to `help`, so `lain chat --help`, `lain up --help` and `lain sessions --help` print that
+command's usage rather than refusing an unknown switch. Every other unknown switch *is* refused
+by name — `lain survey ./docs --permissive` answers `Unknown switches "--permissive"` — so a
+mistyped flag never gets read as a positional argument.
+
 ---
 
 ## Shell commands
@@ -218,6 +224,81 @@ The accumulated cross-project dogfood queue, written by the `improvement_write` 
 `--project` filters to one project (a 12-hex-char hash, or a path resolved the same way).
 `--kind` filters to `knob`, `bug`, `missing-feature`, or `doc`.
 
+### lain review
+
+Review a pull request or a branch. `lain review 4821` takes a pull request number,
+`lain review feature/foo` a branch. It resolves the target, opens a round over the changeset,
+and prints the round as **text** — no editor is involved. [`/review`](#review) is the same round
+drawn in the cockpit.
+
+```bash
+lain review 4821
+lain review feature/foo --scope by_directory
+lain review feature/foo --base origin/main
+lain review open help                        # a branch actually named `help`
+```
+
+`open` is a disambiguating verb, not a mode. Thor owns the first word, so a target named `help`
+or `tree` would reach Thor's own command instead of the resolver; `lain review open help` is the
+way through. Every target that does not collide works without it.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--scope` | unset — the round opens at `cumulative` | `cumulative`, `commits`, or `by_directory`: which grouping the sidebar opens on. The enum is read off the registered partition strategies rather than written out in `exe/lain`, so a scope the registry serves cannot be refused before the registry is asked. |
+| `--base` | unset | Override the base ref the changeset is cut against. |
+
+An unresolvable target is refused by name, and names the repository it looked in:
+`head ref "does-not-exist-xyz" does not resolve to a commit in <root>`.
+
+### lain survey
+
+Review a directory **as it stands** — no pull request, no branch, no diff. `lain survey ./docs`
+walks the tree, opens a round over it, and prints the listing as text.
+[`/survey`](#survey) is the same round drawn in the cockpit.
+
+```bash
+lain survey ./docs
+lain survey ./lib --unbounded
+lain survey open help                        # a directory actually named `help`
+```
+
+`open` is the same escape valve `lain review` carries, for the same reason.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--scope` | unset — the round opens at `cumulative` | The same three registered strategies `lain review` offers. A corpus does not answer all of them — see below. |
+| `--unbounded` | `false` | Present the whole tree however large it is. It lifts the corpus file ceiling below; the separate `/critique` packing ceiling still holds. |
+
+**`--permissive` is not a flag of this command.** It chooses the rule a *verdict* is judged
+under, and `lain survey` renders a tree and submits nothing; the in-session
+[`/survey`](#survey) is where it lives. `lain survey ./docs --permissive` answers
+`Unknown switches "--permissive"` — it names the switch you typed rather than reading the word
+as a path or inventing a verb for it.
+
+Two refusals worth meeting on paper first.
+
+**A scope the registry has but this source cannot answer** is refused in prose, and names the
+ones that would have worked:
+
+```
+scope commits is not available for the corpus source -- it does not answer what that grouping
+reads. cumulative, by_directory do present this one
+```
+
+A scope that is not registered at all never reaches the source: Thor validates the enum ahead of
+dispatch and answers `Expected '--scope' to be one of cumulative, commits, by_directory; got by_size`.
+
+**A tree over the file ceiling** is refused before a single file is read:
+
+```
+this corpus is 742 files, over the ceiling of 300 -- survey a subdirectory instead, or raise
+the ceiling with --unbounded
+```
+
+The decision is made from a file count alone, when the corpus is built — **before any `--scope`
+is applied**. So no scope lifts it: `--scope by_directory` groups the same file set and refuses
+with the same sentence. The two remedies the refusal names are the only two there are.
+
 ### lain bench variance
 
 Report determinism, divergence, and distribution across recorded sessions. Offline.
@@ -332,6 +413,76 @@ set you have not answered. See `:help lain-question`.
 ### /approve
 
 Answer each pending tool approval `y/N`.
+
+### /survey
+
+`/survey <path>` opens a survey of a directory in the editor this chat is **already** attached
+to — the round [`lain survey`](#lain-survey) prints as text, drawn in the cockpit with this
+chat's gesture rails bound to it. Its usage line:
+
+```
+/survey <path> [--scope cumulative|commits|by_directory] [--unbounded] [--permissive]
+```
+
+The scope names in that line are filled in from the registered partition strategies, so the
+usage enumerates whatever is registered rather than restating a list that could drift from it.
+
+It reads three flags: the two `lain survey` has, plus `--permissive`, which the one-shot has no
+use for. `--permissive` chooses the rule a **verdict** is judged under — it forgives rows nobody
+read and still refuses an objection nobody answered — and only the cockpit submits a verdict.
+Anything else beginning with `--` is refused by name rather than read as a path, and a declared
+flag whose value is missing gets its own refusal, because the remedy is the opposite one.
+
+Without an editor it **refuses** rather than drawing into nothing: a survey nothing drew and no
+gesture could reach is the failure the review surface was written against. The refusal names
+`lain up --nvim` (or `lain chat --nvim <socket>`) as the way to get one, and `lain survey <path>`
+as the way to read one without.
+
+**A survey opens two windows: `sidebar | file`.** There is no diff pair — a corpus has no base
+revision, so there is nothing to put on an old side. A changeset review opens three,
+`sidebar | old | new`. The `old` slot stays in the layout's vocabulary either way, and a survey
+opens it **on demand**, which is what keeps `:LainThread` working there.
+
+The banner lain prints on opening teaches the motion for the round it actually drew: **one**
+`<C-w>l` from the sidebar to the file on a survey, two on a changeset review.
+
+One chat draws one review at a time. A `/survey` over an open changeset review is refused,
+naming the one already open; a `/survey` over an open **survey** rebinds, which is how you take
+a second look at a tree.
+
+There is no `/survey-submit` — a corpus has no pull request under it. A drawn survey is held all
+the same, so [`/review-submit`](#review-submit) names the survey rather than claiming nothing is
+open.
+
+### /review
+
+`/review <pull-request|branch>` opens a changeset review in the attached editor. Its usage line:
+
+```
+/review <pull-request|branch> [--base <ref>] [--scope cumulative|commits|by_directory] [--permissive]
+```
+
+Same editor rule as `/survey`: no editor is a refusal, not a Null surface. Same one-surface rule
+too, from the other side.
+
+`--permissive` is here so the partial-review refusal stays honest from a `/review` round as well
+as a `/survey` one. Submitting `approve` over a changeset that is not fully reviewed is refused
+by naming the rows that are outstanding — the first few, then a count of the rest — and offering
+two remedies: mark each row reviewed with `x` in `lain://review`, or re-open the review with
+`--permissive` if this run means to judge regardless. A command that could not read the flag
+would be naming a remedy unreachable from the very review that refused.
+
+### /review-submit
+
+`/review-submit [summary]` posts the open changeset review to its pull request, **once**.
+
+There is no retry, and that is structural rather than shy: an accepted POST creates a review
+every time, so GitHub refusing comes back as a refusal that is raised loudly and nothing here
+tries again. A review that did not land must not read like a line of success.
+
+A survey has nowhere to post. That is a modelled outcome rather than an error — a perfectly good
+review with nowhere to post — so this command names the survey instead of claiming nothing is
+open.
 
 ### /goal
 

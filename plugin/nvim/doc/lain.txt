@@ -293,9 +293,23 @@ submitted stays listed for a moment. That is the list being honest, not the
 write failing. Pressing <CR> on such a row says so and opens nothing: reopening
 it would replace what you wrote with a blank document.
 
-`:LainReply {answer}` still answers the OLDEST pending question -- not the one
-under your cursor -- as a hand-typed one-liner. A set of several questions has
-no single-line answer, so the keys are the way to answer one.
+`:LainReply {answer}` answers the question set THE ROW UNDER YOUR CURSOR
+names, as a hand-typed one-liner -- resolved by line and rendering exactly as
+`:LainOpen` resolves one. A set of several questions still has no single-line
+answer, so the keys remain the way to answer one of those.
+
+It used to answer the oldest pending question instead. That guess named a set
+only while one was pending AND had reached the consumer at all, and a question
+raised from the EDITOR while you sit at `you>` never does -- so the guess came
+back empty and you were told the row in front of you was stale.
+
+Inside the inbox, on a line that names no question set -- the trailer, the keys
+hint, the empty-state placeholder -- it REFUSES OUT LOUD and sends nothing,
+rather than answering against a different list from the one this buffer is
+showing you. From any other buffer the answer goes on alone, with no row beside
+it, and is read the way the terminal drain reads a typed answer: the oldest set
+listed. That fallback is honest only because there is no listing in front of
+you to contradict it.
 
 The gesture carries your cursor's line AND the rendering the buffer is holding
 (`b:lain_view_generation`, stamped by lain on every inbox render). Both are
@@ -689,10 +703,24 @@ exactly as they would to a file you opened yourself, and you can edit and `:w`
 it. On the left is a read-only `nofile` buffer named `lain://review/OLD/{path}`
 holding that file as of the merge base.
 
-Both windows are in nvim's native diff mode, so 'foldmethod' is "diff" --
-unchanged regions fold away and `zo`/`zr` expand them -- `]c`/`[c` walk the
-changes, and `do`/`dp` work as they always do. Opening a file focuses the new
-side on the line the review sent you to, opening just enough fold to show it.
+A SURVEY IS NOT A PAIR. A survey reviews files as they stand, so it has no base
+revision to put on an old side and nothing to diff: it opens the sidebar and
+the file, TWO windows, where a changeset review opens three -- sidebar, old,
+new. Everything in this section about the old side and about diff mode is the
+changeset pair's; a survey's file window is the same real, editable file
+buffer, alone. The `old` slot stays in the layout's vocabulary either way, and
+a survey opens one ON DEMAND when `:LainThread` needs somewhere to put a
+docent conversation.
+
+The banner lain prints when it opens a round teaches the motion for the round
+it actually drew, so it is not a fixed two: one `<C-w>l` from the sidebar to
+the file on a survey, `<C-w>l<C-w>l` on a changeset review.
+
+Both windows of a changeset pair are in nvim's native diff mode, so
+'foldmethod' is "diff" -- unchanged regions fold away and `zo`/`zr` expand
+them -- `]c`/`[c` walk the changes, and `do`/`dp` work as they always do.
+Opening a file focuses the new side on the line the review sent you to,
+opening just enough fold to show it.
 
 Each side carries which side it is, which commit it came from, and which file:
 
