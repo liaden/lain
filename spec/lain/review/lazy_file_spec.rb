@@ -32,6 +32,7 @@ RSpec.describe Lain::Review::LazyFile do
     partition = Lain::Review::Partition.new(label: -"s", files: [walked].freeze)
     changeset = instance_double(Lain::Review::Changeset, files: [keyed], hunks: [hunk],
                                                          partitions: [partition],
+                                                         sides: Lain::Review::Source::HEAD_SIDE_ONLY,
                                                          base_ref: -("b" * 40), head_ref: -("h" * 40))
     marks = instance_double(Lain::Review::Marks, assert_same_base!: nil, state_of: :reviewed)
     Lain::Review::Session::MarkedChangeset.of(changeset, marks)

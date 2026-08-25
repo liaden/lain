@@ -195,6 +195,20 @@ module Lain
       # @return [Boolean]
       def supports?(strategy) = strategy.supports?(@source)
 
+      # Which of {Review::SIDES} this round presents at all -- what an editor
+      # builds its layout from, before a single row is opened.
+      #
+      # {#supports?}'s shape for {#supports?}'s reason: the question goes to
+      # `@source` and the source stays private, so this is a message on the
+      # changeset rather than a reader. And it cannot be derived HERE either.
+      # {#old_side} answers `[]` both for a file this changeset adds and for
+      # every file of a corpus, so a version reading the files would report a
+      # one-sided round for any diff whose only file is an addition -- the
+      # guess this message exists to remove, arrived at one level lower down.
+      #
+      # @return [Array<String>] a subset of {Review::SIDES}, in its order
+      def sides = @source.sides
+
       # Every anchorable line of the changeset, on ONE side, in diff order.
       #
       # One side per walk rather than a `both` for context lines: {Review::SIDES}

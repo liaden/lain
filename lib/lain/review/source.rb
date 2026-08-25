@@ -4,7 +4,7 @@ module Lain
   module Review
     # The changeset-source port: where a reviewable changeset comes from.
     #
-    # A source answers SIX messages, and the shared example group
+    # A source answers SEVEN messages, and the shared example group
     # `"a review changeset source"` (spec/support/shared_examples/review_source.rb)
     # is the contract, not this comment:
     #
@@ -14,16 +14,32 @@ module Lain
     #   #head_ref     what every new-side anchor rests on
     #   #file_at      one path, as one revision holds it
     #   #diff_origin  where the bytes came from, and whether anything fell back
+    #   #sides        which of {Review::SIDES} this round presents at all
     #
     # {LocalBranch#diff} and {LocalBranch#commits} are NOT on that list. They
     # belong to sources that have unified-diff bytes and a commit walk, which is
     # a real category and not the port -- see "Not every source has two
     # witnesses" below. A local branch and a GitHub pull request are today's two
     # implementations, and everything downstream -- the anchors, the marks, the
-    # session's address -- reads only the six, so none of them knows which it
+    # session's address -- reads only the seven, so none of them knows which it
     # has. That last clause is the whole design, and it used to be false: an
     # earlier edition of this list said "answers six... reads only these five",
     # which was a miscount in both halves.
+    #
+    # == {#sides}, and why the question is the SOURCE's
+    #
+    # A corpus has no old side -- not "not this time", but structurally, for
+    # every file it will ever hold, because its base holds nothing. A changeset
+    # has two even when a particular file is an addition. Those are different
+    # facts, and only the first one means an editor should not build the window.
+    #
+    # Nothing downstream can tell them apart. {Changeset#old_side} answers `[]`
+    # for a file with no old path whichever kind it came from, so an editor
+    # reading `old_lines` off one opened row sees the same value in both cases
+    # -- and it has already built its panes by then, at first paint, before any
+    # row is opened. So the fact belongs to the object that knows it without
+    # reading anything, and it travels on the render that PRECEDES the layout
+    # ({Surface::Neovim#present}).
     #
     # The one downstream reader that needs the walk is {Partition::ByCommit},
     # through {Changeset#commits}. It is also the one a source without a walk
@@ -95,6 +111,24 @@ module Lain
     # gh not existing is a broken machine". There is no review to be had and no
     # fold to carry a not-ok answer, so {UnknownRef} raises.
     module Source
+      # Whether each of {Review::SIDES} rests on the BASE revision. The literals
+      # are KEYS here rather than answers, and the two sets below are selected
+      # out of the vocabulary through it: `Submit::SIDES`' shape and its reason
+      # -- a `%w[new]` written as an answer would be a second declaration of
+      # membership, free to disagree with the set that decides it, while a
+      # `fetch` against a table makes the dependency real. Add a side to
+      # {Review::SIDES} and this raises while the module body runs.
+      RESTS_ON_BASE = { "old" => true, "new" => false }.freeze
+      private_constant :RESTS_ON_BASE
+
+      # What a source spanning two revisions presents: the vocabulary itself,
+      # never a copy of it.
+      BOTH_SIDES = Review::SIDES
+
+      # What a source whose base holds nothing presents -- {Source::Corpus}, and
+      # anything else surveyed as it stands.
+      HEAD_SIDE_ONLY = Review::SIDES.reject { |side| RESTS_ON_BASE.fetch(side) }.freeze
+
       # A ref the source was built against does not resolve, or two refs share no
       # history so there is no merge base to anchor the old side to. Named per
       # the error-taxonomy convention: a refusal subclasses {Lain::Error} next to
@@ -308,6 +342,16 @@ module Lain
 
         # @return [Array<ChangedFile>] in the diff's own (path-sorted) order
         def files = @files ||= Parser.new(diff).files.freeze
+
+        # Both, and it is HERE for the same reason {#files} is: having a diff IS
+        # having two revisions, so this is what the includer already knows
+        # rather than a fact each diff source would have to restate. It does not
+        # move with the files -- a diff whose only file is an addition is still
+        # a round with an old side, and collapsing the two is exactly the guess
+        # this message exists to remove.
+        #
+        # @return [Array<String>] {BOTH_SIDES}
+        def sides = BOTH_SIDES
 
         # The changeset's content address: base, paths, statuses and hunk keys --
         # and deliberately NOT the head.

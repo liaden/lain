@@ -27,8 +27,8 @@ class RecordingReviewInlet
   # @return [Array<Array>] one entry per post: `[verb, *arguments]`
   attr_reader :posted
 
-  def set_review(lines, generation)
-    @posted << [:set_review, lines, generation]
+  def set_review(lines, generation, sides)
+    @posted << [:set_review, lines, generation, sides]
     @refusal
   end
 
@@ -149,8 +149,11 @@ RSpec.describe Lain::Review::Surface::Neovim do
     end.new(subject, files, added, deleted, 0)
   end
 
-  def changeset(files:, commits: [])
-    Struct.new(:files, :partitions).new(files, commits)
+  # `sides` joins the duck because the sidebar post carries it: the editor builds
+  # its windows at first paint, before any row is opened, so the fact has to
+  # ride the rail that PRECEDES the layout.
+  def changeset(files:, commits: [], sides: Lain::Review::SIDES)
+    Struct.new(:files, :partitions, :sides).new(files, commits, sides)
   end
 
   def reviewed = file_entry(path: "lib/a.rb", state: :reviewed)
@@ -165,11 +168,15 @@ RSpec.describe Lain::Review::Surface::Neovim do
 
   def unreviewed = file_entry(path: "lib/c.rb", state: :unreviewed)
 
-  def two_commit_changeset
-    changeset(files: [reviewed, partial, unreviewed],
+  def two_commit_changeset(sides: Lain::Review::SIDES)
+    changeset(files: [reviewed, partial, unreviewed], sides:,
               commits: [commit_entry(subject: "add a.rb", files: [reviewed]),
                         commit_entry(subject: "touch b.rb and c.rb", files: [partial, unreviewed])])
   end
+
+  # What a survey hands over: a round whose base holds nothing for any file it
+  # will ever carry, so there is no old side to draw for any of them.
+  def surveyed_changeset = two_commit_changeset(sides: Lain::Review::SIDES - ["old"])
 
   def real_anchor(path: "lib/lain/agent.rb", line: 14)
     Lain::Review::Anchor.new(path:, side: :new, line:, anchor_text: "  @store.write(input)", revision: "abc123")
@@ -262,14 +269,35 @@ RSpec.describe Lain::Review::Surface::Neovim do
     it "posts the view's lines beneath the stamp they were rendered under" do
       surface.present(two_commit_changeset, scope: :cumulative)
 
-      expect(inlet.posted).to eq([[:set_review, ["[x] lib/a.rb", "[~] lib/b.rb", "[ ] lib/c.rb"], 1]])
+      expect(inlet.posted)
+        .to eq([[:set_review, ["[x] lib/a.rb", "[~] lib/b.rb", "[ ] lib/c.rb"], 1, %w[old new]]])
+    end
+
+    # `review_panes.ensure()` opens every missing slot at FIRST PAINT, from the
+    # sidebar render -- so a fact delivered on `open_changeset` arrives after the
+    # window it would have prevented already exists. This rail is the one that
+    # precedes the layout, which is why the sides ride it.
+    it "tells the editor a survey has one side, on the post that precedes the layout" do
+      surface.present(surveyed_changeset, scope: :cumulative)
+
+      expect(inlet.posted.map(&:first)).to eq([:set_review])
+      expect(inlet.posted.dig(0, 3)).to eq(["new"])
+    end
+
+    # A FACT about the round, never an instruction: `rpc_thread.rb`'s rule is
+    # that a layout is the editor's own question, so Ruby says what the round
+    # has and the editor decides what to build.
+    it "names both sides for a changeset review, on the same rail" do
+      surface.present(two_commit_changeset, scope: :cumulative)
+
+      expect(inlet.posted.dig(0, 3)).to eq(Lain::Review::SIDES)
     end
 
     it "posts a second render beneath a second stamp, so no gesture aliases across them" do
       surface.present(two_commit_changeset, scope: :cumulative)
       surface.present(two_commit_changeset, scope: :commits)
 
-      expect(inlet.posted.map(&:last)).to eq([1, 2])
+      expect(inlet.posted.map { |entry| entry[2] }).to eq([1, 2])
     end
 
     it "renders the commit walk at :commits scope" do

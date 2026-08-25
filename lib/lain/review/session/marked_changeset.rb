@@ -3,7 +3,7 @@
 module Lain
   module Review
     class Session
-      MarkedChangeset = Data.define(:files, :partitions, :base_ref, :head_ref)
+      MarkedChangeset = Data.define(:files, :partitions, :base_ref, :head_ref, :sides)
 
       # A changeset's STRUCTURE joined to its marks' TRI-STATE -- the one object
       # that can answer both, and the argument every {Review::Surface} means by
@@ -22,6 +22,13 @@ module Lain
       #   #files       -> Array<FileRow>       every file, in the diff's own order
       #   #partitions  -> Array<PartitionRow>  the groups, files partitioned
       #   #base_ref / #head_ref                the refs every anchor rests on
+      #   #sides                               which of them the round presents
+      #
+      # {#sides} is forwarded, never derived, and it rides here rather than
+      # being asked of the changeset later because THIS is what a
+      # {Review::Surface} is handed. It is the round's own fact and not any
+      # file's: rows carry no side, and a {FileRow} whose old path is nil is an
+      # addition inside a two-sided round -- see {Review::Changeset#sides}.
       #
       # It does NOT answer `#hunks`. {Marks#reconcile} reads `#base_ref` and
       # `#hunks` together, and it must only ever be handed the whole, unfiltered
@@ -162,7 +169,7 @@ module Lain
           # that somehow shared a path could not silently collapse into one row.
           rows = changeset.files.to_h { |file| [file, row(file, marks, keys_by_path)] }
           new(files: rows.values.freeze, partitions: grouped(changeset, rows, strategy),
-              base_ref: changeset.base_ref, head_ref: changeset.head_ref)
+              base_ref: changeset.base_ref, head_ref: changeset.head_ref, sides: changeset.sides)
         end
 
         # `fetch` without a default: a partition names only files the changeset

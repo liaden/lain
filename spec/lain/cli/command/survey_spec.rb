@@ -72,7 +72,7 @@ class SurveyDocentInlet
 
   attr_reader :threads
 
-  def set_review(_lines, _generation) = nil
+  def set_review(_lines, _generation, _sides) = nil
   def review_focus = nil
   def review_refused(_message) = nil
   def set_thread(anchor, lines) = @threads << [anchor, lines]

@@ -130,7 +130,8 @@ RSpec.describe Lain::Review::Changeset do
   def fake_source(diff:, commits: [commit_record(sha: "c1", paths: ["one.rb"])],
                   base_ref: "b" * 40, head_ref: "h" * 40)
     instance_double(Lain::Review::Source::LocalBranch,
-                    files: parsed(diff), commits: commits.freeze, base_ref:, head_ref:)
+                    files: parsed(diff), commits: commits.freeze, base_ref:, head_ref:,
+                    sides: Lain::Review::Source::BOTH_SIDES)
   end
 
   def changeset_over(diff, **) = described_class.new(source: fake_source(diff:, **))
@@ -748,6 +749,36 @@ RSpec.describe Lain::Review::Changeset do
     # be dead code that no example could reach.
     it "forwards a walk this changeset itself would answer for" do
       expect(commitless_changeset).to respond_to(:commits)
+    end
+  end
+
+  # `#supports?`'s shape for `#supports?`'s reason: the question is the SOURCE's
+  # and the source stays private, so the changeset is the only object that can
+  # put it. Deriving it here instead -- from whether any file carries an old
+  # path -- is the guess this message exists to remove: a diff whose only file
+  # is an addition would then report a one-sided round.
+  describe "#sides, which is what the editor builds its layout from" do
+    def added_file_diff
+      <<~DIFF
+        diff --git a/new.rb b/new.rb
+        new file mode 100644
+        index 0000000..1111111
+        --- /dev/null
+        +++ b/new.rb
+        @@ -0,0 +1,2 @@
+        +alpha
+        +beta
+      DIFF
+    end
+
+    it "puts the question to its own SOURCE, not to its files" do
+      corpus = instance_double(Lain::Review::Source::Corpus, sides: Lain::Review::SIDES - ["old"])
+
+      expect(described_class.new(source: corpus).sides).to eq(["new"])
+    end
+
+    it "answers both sides for a diff source whose only file is an addition" do
+      expect(changeset_over(added_file_diff).sides).to eq(Lain::Review::SIDES)
     end
   end
 

@@ -52,12 +52,12 @@ RSpec.shared_examples "files a bound can size" do
   end
 end
 
-# The changeset-source port. A source answers six messages -- #files, #identity,
-# #base_ref, #head_ref, #file_at and #diff_origin -- and every implementation
-# must pass this group unchanged. {Lain::Review::Source::LocalBranch} is the
-# first; a GitHub PR source is the second, and the point of writing the contract
-# here rather than inside either spec is that the second one is held to it
-# without renegotiation.
+# The changeset-source port. A source answers seven messages -- #files,
+# #identity, #base_ref, #head_ref, #file_at, #diff_origin and #sides -- and
+# every implementation must pass this group unchanged.
+# {Lain::Review::Source::LocalBranch} is the first; a GitHub PR source is the
+# second, and the point of writing the contract here rather than inside either
+# spec is that the second one is held to it without renegotiation.
 #
 # == This group is UNIVERSAL; "a diff-bearing review changeset source" is not
 #
@@ -168,6 +168,14 @@ RSpec.shared_examples "a review changeset source" do |config|
 
   def unreadable_sides(source) = named_sides(source).select { |_named, bytes| bytes.nil? }.map(&:first)
 
+  # Which sides the source's own FILES name, in {named_sides}' sense and by its
+  # rule -- a file names a side by carrying a path for it -- but as the side
+  # alone, which is the unit `#sides` answers in.
+  def sides_named_by(source)
+    source.files.flat_map { |file| [[file.old_path, "old"], [file.new_path, "new"]] }
+                .select(&:first).map(&:last).uniq
+  end
+
   # The same source, naming one file more than its own revisions carry. Pointing
   # a law at this and requiring it to FAIL is how the law's discriminating power
   # is checked rather than asserted -- without it, "every side a file names
@@ -205,6 +213,44 @@ RSpec.shared_examples "a review changeset source" do |config|
 
     it "distinguishes base from head, since a non-empty changeset spans the two" do
       expect(changeset_source.base_ref).not_to eq(changeset_source.head_ref)
+    end
+  end
+
+  # Which sides this round PRESENTS -- a structural fact about the source, and
+  # deliberately not a fact about any one file. A corpus has no old side for
+  # anything it will ever hold; a changeset has two even when a particular file
+  # is an addition. The editor builds its windows before a single row is opened,
+  # so nothing downstream can derive this from an opened file's `old_lines`.
+  describe "#sides" do
+    it "names only sides Review::SIDES declares, so no editor is sent a slot it has no name for" do
+      expect(changeset_source.sides).not_to be_empty
+      expect(Lain::Review::SIDES).to include(*changeset_source.sides)
+    end
+
+    # #files' rule for #files' reason: a source is a read model, and a round
+    # whose sides moved between two renders would have the editor tear down a
+    # window it had already drawn into.
+    it "answers the same sides when asked twice" do
+      expect(changeset_source.sides).to eq(changeset_source.sides)
+    end
+
+    # The law with teeth, and the one that makes this more than shape: a file
+    # names a side by carrying a path for it, so a source claiming FEWER sides
+    # than its own files name has promised the editor a window it then posts
+    # content for.
+    it "presents every side its own files name" do
+      expect(changeset_source.sides).to include(*sides_named_by(changeset_source))
+    end
+
+    # In {Lain::Review::SIDES}' OWN order, which every law above is blind to: a
+    # source answering `%w[new old]` satisfies membership, idempotence and the
+    # files-name law alike, while the editor half indexes what it is sent and
+    # the port's doc promises a subset "in SIDES' order". Written as an
+    # intersection so it says the order and nothing about the membership --
+    # that is the law above's job, and duplicating it here would make one
+    # failure red twice.
+    it "names them in Review::SIDES' order, which is what the editor indexes" do
+      expect(changeset_source.sides).to eq(Lain::Review::SIDES & changeset_source.sides)
     end
   end
 
@@ -407,6 +453,15 @@ RSpec.shared_examples "a diff-bearing review changeset source" do |config|
   subject(:changeset_source) { source_call(source) }
 
   it_behaves_like "a review changeset source", config
+
+  # Having a diff IS having two revisions, so a diff source presents both sides
+  # of {Lain::Review::SIDES} whatever its files happen to be. An added file is a
+  # file with an EMPTY old side, never a round with no old side -- the whole
+  # distinction `#sides` exists to keep, since only one of the two means the
+  # editor should not build the window.
+  it "presents both sides, because a diff spans a base revision and a head one" do
+    expect(changeset_source.sides).to eq(Lain::Review::SIDES)
+  end
 
   # A path pulled OUT of the raw diff carries the diff's encoding (bytes), while
   # a path the source reports is UTF-8 by contract. Comparing the two without

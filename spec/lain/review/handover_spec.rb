@@ -91,11 +91,12 @@ class RecordingCockpitInlet < RecordingSurveyInlet
     @drawn = []
   end
 
-  # @return [Array<Array(Array<String>, Integer)>] the lines of every rendering
-  #   posted and the stamp it was posted under, oldest first
+  # @return [Array<Array(Array<String>, Integer, Array<String>)>] the lines of
+  #   every rendering posted, the stamp it was posted under and the sides the
+  #   round said it presents, oldest first
   attr_reader :drawn
 
-  def set_review(lines, generation) = (@drawn << [lines, generation]) && nil
+  def set_review(lines, generation, sides) = (@drawn << [lines, generation, sides]) && nil
 
   def review_refused(_message) = nil
 
@@ -983,7 +984,7 @@ RSpec.describe Lain::Review::Handover do
       # human's next gesture rides in with.
       def rows = inlet.drawn.last.first
 
-      def stamped = inlet.drawn.last.last
+      def stamped = inlet.drawn.last[1]
 
       def line_of(path) = rows.index { |line| line.include?(path) } + 1
 

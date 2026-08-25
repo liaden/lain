@@ -95,6 +95,10 @@ class SurveyedSource
   # added -- so an old side is never resolvable here.
   def file_at(_revision, _path) = nil
 
+  # {Lain::Review::Source::Corpus}' own answer, for the same reason: a survey's
+  # base holds nothing for any file it will ever hold.
+  def sides = Lain::Review::Source::HEAD_SIDE_ONLY
+
   # @return [Integer] how many times that path has actually been chunked
   def chunkings(path) = @tally[path]
 end
@@ -200,8 +204,8 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
   describe "a file the changeset adds" do
     let(:blobs) { {} }
 
-    before do
-      diff.reviewing(changeset_over(<<~DIFF, ["new.rb"]))
+    def added_diff
+      <<~DIFF
         diff --git a/new.rb b/new.rb
         new file mode 100644
         --- /dev/null
@@ -212,6 +216,8 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
       DIFF
     end
 
+    before { diff.reviewing(changeset_over(added_diff, ["new.rb"])) }
+
     # It OPENS, with an empty old side: a file with no old side is a diff against
     # nothing, which is exactly what a new file is, and refusing it would make
     # every added file unreadable in the editor.
@@ -219,6 +225,19 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
       expect(diff.open("new.rb", 1)).to be_nil
       expect(posted).to eq([{ path: "new.rb", old_lines: [], line: 1,
                               revisions: { "old" => base, "new" => head } }])
+    end
+
+    # The distinction the whole seam rests on: an empty old side is a fact about
+    # this FILE, and the round it belongs to still has two. Deriving the round's
+    # sides from an opened row's `old_lines` would collapse the two, and the
+    # editor would tear down a window every other file in the changeset needs.
+    it "leaves the round two-sided, because the empty side is the file's fact and not the round's" do
+      changeset = changeset_over(added_diff, ["new.rb"])
+      diff.reviewing(changeset)
+      diff.open("new.rb", 1)
+
+      expect(changeset.sides).to eq(Lain::Review::SIDES)
+      expect(posted.last[:old_lines]).to eq([])
     end
   end
 

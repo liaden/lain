@@ -292,17 +292,25 @@ module Lain
         #   saying why the render did not land, or nil
         attr_reader :thread_view
 
-        # @param changeset [#files, #partitions] see {Review::Surface}'s class
+        # @param changeset [#files, #partitions, #sides] see {Review::Surface}'s class
         #   doc for the one place this duck is stated; {Frontend::Neovim::ReviewView}
         #   needs five members beyond it (a file's `#hunk_keys`, `#chunked?` and
         #   `#hunks`; a group's `#counted?` with either its `#added`/`#deleted`
         #   or its `#rendered_lines`) and its own doc says why
         # @param scope [Symbol] the name of a {Review::Partition} strategy as a
         #   Symbol; anything else raises from the view's own `fetch`
+        # The sides ride THIS post and not {#open}'s, and the ordering is what
+        # forces it: the editor builds its panes from the sidebar render, at
+        # first paint, before any row is opened -- so a fact carried by the
+        # changeset open arrives after the window it would have prevented
+        # already exists. It is a FACT about the round and never an instruction,
+        # for {#focus}'s reason one line down: Ruby says what the round has, and
+        # what to build out of that is a layout only the editor can see.
+        #
         # @return [String, nil] the editor's refusal, or nothing
         def present(changeset, scope:)
           rendered = @view.render(changeset, scope:)
-          @rpc.set_review(rendered.lines, rendered.generation)
+          @rpc.set_review(rendered.lines, rendered.generation, changeset.sides)
         end
 
         # Put the human in front of what {#present} drew, ONCE, when the round is

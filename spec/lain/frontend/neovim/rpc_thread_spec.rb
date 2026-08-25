@@ -138,7 +138,7 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
     expect(inlet.open_question(["## `q` (choose one)"], "blake3:c0ffee")).to be_nil
     expect(inlet.open_review("/epics/alpha/epic.md", 7, "alpha")).to be_nil
     expect(inlet.review_refused("generation 7 is not open")).to be_nil
-    expect(inlet.set_review(["  M lib/lain/agent.rb"], 3)).to be_nil
+    expect(inlet.set_review(["  M lib/lain/agent.rb"], 3, %w[old new])).to be_nil
     expect(inlet.open_changeset("lib/lain/agent.rb", ["was"], 12, revisions)).to be_nil
     expect(inlet.set_thread("anchor-1", ["why this way?"])).to be_nil
     expect(inlet.review_focus).to be_nil
@@ -156,7 +156,7 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
       question: inlet.open_question(["## `q` (choose one)"], "blake3:c0ffee"),
       review: inlet.open_review("/epics/alpha/epic.md", 1, "alpha"),
       refusal: inlet.review_refused("nobody will read this"),
-      sidebar: inlet.set_review(["  M lib/lain/agent.rb"], 3),
+      sidebar: inlet.set_review(["  M lib/lain/agent.rb"], 3, %w[old new]),
       changeset: inlet.open_changeset("lib/lain/agent.rb", ["was"], 12, revisions),
       thread: inlet.set_thread("anchor-1", ["why this way?"]),
       focus: inlet.review_focus }
@@ -324,11 +324,36 @@ RSpec.describe Lain::Frontend::Neovim::RenderQueue do
     client = instance_double(Neovim::Client, session:)
     allow(session).to receive(:notify)
 
-    queue.post_review_sidebar(["  M lib/lain/agent.rb"], 3)
+    queue.post_review_sidebar(["  M lib/lain/agent.rb"], 3, %w[old new])
     queue.drain(client)
 
     expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::SET_REVIEW,
-                                                   [["  M lib/lain/agent.rb"], 3])
+                                                   [["  M lib/lain/agent.rb"], 3, %w[old new]])
+  end
+
+  # The sides ride THIS rail rather than the changeset open, and the reason is
+  # ordering rather than taste: the editor builds its windows at first paint,
+  # from the sidebar render, so a fact carried by the open arrives after the
+  # window it would have prevented already exists.
+  it "sends the sides the round presents, so a one-sided round says so before any row is opened" do
+    queue = described_class.new
+    session = instance_double(Neovim::Session)
+    client = instance_double(Neovim::Client, session:)
+    allow(session).to receive(:notify)
+
+    queue.post_review_sidebar(["  A guide.md"], 1, ["new"])
+    queue.drain(client)
+
+    expect(session).to have_received(:notify).with("nvim_exec_lua", described_class::SET_REVIEW,
+                                                   [["  A guide.md"], 1, ["new"]])
+  end
+
+  # The lua half has to BIND what Ruby sends: a chunk taking two arguments and
+  # a queue pushing three drops the third silently, which is the one failure
+  # shape a payload assertion above cannot see.
+  it "binds every argument the sidebar render sends, in the chunk the editor runs" do
+    expect(described_class::SET_REVIEW).to include("local lines, gen, sides = ...")
+      .and include("_G.__lain.set_review(lines, gen, sides)")
   end
 
   # Ruby runs git, never the editor: the old side arrives as LINES this side

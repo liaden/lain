@@ -90,6 +90,16 @@ module Lain
     # entries (`#label`, `#files` -- same file-entry shape) for every GROUPED
     # scope, whichever {Review::Partition::Strategy} produced them.
     #
+    # `changeset.sides` answers which of {Review::SIDES} the ROUND presents at
+    # all, as a subset of that vocabulary in its own order -- both for anything
+    # spanning a base revision and a head one, the new side alone for a corpus
+    # surveyed as it stands. It is the round's fact and never a file's: a file
+    # with no old path is an addition INSIDE a two-sided round, and only a
+    # surface that can build panes needs to tell those apart before it draws
+    # ({Surface::Neovim#present} is the one that does, and it sends the fact
+    # rather than a layout). See {Review::Source} for why the question belongs
+    # to the source.
+    #
     # A surface that draws more than a path and a glyph needs more than that,
     # and {Frontend::Neovim::ReviewView} is where the additional members and
     # their reasons are stated -- including the two a LAZY source makes

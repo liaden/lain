@@ -113,9 +113,9 @@ RSpec.describe Lain::Review::Source::Corpus do
     described_class.new(walk: Lain::Survey::Walk.new(root:, sensitivity:), projection:, chunker: dispatch)
   end
 
-  # The port itself. A corpus answers the SIX universal messages and neither of
-  # the two witnesses -- no `#diff`, no `#commits` -- which is exactly the split
-  # `spec/support/shared_examples/review_source.rb` records.
+  # The port itself. A corpus answers the SEVEN universal messages and neither
+  # of the two witnesses -- no `#diff`, no `#commits` -- which is exactly the
+  # split `spec/support/shared_examples/review_source.rb` records.
   describe "the changeset-source port" do
     it_behaves_like "a review changeset source", source: lambda {
       write("guide.md", five_sections(sections))
@@ -130,6 +130,28 @@ RSpec.describe Lain::Review::Source::Corpus do
 
       expect(corpus).not_to respond_to(:diff)
       expect(corpus).not_to respond_to(:commits)
+    end
+
+    # A corpus has no old side STRUCTURALLY -- not "not this time", but for
+    # every file it will ever hold, because its base holds nothing at all. That
+    # is a different fact from a changeset file that happens to be an addition,
+    # and it is the reason the question is on the SOURCE: an editor reading
+    # `old_lines == []` off one opened row cannot tell the two apart.
+    it "presents only the new side, for every file it will ever hold" do
+      write("guide.md", five_sections(sections))
+
+      expect(corpus.sides).to eq(Lain::Review::SIDES - ["old"])
+    end
+
+    # The vocabulary's own derive-don't-restate rule, mechanically: `%w[new]`
+    # written here would be a second declaration free to disagree with the set
+    # that decides membership.
+    it "names its sides out of Review::SIDES rather than restating them" do
+      write("guide.md", five_sections(sections))
+
+      expect(Lain::Review::SIDES).to include(*corpus.sides)
+      expect(Lain::Review::Source::BOTH_SIDES).to equal(Lain::Review::SIDES)
+      expect(Lain::Review::SIDES - Lain::Review::Source::HEAD_SIDE_ONLY).to eq(["old"])
     end
 
     # `Partition::ByCommit` is the one strategy that declines a source, and this

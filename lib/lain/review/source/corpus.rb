@@ -388,6 +388,18 @@ module Lain
         # @return [DiffOrigin]
         def diff_origin = @diff_origin ||= DiffOrigin.already_local
 
+        # One side, for every file this corpus will ever hold: {BASE_REF} names
+        # no revision anything can be read out of, so `#file_at` answers nil for
+        # the old side of everything and every file is `added`.
+        #
+        # STRUCTURAL, which is the whole reason the question is asked of the
+        # source. A changeset file that happens to be an addition has an empty
+        # old side too, and an editor cannot tell the two apart from the lines
+        # it is posted -- see {Review::Source}'s own note on this message.
+        #
+        # @return [Array<String>] {HEAD_SIDE_ONLY}
+        def sides = HEAD_SIDE_ONLY
+
         private
 
         # From the WALK, before a byte is read. `Bounds` owns the ceiling and

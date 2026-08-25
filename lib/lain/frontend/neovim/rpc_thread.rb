@@ -82,7 +82,16 @@ module Lain
         # {SET_VIEW}'s is -- a sidebar row moves the moment the scope toggles,
         # which is exactly the aliasing protocol 8 replaced the line count to
         # fix.
-        SET_REVIEW = "local lines, gen = ...; if _G.__lain then _G.__lain.set_review(lines, gen) end"
+        #
+        # `sides` is a FACT about the round -- which of {Review::SIDES} it
+        # presents at all -- and never a layout instruction; see
+        # {RenderQueue#post_review_sidebar}. It rides THIS rail rather than
+        # {OPEN_CHANGESET} because this one precedes the layout: the editor
+        # builds its panes on the first sidebar render, before any row is
+        # opened, so a fact sent with the open arrives after the window it would
+        # have prevented already exists.
+        SET_REVIEW = "local lines, gen, sides = ...; " \
+                     "if _G.__lain then _G.__lain.set_review(lines, gen, sides) end"
 
         # Go to the review's tabpage, building the layout first if the human
         # closed it. The ONE entry point in `41_layout.lua` that takes focus,
@@ -224,8 +233,17 @@ module Lain
         # gesture the human just made, so a blocking push against a full queue
         # would park the surface that answers every OTHER verb on that rail --
         # including the refusal this one owes them.
-        def post_review_sidebar(lines, generation)
-          @queue.push(Command.new(args: [lines, generation], lua: SET_REVIEW), true)
+        #
+        # @param lines [Array<String>] the sidebar's whole buffer
+        # @param generation [Integer] the stamp those lines were rendered under
+        # @param sides [Array<String>] which of {Review::SIDES} the round
+        #   presents -- a fact, not an instruction. A survey of files as they
+        #   stand has no old side for anything it will ever hold; a changeset
+        #   has both even where one file is an addition. What to build out of
+        #   that is the editor's own question ({#post_review_focus}'s rule), so
+        #   nothing here says "open two windows".
+        def post_review_sidebar(lines, generation, sides)
+          @queue.push(Command.new(args: [lines, generation, sides], lua: SET_REVIEW), true)
         end
 
         # No arguments at all, which is the one thing to notice: where the human
@@ -410,8 +428,8 @@ module Lain
         # raising for the reason above AND one of its own: {Review::Surface} is
         # a port whose adapters DECLINE in words, so a detached editor has to be
         # a value the adapter can hand back, never an exception it has to catch.
-        def set_review(lines, generation)
-          refusable(SIDEBAR_DETACHED) { @queue.post_review_sidebar(lines, generation) }
+        def set_review(lines, generation, sides)
+          refusable(SIDEBAR_DETACHED) { @queue.post_review_sidebar(lines, generation, sides) }
         end
 
         def open_changeset(path, old_lines, line, revisions)

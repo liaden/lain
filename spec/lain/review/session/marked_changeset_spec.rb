@@ -104,6 +104,7 @@ RSpec.describe Lain::Review::Session::MarkedChangeset do
   # unstubbed message.
   def corpus_changeset(files)
     instance_double(Lain::Review::Changeset, files:, base_ref: base_sha, head_ref: head_sha,
+                                             sides: Lain::Review::Source::HEAD_SIDE_ONLY,
                                              partitions: [Lain::Review::Partition.new(label: -"s", files:)])
       .tap { |changeset| allow(changeset).to receive(:hunks) { files.flat_map(&:hunks) } }
   end
