@@ -261,6 +261,30 @@ RSpec.describe Lain::Prompt::Slots do
     end
   end
 
+  # The role namespace is a second, independent filename check (slots.rb:114) --
+  # a typo here must be as loud as a top-level one, naming the file and the
+  # full shipped roster rather than being silently dropped as an unreadable
+  # override. Moved here from role_spec.rb (T-C6): this is Prompt::Slots'
+  # OWN behavior, so it belongs in Prompt::Slots' own spec, not borrowed
+  # locality in the Role class's.
+  describe "an unknown role slot file is loud (the role namespace, like top-level)" do
+    it "names the file and rejects a role that ships no default" do
+      Dir.mktmpdir do |root|
+        path = File.join(root, ".lain", "slots", "role", "chef.md")
+        FileUtils.mkdir_p(File.dirname(path))
+        File.write(path, "cook something")
+
+        known_roles = Lain::Role::Catalog.names.map { |name| Lain::Role::Catalog.fetch(name).slot_name }
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Prompt::UnknownSlot) { |e|
+            expect(e.message).to include("chef")
+            known_roles.each { |slot_name| expect(e.message).to include(slot_name) }
+          }
+      end
+    end
+  end
+
   describe "content addressing" do
     it "digests each known slot's RENDERED bytes via Canonical" do
       with_project("system" => "addressed") do |root|

@@ -236,19 +236,13 @@ RSpec.describe Lain::Role do
     end
   end
 
-  describe "an unknown role slot file is loud (the role namespace, like top-level)" do
-    it "names the file and rejects a role that ships no default" do
-      Dir.mktmpdir do |root|
-        path = File.join(root, ".lain", "slots", "role", "chef.md")
-        FileUtils.mkdir_p(File.dirname(path))
-        File.write(path, "cook something")
-
-        expect { Lain::Prompt::Slots.load(root:) }
-          .to raise_error(Lain::Prompt::UnknownSlot, /chef/)
-      end
-    end
-
-    it "rejects an impure override the same way top-level slots do" do
+  # The filename-refusal half of this used to live here (an unknown
+  # `.lain/slots/role/chef.md` raising UnknownSlot) -- moved to
+  # `slots_spec.rb` (T-C6), which is where `Prompt::Slots`' OWN filename
+  # check belongs; the assertion is there now, strengthened to check every
+  # shipped role name rather than just the offending one.
+  describe "a role override rejects impurity the same way a top-level one does" do
+    it "raises ImpureSlot, naming what the fill actually did" do
       expect do
         with_project("role/test-engineer" => "Now: <%= Time.now %>") do |slots|
           slots.render_role(:test_engineer)

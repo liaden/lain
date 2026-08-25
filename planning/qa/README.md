@@ -85,7 +85,20 @@ note rail and the refusal-delivery rule, all on a dummy tree small enough to sta
 right subject for an anchor assertion. `survey.md` takes everything needing a tree of real size or a
 tree with something planted in it.
 
-**Fourteen scenarios do not fit in one round, and pretending otherwise is how a slot gets
+**Also added 2026-08-25** — the project extension API, written because no scenario drove
+`.lain/slots/` at all: three levels of override, two of them checked here, and a cache-floor claim
+that had never been measured against a real prefix:
+
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`prompt-slots-and-roles.md`](scenarios/prompt-slots-and-roles.md) | Does a project's own `.lain/slots/` tree actually reach the model — does a top-level or role override land verbatim, does a typo'd filename refuse loudly **by name** at every level (`UnknownSlot`) rather than being silently ignored, and does the shipped 364-byte default system slot actually miss Anthropic's 4096-token cache floor on the wire, not just on paper? | cheap (one step paid) |
+
+Almost all of it is a zero-model-turn refusal or `/ruby` inspection path, on `repl-commands.md`'s
+shape. The one exception is its §6 second half: confirming the shipped default actually misses the
+cache on a real round trip costs **2 completions against a live Anthropic key** — the free half of
+§6 (the byte count against the published floor) costs nothing and is not a substitute for it.
+
+**Fifteen scenarios do not fit in one round, and pretending otherwise is how a slot gets
 substituted** — that is the failure rounds 7 and 8 made with `cockpit-surfaces`, one level out. So
 the six above are **not appended to the full round below**. They are placed:
 

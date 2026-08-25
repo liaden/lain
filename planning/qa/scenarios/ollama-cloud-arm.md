@@ -31,7 +31,7 @@ LAIN_PREFLIGHT=1 lain chat --provider ollama-cloud --api-base http://ollama.exam
 LAIN_PREFLIGHT=1 lain chat --provider ollama --summarizer-provider ollama-cloud --api-base http://127.0.0.1:11434
 ```
 
-Each must refuse **at construction, before the chronicle opens**, in one clean line with no
+The first two refuse **at construction, before the chronicle opens**, in one clean line with no
 backtrace. Read the messages, do not just check the exit code — the whole point is that they are
 actionable at 3am:
 
@@ -40,8 +40,12 @@ actionable at 3am:
   server started elsewhere hands its panes — this is the modal `lain up` failure);
 - the plaintext refusal says *why* https is required, in the arm's own terms: a subscription key
   sent in plaintext is an exfiltrated key;
-- the third names `--summarizer-provider`, **not** `--provider`. Naming the flag the operator did
-  not type is a defect this arm has already had once.
+- **the third does not refuse at all — it constructs.** A non-chat tier resolves its OWN
+  deployment's base (`https://ollama.com` for the cloud arm) rather than inheriting `--api-base`
+  (`ollama_tier.rb:238`), so the plaintext `http://127.0.0.1:11434` named there belongs to the
+  *chat* arm (plain `ollama`) and never reaches the cloud summarizer. §2 drives this same property
+  deliberately. An earlier version of this document expected a flag-naming refusal here; that
+  prediction does not hold against the code.
 
 **False pass to watch for:** `LAIN_PREFLIGHT=1` exiting 0 while a real run would refuse. Preflight
 must refuse a **subset** of what chat refuses, never less — that gap is what makes `lain up` open a
