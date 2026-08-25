@@ -38,11 +38,16 @@ module Lain
       # `wrap(:sym)["id"]` answers nil through `Symbol#[]`'s substring search,
       # `wrap(nil).id` raises NoMethodError). The class is the whole diagnosis,
       # so the message quotes no value and cannot itself grow unbounded.
-      def self.wrap(block)
-        return block if block.is_a?(self)
-        raise ArgumentError, "a tool_use lens wraps a Hash block, got #{block.class}" unless block.is_a?(Hash)
+      # @param subject [Hash, ToolUse] a wire tool_use content block, or an
+      #   already-wrapped lens over one
+      # @return [ToolUse] `subject` itself if already a lens; otherwise a new
+      #   lens over it
+      # @raise [ArgumentError] if `subject` is neither a Hash nor a ToolUse
+      def self.wrap(subject)
+        return subject if subject.is_a?(self)
+        raise ArgumentError, "a tool_use lens wraps a Hash block, got #{subject.class}" unless subject.is_a?(Hash)
 
-        new(block)
+        new(subject)
       end
 
       def initialize(hash)

@@ -47,6 +47,46 @@ RSpec.describe Lain::Response::ToolUse do
           .to raise_error(ArgumentError, /wraps a Hash block, got #{subject.class}/)
       end
     end
+
+    # The class name alone is the diagnosis (see the comment above .wrap): the
+    # regex above proves the class is NAMED, but an unanchored substring match
+    # cannot prove a value is ABSENT -- a message that named the class and ALSO
+    # quoted the offending value would still match it. This is the second half
+    # of AC 2, checked directly: an interpolated `subject.inspect` -- which is
+    # exactly what INSPECT_LIMIT (see the class-level constant) exists to keep
+    # OUT of a raised message, for the write_file-shaped case where `input`
+    # carries a whole file -- must not appear.
+    it "quotes no value from the input in the refusal message" do
+      [:sym, "tu_1", [hash]].each do |subject|
+        expect { described_class.wrap(subject) }.to raise_error(ArgumentError) do |error|
+          expect(error.message).not_to include(subject.inspect)
+        end
+      end
+    end
+
+    # AC 3. The contract is entirely tag-shaped, so it should be readable by YARD
+    # itself rather than only by a human skimming the prose above the method --
+    # `source_location` keeps this grounded in the real file rather than a
+    # hand-typed path that could drift from it.
+    #
+    # `YARD::Registry` is process-global mutable state, and no other example in
+    # this tree touches it -- do not build on registry state surviving between
+    # examples. `yard` also lives in the Gemfile's `:development` group, not
+    # `:test`: a deliberate first (see the spec's git history for C3), because
+    # only YARD itself parsing these lines proves the tag-shaped contract is
+    # machine-readable -- a textual grep for `@param` would be weaker, and
+    # would not catch CLAUDE.md's documented trap where a line-leading `@word`
+    # silently becomes a tag. A missing gem fails loudly with `LoadError`.
+    it "documents its contract with @param, @return and @raise tags YARD can parse" do
+      require "yard"
+
+      path, = described_class.method(:wrap).source_location
+      YARD::Registry.clear
+      YARD.parse(path)
+
+      tags = YARD::Registry.at("#{described_class}.wrap").tags.map(&:tag_name)
+      expect(tags).to include("param", "return", "raise")
+    end
   end
 
   describe "the named readers" do
