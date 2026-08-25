@@ -1,6 +1,6 @@
 # Chunk: round-11 survey surfaces — what a survey IS, and who may park
 
-status: in-progress (wave 1 complete, wave 2 running)
+status: done
 commit-mode: orchestrator-commits
 language: ruby (with real Lua in the nvim runtime)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson, TJ DeVries (Neovim seat, added for this chunk)
@@ -1024,7 +1024,7 @@ its wording is the narrow claim and is already correct.
 
 ---
 
-### T11 — Open only the slots the round has, keeping the vocabulary whole   [wave 2] [risk: high]
+### T11 — Open only the slots the round has, keeping the vocabulary whole   [wave 2] [risk: high]  ✅ LANDED bde9195c
 
 **Depends on:** T4
 **Files:** modify `lib/lain/frontend/neovim/runtime/41_layout.lua`,
@@ -1199,7 +1199,7 @@ Scenario: marking still works from the sidebar
 
 ---
 
-### T12 — Make the opened banner name the motion the round actually has   [wave 2] [risk: low]
+### T12 — Make the opened banner name the motion the round actually has   [wave 2] [risk: low]  ✅ LANDED b0cac216
 
 **Depends on:** T4
 **Files:** modify `lib/lain/review/opened_banner.rb`, `lib/lain/cli/command/review.rb`,
@@ -1250,7 +1250,7 @@ Scenario: the banner still names the sidebar and the verdict gesture
 
 ---
 
-### T13 — Let the corpus ceiling refuse through Bounds, with advice   [wave 2] [risk: medium]
+### T13 — Let the corpus ceiling refuse through Bounds, with advice   [wave 2] [risk: medium]  ✅ LANDED 338862d3
 
 **Depends on:** T4 (file-contention only — both cards edit `review/source/corpus.rb`)
 **Files:** modify `lib/lain/review/source/corpus.rb`, `lib/lain/review/bounds.rb` (if the advice seam
@@ -1286,8 +1286,21 @@ Worse, `fits?` → `view.partitions` → `Corpus#files` → `#lazy` → `reads.f
 read of every file** (`corpus.rb:456-460`), so the two original ACs could not both hold.
 
 So: route the refusal through `Bounds#guard!` (`bounds.rb:448-452`) so it stops being a hand-written
-imitation, and **yield `--unbounded` plus `Partition::ByDirectory`'s own static advice string**
-(`by_directory.rb:21`, a frozen constant). No measurement, no view, no walk.
+imitation, and **yield `--unbounded` plus the generic subdirectory remedy**. No measurement, no view,
+no walk.
+
+> **CORRECTED DURING EXECUTION (2026-08-25, orchestrator).** This paragraph originally said to yield
+> `Partition::ByDirectory`'s own static advice string, and AC 2 below originally read *"the refusal
+> names the directory scope as an alternative"*. **Both were false and are struck.** `cli/survey.rb:155`
+> builds the `Corpus` — where `refuse_oversized!` raises — and `scope` is not applied until `:191`
+> (`session.present(scope:)`), so the refusal fires strictly before any scope exists. **`--scope
+> by_directory` cannot lift the corpus ceiling**; a refusal naming it would send a human to a path that
+> refuses with a byte-identical message, which is the exact defect class this chunk exists to remove.
+> The plan conflated *grouping the display by directory* (a partition strategy over the same file set)
+> with *surveying a smaller tree* (a different walk root, which really does reduce the count). The
+> shipped advice keeps **"survey a subdirectory instead"** — generic, walk-free, and true — and adds
+> **`--unbounded`**, the flag QA found missing. Found by T13's implementer, who implemented the card as
+> written and escalated rather than silently overriding a reviewed AC.
 
 **Acceptance criteria:**
 
@@ -1296,10 +1309,11 @@ Scenario: the file-count refusal names the flag that lifts it
   Given a corpus over the file ceiling
   Then the refusal names --unbounded
 
-Scenario: the refusal names the narrower scope that exists
+Scenario: the refusal names the narrower survey that exists
   Given a corpus over the file ceiling
-  Then the refusal names the directory scope as an alternative
-  And it does so from ByDirectory's own static advice, measuring nothing
+  Then the refusal says a subdirectory may be surveyed instead
+  And it names no partition scope, because a scope cannot lift this ceiling
+  And it measures nothing
 
 Scenario: the decision is still reached without walking
   Given a corpus over the file ceiling
@@ -1418,7 +1432,7 @@ existing coverage and must remain green **and unmodified by this card**.
 
 ---
 
-### T15 — Bring the two user-facing docs up to date with the review tier   [wave 3] [risk: low]
+### T15 — Bring the two user-facing docs up to date with the review tier   [wave 3] [risk: low]  ✅ LANDED e5f9cc1f
 
 **Depends on:** T3, T8, T9, T11, T12, T13 — **T3 is what changes `lain.txt:296`'s `:LainReply` line**
 **Files:** modify `docs/commands.md`, `plugin/nvim/doc/lain.txt`
@@ -1528,3 +1542,69 @@ Run after the last wave, by the orchestrator:
    discharges round 11, following the `chunk-qa-round7-constructed-and-consistent.md` precedent.
 9. **`fleet N` will still not decrement.** That is this chunk's one knowingly-unfixed finding (see
    Open decisions) — do not read it as a regression.
+
+## Close-out (2026-08-25)
+
+**All fourteen cards landed** (T2 withdrawn before execution). Verified by **round 12**, a manual
+re-drive of `planning/qa/scenarios/survey.md` on the real cockpit —
+[`../qa-findings-round12-2026-08-25.md`](../qa-findings-round12-2026-08-25.md).
+
+**The result this chunk was built for:** `:LainThread` on a one-sided survey opens the `old` slot on
+demand at 80 and 100 columns — **no traceback, no modal, no blocking**. Round 7's F31 shape did not
+return to the surface T11 reshaped. F64–F70 and the corpus ceiling all verified FIXED against the
+real binary, and the ceiling's no-walk property survived at **+83ms over a `lain help` no-op**, with a
+scaling control (735 files ≈ same cost, 1762 ≈ 2.1×) proving it enumerates rather than reads.
+
+**Integration checks:** suite **15899 examples, 0 failures, 15 pendings** against a pre-chunk baseline
+of **15749/0/15** — the count GREW by 150 and the pendings are unchanged, which is the check that
+matters (`parallel_tests` reports only survivors, so a shrinking count is a dead worker wearing a
+pass). `rubocop` 1387 files clean with `-a` correcting nothing; `cargo test` + `clippy -D warnings`
+green; **509 `:nvim`-tagged examples genuinely executed**, so T3, T5 and T11's Lua halves are really
+verified rather than silently skipped. `git worktree list` and `git branch --list` are back to the
+pre-chunk baseline exactly.
+
+**One honest loose end.** A single failure appeared in one `pre-commit run --all-files` (15899
+examples, 1 failure) and did **not** reproduce across seven subsequent full-suite runs at both 12 and
+7 workers. It was never identified by name, so it is deliberately NOT added to the flake list —
+CLAUDE.md's rule is that a flake is recorded by NAME, and a stale or guessed entry reads as "not a
+known flake" later, which is worse than no entry. Evidence it is not this chunk's: `git diff
+b1927ce7..HEAD` over `lib/lain/supervisor*` and `spec/lain/supervisor*` is **empty** — no card touched
+any async, supervisor or reactor path. `bundle exec rake spec:flakes` (16 runs in random orders) is
+the tool that would settle it.
+
+**Deliberately unfixed, as planned:** `fleet N` still does not decrement. `status_feed.rb:44-48`
+records W3 lifecycle as future work, and giving `@fleet` removal means deciding what "done" means for
+an arm — a design question, not a fix. Round 12 confirmed it persists; that is expected, not a
+regression.
+
+**Follow-up work found in review and by round 12, none blocking:**
+
+| what | found by |
+|---|---|
+| `Held#source`/`Held#verdict` + `Held::None` — the outbox walks two Demeter trains | T6 panel |
+| a judged-but-unposted `github_pr` round is droppable by `/survey` (widened, not new) | T6 panel |
+| `HEAD_SIDE_ONLY` belongs in `review/vocabulary.rb`, deleting the banner→source load edge | T12 panel |
+| four runtime modules still refuse on raw `vim.notify` and will modal at 80 columns | T5 panel |
+| `unattended` may belong to the SPAWN SITE, not the role, for `researcher` | T1 implementer |
+| `ChildBuilder` registers an asker before `granted` decides it may not have one | T1 panel |
+| `--scope commits` on an oversized tree answers the ceiling, then fails differently | T13 panel |
+| F71 — `unknown skill` leaks `Array#inspect` of Symbols, F70's defect one rail over | round 12 |
+| F72 — T7 unified the sidebar onto the path spelling that does NOT resolve from cwd | round 12 |
+| P18 — orphaned load-probe spinners; `trap ... EXIT INT TERM` folded into `method.md` | round 12 |
+
+**What the panel caught that a green suite could not.** Five assertions in this chunk passed for the
+wrong reason and were found by review: a bracket-regex negative that captured nothing (T9); a
+"no refusal raises" assertion that held only at 120 columns while the code raised a modal at 80 (T5);
+a hop count that `sides.length` satisfied identically (T12); a `landing` fallback so unexercised that
+reverting it left all 162 examples green (T11); and a "sheds the stale window" assertion that passed
+with the shedding code deleted, because a different mechanism produced the same end state (T11).
+Two cards also shipped comments whose stated REASON was false though the decision was right — both
+from an orchestrator lesson propagated to a surface whose mechanism did not reach it. **The rule that
+earned its keep: when propagating a lesson between cards, propagate the MECHANISM and make the
+receiving card verify it reaches its surface before citing it.**
+
+**One card's acceptance criteria were wrong and were corrected mid-flight**: T13's mandated advice
+named `--scope by_directory`, which cannot lift the corpus ceiling because the refusal raises in
+`Corpus#initialize` before any scope is applied. See the `CORRECTED DURING EXECUTION` block on that
+card. The implementer built it as written, proved the falsity with a real filesystem probe, and
+escalated rather than silently overriding a reviewed AC — which is what made it visible.

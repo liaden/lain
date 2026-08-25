@@ -170,8 +170,16 @@ call per turn.
 
 Written per round, kept in `planning/` alongside the chunk specs that discharge them:
 
+- [`../qa-findings-round12-2026-08-25.md`](../qa-findings-round12-2026-08-25.md) — round 12, the
+  scoped `survey` **regression re-drive** after round 11's chunk landed: all eight of round 11's
+  findings verified fixed on the real cockpit, and **§7's `:LainThread` did not raise** — round 7's
+  F31 shape has not returned to the surface the layout card reshaped. Two new LOW findings (F71,
+  F72) and one process finding (P18, the orphaned load-probe spinners)
 - [`../qa-findings-round11-2026-08-25.md`](../qa-findings-round11-2026-08-25.md) — round 11, the
   scoped `survey` round: all seven sections driven, **§7's docent-thread debt discharged**
+- [`../specs/chunk-qa-round11-survey-surfaces.md`](../specs/chunk-qa-round11-survey-surfaces.md)
+  — the chunk that discharges round 11, following the round-7 precedent below: fourteen cards,
+  F64–F70 plus the corpus ceiling, verified by round 12
 - [`../qa-findings-round10-2026-08-23.md`](../qa-findings-round10-2026-08-23.md) — round 10
 - [`../qa-findings-round9-2026-08-23.md`](../qa-findings-round9-2026-08-23.md) — round 9
 - [`../qa-findings-round9-remaining-2026-08-23.md`](../qa-findings-round9-remaining-2026-08-23.md)

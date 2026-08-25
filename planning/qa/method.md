@@ -720,6 +720,32 @@ first. They were **reparented to init**, which is the cheap way to identify them
 ps -eo pid,ppid,args | awk '$2==1 && /while :; do :; done/'    # ppid 1 == nobody is coming back
 ```
 
+**Round 12 found the SAME SIXTEEN round 11 had found, now 5.6 hours old** -- the round-11 driver was
+refused permission to kill them, so they burned ~13 of 16 cores across two consecutive rounds. This
+is the third round running to be contaminated by orphaned spinners, and the recurrence is the
+finding: **a probe that saturates the box must clean up on the FAILURE path, not only the success
+path.** The shape that spawns them is always the same --
+
+```bash
+for i in $(seq 1 $(nproc)); do (while :; do :; done) & done
+loadpids=$(jobs -p)
+...                       # anything here that dies takes the `kill` below with it
+kill $loadpids 2>/dev/null
+```
+
+-- and the one-line fix is to arm the cleanup before the work rather than after it:
+
+```bash
+loadpids=$(jobs -p)
+trap 'kill $loadpids 2>/dev/null' EXIT INT TERM     # survives a failure, a timeout and a Ctrl-C
+```
+
+**Write the `trap` on the line after the spawn, every time.** A `kill` on the last line is not
+cleanup, it is cleanup *conditional on nothing going wrong*, which is the one case it is not needed
+in. And a driver who finds orphans and cannot clear them should say so in the findings AND escalate
+to the operator rather than absorbing it -- round 11 absorbed it and round 12 paid for it again.
+
+
 **When the gate FAILS and cannot be cleared, a timing claim is still possible — as a CONTROL SET,
 never as an absolute.** Round 11 drove a whole round at 0.0% idle behind 16 orphaned spinners it was
 not permitted to kill, and still answered `survey.md` §2's "does it refuse without walking the tree"
