@@ -720,6 +720,24 @@ first. They were **reparented to init**, which is the cheap way to identify them
 ps -eo pid,ppid,args | awk '$2==1 && /while :; do :; done/'    # ppid 1 == nobody is coming back
 ```
 
+**When the gate FAILS and cannot be cleared, a timing claim is still possible — as a CONTROL SET,
+never as an absolute.** Round 11 drove a whole round at 0.0% idle behind 16 orphaned spinners it was
+not permitted to kill, and still answered `survey.md` §2's "does it refuse without walking the tree"
+question, because the question is comparative and the samples share the load:
+
+| run | files | wall |
+|---|---:|---:|
+| REFUSE `lib` | 742 | 1578ms |
+| SUCCEED `lib/lain/frontend` | 52 | 1676ms |
+| SUCCEED `lib/lain/survey` | 9 | 1485ms |
+| **`lain help`** — does no survey at all | — | **1521ms** |
+
+The no-op baseline is the load-bearing row: the 742-file refusal costs ~57ms more than a command
+that surveys nothing, and is FASTER than surveying 52 files. That conclusion survives any load the
+four samples share. **The rule: when the gate fails, restate the question comparatively and include a
+do-nothing baseline, rather than either reporting a contaminated absolute or dropping the check.**
+Say in the findings that no absolute wall-clock claim rests on that round.
+
 **Judge this gate on INSTANTANEOUS idle, not on `uptime`.** The 1-minute load average lags badly --
 it still read 14.00 several minutes after all 24 were killed, which would read as a failed gate on a
 machine that was 92% idle. Use:

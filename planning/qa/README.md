@@ -56,13 +56,44 @@ Its step 7 is the one to read before using this arm for anything: **neither olla
 determinism-comparable bench arm on this machine right now**, so a `bench variance` number taken
 from either is measuring the server rather than the change.
 
-**Thirteen scenarios do not fit in one round, and pretending otherwise is how a slot gets
+**Added 2026-08-25** — the first scenario to own a **command** rather than a tier, written because
+`/survey`'s coverage was scattered across another scenario's two subsections and the parts nobody
+had driven were the parts nobody owned:
+
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`survey.md`](scenarios/survey.md) | Does `/survey` refuse honestly at a **size no round has driven** (lain's own `lib/` is 742 files / 161,963 lines against ceilings of 300 / 30,000), does the **walk** admit and withhold the right paths — gated is *listed and masked*, only denied is withheld — and is the **docent thread reachable at all**? Runs entirely on the **local** arm. | cheap |
+
+It takes the **docent thread pane** off `cockpit-surfaces` §4b, which is where that debt had sat
+**undriven since round 7** — dropped by rounds 8, 9 and 10, and named "3rd round owed" in round 10's
+own coverage table. §7 was that debt, and it is why this scenario belongs in the regression gate
+rather than the rotation: it is deterministic apart from one local model call, and the thing it
+guards had slipped four rounds precisely because it was always somebody's optional last section.
+
+**DISCHARGED as of round 11 (2026-08-25).** All seven sections were driven — the first drive of any
+of them. **Round 7's F31 is fixed** (the thread pane's `BufWriteCmd` refusal no longer raises: no
+traceback, no modal, `:w` in 0s against two 120s RPC timeouts) and **F56 is fixed**. Seven new
+findings, headed by **F64** (a docent that parks an `ask_human` strands the thread pane while the
+inbox, the HUD and `:LainReply` disagree about whether the question is live) and **F65** (the `<CR>`
+gesture opens the RAW file, putting unreleased secret bytes on a surface `Projection` masks
+everywhere else). **Six of the scenario's own predictions were falsified and corrected in place** —
+including §4's planted key, which sat below both detector gates and so made that check pass for the
+wrong reason. Two predicted defects were withdrawn with their mechanisms.
+
+**The boundary with `cockpit-surfaces` is stated in both files.** §4/§4b keep the gesture rails, the
+note rail and the refusal-delivery rule, all on a dummy tree small enough to state in full — the
+right subject for an anchor assertion. `survey.md` takes everything needing a tree of real size or a
+tree with something planted in it.
+
+**Fourteen scenarios do not fit in one round, and pretending otherwise is how a slot gets
 substituted** — that is the failure rounds 7 and 8 made with `cockpit-surfaces`, one level out. So
 the six above are **not appended to the full round below**. They are placed:
 
 - `repl-commands` and `epic-tier` are cheap and fully deterministic, so they join the
   **regression gate** (see below) on the standing rule that anything deterministic belongs in the
-  cheap set even when the feature it guards is not.
+  cheap set even when the feature it guards is not. **`survey` joins them as of 2026-08-25** on the
+  same rule: §1–§6 are zero-model, and §7's one local call is what stops the docent debt being
+  deferred a fifth time.
 - `secret-boundary`, `changeset-review`, `subagents-and-backends` and `memory-and-dogfood` are
   **owned rounds**, on `rails-blog`'s precedent: a scenario that owns its context has no position in
   a list to be unlucky about. Schedule one per round alongside the full round, rotating.
@@ -112,8 +143,8 @@ skipped by convention stops being a gap anyone can see; one that is separately s
 visible as an outstanding debt instead.
 
 **A suggested regression gate after a chunk lands:** `failure-injection` + `session-and-window`,
-and since 2026-08-23 also `repl-commands` + `epic-tier`.
-All four are cheap, deterministic, and cover the paths most chunks touch. As of 2026-08-18 the first pair
+and since 2026-08-23 also `repl-commands` + `epic-tier`, and since 2026-08-25 `survey`.
+All five are cheap, deterministic, and cover the paths most chunks touch. As of 2026-08-18 the first pair
 also covers **most of a chunk that was mostly not about the cockpit at all** — the price table and
 its lint, `--compact-strategy` resolution, both tool-bound shapes, the `edit_file` refusal
 vocabulary, the summarizer's ceilings, the per-ask iteration ceiling and the `lain up`
@@ -121,6 +152,11 @@ crash-on-start case. That is deliberate: **a check that only runs in an expensiv
 does not run**, so anything deterministic belongs in the cheap set even when the feature it guards
 is expensive. The two added in 2026-08-23 are there on exactly that rule: `repl-commands` is almost
 entirely zero-model-turn refusal paths, and `epic-tier` is deterministic except for one policy.
+`survey` is there on the same rule again, with a caveat that is the point of adding it: **cut its
+§7 last, not first.** Every other section in it is deterministic and will keep; §7 is the one thing
+in this whole directory that has been dropped by three consecutive rounds, and it is only ever
+dropped because it is the section at the end that needs a model.
+
 **If the gate is too long to run every time, cut `epic-tier` first** — say so in the findings rather
 than letting it drop quietly, which is the failure mode this whole file keeps re-learning.
 
@@ -134,6 +170,8 @@ call per turn.
 
 Written per round, kept in `planning/` alongside the chunk specs that discharge them:
 
+- [`../qa-findings-round11-2026-08-25.md`](../qa-findings-round11-2026-08-25.md) — round 11, the
+  scoped `survey` round: all seven sections driven, **§7's docent-thread debt discharged**
 - [`../qa-findings-round10-2026-08-23.md`](../qa-findings-round10-2026-08-23.md) — round 10
 - [`../qa-findings-round9-2026-08-23.md`](../qa-findings-round9-2026-08-23.md) — round 9
 - [`../qa-findings-round9-remaining-2026-08-23.md`](../qa-findings-round9-remaining-2026-08-23.md)

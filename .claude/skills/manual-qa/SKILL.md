@@ -21,11 +21,11 @@ components disagreeing with each other, and for the moments a human would be mis
 
 ## Phase 1 — Scope, and say what you chose
 
-**Enumerate `planning/qa/scenarios/` — never work from a remembered list.** Thirteen files as of
-2026-08-23, and a round that runs a hard-coded five silently stops covering the sixth. A scenario in
+**Enumerate `planning/qa/scenarios/` — never work from a remembered list.** Fourteen files as of
+2026-08-25, and a round that runs a hard-coded five silently stops covering the sixth. A scenario in
 neither README's tiers nor your round is one somebody added and nobody scheduled: say so.
 
-**README sorts the thirteen into three tiers, and that sorting — not the directory listing — is what
+**README sorts the fourteen into three tiers, and that sorting — not the directory listing — is what
 a round follows.** It carries the reasoning for each; this is the shape:
 
 | tier | what |
