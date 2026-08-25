@@ -773,7 +773,7 @@ RSpec.describe Lain::CLI::Wiring do
       agent = wire_agent
 
       expect(source_of(agent)).to be_a(Lain::Compaction::Source)
-      expect(agent.instance_variable_get(:@tool_runner).instance_variable_get(:@observer)).to be(backend.tool_observer)
+      expect(agent.send(:tool_runner).instance_variable_get(:@observer)).to be(backend.tool_observer)
       expect(backend.tool_observer.eager).to be(backend.eager)
       expect(source_of(agent).eager).to be(backend.eager)
     end

@@ -65,7 +65,15 @@ module Lain
                 :iterations, :failure_reason, :budget, :request_override, :dispatch_lock
 
     # {Accounting} owns the run's token roll-up; the Agent just exposes it.
-    delegate :usage, to: :@accounting
+    delegate :usage, to: :accounting
+
+    # The three collaborators the loop drives, delegated to the retained
+    # {Collaborators} resolver rather than mirrored onto three ivars of their
+    # own -- the same idiom as `usage` above, one hop further in. Private:
+    # every private caller below already reached them as bare ivars, and the
+    # curated public surface above (see `request_override`'s comment) is this
+    # class's own decision to widen, not a side effect of this collapse.
+    delegate :model_caller, :tool_runner, :accounting, to: :@collaborators, private: true
 
     # The argument list is long because the Agent is the wiring point of the whole
     # harness, and the honest split is three-way, not one big bag: values that are
@@ -289,7 +297,7 @@ module Lain
     #   measures as Infinity or NaN rather than as a reading. Unreachable
     #   through {ContextWindow.default}; a caller passing its own book owns it.
     def occupancy(context_window: @context_window)
-      context_window.occupancy(@accounting.last_turn_usage, model: context.model).ratio
+      context_window.occupancy(accounting.last_turn_usage, model: context.model).ratio
     end
 
     # Time travel: the loop can be resumed from any earlier turn, which is what
@@ -349,12 +357,9 @@ module Lain
     # table is keyed on the keywords a caller actually wrote.
     def wire_callers(request_override:, instrumentation:, instrumented:, **collaborators)
       @instrumentation = Instrumentation.resolve(instrumentation, instrumented)
-      resolved = Collaborators.new(toolset: @toolset, instrumentation: @instrumentation, **collaborators,
-                                   **instrumented.slice(*Collaborators::KEYWORDS))
+      @collaborators = Collaborators.new(toolset: @toolset, instrumentation: @instrumentation, **collaborators,
+                                         **instrumented.slice(*Collaborators::KEYWORDS))
       @request_override = request_override
-      @model_caller = resolved.model_caller
-      @tool_runner = resolved.tool_runner
-      @accounting = resolved.accounting
     end
 
     # The mutable run context, kept apart from #initialize on purpose: the
@@ -391,7 +396,7 @@ module Lain
       @transition_listener = @instrumentation.transition_listener
       @session = session
       @snapshot_writer = snapshot_writer
-      @deliveries = ToolDelivery.new(runner: @tool_runner, journal: @instrumentation.journal, snapshot_writer:)
+      @deliveries = ToolDelivery.new(runner: tool_runner, journal: @instrumentation.journal, snapshot_writer:)
       @budget = budget
       @iterations = 0
       @dispatch_lock = Monitor.new
@@ -436,7 +441,7 @@ module Lain
         # Commit BEFORE the token check: a turn that busts the ceiling was still
         # paid for, so it stays in the record -- Timeline and Journal both --
         # rather than vanishing with the raise.
-        @budget.check_tokens!(@accounting.observe(response, digest: @timeline.head_digest))
+        @budget.check_tokens!(accounting.observe(response, digest: @timeline.head_digest))
       end
     end
 
@@ -475,7 +480,7 @@ module Lain
     def call_model(on_stream_started)
       dispatch!
       @request_override.deliver(render: -> { render_request }) do |request|
-        @model_caller.call(request, on_stream_started:)
+        model_caller.call(request, on_stream_started:)
       end
     end
 
@@ -492,7 +497,7 @@ module Lain
     # never clears.
     def render_request
       turn_context = @instrumentation.pipeline_source.context_for(base: @context, timeline: @timeline,
-                                                                  usage: @accounting.last_turn_usage,
+                                                                  usage: accounting.last_turn_usage,
                                                                   session: @session)
       turn_context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace.with(*@session.reminders))
     end

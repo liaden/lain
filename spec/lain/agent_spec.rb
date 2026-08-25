@@ -1225,4 +1225,82 @@ RSpec.describe Lain::Agent do
       expect(digests.uniq.size).to eq(1)
     end
   end
+
+  # C4: wire_callers collapses its three mirror assignments
+  # (@model_caller/@tool_runner/@accounting from `resolved`) into delegation to
+  # the retained Collaborators object, the same idiom `delegate :usage, to:
+  # :@accounting` already used for the fourth. Kept private (see
+  # collaborators.rb:61's attr_reader): the public surface at the top of this
+  # file is a curated, deliberate list, and this collapse is a readability
+  # change to a private wiring seam, not a new public API.
+  describe "wire_callers delegation (C4)" do
+    # The point of resolving eagerly (agent.rb wire_callers' comment) is that a
+    # wiring mistake is an error AT CONSTRUCTION, never deferred to the first
+    # turn. No #ask happens in this example -- the raise has to come out of
+    # `described_class.new` itself, which is only possible if the collapsed
+    # delegation still resolves Collaborators/Instrumentation inside
+    # #wire_callers rather than lazily on first use.
+    it "still raises during initialize, before any turn runs, on a wiring mistake" do
+      expect do
+        described_class.new(toolset:, context:, provider: Lain::Provider::Mock.new(responses: []),
+                            instrumentation: Lain::Agent::Instrumentation.new,
+                            journal: RecordingChannel.new)
+      end.to raise_error(ArgumentError, /instrumentation:.*journal:/m)
+    end
+
+    # The instrumentation clash above resolves inside `Instrumentation.resolve`,
+    # BEFORE `Collaborators.new` ever runs (agent.rb wire_callers: :359 then
+    # :360) -- so it raises even under a Collaborators built lazily, and does
+    # not by itself prove #wire_callers still resolves the delegated seam this
+    # card touched. This example trips a mistake INSIDE Collaborators
+    # (model_caller: alongside the provider: it would have been built from,
+    # collaborators.rb's INGREDIENTS[:model_caller]) and demands the same
+    # thing: no #ask, the raise comes out of `described_class.new` itself.
+    it "still raises during initialize on a Collaborators-level double-wiring mistake" do
+      model_caller = Lain::Agent::ModelCaller.new(provider: Lain::Provider::Mock.new(responses: []))
+
+      expect do
+        described_class.new(toolset:, context:, model_caller:,
+                            provider: Lain::Provider::Mock.new(responses: []))
+      end.to raise_error(ArgumentError, /model_caller.*provider/m)
+    end
+
+    # The delegated readers answer the same objects a caller injected -- not
+    # copies, not rebuilt ones. Private (constraint 2), so reached with #send
+    # rather than a public call, same as the two other specs (subagent_spec.rb,
+    # wiring_spec.rb) that reach this seam from outside.
+    it "answers model_caller, tool_runner and accounting as the injected doubles" do
+      model_caller = Lain::Agent::ModelCaller.new(provider: Lain::Provider::Mock.new(responses: []))
+      tool_runner = Lain::Agent::ToolRunner.new(handler: Lain::Effect::Handler::Mock.new, toolset:)
+      accounting = Lain::Agent::Accounting.new
+      a = described_class.new(toolset:, context:, model_caller:, tool_runner:, accounting:)
+
+      expect(a.send(:model_caller)).to equal(model_caller)
+      expect(a.send(:tool_runner)).to equal(tool_runner)
+      expect(a.send(:accounting)).to equal(accounting)
+    end
+
+    it "still delegates #usage to the injected accounting's cumulative usage" do
+      accounting = Lain::Agent::Accounting.new
+      accounting.observe(text_response(usage: Lain::Usage.new(input_tokens: 40, output_tokens: 2)), digest: "seed")
+      a = described_class.new(toolset:, context:, accounting:,
+                              model_caller: Lain::Agent::ModelCaller.new(
+                                provider: Lain::Provider::Mock.new(responses: [])
+                              ))
+
+      expect(a.usage).to equal(accounting.usage)
+    end
+
+    # Constraint 2's ask, verified rather than assumed: the delegation must not
+    # widen Agent's public surface as a side effect of a private-wiring
+    # readability refactor. `public_instance_methods(false)`/
+    # `private_instance_methods(false)` are scoped to methods `delegate`
+    # defines directly on Agent (not inherited ones), which is exactly where a
+    # stray public delegate would show up.
+    it "keeps model_caller, tool_runner and accounting off Agent's public surface" do
+      expect(described_class.public_instance_methods(false)).not_to include(:model_caller, :tool_runner,
+                                                                            :accounting)
+      expect(described_class.private_instance_methods(false)).to include(:model_caller, :tool_runner, :accounting)
+    end
+  end
 end

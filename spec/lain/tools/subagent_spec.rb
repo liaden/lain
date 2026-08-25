@@ -785,7 +785,7 @@ RSpec.describe Lain::Tools::Subagent do
         )
       end
 
-      def handler_of(agent) = agent.instance_variable_get(:@tool_runner).instance_variable_get(:@handler)
+      def handler_of(agent) = agent.send(:tool_runner).instance_variable_get(:@handler)
 
       # LEVEL 1 -- the composition itself.
       it "composes the denial handler OUTSIDE the child's gate, over one policy object" do
