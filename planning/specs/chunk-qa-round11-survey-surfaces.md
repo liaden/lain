@@ -1,6 +1,6 @@
 # Chunk: round-11 survey surfaces — what a survey IS, and who may park
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (with real Lua in the nvim runtime)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson, TJ DeVries (Neovim seat, added for this chunk)
@@ -200,6 +200,82 @@ limitation**; **no example pins a group header built from a climbing label.**
 headless nvim from a Ruby `:seam` spec — `spawn("nvim","--headless","--clean","-n","--listen",socket)`
 in `layout_spec.rb:21`, `diff_mode_spec.rb:104`, `review_view_spec.rb:877`, `annotate_spec.rb:79-105`,
 `thread_view_spec.rb`. That is where T5, T11 and T3's Lua half must be pinned.
+
+## Grounding corrections (orchestrator, 2026-08-25, before wave 1)
+
+Re-verified by four parallel explorations against the tree at `7836c527`, one per wave-1 cluster.
+**No card was invalidated.** Every divergence below is absorbable and was passed to the implementing
+agent in its brief. Recorded here so the next reader does not re-derive them.
+
+**Two claims were outright FALSE and changed how a card is built:**
+
+- **T3.** The plan says `:LainOpen` resolves a digest at `human_replies.rb:825-828`. It does not.
+  `:824-827` is `Gestures#open_set`, which unpacks `line, generation` and forwards them untouched.
+  The real `digest_at`-over-`Renderings` resolution is
+  **`lib/lain/frontend/neovim/inbox_view/gestures.rb:107`**, reached via `inbox_view.rb:230`, and the
+  Lua command (`70_inbox.lua:103-112`) sends `["open", [line, generation]]`. **So `:LainOpen`
+  resolves by line + generation, not by digest** — which settles T3's first escalation trigger in
+  favour of taking the generation, and means the symmetric `:LainReply` fix follows an existing
+  mechanism rather than inventing a digest-on-the-wire shape.
+- **T10.** The plan grounds the annotation pane's rationale in `47_diff.lua:184-191` as being about
+  `:LainNote` line numbers and LSP attaching. That range is `review_diff.new_side(path)` — the diff
+  pane's *new side*, not the annotation pane — and its documented rationale (`:160-183`) is entirely
+  about `:w` refusal and `nowrite` vs `nofile`. **There is no mention of `:LainNote` line numbers or
+  LSP anywhere in the runtime tree.** The nearest real statement is `51_thread.lua:140-144`, *"the
+  new side is a REAL file buffer the human can edit"* — editability, not LSP. A card about docstring
+  accuracy must not write a fresh inaccuracy, so T10 grounds the "why" in editability and in
+  `projection.rb:62-63`, and claims no LSP behaviour.
+
+**Two findings resolved an escalation trigger before it could fire:**
+
+- **T8, the `lain up` splat.** Tested empirically against the bundled Thor 1.5.0: `check_unknown_options!`
+  **does not** break `up <path> -- --provider ollama-cloud`. `thor/parser/options.rb:65-76` sets
+  `@stopped_parsing_after_extra_index` when it consumes `--`, and `check_unknown!` (`:168-174`) only
+  inspects `@extra` *before* that index, so post-`--` tokens are structurally exempt. **No `except:`
+  is needed.** The dogfood session's launch line is safe.
+- **T8, and this one changes the implementation.** `thor.rb:363-380` makes `check_unknown_options?`
+  return **false for any command name registered in `subcommands`**. `Survey` (`exe/lain:365-386`),
+  `Review` (`:333-354`), `Epic` (`:279-321`) and `Bench` (`:394-557`) are nested `< Thor` subclasses,
+  so **a single declaration on `LainCLI` would be inert for `lain survey --permissive`, the card's own
+  headline scenario.** Each nested class needs its own. "Once for the whole CLI" means five
+  declarations, not one — and a card that added only the parent would have shipped nothing.
+- **T1, first escalation trigger — resolved, do not stop on it.** It feared `subagent_spec.rb:1249-1290`
+  pins the `ask_human` grant as a *universal* invariant. The block actually spans **1242-1292** and
+  already pins it as **posture-conditional**: `:1254` grants it "whenever the session posture permits",
+  `:1267` withholds it where the posture does not, `:1282` strips the parent's asker from the dispatch
+  union when muted. T1 adds one more condition to an existing conditional.
+
+**Line-number drift, absorbed (the claim holds, the cite moved):**
+
+| card | plan says | actually |
+|---|---|---|
+| T1 | `subagent.rb:610-616` is `ChildBuilder#initialize` | `:609-616` (609 is the `def`) |
+| T1 | `subagent.rb:672-697` is the grant doc | `:673-697` (672 is blank) |
+| T3 | `70_inbox.lua:7-15` holds the one-question comment | comment is `:1-6`; `:7-15` is the code |
+| T3 | `human_replies.rb:375-382` argues the settle | starts at `:374` |
+| T3 | `Directory#reply` at `directory.rb:155-159` | that is `Registration#reply`; `Directory#reply` is `:202` |
+| T4 | `neovim_runtime_spec.rb:796-798` pins the rails | `:797-799` |
+| T4 | `deletability_spec.rb:106` pins rails *and* help tags | `:106` rails, **`:107` help tags** — separate assertions |
+| T4 | `Review::Delta#sides` collides | it is `Delta::Git#sides`, and **private** — narrower, but still name it deliberately |
+| T4 | `source.rb:79-89` records the `respond_to?` deletion | `:78-87` |
+| T5 | `51_thread.lua:452-458` is the `:LainThread` half | that is `review_thread.window`; the command is **`:700-720`** |
+| T5 | `thread_view_spec.rb:1337-1346` pins both refusals | `:1338-1347` is the first; the second starts `:1349` |
+| T5 | `48_annotate.lua:585-592` binds `<leader>Lt` | `NOTE_KEYS` is `:587-593`, `t` at `:592`; the prefix is `lain_prefix()` (`30_commands.lua:31`), not literal |
+| T6 | `Verdict::None#empty?` at `verdict.rb:20-35` / `:34-37` | **`:38`** — both cites miss it |
+| T6 | `review_submit.rb` under `lib/lain/review/submit/` | **`lib/lain/cli/command/review_submit.rb`**; that dir holds only `outbox.rb` |
+| T6 | guard's-own-words at `survey_spec.rb:783` | `:776` and `:787` |
+| T6 | stranding pair at `survey_spec.rb:806-816` | `:790-822` |
+| T6 | attr_reader block at `session.rb:186-198` | `:185-193` |
+| T7 | known limitation at `review_view_spec.rb:220-227` | `:219-227` |
+| T9 | `scope.rb:81` interpolates an Array | it is a bare **`Symbol#inspect`** — same defect, smaller scale, fix it too |
+| T8 | `exe/lain:365-386`/`:567-569` are "the" declarations | Survey only; **Review is `:333-354` and `:562-565`** |
+| T8 | `--yolo` guard at `cli_spec.rb:312-335` | block starts `:311` |
+| T14 | 28 tracked files match `yolo` | **29** — the plan doc itself became the 29th when the pre-step committed it. Still exactly one changes. |
+
+**Confirmed true and load-bearing, so stated once here:** T6's claim that **no spec settles a round
+and then tries the other command** — verified unpinned in both directions, so T6's examples are new
+coverage rather than a rewrite. T7's claim that **no example pins a group header built from a
+climbing label** — also verified. `check_unknown_options!` really is declared nowhere in `exe/lain`.
 
 ## Orchestrator contract (plan-specific only)
 
