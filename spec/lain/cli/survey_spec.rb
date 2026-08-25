@@ -183,6 +183,50 @@ RSpec.describe Lain::CLI::Survey, :seam do
         .to raise_error(Lain::Review::Bounds::TooLarge, /2 files.*ceiling of 1.*survey a subdirectory/m)
     end
 
+    # The refusal fires in `Corpus#initialize`, which `#present` reaches BEFORE
+    # `session.present(scope:)` -- so no scope can lift this ceiling, and the
+    # advice must therefore name none.
+    #
+    # WHICH HALF BITES, stated honestly because the two are not equal: the
+    # textual half is the working guard -- every mutant that puts a strategy
+    # back into the sentence reddens `not_to include("scope:")`. The
+    # same-string half is close to a tautology *given* the ordering above, since
+    # a refusal raised before a scope exists cannot vary by one; it only fires
+    # if somebody restructures `#present` so the scope reaches the ceiling. That
+    # is still worth having -- it is a structural tripwire, and it compares two
+    # LIVE messages rather than a literal, so it survives a legitimate
+    # rewording -- but it is not the assertion doing the work.
+    #
+    # The scopes are DERIVED, this file's neighbours' rule: a strategy that
+    # registers tomorrow is exercised here without an edit. `:commits` is
+    # excluded because a corpus has no commits to be grouped by, which
+    # {Session::UnsupportedScope} is the refusal for and this example is not
+    # about.
+    it "refuses identically at every scope a corpus can be asked for" do
+      refusals = (Lain::Review::Partition::STRATEGIES.keys - [:commits]).map do |scope|
+        bounded(max_files: 1).present(@root, scope:)
+        raise "expected a refusal at #{scope}"
+      rescue Lain::Review::Bounds::TooLarge => e
+        e.message
+      end
+
+      expect(refusals.map { |refusal| refusal.include?("scope:") }).to all(be(false))
+      expect(refusals.uniq.size).to eq(1)
+    end
+
+    # The flag the human actually has, at the surface that actually offers it --
+    # `--unbounded` is declared on `lain survey` and nowhere else, so a refusal
+    # naming it anywhere else would be naming a flag its reader cannot type.
+    #
+    # The LAST-position half of this pin is defence in depth, not a guard over
+    # anything live: this sentence is rendered whole by Thor's stderr here and
+    # by `Repl#dispatch` in chat, and reaches no eliding surface at all. See
+    # {Review::Bounds::CORPUS_NARROWING}, which carries the whole account.
+    it "names --unbounded, the flag this very command declares, and names it last" do
+      expect { bounded(max_files: 1).present(@root) }
+        .to raise_error(Lain::Review::Bounds::TooLarge, /--unbounded\z/)
+    end
+
     it "refuses a tree over the line ceiling too, which is the other shape" do
       expect { bounded(max_lines: 1).present(@root) }
         .to raise_error(Lain::Review::Bounds::TooLarge, /lines/)

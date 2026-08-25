@@ -696,12 +696,51 @@ RSpec.describe Lain::Review::Source::Corpus do
         .to raise_error(Lain::Review::Bounds::TooLarge, /6 files.*ceiling of 5/m)
     end
 
-    it "reads no file to reach that decision" do
+    # The QA finding this closes: over lain's own `lib/` the refusal named the
+    # measurement and the ceiling and neither way out. `--unbounded` is the flag
+    # that lifts this exact ceiling.
+    #
+    # It is pinned LAST as defence in depth rather than against a live
+    # truncation -- nothing elides this sentence today, and
+    # {Review::Bounds::CORPUS_NARROWING} says so at length rather than leaving
+    # a reader to infer a rail that does not exist.
+    it "names the flag that lifts the ceiling, and names it last" do
       spread(6)
-      allow(File).to receive(:binread).and_raise("a refusal must not read a byte")
 
       expect { described_class.new(walk:, projection:, bounds: Lain::Review::Bounds.new(max_files: 5)) }
-        .to raise_error(Lain::Review::Bounds::TooLarge)
+        .to raise_error(Lain::Review::Bounds::TooLarge, /--unbounded\z/)
+    end
+
+    # A narrower walk ROOT, which is the only narrowing that moves the number
+    # this ceiling measures -- and the sentence comes off {Bounds}, not out of
+    # this object, which is the whole difference this card makes.
+    #
+    # NOT a partition scope. `--scope by_directory` groups the same file set for
+    # display and is applied long after this constructor has already refused, so
+    # recommending it would send a reader to a path that refuses again with the
+    # identical sentence.
+    it "names a narrower tree as the alternative, and names no partition scope" do
+      spread(6)
+
+      expect { described_class.new(walk:, projection:, bounds: Lain::Review::Bounds.new(max_files: 5)) }
+        .to raise_error(Lain::Review::Bounds::TooLarge, /survey a subdirectory/) { |error|
+          expect(error.message).not_to include("scope:")
+        }
+    end
+
+    # A RAISING double on both halves, `bounds_spec.rb`'s rule: a recorder that
+    # counted zero leaves the green run resting on the recorder. The decision is
+    # a file count off the walk, so neither a byte nor a hunk may be asked for,
+    # and asking for either fails this example with the wrong error class.
+    it "reads no file and asks for no hunk to reach that decision" do
+      spread(6)
+      allow(File).to receive(:binread).and_raise("a refusal must not read a byte")
+      unchunkable = ->(_path) { raise "a refusal must not ask for a hunk" }
+
+      expect do
+        described_class.new(walk:, projection:, chunker: unchunkable,
+                            bounds: Lain::Review::Bounds.new(max_files: 5))
+      end.to raise_error(Lain::Review::Bounds::TooLarge)
     end
 
     it "admits a corpus at the ceiling" do

@@ -507,6 +507,80 @@ RSpec.describe Lain::Review::Bounds do
     end
   end
 
+  # The CORPUS file ceiling. {Source::Corpus} decides it in its CONSTRUCTOR,
+  # from the walk's file count and nothing else, so it arrives here as a number
+  # rather than as a view -- and its advice therefore cannot be measured the way
+  # `#cumulative_advice` measures, because there is no changeset yet to measure
+  # and building one is the streamed read of every file that the early refusal
+  # exists to avoid.
+  describe "#check_corpus_files!" do
+    # The shape EVERY ceiling in this object refuses in: a subject, the
+    # measurement, its unit, the ceiling, and then what to do instead. One
+    # regexp asserted against two unrelated refusals, because "the same shape"
+    # is a claim about both of them and a copy per example is how two shapes
+    # come apart.
+    let(:ceiling_sentence) { /\A.+ is \d+ files, over the ceiling of \d+ -- \S.+/ }
+
+    def raised_by
+      yield
+      raise "expected a refusal"
+    rescue Lain::Review::Bounds::TooLarge => e
+      e.message
+    end
+
+    it "refuses a walk past the ceiling, naming the measurement and the ceiling" do
+      expect { described_class.new(max_files: 5).check_corpus_files!(6) }
+        .to raise_error(described_class::TooLarge, /6 files, over the ceiling of 5/)
+    end
+
+    it "admits a walk AT the ceiling" do
+      expect(described_class.new(max_files: 5).check_corpus_files!(5)).to be_nil
+    end
+
+    it "names the flag that lifts this ceiling, and names it last" do
+      expect { described_class.new(max_files: 5).check_corpus_files!(6) }
+        .to raise_error(described_class::TooLarge, /--unbounded\z/)
+    end
+
+    # A narrower WALK ROOT, which is the other thing that genuinely moves the
+    # number this ceiling measures. Generic, because naming WHICH subdirectory
+    # fits would need the walk the early refusal exists to avoid.
+    it "offers a narrower tree, which is the remedy that changes the file count" do
+      expect { described_class.new(max_files: 5).check_corpus_files!(6) }
+        .to raise_error(described_class::TooLarge, /survey a subdirectory/)
+    end
+
+    it "composes that advice without a view, a partition or a measurement" do
+      expect(described_class::CORPUS_NARROWING).to be_frozen
+    end
+
+    # Pinned so it cannot come back: a partition strategy groups the SAME file
+    # set for display, and this ceiling has already fired in the corpus's
+    # constructor by the time any scope is applied. Recommending one sends a
+    # reader to a path that refuses again with the identical sentence, which is
+    # the defect {Bounds::NO_PRESENTABLE_SCOPE} exists to refuse.
+    it "recommends no partition scope, because no scope changes a corpus's file count" do
+      expect { described_class.new(max_files: 5).check_corpus_files!(6) }
+        .to raise_error(described_class::TooLarge) { |error|
+          expect(error.message).not_to include("scope:")
+          expect(error.message).not_to include(Lain::Review::Partition::ByDirectory::NAME)
+        }
+    end
+
+    # The fourth AC, and the reason this refusal moved onto `#guard!` at all: a
+    # corpus refusal and a cumulative one are now one sentence with different
+    # words in it, rather than two sentences that happen to look alike.
+    it "keeps the shape the cumulative ceiling refuses in" do
+      corpus = raised_by { described_class.new(max_files: 5).check_corpus_files!(6) }
+      cumulative = raised_by do
+        described_class.new(max_files: 4, max_lines: 100)
+                       .check_presentation!(unchunkable_view(count: 5), scope: :cumulative)
+      end
+
+      expect([corpus, cumulative]).to all(match(ceiling_sentence))
+    end
+  end
+
   # AC 5 and 6. The ceiling that is not a number, and the one that is by default.
   describe "an unbounded ceiling" do
     it "is infinity, which answers the whole comparison duck a number does" do

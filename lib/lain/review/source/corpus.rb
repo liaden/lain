@@ -402,19 +402,18 @@ module Lain
 
         private
 
-        # From the WALK, before a byte is read. `Bounds` owns the ceiling and
-        # the refusal type; the measurement is a file count this object already
-        # has, so asking it here is what keeps "an oversized corpus is refused
-        # without reading a byte" a property of construction rather than of
-        # whoever remembers to check first.
-        def refuse_oversized!(bounds)
-          measured = @walk.files.size
-          return if measured <= bounds.max_files
-
-          raise Bounds::TooLarge,
-                "this corpus is #{measured} files, over the ceiling of #{bounds.max_files} -- " \
-                "survey a subdirectory instead, or raise the ceiling"
-        end
+        # From the WALK, before a byte is read: the measurement is a file count
+        # this object already has, which is what keeps "an oversized corpus is
+        # refused without reading a byte" a property of construction rather than
+        # of whoever remembers to check first.
+        #
+        # `Bounds` owns the rest of it -- the ceiling, the refusal type, the
+        # wording and the alternative the refusal names. This used to write that
+        # sentence out here instead, against the same ceiling on the same
+        # `Bounds` instance the session gets, which made the object's whole
+        # advice half unreachable for a corpus and left two spellings of one
+        # refusal with nothing keeping them in step.
+        def refuse_oversized!(bounds) = bounds.check_corpus_files!(@walk.files.size)
 
         def readings
           @readings ||= @walk.files.to_h do |listing|

@@ -143,6 +143,51 @@ module Lain
       # surfaces instead.
       DIRECTORY_STRATEGY = Partition::STRATEGIES.fetch(:by_directory)
 
+      # What {#check_corpus_files!} recommends, and the ONE advice in this
+      # object that is a constant rather than a measurement.
+      #
+      # {Source::Corpus} refuses in its CONSTRUCTOR, off the walk's file count
+      # alone -- which is what keeps an oversized survey cheap to refuse rather
+      # than costing the streamed read of every file it is refusing to show. So
+      # there is no changeset there to hand {#cumulative_advice}, and building
+      # one to compose a sentence would spend the exact property the early
+      # refusal exists to buy. Static, therefore.
+      #
+      # == Why this names no SCOPE, and must not
+      #
+      # Both remedies here change the FILE COUNT, because a file count is the
+      # only thing this ceiling measures. A narrower walk root genuinely holds
+      # fewer files; `--unbounded` genuinely lifts the number. A partition
+      # strategy does NEITHER -- it groups the same file set for display, and
+      # this refusal has already fired by the time any scope is applied
+      # ({CLI::Survey#present} builds the corpus before `session.present`). So
+      # `--scope by_directory` cannot lift this ceiling, and a version of this
+      # sentence that recommended it sent the reader to a path that refused
+      # again with byte-identical wording. That is the {NO_PRESENTABLE_SCOPE}
+      # rule one paragraph up, and it applies to advice this object writes as
+      # much as to advice it declines to write.
+      #
+      # "a subdirectory" and not a NAMED one: naming which subdirectory would
+      # fit needs the walk this refusal exists to avoid.
+      #
+      # `--unbounded` is LAST, and the pin on that placement is DEFENCE IN
+      # DEPTH rather than a guard over a live path -- said plainly, because a
+      # comment claiming otherwise is one a future reader would trust. This
+      # sentence never reaches the eliding rail: it raises in
+      # {Source::Corpus#initialize}, before any surface is called, and is
+      # rendered whole by `Repl#dispatch` in chat and by Thor's stderr under
+      # `lain survey`. So nothing truncates it today. The placement costs
+      # nothing and is kept for the day something does -- and the reasoning
+      # would hold there, since `elided` (`65_review.lua`) preserves a head AND
+      # a tail, so the token a reader cannot guess is the one that wants an end.
+      CORPUS_NARROWING = "survey a subdirectory instead, or raise the ceiling with --unbounded"
+
+      # What a corpus refusal calls the thing it is refusing, in {#guard!}'s
+      # subject position. A survey is of a TREE and has no revision, so there is
+      # no sha and no scope name to put here the way a group's detail supplies
+      # one -- the corpus is the whole subject there is.
+      CORPUS = "this corpus"
+
       # Every strategy a cumulative refusal may recommend narrowing TO -- every
       # registered strategy except {Whole} itself, since "narrow to the whole
       # changeset" recommends nothing. Registry order, so the same candidate
@@ -262,6 +307,31 @@ module Lain
       # @raise [KeyError] for a scope {Partition::STRATEGIES} does not declare
       def check_presentation!(view, scope:)
         send(SCOPE_CHECKS.fetch(scope), view)
+        nil
+      end
+
+      # The file ceiling asked from a FILE COUNT, for the caller who has one and
+      # has no view -- {Source::Corpus}, deciding in its constructor whether to
+      # become one at all.
+      #
+      # Public because that caller is outside this object and the alternative is
+      # what it replaced: a refusal sentence written out by hand somewhere else,
+      # imitating {#guard!}'s wording, against the same ceiling on the same
+      # {Bounds} instance, with no advice and nothing to keep the two spellings
+      # in step. One object owns the ceiling, the refusal type, the wording AND
+      # the alternative it names; a second caller does not get to own a copy.
+      #
+      # Only `max_files`. The line ceiling is not asked here because a line
+      # count is not a fact a walk has -- it is the read this refusal is
+      # avoiding -- and {Session#present} asks it afterwards, of a corpus that
+      # got built.
+      #
+      # @param measured [Integer] how many files the walk found
+      # @return [nil] when the walk is within the ceiling
+      # @raise [TooLarge] naming the measurement, the ceiling and
+      #   {CORPUS_NARROWING}
+      def check_corpus_files!(measured)
+        guard!(measured, max_files, "files", CORPUS) { CORPUS_NARROWING }
         nil
       end
 
