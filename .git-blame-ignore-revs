@@ -1,0 +1,15 @@
+# Revisions git blame should skip when attributing lines.
+#
+# A commit listed here is one that touched a great many lines without changing
+# what the code does -- a repo-wide comment rewrite, a formatting pass, a
+# mechanical rename. Blame walks through it to the commit that last changed the
+# line's actual behaviour, which is the one worth finding.
+#
+# This repository's git config already points at this file
+# (blame.ignoreRevsFile), so `git blame` and `git log -L` honour it with no
+# flag. Editors and forges that read the same setting pick it up too.
+#
+# One full 40-character SHA per line, newest last, each preceded by a comment
+# naming the commit and its date. A short SHA or a revision that is not a valid
+# object makes git fail the WHOLE blame, so append only after the commit exists
+# on main and verify with a blame afterwards.
