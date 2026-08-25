@@ -194,11 +194,15 @@ module Lain
       # A guard, not a lock: {#open}'s check and its claim straddle the Q write,
       # which an attached observer's journal can turn into a yield point, so two
       # fibers sharing ONE asker could both pass it. Unreachable today rather
-      # than impossible -- one asker is built (`Wiring#wire_agent`) and only the
-      # top-level toolset holds it; `research_subagent` and `role_spawn_seam`
-      # are handed the `base` set, which excludes it, so no child can ask at all.
-      # The card that lets children ask owes them their own askers; a mutex here
-      # would not answer it.
+      # than impossible -- one asker is built per ASKER, never shared. The
+      # top-level toolset holds the run's own; `research_subagent` and
+      # `role_spawn_seam` are handed the `base` set, which excludes it (see
+      # {CLI::Wiring::ToolsetBuild}), so no child inherits the PARENT's. A child
+      # that may ask gets its OWN, enrolled at the spawn by
+      # {Tools::Subagent::ChildBuilder} -- when the session posture permits
+      # `ask_human` and the role has not declared itself unattended. So no two
+      # fibers share one asker by any wired path, and a mutex here would not be
+      # what made that true.
       class Outstanding
         # What a human sees when they answer a question this asker no longer
         # holds -- an inbox line that outlived its set. Written to be read at a

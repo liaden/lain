@@ -684,6 +684,12 @@ module Lain
         # past. It is in `plan`'s READ_ONLY today, deliberately and with the
         # reasoning beside it; specs pin both directions.
         #
+        # The ROLE governs it too, through {Tool::SpawnPolicy}'s `unattended`:
+        # an arm that answers with nobody minding it holds no tool that can
+        # block on a human, and `only:` cannot say so from inside a set this
+        # grant is deliberately outside of. It is a default with conditions,
+        # not an invariant -- which is what the two together make explicit.
+        #
         # REPLACING rather than appending, and that is the important half: a
         # union that already holds an `ask_human` holds the PARENT's, whose
         # questions would be attributed to the parent's chain and whose promise
@@ -696,8 +702,18 @@ module Lain
         # the very child the posture just muted (under `handler_union` it is
         # also rendered), resolving into the parent's own {Outstanding}.
         def granted(set, asker)
-          own = @seam.permits.include?(asker.name) ? [asker] : []
+          own = grants_own_asker?(asker) ? [asker] : []
           Toolset.new(set.reject { |tool| tool.name == asker.name } + own)
+        end
+
+        # Two conditions, and they refuse for different reasons. The SESSION
+        # posture is the rung the whole run stands on; `unattended` is the ROLE's
+        # own claim that it answers with nobody minding it -- or with somebody
+        # standing at a surface waiting for its answer, which is the docent's
+        # case and the worse one. Either is enough to withhold, because both are
+        # statements that a question this child asked would reach no one.
+        def grants_own_asker?(asker)
+          !@policy.unattended && @seam.permits.include?(asker.name)
         end
 
         # The child's capability set: the spawn policy's own attenuation, and

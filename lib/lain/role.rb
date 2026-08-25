@@ -1,11 +1,15 @@
 # frozen_string_literal: true
 
 module Lain
-  Role = Data.define(:name, :only) do
+  Role = Data.define(:name, :only, :unattended) do
     # `name` is the catalog key (`:test_engineer`); `only` normalizes to frozen
     # Symbols -- the tool names this role attenuates the spawn's union down to.
-    def initialize(name:, only:)
-      super(name: name.to_sym, only: Array(only).map(&:to_sym).freeze)
+    # `unattended` is the guarantee described on the reopened class below. It
+    # normalizes to a REAL boolean like every member beside it, and defaults to
+    # false: a role CLAIMS the guarantee, it never inherits one.
+    def initialize(name:, only:, unattended: false)
+      super(name: name.to_sym, only: Array(only).map(&:to_sym).freeze,
+            unattended: unattended ? true : false)
     end
 
     # The on-disk basename of this role's slot: the pinned underscores-to-hyphens
@@ -19,11 +23,14 @@ module Lain
     def attenuate(union) = union.only(*only)
 
     # The spawn policy the {Tools::Subagent} tool reads: this role's `only`-set
-    # under the caller's chosen prefix/posture arms. `only` is the role's; the
-    # two axes are the spawner's to pick (a role is capability-shaped, not
-    # cache-strategy-shaped), so they default to the conservative arms.
+    # and its unattended declaration, under the caller's chosen prefix/posture
+    # arms. Both role-derived members are the role's; the two axes are the
+    # spawner's to pick (a role is capability-shaped, not cache-strategy-shaped),
+    # so they default to the conservative arms. This is the ONLY channel the
+    # declaration has -- a {Tools::Subagent::ChildBuilder} holds a policy and
+    # never the Role it was built from.
     def spawn_policy(prefix: :fresh, posture: :schema)
-      Tool::SpawnPolicy.new(prefix:, posture:, only:)
+      Tool::SpawnPolicy.new(prefix:, posture:, only:, unattended:)
     end
 
     # The child's system prelude as SEGMENTS, in the pinned order: the
@@ -81,6 +88,17 @@ module Lain
   # the short role tail differs. Two spawns of one role in a session render
   # byte-identical (slots are session-fixed); two different roles share every
   # byte up to their role slot.
+  #
+  # == Attended and unattended
+  #
+  # A role's `only`-set says what an arm may TOUCH. An unattended role declares
+  # something `only` cannot express: that it may not PARK -- on the approval
+  # gate or on a human -- because it answers with nobody minding it, or with
+  # somebody standing at a surface waiting for the answer to land. Naming the
+  # guarantee rather than the tool is the point: `ask_human` is the only tool
+  # that can park a child today, and a second one must not quietly reach such a
+  # role later. `only` cannot say it because the parking capability is granted
+  # OUTSIDE the attenuation, at the spawn ({Tools::Subagent::ChildBuilder}).
   class Role
     # Reopened rather than defined in the `Data.define ... do` block above: a
     # constant declared inside that block scopes to the enclosing module, not the

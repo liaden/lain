@@ -23,11 +23,17 @@ module Lain
     # schema-vs-enforcement decision. A {SpawnPolicy} value groups them with the
     # `only`-set the child is attenuated to.
     #
+    # `unattended` is the third thing a policy carries, and it is a different
+    # kind of fact from the two axes: not a strategy the spawner picks but a
+    # guarantee the ROLE claims -- that this arm answers with nobody watching,
+    # so it may hold no tool that can block on a human. It rides here because
+    # {Tools::Subagent::ChildBuilder} is handed a policy and never a {Role}.
+    #
     # The methods and the two strategy modules live in the REOPENED class below,
     # NOT in a `Data.define ... do` block: a constant referenced inside that
     # block resolves against the enclosing module (`Lain::Tool`), not the Data
     # class, so `PrefixStrategy` would not be found (the trap `Request` documents).
-    SpawnPolicy = Data.define(:prefix, :posture, :only)
+    SpawnPolicy = Data.define(:prefix, :posture, :only, :unattended)
 
     class SpawnPolicy
       # Reopened (not a `Data.define ... do` block) so its constants resolve
@@ -35,13 +41,22 @@ module Lain
 
       # `prefix`/`posture` accept either a strategy instance or its short name
       # (`:fresh`, `:handler_union`) so a caller writes the arm, not a
-      # constructor. `only` normalizes to a frozen Array of Strings -- the same
-      # String names {Toolset#only} keys on.
-      def initialize(prefix: :fresh, posture: :schema, only: [])
+      # constructor. `only` normalizes to a frozen Array of INTERNED Strings --
+      # the same String names {Toolset#only} keys on, deduped so the frozen
+      # Array is deeply frozen and the whole value stays `Ractor.shareable?`.
+      #
+      # `unattended` normalizes to a REAL boolean, for the same reason: every
+      # other member is coerced, and an uncoerced one is the hole the coercion
+      # was for. A truthy non-boolean would otherwise ride into the value
+      # verbatim -- an arbitrary object among them, which is unshareable and
+      # forfeits the guarantee above. Defaults to attended: a spawn CLAIMS the
+      # guarantee, it never inherits one.
+      def initialize(prefix: :fresh, posture: :schema, only: [], unattended: false)
         super(
           prefix: PrefixStrategy.resolve(prefix),
           posture: AttenuationPosture.resolve(posture),
-          only: Array(only).map(&:to_s).freeze
+          only: Array(only).map { |name| -name.to_s }.freeze,
+          unattended: unattended ? true : false
         )
       end
 
@@ -68,6 +83,11 @@ module Lain
         # empty bottom element. Lineage is recorded out-of-band, on the :spawn
         # event's causal edge (see {Tools::Subagent}).
         class Fresh
+          # Frozen at birth, as {SiblingTemplate} already was: a {SpawnPolicy}
+          # holding a plain mutable strategy is not deeply frozen, and the
+          # value-object rule is asked of the policy, not of its members.
+          def initialize = freeze
+
           # `parent` is unused here but part of the uniform strategy duck.
           def base_timeline(store:, **)
             Timeline.empty(store:)
@@ -85,6 +105,8 @@ module Lain
         # first commit, so the child inherits the whole conversation -- the arm
         # that trades subagent isolation for a shared, already-warm cache prefix.
         class Inherit
+          def initialize = freeze
+
           # `store` is unused here (the fork carries the parent's own) but part
           # of the uniform strategy duck.
           def base_timeline(parent:, **)
@@ -244,6 +266,8 @@ module Lain
         # cannot name. The default arm; it forfeits sibling cache-sharing (every
         # role gets a different byte-0 prefix) in exchange for a tighter prompt.
         class Schema
+          def initialize = freeze
+
           # `union` is unused here but part of the uniform posture duck.
           def rendered_toolset(allowed:, **)
             allowed
@@ -263,6 +287,8 @@ module Lain
         # always the Handler's, since tools are capabilities, not schema
         # entries.
         class HandlerUnion
+          def initialize = freeze
+
           # `allowed` is unused here but part of the uniform posture duck.
           def rendered_toolset(union:, **)
             union

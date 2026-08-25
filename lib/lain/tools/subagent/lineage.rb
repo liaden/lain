@@ -37,11 +37,19 @@ module Lain
         # `lifecycle` is the actor path's machine-readable transition marker
         # (see {#note}); a one-shot spawn passes none, so its bytes -- and
         # every digest already derived from them -- are unchanged.
+        #
+        # `unattended` rides the same conditional shape for the same reason. It
+        # belongs in the record because it is the fourth thing the policy
+        # decides and the Journal IS the experiment record: without it the
+        # recorded spawn no longer determines the child's toolset, which is the
+        # one property a bench reader replays a spawn to check. Written only
+        # when true, so every attended spawn's bytes stay byte-identical.
         def spawn(parent, lifecycle: nil)
           head = parent.head_digest
           body = { "prefix" => @policy.prefix.label, "posture" => @policy.posture.label,
                    "only" => @policy.only, "spawned_from" => head }
           body["lifecycle"] = lifecycle unless lifecycle.nil?
+          body["unattended"] = true if @policy.unattended
           put(parent, kind: :spawn, from: correlation_of(parent), to: nil,
                       causal_parents: [head].compact, body:)
         end

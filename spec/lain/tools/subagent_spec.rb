@@ -20,8 +20,8 @@ RSpec.describe Lain::Tools::Subagent do
   let(:child_context) { Lain::Context.new(model: "child-model", max_tokens: 256) }
   let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
 
-  def spawn_policy(prefix: :fresh, posture: :schema, only: %i[read_file])
-    Lain::Tool::SpawnPolicy.new(prefix:, posture:, only:)
+  def spawn_policy(prefix: :fresh, posture: :schema, only: %i[read_file], unattended: false)
+    Lain::Tool::SpawnPolicy.new(prefix:, posture:, only:, unattended:)
   end
 
   # `**seam` forwards the loose seam members a spawn is adopted over -- the
@@ -89,6 +89,24 @@ RSpec.describe Lain::Tools::Subagent do
       spawn = tool.last_spawn
       expect(spawn.kind).to eq(:spawn)
       expect(spawn.causal_parents).to include(parent.head_digest)
+    end
+
+    # The Journal is the experiment record, so the recorded spawn has to
+    # DETERMINE the child's toolset -- and `unattended` is the fourth thing the
+    # policy decides. Written only when true, riding `lifecycle`'s conditional
+    # shape, so every attended spawn's bytes and every digest already derived
+    # from them are unchanged.
+    it "journals the unattended declaration, and omits the key entirely when attended" do
+      attended = build_subagent(provider: mock(text_response("done")))
+      attended.call({ "prompt" => "go" }, invocation)
+
+      unattended = build_subagent(provider: mock(text_response("done")),
+                                  policy: spawn_policy(unattended: true))
+      unattended.call({ "prompt" => "go" }, invocation)
+
+      expect(attended.last_spawn.body).not_to have_key("unattended")
+      expect(unattended.last_spawn.body).to include("unattended" => true)
+      expect(unattended.last_spawn.body.fetch("only")).to eq(%w[read_file])
     end
   end
 
@@ -1289,6 +1307,52 @@ RSpec.describe Lain::Tools::Subagent do
       tool.call({ "prompt" => "go" }, invocation)
 
       expect(provider.last_request.tools.map { |tool| tool["name"] }).to eq(%w[echo read_file])
+    end
+
+    # A role's `only:` says what an arm may TOUCH; `unattended` says it may not
+    # PARK. The docent answers while a human stands mid-review waiting for the
+    # line to change, so an asker granted past the attenuation would hang
+    # exactly the answer the human is waiting on -- and `only:` cannot express
+    # a tool the role must NOT hold, because the grant happens outside it.
+    it "withholds the asker from an unattended spawn, though the posture permits it" do
+      provider = mock(text_response("done"))
+      tool = asking_subagent(provider, policy: spawn_policy(only: [], unattended: true))
+
+      tool.call({ "prompt" => "go" }, invocation)
+
+      expect(provider.last_request.tools.map { |rendered| rendered["name"] }).to eq(%w[echo read_file])
+    end
+
+    # {ChildBuilder#granted} runs TWICE -- once on the attenuated set and once
+    # on the raw union -- and under `handler_union` it is the UNION the child is
+    # shown and dispatched against. An `ask_human` surviving there is the
+    # PARENT's, reachable by the very child the declaration muted.
+    it "strips the parent's asker from an unattended child's dispatch union too" do
+      provider = mock(text_response("done"))
+      poisoned = Lain::Toolset.new(union.to_a + [Lain::Tools::AskHuman.new(parent:)])
+      tool = asking_subagent(provider, toolset: poisoned,
+                                       policy: spawn_policy(only: [], posture: :handler_union, unattended: true))
+
+      tool.call({ "prompt" => "go" }, invocation)
+
+      expect(provider.last_request.tools.map { |rendered| rendered["name"] }).to eq(%w[echo read_file])
+    end
+
+    # The other half of the same rule: an ATTENDED child still gets an asker,
+    # and it is its OWN. The union here is poisoned with the parent's, whose
+    # questions would be attributed to the parent's chain and whose promise the
+    # parent's {AskHuman::Outstanding} holds -- so the sender the human is told
+    # is the assertion that tells the two apart.
+    it "still grants an attended child its own asker, announced as the child" do
+      poisoned = Lain::Toolset.new(union.to_a + [parent_asker])
+      tool = asking_subagent(mock(asks, text_response("done")), toolset: poisoned, name: "researcher",
+                                                                policy: spawn_policy(only: [], posture: :handler_union))
+
+      result, item = answered(tool)
+
+      expect(result).to be_ok
+      expect(item.question.to_s).to eq("which db?")
+      expect(notified).to eq([["researcher", "which db?"]])
     end
 
     # Retention runs from `register` to `deregister` and NOTHING else releases

@@ -67,6 +67,45 @@ RSpec.describe Lain::Role do
     end
   end
 
+  # `only:` says what an arm may TOUCH. The property `diff_docent` actually
+  # needs is that it may not PARK -- on the approval gate or on a human --
+  # because it answers while a human stands mid-review waiting for the line to
+  # change. The catalog argued that invariant in prose and nothing enforced it.
+  describe "a role can declare that it answers unattended" do
+    it "defaults to attended, and two shipped roles declare otherwise" do
+      expect(Lain::Role::Catalog.fetch(:test_engineer).unattended).to be(false)
+      expect(Lain::Role::Catalog.fetch(:diff_docent).unattended).to be(true)
+      expect(Lain::Role::Catalog.fetch(:merge_resolver).unattended).to be(true)
+    end
+
+    # Coerced like every member beside it, and for the shareability reason
+    # {Tool::SpawnPolicy}'s own spec spells out.
+    it "coerces the declaration to a real boolean" do
+      expect(described_class.new(name: :probe, only: %i[read_file], unattended: "false").unattended).to be(true)
+      expect(described_class.new(name: :probe, only: %i[read_file], unattended: nil).unattended).to be(false)
+      expect(Ractor.shareable?(described_class.new(name: :probe, only: [], unattended: Object.new))).to be(true)
+    end
+
+    # The spawn policy is the ONLY channel: a {Tools::Subagent::ChildBuilder}
+    # holds `@policy` and never sees the Role it came from.
+    it "carries the declaration onto the spawn policy under either arm" do
+      expect(Lain::Role::Catalog.fetch(:diff_docent).spawn_policy.unattended).to be(true)
+      expect(Lain::Role::Catalog.fetch(:diff_docent).spawn_policy(prefix: :inherit).unattended).to be(true)
+      expect(Lain::Role::Catalog.fetch(:test_engineer).spawn_policy.unattended).to be(false)
+    end
+
+    # Named for the GUARANTEE, not for the tool: an arm that answers unattended
+    # holds nothing that can block on a human. `ask_human` is the only such tool
+    # today, and the point of the name is that a second one cannot quietly reach
+    # an unattended role later.
+    it "is declared by no role that also names a parking tool in only:" do
+      parking = %i[ask_human request_review]
+      offenders = Lain::Role::Catalog.all.select { |r| r.unattended && r.only.intersect?(parking) }
+
+      expect(offenders.map(&:name)).to be_empty
+    end
+  end
+
   describe "an override touches one role only" do
     it "changes test_engineer's prelude and leaves every sibling byte-identical" do
       te = Lain::Role::Catalog.fetch(:test_engineer)

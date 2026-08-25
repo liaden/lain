@@ -283,5 +283,35 @@ RSpec.describe Lain::Tool::SpawnPolicy do
       expect(described_class.new(only: %i[echo]).attenuate(union).names).to eq(%w[echo])
       expect(described_class.new(only: []).attenuate(union).names).to eq(union.names)
     end
+
+    # A role's `only`-set says what an arm may TOUCH; `unattended` says it may
+    # not PARK -- on the approval gate or on a human. This value is the only
+    # channel that word has: {Tools::Subagent::ChildBuilder} is handed a policy
+    # and never a {Role}.
+    it "carries a role's unattended declaration, and defaults to attended" do
+      expect(described_class.new(only: %i[echo]).unattended).to be(false)
+      expect(described_class.new(only: %i[echo], unattended: true).unattended).to be(true)
+    end
+
+    # Every other member is coerced, and an uncoerced one is the hole the
+    # coercion was for: `"false"` is TRUTHY in Ruby, so a policy carrying it raw
+    # would read as unattended while printing as a String that says otherwise.
+    it "coerces unattended to a real boolean rather than carrying truthiness" do
+      expect(described_class.new(only: [], unattended: "false").unattended).to be(true)
+      expect(described_class.new(only: [], unattended: nil).unattended).to be(false)
+      expect(described_class.new(only: [], unattended: 0).unattended).to be(true)
+    end
+
+    # CLAUDE.md's value-object rule, asked of the whole policy rather than of
+    # `unattended` alone -- the sweep in `value_object_shareability_spec.rb`
+    # cannot reach this constructor (every generic dummy fails
+    # `PrefixStrategy.resolve`), so it is asked here or nowhere. The coercion
+    # above is what keeps it true against an arbitrary object: an unshareable
+    # one riding in raw would forfeit exactly this.
+    it "is deeply frozen -- Ractor.shareable? -- carrying the new member" do
+      expect(Ractor.shareable?(described_class.new(only: %i[echo], unattended: true))).to be(true)
+      expect(Ractor.shareable?(described_class.new(prefix: :inherit, posture: :handler_union, only: []))).to be(true)
+      expect(Ractor.shareable?(described_class.new(only: [], unattended: Object.new))).to be(true)
+    end
   end
 end

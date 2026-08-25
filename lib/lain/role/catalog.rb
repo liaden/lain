@@ -43,17 +43,31 @@ module Lain
         # belongs to {Isolation::Worktree::Handback}, this role only edits the
         # conflicted files, and without a tier-3 tool it never reaches the
         # approval gate that would hang the spawn waiting for a human.
-        Role.new(name: :merge_resolver, only: %i[read_file edit_file write_file grep]),
+        #
+        # `unattended` is that same sentence said where the code can read it,
+        # and here the stakes are higher than the docent's. That path is
+        # unbounded -- no deadline anywhere in the chain -- and
+        # {Isolation::WorkerHandoff#complete} runs the resolve BEFORE the
+        # restore, so a resolver parked on a question strands the parent
+        # mid-merge still holding the lease: the STRANDED state, the one a
+        # person has to fix by hand.
+        Role.new(name: :merge_resolver, only: %i[read_file edit_file write_file grep], unattended: true),
         # {Review::Docent}'s answerer (T24): spawned per question on a review
         # thread, to explain ONE hunk to the human standing on it. Read-only for
         # the reviewers' reason -- explaining a change does not touch the tree --
         # and without `bash` for `merge_resolver`'s: it answers while a human is
         # mid-review and a tier-3 tool would park it at the approval gate.
         #
+        # `unattended` is the half `only:` could never say. The human is not
+        # merely absent, they are STANDING on the hunk waiting for the PENDING
+        # line to become an answer, so a child that parked on a question would
+        # hang the very thing being waited for -- and the grant that could do it
+        # ({Tools::Subagent::ChildBuilder#granted}) happens outside this list.
+        #
         # DELETABLE with the docent, and it does not travel alone: this entry,
         # `prompt/templates/role/diff-docent.md` and `role_spec.rb`'s roll call
         # are pinned to each other in both directions (see `review.rb`).
-        Role.new(name: :diff_docent, only: %i[read_file list_files glob grep])
+        Role.new(name: :diff_docent, only: %i[read_file list_files glob grep], unattended: true)
       ].to_h { |role| [role.name, role] }.freeze
 
       class << self

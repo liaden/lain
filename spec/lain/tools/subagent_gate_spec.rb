@@ -199,12 +199,18 @@ RSpec.describe "Subagent gating" do
     # the posture must ANSWER that rather than raise: `Permits#attenuate` goes
     # through {Toolset#only}, which would die on the nine read-only names this
     # child never held.
+    #
+    # No `ask_human` in the result, and it is INCIDENTAL to what this example
+    # guards: the role declares itself unattended (`role/catalog.rb`), so the
+    # spawn withholds an asker regardless of what this posture permits. The
+    # subject here is still the intersection answering instead of raising --
+    # `grep` and `read_file` are the two names the role and the posture share.
     it "attenuates a role whose set the posture's does not cover, without raising" do
       provider = mock(text_response("done"))
 
       expect { build_subagent(provider:, role: :merge_resolver, permits:).call({ "prompt" => "go" }, invocation) }
         .not_to raise_error
-      expect(rendered(provider)).to eq(%w[ask_human grep read_file])
+      expect(rendered(provider)).to eq(%w[grep read_file])
     end
 
     # A child with nothing at all is a wiring error, not a tighter child. It is

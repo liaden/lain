@@ -2,6 +2,7 @@
 
 require "async"
 require "stringio"
+require "timeout"
 require "tmpdir"
 
 # The thread pane, recorded at the ONE message the docent sends it:
@@ -1025,12 +1026,83 @@ RSpec.describe Lain::Review::Docent do
     # no tier-3 tool -- explaining a change does not touch the tree, and a gated
     # tool would park the answer at the approval gate with a human sitting
     # mid-review waiting for it. Neither half was asserted anywhere.
-    it "attenuates to read-only capabilities, none of which reach the approval gate" do
+    #
+    # Asserted over the BUILT CHILD's rendered set, not over the role's own
+    # attenuation: {Tools::Subagent::ChildBuilder#granted} adds the child's
+    # `ask_human` OUTSIDE the attenuation, so a role-level check cannot see the
+    # one tool that would park this answer. The seam is the real spawn path
+    # {Skill::RoleSpawn} takes, driven over a mock provider -- what the child is
+    # rendered IS what it may call under the default `schema` posture.
+    it "renders a built child read-only, unable to reach the gate or to park on a human" do
       union = Lain::Toolset.new(Lain::CLI::Wiring::BaseTools.build(Lain::Memory::Recorder.new))
-      allowed = Lain::Role::Catalog.fetch(described_class::ROLE).attenuate(union)
+      provider = Lain::Provider::Mock.new(responses: [text_response("said")])
 
-      expect(allowed.names).to contain_exactly("glob", "grep", "list_files", "read_file")
-      expect(allowed.select(&:requires_approval?)).to be_empty
+      spawn_docent(provider, union)
+
+      rendered = provider.last_request.tools.map { |tool| tool["name"] }
+      expect(rendered).to contain_exactly("glob", "grep", "list_files", "read_file")
+      expect(union.only(*rendered).select(&:requires_approval?)).to be_empty
+    end
+
+    # The other posture, and the one that actually carries the risk. Under
+    # `schema` the allowed set and the rendered set coincide, so the example
+    # above cannot tell a withheld tool from an unrendered one. Under
+    # `handler_union` the child is SHOWN the union and {Effect::Handler::Live}
+    # dispatches against it, so a surviving `ask_human` there is the PARENT's --
+    # reachable by the very child the role muted, and resolving into the
+    # parent's own {Tools::AskHuman::Outstanding}.
+    describe "under the handler_union posture, where the child sees the union" do
+      let(:notified) { [] }
+      let(:notifier) { instance_double(Lain::Notify) }
+      let(:askers) { Lain::CLI::Wiring::Askers.new(notifier:, observer: Lain::Event::ChainWriter::Null.new) }
+
+      before { allow(notifier).to receive(:question) { |agent:, text:| notified << [agent, text] } }
+
+      # BaseTools plus the PARENT's own enrolled asker -- the shape a real
+      # session's union has when a docent is spawned out of the human's chat.
+      def poisoned_union
+        Lain::Toolset.new(Lain::CLI::Wiring::BaseTools.build(Lain::Memory::Recorder.new) +
+                          [askers.enrol(Lain::Timeline.empty(store: Lain::Store.new), agent: "lain").asker])
+      end
+
+      it "shows the child no ask_human, though the union it renders from holds the parent's" do
+        provider = Lain::Provider::Mock.new(responses: [text_response("said")])
+        union = poisoned_union
+
+        spawn_docent(provider, union, posture: :handler_union, askers:)
+
+        expect(union.names).to include("ask_human")
+        expect(provider.last_request.tools.map { |tool| tool["name"] }).not_to include("ask_human")
+      end
+
+      # The strong form: the model NAMES the tool rather than merely being
+      # offered it. If the grant survived, this parks forever on a queue a
+      # review has no drain for -- the Timeout is what turns that regression
+      # into a failure instead of a wedged suite.
+      it "refuses the call rather than parking, when the model names ask_human anyway" do
+        provider = Lain::Provider::Mock.new(
+          responses: [tool_response(["c1", "ask_human", { "question" => "which db?" }]), text_response("said")]
+        )
+
+        result = Timeout.timeout(10) { spawn_docent(provider, poisoned_union, posture: :handler_union, askers:) }
+
+        expect(result).to be_ok
+        expect(notified).to be_empty
+      end
+    end
+
+    # {Skill::RoleSpawn#build_subagent}'s own construction, minus the persona
+    # (which needs a project's slots and says nothing about capability).
+    def spawn_docent(provider, union, posture: :schema, askers: Lain::CLI::Wiring::Askers.unwired)
+      role = Lain::Role::Catalog.fetch(described_class::ROLE)
+      seam = Lain::Tools::Subagent::Seam.new(
+        provider:, context_factory: -> { Lain::Context.new(model: "docent-model", max_tokens: 128) },
+        parent: Lain::Timeline.empty(store: Lain::Store.new), askers:
+      )
+      Lain::Tools::Subagent.new(seam:, toolset: union, policy: role.spawn_policy(posture:), max_depth: 1,
+                                name: role.name.to_s)
+                           .call({ "prompt" => "explain this hunk" },
+                                 Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
     end
 
     it "refuses in words, never by raising, when no answerer was wired" do
