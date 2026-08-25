@@ -102,6 +102,11 @@ module ThreadFixture
   # echoed with `history = false`, so `:messages` holds the unshortened sentence
   # and not the one the human read. Wrapping the rail is the only way to get that
   # answer back out of a callback that discards it.
+  # ONE spelling of the message-history read: `messages` runs it on the
+  # example's own connection and `spoke?` on a throwaway one, and the two must
+  # not be able to disagree about what "the history" is.
+  MESSAGES = "return vim.api.nvim_exec2('messages', { output = true }).output"
+
   RAIL_PROBE = <<~LUA
     _G.__thread_rail = {}
     local real = _G.__lain.review_refused
@@ -333,7 +338,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
   # nvim's own message history, which is where `__lain.review_refused` echoes
   # and where a `stack traceback:` would land -- so one read answers both halves
   # of "a refusal is not a crash".
-  def messages = lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+  def messages = lua(ThreadFixture::MESSAGES, [])
 
   # `:w` as a human types it, in a real window on the thread buffer.
   #
@@ -414,14 +419,89 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
     probe&.session&.shutdown
   end
 
-  def notified
+  # `48_annotate.lua`'s own gesture, driven as the command a human types: the
+  # marker this card's refusal reads is placed by `review_notes.place` off the
+  # CURRENT window's cursor, so the note lands wherever `move_to` last left it.
+  def place_note(kind, text) = @editor.command("LainNote #{kind} #{text}")
+
+  # `:LainThread` as a human types it, answering the settled mode and the slice
+  # of `:messages` this one command added.
+  #
+  # THE DELTA AND NOT THE WHOLE HISTORY: `raising_blocks` deliberately leaves a
+  # `stack traceback:` in it, so an example asserting that string's absence over
+  # the full buffer would fail on its own guard.
+  def typed_refusal
+    before = messages
+    @editor.session.notify(:nvim_input, ":LainThread\r")
+    mode = mode_once_spoken(before)
+    clear_prompt
+    wait_until(reason: "the refusal to reach :messages") { messages.length > before.length }
+    [mode, messages[before.length..]]
+  end
+
+  # STRUCTURAL RATHER THAN TIMED, and the panel's NIT: a fixed sampling window
+  # can end before the command it is sampling has run, and would then report
+  # "not blocking" for the wrong reason. This ends on a FACT.
+  #
+  # A hit-enter prompt does not clear itself, so once it is up `nvim_get_mode`
+  # keeps reporting it and there is no window to miss -- what has to be waited
+  # for is the command having RUN. Its two witnesses are the prompt itself (fast,
+  # answered straight through it) and the sentence reaching `:messages` (only
+  # askable while nothing is blocking), so polling both ends the wait either way.
+  def mode_once_spoken(before)
+    wait_until(reason: ":LainThread to speak or to block") do
+      @editor.session.request(:nvim_get_mode)["blocking"] || spoke?(before)
+    end
+    @editor.session.request(:nvim_get_mode)
+  end
+
+  # ON ITS OWN CONNECTION, `round_trip`'s reason one leg earlier. This read is
+  # non-fast, so a prompt raised in the gap after the mode check above queues it
+  # forever -- and abandoning it on `@editor` would leave a response pending
+  # there that `clear_prompt`'s next read would collect as its own.
+  def spoke?(before)
+    probe = Neovim.attach_unix(@socket)
+    Timeout.timeout(0.3) { probe.exec_lua(ThreadFixture::MESSAGES, []).length > before.length }
+  rescue Timeout::Error
+    false
+  ensure
+    probe&.session&.shutdown
+  end
+
+  # Only ever presses when a prompt is actually standing: a stray `\r` in normal
+  # mode is a cursor motion, and the examples here place notes by cursor row.
+  # Loops because a traceback can span more screens than one prompt clears.
+  def clear_prompt
+    wait_until(reason: "any hit-enter prompt to clear") do
+      blocking = @editor.session.request(:nvim_get_mode)["blocking"]
+      press_enter if blocking
+      !blocking
+    end
+  end
+
+  # THE NON-VACUITY GUARD: a command that really does `error()`, driven exactly
+  # as the refusals are, on the same attached UI. If this does not block, the
+  # apparatus cannot witness the defect and the three passes it precedes mean
+  # nothing. Measured by a panel probe at 120 columns as `raise=true,
+  # notify=false`, so it separates a raise from a message rather than from
+  # silence.
+  def raising_blocks
     lua(<<~LUA)
-      local seen = {}
-      local original = vim.notify
-      vim.notify = function(message, level) table.insert(seen, { message, level }) end
+      vim.api.nvim_create_user_command("LainThreadSpecRaise", function() error("deliberate") end, {})
+    LUA
+    @editor.session.notify(:nvim_input, ":LainThreadSpecRaise\r")
+    settled_mode["blocking"].tap { clear_prompt }
+  end
+
+  # `:LainThread` refuses on `__lain.review_refused`, so the line a human SAW is
+  # the one the rail answered with -- `RAIL_PROBE`'s whole reason. `pcall` still
+  # wraps the command because "it refused rather than raised" is half of what
+  # every example below pins.
+  def refused_thread
+    lua(ThreadFixture::RAIL_PROBE)
+    lua(<<~LUA)
       local ok, err = pcall(vim.cmd, "LainThread")
-      vim.notify = original
-      return { seen = seen, ok = ok, err = tostring(err) }
+      return { ok = ok, err = tostring(err), shown = _G.__thread_rail }
     LUA
   end
 
@@ -1340,20 +1420,178 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
       enter(slots["new"])
       move_to(7)
 
-      answer = notified
+      answer = refused_thread
 
       expect(answer["ok"]).to be(true)
-      expect(answer["seen"].flatten.first).to include("no thread")
+      expect(answer["shown"].last).to include("no thread")
+      # The sentence this card ADDS belongs to a line that has a note on it.
+      # Without this half, a refusal that named `:LainNoteDone` unconditionally
+      # would pass every example below while telling a human with no note at all
+      # to hand one back.
+      expect(answer["shown"].last).not_to include("LainNoteDone")
     end
 
     it "says so outside a review diff buffer rather than opening whatever is there" do
       open_counter
       enter(slots["sidebar"])
 
-      answer = notified
+      answer = refused_thread
 
       expect(answer["ok"]).to be(true)
-      expect(answer["seen"].flatten.first).to include("LainThread")
+      expect(answer["shown"].last).to include("LainThread")
+      expect(answer["shown"].last).not_to include("LainNoteDone")
+    end
+
+    # F66. Both sentences were true and the human could only see one: a `● note`
+    # marker sits visibly on the line, and `:LainThread` answered "no thread on
+    # this line". The anchor id is minted at hand-back
+    # ({Lain::Review::Handover}), so a thread genuinely cannot exist yet -- the
+    # fix is the third sentence, not earlier ids.
+    #
+    # The marker is read through `48_annotate.lua`'s own `review_notes.marked`,
+    # so what the refusal reacts to is the thing the human can see rather than a
+    # second registry that could disagree with it.
+    it "names the unhanded note and its remedy when a marker sits on the line" do
+      open_counter
+      enter(slots["new"])
+      move_to(7)
+      place_note("note", "this line reads oddly")
+
+      answer = refused_thread
+
+      expect(answer["ok"]).to be(true)
+      expect(answer["shown"].last).to include("note").and include("LainNoteDone")
+      expect(answer["shown"].last).not_to include("no thread on this line")
+    end
+
+    # A note on ANOTHER line must not answer for this one -- otherwise the new
+    # sentence is really "this buffer has notes somewhere", which is not a
+    # question anybody asked.
+    it "keeps the bare sentence for a line whose neighbour carries the note" do
+      open_counter
+      enter(slots["new"])
+      move_to(7)
+      place_note("note", "this line reads oddly")
+      move_to(9)
+
+      answer = refused_thread
+
+      expect(answer["ok"]).to be(true)
+      expect(answer["shown"].last).to include("no thread")
+      expect(answer["shown"].last).not_to include("LainNoteDone")
+    end
+
+    # THE THREE SENTENCES, PINNED WHOLE AND IN ONE PLACE. Each example above
+    # asserts the DISTINGUISHING half of its own refusal, which is what makes
+    # them readable; this is where the exact wording lives, so a reworded
+    # sentence fails once with a diff rather than three times by keyword.
+    #
+    # The `lain: ` on each is the RAIL'S, not the caller's -- `review_refused`
+    # prepends it -- so this also pins that none of the three carries its own and
+    # doubles it.
+    it "refuses in three sentences, each naming its own state" do
+      open_counter
+      lua(ThreadFixture::RAIL_PROBE)
+
+      enter(slots["sidebar"])
+      lua('pcall(vim.cmd, "LainThread")')
+      enter(slots["new"])
+      move_to(7)
+      lua('pcall(vim.cmd, "LainThread")')
+      place_note("note", "this line reads oddly")
+      lua('pcall(vim.cmd, "LainThread")')
+
+      expect(lua("return _G.__thread_rail", [])).to eq(
+        ["lain: no review diff here -- open one, then :LainThread",
+         "lain: no thread on this line",
+         "lain: note not handed back yet -- hand it back with :LainNoteDone"]
+      )
+    end
+
+    # THE ELIDED FORM IS WHAT THE HUMAN READS AT THE MOMENT THEY NEED IT, and
+    # surviving the hit-enter prompt is not the same as surviving legibly. The
+    # rail fits a sentence by keeping its HEAD AND TAIL (`65_review.lua`'s
+    # `elided`), so a remedy in the MIDDLE is cut in half: measured, an earlier
+    # draft of the note refusal read back as
+    #
+    #   lain: note not handed ... Done gives it a thread
+    #
+    # and `Done` is not a command. `v:echospace` is `columns - 12`, so 60 columns
+    # leaves 48 cells and every sentence here but the bare one is fitted.
+    #
+    # THE RULE THIS PINS: the token a human cannot guess goes LAST, because the
+    # tail is what survives. Both command names qualify -- `<leader>Lt` reaches
+    # this refusal without the human ever having typed `:LainThread`, so the name
+    # is not recoverable from what they just did.
+    it "keeps the command a human cannot guess whole when the rail has to elide" do
+      open_counter
+      attach_ui(columns: 60, lines: 24)
+      lua(ThreadFixture::RAIL_PROBE)
+
+      enter(slots["sidebar"])
+      lua('pcall(vim.cmd, "LainThread")')
+      enter(slots["new"])
+      move_to(7)
+      place_note("note", "this line reads oddly")
+      lua('pcall(vim.cmd, "LainThread")')
+
+      outside, noted = lua("return _G.__thread_rail", [])
+
+      expect(outside).to include(":LainThread")
+      expect(noted).to include(":LainNoteDone")
+      # NON-VACUITY: if neither sentence were fitted at all this example would
+      # pass over a rail that had never been asked the question.
+      expect([outside, noted]).to all(include(" ... "))
+    end
+
+    # Round 7's F31, on the surface this card touches: an `error()` inside a
+    # `define`d command reaches the human wearing `stack traceback:` with a
+    # hit-enter prompt behind it, and that prompt queues every non-fast RPC
+    # request until somebody presses a key.
+    #
+    # KEYSTROKES WITH A UI ATTACHED, for `type_write`'s measured reason -- an
+    # error out of a NOTIFIED `nvim_exec_lua` is discarded by nvim,
+    # `refused_thread`'s own `pcall` swallows one too, and a headless editor
+    # never raises the prompt at all. Any of the three shortcuts reads green over
+    # an editor that cannot fail this.
+    #
+    # ⚠️ 80 AND 100 COLUMNS, AND THE PAIR IS THE POINT. A panel measured the
+    # blocking threshold for a plain `vim.notify` at roughly `len + 12 > columns`:
+    # the pre-existing 95-character refusal blocked at anything up to 105
+    # columns, and a 106-character new one would have blocked up to 115 -- taking
+    # this surface from one refusal modaling to two, on ordinary terminals. A
+    # first cut of this example passed only because it ran at 120 columns, which
+    # is two columns of headroom and not a margin. These are the widths a human
+    # actually has, so they are the widths the property is pinned at. The remedy
+    # is `__lain.review_refused`, which fits the line to the screen and was
+    # measured never to block at 60, 80, 100 or 110.
+    [80, 100].each do |columns|
+      it "leaves the editor answering RPC on each of its three refusals at #{columns} columns" do
+        open_counter
+        attach_ui(columns:, lines: 24)
+        expect(lua("return #vim.api.nvim_list_uis()", [])).to be_positive
+        expect(raising_blocks).to be(true)
+
+        enter(slots["sidebar"])
+        outside = typed_refusal
+
+        enter(slots["new"])
+        move_to(7)
+        bare = typed_refusal
+
+        enter(slots["new"])
+        move_to(7)
+        place_note("note", "this line reads oddly")
+        noted = typed_refusal
+
+        said = [outside, bare, noted].map(&:last)
+
+        expect([outside, bare, noted].map { |mode, _| mode["blocking"] }).to eq([false, false, false])
+        expect(round_trip).to eq(2)
+        expect(said).to all(include("lain:"))
+        expect(said.join("\n")).not_to include("stack traceback")
+        expect(said.join("\n")).not_to include("Error executing")
+      end
     end
   end
 

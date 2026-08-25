@@ -81,6 +81,28 @@ function review_notes.namespace()
   return vim.api.nvim_create_namespace("lain_review_notes")
 end
 
+-- Whether one of this module's markers is on this row. The row is 1-BASED, as a
+-- cursor reports it; the 0-based arithmetic is this function's, and that is the
+-- point of it existing.
+--
+-- Public because another module needs the answer and must not need this one's
+-- namespace or its indexing convention to get it: `51_thread.lua`'s
+-- `:LainThread` refuses differently for a line carrying a note that has not been
+-- handed back yet, and a copy of these two lines over there would be a second
+-- place every change here has to reach.
+--
+-- THE EXTMARK AND NOT `by_buf`: the mark is what carries the `● note` virt_text
+-- the human can actually see, and what travelled with the line as they kept
+-- editing, while the registry entry keeps the row the note was PLACED on. The
+-- question being asked is about what is on the screen.
+--
+-- READ-ONLY, and it has to stay that way. Nothing here writes into the
+-- namespace, adds an entry, or touches `placed` -- the placement ORDER this
+-- module's header calls its output belongs to `place` and `settle` alone.
+function review_notes.marked(buf, row)
+  return #vim.api.nvim_buf_get_extmarks(buf, review_notes.namespace(), { row - 1, 0 }, { row - 1, -1 }, {}) > 0
+end
+
 -- Sorted, so a refusal message and a completion list are the same list in the
 -- same order every time rather than whatever `pairs` felt like.
 function review_notes.kinds()

@@ -693,22 +693,64 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
 -- 47_diff's reason -- a render must move nobody, a gesture the human just made
 -- is the one thing that may.
 --
--- Refuses in words rather than raising, and says which of the two things is
+-- Refuses in words rather than raising, and says which of the THREE things is
 -- wrong: `define` makes every :Lain* command GLOBAL, so this is reachable from
 -- lain://journal as readily as from the diff, and "no thread on this line" told
 -- to somebody who is not even in a review is the wrong sentence.
+--
+-- The third branch is round 11's F66, and it is a sentence rather than a change
+-- of timing. A `● note` marker is visible on the line while "no thread on this
+-- line" is also true, and the human can only see one of the two: the anchor id
+-- is minted at HAND-BACK ({Lain::Review::Handover}), so until the note goes back
+-- there is nothing for a thread to be keyed by. Naming the state and the remedy
+-- is the whole fix -- minting ids earlier would move a boundary this refusal
+-- only has to describe. `review_notes.marked` is asked rather than the namespace
+-- read here: the 0-based arithmetic and the namespace both belong to the module
+-- that places the markers.
+--
+-- ALL THREE GO OUT ON `__lain.review_refused`, NOT ON `vim.notify`, and that is
+-- the difference between a refusal and a modal. `nvim_echo` writes the message
+-- AREA, so a sentence too wide for it raises the hit-enter prompt that queues
+-- every non-fast RPC request -- round 7's F31 shape, reached here by WIDTH
+-- rather than by a raise. Measured by a panel: a plain `vim.notify` blocks at
+-- roughly `#sentence + 12 > columns`, so the 95-character refusal this branch
+-- used to send blocked at every width up to 105 and a 106-character one for the
+-- note would have blocked up to 115 -- two of three modaling on an ordinary
+-- 80- or 100-column terminal. `review_refused` (`65_review.lua`) fits the line
+-- to the screen and folds the rest into `:messages`, and was measured never to
+-- block at 60, 80, 100 or 110. It prepends the `lain: ` these strings therefore
+-- do not, and supplies its own highlight, so there is no level argument either.
+--
+-- THE SENTENCES ARE ALSO SHORT, which is belt to the rail's braces: `v:echospace`
+-- is `columns - 12`, so it is 98 in the cockpit's 110-column pane and 48 in a
+-- 60-column one. Under ~62 characters each, these are never fitted at 80 and
+-- above.
+--
+-- AND THE TOKEN A HUMAN CANNOT GUESS GOES LAST, which is the rule the widths
+-- below 80 force. `fitted` keeps a sentence's HEAD AND TAIL (`65_review.lua`'s
+-- `elided`), so a command name in the MIDDLE is cut in half rather than dropped:
+-- at 60 columns an earlier draft of the note refusal read back as
+-- `lain: note not handed ... Done gives it a thread`, and `Done` is not a
+-- command. The same thing had already eaten the ask-failed refusal's `err`
+-- below. Both names here qualify as unguessable and not just unmemorable --
+-- `48_annotate`'s `<leader>Lt` reaches this refusal without the human having
+-- typed `:LainThread` at all -- so both sentences END on theirs, and
+-- `thread_view_spec.rb` pins the elided rendering at 60 columns rather than the
+-- rule in prose.
 define("LainThread", function()
   local buf = vim.api.nvim_get_current_buf()
   local slot = review_thread.OPPOSITE[vim.b[buf].lain_review_side]
   if slot == nil then
-    vim.notify("lain: :LainThread opens the thread on the line under the cursor, and needs a review diff buffer",
-      vim.log.levels.WARN)
+    _G.__lain.review_refused("no review diff here -- open one, then :LainThread")
     return
   end
 
-  local held = review_thread.anchor_at(buf, vim.api.nvim_win_get_cursor(0)[1])
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local held = review_thread.anchor_at(buf, row)
   if held == nil then
-    vim.notify("lain: no thread on this line", vim.log.levels.WARN)
+    _G.__lain.review_refused(review_notes.marked(buf, row)
+      and "note not handed back yet -- hand it back with :LainNoteDone"
+      or "no thread on this line")
     return
   end
   -- A GESTURE, so it may rebuild -- and through `window` rather than
