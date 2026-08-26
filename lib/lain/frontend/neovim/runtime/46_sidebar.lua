@@ -5,41 +5,33 @@
 -- 46, above 41: this renders THROUGH the layout's `review_place`, and a module
 -- sees only what concatenates before it.
 --
--- THE FIRST CALLER OF THE REVIEW LAYOUT, and that is the whole of why this file
--- exists rather than another `belowright split`. `review_place` re-ensures the
--- tabpage and its three slots before every render and answers a freshly
--- resolved window id, so a render arriving after the human closed the sidebar
--- rebuilds it and lands in the rebuilt one. `review_layout()`'s return is a
--- SNAPSHOT and is deliberately not called here: caching an id across renders is
--- the documented way to earn `Invalid window id`.
+-- `review_place` re-ensures the tabpage and its slots before every render and
+-- answers a freshly resolved window id, so a render arriving after the human
+-- closed the sidebar rebuilds it and lands in the rebuilt one.
+-- `review_layout()`'s return is a SNAPSHOT and is deliberately not called here:
+-- caching an id across renders is the documented way to earn
+-- `Invalid window id`.
 --
--- ONE new top-level name, 41_layout's own economy: the chunk shares one scope
--- and the binding cap is 60 upvalues per function prototype, so every top-level
--- local is a name each later module pays for. The public entry point goes on
--- `_G.__lain`, where the runtime's public surface lives.
+-- ONE new top-level name, 41_layout's economy: the binding cap is 60 upvalues
+-- per function prototype, so every top-level local is a name each later module
+-- pays for.
 local review_sidebar = {
   NAME = "lain://review",
 
-  -- state -> the key that sends it. THE SECOND SPELLING of a closed set
-  -- `review/vocabulary.rb` owns (`Lain::Review::MARK_STATES`), and it is forced:
-  -- lua cannot read a Ruby constant, and a key per state needs both members by
-  -- name anyway. `review_view_spec.rb` pins these keys against that declaration,
-  -- the same defence `48_annotate`'s MARKERS applies to `ANNOTATION_KINDS` -- so
+  -- state -> the key that sends it. THE SECOND SPELLING of the closed set
+  -- `Lain::Review::MARK_STATES`, and it is forced: lua cannot read a Ruby
+  -- constant. `review_view_spec.rb` pins these keys against that declaration, so
   -- a third state added on one side and not the other fails there rather than
-  -- being refused, silently, at the far end of a wire.
+  -- being refused silently at the far end of a wire.
   --
-  -- A KEY PER STATE, NEVER ONE TOGGLE KEY, and that is this table's whole
-  -- reason for existing rather than a preference. The state RIDES THE WIRE: a
-  -- toggle would have to be computed here from the rendering on screen, and
-  -- `cli/human_replies.rb` says what that costs -- a rendering that has since
-  -- moved flips the wrong hunk, in SILENCE, because both values are legal. What
-  -- the human pressed is what they meant, and it is what gets sent.
+  -- A KEY PER STATE, NEVER ONE TOGGLE KEY. The state RIDES THE WIRE: a toggle
+  -- would have to be computed here from the rendering on screen, and a rendering
+  -- that has since moved flips the wrong hunk in SILENCE, because both values are
+  -- legal. What the human pressed is what gets sent.
   --
-  -- `x` is lain's tick gesture already (`60_question.lua` binds it to ticking
-  -- the option under the cursor) and the sidebar draws a mark as `[x]`, so the
-  -- two agree by sight. `u` is its counterpart and costs nothing here: the
-  -- sidebar is `nofile` and nomodifiable, so vim's own `u` has nothing to undo
-  -- in it.
+  -- `x` is lain's tick gesture already and the sidebar draws a mark as `[x]`, so
+  -- the two agree by sight. `u` is its counterpart and costs nothing: the sidebar
+  -- is `nofile` and nomodifiable, so vim's own `u` has nothing to undo in it.
   MARK_KEYS = { reviewed = "x", unreviewed = "u" },
 }
 
@@ -54,16 +46,14 @@ function review_sidebar.states()
   return names
 end
 
--- `named_buf` is the shared constructor (nofile, hidden, nomodifiable at rest,
--- idempotent by name) and it attaches a filetype from READONLY_FILETYPES -- a
--- table in 00_constants, which this module does not edit. The lookup misses, so
--- the option lands unset, and the fix is applied HERE rather than by widening a
--- shared table: the sidebar joins the one shared "lain" filetype like every
--- other record-shaped view, with b:lain_view naming which view it is.
+-- `named_buf` attaches a filetype from READONLY_FILETYPES, a table this module
+-- does not edit, so the lookup misses and the option lands unset. Fixed HERE
+-- rather than by widening a shared table: the sidebar joins the one shared
+-- "lain" filetype like every other record-shaped view.
 --
 -- Guarded on the CURRENT value rather than run unconditionally, because setting
--- 'filetype' fires FileType synchronously -- re-setting it on every render
--- would re-run a human's every FileType autocmd once per row change.
+-- 'filetype' fires FileType synchronously -- re-setting it on every render would
+-- re-run a human's every FileType autocmd once per row change.
 function review_sidebar.buf()
   local buf = named_buf(review_sidebar.NAME)
   if vim.bo[buf].filetype == "" then
@@ -72,30 +62,21 @@ function review_sidebar.buf()
   return buf
 end
 
--- Whole-buffer replace, stamped (SET_REVIEW). The stamp is REQUIRED
--- here where set_view's is optional: a sidebar row moves the moment the scope
--- toggles or a mark redraws a row, and two renderings are routinely the same
--- height -- which is exactly the aliasing protocol 8 replaced the line COUNT to
--- fix. Ruby resolves a gesture only against the rendering the stamp names.
+-- Whole-buffer replace, stamped. The stamp is REQUIRED here where set_view's is
+-- optional: a sidebar row moves the moment the scope toggles or a mark redraws a
+-- row, and two renderings are routinely the same height, so a line COUNT
+-- aliases. Ruby resolves a gesture only against the rendering the stamp names.
 --
 -- Written BEFORE the placement, so the window never shows a half-drawn buffer,
 -- and placed on EVERY render rather than only the first: `review_place` is what
 -- repairs a layout the human has since closed windows in, and it moves nobody.
 --
--- `sides` is a FACT about the round -- which of {Lain::Review::SIDES} it
--- presents at all -- and never a layout instruction: a survey of files as they
--- stand has no old side for anything it will ever hold, a changeset has both
--- even where one file is an addition, and what to DRAW out of that is the
--- editor's own question (`rpc_thread.rb`'s rule for `review_focus`, one rail
--- over). It rides THIS render because this render precedes the layout -- the
--- panes are built by the `review_place` below, before any row is opened -- so a
--- fact sent with the open would arrive after the window it would have
--- prevented already exists.
---
--- Carried onto `review_panes` rather than passed down: on the first paint there
--- is no review tabpage yet to write it to, and the call below is what creates
--- one. See `41_layout.lua` for why a value in transit is not the registry that
--- file's header rules out.
+-- `sides` is a FACT about the round, never a layout instruction, and it rides
+-- THIS render because this render precedes the layout -- the panes are built by
+-- the `review_place` below, before any row is opened, so a fact sent with the
+-- open would arrive after the window it would have prevented already exists.
+-- Carried onto `review_panes` rather than passed down, because on the first
+-- paint there is no review tabpage yet to write it to.
 function _G.__lain.set_review(lines, gen, sides)
   local buf = review_sidebar.buf()
   vim.b[buf].lain_view_generation = gen
@@ -105,11 +86,10 @@ function _G.__lain.set_review(lines, gen, sides)
   announce_render(review_sidebar.NAME, buf)
 end
 
--- The cursor-on-a-row OPEN gesture. :LainOpen's shape in every respect that
--- matters, and its comment states the two rules this one follows too: the LINE
--- rides as an argument, never an identity, because a sidebar row renders no hunk
--- key -- and the buffer's STAMP rides beside it, because a line number alone
--- names a position in a buffer whose positions move.
+-- The cursor-on-a-row OPEN gesture. The LINE rides as an argument, never an
+-- identity, because a sidebar row renders no hunk key -- and the buffer's STAMP
+-- rides beside it, because a line number alone names a position in a buffer
+-- whose positions move.
 --
 -- ONE argument after the verb, and it is an ARRAY. Every verb on this rail is
 -- destructured Ruby-side as `verb, args`; 65_review records a verb that sent
@@ -118,26 +98,20 @@ end
 -- The buffer check is NOT redundant with the buffer-local map below. `define`
 -- makes every :Lain* command GLOBAL and this one reads the CURRENT window's
 -- cursor, so hand-typed from lain://journal line 7 it would open whatever file
--- the sidebar lists on ITS line 7 -- a file the human never looked at. Hand
--- typing is an invited path precisely because the map invokes the command.
+-- the sidebar lists on ITS line 7. Hand typing is an invited path precisely
+-- because the map invokes the command.
 --
 -- Every line is sent, with no runtime-side test of whether it holds a file: the
 -- legend, a commit header and the empty-state placeholder all name none, and
 -- Ruby -- which drew them and owns the line -> target map -- is the only side
--- that can say so. It answers with a refusal the human sees on the same rail a
--- refused :LainReviewDone answers on, which is a better outcome than a lua-side
--- pattern match on rendered text that would have to be kept in step with it.
+-- that can say so.
 --
--- AND SO DOES THE BUFFER GUARD BELOW, which used to `vim.notify`. THE SAME RAIL
--- FOR BOTH IS THE POINT -- a refusal that comes back from Ruby and one this
--- command makes for itself are the same thing to the human reading it, and
--- `51_thread.lua` measured what the other door costs: a plain notify blocks at
--- roughly `#sentence + 12 > columns`, which is the hit-enter prompt every
--- non-fast RPC request then queues behind. `review_refused` fits the line,
--- folds the rest into `:messages`, supplies its own highlight (so there is no
--- level argument) and prepends the `lain: ` these strings therefore do not.
--- Every refusal in this module rides it now, and
--- `spec/refusal_delivery_discipline_spec.rb` is what keeps it that way.
+-- EVERY REFUSAL RIDES `review_refused`, including the buffer guard's own: a
+-- plain `vim.notify` blocks at roughly `#sentence + 12 > columns`, which is the
+-- hit-enter prompt every non-fast RPC request then queues behind. The rail fits
+-- the line, folds the rest into `:messages`, supplies its own highlight and
+-- prepends the `lain: ` these strings therefore do not.
+-- `spec/refusal_delivery_discipline_spec.rb` keeps it that way.
 define("LainReviewOpen", function()
   local buf = vim.api.nvim_get_current_buf()
   if vim.api.nvim_buf_get_name(buf) ~= review_sidebar.NAME then
@@ -164,17 +138,12 @@ end)
 -- sense that matters -- everything either key does is invocable by name, with
 -- the state typed out.
 --
--- ACKED, so nothing here reads a return value: a refusal comes back on the
--- rail `__lain.review_refused` renders, exactly as a refused open does.
---
--- AND SO DOES THE ONE RAISED HERE, which is what makes that sentence true of
--- BOTH refusals rather than only the far side's. A state lain has no spelling
--- for used to `error()` out of this callback, and nvim appends its own
--- `stack traceback:` to anything that escapes one -- `error(msg, 0)` included --
--- then raises a hit-enter prompt that queues every non-fast RPC request. So the
--- editor stopped answering lain exactly while a refusal naming the vocabulary
--- was on screen. `spec/refusal_delivery_discipline_spec.rb` is the gate that
--- keeps it that way.
+-- ACKED, so nothing here reads a return value: a refusal comes back on the rail
+-- `__lain.review_refused` renders -- INCLUDING the one raised here. nvim appends
+-- its own `stack traceback:` to anything escaping a `define`d callback,
+-- `error(msg, 0)` included, then raises a hit-enter prompt that queues every
+-- non-fast RPC request, so the editor stopped answering lain exactly while a
+-- refusal naming the vocabulary was on screen.
 define("LainReviewMark", function(opts)
   local buf = vim.api.nvim_get_current_buf()
   if vim.api.nvim_buf_get_name(buf) ~= review_sidebar.NAME then
@@ -228,37 +197,20 @@ end, {
 -- `pcall` is what turns that ERROR -- which may be a raw table that crossed
 -- msgpack, not a string -- into READABLE TEXT before anything is shown.
 --
--- IT IS THEN ANSWERED AND NOT RE-RAISED, and the correction is worth stating
--- because the comment here used to draw the opposite conclusion from the same
--- true measurement. The measurement stands: any error escaping a `define`d
--- callback gets nvim's own `stack traceback:` appended however it was raised --
--- `error(msg, 0)` included, and re-raising a caught error from inside a `pcall`
--- included -- because the traceback is nvim's outer wrapper's doing and not
--- this function's. What the old comment got wrong was reading that as a limit
--- on the REFUSAL rather than on RAISING. A refusal does not have to raise. So
--- it goes out on `__lain.review_refused` (`65_review.lua`), which is where
--- `:LainReviewMark`'s refusals above already land and what `:LainReviewDone`
--- switched to for exactly this reason -- and the human gets lain's sentence
--- with no traceback under it. `48_annotate`'s `:LainNoteDone` is the third
--- site and keeps the same shape.
+-- IT IS THEN ANSWERED AND NOT RE-RAISED. Any error escaping a `define`d callback
+-- gets nvim's own `stack traceback:` appended however it was raised --
+-- `error(msg, 0)` and a re-raise from inside a `pcall` included -- because the
+-- traceback is nvim's outer wrapper's doing. A refusal does not have to raise.
 --
--- BE EXACT ABOUT WHAT THAT BUYS, because the first draft of this comment
--- overclaimed and a doc sentence went out with it. What it bought at the time
--- was the TRACEBACK: the hit-enter prompt stayed, because `nvim_echo` of a
--- message longer than the message area pages -- measured with a UI attached at
--- 80 columns, `NoReviewWrites::UNOPENED` (134 chars with the `lain: ` prefix)
--- left `nvim_get_mode` reading `{mode = "r", blocking = true}`, while the same
--- message at width 200, and a short one at width 80, did not.
---
--- THAT RESIDUAL IS NOW GONE TOO, and this paragraph is kept rather than deleted
--- because the measurement above is still the reason the rail is shaped the way
--- it is. `__lain.review_refused` (`65_review.lua`) records the whole sentence in
--- `:messages` and displays one line that fits `v:echospace`, folding line breaks
--- and eliding the middle -- and it suppresses `-- More --` around the recording
--- echo, which is a SEPARATE prompt under a separate option that the width fix
--- did not touch. Its own comment carries the three-axis checklist and what was
--- measured against it. A `blocking = true` after a refusal is a REGRESSION now,
--- not a known cost -- on any of the three.
+-- The traceback is not the whole cost: `nvim_echo` of a message longer than the
+-- message area PAGES. Measured with a UI attached at 80 columns, a 134-character
+-- refusal left `nvim_get_mode` reading `{mode = "r", blocking = true}`, while
+-- the same message at width 200 and a short one at width 80 did not.
+-- `__lain.review_refused` records the whole sentence in `:messages` and displays
+-- one line that fits `v:echospace`, folding line breaks and eliding the middle,
+-- and it suppresses `-- More --` around the recording echo -- a SEPARATE prompt
+-- under a separate option. A `blocking = true` after a refusal is a REGRESSION,
+-- not a known cost.
 define("LainReviewVerdict", function(opts)
   local taken, refusal = pcall(vim.rpcrequest, chan, "lain_command", "review_verdict", { opts.args })
   if not taken then
@@ -288,50 +240,26 @@ vim.api.nvim_create_autocmd("BufEnter", {
   end,
 })
 
--- The add-to-survey gesture, the wire half of accretion. It lives
--- here rather than getting its own file because this module already carries
--- two of the four gestures reaching `Gestures#routes`
--- (`human_replies.rb:843-852`) -- `review_open`/`review_mark` above -- and
--- `survey_add` would be the third once accretion gives it a route;
--- `51_thread.lua`'s `review_ask` is the fourth. What differs from every
--- keymap above is the BUFFER: a sidebar row is a NAME this runtime knows
--- ahead of time to scope a `BufEnter` to, but a survey grows from WHATEVER
--- FILE the human is reading, and there is no name to scope that to -- so the
--- command and its keymap are GLOBAL, never buffer-local.
+-- The add-to-survey gesture, the wire half of accretion. What differs from every
+-- keymap above is the BUFFER: a sidebar row is a NAME this runtime knows ahead
+-- of time to scope a `BufEnter` to, but a survey grows from WHATEVER FILE the
+-- human is reading, so the command and its keymap are GLOBAL.
 --
--- PREFIXED rather than a bare letter, through `30_commands`' `lain_key`: `x`/
--- `u`/`<CR>` are safe to claim on `review_sidebar.buf()`, which is
--- `nomodifiable` with nothing to type into (see the `u` comment above) -- but
--- the buffer this fires from is the human's own real, EDITABLE file, where a
--- bare `a` would cost them vim's own append. Every global lain key shares one
--- movable prefix for that reason; see `lain_key`.
+-- PREFIXED rather than a bare letter: `x`/`u`/`<CR>` are safe to claim on a
+-- `nomodifiable` sidebar, but the buffer this fires from is the human's own
+-- real, EDITABLE file, where a bare `a` would cost them vim's own append.
 --
--- REFUSES, where the comment here used to say ACKED. `Gestures#routes`
--- (`human_replies.rb:843-852`) has no `survey_add` entry, and `Router#call`'s
--- `@routes[verb]&.call(...)` (`rpc_thread.rb:831`) is a silent no-op for a
--- verb its table does not carry -- the ack (`respond(request.id, true)`,
--- `rpc_thread.rb:1221`) had already returned by the time that ran. So the key
--- told the human it worked while it had done nothing: no route drains
--- `survey_add`, and nothing was ever added to a survey. Accretion is
--- what would give this a route; until it lands, honesty is the only correct
--- behaviour, and `_G.__lain.review_refused` (`65_review.lua`) is the same
--- rail the wrong-buffer refusal below already answers on. No payload is
--- built for a route that does not exist -- the `:p`-forced absolute path and
--- the generation stamp accretion will need (nil for an ordinary file, same as
--- everywhere else `b:lain_view_generation` goes unstamped) are accretion's to
--- add back, alongside the route itself.
+-- It REFUSES rather than acking. `Gestures#routes` has no `survey_add` entry,
+-- and `Router#call`'s `@routes[verb]&.call(...)` is a silent no-op for a verb
+-- its table does not carry -- the ack having already returned by the time that
+-- ran, so the key told the human it worked while nothing was added to a survey.
+-- No payload is built for a route that does not exist.
 --
--- Every OTHER buffer-guard in this module (see `LainReviewOpen`/
--- `LainReviewMark` above, and `:LainPin`'s own spec at
--- `neovim_spec.rb:416`) refuses when fired from the wrong buffer and SAYS SO,
--- rather than acting on whatever is current. An empty name alone is not
--- enough of a guard here: every lain:// buffer HAS a name (`lain://timeline`,
--- `lain://review`, ...) and would otherwise sail through this guard and reach
--- the wrong refusal -- "not wired" when the real problem is that this was
--- never a file to add. `buftype ~= ""` is the real discriminator,
--- `47_diff.lua`'s own: `buftype = ""` is what makes the diff's new side "THE
--- FILE" rather than a scratch copy, and it is exactly what every lain://
--- buffer (`nofile`, `acwrite`) is not.
+-- An empty NAME alone is not enough of a guard: every lain:// buffer has one and
+-- would sail through to the wrong refusal. `buftype ~= ""` is the real
+-- discriminator, `47_diff.lua`'s own: `buftype = ""` is what makes the diff's
+-- new side THE FILE rather than a scratch copy, and it is exactly what every
+-- lain:// buffer (`nofile`, `acwrite`) is not.
 define("LainSurveyAdd", function()
   local buf = vim.api.nvim_get_current_buf()
   local name = vim.api.nvim_buf_get_name(buf)

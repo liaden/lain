@@ -33,11 +33,10 @@ module Lain
 
         def complete? = violations.empty?
 
-        # The record type's own WRITE-side contract, plus the two things it cannot see:
-        # that the keys are there at all, and that the heads are heads.
-        # Reusing it is what keeps a reader's idea of the shape from
-        # drifting from the writer's -- there is one definition of what a
-        # `context_derived` record is, and this is it.
+        # The record type's own WRITE-side contract, plus the two things it
+        # cannot see: that the keys are there at all, and that the heads are
+        # heads. Reusing it keeps a reader's idea of the shape from drifting
+        # from the writer's.
         def violations = absent + misshapen + carried
 
         private

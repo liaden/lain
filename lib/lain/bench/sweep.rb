@@ -9,37 +9,31 @@ module Lain
     # five retrieval arms -- manifest, bm25, vector, hybrid, graph -- over the
     # committed gold corpus, ranked by recall@k with a tokens-on-recall column.
     #
-    # It is a Compare-STYLE report, not a Compare: Compare folds many runs into
-    # one distribution PER METRIC (compare.rb), whereas the sweep folds each
-    # ARM's per-query recall into its OWN distribution and ranks the arms. That
-    # is a different shape than Compare::Run's scalar score, so the sweep still
-    # does NOT reshape Compare's public surface -- it delegates the transposed
-    # fold to {Compare::ArmFold}, which owns exactly that shape.
+    # A Compare-STYLE report, not a {Compare}: Compare folds many runs into one
+    # distribution PER METRIC, whereas this folds each ARM's per-query recall
+    # into its OWN distribution and ranks the arms. A different shape from
+    # {Compare::Run}'s scalar score, so the transposed fold is delegated to
+    # {Compare::ArmFold} rather than reshaping Compare's public surface.
     #
     # Unlike its siblings it renders ONE ranked table rather than a section per
     # metric, because the tokens-on-recall column is a SECOND metric's mean
     # riding beside the first metric's distribution: ranking by recall is the
-    # headline, and tokens is what that recall cost. So it takes ArmFold's row
-    # (the six shared cells) and appends its own seventh, rather than asking for
-    # a section it would then have to take apart.
+    # headline, and tokens is what that recall cost. So it takes ArmFold's six
+    # shared cells and appends its own seventh, rather than asking for a section
+    # it would then have to take apart.
     #
     # Zero network by construction: the vector arm reads COMMITTED fixture
-    # embeddings (corpus/corpus_embeddings.json) through {Embeddings}, never a
-    # live embedder, so the whole sweep runs under the suite's offline posture.
-    # The gold corpus and its embeddings ship WITH THE GEM (lib/lain/bench/corpus/)
-    # rather than living under spec/ -- the eval is bound to exactly that gold
-    # set, and a `lain bench sweep` run in an installed gem (no spec/ tree) needs
-    # them present.
+    # embeddings through {Embeddings}, never a live embedder. The gold corpus
+    # and its embeddings ship WITH THE GEM rather than living under spec/ --
+    # the eval is bound to exactly that gold set, and a `lain bench sweep` run
+    # in an installed gem has no spec/ tree.
     class Sweep
-      # Raised when the committed embeddings were recorded under a different
-      # model than the sweep asks for -- a silent stale fixture would measure the
-      # wrong model's geometry and lie. Names both ids (see {Embeddings.load}).
+      # A silent stale fixture would measure the wrong model's geometry and lie.
+      # Names both ids (see {Embeddings.load}).
       class StaleEmbeddings < Lain::Error; end
 
-      # Raised when a corpus or embeddings path does not exist -- a packaging
-      # mistake or a deleted fixture, never a normal ArgumentError. Named and
-      # path-bearing like {StaleEmbeddings}, so the exe presents it without a
-      # backtrace (`exe/lain`'s `rescue Lain::Error` on the sweep command)
+      # A packaging mistake or a deleted fixture, never a normal ArgumentError.
+      # Named and path-bearing so the exe presents it without a backtrace
       # instead of an unhelpful Errno::ENOENT.
       class MissingCorpus < Lain::Error; end
 
@@ -51,9 +45,8 @@ module Lain
       # is the whole ability the graph arm exists to probe.
       GRAPH_HOPS = 1
 
-      # The recall block's opening tag (Context::Recall#recall_block). A rendered
-      # tail that starts with it is a real recall injection to be counted; a tail
-      # that does not means the arm recalled nothing for that query (zero tokens).
+      # A rendered tail starting with this is a real recall injection to be
+      # counted; one that does not means the arm recalled nothing for that query.
       RECALL_TAG = "<recall>"
       private_constant :RECALL_TAG
 
@@ -71,11 +64,10 @@ module Lain
       # One gold query: the text, its gold ids, and the ability class it probes.
       Query = Data.define(:text, :gold_ids, :klass)
 
-      # A committed text => vector map standing in for a live {Embedder} -- the
-      # vector arm's determinism oracle. Keyed on the SAME text the arm embeds
-      # ("description\nbody"), resolved through each item's content digest so the
-      # committed JSON stays addressable and a corpus edit that changes a body
-      # misses loudly rather than scoring against a stale vector.
+      # A committed text => vector map standing in for a live {Embedder}. Keyed
+      # on the SAME text the arm embeds, resolved through each item's content
+      # digest so the committed JSON stays addressable and a corpus edit that
+      # changes a body misses loudly rather than scoring against a stale vector.
       class Embeddings
         # @raise [StaleEmbeddings] when the fixture's model id differs from the
         #   requested one (named on BOTH sides so the fix is obvious), or when
@@ -97,9 +89,8 @@ module Lain
         end
         private_class_method :check_model!
 
-        # The digest is Canonical over everything BUT itself, recorded at
-        # regeneration (the :ollama sweep-fixture spec) -- corruption detection
-        # for the committed vectors, not a security control.
+        # Canonical over everything BUT itself, recorded at regeneration --
+        # corruption detection for the committed vectors, not a security control.
         def self.check_content!(data, path)
           recorded = data.fetch("content_digest") do
             raise StaleEmbeddings, "fixture embeddings at #{path} carry no content digest; " \
@@ -142,8 +133,8 @@ module Lain
       end
 
       # Fixes the graph arm's hop count so it presents the SAME `#search(query)`
-      # duck the other arms do -- both the grader and Context::Recall then treat
-      # every arm identically, and the hop policy lives in exactly one place.
+      # duck the other arms do: the grader and Context::Recall then treat every
+      # arm identically, and the hop policy lives in one place.
       HopSearch = Data.define(:graph, :hops) do
         def search(query) = graph.search(query, hops:)
       end
@@ -167,16 +158,15 @@ module Lain
       end
       # rubocop:enable Naming/MethodParameterName
 
-      # A Compare-style ranked table as a String -- never printed (output
-      # discipline). Memoized so "report twice" is byte-identical for free.
+      # Memoized so that reporting twice is byte-identical for free.
       def report
         @report ||= render(ranked)
       end
 
       private
 
-      # [name, {recall:, tokens:}] per arm, sorted by recall mean desc then name
-      # so ties never depend on Hash order -- the whole point of the determinism AC.
+      # Sorted by recall mean descending then name, so ties never depend on Hash
+      # order.
       def ranked
         measured.sort_by { |name, dists| [-dists.fetch(:recall).mean, name] }
       end
@@ -194,12 +184,10 @@ module Lain
         Grader::Recall.new(gold_ids: query.gold_ids).grade(arm.search(query.text), k: @k).score
       end
 
-      # Tokens-on-recall from the dry-rendered Context::Recall block: build the
-      # recall stage over this arm, render it against the bare query, and count
-      # the injected block. No BPE tokenizer lives in-process, so this is a
-      # whitespace-token proxy -- deterministic and offline, which is what the
-      # eval needs; the column measures relative cost across arms, not exact
-      # provider billing.
+      # Tokens-on-recall from the dry-rendered Context::Recall block. No BPE
+      # tokenizer lives in-process, so this is a whitespace-token proxy:
+      # deterministic and offline, measuring relative cost across arms rather
+      # than exact provider billing.
       def recall_tokens(arm, query)
         tail = Context::Recall.new(index: arm, k: @k).call([user_message(query.text)]).last["content"].last
         tail["text"].to_s.start_with?(RECALL_TAG) ? tail["text"].split.size : 0

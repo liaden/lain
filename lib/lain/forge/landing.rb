@@ -12,30 +12,28 @@ module Lain
     # {#call} and {#resume_from} differ in the EVIDENCE they fold against and in
     # nothing else: a fresh landing folds the plan against {Evidence::NONE}, a
     # resume folds the same plan against what {Reconcile} read back. The first
-    # version of this class inlined the sequence twice and the two copies
-    # disagreed in five ways -- a skipped verdict, a repeated transition, an
-    # uncaught {Unobservable}, a raw Report returned where an Answer was, and a
-    # `settled?` that did not look at `ok`. A second copy of a protocol is a
-    # second protocol; there is one, and it is {Plan}.
+    # version inlined the sequence twice and the two copies disagreed in five
+    # ways -- a skipped verdict, a repeated transition, an uncaught
+    # {Unobservable}, a raw Report returned where an Answer was, and a `settled?`
+    # that did not look at `ok`. A second copy of a protocol is a second
+    # protocol; there is one, and it is {Plan}.
     #
     # == Every verdict is READ, and any step can stop the run
     #
     # {Promotion} refuses a diverged remote, an occupied namespace, an
-    # unreachable remote and an inexact sha as `ok: false` VALUES -- "every
-    # refusal is a value; only a caller's own nonsense raises". A caller that
+    # unreachable remote and an inexact sha as `ok: false` VALUES. A caller that
     # discards those answers opens a pull request from a branch standing at
     # somebody else's commit and merges it as this issue's approved work. So
     # {Step#missing} reads the answer it got, and a not-ok answer stops the fold
     # by turning the {Running} into a {Stopped} that every later step answers
-    # with itself. No `break`, no early return threaded through two methods.
+    # with itself -- no `break`, no early return threaded through two methods.
     #
     # == Refusals are values here too
     #
     # A conflict, an unreadable merge state, an inconsistent journal: each
     # answers a not-ok {Gh::Answer} carrying a `reason` a human can act on --
-    # never a raise, and never a bare {Reconcile::Report}, which a caller
-    # sending `ok?` meets as a NoMethodError. `base` is always main; retargeting
-    # and cascade are a later chunk's, and nothing here forces anything.
+    # never a raise, and never a bare {Reconcile::Report}, which a caller sending
+    # `ok?` meets as a NoMethodError. `base` is always main.
     class Landing
       # Serial landing means one base, and it is main. A repo that ever targets
       # two would need {Reconcile}'s `pr_for(head:)` sharpened first -- it
@@ -69,9 +67,8 @@ module Lain
       # @param journaled [#pr_create, #pr_merge, #merge_state, #attempt] the
       #   intent/outcome bracket. ONE executor collaborator, not two:
       #   {Journaled#merge_state} and {Journaled#pr_view} forward untouched and
-      #   journal nothing, precisely so a caller needs no second handle on the
-      #   raw {Gh}. A second one could be wired to a different repo than the
-      #   bracket, which is the mis-wiring {Promotion} documents at length.
+      #   journal nothing, so a caller needs no second handle on the raw {Gh} --
+      #   a second one could be wired to a different repo than the bracket.
       # @param scribe [#issue_moved] {Epic::Scribe}
       # @param base [String] the branch the pull request lands against; {BASE}
       #   unless the epic is targeting something other than the trunk

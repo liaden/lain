@@ -3,41 +3,29 @@
 module Lain
   module Review
     # A changeset is files -> hunks -> anchorable lines, read from a {Source} and
-    # from nothing else. The line walk is `spike/review-probe/diff_map.rb`
-    # promoted: two counters, one per side, and the three predicates below are
-    # what keep both honest.
+    # from nothing else. The line walk is two counters, one per side, and the
+    # three predicates below are what keep both honest.
     #
-    # == It reads MODEL VALUES, and parses nothing
+    # It reads MODEL VALUES and parses nothing. {#files} is `@source.files`; it
+    # used to be `Parser.new(@source.diff).files`, which quietly made "a source"
+    # mean "a thing with unified-diff bytes in it", so a source with no diff had
+    # to synthesize some for this object to take apart again. There is exactly ONE
+    # of this class, parameterised by its source, which is why {#identity}
+    # forwards rather than composes: an address that branched here would have to
+    # branch on the source's TYPE.
     #
-    # {#files} is `@source.files`. It used to be `Parser.new(@source.diff).files`,
-    # which quietly made "a source" mean "a thing with unified-diff bytes in it"
-    # -- so a source with no diff had to synthesize some for this object to take
-    # apart again. {Source::Parser} now lives with the sources that HAVE bytes,
-    # and this class holds the arithmetic over whatever values it was handed:
-    # anchors, the old side, the grouping, the address's forwarding.
+    # NOTHING IS READ UNTIL SOMETHING IS ASKED FOR. Every answer memoizes on first
+    # demand, and {#each_anchor} without a block returns an {Enumerator} that has
+    # not asked the source for anything. A work-scale changeset is 80,800 rendered
+    # lines; materializing an Anchor per line for a caller that wanted the first
+    # screenful is the cost this shape avoids.
     #
-    # There is exactly ONE of this class, parameterised by its source. That is
-    # why {#identity} forwards rather than composes: polymorphism on the
-    # changeset does not exist, so an address that branched here would have to
-    # branch on the source's TYPE, which is the shape {Source}'s own doc condemns.
-    #
-    # == Nothing is read until something is asked for
-    #
-    # Every answer memoizes on first demand, and {#each_anchor} without a block
-    # returns an {Enumerator} that has not asked the source for anything yet. A
-    # work-scale changeset is 80,800 rendered lines (research §3.7); materializing
-    # an Anchor per line for a caller that wanted the first screenful is the cost
-    # this shape exists to avoid.
-    #
-    # == The diff is a TWO-TREE diff, so no hunk ever has two old sides
-    #
-    # A merge commit shows up in the WALK ({Partition::ByCommit}), never in the
-    # diff's shape: {Source::LocalBranch#diff} is `git diff <base> <head>`, and git
-    # emits a combined diff (`@@@ -1,8 -1,8 +1,8 @@@`, two old sides, which {Hunk}'s
-    # single `(old_start, old_count)` cannot represent) only for a commit against
-    # its own parents. The other half of the same gap is already closed, by
-    # passing `--diff-merges=first-parent` so a file changed only by a hand
-    # resolution reaches some commit's numstat. There is a spec for both.
+    # THE DIFF IS A TWO-TREE DIFF, so no hunk ever has two old sides. A merge
+    # commit shows up in the WALK ({Partition::ByCommit}), never in the diff's
+    # shape: git emits a combined diff (two old sides, which {Hunk}'s single
+    # `(old_start, old_count)` cannot represent) only for a commit against its own
+    # parents. The other half of that gap is closed by `--diff-merges=first-parent`,
+    # so a file changed only by a hand resolution reaches some commit's numstat.
     class Changeset
       # A file in the changeset that no commit's numstat accounts for. Refused
       # rather than dropped or given an invented owner: silently skipping it
@@ -131,25 +119,20 @@ module Lain
       # Register that this file has now been READ, on somebody's behalf, and
       # answer what reading it produced.
       #
-      # A review asks two questions about a file and only one of them is a
-      # question about the diff: what it says, and whether anybody has looked at
-      # it. {LazyFile#chunked?} answers the second, and it flips only when
-      # {LazyFile#hunks} is finally asked -- so a caller that puts a file in
-      # front of a human WITHOUT asking leaves a file that has been read
-      # reporting that it has not. {Session::MarkedChangeset.row} then hands its
-      # row no key and every marking gesture on it is refused, which is the
-      # defect this message exists to make impossible to reintroduce silently.
+      # A review asks two questions about a file and only one is about the diff:
+      # what it says, and whether anybody has looked at it. {LazyFile#chunked?}
+      # answers the second, and it flips only when {LazyFile#hunks} is asked -- so
+      # a caller that puts a file in front of a human WITHOUT asking leaves a read
+      # file reporting that it has not been. {Session::MarkedChangeset.row} then
+      # hands its row no key and every marking gesture on it is refused.
       #
       # A message here rather than `file.hunks` at the caller, because a call
       # whose return value nobody wants reads as dead code and is deleted by the
-      # next person through; this one says what it is for. Over a diff source it
-      # costs nothing -- a {Source::ChangedFile} is chunked the moment the parser
-      # produces it, and answers `#chunked?` true from birth.
+      # next person through. Over a diff source it costs nothing.
       #
       # {#old_side} deliberately does NOT call it. That is a query, and the
       # callers that size or hash an old side have read the file on nobody's
-      # behalf; welding the two would make every such caller mark the corpus
-      # read, which is the same defect pointing the other way.
+      # behalf; welding the two would make every such caller mark the corpus read.
       #
       # @param file [Source::ChangedFile, LazyFile] one of {#files}
       # @return [Array<Hunk>] that file's hunks, now in hand
@@ -182,14 +165,13 @@ module Lain
       def partitions(strategy) = strategy.partition(self)
 
       # Whether this changeset's SOURCE can be grouped that way -- asked before
-      # {#partitions}, so a source with no walk refuses by name instead of
-      # dying on a missing message halfway through one.
+      # {#partitions}, so a source with no walk refuses by name instead of dying
+      # on a missing message halfway through one.
       #
-      # The question goes to `@source` and the source stays private, which is
-      # what makes this a message on the changeset rather than a reader. It
-      # cannot be asked of the changeset either: `#commits` above is forwarded
-      # unconditionally, so `ByCommit#supports?(self)` would answer true for a
-      # source that has no walk at all and the refusal would be unreachable.
+      # The question goes to `@source`, which stays private. It cannot be asked
+      # of the changeset either: `#commits` above is forwarded unconditionally,
+      # so `ByCommit#supports?(self)` would answer true for a source that has no
+      # walk at all and the refusal would be unreachable.
       #
       # @param strategy [Partition::Strategy] anything answering the port
       # @return [Boolean]
@@ -198,13 +180,10 @@ module Lain
       # Which of {Review::SIDES} this round presents at all -- what an editor
       # builds its layout from, before a single row is opened.
       #
-      # {#supports?}'s shape for {#supports?}'s reason: the question goes to
-      # `@source` and the source stays private, so this is a message on the
-      # changeset rather than a reader. And it cannot be derived HERE either.
-      # {#old_side} answers `[]` both for a file this changeset adds and for
-      # every file of a corpus, so a version reading the files would report a
-      # one-sided round for any diff whose only file is an addition -- the
-      # guess this message exists to remove, arrived at one level lower down.
+      # {#supports?}'s shape for {#supports?}'s reason, and it cannot be derived
+      # HERE either: {#old_side} answers `[]` both for a file this changeset adds
+      # and for every file of a corpus, so a version reading the files would
+      # report a one-sided round for any diff whose only file is an addition.
       #
       # @return [Array<String>] a subset of {Review::SIDES}, in its order
       def sides = @source.sides

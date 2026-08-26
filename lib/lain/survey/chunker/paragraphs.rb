@@ -5,30 +5,26 @@ module Lain
     module Chunker
       Paragraphs = Data.define(:ceiling)
 
-      # The universal floor: a file split at its blank lines, with the runs
-      # packed toward the ceiling. It needs no grammar, no language and no
-      # syntax tree, which is exactly why every other chunker falls back to it
-      # -- an oversized markdown leaf, a setext-authored document, a language
-      # with no authored query, a file whose bytes are not valid UTF-8 -- and
-      # why it is the one that authors the coverage contract.
+      # The universal floor: a file split at its blank lines, with the runs packed
+      # toward the ceiling. It needs no grammar, no language and no syntax tree,
+      # which is why every other chunker falls back to it and why it is the one
+      # that authors the coverage contract.
       #
       # A paragraph here is a run of lines up to AND INCLUDING the blank lines
-      # that follow it. Attaching the blanks upward rather than downward is what
-      # makes the split gap-free without a separate whitespace unit: a blank
-      # line is content the file holds, and a unit of nothing but blank lines is
+      # that follow it. Attaching the blanks upward makes the split gap-free
+      # without a separate whitespace unit -- a unit of nothing but blank lines is
       # a mark a reviewer cannot read.
       #
-      # Runs are then packed, not emitted one per paragraph, because a mark per
-      # sentence is as useless as a mark per file. A single paragraph larger
-      # than the ceiling is emitted WHOLE and over-ceiling rather than cut:
-      # cutting hands a reviewer half a thought and makes the other half a
-      # separate mark, and the ceiling is a target, not a promise.
+      # Runs are packed, not emitted one per paragraph, because a mark per
+      # sentence is as useless as a mark per file. A paragraph larger than the
+      # ceiling is emitted WHOLE rather than cut: cutting hands a reviewer half a
+      # thought and makes the other half a separate mark. The ceiling is a target,
+      # not a promise.
       #
-      # It takes no {Granularity}, and that is measured rather than assumed:
-      # packing toward a ceiling already bounds granularity from the other side,
-      # and over this repository's 619 `lib/**/*.rb` files it produces no file
-      # above one unit per five lines. The chunkers that read STRUCTURE are the
-      # ones that need a minimum imposed.
+      # It takes no {Granularity}, measured rather than assumed: packing toward a
+      # ceiling already bounds granularity from the other side, and over this
+      # repository's 619 `lib/**/*.rb` files it produces no file above one unit
+      # per five lines. The chunkers that read STRUCTURE need a minimum imposed.
       class Paragraphs
         def initialize(ceiling: DEFAULT_CEILING) = super(ceiling: Integer(ceiling))
 

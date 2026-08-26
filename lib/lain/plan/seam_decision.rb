@@ -4,37 +4,29 @@ require "bigdecimal"
 
 module Lain
   module Plan
-    # The seam expected-value decision. At each plan seam the linear shape
-    # asks: rewrite the prefix NOW (pay one cache write of the shorter prefix),
-    # or DEFER to the next seam (keep resending the chunk's tokens as warm cache
-    # reads)? This is the policy that answers it, weighing the one-off rewrite
-    # cost against the payback of never resending those tokens again over the
-    # turns the chunk is estimated to still run.
+    # The seam expected-value decision. At each plan seam the linear shape asks:
+    # rewrite the prefix NOW (pay one cache write of the shorter prefix), or
+    # DEFER to the next seam (keep resending the chunk's tokens as warm cache
+    # reads)? This weighs the one-off rewrite cost against the payback of never
+    # resending those tokens again over the turns the chunk is estimated to run.
     #
-    # It follows {Compaction::Scheduler}'s template -- a frozen policy object
-    # whose `#call` is a pure function of its arguments, journaling its full
-    # accounting as it commits to a verdict -- but the profile and prices arrive
-    # PER SEAM (a sweep varies them across arms), while the arm's `model` is
-    # fixed at construction. The fork-per-step shape journals the same record as
-    # seam-density VALIDATION (it never rewrites); live wiring into either shape
-    # belongs to the caller, not to this policy.
+    # It follows {Compaction::Scheduler}'s template -- a frozen policy whose
+    # `#call` is a pure function of its arguments, journaling its full accounting
+    # as it commits -- but the profile and prices arrive PER SEAM (a sweep varies
+    # them across arms) while the arm's `model` is fixed at construction.
     #
     # Both sides are priced through the provider's real {CacheProfile} --
     # `write_multiplier` for the rewrite, `read_multiplier` for the resend --
     # times the model's plain input rate from the {PriceBook}, rather than the
     # PriceBook's own cache_creation/cache_read rows: the profile is the
-    # first-class home for a provider's cache premium/discount, with no second
-    # constant to drift (a Guard-spec pins the two encodings equal for the
-    # shipped models).
+    # first-class home for a provider's cache premium, with no second constant to
+    # drift (a Guard-spec pins the two encodings equal for the shipped models).
     #
     # Under a NO_CACHING provider (both multipliers 1.0) a large chunk still
     # answers `rewrite_now`, and that is HONEST EV, not a degenerate case:
-    # without a cache there is nothing to protect, but there is everything to
-    # save -- compaction shortens every future turn's FULL-PRICE input resend,
-    # so `payback = bytes_removed.to_tokens x input x 1.0 x turns` genuinely
-    # outweighs the one-off `rewrite_cost = bytes_after.to_tokens x input x 1.0`.
-    # The only path that defers regardless is an UNPRICED arm (`model: nil`),
-    # where both sides are zero -- see {#initialize}.
+    # without a cache there is nothing to protect, but compaction still shortens
+    # every future turn's FULL-PRICE input resend. The only path that defers
+    # regardless is an UNPRICED arm (`model: nil`), where both sides are zero.
     #
     # BOTH operands are the compaction subsystem's canonical-BYTE proxy and both
     # rates are per TOKEN, so each side crosses through {Lain::ProxyBytes#to_tokens}

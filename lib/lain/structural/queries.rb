@@ -15,29 +15,28 @@ module Lain
     # locals.scm -- deliberately, to avoid a NOTICE obligation.
     #
     # Reading at call time rather than caching keeps this a pure function of the
-    # on-disk file: the queries are hand-iterated artifacts, edited far more
-    # often than a session reads them, and a per-call file read is nothing next
-    # to parsing the source the query then runs against.
+    # on-disk file, and a per-call file read is nothing next to parsing the
+    # source the query then runs against.
     module Queries
-      # A language with no authored query file. Named in the message, per the
-      # project's loud-failure convention -- python is deliberately DEFERRED, so
-      # it lands here rather than silently returning nothing.
+      # A language with no authored query file, named in the message -- python
+      # is deliberately DEFERRED, so it lands here rather than silently
+      # returning nothing.
       class Unsupported < Error; end
 
       # A SUPPORTED language whose authored `.scm` is somehow absent -- a
-      # packaging bug, not a user error. Raised (naming the query file) rather
+      # packaging bug, not a user error. Raised naming the query file rather
       # than letting a bare `Errno::ENOENT` be misattributed downstream as a
       # failure to read the user's OWN source file.
       class Missing < Error; end
 
-      # Which queries lain ships for which language -- the gate, and it is a
-      # TABLE rather than a language list because the two axes are independent.
-      # markdown ships `sections` and no `symbols`; ruby, typescript and rust
-      # ship `symbols` and no `sections`. A flat allowlist could only say
-      # "markdown is supported", which would turn Tools::FileSymbols' honest
-      # user error over a markdown file into a Missing -- a packaging bug it
-      # would be reporting against a file that is not missing at all. Python is
-      # deferred (a follow-up), so it is intentionally absent from every row.
+      # Which queries lain ships for which language: a TABLE rather than a
+      # language list because the two axes are independent. markdown ships
+      # `sections` and no `symbols`; ruby, typescript and rust ship `symbols`
+      # and no `sections`. A flat allowlist could only say "markdown is
+      # supported", which would turn Tools::FileSymbols' honest user error over
+      # a markdown file into a Missing -- a packaging bug reported against a
+      # file that is not missing at all. Python is deferred, so it is absent
+      # from every row.
       QUERIES = {
         ruby: %i[symbols].freeze,
         typescript: %i[symbols].freeze,
@@ -65,19 +64,17 @@ module Lain
         File.read(path)
       end
 
-      # The languages shipping +query_name+ -- what a refusal offers instead,
-      # so asking python for symbols is never answered with markdown. Also the
-      # single answer to "can lain parse this?", asked by every caller rather
-      # than restated in a second table.
+      # The languages shipping +query_name+ -- what a refusal offers instead, so
+      # asking python for symbols is never answered with markdown. Also the one
+      # answer to "can lain parse this?", never restated in a second table.
       def languages_for(query_name)
         QUERIES.select { |_language, names| names.include?(query_name) }.keys
       end
 
       # Two refusals, because the actionable fact differs. For an unknown
-      # LANGUAGE, it is which languages ship the query that was asked for. For a
-      # known one, it is what that language does ship -- "expected one of []",
-      # which is what offering the other languages' query names would print,
-      # tells the reader nothing at all.
+      # LANGUAGE it is which languages ship the query that was asked for; for a
+      # known one it is what that language does ship -- offering the other
+      # languages' query names would print "expected one of []".
       def refusal(language, query_name, authored)
         return "language #{language.inspect} ships #{authored.inspect}, not #{query_name.inspect}" if authored.any?
 

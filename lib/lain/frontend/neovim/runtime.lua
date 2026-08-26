@@ -1,14 +1,12 @@
--- lain runtime, injected at attach via nvim_exec_lua. It ships IN the gem (read
--- and sent by Frontend::Neovim::RpcThread), so the lua here and the Ruby that
--- speaks to it can never drift across repos -- the whole reason lain installs
--- nothing in the user's dotfiles. See planning/interface-integration.md.
+-- lain runtime, injected at attach via nvim_exec_lua. It ships IN the gem, so
+-- the lua here and the Ruby that speaks to it can never drift across repos --
+-- the whole reason lain installs nothing in the user's dotfiles.
 --
 -- THIS FILE IS THE HEAD OF THE CHUNK, and `runtime/` holds the rest.
 -- {Frontend::Neovim::RuntimeLoader} concatenates this file with every
--- `runtime/NN_*.lua` in sorted order and injects the result as ONE chunk. The
--- concatenation is not a taste preference: an injected chunk has no
--- `package.path`, so `require` cannot reach a sibling and the modules have no
--- other way to see each other.
+-- `runtime/NN_*.lua` in sorted order and injects the result as ONE chunk,
+-- because an injected chunk has no `package.path`: `require` cannot reach a
+-- sibling, and the modules have no other way to see each other.
 --
 -- Three rules follow from being one chunk, and every module inherits them:
 --
@@ -20,7 +18,7 @@
 --      numeric prefix IS the dependency order. Sorted glob, never a list, so
 --      adding a capability is adding a file and no later card edits a loader.
 --   3. Two modules declaring the same local name shadow SILENTLY. `selene`
---      reports it (see planning/lua-tooling-2026-08.md); nothing else will.
+--      reports it; nothing else will.
 --
 -- Injected args: the gem version (display only, surfaced by :LainVersion), the
 -- protocol token (compatibility), and the RPC channel id to call back on.
@@ -30,11 +28,11 @@ local gem_version, protocol, chan = ...
 --
 -- `_G.__lain` is process-wide and every :Lain* command closes over `chan`
 -- above, so injecting this chunk a second time repoints every verb at the
--- newcomer's channel. Measured twice: the first lain's :LainReply then raises
+-- newcomer's channel. Measured: the first lain's :LainReply then raises
 -- `Invalid channel: N` forever, the newcomer's empty prime replaces the first's
--- rendered views, and every review annotation still drawn on screen is dropped
--- by a submit that reports success. So a second attach is REFUSED, and refused
--- HERE -- an editor is taken over by the modules below, and the only place a
+-- rendered views, and every review annotation still on screen is dropped by a
+-- submit that reports success. So a second attach is REFUSED, and refused HERE
+-- -- an editor is taken over by the modules below, and the only place a
 -- takeover can be declined is before them.
 --
 -- LIVENESS, never presence, and the distinction is the whole design. A lain
@@ -77,17 +75,16 @@ if protocol ~= RUNTIME_PROTOCOL then
 end
 vim.g.lain_rpc_version = protocol
 
--- The one namespace every module publishes through, declared HERE rather than
--- in whichever module happens to load first: `_G.__lain.foldexpr` and
--- `_G.__lain.tick` are named from vim options as `v:lua.__lain.*`, so the table
--- is the runtime's public surface and belongs to the chunk, not to a capability.
+-- The one namespace every module publishes through, declared HERE rather than in
+-- whichever module loads first: `_G.__lain.foldexpr` and `_G.__lain.tick` are
+-- named from vim options as `v:lua.__lain.*`, so the table is the runtime's
+-- public surface and belongs to the chunk, not to a capability.
 _G.__lain = _G.__lain or {}
 
 -- The ownership marker the check above reads, and the only non-function member
--- of this table. It is published rather than kept as a local for the reason the
--- defect had no remedy: `chan` was an upvalue nothing could see, so an editor
--- whose verbs had been repointed at a dead channel could not be inspected, let
--- alone healed -- `:LainVersion` reported a healthy runtime and every gesture
--- raised. Written LAST, so a refused attach leaves the owner's number exactly
--- as it found it.
+-- of this table. PUBLISHED rather than kept as a local: as an upvalue nothing
+-- could see, an editor whose verbs had been repointed at a dead channel could
+-- not be inspected, let alone healed -- `:LainVersion` reported a healthy
+-- runtime and every gesture raised. Written LAST, so a refused attach leaves the
+-- owner's number exactly as it found it.
 _G.__lain.channel = chan

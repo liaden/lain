@@ -4,48 +4,40 @@ require "digest"
 require "fileutils"
 
 module Lain
-  # XDG Base Directory resolution: config in `$XDG_CONFIG_HOME`, caches in
-  # `$XDG_CACHE_HOME`, durable state in `$XDG_STATE_HOME`, ephemera in
-  # `$XDG_RUNTIME_DIR` -- each falling back to the spec-mandated default when
-  # unset, every path suffixed `/lain` so this harness never collides with a
-  # sibling tool sharing the same base. Project-scoped `.lain/` (like `.git/`)
-  # is a separate, non-XDG concern and out of scope here -- {ProjectDir} is its
-  # locator, and answers the same class-names/instance-resolves split.
+  # XDG Base Directory resolution, every path suffixed `/lain` so this harness
+  # never collides with a sibling tool sharing the same base. Project-scoped
+  # `.lain/` is a separate, non-XDG concern; {ProjectDir} is its locator.
   #
   # {ProjectDir} sits on BOTH sides of that line and reads this class for the
   # half that is XDG: the state feed it resolves is rewritten every turn, which
   # makes it machine state rather than a project artifact, so it is composed
-  # from {#state_home} and {#project_hash} here rather than written into the
-  # user's source tree.
+  # from {#state_home} and {#project_hash} rather than written into the user's
+  # source tree.
   #
-  # `env:` is injected (defaulting to the real `ENV`) rather than read globally,
-  # so a spec builds an isolated Hash instead of mutating process-wide state --
-  # the real `$HOME` is never touched by this class or by its specs.
+  # `env:` is injected rather than read globally, so a spec builds an isolated
+  # Hash instead of mutating process-wide state -- the real `$HOME` is never
+  # touched by this class or by its specs.
   class Paths
-    # Named per the error-taxonomy convention: a refusal subclasses {Lain::Error}
-    # next to the owner that raises it (see {Journal::Closed}).
+    # A directory this class had to create and could not.
     class Unwritable < Error
       def initialize(path, cause)
         super("cannot create #{path}: #{cause.message}")
       end
     end
 
-    # Every XDG accessor falls back to `$HOME`, so a `$HOME` that is not an
-    # absolute path makes all of them relative -- and a relative state path
-    # resolves against the process's cwd, which puts machine state back inside
-    # the user's repository. Named after the value rather than after the
-    # accessor because the operator fixes it in one place, their environment.
+    # Every XDG accessor falls back to `$HOME`, so a non-absolute `$HOME` makes
+    # all of them relative -- and a relative state path resolves against the
+    # process's cwd, which puts machine state back inside the user's repository.
     #
-    # **Not {Project::Resolver::UnusableHome}, and the two are not
-    # interchangeable.** That one guards a home used as the STOP of an upward
-    # project walk, so it is strictly narrower: it also refuses `"/"`, because a
-    # root of `/` makes every directory on the machine a project. This one
-    # guards a home used as a JOIN BASE, and `/` joins fine -- `$HOME=/` is what
-    # root gets in a container, and `/.local/state/lain` is a real answer. So
-    # `$HOME=/` is ACCEPTED here and REFUSED there, deliberately. They are two
-    # classes rather than one because load order forces it: `paths.rb` is
-    # manifest line 11 and `project.rb` is line 43, so this file cannot name
-    # that one.
+    # **Not {Project::Resolver::UnusableHome}, and not interchangeable with it.**
+    # That one guards a home used as the STOP of an upward project walk and is
+    # strictly narrower: it also refuses `"/"`, because a root of `/` makes every
+    # directory on the machine a project. This one guards a home used as a JOIN
+    # BASE, where `/` works fine -- `$HOME=/` is what root gets in a container,
+    # and `/.local/state/lain` is a real answer. So `$HOME=/` is ACCEPTED here
+    # and REFUSED there, deliberately. Two classes rather than one because load
+    # order forces it: `paths.rb` precedes `project.rb` in the manifest, so this
+    # file cannot name that one.
     class NonAbsoluteHome < Error
       def initialize(value)
         super("$HOME is #{value.inspect}, which is not an absolute path -- " \
@@ -54,14 +46,12 @@ module Lain
       end
     end
 
-    # The ONE naming authority for a session's response WAL: `<stem>.wal`
-    # beside whatever NDJSON path it sits next to, stem taken by stripping
-    # WHATEVER extension the given path carries (not a hardcoded ".ndjson"
-    # strip). {CLI::Chronicle#spool} and {CLI::Resume::Salvager} both derive
-    # the wal path from the SAME session file for the SAME reason -- one
-    # writes it, the other reads it back after a crash -- so this lives here,
-    # a class method, rather than duplicated string surgery in each: a class
-    # method because the transform is pure and needs no XDG env to resolve.
+    # The ONE naming authority for a session's response WAL: `<stem>.wal` beside
+    # the NDJSON path, stem taken by stripping WHATEVER extension the given path
+    # carries, not a hardcoded ".ndjson". {CLI::Chronicle#spool} writes it and
+    # {CLI::Resume::Salvager} reads it back after a crash, so the derivation
+    # lives in one place rather than as string surgery in each. A class method
+    # because the transform is pure and needs no XDG env.
     def self.wal_for(ndjson_path)
       stem = File.basename(ndjson_path, ".*")
       File.join(File.dirname(ndjson_path), "#{stem}.wal")
@@ -69,12 +59,10 @@ module Lain
 
     # The ephemeral (--btw) session convention. The session header is
     # write-once, so ephemerality cannot be a header field -- it lives in the
-    # FILENAME instead: `<ts>-<pid>.btw.ndjson`. {wal_for} strips only the
-    # final extension, so the derived wal (`<ts>-<pid>.btw.wal`) carries the
-    # mark too and the pair travels together. All three transforms are pure
-    # naming, class methods like {wal_for}; ArgumentError (not a refusal) on a
-    # mismarked path because a wrong mark here is a caller bug, never user
-    # input.
+    # FILENAME instead: `<ts>-<pid>.btw.ndjson`. {wal_for} strips only the final
+    # extension, so the derived wal carries the mark too and the pair travels
+    # together. ArgumentError rather than a refusal on a mismarked path, because
+    # a wrong mark here is a caller bug and never user input.
     BTW_MARK = ".btw.ndjson"
 
     def self.ephemeral?(path) = File.basename(path).end_with?(BTW_MARK)
@@ -92,12 +80,10 @@ module Lain
       "#{path.delete_suffix(BTW_MARK)}.ndjson"
     end
 
-    # One ephemeral session's lifecycle: {#promote!} keeps it, {#reap!} drops
-    # it. Both are pure filesystem renames/deletes over the pair {Paths} names
-    # -- the record itself is never rewritten, which is what keeps the
-    # write-once header honest and the owning appender's fd valid across a
-    # promotion (rename does not disturb an open fd). A crash simply runs
-    # neither, so both files survive for salvage.
+    # One ephemeral session's lifecycle: {#promote!} keeps it, {#reap!} drops it.
+    # The record itself is never rewritten -- only renamed -- which is what keeps
+    # the write-once header honest and the owning appender's fd valid across a
+    # promotion. A crash runs neither, so both files survive for salvage.
     class Ephemeral
       # A promotion target that already exists. POSIX `rename` silently
       # replaces its target, so without this guard a promotion could destroy
@@ -120,18 +106,15 @@ module Lain
         @filesystem = filesystem
       end
 
-      # WAL FIRST, then journal. The crash window between the two then leaves
-      # `<stem>.btw.ndjson` + `<stem>.wal`: the journal still wears the mark,
-      # so the half-promoted state is visibly unfinished and a re-run of this
-      # method completes it (the wal leg is skipped once done). The reverse
-      # order's window would leave a promoted `<stem>.ndjson` whose recorded
-      # frames sit in a `.btw.wal` basename {Paths.wal_for} no longer derives
-      # -- a normal-looking session that silently lost its salvage pair.
+      # WAL FIRST, then journal. The crash window then leaves
+      # `<stem>.btw.ndjson` + `<stem>.wal`: the journal still wears the mark, so
+      # the state is visibly unfinished and a re-run completes it. The reverse
+      # order would leave a promoted `<stem>.ndjson` whose recorded frames sit in
+      # a `.btw.wal` basename {Paths.wal_for} no longer derives -- a
+      # normal-looking session that silently lost its salvage pair.
       #
-      # Both {Collision} guards fire before ANY rename runs (a refused
-      # promotion must not itself manufacture the half-promoted state): the
-      # journal-target guard first, then the wal leg's own guard immediately
-      # before the wal rename -- the first rename there is.
+      # Both {Collision} guards fire before ANY rename runs, so a refused
+      # promotion cannot itself manufacture the half-promoted state.
       #
       # @return [String] the promoted journal path
       # @raise [Collision] when either target name already exists
@@ -169,15 +152,14 @@ module Lain
       end
     end
 
-    # Where the gem ships its own nvim plugin (`plugin/nvim`) -- the same
-    # "locate a shipped non-lib/ file via File.expand_path(..., __dir__)"
-    # shape as {Core::Child::BINARY}. `paths.rb` sits at `lib/lain/paths.rb`,
-    # so two levels up from `__dir__` (`lib/lain`) is the repo/gem root.
+    # Where the gem ships its own nvim plugin, located the same way
+    # {Core::Child::BINARY} is. This file sits at `lib/lain/paths.rb`, so two
+    # levels up from `__dir__` is the repo/gem root.
     NVIM_PLUGIN_ROOT = File.expand_path("../../plugin/nvim", __dir__)
 
-    # `nvim_plugin_root:` is injectable, mirroring {Core::Child}'s `binary:`,
-    # so a spec can point at a path that does not exist without disturbing
-    # the real gem tree.
+    # `nvim_plugin_root:` is injectable, mirroring {Core::Child}'s `binary:`, so
+    # a spec can point at a path that does not exist without disturbing the real
+    # gem tree.
     def initialize(env: ENV, nvim_plugin_root: NVIM_PLUGIN_ROOT)
       @env = env
       @nvim_plugin_root = nvim_plugin_root
@@ -186,25 +168,18 @@ module Lain
     attr_reader :nvim_plugin_root
 
     # The user's home directory, from the INJECTED env -- the base every XDG
-    # accessor below falls back to, and the anchor {Sensitivity} classifies
-    # against. Public because the path classifier needs a home that a spec
-    # can pin, and this class is already the one place that resolves it from a
-    # substitutable environment. It reads no filesystem and creates nothing, so
-    # exposing it hands out a naming and no authority.
+    # accessor falls back to, and the anchor {Sensitivity} classifies against.
+    # Public because the path classifier needs a home a spec can pin; it reads
+    # no filesystem and creates nothing, so exposing it hands out a naming and
+    # no authority.
     #
-    # `Dir.home` goes through {#present} TOO, and that second guard closes the
-    # return leg of the same defect. Ruby's `Dir.home` hands back `$HOME`
-    # verbatim with no absoluteness check of its own, and this class defaults
-    # `env: ENV` -- so a relative `$HOME` was read twice, passed the first
-    # guard by failing it, and came back through the fallback unexamined. The
-    # answer then made every XDG accessor relative, and a relative
-    # {ProjectDir#state_path} resolves against the project's cwd, which is the
-    # repository this class exists to keep clean.
-    #
-    # Refusing beats degrading here: there is no home to invent, an unusable
-    # one poisons the session store and {Sensitivity}'s `~` anchor alike, and a
-    # silently relative path is exactly the failure {Lain::StringInquirer} was
-    # rejected for (CLAUDE.md).
+    # `Dir.home` goes through {#present} TOO, closing the return leg of the same
+    # defect: Ruby's `Dir.home` hands back `$HOME` verbatim with no absoluteness
+    # check, and this class defaults `env: ENV`, so a relative `$HOME` was read
+    # twice, failed the first guard, and came back through the fallback
+    # unexamined -- making every XDG accessor relative and resolving
+    # {ProjectDir#state_path} against the repository this class exists to keep
+    # clean. Refusing beats degrading: there is no home to invent.
     #
     # @return [String]
     # @raise [NonAbsoluteHome] when neither the env nor `Dir.home` is absolute
@@ -216,45 +191,42 @@ module Lain
     def cache_home = xdg_dir("XDG_CACHE_HOME", ".cache")
     def state_home = xdg_dir("XDG_STATE_HOME", ".local/state")
 
-    # No `$HOME`-relative fallback in the XDG spec for runtime dirs -- ROADMAP:600
-    # settles on `/tmp/lain` rather than inventing one.
+    # The XDG spec gives runtime dirs no `$HOME`-relative fallback, so the
+    # ROADMAP settles on `/tmp/lain` rather than inventing one.
     def runtime_dir
       base = present(@env["XDG_RUNTIME_DIR"]) || "/tmp"
       File.join(base, "lain")
     end
 
-    # The same recipe DEBUGGING_NVIM.md:17 uses for the nvim socket path, so a
+    # The same recipe DEBUGGING_NVIM.md gives for the nvim socket path, so a
     # project resolves to one identifier everywhere: `sha256(realpath)[0,12]`.
+    #
     # Kernel-resolved, not merely expanded: nvim's getcwd() and Ruby's Dir.pwd
-    # BOTH resolve symlinks, so a symlinked path ARGUMENT (--project <symlink>)
+    # BOTH resolve symlinks, so a symlinked path ARGUMENT (`--project <symlink>`)
     # hashed lexically would name a different socket/session id than the editor
-    # serves (the spec's hash-agreement probe). Isolation keys WORKER IDS through
-    # here too -- strings naming no real path -- so an unresolvable argument
-    # falls back to the lexical expansion instead of raising. That fallback is
-    # hash-UNSTABLE by construction: `link/app` hashes lexically while `app`
-    # does not exist and post-resolution once it does, so an answer taken for a
-    # path that is not there yet is provisional. Unreachable for
-    # {ProjectDir#state_path}, whose callers pass a checked directory
-    # ({CLI::Up::Workdir}) or `Dir.pwd`.
+    # serves. Isolation keys WORKER IDS through here too -- strings naming no
+    # real path -- so an unresolvable argument falls back to the lexical
+    # expansion instead of raising. That fallback is hash-UNSTABLE by
+    # construction: `link/app` hashes lexically while `app` does not exist and
+    # post-resolution once it does, so an answer taken for a path that is not
+    # there yet is provisional. Unreachable for {ProjectDir#state_path}, whose
+    # callers pass a checked directory or `Dir.pwd`.
     def project_hash(dir = Dir.pwd)
       Digest::SHA256.hexdigest(resolved(dir))[0, 12]
     end
 
-    # The one XDG path this harness actually writes durable state into, so it is
-    # the one accessor that ensures the directory exists (mkdir_p-on-demand,
-    # mirroring {Journal.open}'s mkdir_p-then-own pattern) rather than leaving
-    # creation to the caller.
+    # The one XDG path this harness writes durable state into, so it is the one
+    # accessor that ensures the directory exists rather than leaving creation to
+    # the caller -- {Journal.open}'s mkdir_p-then-own pattern.
     def sessions_dir(project: project_hash)
       ensure_dir(File.join(state_home, "sessions", project))
     end
 
-    # The cross-project harness-improver sink: ONE file, not
-    # partitioned by project_hash the way {#sessions_dir} is -- a dogfood
-    # note about lain ITSELF is worth keeping across every project lain has
-    # ever run in, unlike a session's own turn history. Same
-    # ensure-dir-on-demand shape as {#sessions_dir}, since {Improvement::Sink}
-    # opens this path directly, per append, with no separate mkdir step of
-    # its own.
+    # The cross-project harness-improver sink: ONE file, not partitioned by
+    # project_hash the way {#sessions_dir} is -- a dogfood note about lain
+    # ITSELF is worth keeping across every project lain has run in, unlike a
+    # session's own turn history. It ensures the dir because {Improvement::Sink}
+    # opens this path directly, per append, with no mkdir step of its own.
     def improvements_path
       File.join(ensure_dir(state_home), "improvements.ndjson")
     end

@@ -8,25 +8,19 @@ module Lain
     # function of `(Timeline, Toolset, Workspace)`: a strategy change costs a
     # re-render and a diff, not a re-run.
     #
-    # == How it obtains the recorded Timeline and the baseline
-    #
-    # Honestly, from what a real run naturally holds. The inputs are:
-    #
-    # * `timeline` -- the recorded FINAL Timeline: the actual content-addressed
-    #   DAG the run produced (`agent.timeline`).
-    # * `baseline` -- the Requests that were ACTUALLY sent, one per model call,
-    #   in order (`provider.requests`). These are the recorded bytes to diff
-    #   against; they are DATA, not re-derived from the Context under test.
+    # Both inputs are what a real run naturally holds: the recorded FINAL
+    # Timeline, and the Requests that were ACTUALLY sent, one per model call, in
+    # order. The baseline is DATA, never re-derived from the Context under test.
     #
     # The prefix each recorded Request rendered over is RECONSTRUCTED from the
     # recorded DAG rather than trusted: a model call happens immediately before
     # its assistant turn commits, so the k-th recorded Request rendered exactly
     # the timeline whose head is the k-th assistant turn's parent. Walking the
     # DAG's assistant-turn boundaries recovers those prefixes with no extra
-    # recording. Reconstructing rather than re-deriving is what makes the
-    # byte-identity claim a real test of `#render` purity: re-render each prefix
-    # under the recording's own Context and the bytes must match the baseline
-    # to the digest -- which they cannot if `#render` leaked a clock or a pwd.
+    # recording, and that is what makes the byte-identity claim a real test of
+    # `#render` purity: re-rendered under the recording's own Context, the bytes
+    # must match to the digest -- which they cannot if `#render` leaked a clock
+    # or a pwd.
     class DryReplay
       # A recorded model call: the reconstructed Timeline prefix that was
       # rendered, paired with the recorded Request the render produced.
@@ -69,17 +63,13 @@ module Lain
         context.render(timeline:, toolset: @toolset, workspace: @workspace)
       end
 
-      # Recover, from the recorded DAG, the Timeline prefix each model call
-      # rendered over. Assistant turns in oldest-first order ARE the model
-      # calls; each rendered the prefix ending at its parent.
-      #
-      # This couples to Agent#step's commit order: the model is called, THEN its
+      # Couples to `Agent#step`'s commit order: the model is called, THEN its
       # assistant turn commits, so the k-th assistant turn's parent is exactly
       # the head the k-th recorded Request saw. Two guards keep a future Agent
-      # reorder from turning that into a silent mystery: the size check below
-      # raises when the counts stop lining up, and the "matches the recorded
-      # bytes digest-for-digest" spec fails loudly if the ORDER ever drifts, since
-      # a mis-paired prefix re-renders to different bytes than the baseline.
+      # reorder from turning that into a silent mystery -- the size check below
+      # raises when the counts stop lining up, and the digest-for-digest spec
+      # fails loudly if the ORDER drifts, since a mis-paired prefix re-renders
+      # to different bytes than the baseline.
       def reconstruct(timeline, baseline)
         assistant_turns = timeline.to_a.select { |turn| turn.role == "assistant" }
         unless assistant_turns.size == baseline.size
@@ -114,11 +104,10 @@ module Lain
       end
     end
 
-    # The whole replay's diff: one StepDiff per model call. `#identical?` is the
-    # byte-identity verdict the identity-Context acceptance test asserts. The
-    # steps array is frozen (its StepDiff members already are, being Data with a
-    # frozen `changed_fields`) so a Diff clears the project's `Ractor.shareable?`
-    # bar like every other value object here.
+    # The whole replay's diff: one StepDiff per model call. The steps array is
+    # frozen -- its StepDiff members already are, being Data with a frozen
+    # `changed_fields` -- so a Diff clears `Ractor.shareable?` like every other
+    # value object here.
     Diff = Data.define(:steps) do
       def initialize(steps:)
         super(steps: steps.freeze)

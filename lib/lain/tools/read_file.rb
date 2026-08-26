@@ -13,19 +13,16 @@ module Lain
     #
     # == The window, and why completeness is the interesting half
     #
-    # `offset`/`limit` exist so a file too large to hand back whole is still
-    # reachable. The bytes are the easy part; what matters is what the
-    # read-set is told. A window that leaves lines unseen records
-    # `complete: false`, so {Tools::EditFile} refuses the edit and says WHY --
-    # editing from a window would clobber lines the model never saw -- and the
-    # result itself carries one line saying the same thing, so the model learns
-    # it before spending a turn on the refusal.
+    # The bytes are the easy part; what matters is what the read-set is told. A
+    # window that leaves lines unseen records `complete: false`, so
+    # {Tools::EditFile} refuses the edit -- editing from a window would clobber
+    # lines the model never saw -- and the result itself carries one line saying
+    # so, ahead of the refusal.
     #
     # A window that covers the whole file records a COMPLETE read, and that is
-    # load-bearing rather than a nicety: it is the only path by which a file
-    # that cannot be read unwindowed becomes editable at all. {Tools::WriteFile}
-    # is not an alternative -- its overwrite contract asks {Lain::Session#read?}
-    # too, and it replaces the whole file rather than one span.
+    # load-bearing: it is the only path by which a file too large to read
+    # unwindowed becomes editable at all. {Tools::WriteFile} is not an
+    # alternative -- its overwrite contract asks {Lain::Session#read?} too.
     #
     # == The two ceilings, and why there are two
     #
@@ -34,111 +31,96 @@ module Lain
     # reads complete and is wrong. So an oversized read is refused and told
     # where to go instead, never truncated.
     #
-    # {WHOLE_BOUND} governs the unwindowed read and is decided from `File.size`
+    # {WHOLE_BOUND} governs the unwindowed read, decided from `File.size`
     # before the file is opened. {WINDOW_BOUND} governs the bytes a WINDOW
     # hands back, because `limit: 50_000_000` is a whole-artifact read wearing
-    # a window's clothes and a bound only one of them could reach would not be
-    # a bound.
+    # a window's clothes.
     #
-    # They are deliberately DIFFERENT numbers, and the gap is load-bearing.
-    # {Tools::EditFile} accepts a file only after a COMPLETE read, and for a
-    # file over {WHOLE_BOUND} the only complete read available is a window that
-    # covers it -- so a window ceiling equal to the whole-read ceiling would
-    # make every file between them permanently uneditable, which is the exact
-    # deadlock this pair of cards exists to avoid. The window ceiling therefore
-    # sits above the whole-read one: the unwindowed read is bounded against
-    # spending a context window by ACCIDENT, the window against spending one
-    # deliberately without limit.
+    # The two numbers DIFFER, and the gap is load-bearing. For a file over
+    # {WHOLE_BOUND} the only complete read available is a window covering it,
+    # so equal ceilings would make every file between them permanently
+    # uneditable. The window ceiling therefore sits above: the unwindowed read
+    # is bounded against spending a context window by ACCIDENT, the window
+    # against spending one deliberately without limit.
     class ReadFile < Tool
-      # 256 KiB for a whole read. Measured against this repository rather than
-      # guessed: the largest hand-written file tracked here is 231 KB and the
-      # largest source file 113 KB, so nothing a person authored is refused,
-      # while the one tracked file above it -- a 659 KB embeddings blob -- is
-      # exactly the artifact no whole read should ever hand back. It is also
-      # ~65k tokens, already a third of a 200k context for ONE observation.
+      # 256 KiB for a whole read, measured against this repository rather than
+      # guessed: the largest hand-written file tracked here is 231 KB, so
+      # nothing a person authored is refused, while the one tracked file above
+      # it -- a 659 KB embeddings blob, ~65k tokens -- is exactly the artifact
+      # no whole read should hand back.
       #
-      # ⚠️ The margin is thinner than it sounds and it is closing:
-      # `planning/specs/chunk-review-surface.md` is 213,211 bytes, **81% of
-      # this ceiling**, and plan docs are exactly what an agent reads whole.
-      # The next one past 262,144 becomes window-only -- still readable and
-      # still editable through a full-cover window, but a behaviour change a
-      # reader should meet here rather than discover.
+      # The margin is closing: `planning/specs/chunk-review-surface.md` is
+      # 213,211 bytes, 81% of this ceiling, and plan docs are exactly what an
+      # agent reads whole. The next one past 262,144 becomes window-only --
+      # still readable and editable through a full-cover window, but a
+      # behaviour change a reader should meet here rather than discover.
       WHOLE_BOUND = Tool::Bounds::Artifact.new(limit: 256 * 1024)
 
-      # 1 MiB for what a window hands back: four times the whole-read ceiling,
-      # so every file tracked in this repository stays readable end to end --
-      # and therefore editable -- through a window that covers it, while a
-      # window over a genuinely unbounded file still meets a wall.
+      # 1 MiB, four times the whole-read ceiling, so every file tracked here
+      # stays readable end to end -- and therefore editable -- through a window
+      # that covers it, while a genuinely unbounded file still meets a wall.
       WINDOW_BOUND = Tool::Bounds::Artifact.new(limit: 1024 * 1024)
 
-      # What a refusal offers that is not a window. Named unconditionally
-      # rather than by extension: a second notion of "is this code" would be
-      # one more thing to drift, and these tools already refuse what they
-      # cannot parse.
+      # Named unconditionally rather than by extension: a second notion of "is
+      # this code" would be one more thing to drift, and these tools already
+      # refuse what they cannot parse.
       STRUCTURAL = [
         "outline it with code_outline, file_symbols or ast_search",
         "grep it for the lines you actually need"
       ].freeze
 
-      # The route back to an EDITABLE file, offered only when it exists: a
-      # window covering the whole file records a complete read, but only if the
-      # file is small enough for that window to be admitted. Advice that would
-      # itself be refused is a loop, not a move.
+      # Offered only when it exists: a full-cover window records a complete
+      # read, but only if the file is small enough for that window to be
+      # admitted. Advice that would itself be refused is a loop, not a move.
       FULL_COVER = "read it with read_file's offset and limit (a window covering the whole file " \
                    "counts as a complete read, so edit_file still accepts it)"
 
-      # What is left to say when even a full-cover window is over the ceiling
-      # -- and the file still HAS lines a window can land between. A file that
-      # is one enormous line gets {LONG_LINE_NARROWER} instead, because
-      # `offset` and `limit` count lines and so cannot narrow it at all.
+      # For a file past even a full-cover window that still HAS lines a window
+      # can land between. One enormous line gets {LONG_LINE_NARROWER} instead,
+      # because `offset` and `limit` count lines and cannot narrow it at all.
       PART_ONLY = "read part of it with read_file's offset and limit"
 
-      # A window that hands back too much has one obvious narrower form, and
-      # naming it is what keeps the model from re-issuing the same call.
+      # Naming the narrower form is what keeps the model from re-issuing the
+      # same call.
       WINDOW_NARROWER = ["narrow the window with a smaller limit or a later offset", *STRUCTURAL].freeze
 
-      # What is left when ONE line is over the ceiling by itself -- a minified
-      # bundle, one-line JSON, a binary. No offset and no limit reaches inside
-      # a line, so the only narrower read is a byte range, and this tool does
-      # not take one.
+      # ONE line over the ceiling by itself -- a minified bundle, one-line
+      # JSON, a binary. No offset or limit reaches inside a line, so the only
+      # narrower read is a byte range, which this tool does not take.
       #
-      # It names a byte COUNT rather than leaving one to be guessed, and the
-      # count sits under {Tools::Bash}'s own ceiling. Following this advice
-      # steps the model DOWN a ceiling -- 1 MiB here, 128 KiB there -- and onto
-      # an approval-gated tier-3 tool, so a `head -c` sized from the number in
-      # this message would be refused on arrival.
+      # The byte COUNT is named rather than left to be guessed, and it sits
+      # under {Tools::Bash}'s own ceiling: this advice steps the model DOWN a
+      # ceiling (1 MiB here, 128 KiB there) onto an approval-gated tier-3 tool,
+      # so a `head -c` sized from this number would be refused on arrival.
       LONG_LINE_NARROWER = [
         "take a byte range with bash (`head -c 100000 PATH`, or tail -c, or cut) -- one line alone is over the ceiling",
         *STRUCTURAL
       ].freeze
 
-      # What to offer a file whose bytes are not text at all. Neither `offset`
-      # nor `limit` can make invalid bytes valid, and the structural tools
-      # refuse the same file for the same reason, so the advice leaves
-      # read_file entirely rather than naming a call that would be refused
-      # identically. `PATH` is the placeholder {LONG_LINE_NARROWER} already uses.
+      # Neither `offset` nor `limit` can make invalid bytes valid, and the
+      # structural tools refuse the same file for the same reason, so the
+      # advice leaves read_file entirely rather than naming a call that would
+      # be refused identically.
       NOT_TEXT_NARROWER = [
         "identify it with bash (`file PATH`)",
         "look at its bytes with bash (`xxd PATH | head`)"
       ].freeze
 
       # 16 KiB, the block {ReadFile.separator_within?} reads in. Two numbers
-      # meet here and neither is the ceiling: it is what a single refusal may
-      # ALLOCATE, and it is how much of an ordinary file has to be read before
-      # a newline turns up. Sixteen kibibytes clears the second by a wide
-      # margin -- a file with lines in it answers on block one -- while leaving
-      # the first at four ten-thousandths of what a slurp at {WINDOW_BOUND}
-      # would cost. The worst case, a genuinely separatorless megabyte, is 64
-      # of these read one after another and never held together.
+      # meet here and neither is the ceiling: what a single refusal may
+      # ALLOCATE, and how much of an ordinary file has to be read before a
+      # newline turns up. A file with lines in it answers on block one, while a
+      # separatorless megabyte is 64 of these read one after another and never
+      # held together.
       PROBE_BLOCK = 16 * 1024
 
-      # The largest line number an input may name. Not a bound on how much may
-      # be READ -- {WHOLE_BOUND} and {WINDOW_BOUND} own that -- but on what a
-      # line number can MEAN: past 2^53 a JSON number no longer carries an integer exactly,
-      # so the value the model sent and the value we received stop being the
-      # same number. It is also what keeps `offset`/`limit` away from Ruby's own
-      # allocator, where the failure is a bare `RangeError: bignum too big to
-      # convert into 'long'` naming neither the parameter nor a remedy.
+      # Not a bound on how much may be READ -- {WHOLE_BOUND} and {WINDOW_BOUND}
+      # own that -- but on what a line number can MEAN: past 2^53 a JSON number
+      # no longer carries an integer exactly, so the value the model sent and
+      # the value received stop being the same number. It also keeps
+      # `offset`/`limit` away from Ruby's allocator, where the failure is a bare
+      # `RangeError: bignum too big to convert into 'long'` naming neither the
+      # parameter nor a remedy.
       MAX_LINE_NUMBER = (2**53) - 1
 
       # The wire shape: one required path, and an optional line window.
@@ -163,24 +145,18 @@ module Lain
 
       input_model Input
 
-      # What a read handed back, and whether the model saw the whole file.
-      # The two travel together because {Lain::Session#record_read} needs both
+      # The two travel together because {Lain::Session#record_read} needs both,
       # and neither {Whole} nor {Window} may answer one without deciding the
       # other.
       Read = Data.define(:contents, :complete) do
-        # The read-set is the point of tier 1 reads: a later edit-before-write
-        # contract asks the session whether this file was read. Only a
-        # SUCCESSFUL read counts -- a missing, unreadable or REFUSED path
-        # taught the model nothing about the file's contents.
+        # Only a SUCCESSFUL read joins the read-set -- a missing, unreadable or
+        # REFUSED path taught the model nothing about the file's contents.
         #
-        # Bytes that could never become a turn are refused HERE, because this
-        # is the one point both readers pass through and the last one that
-        # still knows which path produced them. Left alone they reach
-        # `Canonical.normalize` inside {Event::Payload} on {Timeline#commit},
-        # which raises `UnsupportedType` naming no file and takes the whole ask
-        # down with it -- a read that cannot be recorded is a failed read, and
-        # saying so here is what turns a killed ask into an answer the model
-        # can act on.
+        # Bytes that could never become a turn are refused HERE, the one point
+        # both readers pass through and the last that still knows which path
+        # produced them. Left alone they reach `Canonical.normalize` on
+        # {Timeline#commit}, which raises `UnsupportedType` naming no file and
+        # takes the whole ask down with it.
         def deliver(session, path)
           return ReadFile.not_text(path) unless committable?
 
@@ -190,66 +166,51 @@ module Lain
 
         private
 
-        # Canonical's UTF-8 rule, restated here for {Question#prose}'s reason
-        # and only for it: `Canonical.normalize` interns what it returns
-        # (`-@`), so asking it the question directly would pay a full-string
+        # Canonical's UTF-8 rule, restated rather than asked: `normalize`
+        # interns what it returns, so asking directly would pay a full-string
         # hash and pin a quarter-megabyte of file contents in the process-wide
         # fstring table on every tier-1 read. A spec reads every byte shape
         # through both, so the copy cannot drift silently.
         #
-        # NARROWER than Canonical's on one point, and the difference is forced
-        # by the line below it: {#deliver} ships `contents` UNCONVERTED.
-        # Canonical admits whatever it can CONVERT, so it would admit a UTF-16
-        # read -- putting one encoding on the wire to the model and a different
-        # one on the Timeline. The question that is sound for a value nobody
-        # converts is whether Canonical would hand back the SAME BYTES: already
-        # UTF-8, or ASCII-only under some ASCII-compatible tag, which
-        # transcodes to itself.
+        # NARROWER than Canonical's on one point, forced by {#deliver} shipping
+        # `contents` UNCONVERTED: Canonical admits whatever it can CONVERT, so
+        # it would admit a UTF-16 read -- one encoding on the wire to the model
+        # and a different one on the Timeline. The sound question for a value
+        # nobody converts is whether Canonical would hand back the SAME BYTES:
+        # already UTF-8, or ASCII-only under an ASCII-compatible tag.
         #
-        # That second arm is not hypothetical bet-hedging. `Array#join` answers
-        # US-ASCII for an EMPTY array, so a COMPLETE window over an empty file
-        # -- {Window#disclosed}'s `seen.join` with nothing in `seen` -- arrives
-        # tagged US-ASCII no matter what the read was told to decode. Demanding
-        # the UTF-8 tag alone refuses `.keep`, an empty `__init__.py`, and
-        # every other zero-length file reached through a window.
+        # That second arm is not bet-hedging. `Array#join` answers US-ASCII for
+        # an EMPTY array, so a complete window over an empty file arrives tagged
+        # US-ASCII whatever the read was told to decode. Demanding the UTF-8 tag
+        # alone refuses `.keep`, an empty `__init__.py`, and every other
+        # zero-length file reached through a window.
         def committable?
           contents.valid_encoding? && (contents.encoding == Encoding::UTF_8 || contents.ascii_only?)
         end
       end
 
-      # A read refused for size, and the sibling of {Read} rather than a flag
-      # on it. It holds the refusal and NOTHING else, so "the refusal carries
-      # none of the bytes" is a property of what this object can contain; and
-      # because it answers the same message, the branch that refuses cannot
-      # reach {Lain::Session#record_read} at all.
+      # The sibling of {Read} rather than a flag on it: it holds the refusal
+      # and NOTHING else, so "the refusal carries none of the bytes" is a
+      # property of what this object can contain, and the branch that refuses
+      # cannot reach {Lain::Session#record_read} at all.
       Refused = Data.define(:result) do
         def deliver(_session, _path) = result
       end
 
-      # The unwindowed read: `File.read`, byte for byte what this tool did
-      # before a window existed, and complete by construction. Its own object
-      # rather than a branch, so the default path cannot drift as the windowed
-      # one grows (Null Object, as {Sink::Null} is to {Sink::IOAdapter}).
+      # The unwindowed read, complete by construction. Its own object rather
+      # than a branch, so the default path cannot drift as the windowed one
+      # grows.
       class Whole
         # `File.size` FIRST, and that ordering is the whole memory claim: the
         # decision to refuse costs a stat, so a file over the ceiling is never
         # materialised. A post-hoc `File.read(path).bytesize` would produce the
-        # same message having already paid the cost the message exists to
-        # avoid.
+        # same message having already paid the cost the message exists to avoid.
         #
-        # What the stat buys is the DECISION; what to SAY about the file is a
-        # separate question, and for a file over {WINDOW_BOUND} it is answered
-        # afterwards by a bounded, block-at-a-time look for a newline in
-        # {ReadFile.narrower_for}. The claim keeps the scope that makes it
-        # true: nothing over the ceiling is ever opened to DECIDE, and no file
-        # over the ceiling is ever materialised.
-        #
-        # But a stat is a DECISION, not a guarantee, and the second read is not
-        # belt-and-braces. `File.size` answers a moment before the open, and an
-        # appender writing in between handed back 1,309,696 bytes through a
-        # 262,144-byte ceiling (measured). So the read itself takes a length:
-        # one byte past the ceiling is enough to know it was exceeded, and
-        # costs one byte. Cheap first, then correct -- neither alone is both.
+        # But a stat is a DECISION, not a guarantee. `File.size` answers a
+        # moment before the open, and an appender writing in between handed back
+        # 1,309,696 bytes through a 262,144-byte ceiling (measured). So the read
+        # itself takes a length: one byte past the ceiling is enough to know it
+        # was exceeded, and costs one byte. Cheap first, then correct.
         def read(path)
           size = File.size(path)
           return ReadFile.too_large(path, size) unless WHOLE_BOUND.admits?(size)
@@ -260,9 +221,8 @@ module Lain
           Read.new(contents:, complete: true)
         end
 
-        # One shared frozen instance, for {Channel::Null}'s reason: it has no
-        # state, so every unwindowed read reuses this rather than allocating a
-        # fresh reader per call.
+        # No state, so every unwindowed read reuses this rather than
+        # allocating a fresh reader per call.
         INSTANCE = new.freeze
 
         # @return [Whole] the shared instance
@@ -274,26 +234,18 @@ module Lain
         # both are undone here: without the `force_encoding` an ordinary UTF-8
         # file would come back ASCII-8BIT and stop comparing equal to the bytes
         # this tool returned yesterday. Nothing is validated, exactly as
-        # `File.read` validates nothing -- an invalid-UTF-8 file keeps its bytes
-        # and its invalidity, and {Read#deliver} is the one place that judges.
+        # `File.read` validates nothing -- {Read#deliver} is the one judge.
         #
-        # UTF-8 by NAME, and not `Encoding.default_external`, which is what
-        # this line used to say. Under a C locale (containers, systemd units)
-        # that is US-ASCII, so {Read#committable?} -- and `Canonical` behind it
-        # -- would refuse an ordinary UTF-8 file with a message saying it is
-        # not UTF-8, which it is, and the model would have no move. The read
-        # names its own encoding for exactly the reason the sibling structural
-        # tools do (`code_outline.rb`, `file_symbols.rb`, `ast_search.rb`).
+        # UTF-8 by NAME, and not `Encoding.default_external`: under a C locale
+        # (containers, systemd units) that is US-ASCII, so {Read#committable?}
+        # would refuse an ordinary UTF-8 file with a message saying it is not
+        # UTF-8, and the model would have no move.
         #
-        # `+""` and NOT `""`, and the whole difference is one unary plus. This
-        # file is `frozen_string_literal`, so a bare literal is frozen while
-        # `force_encoding` MUTATES its receiver -- and nil-at-EOF is not an
-        # exotic case, it is every zero-length file there is: a `touch`ed .rb,
-        # an empty `__init__.py`, a `.keep`. Those raised `FrozenError` past
-        # this class's `rescue SystemCallError, IOError` and reached the model
-        # as a refusal naming a frozen String. The shared contract table in
-        # `spec/support/shared_examples/tier_one_read_contract.rb` is what
-        # catches the next one.
+        # `+""` and NOT `""`: this file is `frozen_string_literal`, so a bare
+        # literal is frozen while `force_encoding` MUTATES its receiver -- and
+        # nil-at-EOF is every zero-length file there is. Those raised
+        # `FrozenError` past this class's `rescue SystemCallError, IOError` and
+        # reached the model as a refusal naming a frozen String.
         def capped(path)
           (File.read(path, WHOLE_BOUND.limit + 1) || +"").force_encoding(Encoding::UTF_8)
         end
@@ -301,17 +253,12 @@ module Lain
 
       # `limit` lines from 1-based `offset`, either bound optional.
       class Window
-        # A running byte total with a ceiling, filled from a lazy line stream.
-        # It stops at the FIRST line that carries the returned bytes past the
-        # ceiling, so an oversized window costs the ceiling plus one line
-        # rather than the file -- and because it COUNTS that line, {#size} is
-        # the exact size of the exact span {#lines} covers. That is what lets
-        # the refusal state a measurement instead of a floor -- a walk that
-        # abandoned the crossing line would know only "at least this much".
-        #
-        # `take_while` rather than `each` with a `break` (house style): the
-        # predicate is what accumulates, so the walk stops the instant the
-        # ceiling is crossed and nothing after it is read.
+        # Stops at the FIRST line that carries the returned bytes past the
+        # ceiling, so an oversized window costs the ceiling plus one line rather
+        # than the file -- and because it COUNTS that line, {#size} is the exact
+        # size of the exact span {#lines} covers. That is what lets the refusal
+        # state a measurement instead of a floor: a walk that abandoned the
+        # crossing line would know only "at least this much".
         class Budget
           attr_reader :lines, :size
 
@@ -348,35 +295,30 @@ module Lain
           end
         end
 
-        # Watches the chunks `File.foreach`'s byte limit hands back and stops
-        # the walk at the first one big enough to be a refusal on its own.
+        # Stops the walk at the first chunk big enough to be a refusal on its
+        # own.
         #
-        # It exists because that byte limit SPLITS a long line while `offset`
-        # and `limit` count LINES. Left to itself, a walk that counted chunks
-        # would step over a split boundary and renumber everything after it:
-        # measured, on a file whose line 1 was 1.5 MiB, `offset: 2, limit: 3`
-        # returned **success** with 512 KB of line 1's tail labelled "lines
-        # 2-4", and `offset: 4, limit: 2` returned real lines 3-4 as "lines
-        # 4-5" -- a line 5 that does not exist. A wrong answer handed back as a
-        # success is the exact outcome {Tool::Bounds}' whole-artifact doctrine
-        # exists to prevent, so a file holding such a line refuses the window
-        # WHATEVER the offset. That is a real loss (the short lines after a
-        # 5 MiB line become unreachable by `read_file`) and it is the honest
-        # one: the alternative is rejoining the line to count it, which is the
-        # allocation the byte limit was added to avoid.
+        # It exists because `File.foreach`'s byte limit SPLITS a long line while
+        # `offset` and `limit` count LINES. A walk that counted chunks would
+        # step over a split boundary and renumber everything after it: measured,
+        # on a file whose line 1 was 1.5 MiB, `offset: 2, limit: 3` returned
+        # SUCCESS with 512 KB of line 1's tail labelled "lines 2-4", and
+        # `offset: 4, limit: 2` returned real lines 3-4 as "lines 4-5" -- a line
+        # 5 that does not exist. A wrong answer handed back as a success is what
+        # {Tool::Bounds}' whole-artifact doctrine exists to prevent, so a file
+        # holding such a line refuses the window WHATEVER the offset. That loses
+        # the short lines after a 5 MiB line, and it is the honest loss: the
+        # alternative is rejoining the line to count it, the very allocation the
+        # byte limit was added to avoid.
         #
-        # The line NUMBER is right because it counts completed lines rather
-        # than chunks: a chunk ending in the separator finishes a line, one
-        # that does not is the head of a line still running. So a 512 MiB
-        # separatorless file is line 1 however far past its end the offset
-        # reached.
+        # The line NUMBER is right because it counts completed lines rather than
+        # chunks, so a 512 MiB separatorless file is line 1 however far past its
+        # end the offset reached.
         #
-        # It also subsumes the predicate this used to ask after the fact
-        # ("did the last chunk end in a newline?"), which was one byte away
-        # from wrong: a line of exactly the chunk limit INCLUDING its newline
-        # arrives whole, and the model was told to narrow a window that had
-        # nothing in it to narrow. Any single chunk over the ceiling is the
-        # long-line case, terminated or not.
+        # Any single chunk over the ceiling is the long-line case, terminated or
+        # not -- asking "did the last chunk end in a newline?" instead was one
+        # byte from wrong, since a line of exactly the chunk limit INCLUDING its
+        # newline arrives whole and has nothing in it to narrow.
         class LongLine
           # @param ceiling [Integer] bytes a window may hand back
           # @param offset [Integer] the 1-based line the window was asked to
@@ -389,9 +331,9 @@ module Lain
             @size = nil
           end
 
-          # Passes chunks through until one is over the ceiling, then ends the
-          # stream -- so a `drop` for a large offset over a huge line stops at
-          # the first chunk instead of reading its way to the offset.
+          # Ends the stream at the first over-ceiling chunk, so a `drop` for a
+          # large offset over a huge line stops there instead of reading its
+          # way to the offset.
           #
           # @param stream [Enumerator::Lazy]
           # @return [Enumerator::Lazy]
@@ -421,15 +363,14 @@ module Lain
           end
 
           # WHERE the offending line fell decides what to advise, and getting
-          # that wrong is not cosmetic: a model that asked for line 4990 was
-          # being told to `head -c` the START of the file, which is the other
-          # end of it.
+          # it wrong is not cosmetic: a model that asked for line 4990 was
+          # being told to `head -c` the START of the file, the other end of it.
           #
-          # The arithmetic is one fact. A window ending at line M pulls line
+          # The arithmetic is one fact: a window ending at line M pulls line
           # M + 1 as its completeness probe, so the last window a file with an
-          # over-long line at N can serve is one ending at N - 2. From an
-          # offset X that is a limit of N - 1 - X, and when that is not at
-          # least 1 no window starting at X can be served at all.
+          # over-long line at N can serve ends at N - 2. From an offset X that
+          # is a limit of N - 1 - X, and when that is under 1 no window
+          # starting at X can be served at all.
           def narrower
             stop = @number - 1 - @offset
             if stop.positive?
@@ -441,9 +382,8 @@ module Lain
             LONG_LINE_NARROWER
           end
 
-          # No window from the requested offset can be served, so this names
-          # the one that can -- and says which line is in the way, because the
-          # model did not ask to hear about it.
+          # Names the window that CAN be served, and which line is in the way
+          # -- the model did not ask to hear about that line.
           def outside_window
             "line #{@number} is #{placed} the window you asked for and cannot be walked past -- " \
               "read a window that ends before it: offset 1 with limit at most #{@number - 2}"
@@ -464,45 +404,36 @@ module Lain
         end
 
         # ONE line past the window is the entire evidence for "there is more of
-        # this file you have not seen", and pulling exactly one is what lets
-        # completeness be decided without materialising the file a window
-        # exists to avoid materialising -- the same collect-one-past-the-cap
-        # discipline {Tools::Grep} uses for MAX_MATCHES. With no `limit` the
-        # window runs to EOF, so there is no line past it and completeness
-        # rests on `offset` alone.
+        # this file you have not seen", and pulling exactly one is what decides
+        # completeness without materialising the file a window exists to avoid
+        # materialising. With no `limit` the window runs to EOF, so there is no
+        # line past it and completeness rests on `offset` alone.
         #
-        # `take(n).force` and NOT `first(n)`, and the difference is not style:
-        # `first` RESERVES an Array of n slots before a single line is read
-        # (measured: 381 MB of address space at n = 5*10^7), and n here is a
-        # number the model chose. `take` reserves nothing and returns the same
-        # Array. Under an address-space cap the difference is a `NoMemoryError`,
-        # which is not a StandardError -- so it would escape
-        # {Effect::Handler::Live}'s rescue and propagate past the loop.
-        # The third argument to `File.foreach` is a per-line BYTE limit, and it
-        # is what keeps {Budget} from being handed something too big to weigh.
-        # A file with no separator in it is ONE line, so `foreach` alone
-        # materialises the whole thing before any counter sees a byte --
-        # measured at 512 MB peak RSS on a 512 MiB file, and at real scale that
-        # is a `NoMemoryError`, which is not a StandardError and so escapes
-        # {Effect::Handler::Live}'s rescue and propagates past the loop. The
-        # same failure the `take` over `first` note above describes, by a
-        # different route.
+        # `take(n).force` and NOT `first(n)`: `first` RESERVES an Array of n
+        # slots before a single line is read (measured: 381 MB of address space
+        # at n = 5*10^7), and n here is a number the MODEL chose. Under an
+        # address-space cap that is a `NoMemoryError`, which is not a
+        # StandardError -- so it escapes {Effect::Handler::Live}'s rescue and
+        # propagates past the loop.
+        #
+        # `File.foreach`'s third argument is a per-line BYTE limit, keeping
+        # {Budget} from being handed something too big to weigh: a file with no
+        # separator is ONE line, so `foreach` alone materialises the whole thing
+        # first -- measured at 512 MB peak RSS on a 512 MiB file, the same
+        # NoMemoryError escape by another route.
         #
         # `+ 1` is what makes a split ALWAYS a refusal. `foreach` never returns
         # a chunk shorter than the limit except at EOF (it runs on to finish a
         # multibyte character rather than cutting one -- measured: 1002 bytes
-        # for a limit of 1001 on UTF-8), so a chunk that was split is already
-        # over the ceiling. {LongLine} is what turns that into the refusal, and
-        # it has to sit BEFORE the `drop`, because `drop` is the thing that
-        # would otherwise miscount.
+        # for a limit of 1001 on UTF-8), so a split chunk is already over the
+        # ceiling. {LongLine} turns that into the refusal, and must sit BEFORE
+        # the `drop`, which is what would otherwise miscount.
         #
-        # `encoding:` for {Whole#capped}'s reason, and it is not optional here
-        # either: `File.foreach` tags every line with
-        # `Encoding.default_external`, so under `LC_ALL=C` a window over a
-        # perfectly good UTF-8 file would be refused by {Read#committable?} the
+        # `encoding:` for {Whole#capped}'s reason: `File.foreach` tags every
+        # line with `Encoding.default_external`, so under `LC_ALL=C` a window
+        # over a good UTF-8 file would be refused by {Read#committable?} the
         # moment the model passed an offset. Naming UTF-8 also makes the
-        # multi-byte behaviour the `+ 1` note above relies on unconditional
-        # rather than a property of the locale.
+        # multi-byte behaviour the `+ 1` relies on unconditional.
         def read(path)
           watch = LongLine.new(WINDOW_BOUND.limit, offset: @offset)
           stream = File.foreach(path, WINDOW_BOUND.limit + 1, encoding: Encoding::UTF_8).lazy
@@ -532,16 +463,15 @@ module Lain
           disclosed(budget.lines, complete: from_the_top?)
         end
 
-        # It names the span it MEASURED and that span's true size, so the
-        # sentence stays true of a window the model may have asked to be far
-        # larger: "the window over lines 1-16385 of x.log is 1048640 bytes" is
-        # a fact about a prefix, where "the window is 1048640 bytes" would be a
-        # guess about a tail nobody read.
+        # Names the span it MEASURED and that span's true size, so the sentence
+        # stays true of a window the model may have asked to be far larger:
+        # "the window over lines 1-16385 of x.log is 1048640 bytes" is a fact
+        # about a prefix, where "the window is 1048640 bytes" would be a guess
+        # about a tail nobody read.
         #
-        # Getting here means at least TWO lines were charged -- a single chunk
-        # over the ceiling is {LongLine}'s case and never reaches this one --
-        # so "narrow the window with a smaller limit" always has somewhere to
-        # go.
+        # Getting here means at least TWO lines were charged -- one chunk over
+        # the ceiling is {LongLine}'s case -- so "narrow the window with a
+        # smaller limit" always has somewhere to go.
         def refused(budget, path)
           Refused.new(result: WINDOW_BOUND.refusal(
             subject: "the window over #{covered(budget.lines.size)} of #{path}",
@@ -550,24 +480,23 @@ module Lain
         end
 
         # A complete window withheld nothing, so it says nothing -- and stays
-        # byte-identical to the unwindowed read, which is what lets a window
-        # covering the whole file stand in for one.
+        # byte-identical to the unwindowed read, which is what lets a full-cover
+        # window stand in for one.
         #
-        # The notice is added AFTER {Budget} has weighed the lines, so a
-        # partial window at the ceiling hands back the ceiling plus this one
-        # sentence -- ~94 bytes over 1 MiB. Charging it would need the count
-        # the notice states, which is not known until the count is final, so
-        # the overshoot is bounded and named rather than chased.
+        # The notice is added AFTER {Budget} weighed the lines, so a partial
+        # window at the ceiling hands back the ceiling plus ~94 bytes. Charging
+        # it would need the count the notice states, which is not known until
+        # the count is final, so the overshoot is bounded and named rather than
+        # chased.
         def disclosed(seen, complete:)
           return Read.new(contents: seen.join, complete: true) if complete
 
           Read.new(contents: "#{terminated(seen.join)}#{notice(seen.size)}", complete: false)
         end
 
-        # In {Tools::Grep}'s register: it names the window and the fact of
-        # partialness, never a total -- knowing how many lines the file has
-        # would mean reading the whole file, which is the cost a window exists
-        # to avoid.
+        # Names the window and the fact of partialness, never a total: knowing
+        # how many lines the file has would mean reading the whole file, the
+        # cost a window exists to avoid.
         def notice(count)
           "... window only: #{covered(count)}; the rest of the file was not read, " \
             "so edit_file will refuse it"
@@ -579,18 +508,17 @@ module Lain
           "lines #{@offset}-#{@offset + count - 1}"
         end
 
-        # The notice needs a line of its own. A file whose last line has no
-        # terminator is the one case where saying so costs a byte the file does
-        # not contain, and running the two together would be worse.
+        # The notice needs a line of its own, and a file whose last line has no
+        # terminator is the one case where that costs a byte the file does not
+        # contain. Running the two together would be worse.
         def terminated(text) = text.empty? || text.end_with?("\n") ? text : "#{text}\n"
 
         def from_the_top? = @offset == 1
       end
 
-      # The refusal an oversized WHOLE read produces. Class-level because
-      # {Whole} is a shared frozen instance with no state of its own, and
-      # because the conditional half of the advice is a fact about the FILE,
-      # not about the reader.
+      # Class-level because {Whole} is a shared frozen instance with no state,
+      # and because the conditional half of the advice is a fact about the FILE
+      # rather than about the reader.
       #
       # @param path [String] the resolved path, as the model spelled it back
       # @param size [Integer] `File.size`, measured before any open
@@ -599,17 +527,14 @@ module Lain
         Refused.new(result: WHOLE_BOUND.refusal(subject: path, size:, narrower: narrower_for(path, size)))
       end
 
-      # Three answers, and the third is the one that costs anything. A file a
-      # WINDOW could still admit is told to cover itself with one; a larger
-      # file is normally told to read part of itself -- but `offset` and
-      # `limit` count LINES, so that advice is unfollowable for a file that IS
-      # one line, and the model spends a round trip discovering it. QA hit
-      # exactly that on a 1,200,003-byte one-line JSON.
+      # Three answers, and only the third costs anything. "Read part of it" is
+      # unfollowable for a file that IS one line, since `offset` and `limit`
+      # count LINES, and the model spends a round trip discovering that -- QA
+      # hit it on a 1,200,003-byte one-line JSON.
       #
-      # The probe is here rather than in {Whole#read} on purpose: it is about
-      # what to SAY, not about what to decide, so the decision above it still
-      # costs a stat and the {FULL_COVER} branch -- which has no bug -- still
-      # costs nothing at all.
+      # The probe is here rather than in {Whole#read} because it is about what
+      # to SAY, not what to decide: the decision above still costs a stat and
+      # the {FULL_COVER} branch still costs nothing at all.
       #
       # @param path [String] the resolved path, opened only on the branch where
       #   the advice depends on the file's shape rather than on its size
@@ -624,16 +549,16 @@ module Lain
 
       # Whether {Window} would refuse this file's first line however it is
       # windowed. Exact rather than heuristic, and the boundary is one byte off
-      # its obvious reading -- which is the whole subtlety.
+      # its obvious reading.
       #
       # {Window#read} chunks at `WINDOW_BOUND.limit + 1` and {LongLine} refuses
       # any chunk strictly OVER the ceiling, so a first line of exactly
       # `limit + 1` bytes INCLUDING its newline arrives whole and IS refused.
-      # That line's newline sits at byte index `limit`, so the question that
-      # agrees with {LongLine} on every file is "is there a newline inside the
+      # That line's newline sits at byte index `limit`, so the question
+      # agreeing with {LongLine} on every file is "is there a newline inside the
       # first `limit` bytes" -- one byte short of the chunk size. Asked over
-      # `limit + 1` instead, that file is offered a window that then refuses
-      # it, which is the round trip this exists to remove.
+      # `limit + 1`, that file is offered a window that then refuses it, which
+      # is the round trip this exists to remove.
       #
       # @param path [String] a file already known to be over {WINDOW_BOUND}
       # @return [Boolean]
@@ -641,35 +566,29 @@ module Lain
         File.open(path, "rb") { |file| !separator_within?(file, WINDOW_BOUND.limit) }
       end
 
-      # Blocks, and never a slurp. {Whole#capped}'s single `File.read(path, N)`
-      # is the right shape for a read whose bytes are the answer; here the
-      # answer is one Boolean, so at this ceiling that shape would allocate a
-      # megabyte per refusal on a tier-1 hot path -- the cost {Whole#read}'s
-      # stat-first ordering exists to avoid, reintroduced one line below it.
-      # The budget is spent one {PROBE_BLOCK} at a time and the walk stops at
-      # the first separator, so the ordinary file costs one block and the worst
-      # case has read a megabyte while holding 16 KiB.
+      # Blocks, and never a slurp: the answer here is one Boolean, so
+      # {Whole#capped}'s single `File.read(path, N)` would allocate a megabyte
+      # per refusal on a tier-1 hot path -- the cost {Whole#read}'s stat-first
+      # ordering exists to avoid, reintroduced one line below it. The ordinary
+      # file costs one block; the worst case has read a megabyte while holding
+      # 16 KiB.
       #
-      # Binary, so a block is bytes and `\n` is a byte: there is nothing to
-      # decode for this question, and {Whole#capped}'s `force_encoding` answers
-      # one this does not ask. `read` answers nil at EOF, which ends the walk
-      # -- a file that shrank out from under the stat has no separator we can
-      # claim to have seen.
+      # Binary, so a block is bytes and `\n` is a byte. `read` answers nil at
+      # EOF, which ends the walk: a file that shrank out from under the stat has
+      # no separator we can claim to have seen.
       #
-      # The budget is counted in BYTES rather than in blocks so that it is
-      # exactly `budget` whether or not the ceiling divides by the block size.
-      # A short count would refuse a window that works; a long one would offer
-      # a window that does not.
+      # The budget is counted in BYTES rather than blocks so it is exactly
+      # `budget` whether or not the ceiling divides by the block size. A short
+      # count would refuse a window that works; a long one would offer a window
+      # that does not.
       #
       # ONE buffer, reused: `IO#read`'s second argument fills a String the
-      # caller owns instead of minting one, which takes the worst case from 64
-      # 16 KiB Strings of garbage down to a single allocation -- and the answer
-      # here is a Boolean, so not one of those bytes outlives the block it was
-      # read into. That is safe only because the chain is LAZY end to end: each
-      # block is tested and discarded before the next `read` overwrites it. An
-      # eager step anywhere in it (a `to_a`, a `select`, a non-lazy `map`)
-      # would leave every element aliasing the same String, so keep it lazy or
-      # give the buffer up.
+      # caller owns, taking the worst case from 64 16 KiB Strings of garbage
+      # down to one allocation. Safe ONLY because the chain is LAZY end to end
+      # -- each block is tested and discarded before the next `read` overwrites
+      # it. An eager step anywhere in it (a `to_a`, a `select`, a non-lazy
+      # `map`) would leave every element aliasing the same String, so keep it
+      # lazy or give the buffer up.
       #
       # @param file [File] positioned at the start
       # @param budget [Integer] how many bytes may be looked at
@@ -685,13 +604,12 @@ module Lain
       end
       private_class_method :one_long_line?, :separator_within?
 
-      # The refusal for the SECOND check, where the read came back one byte
-      # past the ceiling and so the file is bigger than the stat claimed --
-      # by an unknown amount. Both halves of the message answer to that. The
-      # subject names the PREFIX that was measured rather than asserting a
-      # total nobody read, and the advice offers only a partial window: a
-      # full-cover one might work and might be refused in turn, and this branch
-      # is the one that just learned it cannot trust a size.
+      # The SECOND check's refusal: the read came back one byte past the
+      # ceiling, so the file is bigger than the stat claimed by an unknown
+      # amount. Both halves answer to that -- the subject names the PREFIX
+      # measured rather than asserting a total nobody read, and the advice
+      # offers only a partial window, because this branch has just learned it
+      # cannot trust a size.
       #
       # @param path [String] the resolved path
       # @param size [Integer] bytes actually read, always the ceiling plus one
@@ -701,15 +619,13 @@ module Lain
                                                 narrower: [PART_ONLY, *STRUCTURAL]))
       end
 
-      # The refusal for bytes that are text to nobody. `Canonical` asks this
-      # same question later and answers it with a raise that names no file;
-      # asked here it names the file, and what comes back is committable, so
-      # the ask continues instead of being interrupted.
+      # `Canonical` asks this same question later and answers it with a raise
+      # naming no file; asked here it names the file, and what comes back is
+      # committable, so the ask continues instead of being interrupted.
       #
-      # Class-level beside {too_large} and {grew_past} because it is a fact
-      # about the FILE rather than about either reader -- and unlike those two
-      # it returns the {Tool::Result} directly, since the branch that refuses
-      # is already inside {Read#deliver} and has no reader left to answer to.
+      # Unlike {too_large} and {grew_past} it returns the {Tool::Result}
+      # directly: the branch that refuses is already inside {Read#deliver} and
+      # has no reader left to answer to.
       #
       # @param path [String] the resolved path, as the model spelled it back
       # @return [Tool::Result] an error carrying the verdict and none of the bytes
@@ -732,21 +648,19 @@ module Lain
           "text and so could not be recorded."
       end
 
-      # Audited: this tool only reads the filesystem and appends to the
-      # Session's read-set (Session::Journaled#record_read is documented
-      # fiber-safe, no yield between its check and its mutate -- session.rb).
-      # No process-global state: WorkerEnv#cwd is read, never chdir'd.
+      # Audited: reads the filesystem and appends to the Session's read-set,
+      # whose `record_read` is fiber-safe (no yield between its check and its
+      # mutate). No process-global state -- WorkerEnv#cwd is read, never
+      # chdir'd.
       def parallel_safe? = true
 
       protected
 
       def perform(input, invocation)
         session = session_of(invocation)
-        # A relative path resolves against the session's WorkerEnv cwd (Dir.pwd
-        # under the default, so byte-identical to a raw File.read); the RESOLVED
-        # absolute path is what both the read and the read-set see, so the
-        # edit-before-write contract matches on the same file regardless of how
-        # the model spelled it.
+        # The RESOLVED absolute path is what both the read and the read-set
+        # see, so the edit-before-write contract matches on the same file
+        # regardless of how the model spelled it.
         path = File.expand_path(input.path, session.worker_env.cwd)
         problem = problem_with(path)
         return Tool::Result.error(problem) if problem
@@ -758,12 +672,10 @@ module Lain
 
       private
 
-      # A window from line one with no limit IS the whole file, so it takes the
-      # whole-file path rather than materialising every line as its own String
-      # to reach a byte-identical answer. Not merely wasteful: once the
-      # unwindowed read is bounded by size, routing this spelling through
-      # {Window} would make it a one-keyword bypass of that bound, at the
-      # highest memory cost of the three spellings rather than the lowest.
+      # A window from line one with no limit IS the whole file. Not merely
+      # wasteful to route it through {Window}: since the unwindowed read is
+      # bounded by SIZE, that spelling would be a one-keyword bypass of the
+      # bound, at the highest memory cost of the three rather than the lowest.
       def window_for(input)
         return Whole.instance if input.limit.nil? && (input.offset.nil? || input.offset == 1)
 
@@ -771,13 +683,12 @@ module Lain
       end
 
       # The regular-file check is a MEMORY guard wearing a validation's
-      # clothes, and it belongs here because it has to answer before the size
-      # does. `File.size` is 0 for a character device and for a fifo, so both
-      # sail through {WHOLE_BOUND} -- measured under `ulimit -v`,
-      # `read_file /dev/zero` died with `NoMemoryError`, which is not a
-      # StandardError and so escapes both the rescue below and
-      # {Effect::Handler::Live}'s. A fifo does not even fail: it blocks until
-      # somebody writes.
+      # clothes, and must answer before the size does. `File.size` is 0 for a
+      # character device and for a fifo, so both sail through {WHOLE_BOUND}:
+      # measured under `ulimit -v`, `read_file /dev/zero` died with
+      # `NoMemoryError`, which is not a StandardError and so escapes both the
+      # rescue below and {Effect::Handler::Live}'s. A fifo does not even fail --
+      # it blocks until somebody writes.
       #
       # `File.file?` and not `File.ftype`, which uses `lstat` and would answer
       # "link" for a symlink to a perfectly ordinary file.

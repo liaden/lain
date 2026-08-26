@@ -9,13 +9,12 @@ module Lain
     # model responds to it.
     #
     # SEQUENTIAL by construction: prompts are replayed one after another. A
-    # concurrent `n:` sweep is deliberately deferred to the concurrency
-    # decision (fibers vs. threads) rather than guessed at here.
+    # concurrent `n:` sweep is deferred to the fibers-vs-threads decision rather
+    # than guessed at here.
     #
-    # Provider-agnostic: it drives whatever {Provider} it is handed, so the same
-    # object runs against the real API under `:live` and against
-    # {Provider::Mock} in an offline spec. Only the injected provider decides
-    # whether the network is touched.
+    # Provider-agnostic: only the injected provider decides whether the network
+    # is touched, so the same object runs against the real API under `:live` and
+    # against {Provider::Mock} in an offline spec.
     class LiveReplay
       # The outcome of a fresh run: the new Timeline, the accumulated fresh
       # Usage, and the ordered final Responses (one per prompt).

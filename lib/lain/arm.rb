@@ -1,44 +1,33 @@
 # frozen_string_literal: true
 
 module Lain
-  # An orchestration TOPOLOGY made swappable and bench-scorable: single-thread
-  # control, orchestrator-worker+synthesis, dual-ledger, adaptive-router. Every
-  # arm answers the SAME question -- "run this task and hand back a graded
-  # trajectory" -- in the SAME shape (`#run -> Run`), so a {Driver} can score them
-  # against each other and the single-thread control is simply the arm every
-  # richer topology has to beat.
+  # An orchestration TOPOLOGY made swappable and bench-scorable. Every arm answers
+  # the same question -- "run this task and hand back a graded trajectory" -- in
+  # the same shape (`#run -> Run`), so a {Driver} can score them against each other
+  # and the single-thread control is the arm every richer topology has to beat.
   #
-  # The seam is deliberately minimal: `#run(task, spawn_seam:, isolation:,
-  # grader:) -> Run`, nothing more. A synthesis hook, a Task/Progress ledger, a
-  # spawn-time router -- those are ONE topology's needs and live on THAT concrete
-  # arm, never on this base. That is the {Tool::SpawnPolicy} altitude mistake this
-  # seam exists to avoid: a base that grows every child's knobs stops being a seam.
-  #
-  # What the base DOES own is the lease LIFECYCLE -- {#leased}, one bracket for
-  # every arm -- because acquire/reclaim/surrender is an obligation of the seam
-  # itself, identical across topologies, and getting it wrong destroys a worker's
-  # commits. What an arm MEASURES is the other half of that line and is INJECTED
-  # rather than inherited: see {Instrument}.
+  # The seam is deliberately minimal. A synthesis hook, a Task/Progress ledger, a
+  # spawn-time router are ONE topology's needs and live on THAT concrete arm: the
+  # {Tool::SpawnPolicy} altitude mistake this seam exists to avoid is a base that
+  # grows every child's knobs and stops being a seam. What the base does own is the
+  # lease LIFECYCLE ({#leased}), because acquire/reclaim/surrender is identical
+  # across topologies and getting it wrong destroys a worker's commits. What an arm
+  # MEASURES is injected rather than inherited -- see {Instrument}.
   class Arm
-    # The default isolation backend. The real seam is a later card
-    # (`Isolation#acquire(worker_id) -> a Lease carrying a WorkerEnv + #release`);
-    # the single-thread control runs in the shared process environment and never
-    # needs an isolated worktree, so the base default is a LOCAL null that leases
-    # nothing -- no dependency on the not-yet-built Isolation unit, and no
-    # constant this file cannot resolve.
+    # A LOCAL null rather than a reference into the Isolation unit, so this file
+    # depends on no constant it cannot resolve. The single-thread control runs in
+    # the shared process environment and never needs an isolated worktree.
     module NoIsolation
-      # A lease that owns no isolated resource: releasing it is a no-op and its
-      # `worker_env` is nil, meaning "the shared process environment, unchanged".
+      # A lease that owns no isolated resource: `worker_env` is nil, meaning "the
+      # shared process environment, unchanged".
       class Lease
         def release = nil
         def worker_env = nil
 
-        # Completes the {Isolation::Lease} duck a worker-completion seam asks
-        # (`Isolation::WorkerHandoff` guards on it to stay exactly-once across
-        # its reclaim/surrender pair). Always false, truthfully: this lease is
-        # shared, frozen, and holds nothing, so it is never "given up" -- and a
-        # completion seam wired over NO isolation has nothing to hand back,
-        # which the handback reports loudly rather than silently skipping.
+        # Always false, truthfully: this lease is shared, frozen and holds
+        # nothing, so it is never "given up". It completes the
+        # {Isolation::Lease} duck `Isolation::WorkerHandoff` guards on to stay
+        # exactly-once across its reclaim/surrender pair.
         def released? = false
       end
 
@@ -48,36 +37,26 @@ module Lain
       def self.acquire(_worker_id = nil) = LEASE
     end
 
-    # A graded trajectory: the arm that produced it, the recorded Timeline, the
-    # grader's {Grader::Grade}, the wall-clock seconds it took, and the
-    # journal-sourced {Ledger} that prices it. This is the Arm seam's whole output
-    # vocabulary. A RESULT CARRIER, not a value object: it is frozen (Data), but
-    # it holds a live {Timeline} over a mutable {Store}, so unlike {Compare::Run}
-    # it is deliberately NOT `Ractor.shareable?` -- there is no shareability spec
-    # to satisfy, and porting one on would be a category error.
-    #
-    # `#compare_run` is the single AC of the seam: an arm's Run is scored by
-    # {Compare::Run.from_timeline}, folding usage and cost off the recorded
-    # Timeline through that run's own Ledger and carrying the grade -- nothing
-    # arm-specific. Wall-time (which {Compare} does not model) rides here so the
-    # {Driver} can report it alongside the metrics Compare does fold.
+    # A graded trajectory, and the Arm seam's whole output vocabulary. A RESULT
+    # CARRIER, not a value object: frozen (Data), but it holds a live {Timeline}
+    # over a mutable {Store}, so unlike {Compare::Run} it is deliberately NOT
+    # `Ractor.shareable?` -- there is no shareability spec to satisfy here and
+    # porting one on would be a category error. Wall-time rides along because
+    # {Compare} does not model it.
     #
     # REACHABILITY CONTRACT (load-bearing for fan-out arms). `#usage`/`#cost`/
-    # `#compare_run` fold the Ledger over the UNIQUE turns REACHABLE from
+    # `#compare_run` fold the Ledger over the unique turns REACHABLE from
     # `timeline`'s head, and {Ledger} walks RENDER ancestry only (first-parent,
-    # {Timeline#ancestors}) -- causal edges are NOT priced. So the arm's TOTALS
-    # must be made correct one of two ways. (a) RENDER-REACHABILITY: every paid
-    # turn sits on the returned head's first-parent chain, which a single-thread
-    # run gets for free (one linear head reaches the whole run). (b) LABELED
-    # RE-ATTRIBUTION: a paid turn that is NOT render-reachable (a fan-out worker's
-    # fresh-root turns) has its usage re-keyed onto a reachable digest, each moved
-    # record marked `reattributed: true` and `attributed_from: <the worker head>`
-    # so the record stays honest and per-worker spend is recoverable. The
-    # fan-out synthesis is (b): the multi-parent {Event} it commits NAMES every
-    # worker head causally (`commit(causal_parents:)`), while the workers' tokens
+    # {Timeline#ancestors}) -- causal edges are NOT priced. So an arm's totals are
+    # made correct one of two ways: (a) every paid turn sits on the head's
+    # first-parent chain, which a single-thread run gets for free; or (b) a paid
+    # turn that is not render-reachable (a fan-out worker's fresh-root turns) has
+    # its usage re-keyed onto a reachable digest, each moved record marked
+    # `reattributed: true` and `attributed_from: <the worker head>` so per-worker
+    # spend stays recoverable. Fan-out synthesis is (b): the multi-parent {Event}
+    # it commits names every worker head causally, while the workers' tokens
     # re-attribute onto the reachable synthesis turn. Returning a Run whose totals
-    # silently omit a paid worker -- neither reachable nor re-attributed -- prices
-    # that worker at zero. `arm_spec` pins that unreachable turns are not priced.
+    # silently omit a paid worker prices that worker at zero.
     Run = Data.define(:arm, :timeline, :grade, :elapsed, :ledger) do
       # @return [Compare::Run] this trajectory priced and graded, in Compare's
       #   vocabulary
@@ -85,35 +64,25 @@ module Lain
         Compare::Run.from_timeline(name: arm, timeline:, ledger:, grade:)
       end
 
-      # Usage over the recorded Timeline's unique turns -- no model needed, so a
-      # tokens metric is available even where a bare-mock run cannot be priced.
+      # No model needed, so a tokens metric is available even where a bare-mock
+      # run cannot be priced.
       def usage = ledger.usage(timeline)
       def total_tokens = usage.total_tokens
 
-      # Dollar cost over the same unique reachable turns, each payment priced by
-      # ITS OWN recorded model. The sibling of {#usage}, and deliberately NOT as
-      # forgiving: {Ledger#cost_of} raises {PriceBook::UnknownModel} both for a
-      # payment that recorded no model AND for one naming a model the book has
-      # no row for, and this method lets that through.
+      # Each payment priced by ITS OWN recorded model, and deliberately not as
+      # forgiving as {#usage}: {Ledger#cost_of} raises {PriceBook::UnknownModel}
+      # both for a payment that recorded no model and for one naming a model the
+      # book has no row for, and this lets that through. Rescuing to zero would
+      # report an unpriceable arm as FREE -- on a bench whose headline metric is
+      # cost, silence is the failure mode.
       #
-      # RAISING IS RIGHT HERE AND WRONG ONE FRAME OUT, which is the distinction
-      # worth keeping. Rescuing to zero here would report an unpriceable arm as
-      # FREE -- precisely the lie {PriceBook} and {Ledger#initialize} each refuse
-      # in writing ("on a bench whose headline metric is cost, silence is the
-      # failure mode") -- so this method has no business inventing a number.
-      # But a REPORT folding this metric must not die of it either: an
-      # unpriceable model would take score, tokens and wall-time down with it,
-      # after every run was already paid for. {Driver#fold} is where that is
-      # resolved, by degrading the cost SECTION to this error's own message.
-      #
-      # The escape is a {PriceBook} built with a `fallback:`, handed to this
-      # arm's {Instrument} -- injectable by a LIBRARY caller, and by nothing on
-      # the command line: `bench arms` has no `--price-book`, deliberately
-      # (exe/lain:494 -- "a lambda and a price table are injection seams for
-      # specs, not things an argv spells"). That is exactly why the Driver's
-      # degradation had to exist rather than pointing an operator at this one.
-      #
-      # {#usage}'s promise above is unchanged either way: tokens need no model.
+      # One frame out the answer inverts: a report folding this metric must not
+      # die of it, or an unpriceable model takes score, tokens and wall-time down
+      # with it after every run was already paid for. {Driver#fold} degrades the
+      # cost SECTION to this error's own message instead. The escape is a
+      # {PriceBook} built with a `fallback:`, handed to this arm's {Instrument} --
+      # injectable by a library caller and by nothing on the command line, which
+      # is why the Driver's degradation had to exist.
       #
       # @return [BigDecimal]
       # @raise [PriceBook::UnknownModel] on a payment whose model the book
@@ -124,11 +93,9 @@ module Lain
       def score = grade.score
     end
 
-    # `handoff:` lives here and NOT on a child because {#leased} -- the base's
-    # own lease bracket -- is its only caller: an object holds what it uses. It
-    # is the one thing the seam's own lifecycle needs, which is a different claim
-    # from "every child's knobs"; how an arm MEASURES (its {Instrument}) belongs
-    # to the arms that measure, and stays out here.
+    # `handoff:` lives here and not on a child because {#leased} -- the base's own
+    # lease bracket -- is its only caller. That is the seam's own lifecycle, a
+    # different claim from "every child's knobs".
     #
     # @param name [String] what this arm is, in reports and Compare::Run names
     # @param handoff [#reclaim, #surrender] the worker-completion point: hand the
@@ -140,23 +107,19 @@ module Lain
 
     attr_reader :name
 
-    # The strategy seam every arm implements: run `task` and hand back a graded
-    # {Run}. The keywords are the whole contract -- `spawn_seam:` is the
-    # agent/child factory the topology drives, `isolation:` the injected backend a
-    # parallel arm leases per worker (the control ignores it), `grader:` scores the
-    # resulting Timeline. Splatted here BECAUSE it is abstract: the names and their
-    # meaning are the documented contract above, and a concrete arm re-declares
-    # them; a subclass that forgets fails loudly rather than silently no-oping.
+    # Splatted BECAUSE it is abstract. The keywords are the contract --
+    # `spawn_seam:` is the agent/child factory the topology drives, `isolation:`
+    # the injected backend a parallel arm leases per worker (the control ignores
+    # it), `grader:` scores the resulting Timeline -- and a concrete arm
+    # re-declares them, so a subclass that forgets fails loudly rather than
+    # silently no-oping.
     #
     # The `spawn_seam` duck is `call(journal:, **spawn_opts) -> Agent`, returning
     # a FRESH agent per call (Provider::Mock and any real provider are stateful).
-    # `journal:` is the recording channel the arm injects so it can price exactly
-    # the turns this run produced. The `**spawn_opts` tail is the widening a
-    # spawn-time router needs: {SingleThread} calls only `call(journal:)`, but
-    # an adaptive router passes `model:`/sibling-template at the spawn boundary,
-    # and a parametrized child workspace needs its own keys -- a fixed-arity
-    # `->(journal:) {}` would reject those, so the documented duck accepts the
-    # tail and a seam closes over what it does not use.
+    # The `**spawn_opts` tail is the widening a spawn-time router needs: an
+    # adaptive router passes `model:`/sibling-template at the spawn boundary and a
+    # parametrized child workspace needs its own keys, which a fixed-arity
+    # `->(journal:) {}` would reject.
     #
     # @return [Run]
     def run(*, **)
@@ -166,25 +129,20 @@ module Lain
 
     private
 
-    # The lease bracket, written ONCE. Acquire from the injected backend under
-    # this arm's own name, run the arm's work under the lease, and hand the
-    # worker back -- returning whatever the block returned, so each arm still
-    # assembles its own {Run}.
+    # The lease bracket, written ONCE, returning whatever the block returned so
+    # each arm still assembles its own {Run}.
     #
     # `#reclaim` is the SETTLED completion (handback, resolver, release) and runs
     # only when the block returned. `#surrender` in the `ensure` is what stops any
     # exception class from releasing a `--detach`ed checkout without FIRST trying
-    # to anchor the worker's commits to a ref; it also restores a parent left
-    # mid-merge, and it spawns NOTHING, because an unbounded provider round trip
+    # to anchor the worker's commits to a ref; `Async::Cancel` and `Interrupt` are
+    # `< Exception` and reach no rescue, which is exactly why the attempt lives in
+    # an `ensure`. It spawns NOTHING, because an unbounded provider round trip
     # inside an unwinding `ensure` would hold the worktree for as long as the
-    # provider hangs. `Async::Cancel` and `Interrupt` are `< Exception` and reach
-    # no rescue, which is exactly why the attempt lives in an `ensure`. Both
-    # no-op on an already-released lease, so the settled path pays one boolean.
+    # provider hangs. Both no-op on an already-released lease.
     #
-    # This is the WHOLE-RUN bracket. {OrchestratorWorker} leases per WORKER and
-    # folds each reclaim's {Isolation::WorkerHandoff::Report} into that worker's
-    # own result, so it keeps its own bracket over the same `@handoff` rather than
-    # growing a result-folding hook out here.
+    # This is the WHOLE-RUN bracket; {OrchestratorWorker} leases per WORKER and
+    # keeps its own over the same `@handoff`.
     #
     # @param isolation [#acquire] the injected backend
     # @return [Object] the block's own value
@@ -199,9 +157,8 @@ module Lain
   end
 end
 
-# After the class body: the concrete arm and the driver both reference Arm and
-# Arm::Run, so they load once the class exists (the children-after-the-class-body
-# order effect/handler.rb uses).
+# After the class body: the concrete arms and the driver reference Arm and
+# Arm::Run, so they load once the class exists.
 require_relative "arm/instrument"
 require_relative "arm/ledger_state"
 require_relative "arm/single_thread"

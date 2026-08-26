@@ -5,69 +5,16 @@ module Lain
     # The open changeset review, as the rails a human answers on see it -- what
     # {CLI::HumanReplies#bind_changeset_review} and
     # {Frontend::Neovim#bind_changeset_review} are both handed, and the only
-    # object bound to both.
+    # object bound to both. It holds neither the changeset nor the rendering:
+    # {Review::Session} is the aggregate and {Frontend::Neovim::ReviewView} holds
+    # the line -> row index a gesture resolves through, and this is the join
+    # between them and the place the baton is settled.
     #
-    # It was {Tools::RequestReview::ChangesetReview}, where five of its six
-    # messages declined because it held no view and the epic tool could not
-    # reach one. Moved here and given the view, because nothing about serving a
-    # human's gestures over a diff belongs to an epic: what the epic supplies is
-    # a BATON, one collaborator, and a review opened outside an epic passes a
-    # null one.
-    #
-    # == Two rails, and the difference is what may go wrong on each
-    #
-    # {#wrote_annotation} and {#wrote_verdict} are ANSWERED. They run on the RPC
-    # THREAD, inside the human's `:w`, and their return value IS what that write
-    # succeeds or fails with -- a refusal sentence, or nothing. So neither may
-    # park, and neither may RAISE: a raise reaches
-    # {Frontend::Neovim::RpcThread#answer}, which answers the editor and then
-    # re-raises, ending the editor session over one note. That is why the
-    # rescues below are wide (this project's own {Lain::Error} taxonomy, plus
-    # the `ArgumentError` a record's guard refuses with) rather than a list that
-    # a new refusal class one layer down could silently escape.
-    #
-    # {#open}, {#mark} and {#ask} are ACKED. They arrive on the command inbox
-    # and are served by {CLI::HumanReplies::Gestures} on the reactor thread,
-    # which asks each answer `#opened?`/`#marked?`/`#asked?` and renders
-    # `#report` when it says no. Nothing here may raise on that rail either --
-    # `Gestures` rescues only NoMethodError -- so {#mark} folds the session's
-    # refusals into the answer instead of letting them out.
-    #
-    # == A gesture that changed a row draws that row again
-    #
-    # Both ACKED gestures change what a row SAYS -- a mark moves its marker, and
-    # an open is what makes a survey read the file a row names, which is what
-    # gives the row a hunk key to mark. The human's NEXT gesture is resolved
-    # against the rendering they are still looking at, so a gesture that changed
-    # a row and drew nothing left `<CR>` followed by a mark refusing the very row
-    # the `<CR>` had just made markable. {Redraw} is the collaborator that closes
-    # that, and it is injected because the SCOPE it needs is the one fact this
-    # rail cannot ask anybody for.
-    #
-    # KNOWN LIMITATION, and it is a RACE rather than a hole. The redraw is
-    # posted, not applied: it goes inlet -> wake pipe -> RPC thread -> nvim,
-    # measured at roughly 7-20ms at {Bounds::DEFAULT_MAX_FILES}. A mark carrying
-    # the PRE-OPEN stamp -- a human who pressed `x` inside that window -- is
-    # still refused, and refused with the same {Frontend::Neovim::ReviewView::UNREAD}
-    # sentence, over a file that has demonstrably been read. Keyboard autorepeat
-    # (~30ms) clears the window; a deliberate two-key roll may not; pressing `x`
-    # again always works, because by then the row has been redrawn.
-    #
-    # It is left OPEN deliberately. Closing it means letting the view answer a
-    # gesture from the live changeset rather than from the rendering it drew,
-    # which is exactly what `b45553e` bought its way out of -- and it cannot be
-    # done half way, because a held rendering's `Row` carries `read:` frozen at
-    # render time, so the view cannot tell "still unread" from "read since"
-    # without consulting the model. A better sentence for that case would need
-    # the same consultation. Recorded so the closure is not read as stronger
-    # than it is.
-    #
-    # == What is NOT on this object, and why
-    #
-    # Neither the changeset nor the rendering. {Review::Session} is the
-    # aggregate and {Frontend::Neovim::ReviewView} holds the line -> row index a
-    # gesture resolves through; this is the join between them and the place the
-    # baton is settled, and it holds no review state of its own.
+    # Two arguments behind this rail live in `docs/review.md` under "The review
+    # handover": why {#wrote_annotation}/{#wrote_verdict} are ANSWERED and
+    # {#open}/{#mark}/{#ask} ACKED -- and what may therefore never raise on
+    # either -- and why a gesture that changed a row draws that row again,
+    # including the posted-not-applied race left open deliberately.
     class Handover
       # The baton nobody is holding: a review opened outside an epic. Genuinely
       # a no-op, and that is the test of the cut -- if this needed behaviour,
@@ -80,13 +27,11 @@ module Lain
 
       # No editor attached, so no rendering, so no row a gesture could name.
       # {Frontend::Neovim::ReviewView}'s own answer shapes, because the consumer
-      # ({CLI::HumanReplies::Gestures}) asks them of whatever comes back and a
-      # second shape here would be a second thing for it to understand.
-      #
-      # Unreachable in a headless run rather than merely unused: an `open` or a
-      # `mark` gesture is something an EDITOR sends, so a run with none can
-      # receive neither. It says what is true anyway, because a null that
-      # answers a lie is worse than a nil check.
+      # asks them of whatever comes back and a second shape here would be a
+      # second thing for it to understand. Unreachable in a headless run rather
+      # than merely unused -- an `open` or a `mark` is something an EDITOR sends
+      # -- but it says what is true anyway, because a null that answers a lie is
+      # worse than a nil check.
       module Detached
         NO_EDITOR = "no editor is attached -- nothing is rendered, so this line names no row"
 
@@ -104,21 +49,17 @@ module Lain
       end
 
       # No docent, so a question about a hunk reaches nobody. Both review
-      # commands wire a real one off the editor's surface now; what still
-      # reaches this is a review drawn somewhere with no thread pane to render
-      # an answer into -- a text surface, or the null one an epic's
-      # `implementation` stage opens headless -- and there a refusal is the
-      # honest answer rather than a docent that would spend a provider call and
-      # draw nowhere.
+      # commands wire a real one off the editor's surface; what still reaches
+      # this is a review drawn somewhere with no thread pane -- a text surface,
+      # or the null one an epic's `implementation` stage opens headless -- where
+      # a refusal is honest and a docent would spend a provider call and draw
+      # nowhere.
       #
-      # It answers that capability's SHAPE and never its class, and that is a
-      # deletability requirement rather than taste: the docent is one of this
-      # chunk's removable capabilities, and `spec/lain/review/deletability_spec.rb`
-      # fails on any file outside its row naming it in code -- as this one did.
-      # A constant resolved inside a method body would survive the delete at
-      # LOAD time and NameError at the first gesture, which is the silent half
-      # of the same coupling. {CLI::HumanReplies::NoReview::Nothing} answers its
-      # own outcome for the same reason.
+      # It answers that capability's SHAPE and never its class, which is a
+      # deletability requirement rather than taste: `spec/lain/review/deletability_spec.rb`
+      # fails on any file outside the docent's row naming it in code, as this one
+      # did. A constant resolved inside a method body would survive the delete at
+      # LOAD time and NameError at the first gesture.
       module Unattended
         NO_DOCENT = "no docent is wired to this review -- nothing was asked and nothing spent"
 
@@ -148,59 +89,43 @@ module Lain
       end
 
       # The sidebar, drawn again because a gesture changed what one of its rows
-      # says.
-      #
-      # A row's marker moves when a mark lands, and a row nothing had read
-      # carries no hunk key until an open reads the file it names -- so a
-      # gesture that changes either leaves the human looking at a rendering that
-      # no longer describes the review, and their NEXT gesture is resolved
-      # against exactly that rendering ({Frontend::Neovim::ReviewView}'s stamp is
-      # what makes it so). Without this, `<CR>` then a mark refused the row the
-      # `<CR>` had just made markable.
+      # says: a row's marker moves when a mark lands, and a row nothing had read
+      # carries no hunk key until an open reads the file it names. The human's
+      # NEXT gesture is resolved against exactly the rendering they are still
+      # looking at, so without this, `<CR>` then a mark refused the row the `<CR>`
+      # had just made markable.
       #
       # It holds the SCOPE and not the session, because the scope is the one
       # thing this rail does not already have: {Review::Session#present} takes it
-      # and forgets it (that class's doc: which grouping is on screen is view
-      # state), so it comes from whoever DREW the round -- the same caller, on
-      # the same line of wiring, that built the handover.
+      # and forgets it, so it comes from whoever DREW the round.
       #
       # NOTHING HERE RAISES, and that is the gesture rail's law rather than this
       # object's caution: {CLI::HumanReplies::Gestures} asks the gesture's own
       # `#marked?`/`#opened?` and nothing else, so a re-presentation that failed
-      # must not turn a gesture that LANDED into one the human is told failed. A
-      # ceiling ({Bounds::TooLarge}) and a grouping this source cannot answer
-      # ({Session::UnsupportedScope}) are therefore caught and answered as the
-      # sentence they carry.
+      # must not turn a gesture that LANDED into one the human is told failed.
       #
-      # BUT NOBODY READS THAT SENTENCE, and saying so is the point of this
-      # paragraph rather than an omission it is confessing. Both call sites in
-      # {Handover} discard it, because this rail has no channel for it: the only
-      # thing a gesture can say to a human is its own `#report`, and a redraw
-      # that failed did not change what the gesture did. So the value is
-      # DEFENCE -- it exists so a raise cannot reach the fiber -- and not a
-      # message. It is also unreachable today: `RenderInlet#set_review` is
-      # refusable, so a dead editor answers a String rather than raising, and
-      # {Session#widen} (the one thing that could move a bounded round past its
-      # ceiling mid-session) has no `lib/` caller. If a redraw failure ever has
-      # to reach a human, the route is the review's own notice rail
-      # (`Surface#refuse` -> `review_refused`), which means giving this object
-      # the surface; that is a change, not a tidy-up.
+      # BUT NOBODY READS THAT SENTENCE, and saying so is the point rather than an
+      # omission being confessed. Both call sites discard it, because this rail
+      # has no channel for it: the only thing a gesture can say to a human is its
+      # own `#report`, and a redraw that failed did not change what the gesture
+      # did. So the value is DEFENCE -- it exists so a raise cannot reach the
+      # fiber -- and not a message. It is also unreachable today:
+      # `RenderInlet#set_review` is refusable, and {Session#widen} has no `lib/`
+      # caller. Routing a redraw failure to a human means giving this object the
+      # surface, which is a change rather than a tidy-up.
       #
       # IT IS O(CHANGESET), NOT O(ROW). {Session#present} rebuilds the whole
-      # rendering and its `keys_by_path` walks the whole changeset, so the cost
-      # a gesture now pays scales with the SURVEY rather than with the one row
-      # that changed. Measured under perception at {Bounds::DEFAULT_MAX_FILES}
-      # (a mark at 300 files goes 62.5ms -> 80.0ms, of which the pre-existing
-      # `keys_by_path` rebuild is 62.5); the lever if it ever stops being under
-      # perception is that memo, deliberately removed in `c988512f`, and not
-      # this redraw.
+      # rendering and its `keys_by_path` walks the whole changeset, so the cost a
+      # gesture pays scales with the SURVEY rather than the one row that changed.
+      # Measured under perception at {Bounds::DEFAULT_MAX_FILES} (a mark at 300
+      # files goes 62.5ms -> 80.0ms, of which the pre-existing `keys_by_path`
+      # rebuild is 62.5); the lever, if it ever stops being under perception, is
+      # that memo and not this redraw.
       #
-      # THE SCOPE IS FROZEN AT WIRING TIME, which is correct while a round is
-      # drawn at one grouping for its whole life -- verified: nothing toggles
-      # scope from the editor, and a second `/review` or `/survey` opens a new
-      # round with a new handover. If a scope-toggle gesture ever ships, this is
-      # where it bites: the next gesture after the toggle would silently snap the
-      # sidebar back to the scope wired here.
+      # THE SCOPE IS FROZEN AT WIRING TIME, correct while a round is drawn at one
+      # grouping for its whole life -- verified: nothing toggles scope from the
+      # editor, and a second `/review` or `/survey` opens a new round. If a
+      # scope-toggle gesture ever ships, this is where it bites.
       class Redraw
         # @param scope [Symbol, String] one of {Session::SCOPES}, resolved HERE
         #   so a scope nobody declared refuses where it was wired rather than at
@@ -222,33 +147,30 @@ module Lain
         end
       end
 
-      # A mark that reached the session for some of a row's hunks and was
-      # refused for the rest. {Surface::Neovim::PARTLY_MARKED}'s sentence and
-      # its reason: "nothing happened" and "half of it happened" need different
-      # things from the human.
+      # A mark that reached the session for some of a row's hunks and was refused
+      # for the rest. {Surface::Neovim::PARTLY_MARKED}'s sentence and its reason:
+      # "nothing happened" and "half of it happened" need different things from
+      # the human.
       #
       # `%<refusal>s` is LAST, and that ordering is the rule
       # `spec/refusal_width_discipline_spec.rb` states and cannot assert: the
       # embedded sentence is another component's, of a length no width bar
       # reaches, so lain's own words go first and a shortened echo truncates the
       # quotation rather than the count. This row is the ONE rail sentence known
-      # to exceed that spec's bar in service -- `%<refusal>s` is never empty
-      # here -- so the ordering is the whole of the mitigation available.
+      # to exceed that spec's bar in service, so the ordering is the whole of the
+      # mitigation available.
       PARTLY_MARKED = "marked %<landed>d of %<total>d hunks on that row; the rest were refused -- %<refusal>s"
 
-      # A mark that reached the session for EVERY hunk a row names -- the
-      # counterpart {PARTLY_MARKED} implies but did not have until now.
-      # `Surface::Neovim#mark`'s per-key notice cannot speak for a row: a hunk
-      # key is a content digest with no path in it, and Session#mark's
-      # per-call acknowledgement is a port law shared with Surface::Text, so it
-      # cannot go silent for a batch and speak once at the end either. So the
-      # row's own acknowledgement is composed HERE, from the one thing that
-      # already names it: `%<path>s` carries
-      # {Frontend::Neovim::ReviewView::Marked#report} verbatim (already "N
-      # hunk(s) of <path>", from the SAME view that resolved the row, not a
-      # bare path -- see {#recorded}), quoted LAST for {PARTLY_MARKED}'s
-      # reason: lain's own words first, so a narrow pane truncates the
-      # quotation and not the instruction.
+      # A mark that reached the session for EVERY hunk a row names.
+      # `Surface::Neovim#mark`'s per-key notice cannot speak for a row -- a hunk
+      # key is a content digest with no path in it -- and `Session#mark`'s
+      # per-call acknowledgement is a port law shared with `Surface::Text`, so it
+      # cannot go silent for a batch and speak once at the end either. The row's
+      # own acknowledgement is therefore composed HERE: `%<path>s` carries
+      # {Frontend::Neovim::ReviewView::Marked#report} verbatim (already
+      # "N hunk(s) of <path>", from the SAME view that resolved the row), quoted
+      # LAST for {PARTLY_MARKED}'s reason -- lain's own words first, so a narrow
+      # pane truncates the quotation and not the instruction.
       MARKED_ROW = "marked %<state>s: %<path>s"
 
       # @param session [Review::Session] the aggregate every gesture records
@@ -280,28 +202,21 @@ module Lain
       # The verdict is submitted BEFORE the baton is settled, so the fiber that
       # settling wakes cannot observe a closed review with no judgement on it --
       # and a policy that refuses ({Verdict::Policy::Incomplete}) leaves the
-      # review open, which is what lets the human mark the rest and answer
-      # again.
+      # review open, which is what lets the human mark the rest and answer again.
       #
-      # First-answer-wins ({Approval::Queue::Pending#decide}'s rule) is not
-      # implemented with a flag here: {Session#submit} already refuses a second
-      # verdict over one round and {Epic::Review#settle} already refuses a
-      # generation that is no longer open. A flag beside those would be a second
-      # opinion free to disagree with them; what is needed is only that the
-      # refusal comes back as a SENTENCE, which is what the rescue does.
+      # First-answer-wins is not implemented with a flag here: {Session#submit}
+      # already refuses a second verdict over one round and {Epic::Review#settle}
+      # already refuses a generation that is no longer open. A flag beside those
+      # would be a second opinion free to disagree with them.
       #
       # TWO UNRELATED `settle`s MEET IN THESE FOUR LINES, so read them apart.
       # `@session.submit` acknowledges the verdict to the human by way of
-      # `Surface#settle` -- one word, out to the editor. `@baton.settle` hands
-      # the round back to whoever is parked on it -- no word, no argument, and
-      # nothing to do with a surface. Their arities differ so nothing can
-      # mis-dispatch; they are named alike because a review settles in both
-      # senses at once, which is a fact about the moment and not a shared
-      # mechanism.
-      #
-      # The first of the two cannot fail this call: {Session#submit} makes the
-      # acknowledgement best effort precisely because the rescue below would
-      # otherwise turn a lost message into a refusal of a durable verdict.
+      # `Surface#settle` -- one word, out to the editor. `@baton.settle` hands the
+      # round back to whoever is parked on it -- no word, no argument, nothing to
+      # do with a surface. Their arities differ so nothing can mis-dispatch. The
+      # first cannot fail this call: {Session#submit} makes the acknowledgement
+      # best effort precisely because the rescue below would otherwise turn a lost
+      # message into a refusal of a durable verdict.
       #
       # @param verdict [String] a member of {Review::VERDICTS}
       # @return [String, nil] a refusal in words, or nothing when it stood
@@ -317,48 +232,39 @@ module Lain
       #
       # `drifted` is FORWARDED and never computed. Drift is the anchor text
       # against the line the number now names, and that line lives in the editor
-      # buffer -- neither the diff this session holds nor anything reachable
-      # from here. The measurement is taken where the buffer is, in the lua half
-      # at settle time, and this rail carries it. {AnnotationPlaced} gives it no
-      # default for exactly that reason: a note nobody measured must not be
-      # recorded as one that did not drift.
+      # buffer -- neither the diff this session holds nor anything reachable from
+      # here. The measurement is taken where the buffer is, in the lua half at
+      # settle time. {AnnotationPlaced} gives it no default for that reason: a
+      # note nobody measured must not be recorded as one that did not drift.
       #
-      # The note's SHAPE was already judged at the boundary ({ReviewWrite}) --
-      # every key present, side and kind closed, path and text non-blank, the
-      # line inside {Anchor}'s own domain -- so what is left here is whether
-      # THIS review can take it, which only the session holding the changeset
-      # knows.
+      # The note's SHAPE was already judged at the boundary ({ReviewWrite}), so
+      # what is left here is whether THIS review can take it, which only the
+      # session holding the changeset knows.
       #
-      # THE NOTE IS WHAT OPENS THE THREAD, which is why the docent is told
-      # about one. A thread pane exists at an anchor only once something has
-      # posted that anchor's id, and a note is the only thing that ever does --
-      # `:LainThread` merely reveals a buffer the note already created. So a
-      # docent that was not told would answer every question with
-      # {Docent::NO_THREAD} while being perfectly well wired, which is the
-      # not-actually-reachable shape one layer below the one nobody wiring a
-      # docent went looking for.
+      # THE NOTE IS WHAT OPENS THE THREAD, which is why the docent is told about
+      # one. A thread pane exists at an anchor only once something has posted that
+      # anchor's id, and a note is the only thing that ever does -- `:LainThread`
+      # merely reveals a buffer the note already created. So a docent that was not
+      # told would answer every question with {Docent::NO_THREAD} while being
+      # perfectly well wired.
       #
-      # AFTER the session, and {Docent#hold} rather than `#open`, and those two
-      # facts are the same correctness rather than two preferences. The docent is
-      # told only about a note that LANDED -- a kind the session refuses journals
-      # nothing, and a thread opened over it would invite a question at an anchor
-      # no note is recorded at, which the docent would answer with a real
-      # provider call. And `hold` does not draw, so the note's own render is the
-      # only payload this rail posts: the thread carries one payload per anchor,
-      # and a docent drawing its own empty conversation beside the note would put
-      # write order in charge of which the human reads.
+      # AFTER the session, and {Docent#hold} rather than `#open`, and those are
+      # the same correctness rather than two preferences. The docent is told only
+      # about a note that LANDED -- a kind the session refuses journals nothing,
+      # and a thread opened over it would invite a question at an anchor no note
+      # is recorded at, which the docent would answer with a real provider call.
+      # And `hold` does not draw, so the note's own render is the only payload
+      # this rail posts: the thread carries one payload per anchor.
       #
       # ONE KNOWN LOSS REMAINS, recorded rather than smoothed over, and it runs
       # the other way: a SECOND note at a line whose thread has already been
       # answered mints a second anchor (an id is per-{Anchor}, not per position),
-      # so the pane the cursor finds on that line becomes the note's and the
-      # answered thread is no longer the one on screen. Nothing is destroyed --
-      # both threads are held, the exchange is still reachable by its own id, and
-      # `docent_answered` is on the record for {Docent#replay} -- but the human
-      # has to reopen it. Closing that means an anchor identified by its POSITION
-      # rather than by a fresh uuid, which is a change to {Anchor}'s identity and
-      # not a line of wiring. There is an example pinning it, so the trade cannot
-      # move in silence.
+      # so the pane the cursor finds becomes the note's and the answered thread is
+      # no longer on screen. Nothing is destroyed -- both threads are held and
+      # `docent_answered` is on the record -- but the human has to reopen it.
+      # Closing it means an anchor identified by POSITION rather than a fresh
+      # uuid, a change to {Anchor}'s identity. An example pins it, so the trade
+      # cannot move in silence.
       #
       # @param note [Hash{String=>Object}] {ReviewWrite::KEYS}, normalized
       # @return [String, nil] a refusal in words, or nothing when it landed
@@ -372,16 +278,14 @@ module Lain
       end
 
       # The sidebar's `<CR>`: open the file this row names, at its first
-      # reachable hunk. Straight through to the view, which is the only object
-      # that can say what a row means -- and which refuses in words when the
-      # stamp is stale, when the row names no file, or when nothing is wired to
-      # open one.
+      # reachable hunk. Straight through to the view, the only object that can
+      # say what a row means.
       #
       # The sidebar is drawn again after one that opened, because opening a row
       # is what makes a survey READ the file it names -- and a row nothing has
       # read carries no hunk key, so the rendering the human keeps looking at
-      # would go on refusing the mark this gesture just made possible. Nothing
-      # is drawn again for a refusal, which changed no row.
+      # would go on refusing the mark this gesture just made possible. Nothing is
+      # drawn again for a refusal, which changed no row.
       #
       # @param line [Integer] 1-based, as nvim's cursor reports it
       # @param generation [Integer, nil] the stamp on the buffer it came from
@@ -396,18 +300,15 @@ module Lain
       # one of them. A row IS a file, and its marker already means the whole
       # file's tri-state.
       #
-      # NOT {Surface::Neovim#marked_at}, though the shape is that method's, and
-      # the difference is not tidiness: that one folds refusals its session
-      # answers as VALUES ({Surface::Neovim::Unbound} does), while a real
-      # {Review::Session} RAISES them -- so calling it here would put an
-      # exception on a rail whose consumer rescues only NoMethodError. The fold
-      # below is over raises for that reason.
+      # NOT {Surface::Neovim#marked_at}, though the shape is that method's: that
+      # one folds refusals its session answers as VALUES, while a real
+      # {Review::Session} RAISES them -- so calling it here would put an exception
+      # on a rail whose consumer rescues only NoMethodError.
       #
       # The sidebar is drawn again for every gesture that REACHED the session,
-      # not only for one that landed whole: a row the session took half of has
-      # moved to partly marked, and a human told "nothing happened" over a
-      # sidebar still reading unreviewed has been told two untrue things rather
-      # than one. A gesture the view refused reached nothing and changed no row.
+      # not only one that landed whole: a row the session took half of has moved
+      # to partly marked, and a human told "nothing happened" over a sidebar
+      # still reading unreviewed has been told two untrue things rather than one.
       #
       # @param line [Integer] 1-based
       # @param state [String, Symbol] one of `Review::MARK_STATES`
@@ -440,19 +341,17 @@ module Lain
       end
 
       # A refusal EMPTIES `hunk_keys`, because `#marked?` answers the human's
-      # question -- did this gesture land -- and the answer to that is no. What
-      # did reach the session is not thrown away, it is NAMED: a session that
-      # takes one key and refuses the next leaves the row partly marked, and
-      # saying so is what keeps that visible instead of silent.
+      # question -- did this gesture land. What did reach the session is NAMED
+      # instead: a session that takes one key and refuses the next leaves the row
+      # partly marked.
       #
       # {Review::Session#mark_row}, not N calls to {Review::Session#mark}: the
       # per-key surface notice those calls would each send is what named a
-      # content digest instead of a row -- see {MARKED_ROW}'s own doc. This
-      # method composes the row's ONE acknowledgement itself, from
-      # `resolved.report` (already the row's name, from the same view that
-      # resolved `resolved.hunk_keys`) plus the state the gesture carried, and
-      # hands back a NEW {Frontend::Neovim::ReviewView::Marked} carrying it --
-      # `resolved` itself is never sent to a human; only its fields are read.
+      # content digest instead of a row (see {MARKED_ROW}). This composes the
+      # row's ONE acknowledgement from `resolved.report` -- already the row's
+      # name, from the same view that resolved its keys -- and hands back a NEW
+      # {Frontend::Neovim::ReviewView::Marked}; `resolved` itself is never sent to
+      # a human.
       def recorded(resolved, state)
         landed = 0
         @session.mark_row(resolved.hunk_keys, state) { landed += 1 }

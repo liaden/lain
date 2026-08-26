@@ -6,29 +6,23 @@ module Lain
 
     # A path the walk found and will not hand to the corpus, and why.
     #
-    # Its own value rather than a bare path, because "somehow" is four answers
-    # in four places: the corpus decides what a withheld path does to `#files`,
-    # two surfaces render the disclosure, and the accretion gesture refuses an
-    # added denied path with a report. Each needs the REASON, and a Symbol
-    # nobody can typo is what keeps those four readings the same one.
+    # Its own value rather than a bare path, because four places read the REASON:
+    # the corpus decides what a withheld path does to `#files`, two surfaces
+    # render the disclosure, and the accretion gesture refuses an added denied
+    # path with a report. A Symbol nobody can typo keeps those four readings one.
     #
-    # WITHHELD IS NOT IGNORED. An ignored path -- `tmp/`, a vendored tree, a
-    # build artifact -- is simply not listed and never appears here: withholding
-    # means found-and-not-handed-over, with a reason worth telling the human,
-    # and a disclosure that named every gitignored file would bury the entries
-    # that matter.
+    # WITHHELD IS NOT IGNORED. An ignored path is simply not listed and never
+    # appears here; withholding means found-and-not-handed-over, and a disclosure
+    # naming every gitignored file would bury the entries that matter.
     #
-    # Three reasons and no fourth. A DENIED path is off limits by name, ahead of
-    # any approval, and denial is not approvable -- so it can never enter, and
-    # the classifier's own explanation is carried verbatim rather than
-    # paraphrased. BINARY content is withheld because a review of bytes nobody
-    # can read is not a review. An OUTSIDE path is a symbolic link resolving
-    # out of the surveyed tree: the bytes are real and readable, but the human
-    # pointed at a directory, and quietly reviewing what a link reaches beyond
-    # it is a scope nobody agreed to. A GATED path is not here at all: it enters
-    # masked to its released regions ({Projection}), because withholding it
-    # wholesale would make a survey stricter than the read path over the same
-    # file.
+    # Three reasons and no fourth. DENIED is off limits by name, ahead of any
+    # approval and not approvable, so the classifier's own explanation is carried
+    # verbatim. BINARY is withheld because a review of bytes nobody can read is
+    # not a review. OUTSIDE is a symbolic link resolving out of the surveyed tree:
+    # the bytes are readable, but the human pointed at a directory. A GATED path
+    # is not here at all -- it enters masked to its released regions
+    # ({Projection}), because withholding it wholesale would make a survey
+    # stricter than the read path over the same file.
     class Withheld
       # Checked, not coerced, for {Sensitivity::Verdict}'s reason: a wrong value
       # answering in silence is what an admission boundary must not do.

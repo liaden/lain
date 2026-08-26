@@ -4,51 +4,42 @@ module Lain
   # The vocabulary lain uses to say, in `lib/`, which of its operations are
   # which algebraic structures -- and which deliberately are not.
   #
-  # {ContentAddressed} is the model: a module that names a property, is
-  # `include`d by the values that have it, carries its reasoning in its own doc
-  # comment, and is separately spec'd. This generalizes that move to the
-  # structures whose laws the shared example groups already property-test.
-  #
   # == Why a declaration rather than a comment
   #
   # "Usage is a commutative monoid" used to be evidenced by a `#+` method, a
-  # `ZERO` constant, and an `include_examples` call in a spec file. Nothing in
-  # `lib/` said it, so a reader of usage.rb had to notice the shape and then go
-  # looking for the proof. A declaration puts the structure where the structure
-  # lives, and makes the set of claims *enumerable* -- which is what lets one
-  # spec walk the registry and hold every claim to its laws.
+  # `ZERO` constant and an `include_examples` call in a spec. A declaration puts
+  # the structure where the structure lives and makes the set of claims
+  # *enumerable*, which is what lets one spec walk the registry and hold every
+  # claim to its laws.
   #
   # == Why per-operation and not per-class
   #
-  # Load-bearing, not fastidious. {Timeline} has three meet-ish operations and
-  # only two of them are semilattices: `#meet` and `#dominator_meet` obey the
-  # laws, while `#causal_meets` explicitly does not -- a criss-cross fan-in
-  # leaves incomparable maximal common ancestors, so there is no unique greatest
-  # lower bound. `include MeetSemilattice` on the class would therefore be a
-  # lie. For five of the six modules, including one grants the *vocabulary* and
-  # asserts nothing: `is_a?` is NOT the classification, the registry is.
-  # {Elementwise} is the exception, and says so in its own doc.
+  # {Timeline} has three meet-ish operations and only two of them are
+  # semilattices: `#meet` and `#dominator_meet` obey the laws, while
+  # `#causal_meets` does not -- a criss-cross fan-in leaves incomparable maximal
+  # common ancestors, so there is no unique greatest lower bound. `include
+  # MeetSemilattice` on the class would be a lie. For five of the six modules,
+  # including one grants the *vocabulary* and asserts nothing: `is_a?` is NOT
+  # the classification, the registry is. {Elementwise} is the exception.
   #
   # == Why every structure also has a refutation
   #
-  # A negative that lives only in a code comment rots silently. `#causal_meets`
-  # is not a semilattice for a reason worth stating once, next to the operation,
-  # in a form a spec can walk -- so the refutation is a first-class entry with a
-  # mandatory reason, and an unexplained one is refused.
+  # A negative that lives only in a code comment rots silently. So a refutation
+  # is a first-class entry with a mandatory reason, in a form a spec can walk,
+  # and an unexplained one is refused.
   #
   # == Why every verb asks the latch first
   #
   # Every verb opens with {Registry#refuse_sealed}, uniformly, so "a claim is a
-  # load-time move" is one rule a reader checks by reading rather than a
-  # judgement made per verb. {Elementwise} is the one with something to lose --
-  # it generates a method before it files -- but a family of verbs where only
-  # some carry the guard invites the next verb to be the one that forgets.
-  # ({Elementwise.not_elementwise} is the exception, and files nothing on any
+  # load-time move" is one rule a reader checks by reading. {Elementwise} is the
+  # one with something to lose -- it generates a method before it files -- but a
+  # family of verbs where only some carry the guard invites the next verb to be
+  # the one that forgets. ({Elementwise.not_elementwise} files nothing on any
   # registry: it always raises {Contradiction}.)
   #
-  # The modules are stateless: they add class-level verbs and (for {Elementwise}
-  # and {Pure}) instance behavior, never an ivar, so including one cannot
-  # disturb an includer's deep freeze or its Ractor shareability.
+  # The modules are stateless -- class-level verbs and, for {Elementwise} and
+  # {Pure}, instance behavior, never an ivar -- so including one cannot disturb
+  # an includer's deep freeze or its Ractor shareability.
   module Algebra
     # The structures lain names, and the whole list. Fixed on purpose: group,
     # ring, functor and category are absent because nothing here consumes them,
@@ -91,15 +82,14 @@ module Lain
     # A unit that cannot be named where its declaration is written, deferred to
     # first read.
     #
-    # This exists because the alternative is a guess. A declaration routinely
-    # runs before its own unit exists -- {Context::Combinator}'s unit is
-    # {Context::Identity}, an INSTANCE built after the class body closes -- so
-    # laziness is unavoidable; what is avoidable is *inferring* it. Both duck
-    # tests fail on real units here: `respond_to?(:call)` would invoke
-    # Context::Identity, which answers `#call(messages)`, and an arity-0 rule
-    # would invoke a unit that legitimately is a thunk while silently storing a
-    # mis-shaped `->(x) { ... }` as the unit itself. The wrapper makes intent
-    # explicit, which is what lets a bare Proc be refused outright.
+    # Laziness is unavoidable -- {Context::Combinator}'s unit is
+    # {Context::Identity}, an INSTANCE built after the class body closes -- but
+    # *inferring* it is not. Both duck tests fail on real units here:
+    # `respond_to?(:call)` would invoke Context::Identity, which answers
+    # `#call(messages)`, and an arity-0 rule would invoke a unit that
+    # legitimately is a thunk while silently storing a mis-shaped
+    # `->(x) { ... }` as the unit itself. An explicit wrapper is what lets a
+    # bare Proc be refused outright.
     Later = Data.define(:block) do
       def call = block.call
     end
@@ -116,10 +106,9 @@ module Lain
       subject.method_defined?(operation) || subject.private_method_defined?(operation)
     end
 
-    # One structure on one operation of one class.
-    #
-    # Four fields are structure-specific and nil everywhere else, which is the
-    # honest shape: what evidence a claim carries depends on what it claims.
+    # One structure on one operation of one class. Four fields are
+    # structure-specific and nil everywhere else: what evidence a claim carries
+    # depends on what it claims.
     #
     # * +identity+   the unit, for +:monoid+ and +:commutative_monoid+.
     # * +bottom+     a short PROSE description, for +:meet_semilattice+.
@@ -154,11 +143,9 @@ module Lain
     #
     # Enumerable, and populated at load time by the declarations in `lib/`, so a
     # spec can walk it directly -- no ObjectSpace sweep, no constant walk. That
-    # walk is the point: a marker nothing reads is decoration.
-    #
-    # Populated at load time and then CLOSED, by {#seal}: the process-wide one
-    # is a global that a whole suite reads, and a claim filed after loading is
-    # a mutation of it rather than a declaration about `lib/`.
+    # walk is the point: a marker nothing reads is decoration. Then CLOSED, by
+    # {#seal}, because the process-wide one is a global a whole suite reads and
+    # a claim filed after loading mutates it rather than describing `lib/`.
     class Registry
       include Enumerable
 
@@ -201,23 +188,17 @@ module Lain
       end
 
       # Close the registry. `lain.rb` calls this on the process-wide one once
-      # the last unit has loaded, by which point every claim lain makes has
-      # been filed.
+      # the last unit has loaded.
       #
       # The freeze IS the seal -- one state with one representation, so
-      # {#sealed?} and `frozen?` cannot come to disagree. Freezing `@entries`
-      # is the backstop under {#refuse_sealed}, and it covers registries closed
-      # THROUGH HERE: a bare `.freeze` also reads as sealed, and there the
-      # refusal is the whole of the guarantee.
+      # {#sealed?} and `frozen?` cannot come to disagree. A bare `.freeze` also
+      # reads as sealed, and there {#refuse_sealed} is the whole guarantee.
       #
-      # Shallow on purpose, and the honest statement of what that buys is that
-      # a sealed registry is as frozen as what it was HANDED. Its entries are
-      # frozen Data, but their fields are the caller's objects -- an identity
-      # ({Usage::ZERO}, a {Later} around a block) and, where a reader will feel
-      # it sooner, the `bottom:` and `reason:` PROSE a report prints. Every one
-      # in the tree is a frozen literal, so nothing here moves; a mutable
-      # String handed in would still be the author's to mutate, and freezing an
-      # object the registry does not own would reach outside its own state.
+      # Shallow on purpose: a sealed registry is as frozen as what it was
+      # HANDED. Entries are frozen Data, but their fields are the caller's
+      # objects -- identities, and the `bottom:`/`reason:` prose a report
+      # prints. Every one in the tree is a frozen literal; freezing an object
+      # the registry does not own would reach outside its own state.
       #
       # Idempotent, because sealing states a condition rather than making a
       # change.
@@ -230,13 +211,11 @@ module Lain
 
       # Public, and asked by the declaration verbs BEFORE they touch their
       # includer: {Elementwise} generates the whole-span map and only then
-      # files, so a refusal that arrived from {#declare} alone would leave that
-      # method behind on a class whose claim was refused. One check, reached
-      # from the declaring side and the registry side both -- the same
-      # invariant, which is why it is not two.
+      # files, so a refusal arriving from {#declare} alone would leave that
+      # method behind on a class whose claim was refused.
       #
       # It takes a subject and an operation rather than an entry, unlike the
-      # refusals below it: a verb asks before there is an entry to ask about.
+      # refusals below it, because a verb asks before there is an entry.
       def refuse_sealed(subject:, operation:)
         return unless sealed?
 
@@ -320,12 +299,11 @@ module Lain
       def claim(entry) = [entry.subject, entry.operation, entry.structure]
     end
 
-    # The process-wide registry, which is what the law walk enumerates. Module
-    # state, deliberately and in exactly one place: the declarations are made by
-    # class bodies as they load, so there is nowhere earlier to hold them, and
-    # `lain.rb` seals it once the last of them has. Every verb takes an
-    # injectable `registry:` so a spec can declare against a scratch one
-    # instead -- an injected registry is nobody else's, so nothing seals it.
+    # The process-wide registry the law walk enumerates. Module state,
+    # deliberately and in exactly one place: declarations are made by class
+    # bodies as they load, so there is nowhere earlier to hold them. Every verb
+    # takes an injectable `registry:` so a spec can declare against a scratch
+    # one -- an injected registry is nobody else's, so nothing seals it.
     def self.registry = @registry ||= Registry.new
   end
 end

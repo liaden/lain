@@ -3,20 +3,19 @@
 module Lain
   module CLI
     module Command
-      # `/rewind [N|digest]`: move the live session backward with zero
-      # model turns. The machine moves in place through the already-public
-      # {Agent#rewind}; the move lands in the session record as an additive
-      # `rewound` record ({Chronicle#rewound} -> {SessionRecord::Scribe#rewound}),
-      # so the file's fold follows the checkout and the session stays loadable.
-      # Every refusal happens BEFORE anything moves or lands: a bad target
-      # changes nothing -- not the machine, not the file.
+      # `/rewind [N|digest]`: move the live session backward with zero model
+      # turns, through the already-public {Agent#rewind}. The move lands in the
+      # session record as an additive `rewound` record, so the file's fold
+      # follows the checkout and the session stays loadable. Every refusal
+      # happens BEFORE anything moves or lands: a bad target changes nothing --
+      # not the machine, not the file.
       #
       # The digest form resolves a prefix against THIS session's own render
-      # chain, under the ForkPoint rules: hex-only below a full "blake3:"
-      # scheme (a partial scheme spelling would match every digest through the
-      # scheme string), unique or refuse. It cannot reuse {ForkPoint} itself,
-      # which resolves against a FILE's recorded turns -- here the authority
-      # is the live Timeline.
+      # chain, under the ForkPoint rules: hex-only below a full "blake3:" scheme
+      # (a partial scheme spelling would match every digest through the scheme
+      # string), unique or refuse. It cannot reuse {ForkPoint} itself, which
+      # resolves against a FILE's recorded turns -- here the authority is the
+      # live Timeline.
       class Rewind
         class Refusal < Error; end
 
@@ -35,23 +34,19 @@ module Lain
 
         private
 
-        # Refusals all happened above, so from here the move is committed.
-        # Catch up FIRST (any turn the record has not seen yet lands before
-        # the move is announced), then journal BEFORE the machine moves:
-        # {Timeline#rewind} on a validated count cannot fail, so nothing can
-        # raise between the record landing and the machine moving -- a
-        # chronicle failure here leaves the machine unmoved, never a
-        # machine-at-A/record-at-H wedge every later catch_up would report as
-        # Diverged, far from the actual bug.
+        # Refusals all happened above, so from here the move is committed. Catch
+        # up FIRST, then journal BEFORE the machine moves: {Timeline#rewind} on a
+        # validated count cannot fail, so nothing can raise between the record
+        # landing and the machine moving -- a chronicle failure here leaves the
+        # machine unmoved, never a machine-at-A/record-at-H wedge every later
+        # catch_up would report as Diverged, far from the actual bug.
         #
         # `env.chronicle.catch_up(from)`, deliberately not {Env#checkpoint}:
-        # `from` is THIS rewind's pre-move head, captured once in {#call}.
-        # `#checkpoint` re-reads `agent.timeline` live on every call, which is
-        # right where "the timeline to journal" and "the current timeline"
-        # are the same fact -- but this command's whole job is to change what
-        # "current" means, so a live re-read here is one statement-reorder
-        # away from catching up on the ALREADY-SHORTENED chain instead of the
-        # one being moved away from.
+        # `from` is THIS rewind's pre-move head, captured once in {#call}, while
+        # `#checkpoint` re-reads `agent.timeline` live. This command's whole job
+        # is to change what "current" means, so a live re-read here is one
+        # statement-reorder away from catching up on the ALREADY-SHORTENED chain
+        # instead of the one being moved away from.
         def moved(env, count, from:)
           env.chronicle.catch_up(from)
           to = from.rewind(count)
@@ -60,9 +55,8 @@ module Lain
           rendered(count, from:, to:)
         end
 
-        # The signed match is deliberate: "-1" must reach the RANGE refusal,
-        # not fall through to the digest path and refuse as an unmatched
-        # prefix (panel NIT).
+        # The signed match is deliberate: "-1" must reach the RANGE refusal, not
+        # fall through to the digest path and refuse as an unmatched prefix.
         def count_for(argument, timeline)
           raise Refusal, "nothing to rewind: this session has no committed turns" if timeline.empty?
           return counted(argument, timeline) if argument.empty? || argument.match?(/\A-?\d+\z/)
@@ -103,23 +97,17 @@ module Lain
 
         # Shares {Event.pending_tool_use?} with the session-loading doors (see
         # {CLI::Resume::MidTool}): a target that is an assistant tool_use turn
-        # still awaiting its results must not become the head -- the next ask
-        # would render a dangling tool_use, which the real API rejects. That
-        # reason stands on its own and is why this guard is here.
+        # still awaiting its results must not become the head, because the next
+        # ask would render a dangling tool_use, which the real API rejects.
         #
-        # What it no longer shares is the REMEDY, and the difference is not
-        # drift. A loaded session now repairs this shape instead of
-        # refusing it, so the older second reason given here -- that the
-        # journaled file would refuse to resume through the very guard this
-        # command skipped -- is no longer true; it would repair and resume.
-        # This command is unaffected because it moves a LIVE head and projects
-        # nothing: the torn turn would simply BE the head, with no load to
-        # answer it. A live head is also where the shape stops being one fact
-        # (a call may still be in flight -- the distinction
-        # {CLI::Command::Fork#anchor!} reads off `env.replies.pending?`), which
-        # is why the live doors are the conservative ones.
-        #
-        # Both forms funnel through the count, so both meet the guard.
+        # A LOADED session now repairs that shape instead of refusing it. This
+        # command is unaffected because it moves a LIVE head and projects
+        # nothing: the torn turn would simply BE the head, with no load to answer
+        # it -- and a live head is where the shape stops being one fact, since a
+        # call may still be in flight ({CLI::Command::Fork#anchor!} reads that
+        # off `env.replies.pending?`), which is why the live doors are the
+        # conservative ones. Both forms funnel through the count, so both meet
+        # the guard.
         def settled_target!(count, timeline)
           heads = timeline.ancestors.to_a
           return unless Event.pending_tool_use?(heads[count])
@@ -129,10 +117,9 @@ module Lain
                          "#{nearest_valid(count, heads).join(", ")})"
         end
 
-        # The valid counts adjacent to the refused one -- consistent with the
-        # range message's shape. Never empty: distance `length` is the empty
-        # session, which no tool_use can occupy. `heads[heads.length]` is
-        # nil (one past the end), which is exactly what
+        # The valid counts adjacent to the refused one. Never empty: distance
+        # `length` is the empty session, which no tool_use can occupy, and
+        # `heads[heads.length]` is nil -- exactly what
         # {Event.pending_tool_use?}'s nil guard exists for.
         def nearest_valid(count, heads)
           valid = (1..heads.length).reject { |candidate| Event.pending_tool_use?(heads[candidate]) }

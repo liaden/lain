@@ -9,12 +9,11 @@ module Lain
     # The `APIError` / `APIStatusError` family every backend over the vendored
     # {Provider::HTTP} transport raises, declared once.
     #
-    # Four classes need it -- {Provider::Anthropic}, {Provider::Bedrock},
-    # {Provider::Ollama}, {Embedder::Ollama} -- and all four need the SAME two
-    # classes and the SAME wrapping rule: a vendored transport error carrying a
-    # status becomes an `APIStatusError` with that status lifted out (so callers
-    # branch on it without unwrapping `#cause`), anything else becomes a plain
-    # `APIError`. The original is always preserved as `#cause`.
+    # All four includers need the SAME two classes and the SAME rule: a
+    # vendored transport error carrying a status becomes an `APIStatusError`
+    # with that status lifted out (so callers branch on it without unwrapping
+    # `#cause`), anything else becomes a plain `APIError`. The original is
+    # always preserved as `#cause`.
     #
     # == Why the constants stay nested, and why this is a factory
     #
@@ -22,8 +21,7 @@ module Lain
     # Provider::Ollama::APIStatusError` means "the local chat backend failed",
     # not "some HTTP backend failed" -- one shared pair would make every
     # `rescue` catch all four at once, and a bench arm's error attribution would
-    # stop meaning anything. So the `included` block const_sets the pair into
-    # the includer, where each class keeps its own nested identity.
+    # stop meaning anything.
     #
     # The base differs too: the three Providers root at {Lain::Error}, while
     # {Embedder::Ollama} must root at {Embedder::Error} so `rescue
@@ -34,13 +32,11 @@ module Lain
     #
     # == Not a marker across the family
     #
-    # Two identically-named pairs stay OUTSIDE this module on purpose: the SDK
-    # oracles {Provider::AnthropicReference} and {Provider::BedrockReference}
-    # declare their own in spec/support, because they wrap the official SDK's
-    # errors rather than vendored-transport ones. So `rescue
-    # Anthropic::APIError` still does not catch an `AnthropicReference`
-    # failure -- see that class's own note. Nothing here introduces the shared
-    # marker module that would change that.
+    # The SDK oracles declare identically-named pairs of their own in
+    # spec/support, because they wrap the official SDK's errors rather than
+    # vendored-transport ones. So `rescue Anthropic::APIError` still does not
+    # catch an `AnthropicReference` failure, and nothing here introduces the
+    # shared marker module that would change that.
     module ErrorWrapping
       # What makes an `APIStatusError` more than a name: the HTTP status, lifted
       # out of the wrapped error so a caller branches on it without unwrapping
@@ -75,13 +71,11 @@ module Lain
         #   on Ollama it is "ollama is not running" -- the ordinary case for the
         #   default summarizer arm -- taking out the turn from the render path.
         #
-        # This block lives here rather than written out per backend because two
-        # of the four copies had gone MISSING, and they went missing precisely
-        # because an absent copy is invisible while a wrong one is not. What
-        # legitimately differs per backend is the round trip inside the block,
-        # not the arms around it. A backend that genuinely needs a third arm
-        # rescues it inside its own block (see {Provider::Ollama#stream_body},
-        # whose JSON::ParserError arm sits below this one and passes through).
+        # Written here rather than per backend because two of the four copies
+        # had gone MISSING, and they went missing precisely because an absent
+        # copy is invisible while a wrong one is not. What legitimately differs
+        # per backend is the round trip inside the block, not the arms around
+        # it.
         def wrapping_errors
           yield
         rescue Provider::HTTP::Error => e

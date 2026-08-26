@@ -5,9 +5,7 @@ require "mixlib/shellout"
 module Lain
   module Exec
     # The in-process backend: a command runs as a child of THIS process, under
-    # this process's uid, filesystem and network. What {Tools::Bash} used to do
-    # inline, lifted out so a second and third transport can answer the same
-    # message.
+    # this process's uid, filesystem and network.
     #
     # It owns BOTH in-process arms, and that is the point rather than an
     # accident of extraction: a String reaches `sh -c` through

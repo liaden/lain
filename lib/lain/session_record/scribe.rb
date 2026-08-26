@@ -12,19 +12,14 @@ module Lain
     # * {#catch_up} walks the render chain and appends a `turn` record for every
     #   committed turn not yet written. A Timeline walk sees ONLY render-chain
     #   turns -- that is all it can see -- so that is all this writes.
-    # * {#call} is the {Event::ChainWriter} observer duck: :message/:spawn events
+    # * {#call} is the {Event::ChainWriter} observer duck. :message/:spawn events
     #   never enter any render chain (their causal edges point BACKWARD and the
     #   shared Store has no forward enumerator), so a Timeline walk CANNOT find
-    #   them. They arrive here by observation instead, one at a time, as
-    #   {Telemetry::Message} records -- a shape the turn-chain loader skips, since
-    #   a :message can never survive {Timeline#commit}'s digest re-derivation.
-    #   A SPAWNED chain's turns come through this same door, for the same reason
-    #   (this record's Timeline walk cannot reach another chain) and land as
-    #   {Telemetry::ChildTurn}; the turn-chain loader skips those too. Nothing
-    #   about the render chain moves: {#catch_up} still writes exactly the turns
-    #   above the append point, and only those are `turn` records. And like
-    #   every turn record they stay on the journal rather than the tee -- see
-    #   `message_journal:` on {#initialize}.
+    #   them; they arrive by observation instead, as {Telemetry::Message}
+    #   records, which the turn-chain loader skips. A SPAWNED chain's turns come
+    #   through the same door for the same reason and land as
+    #   {Telemetry::ChildTurn}, also skipped. Like every turn record they stay on
+    #   the journal rather than the tee -- see `message_journal:` on {#initialize}.
     #
     # A graceful {#close} anchors the final head; {#interrupted} marks a run that
     # a stop beat. Neither is written on a hard kill, which is precisely what
@@ -32,26 +27,25 @@ module Lain
     class Scribe
       # A caught-up timeline that does not EXTEND the written chain: rewound, or
       # diverged onto another branch. The record is append-only, so the refusal
-      # is write-time loud -- silently appending the diverged tip would produce
-      # a file that only fails at load, as {Bench::Session::Corrupt}, far from
-      # the bug (panel probe D).
+      # is write-time loud -- silently appending the diverged tip would produce a
+      # file that only fails at load, as {Bench::Session::Corrupt}, far from the
+      # bug.
       class Diverged < Error; end
 
       # What this record has on disk: the turn digests it has written, in chain
-      # order, ending at the append point ({#head}). One object because it is
-      # one invariant -- *the written digests are an ancestor PREFIX of the
-      # chain, so the head is the maximal written ancestor* -- and that
-      # invariant was previously hand-maintained across four Scribe methods and
-      # seedable inconsistently from outside, which is the shape of a missing
-      # object.
+      # order, ending at the append point ({#head}). One object because it is one
+      # invariant -- *the written digests are an ancestor PREFIX of the chain, so
+      # the head is the maximal written ancestor* -- previously hand-maintained
+      # across four Scribe methods and seedable inconsistently from outside,
+      # which is the shape of a missing object.
       #
       # Mutable on purpose: it tracks a file being appended to, and each move it
       # allows mirrors a record that has already landed.
       #
-      # Membership is a linear scan. That is deliberate -- ordered IS the point
-      # here. {Scribe#written_target!} asks once per human-driven rewind;
-      # {Scribe#recorded_turn?} asks once per observed off-chain turn, which is
-      # a spawn's transcript rather than a per-turn cost on the render path.
+      # Membership is a linear scan, and ordered IS the point here.
+      # {Scribe#written_target!} asks once per human-driven rewind;
+      # {Scribe#recorded_turn?} asks once per observed off-chain turn, which is a
+      # spawn's transcript rather than a per-turn cost on the render path.
       class WrittenChain
         def initialize(digests = [])
           @digests = digests.dup
@@ -99,20 +93,18 @@ module Lain
         # That last clause is why the walk takes one more ancestor than it
         # compares. Matching `length` ancestors below the head proves order and
         # no holes, but a chain SUFFIX passes that too, and a suffix means
-        # unwritten turns sit below the head -- so the head is not the maximal
-        # written ancestor and the class doc above would be a claim nothing
-        # enforces. Demanding the walk RUN OUT at `length` is the whole fix, and
-        # it costs one fetch.
+        # unwritten turns sit below the head -- so the head would not be the
+        # maximal written ancestor and this class's claim would be unenforced.
+        # Demanding the walk RUN OUT at `length` is the whole fix, at one fetch.
         #
         # Only a SEED can be wrong. {#append} extends by a turn the walk just
         # proved is the head's child, and {#retreat_to} keeps a prefix of a
         # prefix, so once true this stays true: hence the memo, and hence the
-        # O(length) walk runs at most ONCE per record. Per session, not per
-        # ask -- which is the budget the filtered walk this replaced blew.
+        # O(length) walk runs at most ONCE per record.
         #
         # Requires the head to be on `timeline` already; {Scribe} checks that
-        # first, and checking out a digest the store lacks would raise the
-        # wrong error.
+        # first, and checking out a digest the store lacks would raise the wrong
+        # error.
         def prefix_of?(timeline)
           return true if @verified
 
@@ -262,25 +254,22 @@ module Lain
       # It lands on `@journal`, never the tee. Turn records are RECORD DATA, not
       # live-view telemetry -- the invariant #initialize's `message_journal:`
       # note states -- and it is what keeps a {StatusFeed}, whose observe is
-      # duck-typed on `#kind`, from retiring an inbox question because a
-      # subagent committed a turn. Changing that live surface is a decision for
-      # whoever owns the gap `status_feed.rb` records, not a side effect here.
+      # duck-typed on `#kind`, from retiring an inbox question because a subagent
+      # committed a turn.
       #
       # And it is written ONCE per digest. Content addressing means equal turns
-      # are ONE event, not two, so a record already holding this digest holds
-      # this turn: a `:fresh` child seeded with the text the human opened with
-      # commits literally the parent's root turn, and a fan-out of siblings on
-      # one prompt at temperature 0 commits identical transcripts -- which would
-      # otherwise write the whole child transcript once per sibling, multiplying
-      # the term that already dominates a spawn-heavy file. Nothing is lost by
-      # skipping: {Bench::Session::ChainFold} or an earlier record lands the turn
+      # are ONE event: a `:fresh` child seeded with the text the human opened
+      # with commits literally the parent's root turn, and a fan-out of siblings
+      # on one prompt at temperature 0 commits identical transcripts -- which
+      # would otherwise write the whole child transcript once per sibling,
+      # multiplying the term that already dominates a spawn-heavy file. Nothing
+      # is lost: {Bench::Session::ChainFold} or an earlier record lands the turn
       # either way, and every citation of the digest resolves.
       #
       # REFUSING a repeat instead was considered and is wrong. There are not two
       # events to tell apart, so no predicate could separate "a spawn collided"
       # from "the observer is mis-wired" -- and since `@written` is empty at the
-      # first iteration, such a raise could only ever fire on a LATER spawn,
-      # making it contingent on which iteration the model chose to delegate on.
+      # first iteration, such a raise could only ever fire on a LATER spawn.
       def child_turn(event)
         return if recorded_turn?(event.digest)
 
@@ -294,11 +283,10 @@ module Lain
       # walked head-first and stopped AT the append point, so a catch_up reads
       # the new turns and one more. Filtering a full walk instead cost O(n) per
       # ask -- O(n^2) over a session, on the durability path every ask waits on.
-      #
-      # Bounded only where there IS an append point, and that is the honest
-      # claim: an un-seeded first catch_up has none, so it walks to the root
-      # once, and a refusal walks the whole chain before {#extends_written_chain!}
-      # turns it down. Both are per session, not per ask.
+      # Bounded only where there IS an append point, which is the honest claim:
+      # an un-seeded first catch_up walks to the root once, and a refusal walks
+      # the whole chain before {#extends_written_chain!} turns it down. Both are
+      # per session, not per ask.
       #
       # Stopping at the append point rather than at any already-written digest
       # is what keeps {#rewound} correct: a rewind-and-retry that re-commits
@@ -350,8 +338,7 @@ module Lain
       # whose `from:` comes from the unchecked seed, and retreating the chain,
       # both before any catch_up could turn it down. Call order prevents that
       # today ({CLI::Command::Rewind} catches up first, so does the {CLI::Repl}),
-      # but call order is a convention, and an unvalidated `written:` seed was a
-      # convention too -- which is how this card found it.
+      # but call order is a convention, and so was an unvalidated `written:` seed.
       #
       # {#close} and {#interrupted} are deliberately NOT guarded; see #close.
       def adjudicated_seed!

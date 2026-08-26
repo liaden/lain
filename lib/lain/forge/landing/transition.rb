@@ -9,18 +9,18 @@ module Lain
       #
       # == It fires when this run MOVED something, and not otherwise
       #
-      # The old code wrote it unconditionally after the merge step, so every
-      # resume appended another transition claiming a move from a status the
-      # issue no longer held -- three resumes, three moves. The rule here is a
-      # law about the run rather than a check somebody has to remember: a run
-      # that found every effect already in place changed nothing and has nothing
-      # to announce. That is what makes a repeated resume a fixpoint over the
-      # epic's records as well as over the journal's intents.
+      # Written unconditionally after the merge step, as it once was, every
+      # resume appends another transition claiming a move from a status the issue
+      # no longer holds. The rule is a law about the run rather than a check
+      # somebody has to remember: a run that found every effect already in place
+      # changed nothing and has nothing to announce, which is what makes a
+      # repeated resume a fixpoint over the epic's records as well as over the
+      # journal's intents.
       #
       # It is also why this reads {Running#performed} rather than the journal:
-      # `entries` reaches {Landing.resume} already narrowed to this issue's
-      # forge records ({CLI::EpicLand::Scoped}), so no transition is visible in
-      # them and asking would answer "never moved" every time.
+      # `entries` reaches {Landing.resume} already narrowed to this issue's forge
+      # records, so no transition is visible in them and asking would answer
+      # "never moved" every time.
       #
       # == The residual
       #

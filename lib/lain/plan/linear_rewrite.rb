@@ -3,33 +3,23 @@
 module Lain
   module Plan
     # The linear-rewrite execution shape: the timeline stays LINEAR (every
-    # chunk's turns are committed to the one mainline, nothing forks away), and
-    # the state effect lands entirely on the {Continuation}'s PIPELINE half.
-    # After a chunk closes, subsequent turns render through a Compact-shaped
-    # pipeline whose summarizer is the deterministic rendering of EVERY chunk
-    # closed so far -- so the chunks' verbatim turns are elided from the render
-    # (they remain in the Store, addressed by their closures) and one summary
-    # standing in for all of them rides in their place.
+    # chunk's turns are committed to the one mainline) and the state effect lands
+    # entirely on the {Continuation}'s PIPELINE half. After a chunk closes,
+    # subsequent turns render through a Compact-shaped pipeline whose summarizer
+    # is the deterministic rendering of EVERY chunk closed so far, so the chunks'
+    # verbatim turns are elided from the render (they remain in the Store,
+    # addressed by their closures) and one summary rides in their place.
     #
     # Because the same mainline positions now render to SUMMARIZED bytes, the
-    # prompt-cache prefix is rewritten at the seam -- which is exactly the
-    # difference this shape makes visible: a linear-rewrite run shows one prefix
-    # rewrite per seam where a {ForkPerStep} run shows none.
+    # prompt-cache prefix is rewritten at the seam -- one rewrite per seam where
+    # a {ForkPerStep} run shows none, which is the difference this shape exists
+    # to make visible.
     #
-    # The plan-shaped working view a linear run carries is `plan + every closed
-    # chunk's record + the current chunk`, so the summarizer must ACCUMULATE:
-    # summarizing only the LATEST chunk would silently drop every earlier
-    # closure from the render and under-inform the arm (and corrupt a later
-    # shape comparison). It therefore keeps the closures in seam order and
-    # renders all of them into ONE summary each seam.
-    #
-    # Stateful, like {ForkPerStep} and unlike {Compaction::Scheduler}, on two
-    # counts: it accumulates the closed closures, and it MEMOIZES the original
-    # base pipeline from the first seam's incoming continuation. It always
-    # composes a SINGLE Compact over that fixed base, never over the
-    # already-rewritten pipeline -- stacking Compact-over-Compact each seam would
-    # re-summarize a summary. One Compact over the fixed base, whose summarizer
-    # names all closures so far, keeps the render honest without stacking.
+    # The summarizer must ACCUMULATE: summarizing only the LATEST chunk would
+    # silently drop every earlier closure from the render and under-inform the
+    # arm. And it MEMOIZES the original base pipeline from the first seam,
+    # composing a SINGLE Compact over that fixed base -- stacking
+    # Compact-over-Compact each seam would re-summarize a summary.
     class LinearRewrite
       include SeamPolicy
 

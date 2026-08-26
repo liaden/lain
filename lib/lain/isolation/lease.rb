@@ -7,11 +7,10 @@ module Lain
     # reclaims whatever `acquire` provisioned -- a no-op for {Null}, a
     # `git worktree remove` for {Worktree}.
     #
-    # A RESOURCE HANDLE, not a value object. Unlike a {Turn} it is deliberately
-    # NOT `Ractor.shareable?`: it closes over a mutable release action and tracks
+    # A RESOURCE HANDLE, not a value object, and deliberately NOT
+    # `Ractor.shareable?`: it closes over a mutable release action and tracks
     # whether it has been released, so there is no shareability spec to satisfy
-    # here (the same posture {Arm::Run} takes, and for the same reason -- it
-    # owns a live resource, not frozen data).
+    # here -- {Arm::Run}'s posture, for its reason.
     #
     # Release is IDEMPOTENT-LOUD: safe to call more than once (the reclaim runs
     # exactly once, so a double-release never double-removes a worktree), but
@@ -35,11 +34,10 @@ module Lain
       # @return [Boolean] whether this lease has already been released
       def released? = @released
 
-      # Reclaim the leased resource, exactly once. A command, not a query -- the
-      # seam callers drive is `lease.release` (see {Arm::SingleThread}); it
+      # Reclaim the leased resource, exactly once. A command, not a query: it
       # returns a boolean only to make the idempotent-loud contract observable,
-      # so PredicateMethod (which reads a boolean return as a predicate name) is
-      # a false positive here.
+      # so PredicateMethod -- which reads a boolean return as a predicate name
+      # -- is a false positive here.
       # @return [Boolean] true on the release that did the work, false on a
       #   later (already-released) call
       def release # rubocop:disable Naming/PredicateMethod

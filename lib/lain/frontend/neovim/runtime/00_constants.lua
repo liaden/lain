@@ -11,16 +11,13 @@ local COMPOSE = "lain://compose"
 local QUESTION = "lain://question"
 
 -- The full buffer set, in render order, as ONE value user config can iterate
--- (it rides the User LainAttach payload below). WORKSPACE joining the set is
--- a fix: Ruby (Buffers::WORKSPACE) always rendered it, but no lua table
--- named it, so set_view built it as an orphan -- filetype "" (the nil lookup
--- landed as an unset option), no syntax, outside the lain contract.
+-- (it rides the User LainAttach payload below). A rendered name absent from
+-- here is built as an ORPHAN -- filetype "" from the nil lookup, no syntax,
+-- outside the lain contract.
 --
--- COMPOSE is deliberately NOT in the set, and QUESTION is out for the same
--- reason. Every name here is a projection primed at attach;
--- lain://compose exists only while the human is composing, lain://question only
--- while a set is open, each is created by a gesture, and each takes focus --
--- priming either would open an empty editor window at every attach.
+-- COMPOSE and QUESTION are deliberately out: every name here is a projection
+-- primed at attach, while those two are created by a gesture and each takes
+-- focus, so priming either would open an empty editor window at every attach.
 --
 -- The converse does NOT hold: lain://approval is primed at attach too and is
 -- still not in this set. It is created by 62_approval's own set_approval rather

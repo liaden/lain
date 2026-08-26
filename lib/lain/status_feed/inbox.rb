@@ -4,29 +4,19 @@ module Lain
   class StatusFeed
     # {Event::Projection#pending}({Tools::AskHuman::HUMAN}) mirrored
     # incrementally: what is still addressed to the human and not yet named a
-    # causal parent by a committed turn. The projection's exact semantics, held
-    # as two standing sets rather than re-run as a fresh fold on every event,
-    # which was an O(n) refold per event (O(n^2) over a session) that a review
-    # pass measured at 8.5s for an 8k-event history.
+    # causal parent by a committed turn. Held as two standing sets rather than
+    # re-run as a fresh fold on every event -- an O(n) refold per event (O(n^2)
+    # over a session) measured at 8.5s for an 8k-event history.
     #
-    # ⚠️ THE ARRIVAL SIDE IS O(1); {#committed} IS NOT, and the boast above does
-    # not cover it. Resolving a head's chain is O(chain), paid once per
-    # committed turn: measured 0.15ms at chain 100, 0.33ms at 500, 0.99ms at
-    # 2000, and it is essentially the whole cost of this object (an unbound
-    # inbox, whose walk is a miss, runs flat). That is nothing beside a model
-    # round trip and it is not the refold this class was rewritten to remove --
-    # it is per COMMIT, not per event -- but it does grow with the session, and
-    # a walk that stopped at the first already-{#consumed} digest would answer
-    # identically. It is not written that way ON PURPOSE:
+    # ⚠️ THE ARRIVAL SIDE IS O(1); {#committed} IS NOT. Resolving a head's chain
+    # is O(chain), paid once per committed turn: 0.15ms at chain 100, 0.33ms at
+    # 500, 0.99ms at 2000. That is per COMMIT, not per event, and nothing beside
+    # a model round trip -- but it does grow with the session, and a walk that
+    # stopped at the first already-{#consumed} digest would answer identically.
+    # It is not written that way ON PURPOSE:
     # {Frontend::Neovim::InboxView#consume} walks the whole chain, and a second,
     # cleverer answer is how the parity spec between the two starts passing
     # while the two surfaces disagree. Change both or neither.
-    #
-    # Extracted from {StatusFeed} for {JournaledUsage}'s reason, which was
-    # {ModeState}'s and {Publication}'s before it: the cop naming that class's
-    # line budget was naming a missing object. Counting an inbox is not deriving
-    # a status struct -- and this one owns a collaborator none of the other
-    # twelve fields has any use for, which is the {Store} below.
     #
     # ⚠️ CONSUMPTION COUNTS COMMITTED-TURN EDGES ONLY. A {Tools::AskHuman#reply}
     # answer is a `:message`, and Projection's own doc is explicit that a
@@ -39,31 +29,24 @@ module Lain
     # THE COMMITTED TURN ARRIVES AS A {Telemetry::TurnUsage}, not as a `:turn`
     # Event, and that is why {#committed} exists beside {#consumed}:
     # `SessionRecord::Scribe#catch_up` appends committed turns straight to the
-    # session JOURNAL, never to the tee {StatusFeed} rides ("turn records never
-    # route -- they are record data, not live-view telemetry"), so a count that
-    # waited for the Event only ever climbed (2 published against a
-    # `lain://inbox` drawing one, measured live 2026-08-25). The usage record
-    # names the committed head, so the cited digests are read off that head's
-    # chain in the run's {Store} -- {Frontend::Neovim::InboxView#consume}'s
-    # answer, ported rather than re-invented, because a second answer is how a
-    # parity spec goes green while the two surfaces disagree. Both carriers
+    # session JOURNAL, never to the tee {StatusFeed} rides -- turn records are
+    # record data, not live-view telemetry -- so a count that waited for the
+    # Event only ever climbed (2 published against a `lain://inbox` drawing one,
+    # measured live). The usage record names the committed head, so the cited
+    # digests are read off that head's chain in the run's {Store}. Both carriers
     # write the same standing {#consumed} set, so a replay delivering both
     # retires once.
     class Inbox
-      # @param store [Store] where a committed head's chain is resolved.
-      #   Defaulted to an EMPTY one rather than required: `ChatLaunch` builds
-      #   the feed that owns this object before `Wiring` exists at all, and the
-      #   session's Store does not exist until `Wiring#run` has built the Agent.
-      #   An empty Store is a real object that resolves no head, so an unbound
-      #   inbox counts arrivals and retires nothing -- no caller asks whether it
-      #   has a store yet. See {#bind_store}.
+      # @param store [Store] where a committed head's chain is resolved. Defaulted
+      #   to an EMPTY one rather than required: `ChatLaunch` builds the feed that
+      #   owns this object before `Wiring` exists at all. An empty Store is a real
+      #   object that resolves no head, so an unbound inbox counts arrivals and
+      #   retires nothing -- no caller asks whether it has a store yet.
       def initialize(store: Store.new)
         @store = store
-        # `@consumed` is every digest a committed turn has ever cited; `@pending`
-        # is the still-unconsumed questions, insertion-ordered. Consumption is a
-        # STANDING set rather than "remove from whatever is pending right now"
-        # because a replayed log can deliver the turn before the question it
-        # consumes -- see #arrived.
+        # Consumption is a STANDING set rather than "remove from whatever is
+        # pending right now" because a replayed log can deliver the turn before
+        # the question it consumes. `@pending` is insertion-ordered.
         @consumed = Set.new
         @pending = {}
       end
@@ -75,8 +58,8 @@ module Lain
         nil
       end
 
-      # Named for WHICH set it counts: this object holds two, and `#size` on an
-      # object with a `@consumed` set beside a `@pending` one names neither.
+      # Named for WHICH set it counts: this object holds two, so a bare `#size`
+      # would name neither.
       #
       # @return [Integer] what the HUD publishes as `inbox_count`
       def pending_size = @pending.size
@@ -124,16 +107,11 @@ module Lain
       # that names something other than a turn walks straight into
       # `NoMethodError: undefined method 'parent' for an instance of
       # Event::Payload` -- every message ever written puts such a digest in the
-      # same store -- and that one went out through the tee. The narrower rescue
-      # was survivable only while {Frontend::Neovim::InboxView} was the only
-      # walker, because nvim's drain is not the agent's thread; this object put
-      # the same walk on the HEADLESS path, where it is.
-      #
-      # So: any StandardError here reads as "this head names nothing to retire".
-      # A status surface answering "nothing pending" about a store it cannot
-      # make sense of is the correct failure -- the alternative is costing a
-      # turn to draw a number -- and it is why this class derives the payment
-      # BEFORE calling the walk ({StatusFeed#observe_commit}).
+      # same store -- and that one went out through the tee. So any StandardError
+      # here reads as "this head names nothing to retire": a status surface
+      # answering "nothing pending" about a store it cannot make sense of beats
+      # costing a turn to draw a number, and it is why this class derives the
+      # payment BEFORE calling the walk ({StatusFeed#observe_commit}).
       def cited_by_chain(head_digest)
         Timeline.new(head_digest:, store: @store).to_a.flat_map(&:causal_parents)
       rescue StandardError

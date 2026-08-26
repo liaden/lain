@@ -6,58 +6,53 @@ module Lain
   module Forge
     # Put one issue's anchored commit on the remote, as `epic/<slug>/<issue-id>`.
     #
-    # This is the tier's one NON-gh action, and it is a plain `git push` of a sha
-    # into a refspec: `git push origin <sha>:refs/heads/epic/<slug>/<issue>`.
-    # Nothing local is branched. That is not a shortcut -- {Isolation::Worktree}
-    # explains at length why a branch in `refs/heads/` is the thing that bleeds a
-    # crashed worker's state into its successor, and a promotion that created one
-    # locally would put that branch back for every issue that ever lands. The
-    # commits come off {Isolation::Worktree::Handback}'s ref and go straight out.
+    # The tier's one NON-gh action: a plain `git push` of a sha into a refspec,
+    # `git push origin <sha>:refs/heads/epic/<slug>/<issue>`. Nothing local is
+    # branched, and that is not a shortcut -- {Isolation::Worktree} explains why a
+    # branch in `refs/heads/` is what bleeds a crashed worker's state into its
+    # successor, and a promotion creating one locally would put that branch back
+    # for every issue that ever lands.
     #
     # == Refuse, never force
     #
-    # Re-promoting the SAME sha is an ok, `observed` answer with no push at all,
-    # the `Handback#preserve` / `Salvage#already_committed?` doctrine that
-    # idempotency is asked of the remote rather than remembered. A ref standing
-    # at any OTHER sha is a refusal that names what the remote holds. There is no
-    # `--force` and no `--force-with-lease` in this file, deliberately: deciding
-    # that a remote branch may be overwritten is the cascade chunk's business,
-    # and the outcome this produces is what a human or that chunk reads to make
-    # the decision.
+    # Re-promoting the SAME sha is an ok, `observed` answer with no push at all --
+    # the doctrine that idempotency is asked of the remote rather than remembered.
+    # A ref standing at any OTHER sha is a refusal that names what the remote
+    # holds. There is no `--force` and no `--force-with-lease` here, deliberately:
+    # deciding that a remote branch may be overwritten is the cascade chunk's
+    # business, and the outcome this produces is what it reads to decide.
     #
-    # THE REFUSAL IS NOT ATOMIC WITH THE PUSH, and this is a residual, not an
-    # oversight. Reading the remote and pushing to it are two round trips, and a
-    # bare `push` enforces only the non-fast-forward rule -- so an actor that
+    # THE REFUSAL IS NOT ATOMIC WITH THE PUSH, a residual rather than an
+    # oversight. Reading the remote and pushing to it are two round trips and a
+    # bare `push` enforces only the non-fast-forward rule, so an actor that
     # creates the ref or advances it to an ANCESTOR of this sha in between gets
-    # the push accepted, silently advancing a branch that {#decide} would have
-    # refused a moment earlier. Closing it means `--force-with-lease`, whose
-    # semantics this chunk may not introduce; the window is the cascade chunk's
-    # to shut. A non-fast-forward racer is refused by git itself, so what leaks
+    # the push accepted, silently advancing a branch {#decide} would have refused.
+    # Closing it means `--force-with-lease`, whose semantics this chunk may not
+    # introduce. A non-fast-forward racer is refused by git itself, so what leaks
     # through is exactly the advance case.
     #
     # == Every refusal is a value; only a caller's own nonsense raises
     #
-    # git refusing, a remote nobody can reach, a namespace already occupied --
-    # each answers a not-ok {Gh::Answer} carrying the reason, because the answer is
-    # journaled as a {Forge::Outcome} and a raise would be a second control path
-    # the record never sees ({Gh}'s rule, for the same reason). The two things
-    # that DO raise are the two that make an intent unjournalable: a slug or
-    # issue id the filesystem grammar refuses (checked at construction, before
-    # any subprocess), and a blank sha. Both would put an address in the journal
-    # that no {Reconcile} could ever ask the world about.
+    # git refusing, an unreachable remote, an occupied namespace -- each answers a
+    # not-ok {Gh::Answer} carrying the reason, because the answer is journaled as
+    # a {Forge::Outcome} and a raise would be a second control path the record
+    # never sees. The two things that DO raise are the two that make an intent
+    # unjournalable: a slug or issue id the filesystem grammar refuses (checked at
+    # construction, before any subprocess) and a blank sha. Both would put an
+    # address in the journal no {Reconcile} could ever ask the world about.
     #
     # == The address is the whole address
     #
     # {Intent.id_for} digests the action and its params ALONE, so `params` must
     # identify the effect repo-wide. `ref` carries the epic and the issue and
-    # `sha` carries the commit, which is exactly enough and exactly all: nothing
-    # cosmetic belongs in there, or a reworded retry would address different work.
+    # `sha` the commit: nothing cosmetic belongs in there, or a reworded retry
+    # would address different work.
     class Promotion
       DEFAULT_REMOTE = "origin"
 
       # What the answer's `detail["reason"]` says, as constants rather than
-      # sentences: a caller branches on these, and a reworded
-      # message must not silently change what it decided.
+      # sentences: a caller branches on these, and a reworded message must not
+      # silently change what it decided.
       PROMOTED = "promoted"
       ALREADY_PROMOTED = "already_promoted"
       DIVERGED = "diverged"
@@ -73,10 +68,9 @@ module Lain
       # raises it.
       class Unanchored < Error; end
 
-      # A refusal on its way to becoming a {Gh::Answer}. Private and internal: it is
-      # raised wherever the fact is discovered -- several calls deep in {Remote}
-      # -- and caught once at the boundary, which is {Reconcile::Unobservable}'s
-      # shape and for the same reason. Nothing of this class ever escapes #call.
+      # A refusal on its way to becoming a {Gh::Answer}: raised wherever the fact
+      # is discovered, several calls deep in {Remote}, and caught once at the
+      # boundary. Nothing of this class ever escapes #call.
       class Denied < Error
         attr_reader :reason
 
@@ -102,9 +96,8 @@ module Lain
           @epic_slug = Epic::Home.checked_name(epic_slug, "epic slug")
           @issue_id = Epic::Home.checked_name(issue_id, "issue id")
           @ref = "#{PREFIX}/#{@epic_slug}/#{@issue_id}".freeze
-          # Three interned strings and nothing else, so the house rule for a
-          # value object holds mechanically: `Ractor.shareable?` is false for an
-          # unfrozen object however immutable its contents are.
+          # `Ractor.shareable?` is false for an unfrozen object however immutable
+          # its contents are.
           freeze
         end
 
@@ -147,7 +140,7 @@ module Lain
         end
 
         # The commit's FULL object name, and a refusal unless that is what the
-        # caller already named. A branch, `HEAD`, or an abbreviation all resolve
+        # caller already named. A branch, `HEAD` or an abbreviation all resolve
         # here perfectly well and then poison the address: {Reconcile} confirms a
         # promotion by comparing `sha_of(ref)` to `params["sha"]`, and the remote
         # answers full object names only.
@@ -161,11 +154,9 @@ module Lain
           raise Denied.new(INEXACT_SHA, "#{sha} is not an object name -- it resolves to #{resolved}")
         end
 
-        # Every head the remote holds, as `ref => sha`. One round trip answers
-        # all three questions this promotion has (is it already there, is it
-        # there at something else, is the namespace occupied), and asking them
-        # separately would be three questions about a remote that can move
-        # between them.
+        # Every head the remote holds, as `ref => sha`. One round trip answers all
+        # three questions this promotion has, and asking them separately would be
+        # three questions about a remote that can move between them.
         def heads
           shell = run("ls-remote", "--heads", @remote)
           raise Denied.new(REMOTE_UNREACHABLE, failure("ls-remote", shell)) unless ok?(shell)
@@ -206,9 +197,8 @@ module Lain
       #   a factory exactly as {Isolation::Worktree} does
       #
       # `epic_slug` and `issue_id` are constructor state rather than per-call
-      # arguments, matching {Forge::Journaled}, which holds the same two and
-      # stamps them onto every record: one issue's promotion is one object, so
-      # the two cannot be wired to disagree call by call.
+      # arguments, matching {Forge::Journaled}: one issue's promotion is one
+      # object, so the two cannot be wired to disagree call by call.
       def initialize(epic_slug:, issue_id:, journaled:, repo_root: Dir.pwd, remote: DEFAULT_REMOTE,
                      shell_out_factory: Mixlib::ShellOut.public_method(:new))
         @branch = Branch.new(epic_slug:, issue_id:)
@@ -263,12 +253,9 @@ module Lain
       end
 
       # Both refusals name the state AND what follows from it, because the state
-      # alone reads as a tool that failed rather than one that declined. They are
-      # different kinds of dead end and say so: a divergence has several ways
-      # forward and none of them are this object's to pick, while a ref that is
-      # both a file and a directory has exactly one and no flag anywhere changes
-      # that. The `reason` constants stay untouched -- a caller branches on
-      # those, and a reworded sentence must never move a decision.
+      # alone reads as a tool that failed rather than one that declined. A
+      # divergence has several ways forward and none of them are this object's to
+      # pick; a ref that is both a file and a directory has exactly one.
       def diverged(held, sha)
         "#{@branch.ref} stands at #{held}, not #{sha}; promotion never forces, so advancing or replacing " \
           "that ref is the cascade's decision -- `git log #{held}..#{sha}` shows what an advance would carry"
@@ -279,22 +266,20 @@ module Lain
           "directory, so delete or rename #{blocker} on the remote before promoting this issue"
       end
 
-      # {Gh::Answer}, not a value of this class's own, and the reason is a contract
-      # rather than tidiness: {Gh::Contracts::Answer} refuses a non-boolean flag and
-      # refuses `ok: false, observed: true` outright, so the contradiction "a
-      # refusal that claims the effect was already in place" is unrepresentable
-      # here instead of merely never written. A promotion is not a gh call, but
-      # the bracket both ride reads the same three messages off whatever the
-      # block answered, so it is one value.
+      # {Gh::Answer}, not a value of this class's own, and that is a contract
+      # rather than tidiness: {Gh::Contracts::Answer} refuses a non-boolean flag
+      # and refuses `ok: false, observed: true` outright, so "a refusal that claims
+      # the effect was already in place" is unrepresentable rather than merely
+      # never written.
       #
       # THE ATTRIBUTION HERE CAN DISAGREE WITH THE JOURNAL'S. `epic_slug` and
-      # `issue_id` are put on the answer so a caller can act on a refusal without
-      # a trip to the journal -- but {Journaled#attempt} stamps its OWN copy onto
-      # the {Outcome} it writes, and attribution wins that merge. Wire a
-      # Promotion for one issue to a Journaled for another and the returned
-      # answer and the journaled outcome describe one event two ways, with no
-      # error anywhere. Neither object can check the other, so the wiring site
-      # has to build both for one issue; there is a filed follow-up.
+      # `issue_id` are put on the answer so a caller can act on a refusal without a
+      # trip to the journal -- but {Journaled#attempt} stamps its OWN copy onto the
+      # {Outcome}, and attribution wins that merge. Wire a Promotion for one issue
+      # to a Journaled for another and the returned answer and the journaled
+      # outcome describe one event two ways, with no error anywhere. Neither
+      # object can check the other, so the wiring site has to build both for one
+      # issue.
       # rubocop:disable Naming/MethodParameterName -- `ok` is {Outcome}'s field.
       def answer(sha, reason:, ok:, observed: false, message: "")
         Gh::Answer.new(ok:, observed:,

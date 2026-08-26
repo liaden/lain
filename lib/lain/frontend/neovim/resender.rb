@@ -3,13 +3,11 @@
 module Lain
   module Frontend
     class Neovim
-      # The resend delivery pipeline, extracted from {Neovim} as its own
-      # responsibility: one edited-buffer hand-off becomes a projection pushed
-      # onto the render Channel AND -- when a real bridge is wired -- an offer
-      # that reaches the provider. The worker THREAD stays in {Neovim} (it
-      # shares the record-and-die shape with the drainer, {Neovim#resend_loop});
-      # this owns only what one delivery does, so the frontend class is not
-      # carrying the resend render logic on top of its three-thread lifecycle.
+      # One edited-buffer hand-off becomes a projection pushed onto the render
+      # Channel AND -- when a real bridge is wired -- an offer that reaches the
+      # provider. The worker THREAD stays in {Neovim}, sharing the
+      # record-and-die shape with the drainer; this owns only what one delivery
+      # does.
       class Resender
         # The upfront-attempt render: pushed the instant the bridge's gate
         # passes and BEFORE the round trip, so the human is told an attempt is
@@ -29,14 +27,11 @@ module Lain
           @request_buffer = request_buffer
         end
 
-        # One resend's delivery, in the required order: the projection FIRST (the
-        # human's diff must never wait on a model round trip), then the offer.
-        # The rebuild rides a block so {Unbridged} never forces it -- an
-        # unbridged resend stays byte-identical to the pure projection, never
-        # raising over an edit that parses as JSON but does not rebuild into a
-        # Request. The notice (nil from {Unbridged}) renders through the same
-        # append path every render takes -- how the editor is told a resend
-        # dispatched, was refused mid-flight, or failed.
+        # The required ORDER: the projection first -- the human's diff must never
+        # wait on a model round trip -- then the offer. The rebuild rides a block
+        # so {Unbridged} never forces it, and an unbridged resend therefore never
+        # raises over an edit that parses as JSON but does not rebuild into a
+        # Request.
         def deliver(resent)
           return if resent.nil?
 

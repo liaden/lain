@@ -6,23 +6,21 @@ module Lain
       # Interprets effects by actually doing them: dispatches a {Effect::ToolCall}
       # to the tool the {Lain::Toolset} holds under that name and runs it.
       #
-      # This is where correctness gate 3 is enforced. A tool that raises -- whether
-      # from a bug, a bad input, or a violated contract -- must never propagate past
-      # the loop, so every dispatch is wrapped: any `StandardError` becomes a
-      # {Tool::Result} with `is_error: true`. The raising happens honestly inside
-      # the tool (contracts stay Eiffel-strict); the *conversion* to a loop-safe
-      # error result happens here, once, at the boundary the loop trusts.
+      # This is where correctness gate 3 is enforced. A tool that raises must
+      # never propagate past the loop, so every dispatch is wrapped: any
+      # `StandardError` becomes a {Tool::Result} with `is_error: true`. The
+      # raising happens honestly inside the tool (contracts stay Eiffel-strict);
+      # the *conversion* happens here, once, at the boundary the loop trusts.
       #
-      # Live is the executor of last resort. It does not itself gate on approval; a
-      # deployment composes a {Gate} handler in front of it. So when an
-      # {Effect::Approval} reaches Live, Live treats it as already-approved and
-      # runs the inner effect -- otherwise a stack with no approver would wedge on
-      # every gated call.
+      # Live is the executor of last resort and does not itself gate on approval
+      # -- a deployment composes a {Gate} in front of it. So an
+      # {Effect::Approval} reaching Live is treated as already-approved,
+      # otherwise a stack with no approver would wedge on every gated call.
       #
       # A tool's second argument is a {Tool::Invocation}, built here from the
       # effect plus the injected `channel` -- never the bare context a caller
-      # threads through {#call}. That is what lets, e.g., Tools::Bash attribute
-      # its `live_stdout` bytes to the exact `tool_use_id` that asked for them.
+      # threads through {#call}. That is what lets Tools::Bash attribute its
+      # `live_stdout` bytes to the exact `tool_use_id` that asked for them.
       class Live < Handler
         # @param toolset [Lain::Toolset] the capabilities this handler can dispatch
         # @param channel [Lain::Channel] where tool output is attributed; defaults
@@ -36,10 +34,9 @@ module Lain
 
         def handles?(effect) = effect.tool_call? || effect.approval?
 
-        # The tool this handler would dispatch for `name`, or a delegation inward
-        # when its own Toolset does not hold it. Because dispatch and this lookup
-        # read the same `@toolset`, a decorator that gates via {Handler#tool_named}
-        # is guaranteed to consult the map this handler will actually run against.
+        # Dispatch and this lookup read the same `@toolset`, so a decorator that
+        # gates via {Handler#tool_named} is guaranteed to consult the map this
+        # handler will actually run against.
         def tool_named(name)
           return @toolset.fetch(name) if @toolset.include?(name)
 
@@ -49,11 +46,10 @@ module Lain
         protected
 
         # The `case` over class is genuine dispatch on a CLOSED set -- the effect
-        # vocabulary is the algebra, and each arm is a distinct interpretation
-        # (unwrap-and-recurse vs. run-for-real). A `rescue NoMethodError` else-arm
-        # was considered and rejected for the same reason as everywhere else in
-        # this codebase: it would turn an effect this executor genuinely cannot
-        # perform into a silent swallow instead of the loud {UnhandledEffect}.
+        # vocabulary is the algebra, and each arm is a distinct interpretation.
+        # A `rescue NoMethodError` else-arm was rejected: it would turn an effect
+        # this executor genuinely cannot perform into a silent swallow instead of
+        # the loud {UnhandledEffect}.
         def perform(effect, context)
           case effect
           when Effect::Approval then call(effect.effect, context)
@@ -68,9 +64,7 @@ module Lain
           invocation = Tool::Invocation.new(tool_use_id: effect.tool_use_id, context:, channel: @channel)
           @toolset.fetch(effect.name).call(effect.input, invocation)
         rescue Toolset::UnknownTool
-          # The model asked for a tool this set does not hold. That is a failed
-          # call, not a crash: report it back as an error result and let the loop
-          # continue.
+          # A tool this set does not hold is a failed call, not a crash.
           Tool::Result.error("no tool named #{effect.name.inspect} is available")
         rescue StandardError => e
           # Correctness gate 3: a failing tool returns a tool_result with
@@ -78,18 +72,15 @@ module Lain
           #
           # The wire text carries the exception's OWN message and nothing else --
           # no `#{e.class}` prefix. That class name is a Ruby implementation
-          # detail the model reads as noise on every ordinary refusal
-          # (ContractViolation, InvalidInput), and {Tool::Bounds.ceiling}'s
-          # comment already flags the sharper version of the same hazard: a
-          # class-prefixed string is one hop from leaking bytes a refusal
-          # exists to withhold. `ContractViolation` and `InvalidInput` are the
-          # two a tool subclass structurally cannot rescue (raised around
-          # `#perform` by {Tool#call}), so their own messages -- "precondition
-          # failed for X: ..." / "invalid input for X: ..." -- are what a
-          # reader actually sees. An unexpected error's class is genuinely lost
-          # here and is not journaled: `Live`'s only outlet is a view channel
-          # that never reaches the journal, and giving it one is a larger
-          # change than this warrants.
+          # detail the model reads as noise on every ordinary refusal, and
+          # {Tool::Bounds.ceiling}'s comment flags the sharper version of the
+          # same hazard: a class-prefixed string is one hop from leaking bytes a
+          # refusal exists to withhold. `ContractViolation` and `InvalidInput`
+          # are the two a tool subclass structurally cannot rescue (raised around
+          # `#perform` by {Tool#call}), so their own messages are what a reader
+          # actually sees. An unexpected error's class is genuinely lost here and
+          # is not journaled: `Live`'s only outlet is a view channel that never
+          # reaches the journal.
           Tool::Result.error(e.message)
         end
       end

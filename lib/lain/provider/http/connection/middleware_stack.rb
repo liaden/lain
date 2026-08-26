@@ -1,42 +1,31 @@
 # frozen_string_literal: true
 
-# New code, not a port. Upstream's `Connection` (159 lines) folds Faraday
-# middleware assembly (timeout, logging, retry, JSON, error-mapping, proxy)
-# directly into itself, which pushed the class past this project's default
-# `Metrics/ClassLength` (100) with no `Metrics/*` loosening allowed. Building
-# the Faraday stack is a real, separate responsibility from the request/
-# response API `Connection#post`/`#get` expose, so it is extracted rather
-# than disabled away. Every `setup_*` method and `retry_exceptions` are
-# unchanged from `connection.rb`'s original, apart from namespace and the
-# leak-site-1 Sink routing that lived here already.
+# New code, not a port. Upstream folds Faraday middleware assembly into
+# `Connection` itself, which pushes that class past the default
+# `Metrics/ClassLength` with no loosening allowed -- and building the stack is a
+# real, separate responsibility from the request/response API `Connection#post`
+# exposes. Every `setup_*` method and `retry_exceptions` are otherwise unchanged
+# from upstream, apart from namespace and the Sink routing.
 
 module Lain
   class Provider
     module HTTP
       class Connection
-        # Assembles one Faraday::Connection for a provider: timeout, logging
-        # (leak site 1 -- an injected Sink, never a global Logger), retry,
-        # JSON (de)serialization, error-mapping, and an optional HTTP proxy.
-        # Built once -- Faraday's builder is `StackLocked` after the first
-        # request -- by {Connection#initialize}.
+        # Assembles one Faraday::Connection for a provider, logging through an
+        # injected Sink rather than a global Logger. Built ONCE, because
+        # Faraday's builder is `StackLocked` after the first request.
         class MiddlewareStack
-          # Gives one request's {Streaming::StallClock} its LIFETIME, which is
-          # the half of stalled-stream protection that is knowable here.
+          # Gives one request's {Streaming::StallClock} its LIFETIME, the half
+          # of stalled-stream protection knowable here. The other half is not: a
+          # middleware never sees a body chunk, so it cannot tell silence from
+          # work, and the `on_data` handler that does see them gets no
+          # end-of-stream signal to stop a clock with.
           #
-          # The other half is not: a middleware never sees a body chunk, so it
-          # cannot tell silence from work, and the `on_data` handler that does
-          # see them gets no end-of-stream signal to stop a clock with. So the
-          # split falls exactly there -- this owns the scope, the handler owns
-          # the ticks, and the clock arms itself on the first byte so that a
-          # long prompt evaluation is still bounded only by `request_timeout`.
-          #
-          # `env` is passed rather than merely wrapped, and that is what joins
-          # the two halves: the clock parks itself on `env.request.context`, the
-          # per-request carrier the transports already thread `retry_attempt` and
-          # `wal_frame` through, and `Faraday::Env#stream_response` hands the very
-          # same env to `on_data` with every chunk. So the handler finds this
-          # request's clock without either side sharing anything ambient -- see
-          # {Streaming::StallClock} for the two slots that came before.
+          # `env` is PASSED rather than merely wrapped, and that is what joins
+          # the two halves: the clock parks itself on `env.request.context`, and
+          # `Faraday::Env#stream_response` hands the very same env to `on_data`
+          # with every chunk -- so the handler finds this request's clock with
+          # nothing ambient shared.
           class StallProtection < Faraday::Middleware
             def call(env)
               Streaming::StallClock.watching(options[:grace], env) { @app.call(env) }
@@ -82,15 +71,12 @@ module Lain
           # asks for 2s on the render path, and a 5s connect budget would hand
           # back the wait that budget exists to avoid.
           #
-          # One stance about what a config must answer, and it is the stance
-          # {#stall_grace} already holds: the VENDORED options are assumed --
-          # `request_timeout` is read unguarded a line above, and `retry_options`
-          # reads four more the same way -- while an option this slice added
-          # AFTER vendoring is asked for, because a Configuration-alike handed in
-          # from outside cannot be expected to have grown it. Not theatre: drop
-          # the `respond_to?` and connection_logging_spec's Configuration double
-          # dies on an unexpected `:connect_timeout`. So `request_timeout` needs
-          # no `compact` here; the same method just assumed it.
+          # One stance about what a config must answer: the VENDORED options
+          # are ASSUMED, while an option this slice added AFTER vendoring is
+          # asked for, because a Configuration-alike handed in from outside
+          # cannot be expected to have grown it. Not theatre -- drop the
+          # `respond_to?` and an existing Configuration double dies on an
+          # unexpected `:connect_timeout`.
           def connect_budget
             budget = @config.respond_to?(:connect_timeout) ? @config.connect_timeout : nil
             return nil if budget.nil?

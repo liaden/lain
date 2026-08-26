@@ -6,13 +6,13 @@ module Lain
     #
     # Split out of the Agent for the same reason Budget was: rolling up and
     # recording spend is bookkeeping, not the loop's job. Per-turn cost lives in
-    # the Journal, one {Telemetry::TurnUsage} per model call, keyed by the committed
-    # turn's digest (see {Telemetry::TurnUsage} for why content never carries its price).
+    # the Journal, one {Telemetry::TurnUsage} per model call, keyed by the
+    # committed turn's digest.
     class Accounting
       # The run's cumulative {Usage}; the monoid sum of every observed response.
       attr_reader :usage
 
-      # Where TurnUsage lands. Readable so a caller can confirm what it was wired to.
+      # Readable so a caller can confirm what it was wired to.
       attr_reader :journal
 
       # @param journal [#<<] where TurnUsage records land; the Null channel by
@@ -42,9 +42,9 @@ module Lain
       end
 
       # Current context occupancy: the most recent response's billed-on-the-way-in
-      # tokens (`Usage#total_input_tokens`), not the run's cumulative sum. `#usage`
-      # answers "what has this run spent"; compaction's `Need` needs "how full is
-      # the context right now", which only the latest response can answer.
+      # tokens, not the run's cumulative sum. `#usage` answers "what has this run
+      # spent"; compaction's `Need` needs "how full is the context right now",
+      # which only the latest response can answer.
       #
       # @return [Integer, nil] nil before any turn -- distinct from zero, which
       #   would read as an empty context on a resumed session whose Accounting is

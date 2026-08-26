@@ -5,30 +5,24 @@ require "faraday"
 module Lain
   class Provider
     class Anthropic < Provider
-      # A thin subclass of the vendored Anthropic HTTP provider that exposes the
-      # two round trips {Anthropic} needs, while REUSING the vendored Faraday
-      # stack (faraday-retry, error mapping, the injected-Sink logger) and the SSE
-      # engine (EventStreamParser feeding, chunk-boundary handling, streaming
-      # error recognition).
+      # A thin subclass of the vendored Anthropic HTTP provider, REUSING its
+      # Faraday stack and SSE engine.
       #
-      # It deliberately does NOT go through the vendored `complete`/`render_payload`
-      # or `stream_response`: that path builds and consumes the lossy `Message`,
-      # and `stream_response` folds the stream through the flattening
+      # It deliberately does NOT go through the vendored
+      # `complete`/`stream_response`: that path builds and consumes the lossy
+      # `Message`, folding the stream through the flattening
       # `StreamAccumulator`. Here the payload is already rendered by
       # {AnthropicEncoding} and each parsed SSE event is handed straight out, so
-      # the block-preserving {StreamAssembler} can do the reassembly instead.
+      # the block-preserving {StreamAssembler} does the reassembly.
       #
       # == Spooling raw bytes to the WAL
       #
-      # Both round trips accept an opened {ResponseWal::Frame} (a {Spool::Null}
-      # frame by default). The Provider owns the frame -- it computed the request
-      # digest the frame is keyed by -- and the transport only appends the bytes
-      # it sees off the wire and closes on a clean end. The two paths reach those
-      # bytes differently: streaming tees every raw `on_data` chunk before the SSE
-      # parser touches it; the sync path cannot use `on_data` (it nils the parsed
-      # body the error middleware still needs), so it rides {WalResponseTee}, a
-      # response middleware that copies `env.body` while it is still the wire
-      # string.
+      # The Provider owns the frame -- it computed the request digest the frame
+      # is keyed by -- and the transport only appends what it sees off the wire.
+      # The two paths reach those bytes differently: streaming tees every raw
+      # `on_data` chunk before the SSE parser touches it, while the sync path
+      # cannot use `on_data` (it nils the parsed body the error middleware still
+      # needs) and so rides {WalResponseTee}.
       class Transport < Provider::HTTP::Providers::Anthropic
         # One non-streaming round trip. `faraday.response :json` has already parsed
         # the body, so `#body` is a Hash; {WalResponseTee} captured the wire bytes
@@ -42,11 +36,6 @@ module Lain
           response
         end
 
-        # One streaming round trip. Each parsed SSE `data` Hash is yielded to
-        # `on_event`; the vendored `build_on_data_handler` still owns the byte
-        # feeding and the failed-response path, and each raw chunk is teed to
-        # `frame` on the way in.
-        #
         # It posts through the vendored {Streaming#post_stream} rather than
         # `connection.post` directly, because that is what performs the
         # end-of-stream flush -- without it an `event: error` the server never
@@ -71,9 +60,8 @@ module Lain
           build_on_data_handler { |data| yield data if data.is_a?(Hash) }
         end
 
-        # Wraps the SSE on_data handler so the verbatim wire chunk reaches the WAL
-        # before it is parsed; the splat forwards the rest of `on_data`'s
-        # arguments (`bytes, env`) through untouched.
+        # The verbatim wire chunk reaches the WAL BEFORE it is parsed; the splat
+        # forwards the rest of `on_data`'s arguments untouched.
         def tee_chunks(handler, frame)
           proc do |chunk, *rest|
             frame.append(chunk)
@@ -102,12 +90,11 @@ module Lain
         end
       end
 
-      # Copies the raw HTTP response body -- `env.body` BEFORE the JSON middleware
-      # parses it -- into the WAL frame carried on the request context. A no-op
-      # unless a frame is present, so every non-recording request, and every other
-      # provider sharing the stack, is unaffected. It must sit BELOW `response
-      # :json` so its on_complete runs while the body is still the wire string;
-      # {Provider::HTTP::Connection::MiddlewareStack} places it there.
+      # Copies `env.body` BEFORE the JSON middleware parses it into the WAL
+      # frame carried on the request context. A no-op unless a frame is present.
+      # It MUST sit below `response :json` so its on_complete runs while the
+      # body is still the wire string; {Provider::HTTP::Connection::MiddlewareStack}
+      # places it there.
       class WalResponseTee < Faraday::Middleware
         def call(env)
           @app.call(env).on_complete do

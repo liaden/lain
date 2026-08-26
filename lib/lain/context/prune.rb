@@ -3,24 +3,21 @@
 module Lain
   class Context
     # Drop turns before they ever reach the Provider: either the last N
-    # messages, or whichever match a predicate. This is the client-side arm
-    # of the Prune/Compact-vs-server-context-editing comparison (open
-    # decision #3, remaining-work.md) -- the combinator interface must not
-    # assume client-side, which is exactly why this is one strategy among
+    # messages, or whichever match a predicate. The client-side arm of the
+    # trimming-vs-server-context-editing comparison -- the combinator interface
+    # must not assume client-side, which is why this is one strategy among
     # several rather than baked into Context#render.
     #
-    # `#requires` is inherited from {Combinator}: pure client-side trimming
-    # needs nothing from the Provider, which is the base default.
+    # `#requires` is the inherited {Combinator} default: pure client-side
+    # trimming needs nothing from the Provider.
     class Prune < Combinator
       include Declarative
 
-      # Prune selects EXACTLY ONE way to trim: a `keep_last:` count or a
-      # predicate block, never both and never neither. The cross-field rule is
-      # a `validate` on :base because no single attribute is at fault.
+      # EXACTLY ONE way to trim: a `keep_last:` count or a predicate block,
+      # never both and never neither. The cross-field rule is a `validate` on
+      # :base because no single attribute is at fault.
       #
-      # Declared inline rather than on a carrier of its own: nothing outside
-      # this class ever names these rules, which is the case `declare` exists
-      # for. `predicate` arrives as a Proc built from a BLOCK, so the check is
+      # `predicate` arrives as a Proc built from a BLOCK, so the check is
       # {Lain::Declarative::ClassMethods#check!} and can never be `settle!` --
       # a Proc has no frozen copy.
       declare do
@@ -58,13 +55,12 @@ module Lain
 
       private
 
-      # Survivorship must be tracked by POSITION, not by `Array#include?` on
-      # the Hash values themselves: two messages that happen to be
-      # value-equal (a repeated tool result, a duplicated turn) are NOT the
-      # same survivor, and `survivors.include?(message)` would spuriously
-      # resurrect an older, non-surviving twin of the true one whenever
-      # `protected_patterns:` is configured at all -- silently breaking
-      # `keep_last:`'s count guarantee even when no pattern matches.
+      # Survivorship is tracked by POSITION, not by `Array#include?` on the
+      # Hash values: two messages that happen to be value-equal (a repeated tool
+      # result, a duplicated turn) are NOT the same survivor, and
+      # `survivors.include?(message)` would resurrect an older, non-surviving
+      # twin whenever `protected_patterns:` is configured at all -- silently
+      # breaking `keep_last:`'s count guarantee even when no pattern matches.
       def base_indices(messages)
         return keep_last_indices(messages) if @keep_last
 

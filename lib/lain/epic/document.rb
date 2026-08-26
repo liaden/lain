@@ -369,7 +369,8 @@ module Lain
         end
 
         # An issue body has exactly one slot for a fenced block, and it is the
-        # criteria. A ```ruby fence read as prose could not be written back (the
+        # criteria. A fence opening on any other tag -- a triple-backtick run
+        # followed by `ruby`, say -- read as prose could not be written back (the
         # description rules refuse a fence), so refusing it here is what keeps
         # "everything that parses, emits" true.
         def refuse_foreign_fence!(number, source)

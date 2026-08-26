@@ -5,22 +5,16 @@ module Lain
     # The fork-per-step execution shape: each chunk runs on a FORK of the
     # mainline, and at the seam that fork DIES -- only the chunk's {Closure}
     # digest is committed to the mainline, never the chunk's turns. So the
-    # mainline is strictly append-only (it gains one closure-reference turn per
-    # seam and nothing else) and its prompt-cache prefix is never rewritten; the
-    # chunk's own turns live on a branch nobody continues.
-    #
-    # It acts on the {Continuation}'s TIMELINE half and leaves the pipeline
-    # untouched: subsequent turns render exactly as before, which is what makes a
-    # fork-per-step run show ZERO prefix rewrites against a {LinearRewrite} run's
-    # one-per-seam (the visible difference between the two shapes).
+    # mainline is strictly append-only and its prompt-cache prefix is never
+    # rewritten; the chunk's own turns live on a branch nobody continues. That is
+    # what makes a fork-per-step run show ZERO prefix rewrites against a
+    # {LinearRewrite} run's one-per-seam.
     #
     # Unlike {Compaction::Scheduler} (a frozen, stateless policy) this one is
-    # STATEFUL by necessity: the mainline is exactly the thing continuations
-    # chain on, and +state.head_digest+ at a seam names the FORK's tail, not the
-    # mainline -- so the policy must carry the mainline head across seams itself.
-    # That is why it "takes the store-backed timeline": +mainline+ is the
-    # Timeline it advances, and the {Runner} adopts the head it returns, so the
-    # two never drift.
+    # STATEFUL by necessity: +state.head_digest+ at a seam names the FORK's tail,
+    # not the mainline, so the policy must carry the mainline head across seams
+    # itself. +mainline+ is the Timeline it advances, and the {Runner} adopts the
+    # head it returns, so the two never drift.
     class ForkPerStep
       include SeamPolicy
 

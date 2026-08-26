@@ -34,10 +34,7 @@ module Lain
         # Fold every record from the current position whose cited parents the
         # Store already holds, stopping at the first one it does not; answer
         # whether the position MOVED. That answer is what lets {Loader}
-        # alternate this fold with {MessageReplay} to a fixpoint: a turn's
-        # `causal_parents` can name a :message only that replay can land, and
-        # that replay's records can name a turn only this fold can land, so
-        # neither pass can run first.
+        # alternate this fold with {MessageReplay} to a fixpoint.
         #
         # PRE-CHECKED, never speculative, and the reason is mechanical:
         # {Timeline#commit} puts the payload BEFORE the envelope and only the
@@ -111,30 +108,24 @@ module Lain
           verified_turn(recommitted(chain, record, index), record, index)
         end
 
-        # The causal edge is part of the content address ({Event#payload}), so
-        # a fold that dropped it would re-derive a different digest and raise
-        # {Corrupt} over bytes that are perfectly sound -- the reason the
-        # writer and this reader had to move together. DEFAULTED, never
-        # fetched: every journal written before {SessionRecord.turn} carried
-        # the field has no key, and no key IS the empty set, the same tolerance
-        # `meta` already has.
+        # The causal edge is part of the content address, so a fold that dropped
+        # it would re-derive a different digest and raise {Corrupt} over bytes
+        # that are perfectly sound. DEFAULTED, never fetched: every journal
+        # written before {SessionRecord.turn} carried the field has no key, and
+        # no key IS the empty set.
         #
         # {Event#normalize_causal} re-sorts and dedups on the way in, so a
         # record whose array was reordered or repeated folds to the SAME
-        # verified turn -- two distinct journal byte strings, one record. That
-        # is correct, since element order is deliberately outside the content
-        # address; it does mean this fold verifies the SET, never those bytes.
+        # verified turn -- two distinct journal byte strings, one record.
+        # Correct, since element order is deliberately outside the content
+        # address, but it means this fold verifies the SET, never those bytes.
         #
-        # The parents must already be in the store this chain builds on --
-        # {Store#put} enforces the causal edge like any other, which is what
-        # keeps the fold from vouching for an event nothing recorded. The
-        # rescue below is reached only from {#forced}, since {#advance}
-        # pre-checks the same edges; it is what a genuinely dangling parent
-        # ends at. TRANSLATED rather than left to escape: {Corrupt} is the one
-        # error this format's readers rescue ({CLI::Resume} builds its Refusal
-        # out of it), so a bare {Store::MissingObject} would reach the exe as a
-        # backtrace instead of a named refusal. {MessageReplay#forced_put}
-        # translates the same edge for flat events, in the same currency.
+        # The rescue below is reached only from {#forced}, since {#advance}
+        # pre-checks the same edges. TRANSLATED rather than left to escape:
+        # {Corrupt} is the one error this format's readers rescue, so a bare
+        # {Store::MissingObject} would reach the exe as a backtrace instead of a
+        # named refusal. {MessageReplay#forced_put} translates the same edge for
+        # flat events, in the same currency.
         def recommitted(chain, record, index)
           chain.commit(role: record.fetch("role"), content: record.fetch("content"),
                        meta: record.fetch("meta", {}), causal_parents: cited_parents(record, index))
@@ -143,10 +134,9 @@ module Lain
                          "never landed: #{e.message}"
         end
 
-        # A journal is bytes, and bytes can be wrong. `content` and `meta`
-        # announce their corruption through the digest they then fail to
-        # re-derive, and a bad `role` raises a named {Event::InvalidRole} --
-        # but this field reaches neither check, because
+        # `content` and `meta` announce their corruption through the digest they
+        # then fail to re-derive, and a bad `role` raises a named
+        # {Event::InvalidRole} -- but this field reaches neither check, because
         # {Event#normalize_causal} maps and sorts it before any digest exists,
         # so a null arrives as a NoMethodError three frames down. Shape-checked
         # here so the whole record type answers corruption in ONE currency.
@@ -183,13 +173,11 @@ module Lain
           chain.checkout(verified_target(record, index))
         end
 
-        # Deliberate asymmetry with {SessionRecord::Scribe#rewound}, recorded
-        # by review: this READ side accepts `to` as ANY digest the
-        # fold ever verified -- including one ABOVE the current position (a
-        # redo onto an abandoned branch) -- while the Scribe refuses to WRITE
-        # that move, its skip-set having pruned the target. Verification
-        # stays sound either way (the target was proven); the Scribe owns
-        # write-strictness, this fold owns read-tolerance.
+        # Deliberate asymmetry with {SessionRecord::Scribe#rewound}: this READ
+        # side accepts `to` as ANY digest the fold ever verified, including one
+        # ABOVE the current position (a redo onto an abandoned branch), while
+        # the Scribe refuses to WRITE that move, its skip-set having pruned the
+        # target. Verification stays sound either way -- the target was proven.
         def verified_target(record, index)
           to = record.fetch("to")
           return to if to.nil? || members.include?(to)

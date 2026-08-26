@@ -9,45 +9,35 @@ module Lain
     #
     # Built on the {ToolCallIndex}: `#calls` supplies the deterministic
     # name/is_error signal per turn, and `#lineage` supplies the causal walk
-    # (render `parent`, then -- at a chain root -- `spawned_from`) that
-    # attribution rides. That index was built for this exact mechanism --
-    # resolving an outcome back to its causing turn across a fan-out -- so
-    # {#nearest_prior_use} spends no new machinery inventing a second walk --
-    # it climbs {ToolCallIndex#lineage}'s ancestors and skips any that did not
-    # call the same tool. That skip is the whole point: a decoy call to an
-    # UNRELATED tool sitting between the failure and the repeat never earns
-    # the attribution just for being closer in turn order. Attribution is
-    # over CONTENT-ADDRESSED LINEAGE, never turn-ordinal proximity.
+    # attribution rides. {#nearest_prior_use} climbs that lineage and SKIPS any
+    # ancestor that did not call the same tool, which is the whole point: a
+    # decoy call to an UNRELATED tool sitting between the failure and the repeat
+    # never earns the attribution just for being closer in turn order.
+    # Attribution is over CONTENT-ADDRESSED LINEAGE, never turn-ordinal
+    # proximity.
     #
-    # The mechanical floor stays regex/loop-detection-simple ON PURPOSE: "the
-    # same tool name was retried after an is_error outcome" needs no model,
-    # so it can never make the grader's answer depend on a live API call --
-    # DryReplay-reproducible by construction. A genuinely fuzzy judgment --
-    # "is this differently-shaped retry still the same frustrated attempt,
-    # even though the prior call technically succeeded?" -- is gated behind
-    # the injected `oracle:`, Null by default ({NullOracle}, the same seam
-    # shape as {Middleware::RefuseSecretWrites::NullOracle}). The oracle is
-    # consulted ONLY where the mechanical floor already declined to signal
-    # (the prior use succeeded), so a live oracle can only ADD signals beyond
-    # the deterministic floor, never suppress or relabel one of its own.
+    # The mechanical floor stays loop-detection-simple ON PURPOSE: "the same
+    # tool name was retried after an is_error outcome" needs no model, so it can
+    # never make the grader's answer depend on a live API call. A genuinely
+    # fuzzy judgment -- "is this differently-shaped retry still the same
+    # frustrated attempt, even though the prior call technically succeeded?" --
+    # is gated behind the injected `oracle:`, Null by default. The oracle is
+    # consulted ONLY where the mechanical floor already declined to signal, so a
+    # live oracle can only ADD signals beyond the deterministic floor, never
+    # suppress or relabel one of its own.
     #
     #   FrustrationRepair.new.grade(Journal.records(File.foreach(path)))
     #   #=> Grade(score: 0.0, pass: false, why: "1 frustration signal, 0 repaired: ..." ...)
     #
-    # {ToolCallIndex#lineage} is a single deterministic path (a turn's
-    # `parent` OR, only at a root, its `spawned_from` -- never both), so it
-    # can never itself branch into more than one ancestor. `caused_by` is
-    # still an Array, not a bare digest: {Timeline#causal_meets}'s documented
-    # shape is the set of maximal common ancestors at a criss-cross causal
-    # fan-in, and a journaled `turn` record ({SessionRecord.turn}) carries no
-    # `causal_parents` field to reconstruct that richer walk from -- so this
-    # mechanical floor cannot itself produce more than one cause today, but a
-    # caller reading `caused_by` must never assume a single element, because
-    # the type does not promise one.
+    # {ToolCallIndex#lineage} is a single deterministic path, so this floor
+    # cannot itself produce more than one cause. `caused_by` is still an Array:
+    # {Timeline#causal_meets}'s shape is the SET of maximal common ancestors at
+    # a criss-cross fan-in, and a journaled `turn` record carries no
+    # `causal_parents` field to reconstruct that richer walk from -- so a caller
+    # must never assume a single element, because the type does not promise one.
     class FrustrationRepair
-      # The fuzzy-signal seam, Null by default: mirrors
-      # {Middleware::RefuseSecretWrites::NullOracle} -- one swappable arm over
-      # one interface, decided without a model call until one is wired in.
+      # The fuzzy-signal seam, Null by default: one swappable arm over one
+      # interface, decided without a model call until one is wired in.
       class NullOracle
         def frustrated?(_prior_call, _next_call) = false
 
@@ -56,12 +46,10 @@ module Lain
         def self.instance = INSTANCE
       end
 
-      # One detected signal. `caused_by` is an Array of turn digests (see the
-      # class doc's note on why it is never a bare String). `repaired` is
-      # whether THIS turn's own call succeeded -- the retry that ends the
-      # loop, as opposed to one that persists it. `source` says which arm
-      # found it: `:mechanical` (the deterministic floor) or `:oracle` (the
-      # injected fuzzy signal).
+      # One detected signal. `repaired` is whether THIS turn's own call
+      # succeeded -- the retry that ends the loop, as opposed to one that
+      # persists it. `source` says which arm found it: `:mechanical` for the
+      # deterministic floor, `:oracle` for the injected fuzzy signal.
       Signal = Data.define(:kind, :turn_digest, :caused_by, :repaired, :source, :why)
 
       # @param oracle [#frustrated?] the fuzzy-signal seam; Null by default
@@ -83,9 +71,8 @@ module Lain
       # @param entries [Enumerable<Hash, String>]
       # @param tool_call_index [ToolCallIndex] the projection to detect over,
       #   built from `entries` when absent. A caller folding several graders
-      #   over ONE record array ({Friction::Report}) already holds the index
-      #   this one would build, and parsing the same in-memory records again
-      #   per grader is the whole cost the keyword removes.
+      #   over ONE record array already holds the index this one would build,
+      #   and re-parsing the same records per grader is what the keyword saves.
       # @return [Array<Signal>] every detected signal, turn order, frozen
       def signals(entries, tool_call_index: ToolCallIndex.new(entries))
         tool_call_index.calls.flat_map do |digest, calls|
@@ -119,26 +106,22 @@ module Lain
                                                "frustrated repeat of #{short(prior.first)}")
       end
 
-      # `-why`/`-digest`/`-prior.first` freeze what {Data.define} does not:
-      # it freezes the Signal itself but not a mutable value reachable
-      # through it. String interpolation always returns a fresh, unfrozen
-      # String (the same trap `Grade#initialize`'s own `-why.to_s` guards
-      # against), and a lineage digest read out of a raw JSON-parsed record
-      # is unfrozen too -- ONLY a String used as a Hash KEY is auto-frozen by
-      # Ruby, and `prior.first` is a value read out of {ToolCallIndex#lineage},
-      # never a key. Skipping any of the three would leave
-      # `Ractor.shareable?(signal)` false despite the Signal looking frozen
-      # at a glance.
+      # The three `-` calls freeze what {Data.define} does not: it freezes the
+      # Signal itself but not a mutable value reachable through it. String
+      # interpolation always returns a fresh unfrozen String, and a lineage
+      # digest read out of a raw JSON-parsed record is unfrozen too -- ONLY a
+      # String used as a Hash KEY is auto-frozen by Ruby, and `prior.first` is a
+      # value, never a key. Skipping any of the three leaves
+      # `Ractor.shareable?(signal)` false despite the Signal looking frozen.
       def build_signal(digest, call, prior, source:, why:)
         Signal.new(kind: :rephrase_loop, turn_digest: -digest, caused_by: [-prior.first].freeze,
                    repaired: call.is_error == false, source:, why: -why)
       end
 
-      # The nearest ANCESTOR (never `digest` itself -- a sibling call in the
-      # same turn is concurrent, not causally prior) that also called
-      # `tool_name`, found by climbing {ToolCallIndex#lineage} and skipping
-      # every ancestor whose calls do not match. Lazy, so a long, unrelated
-      # prefix costs nothing once a match is found.
+      # The nearest ANCESTOR that also called `tool_name` -- never `digest`
+      # itself, since a sibling call in the same turn is concurrent rather than
+      # causally prior. Lazy, so a long unrelated prefix costs nothing once a
+      # match is found.
       #
       # @return [Array(String, ToolCallIndex::Call), nil] the matching
       #   ancestor's digest paired with its call, or nil if `tool_name` was

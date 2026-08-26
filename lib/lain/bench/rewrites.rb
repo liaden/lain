@@ -8,13 +8,11 @@ module Lain
     # already journals. No Timeline access -- journal bytes only.
     #
     # A REWRITE is a position present in BOTH of two consecutive chains but
-    # carrying a DIFFERENT digest; its DEPTH is the smallest such position.
-    # A position present in only one chain -- a marker slid
-    # (`Context::CacheBreakpoints`' lookback window moving), or a message got
-    # appended -- is NOT a rewrite: `Request#prefix_digests` is built
-    # precisely so a shared position hashes identically regardless of
-    # whether a marker sits on it (see request.rb), so only genuinely
-    # rewritten bytes disagree on a position both chains carry.
+    # carrying a DIFFERENT digest; its DEPTH is the smallest such position. A
+    # position present in only one chain -- a marker slid, or a message
+    # appended -- is NOT a rewrite: `Request#prefix_digests` is built precisely
+    # so a shared position hashes identically regardless of whether a marker
+    # sits on it, so only genuinely rewritten bytes disagree on a shared one.
     #
     # `prefix_digests` distinguishes nil ("not computed" -- an older Journal,
     # or a run that never enabled the chain) from `[]` ("computed, empty" --
@@ -32,14 +30,13 @@ module Lain
     # shared position.
     #
     # ONE CONFLATION, inherited from the chain itself: `Request#prefix_digests`
-    # folds `model` into every entry (the chains are per-model by design --
-    # a prompt cache never spans models), so a model switch between
+    # folds `model` into every entry, since the chains are per-model by design
+    # and a prompt cache never spans models. So a model switch between
     # consecutive calls disagrees at every shared position and reads here as
     # one rewrite at the earliest one, indistinguishable from a real prefix
-    # edit. Faithful to the cache (a model switch DOES forfeit the whole
-    # prefix), but misleading as edit-attribution -- callers comparing across
-    # models must segment the journal per arm before projecting. Pinned in
-    # the spec.
+    # edit. Faithful to the cache -- a model switch DOES forfeit the whole
+    # prefix -- but misleading as edit-attribution, so callers comparing across
+    # models must segment the journal per arm before projecting.
     class Rewrites
       include Enumerable
 
@@ -75,9 +72,9 @@ module Lain
         # `Journal.records`' lazy walk, and `each_cons`/`filter_map` on a
         # `Lazy` stay `Lazy` -- freezing THAT freezes the enumerator object,
         # not an Array, and an unrealized `Enumerator::Lazy` never clears
-        # `Ractor.shareable?`. Materializing here is also what makes this a
-        # value object at all: a Rewrites answers the same rewrites on every
-        # read, not a stream that can only be walked once.
+        # `Ractor.shareable?`. Materializing is also what makes this a value
+        # object: a Rewrites answers the same rewrites on every read, not a
+        # stream that can only be walked once.
         @rewrites = chains.each_cons(2).filter_map { |before, after| rewrite_between(before, after) }.to_a.freeze
         freeze
       end
@@ -94,8 +91,7 @@ module Lain
       private
 
       # A cross-format pair is INCOMPARABLE, not a rewrite: see the class
-      # comment. Same-format pairs (both nil, or both the same version)
-      # compare exactly as before.
+      # comment.
       def rewrite_between((before_version, before), (after_version, after))
         return nil unless before_version == after_version
 

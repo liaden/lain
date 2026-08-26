@@ -3,35 +3,28 @@
 module Lain
   module Middleware
     # The repl-phase middleware that turns a `you>` line into either an expanded
-    # turn or a short-circuited answer, before the model is ever asked.
-    #
-    # Subclass-Base/override-#call/freeze, the {RefuseSecretWrites} template, and
-    # it routes every path through {Base#downstream} rather than a bare `yield`.
-    # It parses `env[:text]` via {Skill::Invocation.parse} and branches on the
-    # five outcomes the grammar admits:
+    # turn or a short-circuited answer, before the model is ever asked. It parses
+    # `env[:text]` via {Skill::Invocation.parse} and branches on the five outcomes
+    # the grammar admits:
     #
     #   not an invocation  (parse -> nil)  -> pass through unchanged
     #   in-line  (`/skill args`)           -> render the scaffold, append args,
     #                                         REWRITE env[:text], run the turn
-    #   unknown  (`/nope`)                  -> short-circuit: a loud env[:response]
+    #   unknown  (`/nope`)                 -> short-circuit: a loud env[:response]
     #                                         naming the known set, NO model turn
-    #   role-bound (`@role/skill`)          -> fold a persona'd one-shot subagent's
+    #   role-bound (`@role/skill`)         -> fold a persona'd one-shot subagent's
     #                                         final answer into env[:response] via
     #                                         the {Skill::RoleSpawn} seam
-    #   malformed (parse raises Malformed)  -> propagate; the dispatch boundary
+    #   malformed (parse raises Malformed) -> propagate; the dispatch boundary
     #                                         rescues Lain::Error and renders it
     #
     # A short-circuit answers by setting env[:response] and NEVER calling
-    # downstream -- the dispatch-boundary seam renders env[:response] with
-    # zero model turn. The response is a real {Response} whose text is the loud
-    # message, so the one boundary renderer (`render_response`) handles it exactly
-    # as it handles a model turn; this middleware never touches the terminal.
+    # downstream. The response is a real {Response} whose text is the loud
+    # message, so the one boundary renderer handles it exactly as it handles a
+    # model turn; this middleware never touches the terminal.
     #
-    # Malformed is deliberately NOT rescued here: a `@word/` that attempts the
-    # grammar and breaks it is a {Skill::Invocation::Malformed} (a {Lain::Error}),
-    # and letting it propagate is what lets the REPL's dispatch boundary render it
-    # and loop to the next prompt -- rescuing it into a silent pass-through would
-    # send the broken line to the model verbatim.
+    # Malformed is deliberately NOT rescued here: rescuing it into a silent
+    # pass-through would send the broken line to the model verbatim.
     class SkillDispatch < Base
       def initialize(catalog:, renderer:, role_spawn:)
         @catalog = catalog
@@ -66,17 +59,15 @@ module Lain
                       "unknown skill #{invocation.skill.inspect}, expected one of #{@catalog.names.inspect}")
       end
 
-      # A role-bound line folds a persona'd one-shot subagent's final
-      # answer into env[:response]: the {Skill::RoleSpawn} seam fetches the role,
-      # spawns it under its policy/persona in the parsed context mode
-      # (`:inherit` for `@role/skill`, `:fresh` for `@role[/skill]`), and runs
-      # the rendered scaffold + args to a single result. Setting env[:response]
-      # short-circuits, so the boundary renders the child's answer with ZERO
-      # parent turn -- the subagent's turns live attributed in the shared Store,
-      # never in the parent's rendered conversation (out-of-band). An
-      # unknown role raises {Role::Catalog::Unknown} BEFORE any spawn (no
-      # tokens); it is a {Lain::Error}, so -- exactly like {Malformed} -- it
-      # propagates to the dispatch boundary, which renders it and loops.
+      # The {Skill::RoleSpawn} seam fetches the role, spawns it under its
+      # policy/persona in the parsed context mode (`:inherit` for `@role/skill`,
+      # `:fresh` for `@role[/skill]`), and runs the scaffold to a single result.
+      # Setting env[:response] short-circuits, so the boundary renders the child's
+      # answer with ZERO parent turn -- the subagent's turns live attributed in
+      # the shared Store, never in the parent's rendered conversation. An unknown
+      # role raises {Role::Catalog::Unknown} BEFORE any spawn, so no tokens are
+      # spent; being a {Lain::Error} it propagates to the dispatch boundary like
+      # {Malformed} does.
       def report_role_bound(env, invocation)
         result = @role_spawn.call(invocation.role, invocation.context, expand(invocation))
         short_circuit(env, result.content)

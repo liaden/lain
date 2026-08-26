@@ -426,13 +426,12 @@ end
 -- typing comes back AFTER it, in the order the human actually decided.
 --
 -- THE RESERVATION IS AN OBJECT THE MODULE OWNS, NOT AN INTEGER IT HANDS OUT.
--- The first draft returned a bare `seq` and let `anchor` take one from anybody:
--- nothing checked that a sequence came from `reserve`, was used once, or did not
--- exceed `placed`. `place` used to make a forged or duplicated sequence
--- UNREPRESENTABLE, and that is the property being kept -- a caller names a
--- CLAIM, the module holds the placement under it, and `anchor` can only spend
--- what is there. A pane's claim is its buffer NAME, which is the one piece of
--- its identity that survives `:bdelete`.
+-- Handing back a bare `seq` lets `anchor` take one from anybody: nothing checks
+-- that a sequence came from `reserve`, was used once, or did not exceed
+-- `placed`. A forged or duplicated sequence has to be UNREPRESENTABLE, so a
+-- caller names a CLAIM, the module holds the placement under it, and `anchor`
+-- can only spend what is there. A pane's claim is its buffer NAME, the one piece
+-- of its identity that survives `:bdelete`.
 --
 -- A RESERVATION IS A DEBT THE SETTLE COLLECTS. `assert_placed` refuses
 -- `:LainNoteDone` while one is outstanding -- see it below for why that is a
@@ -676,16 +675,13 @@ end, {
 -- is cleared until lain says it took them, which is what the early RETURN
 -- below preserves.
 --
--- THE REFUSAL IS ANSWERED, NOT RE-RAISED, and this comment used to say the
--- opposite for a true reason wrongly applied. It is true that nvim appends its
--- own `stack traceback:` to anything escaping a `define`d callback however it
--- was raised, `error(msg, 0)` and a `pcall`-then-reraise alike; the traceback
--- is nvim's outer wrapper's doing. That is a limit on RAISING, not on
--- refusing. Sending it out on `__lain.review_refused` instead costs the human
--- no traceback, which is what `65_review.lua`'s `:LainReviewDone` already does
--- and what `46_sidebar.lua`'s `:LainReviewVerdict` now does too. It does NOT
--- promise no hit-enter prompt -- a message longer than the window still pages;
--- `46_sidebar.lua`'s comment carries the measurement.
+-- THE REFUSAL IS ANSWERED, NOT RE-RAISED. nvim appends its own
+-- `stack traceback:` to anything escaping a `define`d callback however it was
+-- raised, `error(msg, 0)` and a `pcall`-then-reraise alike, because the
+-- traceback is nvim's outer wrapper's doing -- a limit on RAISING, not on
+-- refusing. Sending it out on `__lain.review_refused` costs the human no
+-- traceback. It does NOT promise no hit-enter prompt: a message longer than the
+-- window still pages, and `46_sidebar.lua` carries that measurement.
 --
 -- TWO `pcall`s, because there are two refusals and only one of them has been
 -- anywhere. `settled` runs `assert_saved`, which refuses a modified buffer
@@ -736,8 +732,7 @@ end, {
 -- to reason about than one that treats it as total in all three. So: total, and
 -- the near-nil path stays loud. That the rail is unguarded is a measured fact
 -- rather than an assumption -- `review_refused` does not `pcall` its own
--- `nvim_echo` (`65_review.lua:245`, `:256`, `:261`); only `recorded()` at `:186`
--- does.
+-- `nvim_echo`; only `recorded()` does.
 define("LainNoteDone", function()
   -- `pcall`'s second return is the VALUE or the ERROR, so `batch` is the
   -- refusal on one leg and the payload on the other. Lua's convention, spelled

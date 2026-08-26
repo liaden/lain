@@ -6,17 +6,14 @@ module Lain
   class Arm
     # The orchestrator-worker topology: a lead decomposes a task into N
     # independent subtasks, fans workers out over ONE shared, Monitor-guarded
-    # Store (so parallel commits neither race nor reorder), then a {Synthesis}
-    # turn folds their results into a single multi-parent causal Event -- the
-    # first any arm writes. Measured against the {SingleThread} control the same
-    # way every richer topology is: same `#run -> Run` shape, same graded,
-    # priced, timed trajectory.
+    # Store so parallel commits neither race nor reorder, then a {Synthesis}
+    # turn folds their results into a single multi-parent causal Event.
     #
-    # Each worker gets a FRESH Timeline root in the shared Store (CLAUDE.md:
-    # subagents never inherit the parent's prompt) and its own leased WorkerEnv
-    # from the injected isolation backend, so the arm theme and the isolation
-    # theme stay decoupled -- the default {NoIsolation} leases nothing and the
-    # arm runs in the shared process environment unchanged.
+    # Each worker gets a FRESH Timeline root in the shared Store -- subagents
+    # never inherit the parent's prompt -- and its own leased WorkerEnv from the
+    # injected isolation backend, so the arm theme and the isolation theme stay
+    # decoupled: the default {NoIsolation} leases nothing and the arm runs in
+    # the shared process environment unchanged.
     class OrchestratorWorker < Arm
       # The default decomposition: one subtask per non-empty line, or the whole
       # task when it has no line structure. Injectable so a bench can decompose
@@ -31,8 +28,7 @@ module Lain
       # @param decompose [#call] `call(task) -> Array<String>` subtasks
       # @param synthesis [Synthesis] the fan-in fold
       # @param instrument [Instrument] times the fan-out and prices the workers'
-      #   merged journals -- the same measuring collaborator every arm is
-      #   injected with
+      #   merged journals
       # @param handoff [#reclaim] what a finished worker's completion point does
       #   with its lease -- hand the work back, resolve a conflict, release. The
       #   Null releases and nothing else, so an unwired arm is unchanged.
@@ -46,10 +42,9 @@ module Lain
       end
 
       # Decompose, fan the workers out, fold their results, and hand back the
-      # graded, priced, timed {Run}. `elapsed` times ONLY the fan-out (the
-      # model/tool work under study) -- decomposition, synthesis, grading, and
-      # pricing are harness accounting and run outside the clock, the same
-      # discipline {SingleThread} follows.
+      # graded, priced, timed {Run}. `elapsed` times ONLY the fan-out:
+      # decomposition, synthesis, grading and pricing are harness accounting and
+      # run outside the clock, {SingleThread}'s discipline.
       #
       # @param task [String] the instruction to decompose and orchestrate
       # @param spawn_seam [#call] `call(journal:, **spawn_opts) -> Agent`, a FRESH
@@ -65,7 +60,7 @@ module Lain
         folded = @synthesis.fold(lead, results)
         # Priced as its own statement before grading, matching the other arms.
         # `#price_records` folds records the workers already drained, so nothing
-        # here depends on the order -- reading the same way everywhere is the
+        # here depends on the order; reading the same way everywhere is the
         # point, since the three arms that DO drain cannot afford to differ.
         ledger = @instrument.price_records(folded.ledger_entries)
         Run.new(arm: name, timeline: folded.timeline, grade: grader.grade(folded.timeline), elapsed:, ledger:)
@@ -75,7 +70,7 @@ module Lain
 
       # Workers run concurrently over the one shared Store; order is preserved so
       # the synthesis folds subtasks deterministically. Under Provider::Mock the
-      # tasks settle synchronously, but the shape is the real fan-out (5-1.4).
+      # tasks settle synchronously, but the shape is the real fan-out.
       def fan_out(subtasks, spawn_seam:, isolation:, lead:)
         Sync do
           subtasks.each_with_index
@@ -84,16 +79,11 @@ module Lain
         end
       end
 
-      # One worker's isolation lifecycle: lease its WorkerEnv, run it under the
-      # lease, and release the lease whatever happens. The lease is this method's
-      # whole responsibility; {#settle} owns the spawn and the outcome.
-      #
-      # NOT the base's {Arm#leased}, and deliberately so: that bracket is the
-      # WHOLE-RUN one, keyed on the arm's name and discarding the reclaim's
-      # Report. This one leases per WORKER and FOLDS that Report into the
-      # worker's own result, so making the base serve both would mean a
-      # result-shaping hook out there -- the one thing `arm.rb`'s seam comment
-      # rules out. Same `@handoff`, two honest brackets.
+      # One worker's isolation lifecycle. NOT the base's {Arm#leased}: that
+      # bracket is the WHOLE-RUN one, keyed on the arm's name and discarding the
+      # reclaim's Report. This one leases per WORKER and FOLDS that Report into
+      # the worker's own result, so making the base serve both would need a
+      # result-shaping hook out there. Same `@handoff`, two honest brackets.
       #
       # `#reclaim` runs in the BODY, not the ensure, because its
       # {Isolation::WorkerHandoff::Report} is folded into the worker's result --
@@ -101,21 +91,20 @@ module Lain
       #
       # `#surrender` in the `ensure` is what makes that safe. `settle` catches
       # only `StandardError`, and this whole method runs inside an `Async` task:
-      # a sibling's failure cancels it with `Async::Cancel`, which is `<
-      # Exception` and reaches neither rescue. Releasing a `--detach`ed worktree
-      # DESTROYS unanchored commits, so no path may release without first TRYING
-      # to anchor -- `surrender` hands back, restores the parent, and releases,
-      # spawning nothing (there is no budget for a model call inside an unwind).
-      # Both no-op on an already-released lease, so the settled path pays one
-      # boolean. What that buys is the attempt, not a guarantee the ref exists:
-      # see {Isolation::WorkerHandoff}'s class doc for the case it cannot cover.
+      # a sibling's failure cancels it with `Async::Cancel`, which is
+      # `< Exception` and reaches neither rescue. RELEASING A `--detach`ED
+      # WORKTREE DESTROYS UNANCHORED COMMITS, so no path may release without
+      # first TRYING to anchor -- `surrender` hands back, restores the parent,
+      # and releases, spawning nothing, since there is no budget for a model
+      # call inside an unwind. Both no-op on an already-released lease. What
+      # that buys is the attempt, not a guarantee the ref exists: see
+      # {Isolation::WorkerHandoff} for the case it cannot cover.
       def work(subtask, index, spawn_seam:, isolation:, lead:)
         worker_id = "#{name}-worker-#{index}"
         lease = isolation.acquire(worker_id)
         # Two named locals, in the order they must happen: the worker settles
         # first, THEN its still-live lease is handed back. Packed as arguments
-        # this read as one expression whose correctness rested on Ruby's
-        # left-to-right argument evaluation.
+        # this rested on Ruby's left-to-right argument evaluation.
         result = settle(subtask, spawn_seam:, lease:, lead:)
         report = @handoff.reclaim(lease, worker_id:)
         handed(result, report)
@@ -137,11 +126,9 @@ module Lain
 
       def joined(existing, summary) = [existing, summary].compact.reject(&:empty?).join("\n\n")
 
-      # Spawn a fresh agent rooted in the shared Store, ask its subtask, and
-      # carry back the settled head plus the spend it journaled. A worker failure
-      # is CAUGHT and returned as a named {Result} (its error kept, any partial
-      # spend preserved) -- the escalation trigger's "a failed worker is a named
-      # input, not an omission".
+      # A worker failure is CAUGHT and returned as a named {Result}, its error
+      # kept and any partial spend preserved: a failed worker is a named input,
+      # not an omission.
       def settle(subtask, spawn_seam:, lease:, lead:)
         journal = Channel.new
         agent = spawn_seam.call(journal:, base_timeline: Timeline.empty(store: lead.store),

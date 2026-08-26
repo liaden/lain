@@ -11,10 +11,9 @@ module Lain
       # This is the mutation the fork exists for. The vendored
       # {Provider::HTTP::StreamAccumulator} flattens: it joins every text block
       # into one String, joins every thinking block, and keeps only the *first*
-      # thinking block's signature. That destroys the content array, and gate 1
-      # requires committing it whole -- a second thinking block's signature that
-      # goes missing corrupts the very next turn, because Anthropic rejects a
-      # thinking block replayed without its verbatim signature.
+      # thinking block's signature. A second thinking block's missing signature
+      # corrupts the very next turn, because Anthropic rejects a thinking block
+      # replayed without its verbatim signature.
       #
       # So this assembler keeps each block separate under its own index and
       # applies deltas to it in place, which is also what makes `input_json_delta`
@@ -78,10 +77,9 @@ module Lain
         #
         # Nothing it accumulated may survive that boundary. Replacing
         # `@blocks[index]` in {#on_block_start} covered only the indices a retry
-        # happened to REOPEN, so a retry that opened FEWER blocks left the
-        # remainder in place: spliced prose at the end of the turn, or -- when the
-        # abandoned attempt had reached a `tool_use` -- a phantom tool call in the
-        # assistant message, under a clean `stop_reason` and clean usage.
+        # happened to REOPEN, so one that opened FEWER blocks left the remainder
+        # in place: spliced prose at the end of the turn, or a phantom tool call
+        # in the assistant message, under a clean `stop_reason` and usage.
         #
         # ⚠️ **"Per attempt" is scoped to what {AnthropicWire#wire_payload} sends,
         # and it is not a property of the protocol.** Anthropic's server-side

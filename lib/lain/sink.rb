@@ -1,32 +1,23 @@
 # frozen_string_literal: true
 
 module Lain
-  # Sinks are where output goes when it is NOT the frontend's to render.
-  #
-  # The output-discipline rule is that only the frontend touches the terminal;
-  # everything else is handed a sink. {Sink::IOAdapter} exists for the awkward
-  # reality that some third-party code (and `Mixlib::ShellOut`'s `live_stdout` /
-  # `live_stderr`) insists on writing to an IO. It presents an IO-shaped duck,
-  # but every write becomes an attributed {Lain::Telemetry::ToolOutput} on a
-  # {Lain::Channel}, tagged at the source with its `tool_use_id` and stream.
-  # {Sink::Null} is the `/dev/null` of sinks.
+  # Where output goes when it is NOT the frontend's to render. Only the frontend
+  # touches the terminal; everything else is handed a sink. {Sink::IOAdapter}
+  # exists because some third-party code (and `Mixlib::ShellOut`'s `live_stdout`
+  # / `live_stderr`) insists on writing to an IO. {Sink::Null} is `/dev/null`.
   module Sink
-    # A minimal IO look-alike over a {Lain::Channel}. Each write turns into a
-    # {Lain::Telemetry::ToolOutput} carrying a fixed `tool_use_id` and `stream`, so
-    # bytes are attributed the moment they are produced.
+    # A minimal IO look-alike over a {Lain::Channel}: each write becomes a
+    # {Lain::Telemetry::ToolOutput} carrying a fixed `tool_use_id` and `stream`,
+    # so bytes are attributed the moment they are produced. Only the surface
+    # third-party writers actually reach for is implemented, and return values
+    # follow the real `IO` contract.
     #
-    # Only the IO surface third-party writers actually reach for is implemented:
-    # `#write`, `#puts`, `#print`, `#<<`, and `#flush`. Return values follow the
-    # real `IO` contract (notably `#write` returns the number of bytes written).
-    #
-    # Not a painter's algorithm: each write-family method allocates exactly one
-    # fresh, mutable buffer local to that call (`+""`), appends each argument to
-    # it AT MOST ONCE, hands it to {#emit}, and lets it go -- there is no
-    # instance-level buffer that grows call over call, so N calls cost O(total
-    # bytes written), never O(n^2). The one thing that *could* look like
-    # re-appending -- `puts`'s recursive `append_line` over a nested Array -- is
-    # still a single pass per byte: each element is visited once and appended
-    # once to the SAME buffer, not copied into a growing chain of buffers.
+    # Not a painter's algorithm: each write-family method allocates one fresh
+    # buffer local to that call, appends each argument to it AT MOST ONCE, and
+    # lets it go -- no instance buffer grows call over call, so N calls cost
+    # O(total bytes written), never O(n^2). `puts`'s recursive `append_line` over
+    # a nested Array only looks like re-appending: each element is visited once
+    # and appended once to the SAME buffer.
     class IOAdapter
       # @param channel [Lain::Channel] destination for emitted events
       # @param tool_use_id [String] attribution stamped on every event
@@ -39,8 +30,8 @@ module Lain
         Telemetry::ToolOutput.new(tool_use_id:, stream:, bytes: "")
       end
 
-      # Write the string form of each argument. Emits one event per call (never
-      # per byte), so a single logical write can never be split mid-line.
+      # One event per call, never per byte, so a single logical write can never
+      # be split mid-line.
       #
       # @return [Integer] total number of bytes written, per the `IO` contract
       def write(*args)
@@ -57,10 +48,8 @@ module Lain
         self
       end
 
-      # Write each argument's string form with no separators or terminator.
-      # Body is identical to {#write}'s -- concatenate, emit -- so it delegates
-      # there rather than duplicating the buffer-building loop; only the return
-      # value differs, per each method's own `IO` contract.
+      # No separators or terminator. The body is {#write}'s, so it delegates
+      # rather than duplicating the buffer loop; only the return value differs.
       # @return [nil] per the `IO#print` contract
       def print(*)
         write(*)
@@ -83,8 +72,7 @@ module Lain
         nil
       end
 
-      # No-op flush: events are enqueued synchronously, so there is nothing to
-      # push. Returns self, as `IO#flush` does.
+      # A no-op: events are enqueued synchronously, so nothing is pending.
       # @return [self]
       def flush
         self
@@ -92,9 +80,8 @@ module Lain
 
       private
 
-      # Recursively render one `puts` argument into `buffer`, matching the
-      # quirks confirmed against real `IO`: an empty array contributes nothing,
-      # a nested array is flattened, and a trailing newline is not doubled.
+      # The quirks confirmed against real `IO`: an empty array contributes
+      # nothing, a nested array is flattened, a trailing newline is not doubled.
       def append_line(buffer, arg)
         if arg.is_a?(Array)
           arg.each { |element| append_line(buffer, element) }
@@ -106,8 +93,7 @@ module Lain
         buffer << "\n" unless string.end_with?("\n")
       end
 
-      # Enqueue attributed bytes, skipping empty writes so we never emit a
-      # zero-byte event.
+      # Skips empty writes, so no zero-byte event is ever emitted.
       def emit(bytes)
         return if bytes.empty?
 
@@ -117,9 +103,8 @@ module Lain
       end
     end
 
-    # A sink that swallows everything. Satisfies the same IO-shaped duck as
-    # {IOAdapter} -- including `#write` returning a byte count -- but sends the
-    # bytes nowhere. Handy for muting a tool or in tests.
+    # The Null Object no caller checks for: the same IO-shaped duck as
+    # {IOAdapter}, `#write`'s byte count included, sending the bytes nowhere.
     class Null
       # @return [Integer] bytes that would have been written
       def write(*args)

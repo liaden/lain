@@ -8,16 +8,6 @@ module Lain
       # summary, in a single derivation, and the turns neither claims are
       # retained verbatim in the gaps between them.
       #
-      # == Why it exists at all
-      #
-      # `chunk-derived-context-timeline.md` follow-up 3 designed this and
-      # deferred it as speculative generality. Joel un-deferred it on
-      # 2026-07-29 with the reason recorded here rather than in the plan:
-      # BUILDING IT IS WHAT PROVES THE EXTRACTION. {IntervalPartition} was
-      # pulled out of {Base} for three callers, and this is the third -- the one
-      # that needs the value's refinement meet, which nothing else does, and the
-      # one that would have had to reach into a private constant to exist.
-      #
       # == It is PARTIAL, and the partiality is the contract
       #
       # Two strategies compose only when they claim DISJOINT stretches. There is
@@ -41,9 +31,9 @@ module Lain
       # Hash-subclass erasure that ruled out a subclassed content block does not
       # reach them.
       #
-      # It is one more subclass of {Base} and not a new seam: {#ranges} and
-      # {#collapse} stay Base's, sealed, and the whole of what this class adds
-      # is a proposal that merges two and a {Base#blocks_for} that forwards.
+      # {#ranges} and {#collapse} stay Base's, sealed; the whole of what this
+      # class adds is a proposal that merges two and a {Base#blocks_for} that
+      # forwards.
       class Composed < Base
         # Two operands claiming the same index. A kind of {NotAPartition} --
         # their union is not one -- so every existing rescue site catches it
@@ -84,10 +74,9 @@ module Lain
           super()
           @left = left
           @right = right
-          # SHALLOW, {Source::Derived::PinCuts}' discipline: it fixes this
-          # object's own two references and says nothing about the operands,
-          # either of which may legitimately hold a live oracle and a mutable
-          # memo and must NOT be frozen.
+          # SHALLOW: it says nothing about the operands, either of which may
+          # legitimately hold a live oracle and a mutable memo and must NOT be
+          # frozen.
           freeze
         end
 
@@ -119,12 +108,12 @@ module Lain
         # operands can legitimately answer identical messages, and matching on
         # content would pick whichever was asked first.
         #
-        # The owner COLLAPSES its own range and this re-wraps the content, which
-        # costs one extra pass of {Replacement}'s vetting and buys the thing a
+        # The owner COLLAPSES its own range and this re-wraps the content. That
+        # costs one extra pass of {Replacement}'s vetting and buys what a
         # forwarded `#blocks_for` cannot: a {NotBlocks} or a {Blank} names the
-        # operand that actually answered. Forwarding raised them against the
-        # pair -- "strategy `Elide | Mute` answered nil" -- which is findable and
-        # literally false about one of the two.
+        # operand that actually answered, where forwarding raised them against
+        # the pair -- "strategy `Elide | Mute` answered nil", which is literally
+        # false about one of the two.
         def blocks_for(messages, range)
           refuse_untagged(range)
           range.owner.collapse(messages, range:).content

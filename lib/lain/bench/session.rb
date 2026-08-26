@@ -12,12 +12,10 @@ module Lain
     #
     # The header captures exactly {Lain::Context}'s constructor inputs, so a
     # loaded Recording rebuilds the DEFAULT-pipeline Context. A run recorded
-    # under a Context subclass (a custom pipeline) still round-trips its data
-    # -- the header's `context_class` names what rendered it, as data,
-    # surfaced as {Recording#context_class} -- but
-    # {Recording#dry_replay} against `recording.context` only claims byte
-    # identity for default-pipeline sessions; that is the stated limit of
-    # this format.
+    # under a Context subclass still round-trips its data -- the header's
+    # `context_class` names what rendered it, as data -- but
+    # {Recording#dry_replay} claims byte identity only for default-pipeline
+    # sessions. That is the stated limit of this format.
     #
     # == One run, one journal, one file
     #
@@ -25,14 +23,34 @@ module Lain
     # stream raises {Corrupt} rather than guessing which run is meant. The
     # header's `head` anchor is what rejects truncation and cross-run splices
     # through the turn chain -- a Merkle chain self-verifies only its PREFIX,
-    # so without the anchor a deleted tail would load as a shorter session
-    # that still replays identically. Stated honestly: a baseline substituted
+    # so without the anchor a deleted tail would load as a shorter session that
+    # still replays identically. Stated honestly: a baseline substituted
     # WHOLESALE from a same-shape foreign run is self-consistent record by
     # record, so it stays detectable only as non-identity under dry replay,
-    # never at load time. Likewise the transport fields (stream, extra) sit
-    # outside the content address and load unverified -- {Request#digest}
-    # deliberately excludes them, so the integrity envelope covers content,
-    # not transport.
+    # never at load time. Likewise the transport fields sit outside the content
+    # address and load unverified, since {Request#digest} deliberately excludes
+    # them -- the integrity envelope covers content, not transport.
+    #
+    # == Open sessions and resume chains
+    #
+    # {SessionRecord}'s live format can leave a header's `head` nil -- an OPEN
+    # session still running, or one a SIGKILL just stopped -- rather than this
+    # class's own header, which is always anchored because it is written AFTER
+    # the run. A nil header `head` verifies against a `session_closed` record's
+    # OWN `head` when one is present, since the header itself is never rewritten
+    # at close; with neither anchor, {Loader} loads the prefix
+    # UNVERIFIED-but-self-consistent, and {Recording#open?} names which shape a
+    # caller got.
+    #
+    # A header MAY also carry `resumed_from` -- the prior file's basename and
+    # its recorded head digest -- naming a PRIOR file this session continues.
+    # {Loader} follows it through an INJECTED resolver duck, never a filesystem
+    # call of its own, verifies the prior file's own rebuilt head against the
+    # recorded digest, and folds its turns and `message` records in BEFORE this
+    # file's own, so {Recording#timeline} is one continuous conversation across
+    # the chain. Only the Timeline and the `message` events merge that way;
+    # `baseline`, `degraded`, `memory` and `ledger_index` stay scoped to the
+    # file actually loaded, which is this format's current limit.
     class Session
       # A session file whose records no longer cohere: a turn or request_sent
       # whose content re-derives to a different digest than the one recorded
@@ -45,38 +63,13 @@ module Lain
       # `session_closed` closer in one file.
       class Corrupt < Error; end
 
-      # == Open sessions and resume chains
-      #
-      # {SessionRecord}'s live format can leave a header's `head` nil --
-      # an OPEN session still running, or one a SIGKILL just stopped -- rather
-      # than this class's own header, which is always anchored because it is
-      # written AFTER the run. A nil header `head` verifies against a
-      # `session_closed` record's OWN `head` when one is present (the header
-      # itself is never rewritten at close); with neither anchor, {Loader}
-      # loads the prefix UNVERIFIED-but-self-consistent, the documented
-      # anti-truncation limit ({SessionRecord}'s class comment) -- and
-      # {Recording#open?} names which shape a caller got.
-      #
-      # A header MAY also carry `resumed_from` -- `{"file" => <prior file's
-      # basename>, "head" => <prior file's recorded head digest>}` -- naming a
-      # PRIOR file this session continues. {Loader} follows it through an
-      # INJECTED resolver duck (`resolve.call(basename) -> entries`), never a
-      # filesystem call of its own (the Loader's whole contract is "handed
-      # records, in"), verifies the prior file's own rebuilt head against the
-      # recorded digest, and folds its turns and `message` records in BEFORE
-      # this file's own -- so {Recording#timeline} is one continuous
-      # conversation across the whole chain. Only the Timeline and the
-      # `message` events merge this way; `baseline`, `degraded`, `memory`, and
-      # `ledger_index` stay scoped to the file actually loaded, stated
-      # honestly as this format's current limit rather than silently partial.
       HEADER_TYPE = "session"
       TURN_TYPE = "turn"
 
-      # The recorded tool schema, wearing the one duck {Context#render}
-      # consumes from a toolset: #to_schema. The live {Lain::Toolset} cannot be
-      # rebuilt from a journal (tools are capabilities, code included), but the
-      # render seam never needed it -- the schema bytes are what reached the
-      # model.
+      # The recorded tool schema, wearing the one duck {Context#render} consumes
+      # from a toolset. The live {Lain::Toolset} cannot be rebuilt from a
+      # journal -- tools are capabilities, code included -- but the render seam
+      # never needed it: the schema bytes are what reached the model.
       RecordedToolset = Data.define(:schema) do
         def initialize(schema:)
           super(schema: Canonical.normalize(schema))
@@ -88,12 +81,12 @@ module Lain
       end
 
       # The per-turn memory surface a {Loader} rebuilds: the {Memory::Index}
-      # root in force when each recorded turn committed (replayed from the
-      # recording's own successful memory_write calls -- the turns ARE the
-      # write log) and the fully replayed index, whose store resolves every
-      # one of those roots. A root is nil for a turn that committed before
-      # any write -- nil IS the empty index's identity, a value here, exactly
-      # as {Telemetry::MemoryRoot} records it on the wire.
+      # root in force when each recorded turn committed -- replayed from the
+      # recording's own successful memory_write calls, since the turns ARE the
+      # write log -- and the fully replayed index, whose store resolves every
+      # one of those roots. A root is nil for a turn that committed before any
+      # write: nil IS the empty index's identity, a value here, exactly as
+      # {Telemetry::MemoryRoot} records it on the wire.
       RecordedMemory = Data.define(:roots, :index) do
         def initialize(roots:, index:)
           super(roots: roots.freeze, index:)
@@ -122,12 +115,10 @@ module Lain
       # recording (which legitimately will not replay to byte identity) from a
       # genuine harness leak.
       #
-      # `open` and `messages` are the live-format additions, both additive:
       # `open` names whether {Loader} verified a full anchor or only the
-      # documented unverified-prefix shape (see the class note above);
-      # `messages` is the session's re-put :message/:spawn events, root-first
-      # like `baseline`, holding the SAME Store {timeline} does (fetchable by
-      # digest from either).
+      # unverified-prefix shape; `messages` is the session's re-put
+      # :message/:spawn events, root-first like `baseline`, holding the SAME
+      # Store {timeline} does.
       Recording = Data.define(:context, :context_class, :toolset, :workspace,
                               :timeline, :baseline, :ledger_index, :degraded, :memory,
                               :open, :messages) do
@@ -161,12 +152,10 @@ module Lain
         # @param context [Lain::Context] the context the run rendered under
         # @param toolset [#to_schema] the toolset in effect at record time
         # @param workspace [Lain::Workspace] the workspace in effect at record time
-        # @param provider [String, nil] the provider name (CLI::Backend#provider's
-        #   naming, e.g. "anthropic") the run dispatched through, recorded as
-        #   pure data beside the model -- never constantized, the same idiom
-        #   `context_class` already sets. Optional (default nil) so an EXISTING
-        #   caller that has not threaded a provider name through yet still
-        #   writes a valid header (the additive-field constraint).
+        # @param provider [String, nil] the provider name the run dispatched
+        #   through, recorded as pure data beside the model and never
+        #   constantized. Optional so an existing caller that has not threaded
+        #   one through yet still writes a valid header.
         # @return [#<<] the journal
         def write(journal, timeline:, context:, toolset:, workspace: Workspace.empty, provider: nil)
           journal << header_record(timeline, context, toolset, workspace, provider)
@@ -193,21 +182,17 @@ module Lain
           source.is_a?(String) ? File.foreach(source) : source
         end
 
-        # `head` anchors the whole turn chain (see the class note on
-        # truncation); `context_class` and `provider` are both pure data --
-        # {Loader} never constantizes either, they name what rendered and what
-        # dispatched the run for the record's sake. `provider` rides beside
-        # `model` rather than inside `context` because it genuinely is not one
-        # of {Context}'s constructor inputs (see the sibling guard spec) --
-        # the choice of backend and the render pipeline are separate concerns
-        # that only happen to be pinned by the same header.
+        # `head` anchors the whole turn chain. `provider` rides beside `model`
+        # rather than inside `context` because it genuinely is not one of
+        # {Context}'s constructor inputs: the choice of backend and the render
+        # pipeline are separate concerns that only happen to be pinned by the
+        # same header.
         #
-        # `provider` merges in only when given, {SessionRecord.header}'s own
-        # `resumed_from` idiom: an existing caller that has not threaded a
-        # provider name through yet (RunRecorder, VarianceFixtures) must keep
-        # writing byte-identical headers, so absence is no key, never a nil
-        # value -- proven by the committed variance fixtures' own
-        # byte-identity regeneration spec.
+        # It merges in only when given, {SessionRecord.header}'s `resumed_from`
+        # idiom: an existing caller that has not threaded a provider name
+        # through must keep writing byte-identical headers, so absence is NO
+        # KEY, never a nil value -- proven by the committed variance fixtures'
+        # own byte-identity regeneration spec.
         def header_record(timeline, context, toolset, workspace, provider)
           record = {
             "type" => HEADER_TYPE, "context_class" => context.class.name,
@@ -219,19 +204,12 @@ module Lain
           provider.nil? ? record : record.merge("provider" => provider)
         end
 
-        # The body fields plus the render edge -- exactly what {Loader#timeline}
-        # re-commits through the event chain, so recording them beside the
-        # digest is what lets the Loader recompute and compare. (The turn's own
-        # envelope hashes correlation too, but correlation derives from the
-        # chain itself, so the re-commit reproduces it from these bytes alone.)
-        #
         # Delegated rather than duplicated. This WAS a byte-compatible twin of
         # {SessionRecord.turn}, kept in step by hand -- and it fell out of step
         # exactly once, when {Event} grew `causal_parents` and neither writer
         # followed. One Loader reads both formats, so "byte-compatible" is a
-        # requirement, not a coincidence; {SessionRecord} is where the format
-        # was promoted to, and this is that format. The header stays its own
-        # method because it genuinely differs (`provider`).
+        # requirement, not a coincidence. The header stays its own method
+        # because it genuinely differs, by `provider`.
         def turn_record(turn)
           SessionRecord.turn(turn)
         end
@@ -240,8 +218,7 @@ module Lain
   end
 end
 
-# Anchor, MemoryReplay, MessageReplay, RequestReplay, and ResumeChain before
-# Loader: the Loader is the class that sends them messages, so it reads as
+# Loader last: it is the class that sends the others messages, so it reads as
 # the dependent unit even though all six resolve at runtime.
 require_relative "session/anchor"
 require_relative "session/memory_replay"

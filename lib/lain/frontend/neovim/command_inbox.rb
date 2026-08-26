@@ -12,13 +12,6 @@ module Lain
       # on every consumer; {CLI::HumanReplies::NoEditor} is the same duck for
       # the session that has no editor at all.
       #
-      # It lives in its own file because {Neovim} had reached its length limit
-      # and this was the first thing in it that was already a class other code
-      # talks to -- a public duck ({#pop}, {#attached?}, {#review_refused},
-      # {#answered}) with a Null twin outside this object entirely. A
-      # `Metrics/ClassLength` that only ever gets paid in formatting is the cop
-      # being satisfied rather than heeded.
-      #
       # `pop` forwards its arguments rather than declaring `non_block = false`:
       # the duck it satisfies is Thread::Queue's, and restating that default
       # here would be a second place for it to be wrong.
@@ -31,15 +24,15 @@ module Lain
         def pop(...) = @inbox.pop(...)
         def review_refused(message) = @rpc.review_refused(message)
 
-        # A gesture lain answered LOCALLY joining the same rail: the
-        # editor's question write is parsed on the RPC thread, and the answer
-        # set it produced is popped by the consumer that serves every other
-        # verb. `[verb, args]` with args ONE array, the shape every verb uses --
-        # flat positionals is how a payload got silently dropped once already.
+        # A gesture lain answered LOCALLY joining the same rail: the editor's
+        # question write is parsed on the RPC thread, and the answer set it
+        # produced is popped by the consumer that serves every other verb.
+        # `[verb, args]` with args ONE array, the shape every verb uses -- flat
+        # positionals is how a payload got silently dropped once already.
         #
-        # It is called on the RPC thread, inside the editor's write, under
-        # {QuestionView}'s lock, so it must stay what it is: a push onto an
-        # unbounded, never-closed queue, which cannot park and cannot raise.
+        # Called on the RPC thread, inside the editor's write, under
+        # {QuestionView}'s lock, so it must stay a push onto an unbounded,
+        # never-closed queue: it cannot park and cannot raise.
         def answered(digest, answers) = @inbox.push(["question_answered", [digest, answers]])
 
         # There is an editor. The Null answers false, and that is the whole of

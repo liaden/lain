@@ -20,13 +20,10 @@ module Lain
     end
 
     # What became of one worker's committed work when its isolated checkout was
-    # handed back. `worker_key` is the STRING form of the caller's `worker_id`,
-    # the same self-describing key {IsolationLease} carries, so the two join on
-    # one value: N acquire/release pairs and what each one's work was worth.
-    # `outcome` is the {Isolation::Worktree::Handback::Outcome} kind, and `ref`
-    # names where the commits are anchored -- nil when nothing was written
-    # (nothing to hand back, or a failure before the ref write), absence being
-    # the signal exactly as it is on the Outcome itself.
+    # handed back. `worker_key` is the same self-describing key
+    # {IsolationLease} carries, so the two join on one value; `ref` is nil when
+    # nothing was written, absence being the signal exactly as it is on the
+    # Outcome itself.
     #
     # A REF, never a path: `refs/lain/worker/<worker>` is repo-relative by
     # construction, so this record can never leak a filesystem path outside the
@@ -35,8 +32,7 @@ module Lain
     #
     # Emitted by {Isolation::Worktree::Handback} itself rather than by a
     # decorator: handback is a one-shot operation whose whole product IS the
-    # outcome, so there is no forwarding duck to wrap the way
-    # {Isolation::Journal} wraps a backend.
+    # outcome, so there is no forwarding duck to wrap.
     Handback = Data.define(:worker_key, :outcome, :ref) do
       include Journalable
 

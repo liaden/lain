@@ -17,14 +17,12 @@ module Lain
           def append(_bytes) = self
           def close(**) = nil
 
-          # The duck a RETRY HOOK needs, which is {RotatingFrame}'s and not
-          # {ResponseWal}'s -- a tap reaches the frame off the retried env and
-          # rotates it without knowing which kind it holds. Without this a
-          # transport called on its default frame (a probe, an embedder, a spec
-          # injecting its own config) raised NoMethodError from inside
-          # faraday-retry's callback the first time a request was retried,
-          # replacing the transport error being carried. Found by
-          # `ollama/retry_tap_spec.rb`'s real-transport example.
+          # The duck a RETRY HOOK needs -- {RotatingFrame}'s, not
+          # {ResponseWal}'s -- because a tap reaches the frame off the retried
+          # env and rotates it without knowing which kind it holds. Without it a
+          # transport on its DEFAULT frame raised NoMethodError from inside
+          # faraday-retry's callback, replacing the transport error being
+          # carried.
           def rotate = self
         end
 

@@ -56,17 +56,15 @@ module Lain
       string
     end
 
-    # The :turn constructor -- what `Turn.new` was. Role, content, and meta form
-    # the out-of-line {Payload} body (meta stays inside the content address, via
-    # the body digest, because it carries causal lineage like "spawned_from");
-    # `parent` is the single render edge. `correlation` names the chain by its
-    # root event digest -- {Timeline#commit} derives it, so it is nil only on a
-    # root or on a turn built outside any chain. `causal_parents` defaults to the
-    # empty set, so an ordinary turn hashes exactly as before; the assistant
-    # commit populates it with the turn's folded mailbox messages (decision 2),
-    # the first production writer of causal edges onto a :turn -- read from the
-    # frozen per-turn {Context::Mailbox::Snapshot} the render also folded, never
-    # from the live log, or the edge would claim a message the prompt never saw.
+    # The :turn constructor -- what `Turn.new` was. Role, content and meta form
+    # the out-of-line {Payload} body; meta stays inside the content address, via
+    # the body digest, because it carries causal lineage like "spawned_from".
+    # `correlation` names the chain by its root event digest, so it is nil only
+    # on a root or on a turn built outside any chain. `causal_parents` defaults
+    # to empty, so an ordinary turn hashes exactly as before; the assistant
+    # commit fills it from the frozen per-turn {Context::Mailbox::Snapshot} the
+    # render also folded, never from the live log, or the edge would claim a
+    # message the prompt never saw.
     def self.turn(role:, content:, parent: nil, meta: {}, correlation: nil, causal_parents: [])
       payload = Payload.new(kind: :turn, body: { "role" => normalize_role(role),
                                                  "content" => content, "meta" => meta })
@@ -77,26 +75,18 @@ module Lain
     # tool_use block -- the shape the next request would render as a dangling
     # tool_use, which the API rejects.
     #
-    # "It must never become a rewind TARGET" is the one claim here still
-    # absolute. It is NOT true of the session-loading doors any more: today
-    # they repair rather than refuse -- CLI::Resume#settled answers every
-    # stranded call with a projected cancellation turn committed above the torn
-    # head, so a resumed or forked chain legitimately starts from a head that
-    # is settled again. Only a call naming no tool_use id, which nothing can
-    # pair a result with, still refuses there.
+    # Such an event must never become a rewind TARGET. The session-loading doors
+    # repair rather than refuse -- CLI::Resume#settled commits a projected
+    # cancellation turn above the torn head, so a resumed chain legitimately
+    # starts from a head that is settled again; only a call naming no tool_use
+    # id, which nothing can pair a result with, still refuses there. The doors
+    # that move a LIVE head with no load behind them (CLI::Command::Fork#anchor!,
+    # CLI::Command::Rewind#settled_target!) still refuse outright.
     #
-    # Shared by every door that has to recognise this shape the same way --
-    # CLI::Resume#settled, which repairs it (CLI::Resume::MidTool states the
-    # refusal for the one shape it cannot), and CLI::Command::Fork#anchor! and
-    # CLI::Command::Rewind#settled_target!, which refuse it because they move a
-    # LIVE head with no load behind them to answer it. This used to be two
-    # separately maintained copies that had quietly drifted (one guarded a nil
-    # event, one did not).
-    #
-    # Nil-safe on purpose: CLI::Command::Rewind#nearest_valid evaluates this
-    # over `(1..heads.length)`, and `heads[heads.length]` is nil by
-    # construction (an off-the-end index), so a caller walking arbitrary
-    # events needs no separate guard.
+    # One definition, because this was two copies that had quietly drifted --
+    # one guarded a nil event, one did not. Nil-safe on purpose:
+    # CLI::Command::Rewind#nearest_valid evaluates it over `(1..heads.length)`,
+    # where `heads[heads.length]` is nil by construction.
     def self.pending_tool_use?(event)
       !event.nil? && event.role == "assistant" &&
         event.content.any? { |block| block.is_a?(Hash) && block["type"] == "tool_use" }

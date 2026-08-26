@@ -5,41 +5,29 @@ require "json"
 module Lain
   module Frontend
     class Neovim
-      # The one EDITABLE lain:// view (4-2.3): `lain://request` shows the pending
+      # The one EDITABLE lain:// view: `lain://request` shows the pending
       # request as pretty JSON a human can edit in place, and `:LainResend` feeds
-      # the edited buffer back as a fresh {Telemetry::RequestSent} -- journaled
-      # like any other request and diffed by {Buffers} against the original, so
-      # "edit it, resend, watch what changed" is a pure, agent-free projection.
-      # The re-render/diff reuse is deliberate: a resent request travels the same
-      # Channel path an agent request does, so {Buffers}' diff and this buffer's
-      # own render handle it with no special case (the shape {Bench::DryReplay}
-      # already leans on -- a request is DATA, re-renderable and diffable).
+      # the edited buffer back as a fresh record -- journaled like any other
+      # request and diffed by {Buffers} against the original. A resent request
+      # travels the same Channel path an agent request does, so the diff and this
+      # buffer's own render handle it with no special case.
       #
-      # THIS class is non-destructive by construction: it never commits to the
-      # Timeline and never reaches into the Agent -- the frontend holds no
-      # commit path at all, so nothing HERE can move a head no matter how many
-      # resends fire. Whether the resent request then also DISPATCHES is the
-      # injected bridge's business, one level up: {Neovim}'s resend
-      # worker offers the rebuilt Request to {CLI::ResendBridge} AFTER this
-      # class journals the projection, and that dispatch commits through the
-      # Agent like any turn -- onto a rewound head whose dropped turn stays
-      # reachable in the Store, a speculative fork, never a rewrite. Unbridged
-      # (plain --nvim), a resend remains the pure projection it always was.
+      # NON-DESTRUCTIVE BY CONSTRUCTION: it never commits to the Timeline and
+      # never reaches into the Agent -- the frontend holds no commit path at all,
+      # so nothing here can move a head however many resends fire. Whether the
+      # resent request also DISPATCHES is the injected bridge's business, one
+      # level up, and that dispatch commits onto a rewound head whose dropped
+      # turn stays reachable in the Store: a speculative fork, never a rewrite.
       #
-      # Threading. {#updates} runs on the frontend's drain thread (turning an
-      # agent RequestSent into the editable buffer and remembering it as the
-      # resend baseline); {#resend} runs on the resend-worker thread (turning
-      # edited lines back into a RequestSent). The baseline is the one piece of
-      # state those two threads share, so a Mutex guards exactly it -- and
-      # nothing else here is mutable.
+      # Threading. {#updates} runs on the frontend's drain thread; {#resend} runs
+      # on the resend-worker thread. The baseline is the one piece of state those
+      # two share, so a Mutex guards exactly it, and nothing else here is mutable.
       #
-      # Known limitation, accepted: a NEW RequestSent arriving while
-      # a human is mid-edit replaces the whole buffer -- their unsent keystrokes
-      # are clobbered. That is last-writer-wins on a buffer with two writers,
-      # and the honest fix (dirty-buffer detection, or a CRDT -- see
-      # planning/crdt-exploration.md) is real work this class does not owe. In
-      # practice the window is narrow: requests arrive between turns, and a
-      # human edits while the agent is idle.
+      # KNOWN LIMITATION: a new RequestSent arriving while a human is mid-edit
+      # replaces the whole buffer and clobbers their unsent keystrokes --
+      # last-writer-wins on a buffer with two writers. The honest fix
+      # (dirty-buffer detection, or a CRDT) is work this class does not owe, and
+      # the window is narrow: requests arrive between turns.
       class RequestBuffer
         REQUEST = "lain://request"
 
@@ -90,15 +78,12 @@ module Lain
           resent
         end
 
-        # {#build}'s inverse, for the resend bridge's dispatch offer: a {Telemetry::RequestResent}
-        # this class produced becomes a live {Request} again, by the proven
-        # rebuild idiom ({Bench::Session::RequestReplay}) -- the payload keys
-        # are exactly Request.new's content keywords, with the digest-excluded
-        # transport fields carried alongside. It lives HERE because the
-        # record's shape is this class's knowledge; it RAISES on a payload that
-        # parses as JSON but is not request-shaped, and the caller decides what
-        # a raise means (the bridge folds it into a refusal notice; the
-        # {Unbridged} default never calls this at all).
+        # {#build}'s inverse, for the resend bridge's dispatch offer: the payload
+        # keys are exactly Request.new's content keywords, with the
+        # digest-excluded transport fields carried alongside. It lives HERE
+        # because the record's shape is this class's knowledge, and it RAISES on
+        # a payload that parses as JSON but is not request-shaped -- the caller
+        # decides what a raise means.
         # @param resent [Telemetry::RequestResent]
         # @return [Lain::Request]
         def rebuild(resent)

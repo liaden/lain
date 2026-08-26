@@ -30,27 +30,18 @@ module Lain
     StreamStarted = Data.define(:digest) do
       include Journalable
 
-      # `settle!`, not `check!`: the carrier's own frozen copy of `digest` IS
-      # the `dup.freeze` this constructor used to spell out, so validating and
-      # taking the settled values leaves nothing for a body to do.
-      #
       # The keyword stays EXPLICIT. A bare `**attrs` hands arity to ActiveModel,
-      # which hands every rule-less attribute a free nil -- and `Data`'s "you
-      # must name this" is the check that would be lost.
+      # which gives every rule-less attribute a free nil, losing `Data`'s own
+      # "you must name this".
       def initialize(digest:) = super(**Carriers::StreamStarted.settle!(digest:))
     end
 
-    # An injected observer callback -- so far, only `on_stream_started`
-    # -- raised instead of running cleanly. A caller-supplied orchestration
-    # hook is not allowed to cost a round trip its Response just because the
-    # hook itself is buggy (see {StreamStarted}'s doc: the Channel push and
-    # the observer call are deliberately two independent paths). But a
-    # swallowed exception is a lie by omission on a bench whose whole point
-    # is an honest record, so the failure lands here instead of vanishing:
-    # `hook` names which observer failed, `digest` is the request it fired
-    # for (the join key onto the {StreamStarted} it failed alongside),
-    # `message` is the exception's own message, not a full backtrace --
-    # attribution, not diagnostics.
+    # An injected observer callback raised instead of running cleanly. A
+    # caller-supplied hook is not allowed to cost a round trip its Response just
+    # because the hook is buggy -- but a swallowed exception is a lie by
+    # omission on a bench whose whole point is an honest record, so the failure
+    # lands here instead of vanishing. `message` is the exception's own message
+    # and not a backtrace: attribution, not diagnostics.
     ObserverFailed = Data.define(:hook, :digest, :message) do
       include Journalable
 

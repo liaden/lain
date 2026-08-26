@@ -13,23 +13,21 @@ module Lain
       # collision the split exists to remove.
       #
       # Load order is the PARSED PREFIX, and the filename is validated to have
-      # one. Both halves earn their place, measured rather than assumed:
+      # one. Both halves are measured rather than assumed:
       #
       #   - Sorting filenames as STRINGS is lexicographic, so `100_foo.lua` loads
       #     FIRST -- ahead of `20_buffers.lua` -- and an unprefixed `sidebar.lua`
       #     loads LAST, past the attach announcement that must be last. Both are
-      #     the obvious thing a later card does ("take the next number", "name it
-      #     after the feature"), and both were silent.
-      #   - Two cards picking the same prefix resolved by filename, silently.
+      #     the obvious thing to do next, and both were silent.
+      #   - Two files picking the same prefix resolved by filename, silently.
       #
       # So a name that is not `NN_lowercase.lua` is refused, a repeated prefix is
       # refused, and order is an Integer comparison no directory reader can
       # influence. Nothing may sort past `99_attach.lua` because two digits cannot
-      # exceed 99 and 99 is already claimed -- the reserved slot needs no separate
-      # rule, and this class needs no second copy of a module's name.
+      # exceed 99 and 99 is already claimed.
       #
-      # See {HEAD}'s own header comment for the three rules that follow from being
-      # one chunk.
+      # See {HEAD}'s own header comment for the rules that follow from being one
+      # chunk.
       class RuntimeLoader
         # The chunk head: the injected args, the protocol handshake, and the
         # `_G.__lain` namespace the modules publish through.
@@ -74,10 +72,9 @@ module Lain
           ordered(module_names).map { |name| File.join(@modules, name) }
         end
 
-        # The load order, as a pure function of the names -- which is what makes it
-        # assertable without stubbing a directory reader. A spec that stubs the
-        # reader instead goes vacuously green the moment someone swaps the reader
-        # out, and this order is a contract six later cards inherit.
+        # A pure function of the names, which is what makes the order assertable
+        # without stubbing a directory reader -- a spec that stubs the reader
+        # goes vacuously green the moment someone swaps the reader out.
         #
         # @param names [Array<String>] module filenames, in any order
         # @return [Array<String>] the same names, in load order
@@ -89,12 +86,10 @@ module Lain
           numbered.sort_by(&:first).map(&:last)
         end
 
-        # Which module a line of the injected chunk came from.
-        #
-        # Lua reports errors against the chunk it was handed, which is a synthetic
-        # concatenation: `[string "<nvim>"]:566` names no file and, since the
-        # split, no longer indexes runtime.lua either. This is how that number
-        # becomes a place a reader can open.
+        # Which module a line of the injected chunk came from. Lua reports errors
+        # against the chunk it was handed, which is a synthetic concatenation:
+        # `[string "<nvim>"]:566` names no file. This is how that number becomes
+        # a place a reader can open.
         #
         # @param line [Integer] 1-based line in {source}
         # @return [Array(String, Integer)] module basename, and the 1-based line
@@ -108,12 +103,12 @@ module Lain
 
         private
 
-        # A line belonging to no module is one of two different things, and saying
-        # "outside the injected chunk" about a line in the MIDDLE of it is worse
-        # than saying nothing: the blank each `join("\n")` leaves between modules
-        # is inside the chunk and belongs to neither neighbour. Unreachable from a
-        # real Lua error, which never points at a blank line -- but this is a
-        # debugging tool, and one that contradicts itself is one nobody trusts.
+        # A line belonging to no module is one of two different things: the blank
+        # each `join("\n")` leaves between modules is INSIDE the chunk and
+        # belongs to neither neighbour, so "outside the injected chunk" would be
+        # false about it. Unreachable from a real Lua error, which never points
+        # at a blank line -- but a debugging tool that contradicts itself is one
+        # nobody trusts.
         def unplaceable(line)
           following = spans.find { |_, first, _| first > line }
           return "line #{line} is outside the injected chunk (#{spans.last.last} lines)" if line < 1 || following.nil?

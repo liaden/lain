@@ -7,17 +7,13 @@ module Lain
     # The environment threaded through a {Stack}, as a read-only whole value
     # rather than a bare Hash passed hand to hand.
     #
-    # Same wrap/`to_h` philosophy as {Lain::Context::MessageEnvelope}: {Stack#call} wraps
-    # its input ONCE at the boundary, so every caller keeps passing plain hashes
-    # and every hash-duck middleware (fetch/[]/merge) keeps working unchanged.
-    # `merge` is functional -- it returns a NEW Env, never mutating in place --
-    # which is safe precisely because no middleware in the tree mutates env by
-    # `env[k] = v` (they all merge); the value carries that discipline in its type.
+    # {Stack#call} wraps its input ONCE at the boundary, so every caller keeps
+    # passing plain hashes and every hash-duck middleware (fetch/[]/merge) keeps
+    # working unchanged -- {Lain::Context::MessageEnvelope}'s philosophy. `merge`
+    # is functional, which is safe precisely because no middleware in the tree
+    # mutates env by `env[k] = v`; the value carries that discipline in its type.
     #
     # == Per-phase key contract (pinned by the phase specs)
-    #
-    # Each phase's Stack agrees on which keys are present going in and coming out;
-    # the reader sugar below names the ones that pay:
     #
     #   model phase (ModelCaller):  :request in  -> :response out
     #   tool  phase (ToolRunner):   :effect, :context in -> :result out
@@ -27,8 +23,7 @@ module Lain
     # A reader for an absent key raises KeyError (it is {#fetch}), so a phase that
     # forgets to populate its out-key fails loudly rather than reading a silent nil.
     class Env
-      # Idempotent: an Env passes through untouched (so a Stack nested inside a
-      # Stack does not double-wrap), a Hash is adopted as the backing store.
+      # Idempotent, so a Stack nested inside a Stack does not double-wrap.
       def self.wrap(env) = env.is_a?(self) ? env : new(env)
 
       def initialize(hash)
@@ -45,10 +40,10 @@ module Lain
 
       def to_h = @hash
 
-      # Delegated, never inherited: an un-delegated lens serializes as the
-      # `to_s` of its own object header -- VALID JSON carrying a debug string,
-      # which the NDJSON Journal accepts in silence where a raise would be
-      # caught. See {Response::ToolUse#to_json}, which states it at length.
+      # Delegated, never inherited: an un-delegated lens serializes as the `to_s`
+      # of its own object header -- VALID JSON carrying a debug string, which the
+      # NDJSON Journal accepts in silence where a raise would be caught. See
+      # {Response::ToolUse#to_json}, which states it at length.
       def to_json(...) = @hash.to_json(...)
 
       def request = fetch(:request)

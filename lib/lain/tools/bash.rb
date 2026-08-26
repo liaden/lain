@@ -3,25 +3,23 @@
 module Lain
   module Tools
     # Tier 3 (free-form): runs a shell command via `sh -c`. Passing
-    # Mixlib::ShellOut a String command -- rather than an argv Array -- is
-    # exactly what makes this tier 3 rather than tier 2: an Array `exec`s with
-    # no shell at all, while a String goes through the shell and the model
-    # fully controls that string (see the plan's "Tool tiers, and where the
-    # security boundary is").
+    # Mixlib::ShellOut a STRING command rather than an argv Array is exactly
+    # what makes this tier 3 rather than tier 2 -- an Array `exec`s with no
+    # shell at all, while a String goes through the shell and the model fully
+    # controls that string.
     #
     # == Two arms, chosen by {Shell::Verdict}, and one rendering
     #
     # Every call is offered to the verdict first. It answers *"is this command
-    # syntactically literal and fully understood?"* -- never "is it safe" -- and
-    # it is free to abstain, which most commands do.
+    # syntactically literal and fully understood?"* -- never "is it safe" --
+    # and it is free to abstain, which most commands do.
     #
     # * *allow* -- {Shell::Pipeline} runs the RECONSTRUCTED ARGV. No shell is
-    #   started, so a disagreement between that parser and a real shell degrades
-    #   to a broken command rather than an attacker-chosen one. There is
-    #   deliberately no path from an allow back to the string: falling back
+    #   started, so a disagreement between that parser and a real shell
+    #   degrades to a broken command rather than an attacker-chosen one. There
+    #   is deliberately no path from an allow back to the string: falling back
     #   would hand `sh -c` exactly the command the term path was chosen for.
-    # * *anything else* -- the string runs through `sh -c` as it always has,
-    #   under the same gate, with the same approval.
+    # * *anything else* -- the string runs through `sh -c`, under the same gate.
     #
     # Both arms render through {.render_output}, so which one ran is not
     # observable in the tool result. The one measured exception is a shell
@@ -30,38 +28,32 @@ module Lain
     # possible.
     #
     # Neither arm is run here: both go to an injected {Lain::Exec} backend,
-    # which is what decides the child's environment (and, once a container
-    # backend exists, its machine). This tool owns the CHOICE of arm and the
-    # rendering of what came back; how a command becomes a process is the
-    # backend's question.
+    # which decides the child's environment. This tool owns the CHOICE of arm
+    # and the rendering of what came back.
     #
     # A PROCESS BOUNDARY IS NOT A SECURITY BOUNDARY. The child inherits our
-    # uid, filesystem, and network; Mixlib::ShellOut adds no seccomp, landlock,
-    # namespace, or chroot confinement of its own. What it *does* make
-    # correct: capture, attribution, timeout, and reaping (it calls `setsid`,
-    # so a timeout kills the whole process group, not just the shell). Real
-    # safety is {#requires_approval?} plus a human (or policy) on the other
-    # end of Effect::Handler::Gate, and eventually OS confinement in the
-    # out-of-process Rust exec boundary -- never this tool's input
-    # validation, which checks only that `timeout` is a sane number.
+    # uid, filesystem and network; Mixlib::ShellOut adds no seccomp, landlock,
+    # namespace or chroot confinement of its own. What it DOES make correct:
+    # capture, attribution, timeout and reaping -- it calls `setsid`, so a
+    # timeout kills the whole process group and not just the shell. Real safety
+    # is {#requires_approval?} plus a human or policy on the other end of
+    # {Effect::Handler::Gate}, and eventually OS confinement in the
+    # out-of-process Rust exec boundary. NEVER this tool's input validation,
+    # which checks only that `timeout` is a sane number.
     class Bash < Tool
       DEFAULT_TIMEOUT = 120
       MAX_TIMEOUT = 600
 
       # A command's output is a WHOLE ARTIFACT in {Tool::Bounds}' sense -- its
       # first N bytes read like the answer and are not -- so it is refused over
-      # the ceiling rather than truncated. 128 KiB, the tightest of the three
-      # ceilings this chunk sets, and tightest for a reason: command output is
-      # the only artifact here the caller SHAPES BEFORE IT EXISTS. A file's
-      # size is a fact to be worked around; `| tail -n 200` is one edit to the
-      # command that was already being written. ~33k tokens is also far past
-      # any output a person reads in one go.
+      # the ceiling rather than truncated. 128 KiB is the tightest ceiling here
+      # for a reason: command output is the only artifact the caller SHAPES
+      # BEFORE IT EXISTS. A file's size is a fact to be worked around; `| tail
+      # -n 200` is one edit to the command already being written.
       OUTPUT_BOUND = Tool::Bounds::Artifact.new(limit: 128 * 1024)
 
-      # Both narrower actions are available to every command, which is what
-      # keeps the refusal from being a dead end: the first re-runs it smaller,
-      # the second keeps every byte and reads them through {Tools::ReadFile}'s
-      # window.
+      # Both are available to EVERY command, which keeps the refusal from
+      # being a dead end.
       NARROWER = [
         "re-run it with the output narrowed through head, tail or grep",
         "redirect it to a file and read one window of that with read_file"
@@ -80,27 +72,21 @@ module Lain
 
       input_model Input
 
-      # The one place BOTH exec arms turn captures into a {Tool::Result} --
-      # {Bash} from mixlib's, {CoreExec} from the daemon reply's bin fields --
-      # shared so the differential's byte-identity cannot drift out from
-      # under its specs.
-      #
-      # {OUTPUT_BOUND} is applied HERE, and the sharing is the reason: a
-      # ceiling checked in `#run_string` and `#run_term` separately would be
-      # two ceilings that happen to agree today, and the daemon arm would have
-      # a third or none. One entry point, one decision, and the byte-identity
-      # example in `spec/lain/tools/bash_spec.rb` covers the refusal for free.
+      # The one place BOTH exec arms turn captures into a {Tool::Result},
+      # shared so the differential's byte-identity cannot drift out from under
+      # its specs. {OUTPUT_BOUND} is applied HERE for that reason: a ceiling
+      # checked per arm would be two ceilings that happen to agree today, and
+      # the daemon arm would have a third or none.
       #
       # The exit status rides in the refusal's SUBJECT rather than being
       # dropped, because it is the one fact a truncation would have preserved
       # and the model usually asked the question to learn it.
       #
-      # ⚠️ The HUMAN still sees every byte. Both arms stream through
-      # {Sink::IOAdapter} as the command produces output, and that is right for
-      # a live terminal -- a refusal is about what the MODEL is handed, not
-      # about what the person watching may see. It does mean the cockpit and
-      # the transcript diverge above this ceiling, which matters on a bench
-      # whose product is the comparison of the two.
+      # The HUMAN still sees every byte: both arms stream through
+      # {Sink::IOAdapter} as output is produced, which is right for a live
+      # terminal -- a refusal is about what the MODEL is handed. It does mean
+      # the cockpit and the transcript diverge above this ceiling, which matters
+      # on a bench whose product is the comparison of the two.
       #
       # @return [Tool::Result] ok with the rendered output, or the bound's
       #   refusal carrying none of it
@@ -116,12 +102,12 @@ module Lain
                         "--- stderr ---\n#{stderr}")
       end
 
-      # @param exec [#call] the {Lain::Exec} backend a command is run through.
-      #   Injected rather than constructed so the transport is a run's choice
-      #   and a spec can substitute one whose TERM->KILL grace is short.
+      # @param exec [#call] the {Lain::Exec} backend a command is run through,
+      #   injected so the transport is a run's choice and a spec can substitute
+      #   one whose TERM->KILL grace is short
       # @param verdict [#call] `String -> Shell::Verdict::Decision`, the choice
-      #   of arm. Injected rather than constructed so a spec can pin either arm
-      #   for one command and compare their bytes.
+      #   of arm, injected so a spec can pin either arm for one command and
+      #   compare their bytes
       def initialize(exec: Exec::Local.new, verdict: Shell::Verdict.new)
         super()
         @exec = exec
@@ -136,26 +122,20 @@ module Lain
           "if it runs past its timeout."
       end
 
-      # Tier 3: the model fully controls `command`. Gated by Effect::Handler::Gate
-      # by default -- see the class comment.
+      # Tier 3: the model fully controls `command`.
       #
-      # STAYS TRUE now that a term arm exists, and the reason is that the flag
-      # describes the TOOL, not one call through it: the tool still takes a
-      # string the model wrote. Which calls may skip a human is the escalation
-      # ladder's question, asked per call and answered from the verdict.
+      # STAYS TRUE now that a term arm exists, because the flag describes the
+      # TOOL and not one call through it -- the tool still takes a string the
+      # model wrote. WHICH calls may skip a human is the escalation ladder's
+      # question, asked per call and answered from the verdict.
       def requires_approval? = true
 
       protected
 
-      # Exit status rides in the returned content, not `is_error`: a nonzero
-      # exit is frequently exactly what the model asked to observe (grep with
-      # no matches, a linter reporting findings). `is_error` here means the
-      # tool itself could not produce a result -- a timeout, or output too
-      # large to hand back, not a subprocess's own exit code.
-      #
-      # The same three fields, from the same {WorkerEnv}, through the same
-      # rendering -- so the arm a call took is not observable in its result,
-      # refusals included.
+      # Exit status rides in the returned content, NOT `is_error`: a nonzero
+      # exit is frequently what the model asked to observe. `is_error` means
+      # the tool itself could not produce a result -- a timeout, or output too
+      # large to hand back -- never a subprocess's own exit code.
       def perform(input, invocation)
         decision = @verdict.call(input.command)
         capture = @exec.call(command: decision.allow? ? decision.term : input.command,
@@ -169,8 +149,7 @@ module Lain
       private
 
       # Cwd resolution lives on {WorkerEnv#resolve} -- one rule shared with
-      # {CoreExec}. Under the default WorkerEnv (`Dir.pwd`) it is
-      # byte-identical to passing the raw `input.cwd` through, nil included.
+      # {CoreExec}.
       def runtime(input, invocation)
         worker_env = session_of(invocation).worker_env
         { cwd: worker_env.resolve(input.cwd), env: worker_env.env, timeout: seconds(input),
@@ -183,10 +162,9 @@ module Lain
         Tool::Result.error("command timed out after #{seconds(input)}s: #{error.message}")
       end
 
-      # Bytes are attributed to their tool_use_id AT THE SOURCE, as they are
-      # produced, rather than reconstructed after the fact from a buffer
-      # shared with whatever else happens to be running -- see Lain::Channel's
-      # doc comment on why a shared byte buffer destroys provenance.
+      # Bytes are attributed to their tool_use_id AT THE SOURCE, as produced,
+      # rather than reconstructed afterwards from a buffer shared with whatever
+      # else is running -- see {Lain::Channel} on why that destroys provenance.
       def output_sink(invocation, stream)
         Sink::IOAdapter.new(invocation.channel, tool_use_id: invocation.tool_use_id, stream:)
       end

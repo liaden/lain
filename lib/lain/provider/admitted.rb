@@ -5,42 +5,24 @@ module Lain
     # Taking a round trip through the RESOLVED ENDPOINT's {Admission}, for a
     # provider that knows which endpoint it talks to.
     #
-    # It exists because two arms needed the identical eight lines, and the second
-    # copy is where a policy starts to drift. The split it encodes is the one
-    # {Admission}'s header argues for: CAPACITY IS A PROPERTY OF THE SERVER and
-    # lives in the gate, while WILLINGNESS TO WAIT IS A PROPERTY OF THE CALLER
-    # and arrives as a constructor keyword. This module is only the join.
+    # It encodes the split {Admission}'s header argues for: CAPACITY IS A
+    # PROPERTY OF THE SERVER and lives in the gate, while WILLINGNESS TO WAIT IS
+    # A PROPERTY OF THE CALLER and arrives as a constructor keyword. This module
+    # is only the join.
     #
-    # It depends on four MESSAGES rather than on an includer's ivars --
-    # `#resolved_endpoint`, `#queue_for_capacity?`, `#wait_journal` and
-    # `#admission_width` -- so a provider that resolves its endpoint differently
-    # (Ollama borrows {Ollama::Transport::DEFAULT_API_BASE}; Anthropic restates
-    # a vendored literal it has no constant for) satisfies the same duck without
-    # this knowing how.
-    #
-    # The fourth is the only one this module answers itself, and the only
-    # optional one: most endpoints are classified correctly by
-    # {Admission::Endpoint.local?}, so the default is to say nothing and let it
-    # decide. An includer overrides it only where locality gets the answer wrong
-    # -- a hosted server with a hard capacity bound, which the unbounded arm
-    # would let a caller run straight past.
-    #
-    # {Admission#enter} and {Admission#try_enter} are called directly rather than
-    # asking the gate to choose between them, deliberately: those two are the
+    # It depends on four MESSAGES rather than on an includer's ivars, so a
+    # provider that resolves its endpoint differently satisfies the same duck
+    # without this knowing how. {Admission#enter} and {Admission#try_enter} are
+    # called directly rather than asking the gate to choose: those two are the
     # whole of its entry surface, and {Admission::Journal} wraps exactly them.
-    # A third method here would be one more thing a decorator had to learn.
     #
     # == The journal is wrapped HERE, and that placement is the whole design
     #
-    # {Admission::Journal} shipped written and spec'd and CONSTRUCTED NOWHERE,
-    # and the reason it never found a home is a lifetime mismatch:
-    # {Admission.for} memoises one gate per endpoint for the life of the
-    # PROCESS, while a journal belongs to one SESSION. Wrapping inside
-    # {Admission.build} would let whichever session resolved an endpoint first
-    # own every later caller's records, so the decorator is applied per call,
-    # here, where both halves are in scope. Two sessions sharing one memoised
-    # gate then journal independently, and the gate never learns a journal
-    # exists.
+    # A lifetime mismatch: {Admission.for} memoises one gate per endpoint for
+    # the life of the PROCESS, while a journal belongs to one SESSION. Wrapping
+    # inside {Admission.build} would let whichever session resolved an endpoint
+    # first own every later caller's records, so the decorator is applied per
+    # call, here, where both halves are in scope.
     module Admitted
       private
 
@@ -49,14 +31,10 @@ module Lain
       # permits 1, 3 or 10 concurrent models, and none of that is inferable from
       # the address.
       #
-      # nil HERE IS WHY {Provider::Anthropic} NEEDS NO EDIT: it includes this
-      # module, declares nothing, and keeps the unbounded arm its hosted
-      # endpoint already gets. Only a provider that would otherwise be
-      # misclassified overrides this.
-      #
-      # It is asked on each round trip because {#admitted} is, and that costs
-      # nothing: {Admission.for} pins the first declaration an endpoint sees, so
-      # an includer that answered differently later would be ignored anyway.
+      # nil is the default because most endpoints are classified correctly by
+      # {Admission::Endpoint.local?}; only a provider that would otherwise be
+      # misclassified overrides it. Asked per round trip, which costs nothing:
+      # {Admission.for} pins the first declaration an endpoint sees.
       # @return [Integer, nil]
       def admission_width = nil
 
@@ -65,21 +43,16 @@ module Lain
       #
       # A refusal RAISES rather than answering nil, because `#complete` owes its
       # caller a {Response} or an exception and there is no third answer. {Busy}
-      # is a {Lain::Error}, so {Oracle::Eager}'s task-boundary rescue
-      # (`oracle/eager.rb:78`) contains it into exactly the skipped summary open
-      # decision 4 asks for: nothing held, nothing journaled, the digest spent.
-      # That is also why the unwilling arm's own refusal below journals nothing:
-      # it is reached through `#try_enter`, which never queued, and a skip is
-      # not a wait.
+      # is a {Lain::Error}, so {Oracle::Eager}'s task-boundary rescue contains it
+      # into a skipped summary. The unwilling arm journals nothing because it
+      # reached `#try_enter`, which never queued, and a skip is not a wait.
       #
-      # THE DECORATOR IS BUILT BEFORE THE BRANCH, DELIBERATELY -- do not hoist it
-      # into the queueing arm. The eager arm therefore allocates a wrapper it can
-      # never journal through, which is one small object per HTTP round trip and
-      # is the price of the wrap staying per-call. Moving the construction to
-      # where it is "needed" means moving it out of `#admitted`, and the only
-      # place left is the memoised {Admission.for} -- which is the lifetime bug
-      # this file's header exists to explain: a process-global gate would then
-      # own the first session's journal forever.
+      # THE DECORATOR IS BUILT BEFORE THE BRANCH, DELIBERATELY -- do not hoist
+      # it into the queueing arm. The eager arm therefore allocates a wrapper it
+      # can never journal through, one small object per round trip, and that is
+      # the price of the wrap staying per-call: the only place left to move the
+      # construction to is the memoised {Admission.for}, which is the lifetime
+      # bug this file's header exists to explain.
       #
       # @return the block's value
       # @raise [Admission::Busy] when the endpoint is busy -- at the deadline for

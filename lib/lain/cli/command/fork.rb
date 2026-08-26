@@ -5,40 +5,34 @@ require "shellwords"
 module Lain
   module CLI
     module Command
-      # `/fork`: a persistent fork of THIS session at its head -- a
-      # sibling `lain chat --fork <session>@<head>` opened in a new tmux
-      # window, inheriting exactly the head's lineage and nothing after it.
+      # `/fork`: a persistent fork of THIS session at its head -- a sibling
+      # `lain chat --fork <session>@<head>` opened in a new tmux window,
+      # inheriting exactly the head's lineage and nothing after it.
       #
-      # Order is the invariant: the head is durably journaled FIRST
-      # (Chronicle#catch_up, the same belt the Repl's deliver wears), then the
+      # Order is the invariant: the head is durably journaled FIRST, then the
       # selector is proven against the file through the SAME {ForkPoint} the
       # child's `--fork` will resolve with -- so a window never opens onto a
-      # selector that dies on arrival. Outside tmux (or with tmux broken) the
-      # command degrades to printing the exact child command line instead of
-      # failing: the fork the human runs by hand is the same fork.
+      # selector that dies on arrival. Outside tmux (or with tmux broken) it
+      # degrades to printing the exact child command line: the fork the human
+      # runs by hand is the same fork.
       #
-      # Orchestrator-head-only BY DESIGN (panel ruling): a subagent's chain
-      # rides the orchestrator's journal as lineage telemetry, never as its
-      # own on-disk session, so `/fork <actor>` refuses honestly rather than
-      # composing a selector no file can back.
+      # Orchestrator-head-only by design: a subagent's chain rides the
+      # orchestrator's journal as lineage telemetry, never as its own on-disk
+      # session, so `/fork <actor>` refuses honestly rather than composing a
+      # selector no file can back.
       class Fork
         NO_JOURNAL = "cannot fork: this session has no durable journal (--no-journal), " \
                      "so there is no record on disk for a child to fork from"
         NO_TURNS = "cannot fork: no turns are recorded yet, so there is no head to fork -- " \
                    "ask something first, then /fork"
 
-        # Why this door refuses a shape `lain chat --fork` REPAIRS, and the
-        # whole of the divergence (see {#anchor!}). Written in the child's
-        # vocabulary for the shape -- "awaiting tool results" -- because it is
-        # the same shape; only what it MEANS here differs.
-        #
-        # It says "may still be making", and the hedge is the point: what the
-        # door sees is a parked question, not a running tool. Those coincide at
-        # the `human> ` prompt and come apart at `you> `, where a question a
-        # subagent queued reads pending over a head torn by an old interrupt.
-        # An earlier draft asserted the call WAS still being made, which is a
-        # fact this door does not have -- and a refusal claiming what it cannot
-        # see is the defect this chunk exists to remove.
+        # Why this door refuses a shape `lain chat --fork` REPAIRS (see
+        # {#anchor!}), written in the child's vocabulary because it is the same
+        # shape. It says "may still be making", and the hedge is the point: what
+        # the door sees is a parked question, not a running tool. An earlier
+        # draft asserted the call WAS still being made -- a fact this door does
+        # not have, and a refusal claiming what it cannot see is the defect this
+        # command exists to remove.
         MID_TOOL = "this session's head is an assistant tool_use turn still awaiting tool results, " \
                    "and a question is parked for you right now -- so this session may still be " \
                    "making that call, and a fork opened here could tell its model the call was " \
@@ -73,33 +67,29 @@ module Lain
         private
 
         # Durability first, even ahead of the refusal: catch_up re-journals
-        # through the scribe's idempotent braces (fsync'd), so the head is on
-        # disk before anything reads for it. THEN the mid-tool gate, which used
-        # to be `Resume.refuse_mid_tool!` (since deleted) run parent-side -- the
-        # child's own words against the same now-durable record, beating a
-        # window that flashes and dies.
+        # through the scribe's idempotent, fsync'd braces, so the head is on disk
+        # before anything reads for it. Then the mid-tool gate, in the child's
+        # own words against the same now-durable record, beating a window that
+        # flashes and dies.
         #
-        # This gate has been kept here and narrowed TWICE. The child repairs a
-        # torn head, so refusing every torn head would refuse forks the child
-        # would open happily. But a live head is not a recorded one: on disk an
-        # unanswered `tool_use` is stranded -- nothing will ever answer it, so
-        # the child's "cancelled" states a fact -- while live it may be a call
-        # still in flight. Both prompts dispatch through one bound registry over
-        # one Env (`wiring.rb:474`), so `/fork` is typeable at the `human> `
-        # prompt a parked `ask_human` opens (`human_replies.rb:1113`), and there
-        # the head's `tool_use` IS that ask_human.
+        # The gate is narrow because the child REPAIRS a torn head, so refusing
+        # every torn head would refuse forks the child would open happily. But a
+        # live head is not a recorded one: on disk an unanswered `tool_use` is
+        # stranded and nothing will ever answer it, while live it may be a call
+        # still in flight. `/fork` is typeable at the `human> ` prompt a parked
+        # `ask_human` opens, and there the head's `tool_use` IS that ask_human.
         #
-        # `env.replies.pending?` is what separates them, and it is exact rather
-        # than approximate: {HumanReplies::Reply::AnswerLoop#exchange} enqueues
-        # the item BEFORE it parks, so it is true for the whole life of that
-        # prompt and false at rest. Those are the only two command-dispatch
+        # `env.replies.pending?` separates them exactly rather than
+        # approximately: {HumanReplies::Reply::AnswerLoop#exchange} enqueues the
+        # item BEFORE it parks, so it is true for the whole life of that prompt
+        # and false at rest. Those two prompts are the only command-dispatch
         # surfaces in `lib/` -- the approval prompt reads y/N straight through
         # `conductor.read_reply` and never consults the registry -- so nothing
         # else can be running a tool while this line is read.
         #
-        # It fails safe in one direction only: a question a subagent queued
-        # while the human sat idle at `you> ` also reads pending, over-refusing
-        # a fork that would have been fine. Over-refusing costs a message;
+        # It fails safe in one direction only: a question a subagent queued while
+        # the human sat idle at `you> ` also reads pending, over-refusing a fork
+        # that would have been fine. Over-refusing costs a message;
         # under-refusing opens a child told its call was cancelled while the
         # parent was still making it.
         def anchor!(env)
@@ -112,18 +102,16 @@ module Lain
         end
 
         # Reachable from where the human is standing: they have a live session,
-        # so an earlier settled digest forks clean today ({Resume#fork} checks
-        # out before it refuses), and answering the parked question costs no
-        # command at all.
+        # so an earlier settled digest forks clean today, and answering the
+        # parked question costs no command at all.
         def remedy(file)
           "Fork an earlier, settled turn instead: lain chat --fork #{file}@<digest-prefix> -- " \
             "or answer the question and /fork once this turn has settled"
         end
 
         # Journal, prove, place -- and degrade to the printed command when no
-        # window can open (outside tmux, or tmux itself unavailable): the
-        # selector is already durable and proven by then, so the printed line
-        # is runnable as-is.
+        # window can open: the selector is already durable and proven by then, so
+        # the printed line is runnable as-is.
         def open_fork(env)
           selector = anchored_selector(env)
           printable = "lain chat --fork #{Shellwords.escape(selector)}"
@@ -131,13 +119,11 @@ module Lain
         end
 
         # The WINDOW command is {Up.pane_command}'s recipe, not the printable
-        # line: a tmux pane sources no interactive chruby, so a bare
-        # `lain chat` would exec the wrong ruby -- while the PRINTED line
-        # (outside tmux, or the degrade below) runs in the user's own shell
-        # and stays bare. `cwd:` pins the parent's project root so the
-        # child's session dir resolves the SAME project regardless of the
-        # session's pane-cwd conventions. The rescue is scoped to this
-        # method so it can never read a local the raise skipped.
+        # line: a tmux pane sources no interactive chruby, so a bare `lain chat`
+        # would exec the wrong ruby -- while the PRINTED line runs in the user's
+        # own shell and stays bare. `cwd:` pins the parent's project root so the
+        # child's session dir resolves the SAME project. The rescue is scoped to
+        # this method so it can never read a local the raise skipped.
         def place_window(env, selector, printable)
           placement = env.tmux_surface.window(command: Up.pane_command("chat", "--fork", selector),
                                               name: window_name(selector), cwd: Dir.pwd)
@@ -146,10 +132,9 @@ module Lain
           "#{e.message}\nrun the fork yourself: #{printable}"
         end
 
-        # The ForkPoint resolve is the proof -- resolution only READS
-        # ({ForkPoint}'s own contract), and its {Resume::Refusal} propagates
-        # loudly instead of opening a doomed window. Runs after {#anchor!},
-        # so the head it proves is already durable.
+        # The ForkPoint resolve is the proof -- resolution only READS, and its
+        # {Resume::Refusal} propagates loudly instead of opening a doomed window.
+        # Runs after {#anchor!}, so the head it proves is already durable.
         def anchored_selector(env)
           selector = "#{File.basename(env.journal_path)}@#{env.head_digest}"
           env.fork_point.call(selector)
@@ -172,7 +157,7 @@ module Lain
         end
 
         # A named target is refused either way; the registered-actor case earns
-        # the honest WHY (deferred by panel ruling, not an oversight).
+        # the honest WHY.
         def target_refusal(target, env)
           return subagent_refusal(target) if registered?(target, env)
 

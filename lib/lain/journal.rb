@@ -6,13 +6,10 @@ require "time"
 require "fileutils"
 
 module Lain
-  # An append-only NDJSON record of everything worth replaying: one event per
-  # line, each line a complete JSON object. The Journal IS the experiment record,
-  # so its contract is losslessness -- it must never drop an event -- and that is
-  # exactly why it does not share the frontend's drop-oldest policy. Durability
-  # lives here, not in a channel's backpressure.
-  #
-  # == Synchronous, under a mutex, on its own fd
+  # An append-only NDJSON record of everything worth replaying, one complete JSON
+  # object per line. The Journal IS the experiment record, so its contract is
+  # losslessness and it does not share the frontend's drop-oldest policy:
+  # durability lives here, not in a channel's backpressure.
   #
   # Every {#record} serializes the whole line in memory, then writes it -- newline
   # included -- in a single `write` under a monitor, with the fd in sync mode.
@@ -22,20 +19,15 @@ module Lain
   # one fd and still parse line by line. The fd is the Journal's own -- a file
   # under {Paths#sessions_dir} by default, a StringIO in specs -- and NEVER stderr.
   #
-  # == Every line parses, even when serialization fails
+  # A value that cannot be encoded would otherwise tear a line or swallow an
+  # event, so a `JSON` failure is caught and replaced, in the same slot, by a
+  # self-describing `journal_error` record: downstream `JSON.parse` never chokes
+  # on a Journal line, and the failure is in the record rather than lost.
   #
-  # Losslessness would be a lie if a value that cannot be encoded produced a torn
-  # line or a swallowed event. So a `JSON` failure is caught and replaced, in the
-  # same slot, by a self-describing `journal_error` record. Downstream `JSON.parse`
-  # never chokes on a Journal line, and the failure is in the record rather than
-  # lost -- the two invariants the Journal exists to guarantee.
-  #
-  # == Ownership
-  #
-  # A Journal built with an injected IO does not own it and never closes it (the
-  # caller's fd is the caller's). {Journal.open}, which opens the file itself, owns
-  # that file and closes it on {#close}. This mirrors the Rust side, which `dup`s
-  # the fd precisely so dropping one writer never closes the other's descriptor.
+  # A Journal built with an injected IO does not own it and never closes it.
+  # {Journal.open} owns the file it opened and closes it on {#close}. This mirrors
+  # the Rust side, which `dup`s the fd precisely so dropping one writer never
+  # closes the other's descriptor.
   class Journal
     class Closed < Error; end
 
@@ -53,24 +45,21 @@ module Lain
     def self.open(path = nil, clock: DEFAULT_CLOCK, fsync: false, paths: Paths.new)
       path ||= default_path(paths:)
       FileUtils.mkdir_p(File.dirname(path))
-      # File.new (not the block form) because the Journal OWNS this handle for
-      # its whole life and closes it in #close -- there is no scope to hand it
-      # to. `path:` ONLY when this call created the file: it is the sole thing
-      # licensing #close to unlink, and a file that already existed is somebody
-      # else's (see {#discard_unwritten}).
+      # File.new, not the block form: the Journal owns this handle for its whole
+      # life. `path:` ONLY when this call created the file -- it is the sole
+      # thing licensing #close to unlink, and a file that already existed is
+      # somebody else's.
       created = create(path)
       new(io: created || File.new(path, "ab"), clock:, owns_io: true, fsync:, path: created && path)
     end
 
-    # O_CREAT|O_EXCL: answers the fd only if this call brought the file into
-    # existence, nil if the name was already taken. Append mode for the same
-    # reason the fallback uses "ab" -- a shared fd (ours plus a dup handed to
-    # Rust tracing) writes atomically at end-of-file, never overwriting the
-    # other's bytes -- and binary so the bytes on the wire are unchanged.
-    #
-    # O_EXCL also refuses to create THROUGH a symlink, which is what keeps
-    # {#discard_unwritten} from ever facing a link whose target it measured and
-    # whose pointer it would remove.
+    # O_CREAT|O_EXCL answers the fd only if this call brought the file into
+    # existence. Append mode for the same reason the fallback uses "ab": a shared
+    # fd (ours plus a dup handed to Rust tracing) writes atomically at
+    # end-of-file, never overwriting the other's bytes. O_EXCL also refuses to
+    # create THROUGH a symlink, which is what keeps the unwritten-file cleanup
+    # from ever facing a link whose target it measured and whose pointer it
+    # would remove.
     def self.create(path)
       File.new(path, File::WRONLY | File::CREAT | File::EXCL | File::APPEND | File::BINARY)
     rescue SystemCallError
@@ -79,21 +68,19 @@ module Lain
     private_class_method :create
 
     # The ONE predicate for "this file holds no records at all", shared by the
-    # readers that pick a session off the directory listing ({Resume::Selector},
-    # {CLI::Watch}, {CLI::Sessions}). An absent path answers true for the same
-    # reason a zero-byte one does -- there is nothing in it to read -- so a file
-    # reaped between a listing and this call is a skip, never an Errno::ENOENT.
-    #
-    # `File.size?` is the idiom that gives both: nil for empty AND for absent.
+    # readers that pick a session off a directory listing. An absent path answers
+    # true for the same reason a zero-byte one does, so a file reaped between a
+    # listing and this call is a skip, never an Errno::ENOENT -- `File.size?` is
+    # the idiom that gives both.
     #
     # THE WINDOW: a live session is genuinely zero bytes between {.open} and the
-    # moment {SessionRecord::Scribe} writes its header, so this answers true for
-    # a session that is starting right now. A byte count cannot tell "never
-    # written" from "not written YET", and no cheap predicate can. The cost is
-    # not merely a wrong label: {CLI::Watch} uses this to CHOOSE a file, so a
-    # chat starting in the same instant can be passed over for an older session.
-    # Naming a file explicitly (`--session`) bypasses the choice entirely, which
-    # is why that path stays honored even when the file is empty.
+    # moment {SessionRecord::Scribe} writes its header, so this answers true for a
+    # session that is starting right now. A byte count cannot tell "never written"
+    # from "not written YET", and no cheap predicate can. The cost is not merely a
+    # wrong label -- {CLI::Watch} uses this to CHOOSE a file, so a chat starting in
+    # the same instant can be passed over for an older session. Naming a file
+    # explicitly (`--session`) bypasses the choice, which is why that path stays
+    # honored even when the file is empty.
     #
     # @param path [String]
     # @return [Boolean]
@@ -107,11 +94,10 @@ module Lain
 
     DEFAULT_CLOCK = -> { Time.now.utc.iso8601(6) }
 
-    # The ONE duck every Journal reader speaks (see {.records}): an entry is
-    # either an already-parsed Hash (passed through with its TOP-LEVEL keys
-    # string-keyed -- nested hashes keep their keys, the record's reader owns
-    # its payload) or one raw NDJSON line (parsed). Answers the record Hash, or
-    # nil for anything that is not one of our records.
+    # The ONE duck every Journal reader speaks (see {.records}): an entry is either
+    # an already-parsed Hash -- passed through with only its TOP-LEVEL keys
+    # stringified, because the record's own reader owns its nested payload -- or
+    # one raw NDJSON line. nil for anything that is not one of our records.
     #
     # @param entry [Hash, String]
     # @return [Hash{String=>Object}, nil]
@@ -124,15 +110,11 @@ module Lain
       nil
     end
 
-    # The ONE walk every Journal reader shares (see {Effect::Handler::Recorded.from_journal},
-    # {Ledger::Index.from_journal}): each entry coerced through {.parse}, foreign
-    # lines skipped, optionally narrowed to a single record type.
-    #
-    # Skipping is the contract, not a convenience: the Journal's own lines always
-    # parse, but its fd can be shared with other writers (Rust tracing spans), so
-    # a reader skips what {.parse} answers nil for rather than raising over
-    # somebody else's bytes. Lazy, so `records(File.foreach(path))` streams the
-    # file without materializing it.
+    # The ONE walk every Journal reader shares. Skipping is the contract, not a
+    # convenience: the Journal's own lines always parse, but its fd can be shared
+    # with other writers (Rust tracing spans), so a reader skips what {.parse}
+    # answers nil for rather than raising over somebody else's bytes. Lazy, so
+    # `records(File.foreach(path))` streams the file without materializing it.
     #
     # @param entries [Enumerable<Hash, String>]
     # @param type [String, Symbol, nil] keep only records of this type, when given
@@ -158,20 +140,19 @@ module Lain
       @clock = clock
       @owns_io = owns_io
       @fsync = fsync
-      # `path:` is public, so the "a file we did not open is never ours to
-      # unlink" rule is applied HERE rather than trusted to {.open} happening to
-      # be the only caller that passes one.
+      # `path:` is public, so "a file we did not open is never ours to unlink" is
+      # enforced HERE rather than trusted to {.open} being its only caller.
       @unwritten = Unwritten.new(owns_io ? path : nil)
       @monitor = Monitor.new
       @closed = false
-      # Unbuffered writes: an event that reached #record is on the fd before the
-      # method returns, which is what "synchronous and lossless" means.
+      # An event that reached #record is on the fd before the method returns,
+      # which is what "synchronous and lossless" means.
       @io.sync = true if @io.respond_to?(:sync=)
     end
 
-    # Append one event as a single NDJSON line. Accepts a Hash (written as-is) or
-    # anything answering `#to_journal` with a Hash (every {Lain::Telemetry} does). The
-    # line is built before the lock and written whole under it.
+    # Accepts a Hash or anything answering `#to_journal` with one (every
+    # {Lain::Telemetry} does). The line is built before the lock and written whole
+    # under it.
     #
     # @param entry [Hash, #to_journal]
     # @return [self]
@@ -190,16 +171,14 @@ module Lain
 
     # Hand this Journal's descriptor to another writer -- the Rust tracing
     # subscriber dups it (`dup_writer` in ext/lain) so its spans merge into this
-    # same NDJSON stream. `nil` for an IO with no descriptor (a StringIO), which
-    # simply means nothing can share it.
+    # same NDJSON stream. nil for an IO with no descriptor.
     #
-    # Sharing is a COMMITMENT, and it is what this method exists to NAME: the
+    # Sharing is a COMMITMENT, and naming it is why this method exists: the
     # receiver may land bytes long after we stop looking, so a shared Journal
-    # retires {#discard_unwritten} for good. Those writes would otherwise go to
-    # an inode we had already unlinked -- invisibly, since nothing on this side
-    # can see them coming. Asking for the number and asking to share are the
-    # same act, but only one of them says so, and the cleanup policy has to turn
-    # on a decision a caller made deliberately.
+    # retires the empty-file cleanup for good. Those writes would otherwise go to
+    # an inode we had already unlinked, invisibly. Asking for the number and
+    # asking to share are the same act, but only one of them says so, and the
+    # cleanup policy has to turn on a decision a caller made deliberately.
     #
     # @return [Integer, nil]
     def share_fd
@@ -207,10 +186,9 @@ module Lain
       descriptor
     end
 
-    # Conservatively an alias for {#share_fd}: a descriptor that leaves this
-    # object may be written through whatever the caller meant by asking, so the
-    # disarm cannot be the thing a caller has to remember. New callers say
-    # {#share_fd}.
+    # Conservatively an alias for {#share_fd}: a descriptor that leaves this object
+    # may be written through whatever the caller meant, so the disarm cannot be
+    # something a caller has to remember. New callers say {#share_fd}.
     #
     # @return [Integer, nil]
     def fileno = share_fd
@@ -220,11 +198,9 @@ module Lain
       @monitor.synchronize { @closed }
     end
 
-    # Stop accepting records. Closes the underlying IO only if this Journal opened
-    # it; an injected fd is the caller's to close. Idempotent.
-    #
-    # A file this Journal CREATED and that is still empty at close is REMOVED --
-    # see {Unwritten#discard} for which files that is and why it is so narrow.
+    # Idempotent. Closes the underlying IO only if this Journal opened it, and a
+    # file this Journal CREATED that is still empty is REMOVED -- see
+    # {Unwritten#discard} for why that is so narrow.
     #
     # @return [self]
     def close
@@ -232,8 +208,8 @@ module Lain
         return self if @closed
 
         @closed = true
-        # Judged BEFORE the close, through the fd, because that is the only
-        # handle on the inode itself -- see {Unwritten#inode}.
+        # Judged BEFORE the close, through the fd: that is the only handle on the
+        # inode itself -- see {Unwritten#inode}.
         inode = @unwritten.inode(@io)
         @io.close if @owns_io && @io.respond_to?(:close)
         @unwritten.discard(inode)
@@ -249,10 +225,9 @@ module Lain
       nil
     end
 
-    # Build the JSON object for `entry`, stamped with a timestamp. A serialization
-    # failure never escapes and never yields a partial line: it becomes a
-    # `journal_error` record that still parses, so the stream's line-by-line
-    # parseability is total.
+    # A serialization failure never escapes and never yields a partial line: it
+    # becomes a `journal_error` record that still parses, so the stream's
+    # line-by-line parseability is total.
     def encode(entry)
       JSON.generate(record_hash(entry))
     rescue StandardError => e
@@ -281,6 +256,5 @@ module Lain
 end
 
 # At the bottom, not the top: Unwritten reopens Lain::Journal to nest itself, so
-# the class has to exist first ({CLI::Watch}'s LineageFilter, same shape). Only
-# ever constructed at runtime from #initialize, so nothing above needs it.
+# the class has to exist first.
 require_relative "journal/unwritten"

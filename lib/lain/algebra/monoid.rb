@@ -18,10 +18,9 @@ module Lain
     #   monoid on: :>>, identity: Algebra.later { Context::Identity }
     #
     # {Context::Identity} is an INSTANCE built after the Combinator class body
-    # closes (`context/base.rb:64`), so it cannot be named where the declaration
-    # is written -- hence {Algebra.later}, which is the only spelling of
-    # laziness this vocabulary accepts. A unit that needs no deferral is passed
-    # directly: `identity: Usage::ZERO`.
+    # closes, so it cannot be named where the declaration is written -- hence
+    # {Algebra.later}, the only spelling of laziness this vocabulary accepts. A
+    # unit that needs no deferral is passed directly: `identity: Usage::ZERO`.
     #
     # A refutation is the same shape with a mandatory reason, so a negative
     # stays visible rather than living in a comment that rots.

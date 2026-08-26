@@ -317,36 +317,33 @@ module Lain
       # The ref that keeps a reviewed head reachable, and the name it is written
       # under.
       #
-      # WHY A REF AT ALL. Once the branch is rewritten, nothing else points at
-      # the commits the human read: they are unreachable, and `git gc` may take
-      # them at any time. Without them there is no old range and so no
-      # range-diff -- the re-review degrades silently into a first review.
+      # WHY A REF AT ALL. Once the branch is rewritten nothing else points at the
+      # commits the human read: they are unreachable, and `git gc` may take them
+      # at any time. Without them there is no old range and so no range-diff --
+      # the re-review degrades silently into a first review.
       #
-      # WHY THAT NAMESPACE. The reasoning {Isolation::Worktree::Handback::Naming}
-      # records for `refs/lain/worker`, and this is its sibling: outside
-      # `refs/heads/` a ref is invisible to `git branch` and unreachable by the
-      # DWIM that invents a checkout from a name, so a pinned baseline can never
-      # be mistaken for -- or checked out as -- a branch. `refs/lain/reviewed/`
-      # does not collide with it or with `refs/heads/epic/` ({Forge::Promotion}),
-      # the only other two lain writes.
+      # WHY THAT NAMESPACE. {Isolation::Worktree::Handback::Naming}'s reasoning
+      # for `refs/lain/worker`, and this is its sibling: outside `refs/heads/` a
+      # ref is invisible to `git branch` and unreachable by the DWIM that invents
+      # a checkout from a name, so a pinned baseline can never be mistaken for a
+      # branch. `refs/lain/reviewed/` collides with neither of the other two refs
+      # lain writes.
       #
       # WHY THE SCOPE KEY IS NOT OPTIONAL. A generation alone is not unique: a
-      # standalone `lain review` has no epic slug, and two reviews open at once
-      # on different branches would write the same ref -- `update-ref` overwrites
+      # standalone `lain review` has no epic slug, and two reviews open at once on
+      # different branches would write the same ref -- `update-ref` overwrites
       # unconditionally, so one review's baseline would silently become the
-      # other's. The key is a required keyword and a blank one is refused, which
-      # is the only spelling under which that collision cannot come back.
+      # other's.
       #
       # WHY A FINGERPRINT FOLLOWS THE SLUG. Slugging alone maps `epic/foo`,
       # `epic foo` and `epic-foo` onto one ref, and those are three scopes a
       # repository can really have at once. The readable half is what a human
       # greps for; the hex is what makes the mapping injective.
       #
-      # ONE REF, AT THE HEAD, is enough for reachability: the reviewed base is
-      # the merge base of that head, hence its ancestor, hence held alive by it.
-      # Its VALUE is the caller's record to keep -- the session already journals
-      # what it reviewed -- and inventing a second ref for it would put a
-      # directory where this leaf ref lives.
+      # ONE REF, AT THE HEAD, is enough for reachability: the reviewed base is the
+      # merge base of that head, hence its ancestor, hence held alive by it. Its
+      # VALUE is the caller's record to keep, and inventing a second ref for it
+      # would put a directory where this leaf ref lives.
       class Pin
         NAMESPACE = "refs/lain/reviewed"
 

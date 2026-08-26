@@ -96,64 +96,42 @@ module Lain
       self.class.new(@by_name.except(*keys).values)
     end
 
-    # The security reading of the pair above, said where the registry can hold
-    # it to laws: attenuation goes DOWN and only down. `#only` names what
-    # survives, `#except` names what goes, `except(x) == only(names - x)`, and
-    # chaining either can never widen the result -- a capability once dropped
-    # cannot be regained by the holder.
+    # Attenuation goes DOWN and only down, held to laws by the registry:
+    # `except(x) == only(names - x)`, chaining either can never widen, and the
+    # partiality is a law too -- `only` outside the set raises, and `except`
+    # twice over the same names raises because the second names a tool already
+    # gone.
     #
-    # There is deliberately no join. Two Toolsets have no least upper bound in
-    # this algebra, and none is offered: union exists only at CONSTRUCTION,
-    # below the trust boundary, where {Tools::Subagent#child_union} assembles a
-    # child's set out of tools the parent already holds.
+    # There is deliberately no join. Two Toolsets have no least upper bound
+    # here; union exists only at CONSTRUCTION, below the trust boundary, where
+    # {Tools::Subagent#child_union} assembles a child's set out of tools the
+    # parent already holds.
     #
-    # What the boundary covers, precisely: the MODEL-FACING surface -- the
-    # rendered schema, and the `#include?`/`#fetch` pair
-    # {Effect::Handler::Live} authorizes and dispatches with. No message on
-    # THOSE adds a dropped capability back, which is what makes "possession is
-    # authorization" survive contact with a subagent, and the monotonicity law
-    # is how it stays checked rather than merely written down here.
-    #
-    # It is not a claim about the Ruby object graph, and must not be read as
-    # one. The tools an attenuated set still yields are objects with surfaces of
-    # their own: `only(:subagent).fetch("subagent").attenuates_from` hands back
-    # the whole un-attenuated union (`tools/subagent.rb:90`). Reaching a tool's
-    # own constructor arguments in-process is not the threat this boundary is
-    # against; a spec pins both halves so neither reading drifts.
-    #
-    # The partiality is a law too: `only` outside the current set raises, and
-    # `except` twice over the same names raises, because the second call is
-    # naming a tool that is already gone.
+    # The boundary covers the MODEL-FACING surface: the rendered schema and the
+    # `#include?`/`#fetch` pair {Effect::Handler::Live} authorizes with. It is
+    # NOT a claim about the Ruby object graph -- `only(:subagent)
+    # .fetch("subagent").attenuates_from` hands back the whole un-attenuated
+    # union. Reaching a tool's own constructor arguments in-process is not the
+    # threat this is against; a spec pins both halves so neither reading drifts.
     attenuation on: :only, dual: :except
 
-    # The provider-neutral tool array: each tool's schema, sorted by name, run
-    # through {Lain::Canonical} so the bytes are stable across constructions.
-    # `Canonical.dump(toolset.to_schema)` is therefore identical for two
-    # Toolsets holding the same tools regardless of the order they were built in
-    # -- which is precisely the invariant prompt caching depends on.
+    # Identical bytes for two Toolsets holding the same tools regardless of the
+    # order they were built in -- the invariant prompt caching depends on.
     def to_schema
       @schema
     end
 
-    # Value equality, defined as the canonical schema bytes: two Toolsets are
-    # equal iff they present the same tools to the model. This is SCHEMA
-    # equality, not behavioral equality -- two tools with identical schemas and
-    # completely different `#perform` bodies compare equal, because the schema is
-    # the whole of what the model, and the prompt cache, can see.
+    # SCHEMA equality, not behavioral equality: two tools with identical schemas
+    # and completely different `#perform` bodies compare equal, because the
+    # schema is the whole of what the model, and the prompt cache, can see.
     #
-    # `equal?` is untouched, so the specs pinning that a posture returns the very
-    # same object still mean what they meant.
-    #
-    # Two siblings state the same idea: {Lain::ContentAddressed} (the digest trio
-    # seven values include) and {Lain::Capability::DegradedSet}. This one is NOT
-    # the module, and diverges from both on one word -- `instance_of?` where they
-    # write `is_a?`. Both record the `is_a?` asymmetry as a latent caveat: under
-    # subclassing `parent == child` holds while `child == parent` does not, and a
-    # class-embedding `hash` then makes that a live ==/hash contract violation.
-    # `instance_of?` is symmetric, so there is nothing to caveat. Converging all
-    # three on `instance_of?` -- and then folding this class into the module --
-    # is owed; until it lands, this comment is what says the three differ on
-    # purpose rather than by drift.
+    # `instance_of?` where the two siblings stating this idea
+    # ({Lain::ContentAddressed}, {Lain::Capability::DegradedSet}) write `is_a?`,
+    # and the divergence is on purpose: under subclassing `is_a?` gives
+    # `parent == child` while `child == parent` fails, which a class-embedding
+    # `hash` turns into a live ==/hash contract violation. `instance_of?` is
+    # symmetric. Converging all three, and folding this class into the module,
+    # is owed.
     def ==(other)
       other.instance_of?(self.class) && digest == other.digest
     end

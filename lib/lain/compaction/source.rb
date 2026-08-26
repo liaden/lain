@@ -4,104 +4,71 @@ module Lain
   module Compaction
     # The live {Agent::PipelineSource}: which Context THIS turn renders through.
     #
-    # Two halves, deliberately kept apart.
+    # OBSERVE feeds {Cold} its two signals by different routes because they
+    # exist at different moments: the idle gap is measured at render time off
+    # the injected clock, while the cache-read count exists only on a model
+    # RESPONSE, which the render seam never sees (`context_for`'s `usage:` is
+    # the last-turn INPUT token count, an Integer, not the usage Hash
+    # {Cold#observe} reads). So this is also a `#<<` sink, the duck
+    # {StatusFeed} answers, riding the same journal fan-out.
     #
-    # OBSERVE feeds {Cold} the two signals it needs and nothing else decides on.
-    # They arrive by different routes because they exist at different moments:
-    # the idle gap is measured at render time from the injected clock, while the
-    # cache-read count only exists on a model RESPONSE, which the render seam
-    # never sees -- `context_for`'s `usage:` is the last-turn INPUT token count,
-    # an Integer, not the usage Hash `Cold#observe` reads. So this object is also
-    # a `#<<` sink (see {#<<}), the same duck {StatusFeed} answers, and rides the
-    # same journal fan-out.
+    # DECIDE is one pass: candidate head, {Need}, {Scheduler}, and only then
+    # this turn's derivation. It answers the base Context ITSELF on a defer --
+    # byte-identical, not merely equivalent, which is the whole DEFER contract.
     #
-    # DECIDE is one pass, in the order `bench/plan_sweep/driver.rb` established:
-    # derive the candidate head, ask {Need} whether a compaction is warranted,
-    # let {Scheduler} choose, and -- only then -- derive this turn's context
-    # timeline. It answers the base Context ITSELF when the scheduler defers --
-    # byte-identical, not merely equivalent, which is the whole DEFER contract --
-    # and `base.with_pipeline` of the composed pipeline when it does not.
-    #
-    # == What a compacting turn renders
-    #
-    # A DERIVED chain, not a render-time projection. {Derived} materializes a
-    # second lineage in the source's own Store and substitutes its projection as
-    # the rendered messages; {Context::Compact} is no longer composed here at
-    # all. The session timeline stays the lossless record and its head advances
-    # only by committed turns -- a derivation writes replacement events into the
-    # Store and never onto the chain the Agent holds.
-    #
+    # A compacting turn renders a DERIVED chain rather than a render-time
+    # projection: {Derived} materializes a second lineage in the Store and
+    # substitutes its projection as the rendered messages, so the session
+    # timeline stays the lossless record and advances only by committed turns.
     # Substituting MESSAGES rather than handing `#render` a different timeline
-    # is the Open decisions ruling, and it is load-bearing rather than
-    # cosmetic: a strategy may hold a live oracle and a mutable memo, and
-    # {Scheduler::COMPOSE}'s `Ractor.make_shareable` would deep-freeze that
+    # is load-bearing -- a strategy may hold a live oracle and a mutable memo,
+    # and {Scheduler::COMPOSE}'s `Ractor.make_shareable` would deep-freeze that
     # graph in SILENCE. The derivation therefore runs here, off the pipeline,
     # and only a frozen array of finished messages crosses into it.
     #
-    # It is NOT `Ractor.shareable?` and must not become so: it holds the mutable
-    # {Cold} and the live {Oracle::Eager}. What it HANDS BACK is shareable, which
-    # is the constraint that matters, and {SummarySnapshot} is what makes the two
-    # compatible -- the summaries riding into the derivation are a frozen copy of
-    # what the Eager held, never the Eager.
+    # This object is NOT `Ractor.shareable?` and must not become so: it holds
+    # the mutable {Cold} and the live {Oracle::Eager}. What it hands BACK is
+    # shareable, and {SummarySnapshot} keeps the two compatible -- the
+    # summaries riding into the derivation are a frozen copy of what the Eager
+    # held, never the Eager.
     class Source
       # The per-turn decision, journaled on EVERY turn including a deferring
-      # one. `Agent#render_request` delegates this choice to a collaborator that
-      # reports nothing back, so what is written here is the only trace it
-      # happened -- and on a bench whose deliverable is comparability, an
-      # unrecorded decision is a missing measurement. {Scheduler} journals the
-      # richer {Telemetry::Compaction} accounting, but only when it compacts;
-      # this record covers the defers and carries the snapshot's hit rate, which
-      # is the bench's read on whether the eager fires are landing at all.
+      # one. Nothing reports this choice back to `Agent#render_request`, so
+      # this record is the only trace it happened -- and on a bench whose
+      # deliverable is comparability, an unrecorded decision is a missing
+      # measurement. {Scheduler} journals the richer accounting, but only when
+      # it compacts.
       #
       # `would_not_shrink` names the one refusal a reader could not otherwise
       # tell from a plain defer: the signals fired, the scheduler said now, and
-      # the rewrite was declined because it would not have made the prompt
-      # smaller (see {#shrinks?}). Silence there would read as "nothing was
-      # warranted". It is `would_not_shrink` and not `would_inflate` because
-      # {#shrinks?} asks for a strict saving -- a byte-NEUTRAL rewrite is
-      # declined too, and calling that inflation would be a claim the
-      # measurement never made.
-      # `window_tokens`/`used_tokens` are the two halves of the occupancy
-      # `:approaching_window` fired (or did not) on -- the DENOMINATOR and the
-      # numerator, both of which a reader previously had to guess. The signal
-      # list said which detectors fired; nothing said what they measured
-      # against, so a journal from an ollama run reading `approaching_window`
-      # on every turn was indistinguishable from a genuinely full context and a
-      # window resolved through {ContextWindow::CONSERVATIVE_FALLBACK} instead
-      # of through the window the server was serving. That is precisely the
-      # defect these two fields close, and it was invisible in the record.
+      # the rewrite would not have made the prompt smaller. Not `would_inflate`
+      # -- {Scheduler::Rewrite#shrinks?} asks for a strict saving, so a
+      # byte-NEUTRAL rewrite is declined too, and calling that inflation would
+      # be a claim the measurement never made.
       #
-      # `used_tokens` is nil before any turn carries usage, which is absence and
-      # not zero -- {ContextWindow::Occupancy::None}'s reading, since that is
-      # the value both fields are lifted off.
+      # `window_tokens`/`used_tokens` are the denominator and the numerator
+      # `:approaching_window` fired (or did not) on; without them a journal
+      # from an ollama run reading `approaching_window` every turn was
+      # indistinguishable from a genuinely full context. `used_tokens` is nil
+      # before any turn carries usage, which is absence and not zero.
       #
-      # `provenance` is the same defect a third time, and the reason it is a
-      # FIELD rather than an inference a reader makes. A GUESSED window
-      # withdraws `:approaching_window` before this record is written
-      # ({Source#need_for}), so the signal list alone cannot tell a
-      # DENIED trigger from one that never fired -- and the two mean opposite
-      # things. Measured: `qwen3:4b` at 7,500 used against a guessed 8,192
+      # `provenance` is a FIELD rather than an inference because a GUESSED
+      # window withdraws `:approaching_window` before this record is written,
+      # so the signal list alone cannot tell a DENIED trigger from one that
+      # never fired. Measured: `qwen3:4b` at 7,500 used against a guessed 8,192
       # (92% full, denied) and `claude-opus-4-8` at 7,500 against a published
       # 1,000,000 (0.75% full, nothing warranted) journal an IDENTICAL
-      # `signals: []`. Without this field a reader has to re-derive the ratio
-      # AND know the provenance rule to tell them apart, which is exactly the
-      # ambiguity `window_tokens`/`used_tokens` were added to destroy. It also
-      # names the one place a human-facing surface disagrees with the record:
-      # the HUD clamps and shows `ctx:92%` on that same turn (`cli/up/hud.rb`)
-      # while compaction can never fire, and this field is what says why.
-      #
-      # One of {ContextWindow::PROVENANCES}; see there for why it is three
-      # values and not two.
+      # `signals: []`. It also names the one place a human-facing surface
+      # disagrees with the record: the HUD clamps and shows `ctx:92%` on that
+      # same turn while compaction can never fire.
       CompactionDecision = Data.define(:compacted, :signals, :head_bytes,
                                        :summary_hits, :summary_misses, :cold, :would_not_shrink,
                                        :window_tokens, :used_tokens, :provenance) do
         include Telemetry::Journalable
       end
 
-      # Null Object for the summary store: an Eager that holds nothing, so a run
-      # with no oracle wired takes a snapshot of honest MISSES and renders pure
-      # elision lines. A `nil` eager guarded at the take would be the same
-      # behavior with a conditional in front of it.
+      # Null Object for the summary store: a run with no oracle wired takes a
+      # snapshot of honest MISSES and renders pure elision lines.
       module NoSummaries
         module_function
 
@@ -110,65 +77,36 @@ module Lain
 
       # WHAT collapses a span this run, and what to CALL the arm it makes.
       #
-      # One value in one slot rather than two arguments, and the reason is a
-      # measured one: {CLI::Backend} sits AT the `Metrics/ClassLength` cap, so
+      # One value in one slot rather than two arguments, for a measured reason:
+      # {CLI::Backend} sits AT the `Metrics/ClassLength` cap, so
       # `--compact-strategy`'s own string cannot reach here as a second keyword
-      # (CLAUDE.md: extract, never loosen a Max). It has to reach here because
-      # the {Scheduler} that journals a compaction is handed a PIPELINE rather
-      # than a policy, and so can name neither.
+      # (CLAUDE.md: extract, never loosen a Max). It has to reach here at all
+      # because the {Scheduler} that journals a compaction is handed a PIPELINE
+      # rather than a policy, and so can name neither.
       #
-      # `policy` is the {Strategy::Base} the flag resolved to, or nil for a run
-      # that named none -- the eager tool-result tier, which {Derived} builds
-      # per turn from that turn's {SummarySnapshot} and which nothing here can
-      # hold. `name` is what a bench groups on.
+      # `name` is NEVER NIL: an unflagged run is not "no arm", it is the CONTROL
+      # arm, named {Telemetry::Compaction::EAGER_CONTROL_ARM}. nil would fold
+      # the control arm into "a record written before this field existed", the
+      # one thing {Telemetry::Compaction}'s nil is reserved for.
       #
-      # NAME IS NEVER NIL, and that is the whole point. An unflagged run is not
-      # "no arm", it is the CONTROL arm ({CLI::Backend::SpanSummarizer}'s doc
-      # argues why), so it is named {Telemetry::Compaction::EAGER_CONTROL_ARM};
-      # a policy handed in with no word of its own answers {Strategy::Base#name}
-      # ({Strategy::Composed#name} for a composition). nil would fold the
-      # control arm into "a record written before this field existed", which is
-      # the one thing {Telemetry::Compaction}'s nil is reserved for.
-      #
-      # The policy travels no further than this value: {Source} reads it out at
-      # construction and hands it to {Derived} exactly as it was handed a bare
-      # strategy before, so nothing that is frozen or made shareable ever holds
-      # it -- what travels onward is `name`, an interned String.
-      #
-      # == Why this value is SHALLOW-frozen, and is not a Data
-      #
-      # It cannot be either of the things CLAUDE.md asks of a value object, and
-      # the reason is the thing it carries. `Ractor.shareable?` would have to
-      # deep-freeze the policy, and {Strategy::Summarizing} holds a live oracle
-      # and a mutable memo that must never be frozen (`summarizing.rb:51-73`) --
-      # the exact hazard {Scheduler::COMPOSE}'s `make_shareable` is kept away
-      # from. So this freezes SHALLOW, {Strategy::Composed}'s own discipline for
-      # the same reason, and is as shareable as whatever policy it was handed
-      # and no more. `Data` is refused for a second, unrelated reason: a
-      # `Data.define ... do` block's body counts toward THIS class's
-      # `Metrics/ClassLength` where a nested class counts as one line, and
-      # {Source} is close enough to that cap that the difference is four lines
-      # of a budget CLAUDE.md forbids raising.
-      #
-      # Neither costs anything real. Nothing compares two of these, and the one
-      # member that outlives construction -- `name` -- is a frozen, interned
-      # String, which IS deeply frozen and IS shareable.
+      # SHALLOW-frozen, and not a `Data`, because of what it carries.
+      # `Ractor.shareable?` would have to deep-freeze the policy, and
+      # {Strategy::Summarizing} holds a live oracle and a mutable memo that must
+      # never be frozen. `Data` is refused separately: a `Data.define ... do`
+      # block's body counts toward {Source}'s own `Metrics/ClassLength` where a
+      # nested class counts as one line. Neither costs anything real -- nothing
+      # compares two of these, and the one member that outlives construction,
+      # `name`, is a frozen interned String.
       class Collapse
-        # The conversion function for {Source}'s `strategy:` slot, which takes a
-        # choice, a bare strategy (a caller with a policy but no word for it) or
-        # nil (a caller that named no arm at all).
-        #
-        # @param value [Collapse, Strategy::Base, nil]
+        # @param value [Collapse, Strategy::Base, nil] a choice, a bare
+        #   strategy from a caller with a policy but no word for it, or nil
+        #   from a caller that named no arm at all
         # @return [Collapse]
         def self.of(value) = value.is_a?(self) ? value : new(policy: value)
 
         # The name is interned for {Strategy::Base#name}'s reason: an anonymous
         # class's `to_s` is a freshly built MUTABLE String, and this one is read
         # back into a journalled record.
-        #
-        # The freeze is SHALLOW, {Strategy::Composed}'s discipline: it fixes
-        # this object's own two references and says nothing about the policy,
-        # which may legitimately hold a live oracle and a mutable memo.
         def initialize(policy: nil, name: nil)
           @policy = policy
           @name = -(name || policy&.name || Telemetry::Compaction::EAGER_CONTROL_ARM).to_s
@@ -186,19 +124,18 @@ module Lain
       # collapse readable, and a fallback wearing a derivation's badge would put
       # back the ambiguity it was added to destroy.
       #
-      # `consecutive` is what keeps this from being the silent-stop mode wearing
-      # a badge. A deterministic strategy over a stable history refuses
+      # `consecutive` is what keeps this from being the silent-stop mode
+      # wearing a badge. A deterministic strategy over a stable history refuses
       # IDENTICALLY every turn -- one refusal is an awkward history, forty in a
-      # row is a session that has stopped compacting -- and the two are
-      # indistinguishable from a record that counts nothing. See {Derived} for
-      # why the streak is journalled rather than raised on.
+      # row is a session that has stopped compacting. See {Derived} for why the
+      # streak is journalled rather than raised on.
       DerivationRefused = Data.define(:strategy, :violations, :consecutive) do
         include Telemetry::Journalable
       end
 
-      # How long since the cache was last touched -- the observe half's clock,
-      # extracted so the Source holds a measurement rather than a raw `Time` and
-      # a bare ivar it has to keep in step by hand.
+      # How long since the cache was last touched, extracted so the Source
+      # holds a measurement rather than a raw `Time` and an ivar it has to keep
+      # in step by hand.
       class IdleGap
         def initialize(clock:)
           @clock = clock
@@ -216,8 +153,8 @@ module Lain
       # How this run prices a compaction and when it must have one: everything
       # a {Scheduler} is built from except the pipeline it schedules.
       #
-      # Its own object because those four values are one decision, read at one
-      # site -- and because {Source#initialize} sits AT the
+      # Its own object because those four values are one decision read at one
+      # site, and because {Source#initialize} sits AT the
       # `Metrics/MethodLength` cap, which CLAUDE.md answers with an extraction
       # rather than a raised Max. `Integer(hard_cap)` stays at CONSTRUCTION: a
       # mis-wired cap must fail where it was wired and not on the first
@@ -238,15 +175,13 @@ module Lain
       end
       private_constant :Scheduling
 
-      # The run's shared summary store; readable so callers can check they hold the
-      # same one the tool observer fires into.
+      # The run's shared summary store; readable so callers can check they hold
+      # the same one the tool observer fires into.
       attr_reader :eager
 
-      # The arm this run collapses spans under, by the name a bench groups on:
-      # `--compact-strategy`'s own string, or {Telemetry::Compaction
-      # ::EAGER_CONTROL_ARM} for a run that named none. Read by whoever
-      # journals a compaction, since the {Scheduler} that writes the record is
-      # handed a pipeline and cannot name the policy behind it.
+      # The arm this run collapses spans under, by the name a bench groups on.
+      # Read by whoever journals a compaction, since the {Scheduler} that
+      # writes the record is handed a pipeline and cannot name the policy.
       #
       # @return [String] frozen, and never nil -- see {Collapse}
       attr_reader :collapse_strategy
@@ -257,26 +192,20 @@ module Lain
       # @param hard_cap [Integer] the history size, in {Head#bytesize}'s byte
       #   proxy, that forces a compaction even while the cache is warm
       # @param keep_last [Integer] trailing messages kept verbatim -- the ONE
-      #   number {Head} and {Context::Compact} must agree on. Checked HERE, at
-      #   wiring time, against the module's rule ({Compaction.validate_keep_last}
-      #   -- a keep_last of 0 makes a derivation replace the ENTIRE history with a
-      #   summary of nothing), so a bad wiring fails at construction rather than
-      #   on the first turn of a live chat. The validated number is then held by
-      #   {Derived} and asked back for the {Head}, never kept in a second ivar
-      #   here: the {Boundary} the derivation cuts at and the {Head} {Need}
-      #   measures must be computed from the SAME keep_last, and two copies is
-      #   how they drift.
+      #   number {Head} and {Context::Compact} must agree on. Checked HERE
+      #   against {Compaction.validate_keep_last} (a keep_last of 0 makes a
+      #   derivation replace the ENTIRE history with a summary of nothing), so
+      #   a bad wiring fails at construction rather than on the first turn of a
+      #   live chat. The validated number is then held by {Derived} and asked
+      #   back for the {Head}, never kept in a second ivar here: the {Boundary}
+      #   the derivation cuts at and the {Head} {Need} measures must come from
+      #   the SAME keep_last, and two copies is how they drift.
       # @param eager [#held] the live summary store; the Null holds nothing
-      # @param strategy [Collapse, Strategy::Base, nil] which policy collapses a
-      #   span, `--compact-strategy`'s answer -- as a {Collapse}, which carries
-      #   the operator's own word for the arm as well, or as the bare policy for
-      #   a caller with no word to give. nil is the un-flagged wiring, which
-      #   collapses into the run's own eager tier exactly as {Context::Compact}
-      #   did -- see {Derived}. Injected ONCE, never fetched per turn: a
-      #   model-backed strategy holds a memo whose absence turns one range's two
-      #   questions into two model calls (`summarizing.rb:220-239`). Whatever
-      #   arrives, the POLICY reaches {Derived} unwrapped; only the name is kept
-      #   here (see {#collapse_strategy}).
+      # @param strategy [Collapse, Strategy::Base, nil] which policy collapses
+      #   a span. nil is the un-flagged wiring, which collapses into the run's
+      #   own eager tier -- see {Derived}. Injected ONCE, never fetched per
+      #   turn: a model-backed strategy holds a memo whose absence turns one
+      #   range's two questions into two model calls.
       # @param journal [#<<] where the decision lands; the Null channel by
       #   default, so no caller guards `if journal`
       # @param model [String, nil] priced for {Scheduler}'s cost accounting
@@ -284,16 +213,14 @@ module Lain
       # @param clock [#call] answers the current Time. Injected, never read
       #   inline: `Time.now` in the render path would make a replayed run
       #   non-deterministic, the same reason {StatusFeed} takes one.
-      # @param context_window [#resolve] the window book {#decide} asks
-      #   about the LIVE model each turn. The default degrades to a conservative
+      # @param context_window [#resolve] the window book {#decide} asks about
+      #   the LIVE model each turn. The default degrades to a conservative
       #   fallback for a model no Anthropic-shaped table carries (`ollama`,
-      #   `bedrock`), because an unsupported provider must still run; a blank
-      #   model still raises there, which is a wiring bug rather than a provider.
-      #   A live chat is handed {CLI::Backend#context_window} instead -- the
-      #   run's one book, built from the window the provider says it is serving
-      #   -- and it is the SAME instance {Agent#occupancy} and the {StatusFeed}
-      #   divide by, so this record's threshold and the figure a human reads
-      #   are one calculation.
+      #   `bedrock`); a blank model still raises there, which is a wiring bug
+      #   rather than a provider. A live chat is handed
+      #   {CLI::Backend#context_window} instead -- the SAME instance
+      #   {Agent#occupancy} and the {StatusFeed} divide by, so this record's
+      #   threshold and the figure a human reads are one calculation.
       def initialize(need:, cold:, hard_cap:, keep_last:, eager: NoSummaries, strategy: nil,
                      journal: Channel::Null.instance, model: nil, price_book: PriceBook.default,
                      clock: -> { Time.now }, context_window: ContextWindow.default)
@@ -310,15 +237,9 @@ module Lain
       end
 
       # The observe half's response leg. A turn's own usage carries the
-      # `cache_read_input_tokens` count {Cold} reads, and nothing on the render
-      # seam does -- so this rides {CLI::JournalTee} as one more fan-out leg,
-      # exactly as {StatusFeed} does, and recognizes its event by duck rather
-      # than by class.
-      #
-      # `#usage` ALONE is not that duck: {Telemetry::OracleAnswer} answers it
-      # too, and its usage Hash has no cache fields, so a landed oracle answer
-      # would read as a zero cache-read and confirm a WARM cache cold. A record
-      # that also names why the model stopped is a turn's own.
+      # `cache_read_input_tokens` count {Cold} reads and nothing on the render
+      # seam does, so this rides {CLI::JournalTee} as one more fan-out leg and
+      # recognizes its event by duck rather than by class (see {#turn_usage?}).
       #
       # @param event [Object] anything from the journal; unrecognized events are
       #   inert, since a fan-out leg is fed everything
@@ -327,9 +248,8 @@ module Lain
         return self unless turn_usage?(event)
 
         @cold.observe(event)
-        # The cache was demonstrably touched at this moment, so the next turn's
-        # idle gap is measured from HERE rather than from the last render --
-        # which would fold the model round trip into it.
+        # Measured from HERE, not from the last render, which would fold the
+        # model round trip into the gap.
         @idle.touch
         self
       end
@@ -339,10 +259,9 @@ module Lain
       # @param base [Context] the Agent's own Context
       # @param timeline [Timeline] the history as of this render
       # @param usage [Integer, nil] the LAST-TURN input tokens -- nil before any
-      #   turn, which {Need::ApproachingWindow} distinguishes from zero. Passed
-      #   through untouched: a cumulative total here would latch the signal on
-      #   permanently, and a zero would read as an empty context on a resumed
-      #   session.
+      #   turn, which {Need::ApproachingWindow} distinguishes from zero. A
+      #   cumulative total here would latch the signal on permanently, and a
+      #   zero would read as an empty context on a resumed session.
       # @param session [Session] the run's Session, for its plan-step signal
       # @return [Context] `base` itself, or a copy carrying this turn's pipeline
       def context_for(base:, timeline:, usage:, session:)
@@ -353,50 +272,45 @@ module Lain
 
       private
 
-      # A turn's own usage, and only that. `#usage` ALONE is not the duck:
-      # {Telemetry::OracleAnswer} answers it too and its usage Hash carries no
-      # cache fields, so a landed oracle answer would read as a zero cache-read
-      # and confirm a WARM cache cold (panel-verified 2026-07-25). A record that
-      # also names why the model stopped is a turn's.
+      # `#usage` ALONE is not the duck: {Telemetry::OracleAnswer} answers it
+      # too and its usage Hash carries no cache fields, so a landed oracle
+      # answer would read as a zero cache-read and confirm a WARM cache cold
+      # (verified 2026-07-25). A record that also names why the model stopped
+      # is a turn's.
       def turn_usage?(event) = event.respond_to?(:usage) && event.respond_to?(:stop_reason)
 
-      # Idle time as this object can honestly measure it: since the cache was
-      # last touched by a response, or since construction before the first one.
-      # A no-op on a TTL-less provider, and only ever a PENDING mark -- the next
-      # zero cache-read confirms or cancels it (see {Cold}).
+      # Only ever a PENDING mark: the next zero cache-read confirms or cancels
+      # it (see {Cold}), and it is a no-op on a TTL-less provider.
       def observe_idle = @cold.idle!(@idle.elapsed)
 
-      # The pin-set, translated once. A pin is a turn DIGEST and {Context::Compact}
-      # only ever sees projected TEXT -- a turn's content address folds `meta`
-      # and `causal_parents` that no projection carries, so the two are not
-      # interchangeable and deriving one from the other by hashing the wrong
-      # bytes misses every lookup in silence. This is the only object holding
-      # both the timeline and the session, so it is the only place the mapping
-      # can be made; making it ONCE and handing the same value to {Head} and to
-      # the Compact is what stops them naming different messages.
+      # The pin-set, translated once. A pin is a turn DIGEST and
+      # {Context::Compact} only ever sees projected TEXT -- a turn's content
+      # address folds `meta` and `causal_parents` that no projection carries,
+      # so hashing the projection instead misses every lookup in silence. This
+      # is the only object holding both the timeline and the session, and
+      # making the mapping ONCE is what stops {Head} and the Compact naming
+      # different messages.
       #
       # `#pinned?` and never `#pins`: the latter sorts the whole set on every
-      # call (session.rb:164) and this is a per-turn membership test.
+      # call and this is a per-turn membership test.
       def pinned(walk, session)
         Context::PinnedMessages.new(
           walk.turns.zip(walk.messages).filter_map { |turn, message| message if session.pinned?(turn.digest) }
         )
       end
 
-      # Is a compaction warranted at all? An empty head is asked for with
-      # `#empty?`, never a zero byte count: an empty Head measures 2, the bytes
-      # of `"[]"`. With nothing droppable there is no compaction to perform
-      # whatever the signals say -- which is also how a history whose every
-      # droppable turn is PINNED declines here rather than reaching Compact's
-      # empty-summarizable path and paying a cache break for
-      # {SummarySnapshot::NOTHING}.
+      # Is a compaction warranted at all? Emptiness is asked for with `#empty?`,
+      # never a zero byte count: an empty Head measures 2, the bytes of `"[]"`.
+      # With nothing droppable there is no compaction whatever the signals say
+      # -- which is also how a history whose every droppable turn is PINNED
+      # declines here rather than reaching Compact's empty-summarizable path
+      # and paying a cache break for {SummarySnapshot::NOTHING}.
+      #
       # The occupancy is built AFTER {Need#check}, off the same two numbers,
-      # rather than being the thing handed to it: `check` keeps its own
-      # `window!` guard and its own message about the parameter it names, and
-      # building the value first would put {ContextWindow::Occupancy.window!}'s
-      # wording in front of it for the same wiring bug. One reading either way
-      # -- {Need::ApproachingWindow} measures this exact value internally -- so
-      # what travels on to {#record} is what the signal was decided on.
+      # so that `check`'s own `window!` guard reports a wiring bug in terms of
+      # the parameter it names. {Need::ApproachingWindow} measures this exact
+      # value internally, so what travels on to {#record} is what the signal
+      # was decided on.
       def decide(base:, timeline:, walk:, usage:, session:, pins:)
         head = Head.new(messages: walk.messages, keep_last: @derived.keep_last, pins:)
         resolution = window_for(base)
@@ -412,9 +326,8 @@ module Lain
       # one method. {Need} answers the first half from the numbers it is given;
       # only the caller holding the window book can answer the second, because
       # only it knows whether the denominator was measured, published or
-      # guessed. Splitting the two across {#decide} made that method carry two
-      # decisions and tripped Metrics/AbcSize, which was naming this method
-      # rather than asking for a raised limit.
+      # guessed. (Splitting the two across {#decide} tripped Metrics/AbcSize,
+      # which was naming this method rather than asking for a raised limit.)
       #
       # `:approaching_window` is the one signal whose whole content is a
       # comparison against a number the bench may have INVENTED, and what it
@@ -424,22 +337,15 @@ module Lain
       # {ContextWindow::CONSERVATIVE_FALLBACK}'s 8,192 and lain rewrite its
       # history three times, at 75-78% of the window it actually had.
       #
-      # ONLY the guess. A shipped-table hit is a real published number, and it
-      # is what a hosted run is measured against
+      # ONLY the guess. A shipped-table hit is a real published number
       # ({Provider#context_window_tokens} is nil for every provider but
-      # ollama), so suppressing that would switch compaction off for every
-      # Anthropic and Bedrock arm in silence -- and {Scheduler#forced?} reads
-      # the same signal, so the forcing behaviour would have gone with it.
-      #
-      # Withdrawn HERE, from the {Need::Result}, rather than inside {Need}: the
-      # window is a per-turn PARAMETER that detector already has to be told
-      # about, and giving the state a second field for who vouched for it would
-      # make every detector's `#fired?` a place provenance could be read. Every
-      # OTHER signal is untouched, which is what leaves the byte threshold and
-      # the hard cap (a history-size question with no window in it at all)
-      # firing exactly as before. What is withdrawn is still RECORDED --
-      # {#record} journals the provenance on every decision, so a denied signal
-      # is legible rather than merely absent (see {CompactionDecision}).
+      # ollama), so suppressing that too would switch compaction off for every
+      # Anthropic and Bedrock arm in silence, taking {Scheduler#forced?} with
+      # it. And it is withdrawn HERE rather than inside {Need}, because giving
+      # detector state a second field for who vouched for the window would make
+      # every `#fired?` a place provenance could be read. What is withdrawn is
+      # still RECORDED: {#record} journals the provenance on every decision, so
+      # a denied signal is legible rather than merely absent.
       def need_for(head:, usage:, session:, resolution:)
         need = @need.check(head_bytes: head.bytesize, used_tokens: usage,
                            window_tokens: resolution.window_tokens,
@@ -448,50 +354,45 @@ module Lain
       end
 
       # Off the LIVE Context, every turn, never captured at construction:
-      # `/model` writes into {Context::ModelSwitch}'s slot mid-session
-      # (model_switch.rb:20-22), so a window resolved once at startup would go
-      # on measuring occupancy against the model the run began with -- and an
-      # over-estimate is the failure that never fires rather than the one that
-      # fires early. `Context#model` reads that slot at read time, which is
-      # exactly what makes the derivation follow the switch.
+      # `/model` writes into {Context::ModelSwitch}'s slot mid-session, so a
+      # window resolved once at startup would go on measuring occupancy against
+      # the model the run began with -- and an over-estimate is the failure
+      # that never fires rather than the one that fires early.
       #
-      # A blank model raises here rather than on the first `#compaction_source`
-      # call, which is later but no quieter: it is a wiring bug, and this bench
-      # fails loudly on one rather than degrading to a threshold nobody chose.
+      # A blank model raises here rather than degrading to a threshold nobody
+      # chose; it is a wiring bug, and this bench fails loudly on one.
       #
-      # A {ContextWindow::WindowResolution} and not the bare Integer, because the
-      # number alone cannot say whether it was measured, published or guessed --
-      # see {#need_for}.
+      # A {ContextWindow::WindowResolution} and not the bare Integer, because
+      # the number alone cannot say whether it was measured, published or
+      # guessed -- see {#need_for}.
       #
       # @return [ContextWindow::WindowResolution]
       def window_for(base) = @context_window.resolve(base.model)
 
       # Then WHEN, and only then WHETHER IT HELPS. {Scheduler#evaluate} is pure
-      # and journals nothing (only `#pipeline` does), so asking it first costs
-      # nothing and settles the entire warm-under-cap band -- the steady state
-      # once the byte threshold is crossed -- before the floor's measurement is
-      # paid for. Both halves of that matter: the floor's `Compact#call` and two
-      # dumps measured 3.6 ms on an 84 KB history, wasted on every turn the
-      # scheduler was going to defer regardless, and a turn deferred on TIMING
-      # would have been journaled as an inflation refusal, over-counting the
-      # refusals a bench reads by the whole warm-defer population.
+      # and journals nothing, so asking it first settles the whole
+      # warm-under-cap band -- the steady state once the byte threshold is
+      # crossed -- before the floor's measurement is paid for. Both halves
+      # matter: the floor's `Compact#call` and two dumps measured 3.6 ms on an
+      # 84 KB history, wasted on every turn the scheduler was going to defer
+      # anyway, and a turn deferred on TIMING would have been journaled as an
+      # inflation refusal, over-counting the refusals a bench reads by the
+      # whole warm-defer population.
+      #
       # THE FLOOR is the last of the three questions: a rewrite that would not
-      # SHRINK the rendered history is refused however loudly the signals fired.
-      # It measures the DERIVED chain's own projection -- the very array a
-      # render will send -- through the scheduler that would journal it, so the
-      # refusal and the accounting read one {Scheduler::Rewrite} rather than two
-      # measurements that happen to agree.
+      # SHRINK the rendered history is refused however loudly the signals
+      # fired. It measures the DERIVED chain's own projection -- the very array
+      # a render will send -- through the scheduler that would journal it, so
+      # the refusal and the accounting read one {Scheduler::Rewrite}.
       #
       # Measured 2026-07-25: {SummarySnapshot}'s per-message attestation (role,
       # digest, byte counts, a line per block) costs ~230 bytes, so over small
       # messages the summary is BIGGER than what it replaces -- six of them go
-      # 571 -> 1,144 bytes -- and it breaks the cache prefix to do it. That is
-      # not a hypothetical: {Need::PlanStepCompletion} is a plain boolean
-      # independent of history size, so a completed plan step on a short history
-      # with a cold cache reaches it in an ordinary chat, with compaction on by
-      # default. It asks the real question rather than a proxy for it, at the
-      # price of two `Canonical.dump`s -- paid once now, and only on a turn the
-      # scheduler has already committed to.
+      # 571 -> 1,144 bytes -- and it breaks the cache prefix to do it. Not a
+      # hypothetical: {Need::PlanStepCompletion} is a plain boolean independent
+      # of history size, so a completed plan step on a short history with a
+      # cold cache reaches it in an ordinary chat, with compaction on by
+      # default.
       def weigh(base:, timeline:, walk:, head:, need:, pins:, occupancy:, provenance:)
         return defer(base:, need:, head:, occupancy:, provenance:) unless timely?(need, head)
 
@@ -509,16 +410,15 @@ module Lain
       end
 
       # {Scheduler#evaluate} is the PURE half of the policy and never reads the
-      # combinator its scheduler was built around, which is what lets the timing
-      # question be asked BEFORE this turn's derivation exists -- so the unit
-      # stands in for the pipeline that has not been decided on yet.
+      # combinator its scheduler was built around, which is what lets the
+      # timing question be asked BEFORE this turn's derivation exists -- so the
+      # identity pipeline stands in for one not yet decided on.
       #
-      # Asking it first is not a micro-optimization. A derivation writes ~22
-      # objects into the Store and journals an edge, and paying that on every
-      # warm-under-cap turn -- the steady state once the byte threshold is
-      # crossed -- would fill the experiment record with derivations no render
-      # ever used, on top of asking a model-backed strategy for summaries
-      # nothing reads.
+      # Not a micro-optimization: a derivation writes ~22 objects into the
+      # Store and journals an edge, and paying that on every warm-under-cap
+      # turn would fill the experiment record with derivations no render ever
+      # used, on top of asking a model-backed strategy for summaries nothing
+      # reads.
       def timely?(need, head)
         scheduler_for(Context::Identity).evaluate(need:, cold: @cold.cold?,
                                                   history_size: head.bytesize).compact?
@@ -531,27 +431,24 @@ module Lain
       end
 
       # `head.bytesize` to {Need} and to the hard-cap comparison -- the count
-      # {Head} took when it sliced the span, never a second `Canonical.dump` of
-      # bytes already measured -- and the WHOLE history's measurement to
-      # {Scheduler}, since its accounting reports the before/after a render
-      # actually sends rather than a head OF the head.
+      # {Head} took when it sliced the span, never a second `Canonical.dump` --
+      # and the WHOLE history's measurement to {Scheduler}, whose accounting
+      # reports the before/after a render actually sends rather than a head OF
+      # the head.
       #
       # The scheduler answers `base` ITSELF when it defers, so identity -- not
-      # equivalence -- is what decides whether this turn's Context is a copy.
+      # equivalence -- decides whether this turn's Context is a copy.
       # `compacted:` is READ back off the pipeline rather than assumed from
-      # {#timely?}: `#pipeline` re-runs the same pure evaluation, so it will
-      # agree, but the flag is journaled and a record claiming a rewrite that
-      # did not ship would be a corrupted measurement, not a stale comment.
-      # `ran_under:` is `base.model` off the LIVE Context -- the same read
-      # {#window_for} makes: the price must follow the live model, as the
+      # {#timely?}: the two agree, but the flag is journaled, and a record
+      # claiming a rewrite that did not ship is a corrupted measurement.
+      #
+      # `ran_under:` is `base.model` off the LIVE Context, because the
       # scheduler is priced at CONSTRUCTION for the model {Scheduling} was
-      # built with -- this class holds no `@model` of its own -- so naming what
-      # is actually answering is what lets it refuse a stale quote after a
-      # `/model` switch rather than journal opus dollars for a sonnet turn.
-      # `collapse_strategy:` rides beside it for the mirror-image reason:
-      # the scheduler is handed a PIPELINE and can name no policy behind it,
-      # while this object was told the arm's word at construction -- so the
-      # accounting can be grouped by arm with no launch command to hand.
+      # built with -- naming what is actually answering is what lets it refuse
+      # a stale quote after a `/model` switch rather than journal opus dollars
+      # for a sonnet turn. `collapse_strategy:` rides beside it for the mirror
+      # reason: the scheduler is handed a PIPELINE and can name no policy, so
+      # the accounting can be grouped by arm with no launch command to hand.
       def commit(base:, head:, need:, outcome:, scheduler:, rewrite:, occupancy:, provenance:)
         provider = BASE_PROVIDER.call(flattened_twin(base))
         pipeline = scheduler.pipeline(need:, cold: @cold.cold?, history_size: head.bytesize,
@@ -564,26 +461,22 @@ module Lain
 
       # The MAIN chat Context is deliberately not `Ractor.shareable?`: `/model`
       # writes a live {Context::ModelSwitch} into its model slot, which is
-      # mutable by design and says so (model_switch.rb:20-22). A provider
-      # closing over THAT therefore fails {Scheduler::COMPOSE}'s
-      # `make_shareable` on the first compacting turn of every real `lain chat`
-      # -- found by wiring this live, invisible to a spec that builds a
-      # plain Context.
+      # mutable by design. A provider closing over THAT fails
+      # {Scheduler::COMPOSE}'s `make_shareable` on the first compacting turn of
+      # every real `lain chat` -- found by wiring this live, invisible to a
+      # spec that builds a plain Context.
       #
-      # The render pipeline does not depend on the model: `#pipeline_for` never
-      # reads it, and both Contexts report the same `#requires`. So the PROVIDER
-      # is built from a twin whose slot is flattened to a frozen
-      # {Context::StaticModel}, while the pipeline is applied to the LIVE base
-      # (see {#commit}), which keeps `/model` switchable from the next turn on.
-      # Shareability is established, not skipped.
+      # The render pipeline does not depend on the model (`#pipeline_for` never
+      # reads it, and both Contexts report the same `#requires`), so the
+      # PROVIDER is built from a twin whose slot is flattened to a frozen
+      # {Context::StaticModel} while the pipeline is applied to the LIVE base
+      # -- which keeps `/model` switchable from the next turn on.
       def flattened_twin(base) = base.with_model(base.model)
 
       # `summary_hits`/`summary_misses` are the collapse POLICY's, not a
-      # snapshot's. The un-flagged policy reads the eager tier through this
-      # turn's {SummarySnapshot} and reports exactly what it did before; a
-      # model-backed strategy reports its OWN content-address hit rate, which is
-      # the count a mis-keyed address is invisible in except as a number that
-      # never rises. A policy holding nothing reports honest zeros.
+      # snapshot's: a model-backed strategy reports its OWN content-address hit
+      # rate, which is the only count a mis-keyed address shows up in -- as a
+      # number that never rises.
       def record(need:, head:, compacted:, outcome:, occupancy:, provenance:, would_not_shrink: false)
         @journal << CompactionDecision.new(compacted:, signals: need.signals, head_bytes: head.bytesize,
                                            summary_hits: outcome.hits, summary_misses: outcome.misses,
@@ -605,15 +498,14 @@ module Lain
       # compacting render with nothing failing -- the composed `#requires` is a
       # union, so it still reports the same capabilities.
       #
-      # A provider rather than the combinator `#pipeline_for` returns, because a
-      # raw combinator would freeze whatever Workspace it was built around, and
-      # Reminder must see the LIVE one (see {Context#initialize}'s warning).
+      # A provider rather than the combinator `#pipeline_for` returns, because
+      # a raw combinator would freeze whatever Workspace it was built around,
+      # and Reminder must see the LIVE one.
       #
-      # A module-scope lambda, for the reason {Scheduler::COMPOSE} spells out: a
-      # Proc built inside an instance method captures that instance as its
+      # A module-scope lambda, for the reason {Scheduler::COMPOSE} spells out:
+      # a Proc built inside an instance method captures that instance as its
       # `self`, which would carry this object -- its live Eager, its Cold, its
-      # journal -- into the pipeline and fail `Ractor.make_shareable`. Here
-      # `self` is the Source CLASS, and the frozen `base` arrives as an argument.
+      # journal -- into the pipeline and fail `Ractor.make_shareable`.
       BASE_PROVIDER = lambda do |base|
         Ractor.make_shareable(->(workspace) { base.pipeline_for(workspace) })
       end
@@ -622,7 +514,6 @@ module Lain
   end
 end
 
-# AFTER the class body, the placement rule `effect/handler.rb` follows: {Derived}
-# reopens {Lain::Compaction::Source} and names {Source::DerivationRefused}, so
-# the class it hangs off has to exist first.
+# AFTER the class body: {Derived} reopens {Lain::Compaction::Source} and names
+# {Source::DerivationRefused}, so the class it hangs off has to exist first.
 require_relative "source/derived"

@@ -3,10 +3,9 @@
 module Lain
   module CLI
     # Where the next human line comes from, including its detour through the
-    # editor. {Repl} used to answer that with one call to {Conductor#read_prompt};
-    # once C-g could open a draft in nvim, "read the prompt" grew a round trip,
-    # a re-prompt loop, and a key binding, which is three responsibilities the
-    # repl does not otherwise have.
+    # editor. Its own object because C-g opening a draft in nvim gave "read the
+    # prompt" a round trip, a re-prompt loop, and a key binding -- three
+    # responsibilities {Repl} does not otherwise have.
     #
     # The split that matters is WHERE the wait happens. A key handler runs on
     # Reline's own input loop, and Reline re-traps SIGINT for the duration of a
@@ -35,12 +34,9 @@ module Lain
       # twice, without surprise.
       #
       # `unless bound?` because a second chat in one process meets a refusal,
-      # not a rebind -- and a refused bind rolls its own registration back, so
-      # a later attempt still runs. The rescue leads with the CONSEQUENCE:
-      # KeyTaken says either "already bound by the line editor..." (the human's
-      # inputrc) or "did not take: the active keymap routes it to..." (the write
-      # did not land), and neither on its own tells them C-g is dead. Losing the
-      # compose key must never cost the session.
+      # not a rebind. The rescue leads with the CONSEQUENCE, because KeyTaken's
+      # own message says only which mechanism refused, never that C-g is dead
+      # -- and losing the compose key must never cost the session.
       def bind_key
         return if Frontend::LineEditor.bound?(KEY)
 
@@ -49,8 +45,6 @@ module Lain
         @tty.render_warning("compose key unavailable: #{e.message}")
       end
 
-      # @return [String, nil] the line to dispatch, or nil at EOF
-      #
       # A compose that was abandoned or timed out sends NOTHING: it yields the
       # draft, which is rendered so the human can still see and re-use their
       # text, and the prompt is read again. Iterative rather than recursive --
@@ -60,6 +54,8 @@ module Lain
       # The loop turns on whether the block FIRED, never on the value: a
       # pass-through returns nil at EOF, and looping on the value would spin
       # against a closed stdin forever.
+      #
+      # @return [String, nil] the line to dispatch, or nil at EOF
       def read
         text = nil
         @again = true

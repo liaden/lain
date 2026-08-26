@@ -24,53 +24,29 @@ module Lain
     #   through to {Approval::Queue} and a human. Abstention is cheap and
     #   expected; the job is to be right when it answers, not to answer often.
     #
-    # == Three tiers of detection, and why the third exists
+    # The three detection tiers -- node kinds, program names, and WORD TEXT,
+    # the tier a designer forgets -- and the fourth thing that has to be COUNTED
+    # rather than read (a newline has no node) are argued in ARCHITECTURE.md's
+    # "Triaging a bash command"; the constants below carry the per-family
+    # reasoning. Three consequences live here:
     #
-    # 1. *Node kinds*, allowlisted -- {LITERAL_KINDS}. An allowlist, never a
-    #    metacharacter denylist: `command_substitution`, `expansion`,
-    #    `process_substitution`, `file_redirect`, `heredoc_redirect`,
-    #    `variable_assignment`, `subshell`, `function_definition` and
-    #    `arithmetic_expansion` are all *tagged* by the grammar, and anything the
-    #    grammar grows later is outside the allowlist by default.
-    # 2. *Program names*, {PROGRAM_RUNNERS}. Some programs run whatever their
-    #    arguments name, and no node kind distinguishes `find . -exec rm {} +`
-    #    from `ls -la`. Read from EVERY stage's `argv.first`, never the first
-    #    stage's: `echo hi; time { rm x; }`, `ls | time rm x` and
-    #    `true && time rm -rf /tmp/x` are all fully covered with an innocuous
-    #    leading stage.
-    # 3. *Word text* -- {EXPANDING} and {ESCAPING}. A glob, a tilde, a brace and
-    #    a backslash have NO node kind at all. `rm *` and `ls ~/secret` parse to
-    #    `program/command/command_name/word` and full coverage, exactly like
-    #    `ls -la` does. The text of the term is the only signal that exists, and
-    #    this is the tier a designer forgets.
-    #
-    # There is a fourth thing to count, because one separator has no node either:
-    # tree-sitter-bash lexes a NEWLINE as whitespace, so `echo hi\nrm -rf /tmp/x`
-    # arrives as two stages and an EMPTY separator list. Reading separator texts
-    # cannot see it; N stages against N-1 pipes can.
-    #
-    # Coverage is a necessary condition and never a sufficient one, so it is
-    # asked as `covered?` and never as `uncovered.empty?` -- the refusal path has
-    # no source, so its `uncovered` is `[]` while `covered?` is correctly false.
-    #
-    # == What an allow hands over
-    #
-    # `[["grep", "-r", "foo", "."], ["wc", "-l"]]`: a non-empty list of non-empty
-    # argvs whose only combinator is the pipe. The Decision deliberately does NOT
-    # carry the original string, because re-running an accepted string through
-    # `sh -c` turns every parser/shell disagreement into a live bypass, and the
-    # cheapest way to make that impossible is to not hand the string over.
-    #
-    # Two consequences the executing layer inherits, both from {Parse}:
-    #
-    # * A quoted or escaped argument ABSTAINS. `Parse` does not strip quotes --
-    #   `echo 'a b'` reconstructs as `["echo", "'a b'"]`, and `echo foo\ bar` as
-    #   `["echo", "foo\\ bar"]` where bash gives `["echo", "foo bar"]` -- so
-    #   allowing either would exec a term carrying literal quoting characters.
-    #   Widening this needs dequoting first, and dequoting is interpretation,
-    #   which is a reviewed decision and not an optimization.
-    # * `;`, `&&`, `||` and `&` abstain. Running them means interpreting control
-    #   flow, and this layer hands over a pipeline, not a shell.
+    # * Coverage is a necessary condition and never a sufficient one, so it is
+    #   asked as `covered?` and never as `uncovered.empty?` -- the refusal path
+    #   has no source, so its `uncovered` is `[]` while `covered?` is correctly
+    #   false.
+    # * An allow hands over `[["grep", "-r", "foo", "."], ["wc", "-l"]]` and
+    #   deliberately NOT the original string, because re-running an accepted
+    #   string through `sh -c` turns every parser/shell disagreement into a live
+    #   bypass, and the cheapest way to make that impossible is to not hand the
+    #   string over.
+    # * A quoted or escaped argument ABSTAINS, and so do `;`, `&&`, `||` and `&`.
+    #   {Parse} does not strip quotes -- `echo 'a b'` reconstructs as
+    #   `["echo", "'a b'"]`, and `echo foo\ bar` as `["echo", "foo\\ bar"]`
+    #   where bash gives `["echo", "foo bar"]` -- so allowing either would exec a
+    #   term carrying literal quoting characters. Widening it needs dequoting
+    #   first, and dequoting is interpretation; running the combinators means
+    #   interpreting control flow, and this layer hands over a pipeline, not a
+    #   shell.
     class Verdict
       # What every record says this object was asked, so a reader of the Journal
       # cannot mistake an allow for a safety judgement.
@@ -98,20 +74,19 @@ module Lain
       # The list is HAND-MAINTAINED and therefore incomplete -- `sudoers(5)` has
       # made exactly this point since the 1990s, and a comment claiming otherwise
       # would be the defect. Extend it by applying the rule, not by guessing.
+      #
       # Known and deliberately absent: `make`, `cargo`, `rake`, `go`, `mvn`,
-      # `gradle` and `dotnet`. What they run comes from a BUILD FILE in the
-      # workspace, which this layer does not model at all -- so listing them
-      # would buy nothing here while abstaining on most of what a session
-      # legitimately runs. That is a judgement about where the threat lives, not
-      # a proof that they cannot execute: `make -f -` reads a makefile from
-      # STDIN and `make --eval=` takes one inline, `mvn exec:exec` names an
-      # executable in a property, and `go run` takes a package path. Both make
-      # exceptions ALLOW today; what stops them mattering is that a working
-      # recipe needs a newline or quoting to carry its TAB-indented line, and
-      # both of those abstain -- a fact about today's tiers, not a guarantee.
-      # `bundle` is on the list rather than off it: `bundle exec
-      # <program>` names the program in the ARGUMENT, which is the rule exactly,
-      # and it is what `env` and `nice` are here for.
+      # `gradle`, `dotnet`. What they run comes from a BUILD FILE this layer does
+      # not model at all, so listing them would buy nothing while abstaining on
+      # most of what a session legitimately runs. That is a judgement about where
+      # the threat lives, not a proof they cannot execute: `make -f -` reads a
+      # makefile from STDIN and `make --eval=` takes one inline, `mvn exec:exec`
+      # names an executable in a property, `go run` takes a package path. Both
+      # make exceptions ALLOW today; what stops them mattering is that a working
+      # recipe needs a newline or quoting to carry its TAB-indented line, and both
+      # of those abstain -- a fact about today's tiers, not a guarantee. `bundle`
+      # is ON the list because `bundle exec <program>` names the program in the
+      # ARGUMENT, which is the rule exactly.
       #
       # `make` is not the next `time`, and the difference is worth recording:
       # `time` was special because the PARSER hides its tail behind full coverage
@@ -146,8 +121,8 @@ module Lain
       # The same shape, with a privilege change on the way through.
       PRIVILEGE = %w[sudo su runuser doas pkexec setpriv].freeze
 
-      # Interactive programs with a documented shell escape. `less` is on the
-      # card's list for this reason, so its whole family is here with it.
+      # Interactive programs with a documented shell escape: `less` is the
+      # motivating one, so its whole family is here with it.
       SHELL_ESCAPES = %w[less more most man info vi vim nvim ed emacs nano psql mysql sqlite3].freeze
 
       # Run a program named in their own options. `git` is here for a measured

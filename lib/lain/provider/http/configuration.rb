@@ -1,26 +1,21 @@
 # frozen_string_literal: true
 
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/configuration.rb.
-# Changed: RubyLLM:: -> Lain::Provider::HTTP::. Dropped every option this
-# vendored slice has no code left to serve: `default_*_model`,
-# `model_registry_file`, `model_registry_class`, `model_registry_source`,
-# `use_new_acts_as` (Models registry, not vendored -- leak sites 6/8), the
-# moderation/image/transcription options (leak site 10, out of scope), and
-# `logger`/`instrumenter`/`log_file`/`log_level`/`deprecation_behavior`/
-# `tool_concurrency` (the global-Logger and ActiveSupport::Notifications
-# seams this slice replaces with injected `Sink`/instrumenter arguments --
-# see connection.rb and Logging::SinkLogger -- so there is nothing left for
-# a Configuration *option* to point at). `register_provider_options` and the
-# dynamic `option` DSL are kept exactly: they are what lets a future
-# provider (openai, gemini, ...) register `<slug>_api_key` /
-# `<slug>_api_base` without this class knowing their names in advance.
+# Dropped every option this slice has no code left to serve: the model-registry
+# ones, the moderation/image/transcription ones, and the
+# logger/instrumenter/log-level family, whose global-Logger and
+# ActiveSupport::Notifications seams this slice replaces with injected
+# `Sink`/instrumenter arguments -- leaving nothing for a Configuration *option*
+# to point at.
 #
-# The custom `log_regexp_timeout=` setter upstream warned via `RubyLLM.logger`
-# on Ruby versions predating `Regexp.timeout=` -- an unlisted twelfth leak
-# site, since it is dead code on the ruby-4.0.6 floor this project requires
-# (Regexp has supported `.timeout=` since 3.2) and would otherwise be the one
-# call in this file that reaches a global logger. Dropped in favor of the
-# plain generated setter.
+# `register_provider_options` and the dynamic `option` DSL are kept exactly:
+# they are what lets a future provider register `<slug>_api_key` /
+# `<slug>_api_base` without this class knowing the names in advance.
+#
+# Upstream's custom `log_regexp_timeout=` setter warned through the global
+# logger on Ruby versions predating `Regexp.timeout=`. Dead code on the 4.0.6
+# floor this project requires, and otherwise the one call in this file reaching
+# a global logger, so it is the plain generated setter here.
 
 module Lain
   class Provider
@@ -50,8 +45,7 @@ module Lain
           # The parameter is a list of option NAMES, not an options hash --
           # `Array()` is there so a provider declaring a single one may pass it
           # bare. Saying that in the type is also what stands `yard-lint`'s
-          # `Tags/OptionTags` down: it keys on the parameter's NAME, and per-key
-          # `option` tags would be the wrong instrument for a list of keys.
+          # `Tags/OptionTags` down, since it keys on the parameter's name.
           #
           # @param options [Array<Symbol>, Symbol] the option keys to declare
           # @return [void] the keys back, which no caller reads
@@ -71,64 +65,48 @@ module Lain
         end
 
         option :request_timeout, 300
-        # The budget for GETTING CONNECTED -- not for the round trip. A separate
-        # number from `request_timeout` because Faraday derives `open_timeout`
-        # from `timeout` when only one is set
-        # (`Faraday::Adapter#request_timeout`), so a single knob priced "nothing
-        # answered the SYN" the same as "the server is still thinking": 300s per
-        # attempt, four attempts deep, since `:post` is retryable and
-        # `Faraday::ConnectionFailed` is in
-        # {Connection::MiddlewareStack#retry_exceptions}. Twenty minutes for an
-        # address nothing answers on, and the stall clock cannot shorten it -- it
-        # arms on the first body chunk and there is never one.
+        # The budget for GETTING CONNECTED, not for the round trip. Separate from
+        # `request_timeout` because Faraday derives `open_timeout` from `timeout`
+        # when only one is set, so a single knob priced "nothing answered the
+        # SYN" the same as "the server is still thinking": 300s per attempt, four
+        # attempts deep, and the stall clock cannot shorten it because it arms on
+        # a first body chunk that never comes.
         #
-        # Read the scope of the fix precisely, because the shapes are close and
-        # only one of them moved. This bounds the case where the connection never
-        # OPENS. A server that ACCEPTS and then sends nothing still costs
-        # 4 x `request_timeout`, for the same reason and deliberately: the stall
-        # clock has no first chunk to arm on, and pre-first-byte silence is a
-        # local model evaluating a prompt.
+        # Read the scope precisely. This bounds the case where the connection
+        # never OPENS. A server that ACCEPTS and then sends nothing still costs
+        # 4 x `request_timeout`, deliberately: pre-first-byte silence is a local
+        # model evaluating a prompt.
         #
         # Nor is it only the SYN. `Net::HTTP` spends `@open_timeout` on the TCP
         # connect, on a direct TLS handshake, and again on a proxied CONNECT
-        # tunnel's handshake -- so the same number bounds each handshake
-        # separately, and an HTTPS-through-proxy attempt can spend it twice.
-        # A hosted arm's TLS handshake is therefore held to 5s where it used to
-        # be held to 600.
+        # tunnel's handshake -- so it bounds each separately, and an
+        # HTTPS-through-proxy attempt can spend it twice.
         #
-        # 300 stays where it is, for the reason the grace below states. A local
-        # model that thinks for six minutes is a real shape; a TCP or TLS
-        # handshake that takes six minutes is not one. Five seconds is two orders
-        # of magnitude under the completion budget and an order above the worst
-        # plausible handshake -- sub-millisecond on loopback, one RTT plus TLS to
-        # a hosted arm, and Linux's first two SYN retransmits land at 1s and 4s,
-        # inside one attempt -- and it sits above
-        # {Ollama::Transport::PROBE_TIMEOUT_SECONDS}, which is the same argument
-        # made for a metadata lookup.
+        # Five seconds is two orders of magnitude under the completion budget and
+        # an order above the worst plausible handshake: sub-millisecond on
+        # loopback, one RTT plus TLS to a hosted arm, and Linux's first two SYN
+        # retransmits land at 1s and 4s, inside one attempt. It sits above
+        # {Ollama::Transport::PROBE_TIMEOUT_SECONDS} by the same argument.
         #
-        # `LAIN_CONNECT_TIMEOUT=0` is the off switch, and it restores exactly the
-        # old behaviour: no separate number, so Faraday derives one again.
+        # `LAIN_CONNECT_TIMEOUT=0` restores the old behaviour exactly: no
+        # separate number, so Faraday derives one again.
         option :connect_timeout, -> { ENV.fetch("LAIN_CONNECT_TIMEOUT", 5) }
         # The INTER-CHUNK grace: the longest silence tolerated between body
         # chunks once a stream has started emitting. nil disables the check.
         #
-        # A separate number from `request_timeout` because the two measure
-        # different things, and conflating them is what made a stalled ollama
-        # wait over 400 seconds printing nothing. `request_timeout` is
-        # per-read, so it also bounds the wait for the FIRST byte -- which on
-        # a local arm is prompt evaluation, legitimately minutes of silence
-        # (provider/ollama.rb: "a local model that thinks for six minutes is a
-        # real shape"), and is why 300 stands here untouched. Once tokens are
-        # flowing, a 30s gap from a token-streaming server means the stream is
-        # dead rather than slow. AWS's stalled-stream detector uses a 5s grace,
-        # which is right for bulk transfer and far too tight for generation.
+        # Separate from `request_timeout` because the two measure different
+        # things, and conflating them is what made a stalled ollama wait over 400
+        # seconds printing nothing. `request_timeout` is per-read, so it also
+        # bounds the wait for the FIRST byte -- which on a local arm is prompt
+        # evaluation, legitimately minutes of silence, and is why 300 stands
+        # untouched. Once tokens are flowing, a 30s gap from a token-streaming
+        # server means the stream is dead rather than slow. AWS's stalled-stream
+        # detector uses 5s, right for bulk transfer and far too tight for
+        # generation.
         #
-        # `LAIN_STREAM_STALL_TIMEOUT` is the off switch an operator can reach --
-        # nothing else constructs a Configuration outside `lib/`, and unlike
-        # `request_timeout` (which only fires when the server never answered)
-        # this knob can end a WORKING generation, so it needs one. `=0` disables;
-        # a positive number sets the grace. Same shape as `log_stream_debug`
-        # below, which is this file's pattern for a knob with no CLI flag.
+        # Unlike `request_timeout`, which fires only when the server never
+        # answered, this knob can end a WORKING generation -- so it needs an off
+        # switch an operator can reach, and `=0` is it.
         option :stream_stall_timeout, -> { ENV.fetch("LAIN_STREAM_STALL_TIMEOUT", 30) }
         option :max_retries, 3
         option :retry_interval, 0.1
@@ -136,10 +114,9 @@ module Lain
         option :retry_interval_randomness, 0.5
         option :http_proxy, nil
         option :faraday_adapter, :net_http
-        # faraday-retry callbacks and rate-limit knobs. Left nil so the vendored
-        # default retry stays silent; a provider that wants retries JOURNALED
-        # (see Provider::Anthropic) sets these, and MiddlewareStack forwards
-        # them so the retry becomes visible instead of invisible spend.
+        # Left nil so the vendored default retry stays silent; a provider that
+        # wants retries JOURNALED sets these, and MiddlewareStack forwards them
+        # so the retry becomes visible rather than invisible spend.
         option :retry_block, nil
         option :exhausted_retries_block, nil
         option :rate_limit_reset_header, nil
@@ -154,23 +131,20 @@ module Lain
           end
         end
 
-        # The one option with a hand-written setter, because BOTH natural
-        # operator mistakes are silently catastrophic under the generated one.
+        # Hand-written because BOTH natural operator mistakes are silently
+        # catastrophic under the generated setter.
         #
-        # `0` is the universal "no timeout" idiom -- curl, Faraday's own
-        # `timeout`, AWS -- but a zero grace makes `idle > grace` true on the
-        # monitor's first sweep, so every stream would die at its first byte.
-        # An operator reaching for the OFF switch would get the maximally
-        # destructive setting. Non-positive therefore means nil, which is off.
+        # `0` is the universal "no timeout" idiom, but a zero grace makes
+        # `idle > grace` true on the monitor's first sweep, so every stream would
+        # die at its first byte -- an operator reaching for the OFF switch would
+        # get the maximally destructive setting. Non-positive therefore means
+        # nil, which is off.
         #
-        # And a non-numeric would be accepted here, then raise a bare
-        # `ArgumentError` from inside the Faraday stack on the first chunk --
-        # where `wrapping_errors` rescues only `HTTP::Error` and
-        # `Faraday::Error`, so it would escape every `rescue` in the codebase.
-        # That is the exact failure {Streaming::StalledStreamError}'s own
-        # ancestry was chosen to avoid, so it is refused here, at the one moment
-        # a human is looking at the value. A String that parses is taken (the
-        # env var arrives as one); anything else is a mistake, said out loud.
+        # A non-numeric would be accepted here and then raise a bare
+        # `ArgumentError` from inside the Faraday stack on the first chunk, where
+        # `wrapping_errors` rescues only `HTTP::Error` and `Faraday::Error` -- so
+        # it would escape every `rescue` in the codebase. Refused here instead,
+        # at the one moment a human is looking at the value.
         #
         # A Numeric is kept AS WRITTEN rather than coerced, so the grace the
         # stall message prints is the one the operator set and can grep for.
@@ -179,14 +153,11 @@ module Lain
                                                    "LAIN_STREAM_STALL_TIMEOUT=0 disables stall protection")
         end
 
-        # The second knob with the same two mistakes to refuse, for the same
-        # reason: `0` is the universal "no timeout" idiom, and a zero connect
-        # budget would fail every attempt before the SYN left the box; a
-        # non-numeric would raise from inside the Faraday stack, past every
-        # `rescue` in the codebase, on the first request rather than here where a
-        # human is still looking. Non-positive therefore means nil, which folds
-        # connect back under `request_timeout` -- the behaviour that shipped
-        # before this option existed.
+        # The same two mistakes to refuse, for the same reasons: a zero connect
+        # budget would fail every attempt before the SYN left the box, and a
+        # non-numeric would raise from inside the Faraday stack past every
+        # `rescue` in the codebase. Non-positive means nil, folding connect back
+        # under `request_timeout`.
         def connect_timeout=(value)
           @connect_timeout = positive_seconds(value, "connect_timeout",
                                               "LAIN_CONNECT_TIMEOUT=0 folds connect back into request_timeout")

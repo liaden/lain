@@ -10,90 +10,76 @@ module Lain
     # == The answerer is a ROLE, and that is the whole design
     #
     # Nothing here is an agent. {Answerer} is one line over {Skill::RoleSpawn},
-    # and every collaborator that decides WHO answers -- the seam, the role name,
-    # the runner the answer is computed on -- is injected. So a bench arm swaps
-    # the answerer for a different role, a recorded oracle, or a second harness
-    # without touching this class, which is what "swappable, observable,
-    # comparable" has to mean at the level of one object. The DEFAULT is a fresh
-    # subagent per question, given the hunk, both revisions of the enclosing
-    # context, and whatever dossier the caller supplies.
+    # and every collaborator that decides WHO answers is injected, so a bench arm
+    # swaps the answerer for a different role, a recorded oracle, or a second
+    # harness without touching this class. The DEFAULT is a fresh subagent per
+    # question, given the hunk, both revisions of the enclosing context, and
+    # whatever dossier the caller supplies.
     #
     # An arm that is swappable and not IDENTIFIABLE is not comparable, so the
     # answerer NAMES ITSELF on the record: {#initialize} asks its answerer for
     # `#role` and journals that, never {ROLE}. Journaling the constant made two
     # genuinely different arms produce byte-identical records and filed a bare
     # lambda under the shipped role's name -- the one field an arm comparison
-    # queries, answering one bucket for every arm. {ANONYMOUS_ARM} is what an
-    # arm that cannot name itself is recorded as, and {Brief#key} is the rest of
-    # the same fact: two records carry the same `brief_key` exactly when the two
-    # arms were handed byte-identical prompts.
+    # queries, answering one bucket for every arm. {ANONYMOUS_ARM} is what an arm
+    # that cannot name itself is recorded as, and {Brief#key} is the rest of the
+    # same fact.
     #
     # It is unbiased by authorship because it is told nothing about who wrote the
-    # change: {Brief} is the whole of what the child sees. There is a
-    # second-order property in that which is worth stating out loud -- if the
-    # docent cannot answer "why this way" from the hand-back it was given, THAT
-    # IS A FINDING ABOUT THE HAND-BACK, not a defect here. {Brief::NO_DOSSIER} is
-    # in the prompt for exactly that reason: an empty dossier says so rather than
-    # rendering as nothing, so a docent answering badly on no evidence is
-    # distinguishable from one answering badly on good evidence.
+    # change: {Brief} is the whole of what the child sees. The second-order
+    # property is worth stating -- if the docent cannot answer "why this way"
+    # from the hand-back it was given, THAT IS A FINDING ABOUT THE HAND-BACK, not
+    # a defect here. {Brief::NO_DOSSIER} is in the prompt for exactly that
+    # reason: a docent answering badly on no evidence has to be distinguishable
+    # from one answering badly on good evidence.
     #
-    # A child spawned `:fresh` gets a NEW Timeline root whose `meta["spawned_from"]`
-    # names the parent's head ({Tool::SpawnPolicy::PrefixStrategy::Fresh}). It
-    # inherits none of the parent's prompt, which is the spawn contract and is
-    # also why this object never reaches for a timeline: everything the child
-    # needs is in the brief or it is not needed.
+    # A child spawned `:fresh` inherits none of the parent's prompt, which is the
+    # spawn contract and is also why this object never reaches for a timeline:
+    # everything the child needs is in the brief or it is not needed.
     #
     # == Nothing here may block the editor, and the fiber it rides on says why
     #
-    # `review_ask` arrives on {CLI::HumanReplies#editor_reply_loop}, which is the
-    # SOLE consumer of every editor verb -- `reply`, `review_done`, every
-    # gesture. An answer is a provider round trip, so computing one inside {#ask}
-    # would stall :LainReply and every review gesture for seconds. {#ask}
-    # therefore renders a pending marker, hands the work to {Reactor}, and
-    # returns; the answer arrives later on the thread pane's own outbound render
-    # path. Every failure the answer can produce is contained inside that task, so
-    # a docent that raises costs one thread's answer and never the fiber.
+    # `review_ask` arrives on {CLI::HumanReplies#editor_reply_loop}, the SOLE
+    # consumer of every editor verb. An answer is a provider round trip, so
+    # computing one inside {#ask} would stall :LainReply and every review gesture
+    # for seconds. {#ask} therefore renders a pending marker, hands the work to
+    # {Reactor}, and returns; the answer arrives later on the thread pane's own
+    # outbound render path. Every failure the answer can produce is contained
+    # inside that task, so a docent that raises costs one thread's answer and
+    # never the fiber.
     #
     # == A repeated question is not a repeated spawn
     #
     # `review_ask` carries no stamp, and the thread pane's editor half re-sends
     # the identical payload when a human hits `:w` twice: its write autocommand
     # fires on an unmodified `acwrite` buffer, and the send does not advance the
-    # buffer's record of what has already been rendered. A duplicate is
-    # therefore ORDINARY, not exotic -- and a duplicate here is a duplicate
-    # subagent, a duplicate provider call, real money, and two answers in one
-    # pane.
+    # buffer's record of what has already been rendered. A duplicate is therefore
+    # ORDINARY, not exotic -- and a duplicate here is a duplicate subagent, a
+    # duplicate provider call, real money, and two answers in one pane.
     #
     # So the guard is here rather than only in lua, and it is keyed on
     # `(anchor id, question text)`: the ask is a pure function of the anchor's
     # hunk, the fixed dossier and the words, over a FRESH root that inherits
     # nothing -- so an identical question on an identical thread is the same ask
-    # by construction, not merely a similar one. The guard holds while the first
-    # answer is still outstanding, which is the window a re-send actually arrives
-    # in ({Exchanges#asked?} reads pending exchanges, not journaled answers).
-    #
-    # A human who genuinely wants a second opinion asks it in different words,
-    # which is the same escape any idempotency key leaves; the refusal names the
-    # duplicate rather than silently doing nothing.
-    #
-    # The guard holds a question only while an exchange is STANDING -- pending
-    # or answered ({Exchange#standing?}). A question the docent refused or a
-    # session ended under is askable again, because the soundness argument above
-    # is an argument about an ANSWER: nothing in the pane answers a question a
-    # provider fell over on, and a retry after a transient failure is a
-    # genuinely different ask rather than a repeat of one that never happened.
+    # by construction. The guard holds while the first answer is still
+    # outstanding, which is the window a re-send actually arrives in, and only
+    # while an exchange is STANDING ({Exchange#standing?}). A question the docent
+    # refused or a session ended under is askable again, because the soundness
+    # argument is about an ANSWER: nothing in the pane answers a question a
+    # provider fell over on. A human who genuinely wants a second opinion asks it
+    # in different words, and the refusal names the duplicate rather than
+    # silently doing nothing.
     #
     # == Why one file, and where its seams are
     #
     # Four concerns live here -- the service, {Threads}, {Conversation}/{Exchanges},
     # {Brief} -- plus the journal records, which elsewhere in `Review` live in
-    # `records.rb`. That is a DELETABILITY choice and not an oversight: every
-    # one of them exists only because a docent does, they have no reader outside
-    # this file, and the chunk's deletion map is "this file and one line in each
-    # of five others". Splitting them would spread that map across six files
-    # whose only tie is this one. The seams are real all the same, and are
-    # named: not one line of {Threads} knows what an answerer is, and {Brief} is
-    # a pure value with one rendering.
+    # `records.rb`. That is a DELETABILITY choice: every one of them exists only
+    # because a docent does, they have no reader outside this file, and the
+    # deletion map is "this file and one line in each of five others". Splitting
+    # them would spread that map across six files whose only tie is this one. The
+    # seams are real all the same: not one line of {Threads} knows what an
+    # answerer is, and {Brief} is a pure value with one rendering.
     class Docent
       # No reactor is running, so there is nowhere to compute an answer that is
       # not the caller's own fiber -- and the caller's own fiber is the one thing
@@ -174,15 +160,14 @@ module Lain
       STANDING = %i[pending answered].freeze
 
       # One question and whatever has come back for it: the answer, the refusal,
-      # or {PENDING} while a child is still reading. `speaker` and `text` are
-      # what the pane renders BENEATH the question, so settling a question is one
+      # or {PENDING} while a child is still reading. `speaker` and `text` are what
+      # the pane renders BENEATH the question, so settling a question is one
       # replacement rather than a delete and an append.
       #
       # `state` is which of {STATES} it is, NAMED rather than inferred. Both
-      # queries over it -- "has this thread already asked that" and "is this one
-      # still outstanding" -- were once readings of the rendered WORDS, so an
-      # empty {PENDING} or a refusal worded like an answer moved them, and
-      # neither question is about what the pane says.
+      # queries over it were once readings of the rendered WORDS, so an empty
+      # {PENDING} or a refusal worded like an answer moved them -- and neither
+      # question is about what the pane says.
       Exchange = Data.define(:question, :speaker, :text, :state) do
         def pending? = state == :pending
 
@@ -211,13 +196,12 @@ module Lain
         def self.call(_brief) = Tool::Result.error(NOT_WIRED)
       end
 
-      # The default answerer: ONE fresh role-scoped child per question.
-      #
-      # This is the whole of the "it is a role, not an agent" claim, and it is
-      # deliberately this small. {Skill::RoleSpawn} already fetches the role,
-      # attenuates the union, renders the persona and runs the child to a single
-      # result, so what is left here is naming which role and which prefix arm --
-      # both injected, so swapping the arm is construction and not a code change.
+      # The default answerer: ONE fresh role-scoped child per question, and the
+      # whole of the "it is a role, not an agent" claim. {Skill::RoleSpawn}
+      # already fetches the role, attenuates the union, renders the persona and
+      # runs the child to a single result, so what is left is naming which role
+      # and which prefix arm -- both injected, so swapping the arm is
+      # construction and not a code change.
       class Answerer
         # @param spawn [#call] `(role_name, context_mode, prompt) -> Tool::Result`
         #   -- {Skill::RoleSpawn} in production
@@ -240,11 +224,8 @@ module Lain
 
       # Where an answer is computed: a TRANSIENT task on the reactor already
       # running under the caller ({Oracle::Eager#fire}'s shape, for its reason).
-      #
       # Transient, so an answer in flight never holds a session open at shutdown
-      # -- a docent's answer is worth having and is never worth waiting for. In a
-      # real run the reactor is the Repl's and outlives every thread pane, so the
-      # only tasks a stop can reap are ones nobody is left to read.
+      # -- a docent's answer is worth having and is never worth waiting for.
       #
       # It REFUSES rather than falling back to running the block inline: an
       # inline fallback would silently reintroduce the multi-second editor freeze
@@ -253,10 +234,8 @@ module Lain
       #
       # `Async::Task#async` is GREEDY -- it runs the block inline on the CALLING
       # fiber until the block's first suspension -- so scheduling alone does not
-      # get the work off the editor's fiber. What does is the handover at the
-      # top of {Delivery#call}; this module only decides WHERE the block runs,
-      # and a bench arm swapping it for a runner of its own inherits that
-      # guarantee rather than having to repeat it.
+      # get the work off the editor's fiber. What does is the handover at the top
+      # of {Delivery#call}; this module only decides WHERE the block runs.
       module Reactor
         NO_REACTOR = "a docent answers on its own fiber, and there is no reactor on this one -- ask from " \
                      "inside a Sync/Async block"
@@ -270,23 +249,19 @@ module Lain
       end
 
       # A docent for the round a review command just opened, or the refusal that
-      # honestly stands in for one -- the whole of the "is a docent reachable
-      # here" question, in the one place a reader looking for it will look.
+      # honestly stands in for one.
       #
       # THE PANE IS THE CONSTRAINT, not the answerer. Every answer is drawn by
       # this object itself, on its own task, long after the gesture that asked
       # returned -- so a surface with nowhere to draw cannot carry a docent at
       # all, and one that spent a provider call and rendered nowhere is worse
-      # than one that refuses. Only the editor's surface has a thread pane, and
-      # it is asked as a DUCK rather than by type, the way {#arm_role} asks its
-      # answerer whether it can name itself.
+      # than one that refuses. Asked as a DUCK rather than by type.
       #
-      # CONSTRUCTION IS NOT THE POINT, which is why this takes the answerer's
-      # spawn and the journal rather than defaulting them: `new` with a changeset
-      # and a view alone is a fully built docent that refuses every question
-      # ({Unanswerable}) and records nothing ({Channel::Null}), and it would
-      # satisfy every test of "a docent exists" while being the same silence one
-      # object deeper.
+      # It takes the answerer's spawn and the journal rather than defaulting
+      # them: `new` with a changeset and a view alone is a fully built docent
+      # that refuses every question ({Unanswerable}) and records nothing
+      # ({Channel::Null}), which would satisfy every test of "a docent exists"
+      # while being the same silence one object deeper.
       #
       # @param changeset [Review::Changeset] the round's diff
       # @param surface [#thread_view, Object] the review surface the round is
@@ -344,25 +319,21 @@ module Lain
       # The same thread, WITHOUT drawing it -- for the caller that has already
       # put something else in that pane and must not have it overwritten.
       #
-      # {Review::Handover#wrote_annotation} is that caller, and the split is
-      # what makes the note win BY CONSTRUCTION rather than by write order: the
-      # thread rail carries one payload per anchor, so a docent rendering its own
-      # (empty) conversation beside the note that opened the thread posts twice
-      # and lets microseconds decide which the human reads.
+      # {Review::Handover#wrote_annotation} is that caller, and the split is what
+      # makes the note win BY CONSTRUCTION rather than by write order: the thread
+      # rail carries one payload per anchor, so a docent rendering its own (empty)
+      # conversation beside the note that opened the thread posts twice and lets
+      # microseconds decide which the human reads.
       #
       # IT SWALLOWS, and that is the point rather than laziness. Locating the
       # hunk an anchor sits in walks the changeset lazily, so it reaches the
       # FILESYSTEM -- a surveyed file deleted since the round opened raises
       # `Errno::ENOENT` from here, and this is called from inside the human's
-      # `:w`, on a rail whose rescue is this project's own refusals and whose
-      # law is that it refuses uniformly or not at all. A raise there would lose
-      # the note. What it costs is that the thread is simply not held, and a
-      # question at that anchor then refuses with {NO_THREAD} -- which is the
-      # sentence for "no hunk of this changeset covers it", already true of a
-      # file that is gone.
-      #
-      # `{Async::Stop}` is not among what is caught, {Delivery#call}'s rule: a
-      # cancelled task must stay cancelled.
+      # `:w`, on a rail whose law is that it refuses uniformly or not at all. A
+      # raise there would lose the note. What it costs is that the thread is
+      # simply not held, and a question at that anchor then refuses with
+      # {NO_THREAD} -- already true of a file that is gone. {Async::Stop} is not
+      # caught, {Delivery#call}'s rule: a cancelled task must stay cancelled.
       #
       # @param anchor [Review::Anchor]
       # @return [Conversation, nil] nil when no hunk covers the anchor, and nil
@@ -378,8 +349,8 @@ module Lain
       #
       # The rescue here is the LOOKUP's, and nothing more: everything that
       # mutates a thread is inside {#take}, which owns its own rescue and takes
-      # the question back through {#undo}. That division is the point -- this
-      # one may safely refuse in words because nothing has happened yet.
+      # the question back through {#undo}. This one may safely refuse in words
+      # because nothing has happened yet.
       #
       # @param anchor_id [String] the id the editor cited back; opaque there,
       #   minted here
@@ -395,18 +366,14 @@ module Lain
       end
 
       # Fold journaled exchanges back into threads nobody has opened yet, so the
-      # next {#open} of an anchor renders what the recorded run rendered -- with
-      # no provider call, because everything an answer consisted of is on the
-      # record.
+      # next {#open} renders what the recorded run rendered, with no provider
+      # call. Replay equals live BY CONSTRUCTION rather than by two
+      # implementations agreeing: a folded record calls the same {Exchanges}
+      # methods the live path calls, in journal order.
       #
-      # Replay equals live BY CONSTRUCTION rather than by two implementations
-      # agreeing: a folded record calls the same {Exchanges} methods the live
-      # path calls, in journal order.
-      #
-      # A record it cannot read is SKIPPED, never raised on. That is
-      # {Session::Replay#fold}'s hard-won rule: a fold aborts where it raises, so
-      # one malformed line would make every later thread permanently
-      # un-rebuildable.
+      # A record it cannot read is SKIPPED, never raised on -- {Session::Replay#fold}'s
+      # rule: a fold aborts where it raises, so one malformed line would make
+      # every later thread permanently un-rebuildable.
       #
       # @param entries [Enumerable<Hash, String>] journal lines or records
       # @return [self]
@@ -423,9 +390,9 @@ module Lain
       private
 
       # The arm's name for the record: the answerer's own if it has one, and
-      # {ANONYMOUS_ARM} otherwise -- never {ROLE}, which would file every
-      # unnamed arm under the shipped role and make the bench's own comparison
-      # query answer one bucket.
+      # {ANONYMOUS_ARM} otherwise -- never {ROLE}, which would file every unnamed
+      # arm under the shipped role and make the bench's comparison query answer
+      # one bucket.
       def arm_role(answerer) = answerer.respond_to?(:role) ? answerer.role : ANONYMOUS_ARM
 
       # The three ways a question is not asked, in the order that names the most
@@ -441,17 +408,15 @@ module Lain
       # The pending marker is rendered BEFORE anything is spent, and a question
       # that did not make it all the way onto a running task is taken back: an
       # answer nobody can see is not worth a provider call, and leaving the
-      # question in the thread would make the human's retry look like a
-      # duplicate.
+      # question in the thread would make the human's retry look like a duplicate.
       #
       # EVERY failure from `conversation.ask` onward routes through {#undo}, and
       # that is the correction this rescue exists for. It used to sit on {#ask},
       # outside the mutation: a view that raised, or a runner with no reactor
-      # under it, refused the human while leaving the question in the thread --
-      # a permanent `(thinking...)` marker, and every retry of it refused as a
-      # duplicate of a question that was never asked. The question became
-      # unaskable forever, in the case ({NoReactor}) this class explicitly
-      # designs for.
+      # under it, refused the human while leaving the question in the thread -- a
+      # permanent `(thinking...)` marker, and every retry refused as a duplicate
+      # of a question that was never asked. The question became unaskable
+      # forever, in the case ({NoReactor}) this class explicitly designs for.
       def take(conversation, question)
         conversation.ask(question)
         notice = render(conversation)
@@ -517,9 +482,7 @@ module Lain
       # because there is a caller to tell, and this may not, because by the time
       # it fails there is nobody left holding a return value. So every ending
       # here is a record and a rendered thread, and the one thing it hands back
-      # up is {#refusal_record}, for a caller whose task never started. Metrics
-      # said an object was missing and this is the object; it is also the exact
-      # boundary a review panel found the rescues on the wrong side of.
+      # up is {#refusal_record}, for a caller whose task never started.
       class Delivery
         # @param answerer [#call] `(String) -> Tool::Result`; the swappable arm
         # @param journal [#<<]
@@ -568,19 +531,18 @@ module Lain
         # The handover, and the reason it is a line of its own:
         # `Async::Task#async` runs its block inline on the CALLING fiber until
         # the first suspension, so without this the arm's whole synchronous
-        # prologue (for the default one: role fetch, persona render, subagent
-        # construction, context build) runs on the fiber serving the editor, and
-        # {Docent#ask} returns only as fast as the arm's first socket read.
-        # Measured against an arm that never suspends: 0.351s on that fiber.
+        # prologue (role fetch, persona render, subagent construction, context
+        # build) runs on the fiber serving the editor and {Docent#ask} returns
+        # only as fast as the arm's first socket read. Measured against an arm
+        # that never suspends: 0.351s on that fiber.
         #
-        # It is here rather than in {Reactor} for two reasons: a bench arm
-        # swapping the runner inherits the guarantee instead of having to repeat
-        # it, and the raise from a stop then lands INSIDE this object's ensure,
-        # so a session ending while a question is merely scheduled unwinds
-        # through the same abandonment path as one ending mid-answer. `&.`
-        # because a runner may compute the answer somewhere that is not a
-        # reactor at all, which is its business -- and `current?`, never
-        # `current`, which RAISES where there is no task.
+        # Here rather than in {Reactor} for two reasons: a bench arm swapping the
+        # runner inherits the guarantee instead of repeating it, and the raise
+        # from a stop then lands INSIDE this object's ensure, so a session ending
+        # while a question is merely scheduled unwinds through the same
+        # abandonment path as one ending mid-answer. `&.` because a runner may
+        # compute the answer somewhere that is not a reactor at all, and
+        # `current?`, never `current`, which RAISES where there is no task.
         def handed_over = Async::Task.current?&.yield
 
         def answer
@@ -645,9 +607,8 @@ module Lain
     class Docent
       # Which conversation an anchor or an id names, and what has been said in
       # it. Its own object because that is a different question from "ask a role
-      # and render what comes back" -- and Metrics said so, which here was
-      # naming a real seam rather than a size: everything below is a lookup over
-      # a diff and a journal, and not one line of it knows what an answerer is.
+      # and render what comes back": everything below is a lookup over a diff and
+      # a journal, and not one line of it knows what an answerer is.
       class Threads
         def initialize(changeset)
           @changeset = changeset
@@ -702,16 +663,16 @@ module Lain
           start...(start + count)
         end
 
-        # Three independent type tests rather than a `case`, {Session::Replay#fold}'s
-        # shape: a record that is none of the three is IGNORED here rather than
-        # raised on, because a fold aborts where it raises and one malformed line
-        # would leave every later thread permanently un-rebuildable.
+        # Three independent type tests rather than a `case`,
+        # {Session::Replay#fold}'s shape: a record that is none of the three is
+        # IGNORED rather than raised on, because a fold aborts where it raises
+        # and one malformed line would leave every later thread permanently
+        # un-rebuildable.
         #
-        # The refusal is re-WRAPPED in {FAILED} rather than journaled wrapped,
-        # for the reason {DocentRefused}'s own doc gives: the record carries the
-        # docent's words and the docent owns the sentence around them. So replay
-        # reproduces the pane by running the same formatting the live path ran,
-        # not by storing its output.
+        # The refusal is re-WRAPPED in {FAILED} rather than journaled wrapped:
+        # the record carries the docent's words and the docent owns the sentence
+        # around them, so replay reproduces the pane by running the same
+        # formatting the live path ran rather than by storing its output.
         def fold(record)
           type = record["type"].to_s
           exchanges(record).ask(record["question"].to_s) if type == DocentAsked::JOURNAL_TYPE
@@ -743,11 +704,10 @@ module Lain
       # has been said. Reopened rather than nested above so this file reads
       # top-down -- the service, then the things it holds.
       #
-      # It is a JOIN and its own forwarding, deliberately: {Exchanges} is what
-      # replay rebuilds at a moment when there is no anchor and no hunk to
-      # attach it to, so the two cannot be one object -- and every caller here
-      # wants "the thread at this anchor", never a pair. The forwarding is the
-      # price of that, and it is the whole of this class.
+      # A JOIN and its own forwarding, deliberately: {Exchanges} is what replay
+      # rebuilds at a moment when there is no anchor and no hunk to attach it to,
+      # so the two cannot be one object -- and every caller here wants "the
+      # thread at this anchor", never a pair.
       class Conversation
         def initialize(anchor:, hunk:, exchanges: Exchanges.new)
           @anchor = anchor
@@ -770,10 +730,8 @@ module Lain
 
       # What has been said in one thread, apart from where it hangs. Its own
       # object because it is exactly what {Docent#replay} rebuilds from a
-      # journal, at a moment when there is no anchor and no hunk to attach it to.
-      #
-      # An Array with an opinion ({CLI::HumanReplies::Pending}'s shape): every
-      # method here is one of the four rules a conversation has.
+      # journal, at a moment when there is no anchor and no hunk to attach it
+      # to. An Array with an opinion ({CLI::HumanReplies::Pending}'s shape).
       class Exchanges
         include Enumerable
 
@@ -783,15 +741,11 @@ module Lain
 
         # Whether this thread has already put that question AND still stands
         # behind it. It reads PENDING exchanges, which is the half that matters:
-        # the duplicate `:w` arrives while the first answer is still
-        # outstanding, so a check against answered questions alone would let
-        # both spawns through.
-        #
-        # It does NOT read refused or abandoned ones ({Exchange#standing?}), and
-        # that is the other half: the duplicate refusal says the answer is in
+        # the duplicate `:w` arrives while the first answer is still outstanding,
+        # so a check against answered questions alone would let both spawns
+        # through. It does NOT read refused or abandoned ones
+        # ({Exchange#standing?}) -- the duplicate refusal says the answer is in
         # the pane, and after a provider fell over the pane holds no answer.
-        # Re-asking then is a genuinely different ask, and it was refused
-        # forever.
         def asked?(question) = standing(question).any?
 
         # Whether that question is still outstanding -- asked, and nothing has
@@ -806,17 +760,14 @@ module Lain
 
         # Replace one question's pending marker in place, so two questions in
         # flight on one thread settle in the order they were ASKED rather than
-        # the order they came back -- a pane whose messages reorder under the
-        # reader is worse than one that waits.
+        # the order they came back.
         #
         # The LAST exchange with those words, and one thread can now hold two of
-        # them: a question that was refused stays in the pane and may be asked
-        # again ({Exchange#standing?}). Matching the FIRST settled the old
-        # refusal a second time and left the live question pending forever, then
-        # journaled it as abandoned at shutdown on top of its own answer.
-        # Matching only a PENDING one cannot settle a refusal over an answer
-        # whose render failed, which is the one case a settled exchange is
-        # settled twice.
+        # them: a refused question stays in the pane and may be asked again
+        # ({Exchange#standing?}). Matching the FIRST settled the old refusal a
+        # second time and left the live question pending forever, then journaled
+        # it as abandoned at shutdown on top of its own answer. Matching only a
+        # PENDING one cannot settle a refusal over an answer whose render failed.
         def settle(question, speaker:, text:, state:)
           at = latest_at(question)
           @exchanges[at] = Exchange.new(question:, speaker:, text:, state:) unless at.nil?
@@ -865,20 +816,16 @@ module Lain
       # rendering, which is what makes {#key} mean something: two records
       # carrying one `brief_key` were built from byte-identical prompts, so two
       # arms are comparable byte for byte without the record carrying a copy of
-      # the diff, the dossier and both revisions. (The record used to claim that
-      # comparability while carrying none of it: a docent handed a 428-line
-      # hand-back and one handed an empty dossier journaled identical records,
-      # and {NO_DOSSIER} -- the distinction that makes "it could not say why" a
-      # finding about the hand-back -- survived in the prompt and was lost in
-      # the record.)
+      # the diff, the dossier and both revisions. The record used to claim that
+      # comparability while carrying none of it -- a docent handed a 428-line
+      # hand-back and one handed an empty dossier journaled identical records.
       #
       # It carries ONE hunk, never the changeset. A prompt holding the whole diff
       # would satisfy "the answer carries the hunk as context" and answer worse:
-      # the docent's question is always about a position, and a neighbouring
-      # hunk is a distraction with a plausible shape. The enclosing context is
-      # reconstructed from that hunk's own origin markers -- context and `-`
-      # lines are the before, context and `+` lines are the after -- so the two
-      # revisions cannot disagree with the hunk they came from.
+      # the question is always about a position, and a neighbouring hunk is a
+      # distraction with a plausible shape. The enclosing context is
+      # reconstructed from that hunk's own origin markers, so the two revisions
+      # cannot disagree with the hunk they came from.
       class Brief
         QUESTION = "# The question"
         WHERE = "# Where it is"
@@ -998,18 +945,15 @@ module Lain
       # record carrying a second copy of the diff.
       #
       # `role` is on the record because the answerer is the swappable arm: an
-      # experiment comparing two docents is a query over this field, and a record
-      # that named only the question could not answer which arm produced the
-      # answer beside it. It is the arm's OWN name ({Docent#arm_role}) and never
-      # {ROLE}: journaling the constant made that query answer one bucket for
-      # every arm, and did it while every test was green.
+      # experiment comparing two docents is a query over this field. It is the
+      # arm's OWN name ({Docent#arm_role}) and never {ROLE} -- journaling the
+      # constant made that query answer one bucket for every arm, and did it
+      # while every test was green.
       #
-      # `brief_key` is the other half of the same comparison -- the address of
-      # the exact prompt the arm was handed ({Brief#key}). Two records agreeing
-      # on it were built from byte-identical briefs, so a difference in the
-      # answers is a difference in the ARM; two disagreeing on it name a
-      # different dossier, a different revision pair or a different hunk without
-      # the record having to carry any of them.
+      # `brief_key` is the other half of the same comparison: the address of the
+      # exact prompt the arm was handed ({Brief#key}). Two records agreeing on it
+      # were built from byte-identical briefs, so a difference in the answers is
+      # a difference in the ARM.
       class DocentAsked
         # The discriminator {Telemetry::Journalable} derives from this class's
         # own name, pinned so a rename breaks at the constant rather than quietly
@@ -1100,15 +1044,13 @@ module Lain
       # A question nobody was left to answer: the session ended, the reactor
       # stopped, and the task carrying it was reaped mid-flight.
       #
-      # Its OWN type and not a {DocentRefused}, for the reason that record's own
-      # doc gives one level up: the two buckets an arm is counted in are answers
-      # and refusals, and an operator closing the session is neither -- counting
-      # it as a refusal would make a shutdown look like a failing arm. It
-      # carries no reason, because there is only ever the one.
-      #
-      # It exists at all because the ALTERNATIVE is worse than an extra type: an
-      # ask with nothing after it replays as a thread that is permanently
-      # thinking, and refuses the human's re-ask as a duplicate of it.
+      # Its OWN type and not a {DocentRefused}: the two buckets an arm is counted
+      # in are answers and refusals, and an operator closing the session is
+      # neither -- counting it as a refusal would make a shutdown look like a
+      # failing arm. It carries no reason, because there is only ever the one.
+      # It exists at all because an ask with nothing after it replays as a thread
+      # permanently thinking, which then refuses the human's re-ask as a
+      # duplicate of it.
       class DocentAbandoned
         # See {DocentAsked::JOURNAL_TYPE}.
         JOURNAL_TYPE = "docent_abandoned"

@@ -3,17 +3,15 @@
 module Lain
   class Toolset
     class Disclosure
-      # The on-demand arm: renders a searchable CATALOG upfront --
-      # each tool's name and a one-line description, never its input_schema --
-      # and leaves the full schema to be fetched later, one tool at a time,
-      # via {Lain::Tools::ToolSearch}.
+      # The on-demand arm: a searchable CATALOG upfront -- each tool's name and
+      # a one-line description, never its input_schema -- with the full schema
+      # fetched later, one tool at a time, via {Lain::Tools::ToolSearch}.
       #
-      # Rendering here is the ONLY place a schema is withheld; the gate that
+      # Withholding here is only the upfront half of the seam; the gate that
       # matters is downstream, in ToolSearch, which must search over the exact
-      # same (possibly attenuated) Toolset ever handed to it. This class does
-      # not enforce that -- it just proves the upfront half of the seam: a
-      # tool this Toolset was attenuated away from was never even a candidate
-      # here, because #render only ever walks the Toolset it is given.
+      # same (possibly attenuated) Toolset handed to it. This class cannot
+      # enforce that, but it cannot leak either: #render only ever walks the
+      # Toolset it is given, so an attenuated-away tool is never a candidate.
       class Deferred < Disclosure
         def render(toolset)
           Canonical.normalize(toolset.map { |tool| catalog_entry(tool) })
@@ -23,8 +21,7 @@ module Lain
 
         # {Tool#one_line_description}, not {Tool#description} -- the same
         # projection {Tools::ToolSearch} matches queries against, so search
-        # can never surface text this catalog withholds. See that method's
-        # comment for why this is one shared method rather than two copies.
+        # can never surface text this catalog withholds.
         def catalog_entry(tool)
           { "name" => tool.name, "description" => tool.one_line_description }
         end

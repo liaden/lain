@@ -23,35 +23,33 @@ module Lain
   # reads it back, {Source} is the live per-turn seam the Agent asks, and
   # {Prepared} belongs to the older design below.
   #
-  # TWO COMPACTION DESIGNS SHIP AND ONLY ONE IS ON THE CHAT PATH. The shipped
-  # one is the DERIVED chain: {Source} builds a {Source::Derived}
-  # (`source.rb:152`), which materializes a second lineage in the session's own
-  # Store and replays `Derivation.projected` as the rendered messages
-  # (`source/derived.rb:126`). {Context::Compact} -- the render-time projection
-  # most of this module's doc comments were written against -- is now a BENCH
-  # ARM: its only two constructors are offline (`plan/linear_rewrite.rb:106`,
-  # `bench/plan_sweep/driver.rb:157`), and chunk 16 ruled explicitly against
-  # retiring it. {Prepared} was built to pair with it and has no caller at all.
+  # TWO COMPACTION DESIGNS SHIP AND ONLY ONE IS ON THE CHAT PATH. The shipped one
+  # is the DERIVED chain: {Source} builds a {Source::Derived}, which materializes
+  # a second lineage in the session's own Store and replays
+  # `Derivation.projected` as the rendered messages. {Context::Compact} -- the
+  # render-time projection most of this module's doc comments were written
+  # against -- is a BENCH ARM, reached only from offline constructors and
+  # deliberately not retired. {Prepared} was built to pair with it and has no
+  # caller at all.
   #
   # So read {Head}'s and {Boundary}'s references to {Context::Compact} as the
   # arm, not as the caller: theirs is `Source#decide`.
   module Compaction
-    # The `keep_last` rule, on the module because THREE objects consult it:
-    # {Boundary}, {Context::Compact} and {Source}, each of which takes the number
-    # at construction. It lived on {Head}, was copied onto {Boundary} under a
-    # comment promising to mirror it "line for line", and was reached by the other
-    # two through a THROWAWAY Head or Boundary built over an empty message list
-    # purely for its constructor's refusal. Three doors onto one refusal is three
-    # chances for one of them to relax.
+    # The `keep_last` rule, on the module because THREE objects consult it --
+    # {Boundary}, {Context::Compact} and {Source}. It lived on {Head}, was copied
+    # onto {Boundary} under a comment promising to mirror it "line for line", and
+    # was reached by the other two through a THROWAWAY object built purely for
+    # its constructor's refusal. Three doors onto one refusal is three chances
+    # for one of them to relax.
     #
-    # {Head} is deliberately NOT a fourth door. It builds a {Boundary} as its
-    # first statement, so the refusal already fires before it reads a message; a
-    # call of its own was unreachable by construction, and a mutation deleting it
-    # left the whole suite green -- including the example named for Head's door,
-    # which was a Boundary test wearing Head's name.
+    # {Head} is deliberately NOT a fourth door: it builds a {Boundary} as its
+    # first statement, so the refusal fires before it reads a message. A call of
+    # its own was unreachable, and a mutation deleting it left the whole suite
+    # green -- including the example named for Head's door, which was a Boundary
+    # test wearing Head's name.
     #
     # Both degenerate values USED TO diverge silently, which is why they are
-    # refused rather than measured (panel probe, 2026-07-25):
+    # refused rather than measured:
     #
     #   0 -- `messages[0...0]` and `messages.last(0)` are both empty, so above
     #     threshold a collapse replaced the ENTIRE history with a summary of ZERO
@@ -62,8 +60,8 @@ module Lain
     #     inside `Context#render`.
     #
     # Every consumer applies it at CONSTRUCTION, never from inside a `#call`:
-    # {Boundary}'s own doc argues that raising inside `Context#render` is worse
-    # than not compacting at all, so a bad wiring must fail at wiring time.
+    # raising inside `Context#render` is worse than not compacting at all, so a
+    # bad wiring must fail at wiring time.
     #
     # @param keep_last [Object] whatever the caller was configured with
     # @return [Integer] the coerced, positive value

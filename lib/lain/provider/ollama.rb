@@ -12,103 +12,60 @@ require_relative "ollama/transport"
 
 module Lain
   class Provider
-    # Ollama's native `/api/chat`, non-streaming. A free, local, temperature-0
-    # bench arm -- a determinism oracle for tests and an exploration target on
-    # the "Provider / model" axis.
+    # Ollama's native `/api/chat`. A free, local, temperature-0 bench arm -- a
+    # determinism oracle for tests, an exploration target on the "Provider /
+    # model" axis -- and, through {Deployment::Cloud}, a metered hosted one.
     #
-    # It is a neutral {Lain::Provider} (NOT the OpenAI-compat shim RubyLLM's
-    # Ollama integration is): it encodes with {Ollama::Encoding} and drives the
-    # vendored Faraday stack through {Transport}. The native path is chosen over
-    # `/v1/...` because that OpenAI-compat surface is SSE + `finish_reason` +
-    # `tool_call_id`, while the native one is NDJSON + `done_reason` +
-    # tool_name-only correlation -- and mapping the native semantics honestly is
-    # cheaper than adapting a shim tuned for OpenAI's models.
+    # A neutral {Lain::Provider}, NOT the OpenAI-compat shim RubyLLM's Ollama
+    # integration is. The native path is chosen over `/v1/...` because that
+    # compat surface is SSE + `finish_reason` + `tool_call_id` while the native
+    # one is NDJSON + `done_reason` + tool_name-only correlation, and mapping
+    # the native semantics honestly is cheaper than adapting a shim tuned for
+    # OpenAI's models.
     #
     # == What the wire lacks, and how it is bridged
     #
     # Native `/api/chat` emits no tool-call id -- results correlate by
-    # `tool_name` only. So a stable id is synthesized on decode (below), lives
-    # purely on Lain's side, and {Ollama::Encoding} maps it back to a
-    # `tool_name` when a tool_result returns to the wire. And `done_reason`'s
-    # real enum is only "stop"/"length"/"" -- there is no "tool_calls" value --
-    # so `:tool_use` is derived from the PRESENCE of tool_calls, not from
-    # done_reason (both confirmed in references/ollama/).
+    # `tool_name` only. So a stable id is synthesized on decode, lives purely
+    # on Lain's side, and {Ollama::Encoding} maps it back to a `tool_name` when
+    # a tool_result returns to the wire. And `done_reason`'s real enum is only
+    # "stop"/"length"/"" -- there is no "tool_calls" value -- so `:tool_use` is
+    # derived from the PRESENCE of tool_calls, not from done_reason (both
+    # confirmed in references/ollama/).
     #
-    # == What Ollama deliberately does not have
+    # == What the deployment owns, and what is still absent
     #
-    # It shares {ErrorWrapping} with the hosted arms but NOT {AnthropicWire} --
-    # its wire is native `/api/chat` NDJSON, decoded by {Ollama::Encoding} and
-    # this class's own #build_response. The rest of the asymmetry is stated
-    # here rather than left to be inferred from an absent line, because a
-    # silent divergence between providers is how a bench arm stops being
-    # comparable:
+    # It shares {ErrorWrapping} with the hosted arms but NOT {AnthropicWire}.
+    # Timeout/retry envelope, authentication, the `/api/ps` and `/api/show`
+    # probes and the capability set are all the {Deployment}'s to state,
+    # because the two arms disagree: 300s/3 is a local model thinking for six
+    # minutes, 120s/5 is a metered host whose ordinary failure is a 429.
     #
-    # NO LONGER absent: a `channel:`. This arm used to take none, so retries
-    # were not journaled: faraday-retry still ran (HTTP::Configuration's
-    # vendored 3) but no {Telemetry::ProviderRetry} reached the Journal, and a
-    # run's record showed one request where four attempts happened. The note
-    # here said free/local spend made that tolerable and that comparing latency
-    # across arms would not let it stay so. What ended it was neither: the
-    # 2026-08-17 QA run hit a stalled server and waited **over 400 seconds
-    # printing nothing at all**, which on the one arm whose honest shape is a
-    # model thinking for six minutes is unreadable. {RetryTap} now journals
-    # every attempt boundary, and -- the part the retried-stream discard needs
-    # -- gives a retry somewhere to DISCARD what the attempt it replaced put
-    # together.
+    # {RetryTap} journals every attempt boundary and -- the part the
+    # retried-stream discard needs -- gives a retry somewhere to DISCARD what
+    # the attempt it replaced put together. Narrating a retry is not cosmetic
+    # here: a stalled server once waited over 400 seconds printing nothing at
+    # all, which on the one arm whose honest shape is a model thinking for six
+    # minutes is unreadable. Bounding that wait, rather than narrating it, is
+    # the stall clock's job and not this arm's.
     #
-    # What that fixed, and what it still does not: {Frontend::Decorators.for}
-    # now renders {Telemetry::ProviderRetry} live too, so a human watching a
-    # retrying request sees the attempt as it happens, not only in the Journal
-    # afterward -- but only on whichever Channel this Provider was built with,
-    # and a subagent's still defaults to {Channel::Null} (wiring that path is
-    # explicitly out of this file's scope). Bounding the wait itself, rather
-    # than narrating it, is the stall clock's job, not this arm's.
+    # `spool:` reached this class only once the arm stopped being free, because
+    # that is when the absence stopped being cheap: a lost local round trip
+    # costs a retry, a lost metered one is SPENT. A retry ROTATES the frame, so
+    # a severed attempt and its replacement are two frames rather than one that
+    # lies -- the splice defect again, in the spool instead of the assembler,
+    # with the two discards registered independently so neither can displace
+    # the other.
     #
-    # The list that used to stand here argued every absence from "free and
-    # local", and that premise now holds for only one of the two arms this
-    # class serves. So the absences are the DEPLOYMENT's to state, and what is
-    # recorded here is which of them moved:
-    #
-    # no longer absent: a timeout/retry envelope of its own. It is not restated
-    # here either -- {Deployment#request_timeout} and {Deployment#max_retries}
-    # answer it, and the two arms disagree. 300s/3 is a local model thinking
-    # for six minutes; 120s/5 is a metered host whose ordinary failure is a 429,
-    # trading patience for attempts.
-    #
-    # no longer absent: authentication. A loopback server asks for no
-    # credential and {Deployment::Local#apply} actively CLEARS one, because the
-    # dangerous state is not a missing key but a hosted key left beside a
-    # loopback base -- that is a Bearer sent in plaintext to whatever holds
-    # port 11434.
-    #
-    # no longer universal: the two metadata probes. `/api/ps` and `/api/show`
-    # are loopback facts, so {Deployment#runner_status?} and
-    # {Deployment#model_metadata?} gate them and a deployment that has neither
-    # concept answers nil without spending a round trip to discover it.
-    #
-    # no longer absent: a response WAL. `spool:` reached this class only after
-    # the arm stopped being free, because that is when the absence stopped being
-    # cheap: a lost local round trip costs a retry, a lost metered one is SPENT.
-    # The bytes land the same way Anthropic's do -- the shared
-    # {Anthropic::WalResponseTee} on the sync path, an explicit tee on the
-    # streaming one -- and a retry ROTATES the frame, so a severed attempt and
-    # its replacement are two frames rather than one that lies. That is the
-    # splice defect again, in the spool instead of the assembler, and the two
-    # discards are registered independently so neither can displace the other.
-    #
-    # STILL ABSENT, and now recorded rather than argued from free-ness:
-    # rate-limit backoff, because the header vocabulary the native cloud path
-    # returns is unverified and naming an unseen header would replace
-    # faraday-retry's working default with a guess ({Deployment::Cloud} states
-    # the case).
+    # STILL ABSENT: rate-limit backoff, because the header vocabulary the
+    # native cloud path returns is unverified and naming an unseen header would
+    # replace faraday-retry's working default with a guess
+    # ({Deployment::Cloud} states the case).
     class Ollama < Provider
-      # One mixin per wire direction: {Encoding} out, {Decoding} back.
       include Encoding
       include Decoding
       # APIError / APIStatusError, nested here and rooted at Lain::Error.
       include ErrorWrapping.under(Lain::Error)
-      # #admitted, over #resolved_endpoint, #queue_for_capacity? and
-      # #wait_journal below.
       include Admitted
 
       DEFAULT_MODEL = "qwen3:4b"
@@ -119,43 +76,34 @@ module Lain
       RETRIES_OWN_THE_SPOOL = "retries: already owns the spool it was built with; " \
                               "pass spool: to the RetryTap instead"
 
-      # The NDJSON streaming path (below) makes :streaming honest. :thinking is
-      # honest too: `think` rides Request#extra onto its own top-level
-      # wire field (Encoding#encode), and #decode_content already turns
-      # `message.thinking` into a thinking block on both the sync and streamed
-      # paths. :prompt_caching and :strict_tools stay off deliberately --
-      # declaring one the native path cannot demonstrate would be a lying
-      # capability in the one subsystem built to catch them, so the capability
-      # policy's `:degrade` journals those gaps, which is the bench working as
-      # designed.
-      # `structured_output` here is grammar-CONSTRAINED decoding (the native `format`
-      # field) -- a stronger guarantee than Anthropic's tool-forcing under the same
-      # capability name. See Provider::AnthropicReference::CAPABILITIES.
+      # `structured_output` here is grammar-CONSTRAINED decoding (the native
+      # `format` field) -- a stronger guarantee than Anthropic's tool-forcing
+      # under the same capability name. See
+      # Provider::AnthropicReference::CAPABILITIES. :thinking is honest because
+      # `think` rides Request#extra onto its own top-level wire field.
+      # :prompt_caching and :strict_tools stay off deliberately: declaring one
+      # the native path cannot demonstrate would be a lying capability in the
+      # one subsystem built to catch them, so the capability policy's
+      # `:degrade` journals those gaps instead.
       #
-      # READ FROM THE LOOPBACK DEPLOYMENT rather than written out a third time.
-      # `#capabilities` now delegates, so a literal here would be a copy nothing
+      # Read from the loopback deployment rather than written out a third time.
+      # `#capabilities` delegates, so a literal here would be a copy nothing
       # consults -- free to drift from the value actually answered while every
-      # spec asserting against it stayed green. The name survives because it is
-      # what an outside reader asks for (`oracle/secret_read_spec.rb:235`) and
-      # because "the ollama arm's capabilities" is a real question with a
-      # deployment-independent answer: the cut on the provider axis is only
-      # clean while both arms agree, which is a fact their own specs pin.
+      # spec asserting against it stayed green. The constant survives because
+      # it is what an outside reader asks for, and because "the ollama arm's
+      # capabilities" is a real question whose deployment-independent answer
+      # holds only while both arms agree.
       CAPABILITIES = Deployment::Local::CAPABILITIES
 
-      # The intention-revealing doors, for a caller who has a deployment in mind
-      # rather than a default to accept.
-      #
-      # `.local` is exactly `.new` and deliberately adds nothing: the bare
-      # construction has to keep meaning loopback, because
+      # Exactly `.new`, and deliberately adds nothing: the bare construction has
+      # to keep meaning loopback, because
       # `spec/provider_construction_discipline_spec.rb` matches `.new` with
       # Ripper and `Oracle::SecretRead.tier` relies on that static guard. So
       # this is a synonym a NEW caller can reach for, never a replacement at an
       # existing site -- renaming one would delete the guard while looking like
-      # a strengthening.
-      #
-      # Both names are load-bearing beyond readability: the same guard keeps a
-      # hand-maintained list of factory selectors, so a door named anything else
-      # would slip past the construction check entirely rather than trip it.
+      # a strengthening. That guard also keeps a hand-maintained list of factory
+      # selectors, so a door named anything else slips past the check entirely
+      # rather than tripping it.
       #
       # @param options [Hash] forwarded verbatim to {#initialize}
       # @option options [String] :api_base override the base this arm dials
@@ -210,20 +158,17 @@ module Lain
       end
       private_class_method :deployment_free
 
-      # @param deployment [#api_base] WHOSE ollama this is, and every value that
-      #   changes with the answer. {Deployment::Local} by DEFAULT, and the
-      #   default is the contract: a bare construction still means loopback, so
-      #   `Oracle::SecretRead.tier`'s guarantee and every existing measurement
-      #   are untouched by this keyword existing.
+      # @param deployment [#api_base] WHOSE ollama this is. {Deployment::Local}
+      #   by DEFAULT, and the default is the contract: a bare construction
+      #   still means loopback, so `Oracle::SecretRead.tier`'s guarantee is
+      #   untouched by this keyword existing.
       # @param transport [#sync_post] injected in specs; a real {Transport} over
       #   the vendored connection otherwise.
       # @param config [Provider::HTTP::Configuration, nil] injected in specs; otherwise built by
       #   {#build_config} from the deployment. An injected one is taken AS GIVEN and the
       #   deployment never rewrites it -- a caller who hands in a whole configuration has
       #   already said what it is.
-      # @param channel [Lain::Channel] where {RetryTap}'s retry events land. The
-      #   Null instance by default, so bench (which passes none) records exactly
-      #   what it recorded before this arm learned to journal retries.
+      # @param channel [Lain::Channel] where {RetryTap}'s retry events land
       # @param retries [RetryTap, nil] injected in specs; a real {RetryTap} over
       #   `channel:` otherwise. It has to be injectable rather than patched on
       #   afterwards: the Faraday middleware stack -- `retry_block` included --
@@ -231,45 +176,31 @@ module Lain
       #   construction is never the one faraday-retry calls.
       # @param sink [Lain::Sink] where the transport's debug/log lines go
       # @param api_base [String, nil] overrides the base the deployment resolves
-      #   to. ONE meaning on both arms -- "the server this deployment is really
-      #   dialling" -- which is what lets every existing call site keep passing
-      #   it and mean what it always meant. It is applied AFTER the deployment;
-      #   see {#build_config} for why the other order loses it silently.
+      #   to, applied AFTER the deployment; see {#build_config} for why the
+      #   other order loses it silently.
       # @param queue [Boolean] whether this provider may WAIT for {Admission} to
-      #   free a slot. Capacity is a property of the server; willingness to wait
-      #   is a property of the caller, and that is the whole reason this is a
-      #   constructor keyword rather than an argument to {#complete}: it belongs
-      #   to whoever built the client, not to one round trip.
+      #   free a slot. Capacity is a property of the server, willingness to wait
+      #   a property of the caller, which is why this is a constructor keyword
+      #   and not an argument to {#complete}.
       #
-      #   `false` is {Oracle::Eager}'s, and only its: `eager.rb:45-47` promises
-      #   the turn that produced a tool result never waits on its summary, so a
-      #   busy endpoint must SKIP the summary rather than queue it. Queueing
-      #   there is the worse degradation -- a fire reaped at teardown burns its
-      #   digest for the whole session -- while a skip is a miss
-      #   {Compaction::SummarySnapshot} already reads as ordinary. The span
-      #   summarizer shares this provider's construction path and keeps the
-      #   default, because it answers on the render path where the summary is
-      #   worth waiting for.
+      #   `false` is {Oracle::Eager}'s, and only its: it promises the turn that
+      #   produced a tool result never waits on its summary, so a busy endpoint
+      #   must SKIP the summary rather than queue it. Queueing there is the
+      #   worse degradation -- a fire reaped at teardown burns its digest for
+      #   the whole session -- while a skip is a miss
+      #   {Compaction::SummarySnapshot} already reads as ordinary.
       # @param journal [#<<] where a {Telemetry::ProviderWait} lands when this
-      #   provider QUEUES for capacity -- {Admitted}'s third collaborator, and
-      #   deliberately not `channel:`, which is the live frontend stream rather
-      #   than the session's record. The Null channel by default, so a caller
-      #   with no record (bench, a bare construction) journals nowhere and needs
-      #   no `if journal` guard.
+      #   provider QUEUES for capacity. Deliberately not `channel:`, which is
+      #   the live frontend stream rather than the session's record.
       # @param spool [#open_frame, nil] where each round trip's raw response
-      #   bytes are teed for salvage. Nil means the Null spool, so no WAL file
-      #   exists unless a session opts in, and a bench or bare construction is
-      #   byte-for-byte unaffected.
+      #   bytes are teed for salvage.
       #
       #   THE NIL DEFAULT IS LOAD-BEARING and is not the missing Null Object it
       #   looks like: it is the only thing that tells "passed no spool" apart
       #   from "passed a Null spool", which is what the refusal below needs. A
       #   `Spool::Null.new` default would make the two indistinguishable and the
-      #   contradiction unrefusable. Every CALLER still hands over a real Null
-      #   Object ({CLI::Backend#provider}, {CLI::Backend::OllamaTier#provider}),
-      #   so the coalesce is reached only by a bare construction. A metered round trip is SPENT, which is what
-      #   makes this worth its cost on this arm and did not while both arms were
-      #   free and local.
+      #   contradiction unrefusable. Every real caller still hands over a Null
+      #   Object, so the coalesce is reached only by a bare construction.
       # @raise [ArgumentError] when `retries:` and `spool:` are both given --
       #   the tap is what OWNS the spool, so an injected tap makes the spool
       #   unreachable. Silently dropping it would build the WAL, hand it a real
@@ -292,43 +223,29 @@ module Lain
       def capabilities = @deployment.capabilities
 
       # No :prompt_caching capability, so no cache economics to report --
-      # {CacheProfile::NO_CACHING} is the honest, flat-cost Null Object answer,
-      # promoted off what used to be a per-provider `NO_CACHING_PROFILE` Hash
-      # constant here into the neutral {Lain::CacheProfile} home shared with
-      # every other provider. Both deployments answer it today, and the
-      # delegation is what makes that a claim either arm could revise on its own
-      # evidence rather than a fact welded to the class.
+      # {CacheProfile::NO_CACHING} is the honest, flat-cost Null Object answer.
+      # Both deployments give it today; the delegation is what leaves either arm
+      # free to revise the claim on its own evidence.
       def cache_profile = @deployment.cache_profile
 
       # One round trip into a neutral Response. Streaming and non-streaming
-      # converge on the same body Hash -- {StreamAssembler} reassembles the NDJSON
-      # lines into the shape the non-streaming endpoint returns -- so both decode
-      # through one #build_response (path parity).
-      #
-      # Both error arms come from {ErrorWrapping#wrapping_errors}, which records
-      # why this arm bites hardest here: ollama is the DEFAULT summarizer
-      # provider, "ollama is not running" is the ordinary case, and since the
-      # span summarizer answers on the RENDER path a leak takes out the turn
-      # rather than one summary. {#stream_body}'s JSON::ParserError arm sits
-      # inside the block and passes through it untouched.
+      # converge on the same body Hash -- {StreamAssembler} reassembles the
+      # NDJSON lines into the shape the non-streaming endpoint returns -- so
+      # both decode through one #build_response.
       #
       # == Why {Admission} is taken HERE, and why it may not move
       #
       # This is the ONE boundary every round trip crosses, and taking capacity
-      # anywhere else means enumerating callers. There are six provider
-      # construction sites on the chat path and {Oracle::SecretRead.tier}
-      # (`oracle/secret_read.rb:140`) builds this class bare and accepts no
-      # injected collaborator on purpose -- that seam is the disclosure the whole
-      # rung exists to prevent -- so a gate handed in by {CLI::Backend} could
-      # never cover it. Keyed by the endpoint this provider resolved for itself,
-      # capacity is a property of the SERVER, and the enumeration is unnecessary.
+      # anywhere else means enumerating callers -- which cannot be done:
+      # {Oracle::SecretRead.tier} builds this class bare and accepts no injected
+      # collaborator on purpose (that seam is the disclosure the whole rung
+      # exists to prevent), so a gate handed in by {CLI::Backend} could never
+      # cover it. Keyed by the endpoint this provider resolved for itself.
       #
       # It may not move DOWN, into {#stream_body} or the transport: the stall
-      # clock arms on the first body chunk with a 30s grace
-      # (`http/streaming/faraday_handlers.rb:397`), so a request queued below that
-      # point would hold an armed clock while no server was sending it anything
-      # and be killed for a silence admission itself caused. `#complete` encloses
-      # the whole stream, so a queued caller has no clock installed at all.
+      # clock arms on the first body chunk with a 30s grace, so a request queued
+      # below that point would hold an armed clock while no server was sending
+      # it anything and be killed for a silence admission itself caused.
       #
       # It may not move UP either, into `Agent#call_model` or {ModelCaller}:
       # `Compaction::Strategy::Summarizing#asked` awaits an oracle inside
@@ -346,96 +263,38 @@ module Lain
 
       # The window this server is actually serving `model` with, or nil.
       #
-      # Ollama publishes two different context numbers and only one of them is
-      # a denominator anything may divide by. `/api/show`'s
-      # `model_info.<arch>.context_length` is the GGUF's TRAINED maximum --
-      # 262,144 for qwen3-coder:30b -- while a loaded runner gets
-      # min(trained, OLLAMA_CONTEXT_LENGTH, per-request num_ctx), which is
-      # 32,768 on this box (DEBUGGING_OLLAMA.md:43). Divide occupancy by the
-      # trained figure and it under-reports 8x, so compaction never fires --
-      # the failure `context_window.rb:74-77` ranks as worse than the crash it
-      # replaces. The trained number is therefore never returned, even though
-      # it is the one that is always available: `/api/ps` states the served
-      # figure or nobody does.
+      # THE SERVED FIGURE, NEVER THE TRAINED ONE. `/api/show`'s
+      # `model_info.<arch>.context_length` is the GGUF's trained maximum and is
+      # 8x larger, so dividing occupancy by it means compaction never fires --
+      # a worse failure than the crash compaction prevents. So nil is the
+      # ORDINARY answer here rather than an error path: `/api/ps` states the
+      # served figure or nobody does, and {ContextWindow}'s conservative
+      # fallback takes over.
       #
-      # So nil is the ORDINARY answer, not an error path. Ollama fixes a
-      # runner's context at load time, so before the model is resident there is
-      # genuinely no served window to report, and an unreachable server is the
-      # everyday case on the arm that is also the default summarizer. Both
-      # answer nil and leave {ContextWindow}'s conservative fallback in charge.
-      #
-      # == A CALLER SENDING num_ctx MUST take the min of this and its own
-      #
-      # This reports the window of the runner that is resident *now*, and
-      # ollama reloads a runner whose `NumCtx` differs from the request's
-      # (`sched.go`'s `needsReload`). So a runner left at 32,768 by `ollama
-      # run`, by a sibling session, or by an earlier turn makes this answer
-      # 32,768 while the very next request -- carrying an explicit `num_ctx` of
-      # 8,192 -- is served 8,192. Reading this figure alone would then
-      # over-estimate by 4x, by the exact mechanism the rest of this method
-      # refuses. Any caller that sends `num_ctx` (an operator `--num-ctx`,
-      # `Request#extra`) owns that `min`; this method cannot see the request.
-      #
-      # Measured 2026-08-17 on loopback: ~0.27ms warm, ~0.3ms with the server
-      # down (one attempt, {Transport::PROBE_TIMEOUT_SECONDS}; the completion
-      # path's budget would make that same case 790ms). Cheap enough to ask per
-      # turn, which is what staying correct across a reload requires --
-      # memoizing it is what makes the stale-runner case above permanent rather
-      # than momentary.
+      # A CALLER THAT SENDS num_ctx OWNS THE MIN of this and its own, because
+      # this method cannot see the request. Asked per turn rather than memoized,
+      # which is what staying correct across a runner reload requires -- both
+      # rules, the measurements behind them, and what the probe costs against a
+      # black-holed host are in docs/providers/ollama.md.
       #
       # == The second rescue arm, and why it re-raises
       #
       # `wrapping_errors` catches {Provider::HTTP::Error} and {Faraday::Error},
-      # so `rescue APIError` alone was narrower than the "nil is the ORDINARY
-      # answer" contract above. It mattered most while
-      # {CLI::Backend::WindowBook} could still reach a scheme-less
-      # `--api-base` (`localhost:11434`, an ordinary typo) at all: it PARSES,
-      # so construction succeeds, and Faraday's `build_exclusive_url` then
-      # calls `end_with?` on the nil host -- a `NoMethodError` raised while
-      # BUILDING the request, above Faraday's own error middleware, so
-      # neither arm of `wrapping_errors` is reached.
+      # which is narrower than the "nil is the ORDINARY answer" contract above.
+      # A scheme-less `--api-base` (`localhost:11434`, an ordinary typo) PARSES,
+      # so construction succeeds, and Faraday's `build_exclusive_url` then calls
+      # `end_with?` on the nil host -- a `NoMethodError` raised while BUILDING
+      # the request, above Faraday's own error middleware, so neither arm of
+      # `wrapping_errors` is reached. {CLI::Backend::Endpoint} now refuses that
+      # flag before a Backend exists, but a caller who constructs this class
+      # DIRECTLY still reaches it.
       #
-      # That refusal has since moved a layer up: on the {CLI::Backend}-mediated
-      # LAUNCH path, `--api-base` is now checked at {Backend}'s own
-      # construction ({Backend::Endpoint}), so neither this method nor
-      # {WindowBook} ever reaches a scheme-less or unparseable one anymore --
-      # the run refuses before a {Backend} exists at all. This method's own
-      # defence still earns its keep for a caller that constructs this class
-      # DIRECTLY, skipping {Backend} entirely, as the examples below do: a
-      # scheme-less base still parses and still needs the `NoMethodError`
-      # rescue here, and a value that is not a URI at all still raises
-      # `URI::InvalidURIError` straight out of `.new`, unabsorbed, for any
-      # such caller.
-      #
-      # A bare `NoMethodError` arm would also swallow the one failure that must
-      # stay loud: a transport that cannot answer `#process_status` at all is a
-      # wiring bug, not an unreachable server, and a silent nil would hide it
-      # (it did, for a canned transport in a seam spec). `#receiver` is what
-      # tells the two apart -- the transport itself for the duck violation,
-      # something deep inside Faraday for the typo -- so the wiring bug
-      # re-raises and the operator's flag mistake answers nil, as every other
-      # unknown here does.
-      #
-      # A black-holed host is the one case the budget, not the rescue, has to
-      # answer for: `--api-base http://10.255.255.1:11434` costs the full
-      # {Transport::PROBE_TIMEOUT_SECONDS} -- measured **2002 ms** PER CALL.
-      #
-      # An earlier edition of this comment said "once, at launch", and called
-      # that the ceiling on what this method can cost a chat. It stopped being
-      # true when the window book stopped being a permanent answer:
-      # {CLI::Backend#context_window} memoizes the BOOK, and
-      # {Middleware::ResolveWindow} re-asks at the top of every ITERATION of the
-      # agent loop -- so a tool-calling turn would re-probe once per tool call
-      # for as long as the book stayed a guess, which for a model the shipped
-      # table does not carry is forever. Measured before it was bounded: 2.003s
-      # per re-resolution, three in a row, so a ten-tool-call turn cost +20s.
-      #
-      # {CLI::Backend::WindowBook::Live::REASK_LIMIT} is what bounds it now, and
-      # the honest ceiling is per SESSION rather than per call: at most
-      # `1 + REASK_LIMIT` of these, i.e. **8 s** on the numbers above. A merely
-      # -down ollama is not affected at all -- it answers ECONNREFUSED in ~0.3ms
-      # rather than dropping packets -- and a server that answers settles the
-      # book on its first reply, after which this method is not called again.
+      # A bare `NoMethodError` arm would swallow the one failure that must stay
+      # loud: a transport that cannot answer `#process_status` at all is a
+      # wiring bug, not an unreachable server, and a silent nil hid one for a
+      # canned transport in a seam spec. `#receiver` tells the two apart -- the
+      # transport itself for the duck violation, something deep inside Faraday
+      # for the typo.
       #
       # A deployment with no loaded-runner concept answers before the request is
       # MADE, not by rescuing one: `/api/ps` is asked on the render path, so a
@@ -459,35 +318,23 @@ module Lain
       # The GGUF's trained maximum for `model`, or nil.
       #
       # THE NUMBER {#context_window_tokens} REFUSES TO RETURN, behind its own
-      # name so the two can never be mistaken for each other. Read that method's
-      # docstring first: `/api/show`'s `model_info.<arch>.context_length` is
-      # 262,144 for qwen3-coder:30b while the runner serves 32,768, and dividing
-      # occupancy by the larger under-reports 8x so compaction never fires.
-      #
-      # So this is a CEILING FOR REFUSING A FLAG, NEVER A DENOMINATOR
-      # ({Provider#trained_context_tokens} states the contract). Its one caller
-      # -- {CLI::Backend}, refusing a `--num-ctx` no runner could ever serve --
-      # compares against it and discards it. If it ever reaches
-      # {ContextWindow::WindowResolution}, the bug this pair exists to prevent
-      # is back one layer up.
+      # name so the two can never be mistaken for each other. A CEILING FOR
+      # REFUSING A FLAG, NEVER A DENOMINATOR: its one caller compares against
+      # it and discards it, and if it ever reaches
+      # {ContextWindow::WindowResolution} the 8x under-report the pair exists
+      # to prevent is back one layer up.
       #
       # The architecture is read from the body rather than assumed: the KV key
       # is `<general.architecture>.context_length`, so a hard-coded family name
-      # would answer nil for every other model. Both the key's presence and the
-      # value's type are checked, never coerced -- `Integer("0x40000")` is
-      # 262,144, and a ceiling built by coercion refuses flags that were fine.
+      # would answer nil for every other model. Value type is checked, never
+      # coerced -- `Integer("0x40000")` is 262,144, and a ceiling built by
+      # coercion refuses flags that were fine.
       #
-      # Same rescue set and same reasoning as {#context_window_tokens}: nil is
-      # the ordinary answer for a server that is not running or a model it does
-      # not have, because a provider that cannot state a ceiling must not block
-      # a launch; a transport that cannot answer at all is a wiring bug and
-      # stays loud, told apart by the error's receiver.
-      #
-      # Gated by its OWN predicate, and the separation from the one above is not
-      # tidiness: `/api/ps` and `/api/show` are two endpoints with two meanings,
-      # and this one is reached EAGERLY at launch (`CLI::Backend#num_ctx`, only
-      # when `--num-ctx` is set) -- before the chronicle is open, which is the
-      # worst possible place to learn that a host does not serve it.
+      # Same rescue set and same reasoning as {#context_window_tokens}, and its
+      # OWN predicate: `/api/ps` and `/api/show` are two endpoints with two
+      # meanings, and this one is reached EAGERLY at launch before the
+      # chronicle is open -- the worst possible place to learn that a host does
+      # not serve it.
       #
       # @param model [String]
       # @return [Integer, nil]
@@ -505,29 +352,24 @@ module Lain
 
       private
 
-      # {Admitted}'s three collaborators. Whether this caller may WAIT for a slot
-      # is the constructor's `queue:`; where it would wait is the endpoint below;
-      # where a wait it actually served gets recorded is the constructor's
-      # `journal:`. All three are the CALLER's properties, which is why they
-      # arrive at construction and not with a round trip.
+      # {Admitted}'s collaborators. These are the CALLER's properties, which is
+      # why they arrive at construction and not with a round trip.
       def queue_for_capacity? = @queue
 
       def wait_journal = @journal
 
-      # {Admitted}'s optional fourth, and the only one that is the SERVER's
-      # property rather than the caller's -- which is why it comes from the
-      # deployment and not from a constructor keyword. The loopback arm answers
-      # nil, meaning "nobody said", so {Admission}'s locality rule keeps
-      # deciding for it exactly as before; only an endpoint locality gets wrong
-      # -- hosted, and hard-capacity-bounded -- states a number.
+      # The one {Admitted} collaborator that is the SERVER's property rather
+      # than the caller's, which is why it comes from the deployment. The
+      # loopback arm answers nil, meaning "nobody said", leaving {Admission}'s
+      # locality rule in charge; only an endpoint locality gets wrong --
+      # hosted, and hard-capacity-bounded -- states a number.
       def admission_width = @deployment.admission_width
 
       # The endpoint THIS provider will really talk to, which is the only honest
-      # key: `@options[:api_base]` is one flag shared by every tier
-      # (`exe/lain:416`), so it reads nil for a bare construction and for a
-      # hosted one alike. Read off the same Configuration {Transport#api_base}
-      # reads, with the same fallback, and `admission_spec.rb` pins the two
-      # answers equal because they live in different files.
+      # key: the `api_base` flag is shared by every tier, so it reads nil for a
+      # bare construction and for a hosted one alike. Read off the same
+      # Configuration {Transport#api_base} reads, with the same fallback, and
+      # pinned equal by spec because the two live in different files.
       def resolved_endpoint = @config.ollama_api_base || Transport::DEFAULT_API_BASE
 
       # `model_info` is the GGUF KV table handed back nearly verbatim
@@ -567,13 +409,10 @@ module Lain
       end
 
       # The Provider opens the frame because the Provider is what holds the
-      # REQUEST -- the digest a frame is keyed by is `request.digest`, and the
-      # transport is handed an encoded payload it cannot re-derive one from.
-      # Keeping the transport digest-blind is the same rule that put the
-      # rotation in {RetryTap} rather than in the connection.
-      #
-      # One frame per round trip, opened here and threaded down, so the two body
-      # paths cannot disagree about how many frames a request gets.
+      # REQUEST -- a frame is keyed by `request.digest`, and the transport is
+      # handed an encoded payload it cannot re-derive one from. Keeping the
+      # transport digest-blind is the same rule that put the rotation in
+      # {RetryTap} rather than in the connection.
       def dispatch(request)
         frame = @retries.open_frame(request_digest: request.digest)
         request.stream ? stream_body(request, frame) : sync_body(request, frame)
@@ -604,11 +443,6 @@ module Lain
       # trusted). It is wrapped in APIError rather than escaping as a bare
       # JSON::ParserError for the same reason transport errors are: callers
       # rescue one provider-error family, and the original stays on `#cause`.
-      # The frame rotates on the SAME retry that resets the assembler, and they
-      # are registered independently ({RetryTap#retry_block}): the reset rides
-      # the attempt, the rotation rides `wal_frame`. So the WAL's two frames and
-      # the assembler's one discarded buffer describe the same event from two
-      # sides, and neither registration can displace the other.
       def stream_body(request, frame)
         assembler = StreamAssembler.new
         attempt = @retries.open_attempt { assembler.reset }
@@ -619,61 +453,42 @@ module Lain
       end
 
       # THE DEPLOYMENT FIRST, THE FLAG SECOND, and the order is the whole
-      # correctness of this method.
-      #
-      # `apply` writes a COMPLETE position unconditionally -- base, credential
-      # and envelope -- so that a configuration always describes exactly one
-      # deployment and one arm's Bearer can never end up beside another's base.
-      # The cost of that guarantee is that `apply` cannot honour `--api-base`:
-      # it cannot tell an operator's flag from the previous deployment's write,
-      # and only this method can, because only this method knows whether
-      # `api_base:` was passed. So the flag is re-applied AFTERWARDS. Reversed,
-      # the deployment silently overwrites `--api-base` and the operator's flag
-      # vanishes with no error anywhere.
+      # correctness of this method. `apply` writes a COMPLETE position
+      # unconditionally -- base, credential and envelope -- so one arm's Bearer
+      # can never end up beside another's base. The cost is that `apply` cannot
+      # honour `--api-base`: it cannot tell an operator's flag from the previous
+      # deployment's write, and only this method knows whether `api_base:` was
+      # passed. Reversed, the deployment silently overwrites the flag with no
+      # error anywhere.
       def build_config(api_base:)
         config = @deployment.apply(Provider::HTTP::Configuration.new)
         config.ollama_api_base = api_base unless api_base.nil?
         config
       end
 
-      # Wires the tap onto whatever config the transport will be built from --
-      # an INJECTED one included. That is deliberate and it is what makes the
-      # seam testable at all: the retry ENVELOPE (interval, backoff, budget) is
-      # snapshotted into the Faraday middleware when the transport is built, so
-      # a caller who wants a different envelope has to hand one in BEFORE
-      # construction, and journaling must not evaporate because they did. The
-      # vendored 300s/3 envelope is otherwise left alone on purpose (see the
-      # class docstring).
+      # Wires the tap onto whatever config the transport will be built from, an
+      # INJECTED one included: the retry ENVELOPE is snapshotted into the
+      # Faraday middleware when the transport is built, so a caller who wants a
+      # different envelope has to hand one in BEFORE construction, and
+      # journaling must not evaporate because they did.
       #
       # It COPIES rather than wiring in place, so the caller's object is never
       # bound to this provider's tap. Wiring in place made a config single-use
       # without saying so: two providers built from ONE config both journal to
       # the FIRST one's channel, because `||=` finds the first tap's block
-      # already there. Nothing in production injects a config
-      # (`cli/backend.rb`, `oracle/secret_read.rb`), so that was a trap laid for
-      # specs -- and the retried-stream discard's specs inject configs. `dup` is
-      # the same shallow copy {Transport#probe_config} already takes of this
-      # object.
+      # already there.
       #
       # The two callbacks are wired DIFFERENTLY, and the asymmetry is the point.
+      # `retry_block` COMPOSES through `then_call:` because it carries a
+      # correctness invariant -- it is what abandons the attempt, and so what
+      # stops a retried stream splicing onto the one it replaced. A config
+      # carrying its own `retry_block` brought the whole splice back, returned
+      # as `:end_turn`, while this was wired with `||=`.
       #
-      # `retry_block` COMPOSES: a caller's callback is threaded through
-      # `then_call:` and runs in addition to the tap's, never instead of it.
-      # This one carries a correctness invariant -- it is what abandons the
-      # attempt, and so what stops a retried stream splicing onto the one it
-      # replaced -- and a correctness invariant must not hang on a seam a caller
-      # can displace. It did, briefly, and it was measurable: a config carrying
-      # its own `retry_block` (which `ollama_spec.rb` ships) brought the whole
-      # splice back, returned as `:end_turn`. `||=` was the right wiring while
-      # this block was only telemetry; it stopped being right the moment the
-      # retried-stream discard was hung on it.
-      #
-      # `exhausted_retries_block` keeps `||=`, because nothing but telemetry
+      # `exhausted_retries_block` keeps `||=` because nothing but telemetry
       # hangs on it: exhaustion does not abandon -- the round trip raises and
       # the assembler is discarded with it -- so a caller who owns this callback
-      # costs a Journal row and no correctness. A spec asserting on its own
-      # exhaustion callback is testing faraday-retry's loop, and silently
-      # replacing it would make that spec lie.
+      # costs a Journal row and no correctness.
       def journaled_retries(config)
         config.dup.tap do |wired|
           wired.retry_block = @retries.retry_block(then_call: config.retry_block)

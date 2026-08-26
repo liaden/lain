@@ -2,37 +2,32 @@
 
 module Lain
   class Config
-    # The `[epics]` table, its own collaborator rather than a private method
-    # on {Config}: other top-level tables are coming (chat-ux's prompt config
-    # may converge on this file), and each one earns exactly this shape --
-    # one small class that knows its own keys, its own allowed values, and
-    # raises its own named errors -- rather than {Config} accreting another
+    # The `[epics]` table, its own collaborator rather than a private method on
+    # {Config}: other top-level tables are coming, and each one earns exactly
+    # this shape -- one small class that knows its own keys, its own allowed
+    # values, and its own named errors -- rather than {Config} accreting another
     # `*_from` method and two more error classes per table it learns to read.
     #
-    # The TOML key is `home` (`[epics]` / `home = "repo"`); the Ruby reader
-    # stays `#epics_home`. `[epics] epics_home` would stutter
-    # (`epics.epics_home`), and the typo this class's own AC teaches
-    # ("hoem") is a typo of "home", not of "epics_home".
+    # The TOML key is `home` (`[epics]` / `home = "repo"`); the Ruby reader stays
+    # `#epics_home`. `[epics] epics_home` would stutter (`epics.epics_home`).
     Epics = Data.define(:home, :gates)
 
     class Epics
       # Reopened (not a body inside the `Data.define do ... end` block) because
       # constants and nested classes defined THERE are lexically scoped to
-      # `Lain::Config`, not to `Epics` itself -- a documented trap, see
-      # `Request::SYSTEM_PREFIX` for the precedent.
+      # `Lain::Config`, not to `Epics` -- see `Request::SYSTEM_PREFIX`.
 
       # Where an epic tree may live, spelled as the TOML spells it. Strings, not
       # Symbols, because membership is tested against what the parser produced --
       # a wrong-TYPED `home` has to fail that test rather than be coerced first.
       HOME_VALUES = %w[xdg repo].freeze
 
-      # Every key `[epics]` understands. An unknown one is refused rather than
-      # ignored, so this list is also the correction {UnknownKeys} offers back.
+      # An unknown key is refused rather than ignored, so this list is also the
+      # correction {UnknownKeys} offers back.
       KEYS = %w[home gates].freeze
 
       # `[epics]` present but not a table -- TOML permits a scalar or an array
-      # there (`epics = "x"`), and treating it as one without checking crashes
-      # on the first `.keys` call with an unnamed NoMethodError.
+      # there (`epics = "x"`), and `.keys` on one is an unnamed NoMethodError.
       class NotATable < Error
         attr_reader :path, :value
 
@@ -43,10 +38,9 @@ module Lain
         end
       end
 
-      # A typo inside `[epics]` -- that table is this class's whole surface,
-      # so an unrecognized key is loud rather than silently ignored the way
-      # an unknown top-level table is. Plural because `.from` reports every
-      # unknown key in one pass, not just the first.
+      # A typo inside `[epics]`: that table is this class's whole surface, so an
+      # unrecognized key is loud rather than ignored the way an unknown
+      # top-level table is. Plural -- `.from` reports every one in a single pass.
       class UnknownKeys < Error
         attr_reader :path, :keys
 
@@ -57,14 +51,12 @@ module Lain
         end
       end
 
-      # `home` set to anything other than the strings "xdg" or "repo" --
-      # including a value of the wrong TYPE (an Integer, a Boolean, an Array):
-      # membership is checked against the two allowed STRINGS directly, so a
-      # foreign type simply fails the `include?` and is named here, rather
-      # than being coerced first and crashing inside `#to_sym`. `path:`
-      # defaults to nil because {Epics#initialize} also raises this -- a
-      # value constructed directly (not through `.from`) carries no config
-      # file to name.
+      # `home` set to anything but "xdg" or "repo", including a value of the
+      # wrong TYPE: membership is checked against the two allowed STRINGS, so a
+      # foreign type fails the `include?` rather than being coerced first and
+      # crashing inside `#to_sym`. Its path defaults to nil because
+      # {Epics#initialize} raises this too, and a value built directly
+      # (not through `.from`) names no config file.
       class InvalidHome < Error
         attr_reader :path, :value
 
@@ -76,12 +68,10 @@ module Lain
         end
       end
 
-      # @param table [Object] whatever `raw["epics"]` parsed to: a Hash when
-      #   the table is present and well-formed, nil when it is absent, or
-      #   anything else a project wrote in its place (`epics = "x"`).
-      # @param path [String] the config file's path, threaded into every
-      #   error raised here so a refusal names the file to open, not just the
-      #   value inside it.
+      # @param table [Object] whatever `raw["epics"]` parsed to: a Hash, nil when
+      #   the table is absent, or anything a project wrote in its place
+      # @param path [String] the config file, threaded into every error raised
+      #   here so a refusal names the file to open
       # @return [Epics]
       def self.from(table, path:)
         table = {} if table.nil?
@@ -93,10 +83,9 @@ module Lain
         new(home: home_from(table, path:), gates: Gates.from(table["gates"], path:))
       end
 
-      # `home`'s own closed-set check, split out so this entry point reads as
-      # one line per key. Each key `[epics]` learns owns its reading; keeping
-      # them inline is what made this method grow past Metrics/AbcSize when
-      # `gates` arrived, and the next key would do it again.
+      # `home`'s own closed-set check, split out so `.from` reads as one line per
+      # key: keeping them inline is what pushed that method past
+      # Metrics/AbcSize when `gates` arrived, and the next key would do it again.
       def self.home_from(table, path:)
         home = table.fetch("home", "xdg")
         raise InvalidHome.new(home, path:) unless HOME_VALUES.include?(home)
@@ -105,20 +94,15 @@ module Lain
       end
       private_class_method :home_from
 
-      # Closed-set validation belongs to the VALUE, not only to the
-      # TOML-parsing path that usually builds it (`Epic::Issue` does the
-      # same): `Epics.new(home: :bogus)` must refuse just as loudly as a bad
-      # `config.toml`, so a value built by any future caller that isn't
-      # `.from` can never carry a symbol the `case epics_home` reader doesn't
-      # expect. `.from`'s own check stays -- it names the config path, which
-      # this constructor-level guard cannot.
+      # Closed-set validation belongs to the VALUE, not only to the TOML-parsing
+      # path that usually builds it (`Epic::Issue` does the same):
+      # `Epics.new(home: :bogus)` must refuse as loudly as a bad `config.toml`.
+      # `.from`'s own check stays -- it names the config path, which this
+      # constructor-level guard cannot.
       #
-      # `gates` earns the SAME guarantee through {Gates.coerce}, and for the
-      # same reason spelled one key over: a hand-built `gates: {"research" =>
-      # "yolo"}` used to construct here and fail later as an unnamed
-      # NoMethodError from {Config#gate_policy_for}. Coercion refuses the typo
-      # by name and accepts the two shapes a caller plausibly means -- a plain
-      # Hash, and nil for "none configured".
+      # `gates` earns the SAME guarantee through {Gates.coerce}: a hand-built
+      # `gates: {"research" => "yolo"}` used to construct here and fail later as
+      # an unnamed NoMethodError from {Config#gate_policy_for}.
       def initialize(home:, gates: Gates.empty)
         raise InvalidHome.new(home, path: nil) unless HOME_VALUES.map(&:to_sym).include?(home)
 

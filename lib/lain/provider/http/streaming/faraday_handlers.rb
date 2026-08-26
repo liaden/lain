@@ -1,15 +1,9 @@
 # frozen_string_literal: true
 
-#--
-# Split from streaming.rb -- see that file's header. A real, separate module:
-# building the `on_data` proc Faraday calls is a distinct concern from the SSE
-# parsing the engine does with the bytes once they arrive. Extracting it also
-# keeps `Streaming` itself under the default `Metrics/ModuleLength` without
-# loosening the cop. Originally vendored from upstream's nested
-# `RubyLLM::Streaming::FaradayHandlers`, which built this proc two ways --
-# Faraday 1's `on_data` callback took `|chunk, size|`, Faraday 2's takes
-# `|chunk, bytes, env|` -- until the v1 leg was deleted as dead code once the
-# gemspec pinned `faraday "~> 2.14"`.
+# Split from streaming.rb -- see that file's header. Building the `on_data` proc
+# Faraday calls is a distinct concern from the SSE parsing the engine does with
+# the bytes once they arrive, and the split keeps `Streaming` under the default
+# `Metrics/ModuleLength` without loosening the cop.
 #
 # {StallClock} and {StalledStreamError} are Lain's, not upstream's, and they
 # live here because this file is the one place in the stack that learns a body
@@ -18,7 +12,7 @@
 # only line where each half is knowable: the middleware
 # ({Connection::MiddlewareStack::StallProtection}) owns the request's SCOPE,
 # and the `on_data` proc below owns the TICKS.
-#++
+
 module Lain
   class Provider
     module HTTP
@@ -43,129 +37,50 @@ module Lain
         # the wrong instrument, because a local model thinking for six minutes
         # is a real shape.
         #
-        # It ARMS ON THE FIRST TICK and not before, which is the whole of the
-        # first-byte/inter-chunk split: until a byte has arrived the only bound
-        # is `request_timeout`, so prompt evaluation keeps the budget it has
-        # always had, and only the mid-stream case is bounded.
+        # It ARMS ON THE FIRST TICK and not before: until a byte has arrived the
+        # only bound is `request_timeout`, so prompt evaluation keeps the budget
+        # it has always had and only the mid-stream case is bounded.
         #
-        # The clock reaches a handler through the REQUEST the bytes belong to.
-        # `Faraday::Env#stream_response` calls `request.on_data.call(chunk, size,
-        # self)` at both its call sites, so every chunk arrives carrying its own
-        # env -- and `env.request.context` is the per-request hash both transports
-        # already thread a collaborator through (`retry_attempt` in
-        # `Ollama::Transport`, `wal_frame` in `Anthropic::Transport`). {#watch}
-        # parks the clock there under {KEY} and {.for} reads it back, so "whose
-        # clock is this chunk's" is answered by the bytes' own request and by
-        # nothing at all about whoever is delivering them.
+        # The clock reaches a handler through the REQUEST the bytes belong to --
+        # {#watch} parks it in `env.request.context` under {KEY} and {.for} reads
+        # it back -- so "whose clock is this chunk's" is answered by the bytes'
+        # own request and by nothing about whoever is delivering them. Neither a
+        # thread variable nor fiber storage can answer it, and the fiber slot's
+        # failure was silent: an adapter running the body callback on a fiber of
+        # its own answered {Null} on every chunk, leaving stall protection OFF
+        # with a green suite.
         #
-        # It got there through two wrong slots, and both are worth keeping,
-        # because they are what any future ambient-storage idea gets read
-        # against. A THREAD variable gave two live streams one slot to fight
-        # over: Lain streams a parent turn and a subagent turn as sibling tasks
-        # on ONE reactor thread (`cli/repl.rb`'s `Sync`,
-        # `agent/tool_runner.rb#gather`'s fan-out), so the second watch displaced
-        # the first, the first's chunks then ticked the second's clock, and the
-        # displaced clock -- never ticked again -- fired against a stream that
-        # was healthy. FIBER storage fixed that and bought a subtler bug:
-        # `Fiber[]` is inherited copy-on-write by every fiber and thread born
-        # under a live watch, so a child held its parent's clock without ever
-        # having watched it and presence in the slot proved nothing. That needed
-        # an OWNERSHIP check -- a clock answers to the fiber that watched it and
-        # to no other -- and the ownership check is what made the ADAPTER's
-        # choice of dispatch fiber load-bearing.
-        #
-        # ⚠️ RETIRING THAT ASSUMPTION IS THE POINT, and it is the whole of
-        # what a request context buys over a fiber slot that already worked. The
-        # assumption was: **the Faraday adapter dispatches `on_data` on the FIBER
-        # that called it.** True of `:net_http`, which is every provider's actual
-        # adapter -- but `faraday_adapter` is a configuration OPTION, and under
-        # fiber storage an adapter that ran the body callback on a fiber or a
-        # thread of its own answered {Null} on every chunk. Stall protection was
-        # then silently OFF with a green suite, which is the worst failure a
-        # safety feature can have; measured at 0.4s of silence against a 0.15s
-        # grace, undetected. A context travels with the env rather than with the
-        # caller, so the same adapter now finds the same clock, and nothing here
-        # depends on where Faraday chooses to run `on_data`.
-        #
-        # Two smaller things follow rather than needing arguments of their own.
-        # NON-LIFO completion is a non-question: sibling streams hold different
-        # requests, so no teardown can wipe a sibling's slot, and {#unwatch}'s
-        # restore exists only to hand a caller's own context back exactly as it
-        # was found. And the invariant `Streaming#flush_stream` depends on -- that
-        # a finished watch leaves {Null} behind -- is kept by that same restore,
-        # which is load-bearing for a reason worth reading at {#unwatch} before
-        # touching it.
-        #
-        # The stop/fire race is BOUNDED, not eliminated. BOTH deliveries are
-        # asynchronous -- `Thread#raise` and `Fiber::Scheduler#fiber_interrupt`
-        # alike -- so {#fire} queues an interrupt while holding the mutex and a
-        # monitor that expires in the instant before the block returns is aiming
-        # at a request that has already finished. What the shared mutex
+        # The stop/fire race is BOUNDED, not eliminated. Both deliveries are
+        # asynchronous, so {#fire} queues an interrupt while holding the mutex
+        # and a monitor that expires in the instant before the block returns is
+        # aiming at a request that has already finished. What the shared mutex
         # guarantees is that a fire can only be ISSUED while `@state` is
-        # `:waiting`, and {#stop} ends that state under the same mutex: so every
-        # interrupt still in flight when {#stop} returns is one {#stop} knows
-        # about, because it read `:stalled` on the way past. That is the whole
-        # disarm, and it is why nothing here needs a token on the exception.
+        # `:waiting`, and {#stop} ends that state under the same mutex -- so
+        # every interrupt still in flight when {#stop} returns is one {#stop}
+        # read `:stalled` for on the way past. That is the whole disarm, and why
+        # nothing here needs a token on the exception.
         #
-        # Which leaves FIVE places the async raise can land, and only four of
-        # them are wanted. {#stalled?} short-circuits on the suspension count,
-        # written and read under the same mutex, so the monitor cannot fire while
-        # the consumer holds a chunk -- which matters MORE under a reactor, where
-        # the consumer's own code may yield to the event loop mid-chunk. The five
-        # are:
+        # An async raise can land in five places and only four are wanted; the
+        # unwanted one is the request's own post-body code, still inside
+        # {#watch}'s `yield`, which the clock cannot tell from upstream silence.
+        # It is bounded by the grace rather than designed away, and it is
+        # reachable deliberately -- so do not write a clock spec that assumes it
+        # away.
         #
-        # 1. blocked in the socket read -- intended, the stall is real;
-        # 2. blocked on the mutex in {#suspend}, which drops the chunk that just
-        #    arrived (also correct: the grace had already expired before it
-        #    landed);
-        # 3. blocked on the mutex, or on the monitor's join, in {#stop} -- which
-        #    {#unwatch} discards;
-        # 4. {Delivery::ToFiber#collect}, which closes the reactor's own hazard.
-        #    `fiber_interrupt` is DEFERRED: the reactor delivers when it next
-        #    resumes the fiber, and a queued interrupt cannot be recalled, so
-        #    without this place a stream completing on the grace boundary would
-        #    be interrupted in its NEXT tool call or its next turn. A completing
-        #    stream that knows an interrupt is coming therefore spends one turn
-        #    of the event loop taking delivery of it;
-        # 5. ⚠️ the request's own post-body code, still inside {#watch}'s `yield`
-        #    after the last {#receiving} has resumed. The suspension count does
-        #    not cover it -- it guards only the region a chunk is being delivered
-        #    in -- and neither does {#unwatch}, which has not been reached yet.
-        #    This one is UNWANTED and is not designed away: the clock gets no
-        #    end-of-body signal, so it cannot tell the middleware stack unwinding
-        #    below {Connection::MiddlewareStack::StallProtection} from upstream
-        #    silence, and it charges that tail the same grace it charges a gap.
-        #    Bounded by the grace, therefore: at the shipped 30s the tail would
-        #    have to run silent for 30s, which is why it has never been observed
-        #    on a real stream. It is easy to reach deliberately -- a `Thread.pass`
-        #    tail took it 140 times in 300 rounds at a twentieth-second grace and
-        #    133 at a hundredth, in one run, and the rate wanders because it is a
-        #    race -- so do not write a clock spec that assumes it away. On the
-        #    reactor path it is closed anyway: the same tail completed 300 of 300
-        #    under {Delivery::ToFiber}, because {#collect} takes delivery unless
-        #    the tail reaches the event loop first. Closing it wants an
-        #    end-of-body tick, which is a change to the split this file's header
-        #    describes rather than a change to this class.
-        #
-        # Before the delivery became a suspended REGION the exception could land
-        # anywhere the request happened to be, the consumer's own code included.
+        # The full account -- the two wrong slots and what each measured, the
+        # adapter assumption that retires, all five landing places, and what is
+        # still owed -- is in docs/providers/stall-clock.md.
         class StallClock
-          # Where {#watch} parks the clock for the `on_data` proc to find: a key
-          # in the FARADAY REQUEST CONTEXT, the request's own carrier rather than
-          # an ambient slot -- see the class doc for why neither the thread nor
-          # the fiber could own it.
+          # A key in the FARADAY REQUEST CONTEXT -- the request's own carrier
+          # rather than an ambient slot.
           KEY = :lain_stall_clock
 
-          # Named threads, and named per FIBER and per CLOCK: a survivor in a
-          # watchdog dump is useless if every clock thread in the process shares
-          # one name, and no single id is enough. The thread attributes it to a
-          # request; the fiber is what tells two SIBLING streams apart, since
-          # they share a reactor thread and that is the whole subject of this
-          # class; the clock's own id keeps two SEQUENTIAL streams on one fiber
-          # apart -- and under `rake pspec` a worker is one process with one main
-          # thread, so without it every clock thread in the worker collides.
-          # Matching {StreamingUpstream::THREAD_PREFIX}, which embeds its port
-          # for exactly this reason -- so match on the prefix, never on equality.
+          # Named per THREAD, FIBER and CLOCK, because no single id is enough:
+          # the thread attributes a survivor in a watchdog dump to a request,
+          # the fiber tells two SIBLING streams sharing a reactor thread apart,
+          # and the clock's own id separates two SEQUENTIAL streams on one fiber
+          # -- without which every clock thread in a `pspec` worker collides.
+          # Match on the prefix, never on equality.
           THREAD_PREFIX = "lain stall clock"
 
           # AWS's stalled-stream detector checks once a second; a grace of a few
@@ -268,15 +183,11 @@ module Lain
             # line further down, so an unfinished response is still a loud
             # NoMethodError rather than a silent nothing.
             #
-            # ⚠️ STILL OWED, and MORE live since the move than it was before: an
-            # absent clock at tick time answers {Null} rather than raising, so a
-            # request whose middleware never ran is unprotected FOREVER and
-            # silently. Under fiber storage that needed a misconfigured adapter
-            # to reach; on the request context it needs only a stack assembled
-            # without {Connection::MiddlewareStack::StallProtection}. The ambient
-            # half of the guard is delivered and the LOUD half is not, and an
-            # unprotected stream with a green suite is the failure mode this
-            # whole class exists to answer.
+            # ⚠️ STILL OWED: an absent clock at tick time answers {Null} rather
+            # than raising, so a stack assembled without
+            # {Connection::MiddlewareStack::StallProtection} is unprotected
+            # FOREVER and silently -- the failure mode this whole class exists
+            # to answer, with a green suite.
             def for(env)
               request = env&.request
               request&.context&.fetch(KEY, nil) || Null
@@ -319,25 +230,19 @@ module Lain
           # would be stall protection silently off, which is the failure this
           # whole class is written against.
           #
-          # The context is REPLACED rather than mutated, and the reason is
-          # sharper than the matching idiom in both transports.
-          # `Connection#build_request` does `req.options = options.dup`, and
-          # `Faraday::Options` does not override `dup` -- so it is Struct's
-          # SHALLOW dup and `env.request.context` is the CONNECTION's own
-          # `options.context` object, not a copy of it. Measured: an in-place
-          # `context[KEY] = self` writes onto the connection, and every later
-          # request built from it starts life holding the finished clock of an
-          # earlier one. Replacing the member instead leaves the connection's
-          # hash untouched, and the `ensure` hands back the very object it
-          # displaced. The simplification is the trap here, so there is an
-          # example on the connection's context and not only on the request's.
+          # The context is REPLACED rather than mutated. `Connection#build_request`
+          # does `req.options = options.dup` and `Faraday::Options` does not
+          # override `dup`, so that is Struct's SHALLOW dup and
+          # `env.request.context` IS the connection's own `options.context`
+          # object. Measured: an in-place `context[KEY] = self` writes onto the
+          # connection, and every later request built from it starts life
+          # holding an earlier one's finished clock. The simplification is the
+          # trap here.
           #
           # The owner and the delivery are captured HERE and not in the
           # constructor, because this is the line that claims a request:
           # `Fiber.current` and `Fiber.scheduler` are only the right pair when
-          # read on the fiber that is about to block reading the body. `@owner`
-          # names the monitor thread and nothing else now -- a clock is found
-          # through its request, so no fiber has to be recognised.
+          # read on the fiber that is about to block reading the body.
           def watch(env)
             request = env.request
             displaced = request.context
@@ -358,13 +263,12 @@ module Lain
           # same thread between two chunks arriving. Measured before this
           # existed: a body already sitting whole in the receive queue was
           # reported as "no bytes for 0.5s, with the connection still open"
-          # purely because the caller slept inside `on_chunk`. The upstream had
-          # finished; the message blamed it. Ticking only on the way out would
-          # have fixed the NEXT gap and left that one, since the consumer's own
-          # call can outlast the grace by itself -- so the window is a region,
-          # not two instants. A consumer that blocks forever therefore never
-          # trips this, which is right: that is a consumer bug, not a dead
-          # stream, and it is not the upstream's silence to answer for.
+          # purely because the caller slept inside `on_chunk`. Ticking only on
+          # the way out would have fixed the NEXT gap and left that one, since
+          # the consumer's own call can outlast the grace by itself -- so the
+          # window is a region, not two instants. A consumer that blocks forever
+          # therefore never trips this, which is right: that is a consumer bug,
+          # not the upstream's silence to answer for.
           def receiving
             suspend
             yield
@@ -376,36 +280,27 @@ module Lain
 
           # The teardown, and all three of its layers are load-bearing.
           #
-          # The COLLECT is what makes a deferred interrupt safe. {#stop} answers
-          # whether the monitor fired, and a fire that {#stop} learns about is
-          # exactly a fire whose interrupt may not have been delivered yet -- so
-          # the fiber takes one turn of the event loop to accept it HERE, rather
-          # than leaving it to land in whatever the fiber does next. Without a
-          # reactor there is nothing to collect and this is a no-op.
+          # The COLLECT is what makes a deferred interrupt safe: a fire {#stop}
+          # learns about is exactly a fire whose interrupt may not have been
+          # delivered yet, so the fiber takes one turn of the event loop to
+          # accept it HERE rather than in whatever it does next.
           #
-          # The RESCUE is why the TEARDOWN cannot report a completed stream as a
+          # The RESCUE is why the teardown cannot report a completed stream as a
           # stalled one. By the time {#stop} runs the block has either returned
-          # -- every byte arrived, so there was no stall -- or raised something
-          # the caller is already carrying and would rather see. A REAL stall
-          # never arrives here: it is raised while the request is still blocked
-          # in the socket read, and propagates out of {#watch}'s `yield`.
+          # or raised something the caller would rather see; a REAL stall never
+          # arrives here, since it is raised while the request is still blocked
+          # in the socket read and propagates out of {#watch}'s `yield`. The
+          # boundary of that claim is the unwanted landing place -- an interrupt
+          # arriving while post-body code is still inside the `yield` is ABOVE
+          # this rescue.
           #
-          # Note the boundary of that claim, which is landing place 5 in the
-          # class doc: an interrupt that arrives while the request's own
-          # post-body code is still inside the `yield` is ABOVE this rescue and
-          # escapes as a stall on a stream that completed. The teardown is not
-          # where that one can be caught.
-          #
-          # The ENSURE takes this clock back OUT of the request, and that is a
-          # REMOVAL rather than a tidy-up. `Faraday::Response#finish` keeps the
-          # very Env the stack ran on -- `env.is_a?(Env) ? env : Env.from(env)`,
-          # no copy -- so `response.env.request.context` IS the hash this line is
-          # writing to, and `Streaming#flush_stream` calls `on_data` once more
-          # through it after `connection.post` has returned. A clock merely
-          # STOPPED and left behind would be found by that flush and ticked,
-          # restarting its own monitor against a request that no longer exists.
-          # {.for} answering {Null} once a watch has ended is what forbids that,
-          # and this line is the whole of the guarantee.
+          # The ENSURE is a REMOVAL rather than a tidy-up.
+          # `Faraday::Response#finish` keeps the very Env the stack ran on, so
+          # `response.env.request.context` IS the hash this line writes to, and
+          # `Streaming#flush_stream` calls `on_data` once more through it after
+          # `connection.post` returns. A clock merely STOPPED and left behind
+          # would be found by that flush and ticked, restarting its own monitor
+          # against a request that no longer exists.
           #
           # It has to run even when the teardown is what raised, which it can
           # twice over: {#stop} blocks on the mutex a firing monitor holds, and
@@ -458,9 +353,9 @@ module Lain
           # The one thread, argued for as `.rubocop.yml`'s census asks. A stalled
           # stream is defined by the ABSENCE of a callback, so nothing on the
           # request thread can notice it -- that thread is blocked in a socket
-          # read, which is exactly the observation being made. It is owned end to
-          # end: started on the first byte, joined by {#stop} in {#watch}'s
-          # ensure, and it touches no state outside this instance's mutex.
+          # read, which is exactly the observation being made. Owned end to end:
+          # started on the first byte, joined by {#stop} in {#watch}'s ensure,
+          # touching no state outside this instance's mutex.
           def start_monitor
             Thread.new do
               Thread.current.name = "#{THREAD_PREFIX} #{@target.object_id}.#{@owner.object_id}.#{object_id}"
@@ -485,10 +380,9 @@ module Lain
           end
 
           # The suspension count first, and it short-circuits: while the consumer
-          # holds the chunk there is no upstream silence to measure, and `now` is
-          # not even asked for. Read under the same mutex {#suspend} writes it
-          # under, which is what makes the delivery window exception-free rather
-          # than merely narrow -- see the class doc.
+          # holds the chunk there is no upstream silence to measure. Read under
+          # the same mutex {#suspend} writes it under, which is what makes the
+          # delivery window exception-free rather than merely narrow.
           def stalled? = @suspensions.zero? && idle > @grace
 
           def idle = now - @last
@@ -513,42 +407,28 @@ module Lain
             v2_on_data(on_chunk, on_failed_response)
           end
 
-          # {StallClock#receiving} wraps the whole delivery -- including the
-          # status branch on purpose, since a failed response's body is bytes
-          # too and a slow error body is not a stall. Named `v2_on_data` rather
-          # than the version-neutral `on_data` because {Provider::HTTP::Providers::Anthropic}'s
-          # transport comment still points at it by that name (out of this
-          # card's scope to rename).
+          # {StallClock#receiving} wraps the whole delivery -- the status branch
+          # included on purpose, since a failed response's body is bytes too and
+          # a slow error body is not a stall.
           #
           # The clock comes off the ENV, which is what makes this proc
-          # indifferent to the fiber Faraday runs it on -- see {StallClock} for
-          # the assumption that retires. A chunk therefore ticks the clock of the
-          # request it arrived with, the empty end-of-body chunk included:
-          # `stream_response` sends `on_data.call(+"", 0, self)` when a body
-          # yielded nothing, and that one goes through {StallClock#receiving}
-          # like any other delivery, so it ARMS a clock that was never armed.
-          # Decided rather than stumbled into, and harmless -- it lands when the
-          # body is over, an instant before {StallClock#watch}'s ensure stops the
-          # clock, so no grace can elapse behind it. Liveness is also its honest
-          # reading: Faraday sends it exactly when the body ended, which is the
-          # opposite of silence with the connection still open.
+          # indifferent to the fiber Faraday runs it on. A chunk therefore ticks
+          # the clock of the request it arrived with, the empty end-of-body
+          # chunk included: `stream_response` sends `on_data.call(+"", 0, self)`
+          # when a body yielded nothing, so that one ARMS a clock that was never
+          # armed. Decided rather than stumbled into, and harmless -- it lands
+          # an instant before {StallClock#watch}'s ensure stops the clock, so no
+          # grace can elapse behind it.
           #
-          # `env.status` (not `env&.status`): this proc has TWO callers, and
-          # only one of them is Faraday itself. Faraday 2's `stream_response`
-          # always passes a real `env` to `on_data`, at both its call sites --
-          # that made the old safe-nav dead FOR THAT CALLER, v1 arity-padding
-          # defensiveness (a non-lambda proc pads a missing third argument with
-          # nil). The second caller is Lain's own {Streaming#flush_stream},
-          # which hands this proc `response.env` rather than an env Faraday
-          # built -- and `Faraday::Response#env` is nil until `#finish` runs,
-          # so a response that reached here unfinished would crash on `env.status`
-          # where the deleted safe-nav used to route it (nil != 200) to
-          # `on_failed_response` instead. Production-safe today: the net_http
-          # adapter finishes the env before `connection.post` returns, so
-          # `flush_stream` never actually sees an unfinished one -- pinned by
-          # `streaming_spec.rb`'s "raises if flush_stream is ever handed a
-          # response that never finished" so a future adapter or refactor that
-          # CAN reach this hits a named spec, not a bare crash.
+          # `env.status`, not `env&.status`: this proc has TWO callers and only
+          # one is Faraday, whose `stream_response` always passes a real env.
+          # The second is Lain's own {Streaming#flush_stream}, which hands over
+          # `response.env` -- nil until `#finish` runs -- and the deleted
+          # safe-nav used to route that (nil != 200) to `on_failed_response`
+          # instead of crashing. Production-safe today, since the net_http
+          # adapter finishes the env before `connection.post` returns, and
+          # pinned by a named spec so a future adapter that CAN reach it fails
+          # by name rather than by bare crash.
           def v2_on_data(on_chunk, on_failed_response)
             proc do |chunk, _bytes, env|
               StallClock.for(env).receiving do

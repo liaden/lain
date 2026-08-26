@@ -7,16 +7,14 @@ module Lain
     class ArmSweep
       # Loads the committed recordings fixture and turns it into the two things
       # the sweep needs to run the real arms offline: a request-aware {Replay}
-      # provider (one committed answer per prompt, replayed through
-      # Provider::Mock), and the orchestrator-worker decomposition
-      # ({#subtasks_for}). One {Recordings} builds ONE {#seam} object that drives
-      # all three arms -- the base Arm duck `call(journal:, **spawn_opts)` -- so
-      # the cross-arm proof the dual_ledger_spec pins holds here by construction.
+      # provider and the orchestrator-worker decomposition ({#subtasks_for}).
+      # One {Recordings} builds ONE {#seam} driving all three arms, so the
+      # cross-arm proof holds here by construction.
       #
-      # Every recorded task id must resolve to a real {Bench::ArmTasks} task (the
-      # suite owns prompts, categories, and graders); a recording for an unknown
-      # id, or a `whole` block missing its text/usage, is a malformed fixture
-      # surfaced loudly, never a task silently skipped.
+      # Every recorded task id must resolve to a real {Bench::ArmTasks} task,
+      # since the suite owns prompts, categories and graders; a recording for an
+      # unknown id, or a `whole` block missing its text or usage, is a malformed
+      # fixture surfaced loudly, never a task silently skipped.
       class Recordings
         # A model call's committed answer: the assistant text (encoding produced
         # files as FILE...END blocks) and the token usage it is priced at.
@@ -28,9 +26,9 @@ module Lain
         # are -- but a known model keeps {Ledger} from raising UnknownModel.
         MODEL = "claude-sonnet-4"
 
-        # The Context every arm's agents render through. Small max_tokens: the
-        # mock never streams a long completion, and a stable Context keeps the
-        # rendered request bytes identical across repeats.
+        # Small max_tokens: the mock never streams a long completion, and a
+        # stable Context keeps the rendered request bytes identical across
+        # repeats.
         def self.context = Context.new(model: "claude-opus-4-8", max_tokens: 256)
 
         # @param path [String] the committed recordings YAML
@@ -72,10 +70,8 @@ module Lain
           @entries.fetch(key)
         end
 
-        # ONE spawn seam driving all three arms: a fresh Agent per call (the mock
-        # is stateful) over a {Replay} provider and an empty toolset, mapping the
-        # widened spawn tail every arm speaks -- `timeline:`/`base_timeline:` to
-        # the Agent's root, `worker_env:` to its Session.
+        # ONE spawn seam driving all three arms: a fresh Agent per call, because
+        # the mock is stateful, over a {Replay} provider and an empty toolset.
         # @return [#call]
         def seam
           recordings = self
@@ -91,8 +87,6 @@ module Lain
 
         private
 
-        # Build the prompt->answer index and per-task decomposition from the
-        # fixture, in file order (the sweep's deterministic run order).
         def index!
           @order = raw.keys.map { |id| -id.to_s }
           @order.each { |id| ingest(id, raw.fetch(id)) }
@@ -138,11 +132,10 @@ module Lain
         end
       end
 
-      # A Provider::Mock whose answer depends on WHICH prompt it is asked, not on
-      # call order -- so one provider correctly serves a linear arm asking the
-      # whole task and a worker asking one subtask, with no ordering assumptions
-      # across the orchestrator's concurrent fan-out. Everything else (the
-      # capability set, the stream-start signal) is Mock's, unchanged.
+      # A Provider::Mock whose answer depends on WHICH prompt it is asked, not
+      # on call order -- so one provider correctly serves a linear arm asking
+      # the whole task and a worker asking one subtask, with no ordering
+      # assumptions across the orchestrator's concurrent fan-out.
       class Replay < Provider::Mock
         def initialize(recordings)
           super()
@@ -168,9 +161,9 @@ module Lain
       # `path => content` Trajectory ArmTasks' gold grader scores. The FILE
       # marker is matched ANYWHERE on a line, not just at its start, because the
       # orchestrator's synthesis fold prefixes each worker's text with
-      # "worker N: " -- so the first block of a folded worker sits mid-line. END
-      # is an all-caps sentinel on its own line, distinct from Ruby's lowercase
-      # `end`, so method bodies never terminate a block early.
+      # "worker N: ", so the first block of a folded worker sits mid-line. END
+      # is all-caps, distinct from Ruby's lowercase `end`, so method bodies
+      # never terminate a block early.
       module FileBlocks
         BLOCK = /FILE (.+?)\n(.*?)\nEND$/m
         private_constant :BLOCK
@@ -179,23 +172,22 @@ module Lain
         # its answer. It lives HERE, beside the regex rather than beside the
         # `bench arms` command that sends it, because the instruction and the
         # pattern are ONE contract: a reworded prompt that stopped satisfying
-        # this regex would not fail, it would score near-zero in every column,
-        # which is the failure this constant exists to have already fixed. The
-        # offline sweep needs no such prompt -- its recordings are authored in
-        # this shape already -- so `bench arms` shipped without one and every
+        # this regex would not fail, it would score near-zero in every column.
+        # The offline sweep needs no such prompt -- its recordings are authored
+        # in this shape already -- so `bench arms` shipped without one and every
         # live arm scored near zero.
         #
         # Deliberately says nothing about HOW to solve a task: the arms differ
         # by orchestration topology, and a prompt that coached strategy would
         # make the comparison measure the prompt. For the same reason it does
-        # not tell an arm it is being evaluated -- that is a documented
-        # behavioural modifier, and the orchestrator arm's workers would each
-        # receive it N times per task while the control receives it once.
+        # not tell an arm it is being evaluated -- a documented behavioural
+        # modifier, and the orchestrator arm's workers would each receive it N
+        # times per task while the control receives it once.
         #
         # The format is TAUGHT BY EXAMPLE and never spelled out in prose, so the
-        # worked block below is itself parseable -- which is what lets a spec
-        # feed this prompt to {parse} and get the example file back, rather than
-        # asserting on wording no reader is bound by.
+        # worked block below is itself parseable, which lets a spec feed this
+        # prompt to {parse} and get the example file back rather than asserting
+        # on wording no reader is bound by.
         #
         # THE EXAMPLE'S PATH AND BODY MUST COLLIDE WITH NO TASK'S GOLD. This
         # prompt is sent INTO the suite it is graded against, so an arm holds
@@ -204,9 +196,8 @@ module Lain
         # gold. The first draft used `lib/widget.rb` / `def normalize`, which is
         # verbatim `rename-method-and-callsite`'s gold, and put a +0.500 floor
         # under that task -- and a floor reads as work done, where a zero reads
-        # as a broken run. `spec/lain/bench/arms_report_spec.rb` scores this
-        # example against every task and demands no advantage over an empty
-        # answer.
+        # as a broken run. A spec scores this example against every task and
+        # demands no advantage over an empty answer.
         CONTRACT = <<~PROMPT
           Answer with the complete new contents of every file the task asks you to write
           or change, and nothing else -- no commentary, no diffs, no fenced code blocks.

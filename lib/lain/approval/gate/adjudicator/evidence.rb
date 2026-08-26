@@ -4,28 +4,19 @@ module Lain
   module Approval
     class Gate
       class Adjudicator
-        # {Adjudicator}'s OWN construction contract -- not {Approval::Contracts},
-        # which carries {GateDecision}'s. Same validate-then-freeze convention:
-        # a {Lain::Declarative::Carrier} checked before the auto-frozen Data value
-        # exists, so the record never touches ActiveModel and stays
-        # `Ractor.shareable?`.
+        # {Adjudicator}'s OWN construction contract, not {Approval::Contracts}.
         module Contracts
-          # All three members that make this record JOINABLE, guarded together.
-          # The artifact digest joins a `gate_evidence` line to the
-          # `gate_decision` it was reached under; `(epic_slug, stage)` is the
-          # partition a review surface reads it back through. A blank one of
-          # those still constructs, still journals, and can never be matched
-          # back -- which is exactly what {GateDecision} and
-          # {SignoffQueue::Partition} both refuse, and this record is read
-          # beside them.
+          # The three members that make this record JOINABLE, guarded together:
+          # a blank one still constructs, still journals, and can never be
+          # matched back to the `gate_decision` it was reached under.
           #
           # `digest` is deliberately NOT required: a failed or blank spike
           # journals one of these with a reason and no content address, and that
-          # record is the evidence that the gate tried.
+          # record is the evidence that the gate TRIED.
           #
-          # `latency` is guarded rather than coerced for {GateDecision}'s
-          # reason: `to_f` turns nil into 0.0, writing "the spike was instant"
-          # -- a measurement nobody made -- into the experiment record.
+          # `latency` is guarded rather than coerced: `to_f` turns nil into 0.0,
+          # writing "the spike was instant" -- a measurement nobody made -- into
+          # the experiment record.
           class Evidence < Declarative::Carrier
             attribute :artifact_digest
             attribute :epic_slug
@@ -41,68 +32,56 @@ module Lain
 
         # One spike's findings over one artifact, journaled as `gate_evidence`.
         #
-        # Content-addressed rather than merely stored: the digest is what rides
-        # onto the {GateDecision} and onto the parked {SignoffQueue::Item}, so a
-        # reviewer holding either can name the exact evidence text the verdict
-        # was reached on. The text is journaled beside it because nothing else
+        # Content-addressed rather than merely stored: the digest rides onto the
+        # {GateDecision} and the parked {SignoffQueue::Item}, so a reviewer
+        # holding either can name the exact evidence text the verdict was
+        # reached on. The text is journaled beside it because nothing else
         # stores spike output -- the digest addresses it, this line IS it.
         #
-        # `digest` and `text` are nil together exactly when no findings were
+        # `digest` and `text` are nil together exactly when nothing was
         # gathered, and `reason` is populated exactly then. That record is still
-        # written: "the gate tried and could not gather" is an experiment result,
-        # not an absence.
+        # written: "the gate tried and could not gather" is an experiment
+        # result, not an absence.
         #
         # `question` is carried HERE and not only on {SignoffQueue::Item}, whose
-        # copy is documented nullable and unrecoverable from the journal. The
-        # morning review is question + evidence + hesitation, so a review rebuilt
-        # after a restart would otherwise hold the evidence and the model's
-        # hesitation and have nothing to say what was being asked.
+        # copy is nullable and unrecoverable from the journal -- otherwise a
+        # review rebuilt after a restart would hold the evidence and the model's
+        # hesitation with nothing to say what was being asked.
         #
-        # `latency` is the SPIKE's seconds, and it is here because the bench's
-        # whole deliverable is comparability: {GateDecision} already journals
-        # what the verdict cost, while the spawn that actually spent the tokens
-        # journaled nothing. Seconds and not tokens because {Skill::RoleSpawn}
-        # hands back a {Tool::Result} with no usage on it -- the child's own turns
-        # journal their usage, and a reader joins the two.
+        # `latency` is the SPIKE's seconds: {GateDecision} already journals what
+        # the verdict cost, while the spawn that spent the tokens journaled
+        # nothing. Seconds and not tokens because {Skill::RoleSpawn} hands back a
+        # {Tool::Result} with no usage on it; the child's own turns journal
+        # theirs, and a reader joins the two.
         GateEvidence = Data.define(:artifact_digest, :epic_slug, :stage, :question, :digest, :text,
                                    :latency, :reason) do
           include Telemetry::Journalable
 
           # THE blankness test. {Adjudicator#findings} routes on it and
-          # {.gathered} refuses on it, so the producer and its own canary cannot
-          # drift into disagreeing about what "nothing" is -- which is exactly
-          # how the U+00A0 hole got in: two `strip` calls, both wrong, unable to
-          # contradict each other.
+          # {.gathered} refuses on it, so the producer and its canary cannot
+          # drift about what "nothing" is -- which is how the U+00A0 hole got
+          # in: two `strip` calls, both wrong, unable to contradict each other.
           #
-          # Sharing it makes the canary a second CHECK, not a second OPINION:
-          # it cannot catch this class being wrong about blankness, only a
-          # caller who skipped the routing. That is the deliberate trade -- a
-          # genuinely independent predicate would be a second definition of
-          # "nothing", and two definitions are what we just paid for.
+          # Sharing makes the canary a second CHECK, not a second OPINION: it
+          # cannot catch this class being wrong about blankness, only a caller
+          # who skipped the routing. The deliberate trade, since a genuinely
+          # independent predicate would be a second definition of "nothing".
           #
-          # The predicate itself now lives in {Lain::Blankness}, which this
-          # delegates DOWN to: {Question::Answer} needs the same test and
-          # `question` loads long before `approval`, so the shared rule moved
-          # below both rather than one unit reaching up into the other. The name
-          # and the behaviour here are unchanged, which is what keeps every
-          # caller and every spec of this class pinning the same thing.
+          # The predicate lives in {Lain::Blankness}, below both this and
+          # {Question::Answer}, rather than one unit reaching up into the other.
           def self.blank?(value) = Blankness.blank?(value)
 
-          # The digest is taken from the record's OWN stored text, after
-          # construction has clamped it -- not from the argument. That makes
-          # "the address names the bytes this line carries" structural rather
-          # than a promise: a truncated text cannot end up addressed by the
-          # digest of the full one, which would leave `evidence_digest` on a
-          # decision naming bytes nobody kept.
+          # The digest is taken from the record's OWN stored text, AFTER
+          # construction clamped it, never from the argument. That makes "the
+          # address names the bytes this line carries" structural rather than a
+          # promise: a truncated text cannot end up addressed by the digest of
+          # the full one, leaving `evidence_digest` naming bytes nobody kept.
           #
-          # Blank findings are refused HERE as well as in {Adjudicator#findings},
-          # as a canary -- the {SignoffQueue::Contracts::Decision} idiom, where a
-          # clause no producible value can trip still earns its place.
-          # `Canonical.digest("")` is a real address, so a record built this way
-          # would answer `gathered?` true and let a bare APPROVE close a gate on
-          # nothing. Nothing in this class reaches it today; it is here so a
-          # later caller cannot. See {.blank?} for why it shares the predicate
-          # rather than restating it.
+          # Blank findings are refused here as well as in {Adjudicator#findings},
+          # as a CANARY. `Canonical.digest("")` is a real address, so a record
+          # built this way would answer `gathered?` true and let a bare APPROVE
+          # close a gate on nothing. Nothing reaches it today; it is here so a
+          # later caller cannot.
           def self.gathered(text, gated, latency:)
             raise ArgumentError, "evidence with no findings is missing evidence -- use .missing" if blank?(text)
 
@@ -113,10 +92,10 @@ module Lain
           def self.missing(reason, gated, latency:) = new(**gated, digest: nil, text: nil, latency:, reason:)
 
           def initialize(artifact_digest:, epic_slug:, stage:, question:, digest:, text:, latency:, reason:)
-            # Settled into their journaled bytes BEFORE the guard, so `presence:`
-            # judges what actually gets written: a stage object whose #to_s is
-            # blank passes a presence check on the raw object and then writes a
-            # partition key nothing can match back.
+            # Settled into their journaled bytes BEFORE the guard, so
+            # `presence:` judges what actually gets written: a stage whose #to_s
+            # is blank passes a presence check on the raw object and then writes
+            # a partition key nothing can match back.
             joinable = { artifact_digest: frozen(artifact_digest), epic_slug: interned(epic_slug),
                          stage: interned(stage) }
             Contracts::Evidence.check!(**joinable, latency:)
@@ -129,16 +108,15 @@ module Lain
 
           private
 
-          # Interned, where the prose is dup'd-and-frozen: the {GateDecision}
-          # split, and for its reason -- a stage or an epic repeats across every
-          # record in a run, a digest and a spike's findings do not.
+          # Interned where the prose is dup'd-and-frozen: a stage or an epic
+          # repeats across every record in a run, a digest and a spike's
+          # findings do not.
           def interned(value) = -value.to_s
 
           def frozen(value) = value && value.to_s.dup.freeze
 
-          # Bounded because nothing upstream bounds a model's answer, and one
-          # runaway spike would put a multi-megabyte line in the middle of an
-          # NDJSON experiment record.
+          # Nothing upstream bounds a model's answer, and one runaway spike
+          # would put a multi-megabyte line in an NDJSON experiment record.
           def clamped(value) = value.to_s[0, MAX_TEXT].freeze
         end
       end

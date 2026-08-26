@@ -575,7 +575,20 @@ module CommentCensus
       return warn(USAGE) || exit(2) unless mode
 
       paths = argv.reject { |arg| arg.start_with?("--") }
-      public_send(mode, paths.empty? ? CommentCensus.scan_files(Dir.pwd) : paths)
+      public_send(mode, paths.empty? ? CommentCensus.scan_files(Dir.pwd) : files_under(paths))
+    end
+
+    # A directory argument means "every file in it I know how to read". Without
+    # this a subtree argument reached the census as one unreadable path, which
+    # divided by zero code lines rather than saying what was wrong.
+    def self.files_under(paths)
+      paths.flat_map { |path| File.directory?(path) ? readable_under(path) : [path] }
+    end
+
+    def self.readable_under(directory)
+      Dir.glob(File.join(directory, "**", "*"))
+         .select { |path| File.file?(path) && CommentCensus.language_for(path) }
+         .sort
     end
 
     # Paths are reported relative to the working directory. The sweep's proof

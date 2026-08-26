@@ -3,42 +3,34 @@
 module Lain
   module Oracle
     # Deterministic replay for the oracle tier: substitutes a journaled answer
-    # instead of asking a model. The same "recorded is a replay of a real
-    # interpretation" shape as {Effect::Handler::Recorded} (which keys a TOOL
-    # call's outcome on `tool_use_id`) and {Grader::Refuter::Recorded} (which
-    # keys a FINDING's verdict on its content digest) -- here keyed on
-    # `(oracle_digest, question)`, so a substituted answer is exactly the one
-    # THIS oracle gave THIS question.
+    # instead of asking a model. The "recorded is a replay of a real
+    # interpretation" shape {Effect::Handler::Recorded} and
+    # {Grader::Refuter::Recorded} take, keyed here on `(oracle_digest, question)`
+    # so a substituted answer is exactly the one THIS oracle gave THIS question.
     #
-    # It is a tier, answering the same `#ask -> Promise` message {Model} and
-    # {Heuristic} do, bound to one {Definition}: the definition renders the
-    # question (the second half of the key), owns the `oracle_digest` (the
-    # first), and re-validates the recorded attributes through its schema on the
-    # way back out -- so a caller cannot tell a replayed answer from a live one.
+    # It is a tier bound to one {Definition}, which renders the question, owns the
+    # digest, and re-validates the recorded attributes through its schema on the
+    # way out -- so a caller cannot tell a replayed answer from a live one.
     #
-    # CRUCIALLY, a miss RAISES {Unrecorded} -- it does NOT fall through to a live
-    # model the way {Effect::Handler::Recorded} falls through to its `inner`.
-    # Re-asking a model on replay would silently spend tokens and, worse, could
-    # return a DIFFERENT answer than the recording, making the replay a lie. Two
-    # staleness paths both surface loudly here: a changed oracle SCHEMA gives the
-    # definition a different `oracle_digest`, so its recordings are keyed under an
-    # address this tier never looks up -> {Unrecorded}; and if a recording for
-    # the right digest somehow no longer fits the schema, {Definition#answer}
-    # raises {InvalidAnswer} as it rebuilds it.
+    # CRUCIALLY, a miss RAISES {Unrecorded} rather than falling through to a live
+    # model: re-asking would silently spend tokens and could return a DIFFERENT
+    # answer than the recording, making the replay a lie. Both staleness paths
+    # surface loudly -- a changed schema gives the definition a different
+    # `oracle_digest` so its recordings sit at an address this tier never looks
+    # up, and a recording that no longer fits the schema raises {InvalidAnswer} as
+    # {Definition#answer} rebuilds it.
     class Recorded
       # No journaled answer names this `(oracle_digest, question)`.
       class Unrecorded < Error; end
 
-      # Build from journaled records, keeping only the answers this definition's
-      # oracle produced (its `oracle_digest`) and grouping them by question.
+      # Build from journaled records, keeping only this definition's oracle's
+      # answers and grouping them by question.
       #
-      # Two identical questions to a model oracle can yield DIFFERENT answers (a
-      # model is not a pure function), so a question is NOT a unique key the way a
-      # `tool_use_id` is. Collapsing same-question lines into one would silently
-      # discard every occurrence but the last and hand a replay the wrong answer;
-      # each question therefore keys a QUEUE consumed FIFO, the same order the
-      # calls were journaled in -- exactly {Grader::Refuter::Recorded}'s handling
-      # of same-digest verdicts.
+      # Two identical questions to a model oracle can yield DIFFERENT answers, so a
+      # question is NOT a unique key the way a `tool_use_id` is. Collapsing
+      # same-question lines would discard every occurrence but the last and hand a
+      # replay the wrong answer, so each question keys a QUEUE consumed FIFO, in
+      # journal order.
       #
       # @param entries [Enumerable<Hash, String>] the {Journal.records} duck --
       #   parsed Hashes or raw NDJSON line Strings
@@ -61,10 +53,9 @@ module Lain
         @answers = answers.transform_values(&:dup)
       end
 
-      # Substitute the next recorded answer for this question, verbatim -- no
-      # provider call. The recorded attributes go back through {Definition#answer},
-      # so the returned Promise is the same pre-resolved, schema-validated one the
-      # live tiers hand back.
+      # The next recorded answer for this question, verbatim -- no provider call.
+      # It goes back through {Definition#answer}, so the Promise is the same
+      # pre-resolved, schema-validated one the live tiers hand back.
       #
       # @param inputs [Hash] the question's slot values
       # @return [Lain::Promise] resolving to the validated typed answer
@@ -81,25 +72,21 @@ module Lain
       end
 
       # Records every oracle call as a {Telemetry::OracleAnswer} before returning
-      # it, so {Recorded.from_journal} can replay the run later with no model
-      # call. The record half of the record/replay pair -- the decoration idiom
-      # {Grader::Verified} uses for verdicts, one tier over: wrap a live tier,
-      # journal what it answered, hand its answer straight back untouched.
+      # it, so {Recorded.from_journal} can replay the run with no model call. The
+      # record half of the pair: wrap a live tier, journal what it answered, hand
+      # its answer straight back untouched.
       #
-      # It is itself a tier (answers `#ask -> Promise`), so it drops in wherever a
-      # {Model} or {Heuristic} would, and stacking two of them would double-record
-      # -- put exactly one, outermost.
+      # Itself a tier, so it drops in wherever a {Model} or {Heuristic} would --
+      # and stacking two would double-record, so put exactly one, outermost.
       class Journaling
-        # @param inner [#ask, #model, #usage] the live tier to record ({Model},
-        #   {Heuristic}, or any tier answering that trio) -- the model and usage
-        #   are read OFF the tier after it answers, never passed in alongside, so
-        #   the journaled cost cannot drift from the tier that actually paid it
-        # @param definition [Oracle::Definition] renders the journaled question
-        #   and owns the `oracle_digest` the replay keys on -- the SAME definition
+        # @param inner [#ask, #model, #usage] the live tier to record -- model and
+        #   usage are read OFF it after it answers, never passed in alongside, so
+        #   the journaled cost cannot drift from the tier that paid it
+        # @param definition [Oracle::Definition] renders the journaled question and
+        #   owns the `oracle_digest` the replay keys on -- the SAME definition
         #   `inner` is built over
         # @param journal [#<<] where {Telemetry::OracleAnswer} records land; the
-        #   Null channel by default, so no caller guards `if journal` (the same
-        #   default {Grader::Verified} and {Middleware::JournalRequests} use)
+        #   Null channel by default, so no caller guards `if journal`
         # @param clock [#call] monotonic seconds source, injectable so a spec can
         #   pin `wall_clock` deterministically
         def initialize(inner:, definition:, journal: Channel::Null::INSTANCE, clock: RunClock::MONOTONIC)
@@ -114,13 +101,11 @@ module Lain
         # right after the call is what puts a model oracle's real spend into the
         # Journal, where the bench's cost accounting reads it.
         #
-        # The answer is read via `#await` only to journal its attributes.
-        # TODO(async-tier): both live tiers pre-resolve their Promise before
-        # `#ask` returns (their own docs), so this await is the degenerate
-        # synchronous case {Promise#await} falls out of -- it never parks a fiber
-        # and needs no reactor. A future tier that resolves asynchronously would
-        # park here; when one lands, journal from a resolution callback instead of
-        # awaiting inline.
+        # TODO(async-tier): both live tiers pre-resolve their Promise before `#ask`
+        # returns, so this await is the degenerate synchronous case -- it never
+        # parks a fiber and needs no reactor. A tier that resolved asynchronously
+        # would park here; when one lands, journal from a resolution callback
+        # instead of awaiting inline.
         #
         # @param inputs [Hash] the question's slot values
         # @return [Lain::Promise] the inner tier's own Promise, unchanged

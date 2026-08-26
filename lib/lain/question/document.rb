@@ -8,91 +8,81 @@ module Lain
     # reads those edits back into an {AnswerSet}. Tick a checkbox, write indented
     # prose beneath it, `:w`.
     #
-    # {Epic::Document}'s posture throughout -- module-scope regexes, one mark map
-    # read in both directions, {MalformedDocument} naming the line, and an
-    # enumeration of the byte shapes that break a round trip. The round trip is
-    # TOTAL in the same strong sense: `parse_markdown(to_markdown(a), set)` is
-    # `a`, or the emit is refused loudly naming the value it cannot write.
-    # Nothing is silently reinterpreted in either direction -- a line the grammar
-    # has no slot for is an error naming it, never prose the human never sees
-    # again. {Plan::Document}'s "drop what you do not recognize" is the wrong
-    # posture here: the dropped line would be the human's answer.
+    # The round trip is TOTAL: `parse_markdown(to_markdown(a), set)` is `a`, or
+    # the emit is refused loudly naming the value it cannot write. Nothing is
+    # silently reinterpreted in either direction -- a line the grammar has no
+    # slot for is an error naming it. {Plan::Document}'s "drop what you do not
+    # recognize" is the wrong posture here: the dropped line would be the
+    # human's answer.
     #
-    # What Epic canNOT lend is its fence handling: it REFUSES a fence in a
-    # description, and a fenced diff, table, or mermaid block is the whole point
-    # of a question body. **This grammar tracks no fence state at all.** The
-    # parse is handed the set it is parsing, so a question's body is compared
-    # against that question's own bytes and skipped WHOLE. A body containing
-    # `- [x] no` or `## no` is therefore unreadable as grammar, and no unbalanced
-    # fence -- the one thing a human can produce by typing -- can swallow the
-    # document, because no MODE survives a line. State does: {Reader} carries a
-    # position and {Draft} carries the entries and an option counter. What none
-    # of it can do is change how the NEXT line is read -- {Draft#line}'s
-    # classification looks at its own line and nothing else, {Reader#body!}
-    # compares a whole region in one shot without classifying anything inside it,
-    # and the stop line is a byte comparison against a string this writer
-    # produced. There is nothing a line can leave open.
+    # **This grammar tracks no fence state at all**, where {Epic::Document}
+    # REFUSES a fence in a description -- a fenced diff, table, or mermaid block
+    # is the whole point of a question body. The parse is handed the set it is
+    # parsing, so a question's body is compared against that question's own bytes
+    # and skipped WHOLE. A body containing an option line or a heading is
+    # therefore unreadable as grammar, and no unbalanced fence -- the one thing a
+    # human can produce by typing -- can swallow the document, because no MODE
+    # survives a line. State does: {Reader} carries a position and {Draft} the
+    # entries and an option counter. What none of it can do is change how the
+    # NEXT line is read -- {Draft#line} looks at its own line and nothing else,
+    # {Reader#body!} compares a whole region in one shot without classifying
+    # anything inside it, and the stop line is a byte comparison against a string
+    # this writer produced.
     #
     # Two degrees of freedom are the human's, and they are all the grammar reads:
-    # the character inside a checkbox, and the indented prose. Every other byte is
-    # compared against what the renderer would have written.
+    # the character inside a checkbox, and the indented prose. Every other byte
+    # is compared against what the renderer would have written.
     #
-    # One deliberate asymmetry, and it is the only one: prose written ABOVE the
-    # options comes back rendered below them. The content survives whole and the
-    # position was never information -- {Answer} carries a comment, not a place
-    # to put it -- so this is relocated rather than refused. Every other line the
-    # grammar has no slot for is an error naming it.
+    # One deliberate asymmetry: prose written ABOVE the options comes back
+    # rendered below them. The content survives whole and the position was never
+    # information -- {Answer} carries a comment, not a place to put it -- so this
+    # is relocated rather than refused.
     module Document
       # The heading's arity word. `free_text?` is a third KIND rather than an
-      # arity, because a question with no options has nothing to choose and
-      # "choose one" printed above no options reads as a rendering bug.
+      # arity, because "choose one" printed above no options reads as a bug.
       #
-      # These strings are a CONTRACT, not decoration: the `x` keymap
-      # (frontend/neovim) recovers a question's boundary and its arity by
-      # scanning up to the nearest line matching {HEADING}, with no RPC. That is
-      # the inverse direction of this same map, read by the editor rather than by
-      # us, and it is why {Question::DOCUMENT_HEADING} refuses a body line
-      # wearing this shape at construction.
+      # These strings are a CONTRACT: the `x` keymap (frontend/neovim) recovers a
+      # question's boundary and its arity by scanning up to the nearest line
+      # matching {HEADING}, with no RPC -- this same map read by the editor
+      # rather than by us, and why {Question::DOCUMENT_HEADING} refuses a body
+      # line wearing this shape at construction.
       FREE_TEXT = "free_text"
       KIND_LABELS = { SINGLE => "choose one", MULTI => "choose any",
                       FREE_TEXT => "write your answer below" }.freeze
       HEADING = /\A## `(?<id>[^`]+)` \((?<kind>#{Regexp.union(KIND_LABELS.values)})\)\z/
 
       # One mark map, both directions, `fetch`ed at both ends -- so a mark this
-      # grammar writes is a mark it reads, and a third selection state would fail
-      # loudly here rather than emit a document that will not parse.
+      # grammar writes is a mark it reads, and a third selection state fails
+      # loudly here rather than emitting a document that will not parse.
       #
-      # `[X]` is NOT a synonym for `[x]`. Every other byte of an option line is
-      # matched literally against what the renderer wrote, and quietly accepting
-      # a second spelling of one of them would be the single place this grammar
-      # normalized the human's text instead of refusing it.
+      # `[X]` is NOT a synonym for `[x]`: every other byte of an option line is
+      # matched literally against what the renderer wrote, and accepting a second
+      # spelling would be the one place this grammar normalized the human's text
+      # instead of refusing it.
       SELECTION_MARKS = { true => "x", false => " " }.freeze
       MARK_SELECTIONS = SELECTION_MARKS.invert.freeze
       MARK_LEGEND = MARK_SELECTIONS.map { |mark, ticked| "[#{mark}] #{ticked ? "chosen" : "not chosen"}" }
                                    .join(", ").freeze
 
-      # An option line is a GitHub task-list item so it renders as a checkbox
-      # anywhere, carrying the id in a code span (which is why {ID_RESERVED}
-      # reserves the backtick) and the label a human reads. Anchored at column 0:
-      # indentation is the one discriminator between the grammar and the human's
-      # prose, so an indented option-shaped line is prose and nothing else.
+      # A GitHub task-list item, so it renders as a checkbox anywhere, carrying
+      # the id in a code span (which is why {ID_RESERVED} reserves the backtick).
+      # Anchored at column 0: indentation is the one discriminator between the
+      # grammar and the human's prose, so an indented option-shaped line is prose.
       OPTION = /\A- \[(?<mark>.)\] `(?<id>[^`]+)` (?<label>.*)\z/
 
-      # Ruling 4's comment slot: indented prose beneath the option. Exactly two
-      # spaces, and a line indented some other way is REFUSED rather than
-      # re-indented -- the editor is set to produce these bytes (`expandtab`,
-      # `shiftwidth=2`), and guessing what a tab meant is how a round trip starts
-      # editing the human's whitespace.
+      # The comment slot: indented prose beneath the option. Exactly two spaces,
+      # and a line indented some other way is REFUSED rather than re-indented --
+      # the editor is set to produce these bytes (`expandtab`, `shiftwidth=2`),
+      # and guessing what a tab meant is how a round trip starts editing the
+      # human's whitespace.
       INDENT = "  "
 
-      # The ONE statement of "these bytes would not survive the parse", spliced
-      # into the rules below the way {Epic::Document::STRIPPED_BYTES} is. The
-      # parse rstrips every line it reads, so anything the rstrip would remove is
+      # The ONE statement of "these bytes would not survive the parse". The parse
+      # rstrips every line it reads, so anything the rstrip would remove is
       # refused on the way out instead of vanishing on the way back.
       #
-      # A finder rather than a predicate: a comment is up to 64KiB and a body up
-      # to 64KiB, so the message names the offending LINE. Dumping the whole
-      # value into an error message is how a diagnostic becomes unreadable.
+      # A finder rather than a predicate: a comment and a body each run to 64KiB,
+      # so the message names the offending LINE rather than dumping the value.
       STRIPPED_BYTES = [
         ["cannot hold a line ending in whitespace -- a trailing space or a \\r -- because the parse strips " \
          "every line it reads and those bytes would not survive the round trip",
@@ -100,9 +90,9 @@ module Lain
       ].freeze
 
       # What a comment must already be for the grammar to write it back
-      # unchanged. Everything ELSE is allowed, deliberately: the indent is what
-      # separates the human's prose from the grammar, so a comment may hold a
-      # fence, a heading, or a checkbox line and none of them mean anything.
+      # unchanged. Everything ELSE is allowed: the indent is what separates the
+      # human's prose from the grammar, so a comment may hold a fence, a heading,
+      # or a checkbox line and none of them mean anything.
       COMMENT_RULES = [
         ["cannot begin with a blank line (the parse reads a comment from its first indented line, so those " \
          "bytes would not survive)",
@@ -112,13 +102,11 @@ module Lain
         *STRIPPED_BYTES
       ].freeze
 
-      # The body has NO rule here. It is written verbatim and never rewritten,
-      # and the one shape it may not hold -- a line that reads as a heading, which
-      # would put the options below it under the wrong question when the editor
-      # scans up -- is refused where the body is BUILT, by
-      # {Question::DOCUMENT_HEADING}. A second check here would be pure
-      # duplication: a rendered question is always a constructed one, and a
-      # refusal at render fires too late to be useful to anybody.
+      # The body has NO rule here. The one shape it may not hold -- a line that
+      # reads as a heading, which would put the options below it under the wrong
+      # question when the editor scans up -- is refused where the body is BUILT,
+      # by {Question::DOCUMENT_HEADING}. A rendered question is always a
+      # constructed one, so a second check here would fire too late to help.
 
       module_function
 
@@ -132,13 +120,12 @@ module Lain
 
       def to_markdown(answers) = Writer.new(answers).to_s
 
-      # Ruling 5's signature. The set is always known -- exactly one is open --
-      # and being given it is what lets the body be skipped whole.
+      # The set is always known -- exactly one is open -- and being given it is
+      # what lets the body be skipped whole.
       #
       # An {AnswerSet} raises ArgumentError for a pair rule the line walk cannot
-      # see; it is re-raised as this unit's error, because the caller of a parse
-      # rescues "this document is malformed" and an ArgumentError escaping to an
-      # editor's `:w` is an unhandled crash.
+      # see; it is re-raised as this unit's error, because an ArgumentError
+      # escaping to an editor's `:w` is an unhandled crash.
       def parse_markdown(source, set)
         AnswerSet.new(questions: set, answers: Reader.new(source, set).answers)
       rescue ArgumentError => e
@@ -161,8 +148,7 @@ module Lain
       # U+00A0 as " " and a zero-width character as "", so a refusal naming a
       # mangled checkbox mark showed the offender as visually identical to the
       # legal mark named in the same sentence -- the one error here nobody could
-      # act on. An editor or an autocorrect puts those characters in far more
-      # easily than a human does.
+      # act on.
       def named(character) = "#{character.inspect} (#{format("U+%04X", character.ord)})"
 
       def rule_break(rules, value)
@@ -179,9 +165,8 @@ module Lain
 
       # The whole answer set as the document, sections in the order the questions
       # were asked. Refuses -- rather than mangles -- a value the grammar cannot
-      # write back, for {Epic::Document::Writer}'s reason: a document that parsed
-      # to something other than what it was rendered from is a silent edit of the
-      # human's answer, which is the one failure this unit exists to prevent.
+      # write back: a document that parsed to something other than what it was
+      # rendered from is a silent edit of the human's answer.
       class Writer
         def initialize(answers)
           @answers = answers
@@ -202,10 +187,9 @@ module Lain
           [Document.heading(question), *Document.body_lines(question), *reply(question, answer)].join("\n")
         end
 
-        # The options and the comment are two BLOCKS, each preceded by a blank
-        # line and each absent when it is empty -- so a free-text question with
-        # nothing written under it ends at its body rather than trailing a blank
-        # line the parse would have to forgive.
+        # Two BLOCKS, each preceded by a blank line and each absent when empty --
+        # so a free-text question with nothing written under it ends at its body
+        # rather than trailing a blank line the parse would have to forgive.
         def reply(question, answer)
           [options(question, answer), comment(answer)].reject(&:empty?).flat_map { |block| ["", *block] }
         end
@@ -242,7 +226,7 @@ module Lain
       end
 
       # The line-oriented parse: the one mutable thing in the unit, held apart
-      # from the values it builds the way {Epic::Document::Reader} is.
+      # from the values it builds.
       #
       # It walks the SET, not the document -- one question at a time, taking the
       # heading it must find, the body it must find, and then whatever the human
@@ -290,11 +274,9 @@ module Lain
 
         def more? = @position < @lines.size
 
-        # A blank line above the FIRST heading was once skipped here. It was the
-        # one line in the unit that was neither refused nor preserved -- dropped
-        # on re-render, silently, which is the law this object states about
-        # everything else. Deleted rather than spec'd: a leading blank is a line
-        # the human did touch, and refusing it names line 1.
+        # A blank line above the FIRST heading is refused, not skipped: skipping
+        # it made it the one line in the unit neither refused nor preserved --
+        # silently dropped on re-render. Refusing names line 1.
         def heading!(question)
           expected = Document.heading(question)
           return @position += 1 if @lines[@position] == expected
@@ -303,15 +285,15 @@ module Lain
                                    "#{question.id.inspect} (#{expected.inspect}), got #{shown(@lines[@position])}"
         end
 
-        # The whole body region compared in one shot and skipped whole. This is
-        # ruling 5, and it is the entire defence against a body that shows the
-        # grammar: there is no line in here the parse ever classifies.
+        # The whole body region compared in one shot and skipped whole: the
+        # entire defence against a body that shows the grammar, since no line in
+        # here is ever classified.
         #
-        # Two separate properties, easy to conflate: skipping whole is what makes
-        # a body SAFE, but what makes it ROUND-TRIP is the `normalize_line` on the
-        # expected side below -- the body is the one interpolated field held to
-        # rstrip-invariance by normalizing both sides rather than by a construction
-        # rule, which is why {Renderable.trimmed!} does not cover it.
+        # Two properties, easy to conflate: skipping whole is what makes a body
+        # SAFE, and the `normalize_line` on the expected side is what makes it
+        # ROUND-TRIP -- the body is the one interpolated field held to
+        # rstrip-invariance by normalizing both sides rather than by a
+        # construction rule, which is why {Renderable.trimmed!} does not cover it.
         def body!(question)
           expected = Document.body_lines(question).map { |line| Document.normalize_line(line) }
           taken = @lines[@position, expected.size] || []
@@ -351,10 +333,9 @@ module Lain
           end
         end
 
-        # {Answer} and {AnswerSet} own the rules about a legal reply, so the ones
-        # they can state are theirs; only the two a line number improves are
-        # restated here. What they raise is re-raised as this unit's error
-        # against the question, the way {Epic::Document::Draft#to_issue} does.
+        # {Answer} and {AnswerSet} own the rules about a legal reply; only the
+        # two a line number improves are restated here. What they raise is
+        # re-raised as this unit's error against the question.
         def to_answer
           missing!
           single!
@@ -401,14 +382,10 @@ module Lain
 
         # One question has one comment, because {Answer} carries one. Refused
         # rather than joined: prose written under two different options means two
-        # different things, and joining them would silently drop which option
-        # each note was about.
-        #
-        # The message names the two PROSE ends -- which are what the human has to
-        # merge, and are both ends of the block by construction -- rather than
-        # one of the option lines between them. Naming a divider meant picking
-        # `first` or `last` arbitrarily, and with two of them either is as true
-        # as the other, so the choice was unobservable.
+        # different things, and joining them would drop which option each note
+        # was about. The message names the two PROSE ends -- what the human has
+        # to merge -- rather than a divider between them, which would have meant
+        # picking `first` or `last` arbitrarily.
         def split!(block)
           return if block.none?(Choice)
 
@@ -453,8 +430,7 @@ module Lain
 
         # The stray line, which is the whole of "nothing is silently
         # reinterpreted": a line here is either the grammar's or the human's, and
-        # a line that is neither is an error naming it rather than an answer
-        # nobody reads.
+        # a line that is neither is an error naming it, not an answer nobody reads.
         def refuse_stray!(number, text)
           if text.match?(/\A[[:space:]]/)
             raise MalformedDocument, "line #{number}: #{text.inspect} begins with whitespace that is not the " \

@@ -7,8 +7,7 @@ module Lain
       # placed in: which issue encloses the line, and whether the line still says
       # what the human anchored the note to.
       #
-      # The answer is a plain Hash per note, in the shape {Annotation} takes, and
-      # nothing here journals: the caller builds the records itself so it can
+      # Nothing here journals -- the caller builds the records itself so it can
       # build them BEFORE it writes anything ({Review#settle} says why).
       module Annotations
         module_function
@@ -22,17 +21,15 @@ module Lain
         end
 
         # A note crosses msgpack from lua, so its keys arrive as Strings, while
-        # an in-process caller writes Symbols. One normalization here beats every
-        # caller remembering which side of the wire it is on -- and reading only
-        # Symbols raised KeyError on every real note, after the settlement had
-        # already been journaled.
+        # an in-process caller writes Symbols. Reading only Symbols raised
+        # KeyError on every real note, after the settlement had already been
+        # journaled.
         #
         # DRIFT is `anchor_text` against the line the number now names: an
         # extmark slides as the human keeps editing, so a note whose anchor is
         # gone points at a line they never pointed at. Attributed to nothing
         # then, because the number is no longer evidence of which issue was
-        # meant -- and kept, because their words are the part nobody can
-        # reconstruct.
+        # meant -- and kept, because their words nobody can reconstruct.
         def resolve_one(annotation, lines)
           note = annotation.transform_keys(&:to_s)
           line = WireInteger.read(note["line"], field: "line")

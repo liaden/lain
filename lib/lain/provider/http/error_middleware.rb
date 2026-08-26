@@ -3,20 +3,22 @@
 require "faraday"
 
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/error_middleware.rb.
-# Changed: RubyLLM:: -> Lain::Provider::HTTP::. Faraday middleware registered
-# under :lain_provider_http_errors instead of :llm_errors, so the global
-# Faraday::Middleware registry never collides with an actual ruby_llm install.
-# `.parse_error`'s status dispatch was a ten-branch `case` carrying an inline
-# `rubocop:disable Metrics/PerceivedComplexity` upstream; CLAUDE.md forbids
-# disabling Metrics cops here, so it is a status -> class/message lookup table
-# plus one collaborator (`context_length_exceeded?`) instead. Behavior,
-# including the 400/429 context-length sniff, is unchanged.
+# Registered under :lain_provider_http_errors instead of :llm_errors, so the
+# global Faraday::Middleware registry never collides with an actual ruby_llm
+# install. `.parse_error`'s status dispatch was a ten-branch `case` carrying an
+# inline `rubocop:disable Metrics/PerceivedComplexity`; CLAUDE.md forbids
+# disabling Metrics cops here, so it is a lookup table plus one collaborator
+# instead. Behavior, including the 400/429 context-length sniff, is unchanged.
 
 module Lain
   class Provider
     module HTTP
       # Faraday middleware that maps provider-specific API errors to our own.
       class ErrorMiddleware < Faraday::Middleware
+        # @param app [#call] the next Faraday middleware in the stack
+        # @param options [Hash] the middleware's own configuration
+        # @option options [Provider::HTTP::Provider] :provider the provider whose
+        #   `parse_error` reads a failed body; the only key read here
         def initialize(app, options = {})
           super(app)
           @provider = options[:provider]

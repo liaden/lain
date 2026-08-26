@@ -5,41 +5,36 @@ module Lain
     # A session's annotations, posted back to GitHub as ONE batched pull request
     # review.
     #
-    # == The anchor IS GitHub's model, so nothing is translated
+    # THE ANCHOR IS GITHUB'S MODEL, so nothing is translated. `(path, side, line)`
+    # -- what {Anchor} has always held -- is exactly the modern review-comment
+    # model, plus `start_line`/`start_side` for a range and one top-level
+    # `commit_id`; both surveyed projects converged on it independently. The only
+    # translation is the SPELLING of the side; see {SIDES}.
     #
-    # `(path, side, line)` -- what {Anchor} has always held -- is exactly the
-    # modern review-comment model, plus `start_line`/`start_side` for a range and
-    # one top-level `commit_id`. Both surveyed projects converged on it
-    # independently (research §4.6). The only translation is the SPELLING of the
-    # side, and that is a wire detail; see {SIDES}.
+    # `position` is NOT modelled at all. It is an offset into the diff AS SERVED,
+    # so it breaks under pagination and re-hunking, and octo's hand-computed
+    # version of it has zero test coverage in that project. Not modelling it also
+    # removes the refusal octo needs only because the legacy API has no range
+    # concept.
     #
-    # `position` is NOT modelled, at all. It is an offset into the diff AS
-    # SERVED, so it breaks under pagination and re-hunking, and octo's
-    # hand-computed version of it (`position + offset - 1`) has zero test
-    # coverage in that project. Not modelling it also removes the refusal octo
-    # needs only because the legacy API has no range concept.
+    # VALIDATE FIRST, because two checks GitHub enforces are easy to skip: tuicr
+    # skips both and takes the 422 -- a range must sit within ONE hunk, and the
+    # path must be present in the diff. Every check here runs before the executor
+    # is touched, which is what makes "no subprocess was spawned" a fact about the
+    # code rather than about timing.
     #
-    # == Validate first, because two checks GitHub enforces are easy to skip
-    #
-    # tuicr skips both and takes the 422: a range must sit within ONE hunk, and
-    # the path must be present in the diff. Every check here runs before the
-    # executor is touched, which is also what makes "no subprocess was spawned"
-    # a fact about the code rather than about timing.
-    #
-    # == One unambiguous reason per rejection
-    #
-    # tuicr's `MixedSideRange` fires from three structurally different causes and
-    # shows one string for all of them -- and its single-line and range paths
-    # disagree about what a valid old-side line even is. {REASONS} is one
-    # sentence per cause, and the spec pins that no two of them are equal or a
-    # substring of one another.
+    # ONE UNAMBIGUOUS REASON PER REJECTION. tuicr's `MixedSideRange` fires from
+    # three structurally different causes and shows one string for all of them,
+    # and its single-line and range paths disagree about what a valid old-side
+    # line even is. {REASONS} is one sentence per cause, and the spec pins that no
+    # two of them are equal or a substring of one another.
     #
     # == Degrade a position, refuse a span
     #
     # An unmappable comment becomes a bullet under {UNPLACED_HEADING} rather than
-    # being dropped -- the best idea in either surveyed project. That works
-    # because a bullet keeps everything a single position had: the words, the
-    # path, the line, the revision.
+    # being dropped -- the best idea in either surveyed project -- because a
+    # bullet keeps everything a single position had: the words, the path, the
+    # line, the revision.
     #
     # A RANGE has one thing more, and no bullet has anywhere to put it. Narrowing
     # it to a single line (which tuicr does, silently) or flattening it to prose
@@ -47,27 +42,18 @@ module Lain
     # cannot be placed raises instead.
     #
     # The rule turns on the COMMENT, never on the reason, and the distinction is
-    # not academic: a range on a path the diff does not have is refused, while
-    # the same note at a single position on that same path degrades. `unknown_path`
-    # therefore appears on both sides, and so do `revision_moved` and
-    # `no_such_line`. Three of the seven reasons ({REASONS}) can only ever arise
-    # on a range and so only ever refuse, but that is a consequence of what they
-    # check, not a second rule. {Rejection#range?} is the whole of it -- a reason
-    # whitelist would be a second copy of a decision this object takes once, free
-    # to disagree with it.
+    # not academic: a range on a path the diff does not have is refused, while the
+    # same note at a single position on that same path degrades. {Rejection#range?}
+    # is the whole of it -- a reason whitelist would be a second copy of a
+    # decision this object takes once, free to disagree with it.
     #
-    # == Nothing is saved here, because nothing had to be
-    #
-    # tuicr writes the session to disk before the network call so a lost round
-    # trip costs nothing. Lain gets the same property for free and earlier:
-    # {Session#annotate} journals each note as it is placed, so by the time this
-    # object exists every annotation is already on the journal. This object then
-    # reads and never writes -- a refused submit leaves the session byte for byte
-    # as it was, and a resumed one rebuilds from the same lines.
-    #
-    # There is no retry, and that is deliberate: a batched review POST is not
-    # idempotent. A refusal comes back as a {Forge::Gh::Answer} for a caller to
-    # decide about.
+    # NOTHING IS SAVED HERE, because nothing had to be. tuicr writes the session
+    # to disk before the network call so a lost round trip costs nothing; lain
+    # gets the same property earlier, since {Session#annotate} journals each note
+    # as it is placed. This object reads and never writes -- a refused submit
+    # leaves the session byte for byte as it was. There is no retry, deliberately:
+    # a batched review POST is not idempotent, and a refusal comes back as a
+    # {Forge::Gh::Answer} for a caller to decide about.
     class Submit
       # A comment names a range GitHub cannot place. Raised before anything is
       # sent, naming every such comment.
@@ -79,17 +65,15 @@ module Lain
 
       # GitHub's own spelling of a diff side.
       #
-      # This is a WIRE DETAIL and deliberately not a member of
-      # `Review::VOCABULARY`. That file holds the sets a JOURNALED record is
-      # judged against; `LEFT`/`RIGHT` is never journaled, never compared against
-      # a record, and belongs to one remote's API -- the same reading
-      # {Review::FILE_STATUSES}' own doc reaches when it declines to force
-      # GitHub's `removed`/`copied`/`changed` onto the local set.
+      # A WIRE DETAIL and deliberately not a member of `Review::VOCABULARY`. That
+      # file holds the sets a JOURNALED record is judged against; `LEFT`/`RIGHT`
+      # is never journaled and belongs to one remote's API -- the same reading
+      # {Review::FILE_STATUSES}' doc reaches when it declines to force GitHub's
+      # `removed`/`copied`/`changed` onto the local set.
       #
-      # The DOMAIN it maps from is the vocabulary, though, so {SIDES} is derived
-      # from {Review::SIDES} with `fetch` rather than restated: a member added
-      # there and not here raises at load, instead of quietly acquiring no
-      # GitHub spelling.
+      # The DOMAIN it maps from IS the vocabulary, so {SIDES} is derived from
+      # {Review::SIDES} with `fetch` rather than restated: a member added there
+      # and not here raises at load.
       GITHUB_SIDES = { "old" => "LEFT", "new" => "RIGHT" }.freeze
 
       # The Symbol projection an {Anchor}'s side is spelled in, mapped to
@@ -113,14 +97,13 @@ module Lain
 
       # Why one comment could not be placed, one sentence each.
       #
-      # The keys double as the predicate names {Placer} dispatches on, so a
-      # reason with no check raises `NoMethodError` at the dispatch. The reverse
-      # -- a PREDICATE with no reason -- is silent: nothing dispatches to it and
-      # it simply never runs, which is a check that looks present and is not.
-      # That asymmetry is why the spec asserts the two sets equal rather than
-      # trusting the dispatch to catch both directions; an earlier draft of this
-      # comment claimed it caught both, and an orphan predicate went unnoticed
-      # under it.
+      # The keys double as the predicate names {Placer} dispatches on, so a reason
+      # with no check raises `NoMethodError` at the dispatch. The reverse -- a
+      # PREDICATE with no reason -- is silent: nothing dispatches to it and it
+      # never runs, which is a check that looks present and is not. That asymmetry
+      # is why the spec asserts the two sets equal rather than trusting the
+      # dispatch; an earlier draft of this comment claimed the dispatch caught
+      # both, and an orphan predicate went unnoticed under it.
       #
       # Their ORDER is the priority: the first true one is the reason reported,
       # so the more specific fact has to come first.
@@ -138,7 +121,7 @@ module Lain
 
       # One comment as GitHub takes it, built from one {AnnotationPlaced}.
       #
-      # `revision` rides along because it is what makes §4.6's live tuicr defect
+      # `revision` rides along because it is what makes the live tuicr defect
       # detectable: there, comments are validated against the full-range diff and
       # submitted against a narrowed `commit_id`, so the anchors were checked
       # against one diff and posted against another. The revision sits on the
@@ -146,8 +129,7 @@ module Lain
       # than an implication of whatever is on screen.
       #
       # Reopened rather than folded into the `Data.define` block: {SIDES} written
-      # inside that block would resolve against `Lain::Review`, not against this
-      # class (the trap {Request::SYSTEM_PREFIX} records).
+      # inside that block would resolve against `Lain::Review`, not this class.
       class Comment
         # @param annotation [Review::AnnotationPlaced]
         # @param start_line [Integer, nil] the first line of a range; nil for a
@@ -221,10 +203,9 @@ module Lain
       # has, and if not, the one reason it does not.
       #
       # Everything is read through {Changeset}'s public answers -- `#files` for
-      # the hunks and `#each_anchor` for what a LINE is on a side. Re-deriving
-      # the origin-marker rules here would be a second walk free to disagree with
-      # the one that produced the anchors in the first place, which is the trap
-      # {Review::SIDES}' own doc describes one level up.
+      # the hunks, `#each_anchor` for what a LINE is on a side. Re-deriving the
+      # origin-marker rules here would be a second walk free to disagree with the
+      # one that produced the anchors in the first place.
       class Placer
         # @param changeset [Review::Changeset] the whole, unfiltered changeset
         def initialize(changeset)

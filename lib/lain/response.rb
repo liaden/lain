@@ -3,20 +3,17 @@
 module Lain
   # Why a model stopped, normalized across providers.
   #
-  # These are exactly the values Anthropic's non-beta `StopReason` enum can
-  # produce, verified against anthropic-1.55.0. Note what is NOT here:
+  # Exactly the values Anthropic's non-beta `StopReason` enum can produce,
+  # verified against anthropic-1.55.0. What is NOT here matters:
   # `:model_context_window_exceeded` and `:compaction` exist only on the Beta
-  # enum, so coding against them on the non-beta path would be waiting for an
-  # event that never arrives. `:stop_sequence` conversely does occur and is easy
-  # to forget.
+  # enum, so coding against them on the non-beta path waits for an event that
+  # never arrives, while `:stop_sequence` does occur and is easy to forget.
   #
-  # The wire enums are non-exhaustive: an unrecognized value passes through
-  # rather than raising. `:unknown` is not a pre-state-machine holdover left to
-  # clean up -- it is what CLOSES the wire's open enum before the machine ever
-  # sees a reason. `normalize` running first is what lets {Agent::LoopMachine}
-  # declare one event per value in `ALL`, `:unknown` included, and fire it
-  # directly instead of falling through a `case`'s `else` (gate 6 totality; see
-  # the transition comment in `agent/loop_machine.rb`).
+  # The wire enums are non-exhaustive, so an unrecognized value passes through
+  # rather than raising, and `:unknown` is what CLOSES that open enum before the
+  # machine ever sees a reason. Normalizing first is what lets
+  # {Agent::LoopMachine} declare one event per value in `ALL` and fire it
+  # directly instead of falling through a `case`'s `else`.
   module StopReason
     END_TURN = :end_turn
     TOOL_USE = :tool_use
@@ -38,12 +35,12 @@ module Lain
   # A model's reply, in Lain's vocabulary. Providers translate into this; nothing
   # downstream ever touches a provider's own response type.
   #
-  # `content` holds the FULL block list -- text, thinking, and tool_use alike --
-  # in normalized wire form. Correctness gate 1: the whole thing is what gets
-  # appended to the Timeline. Extracting just the text and discarding thinking or
-  # tool_use blocks corrupts the very next turn.
+  # `content` holds the FULL block list -- text, thinking and tool_use alike --
+  # in normalized wire form, and the whole of it is what gets appended to the
+  # Timeline. Extracting just the text and discarding thinking or tool_use blocks
+  # corrupts the very next turn.
   #
-  # `raw` carries the provider's own object for debugging. It is deliberately not
+  # `raw` carries the provider's own object for debugging and is deliberately not
   # part of #digest.
   Response = Data.define(:id, :model, :content, :stop_reason, :usage, :raw) do
     def initialize(content:, stop_reason:, id: nil, model: nil, usage: Usage.zero, raw: nil)
@@ -62,17 +59,15 @@ module Lain
     end
 
     # Every tool_use block, lensed by {ToolUse}, with `input` already a parsed
-    # Hash.
+    # Hash -- which the Provider guarantees: on Anthropic's STREAMING path with
+    # raw-hash tool schemas `tool_use.input` arrives as a raw JSON String, while
+    # non-streaming `create` returns it parsed, and nothing above the Provider
+    # should have to know that.
     #
-    # The Provider is responsible for guaranteeing that: on Anthropic's STREAMING
-    # path with raw-hash tool schemas, `tool_use.input` arrives as a raw JSON
-    # String rather than a Hash, while non-streaming `create` returns it parsed.
-    # Nothing above the Provider should ever have to know that.
-    #
-    # `ToolUse` is spelled through `Response::` because a method body written
-    # inside a `Data.define` block resolves constants against its LEXICAL scope
-    # (`Lain`), not against the Data class -- the same trap that sends
-    # `Request::SYSTEM_PREFIX` into a reopened class body.
+    # `ToolUse` is spelled through `Response::` because a method body inside a
+    # `Data.define` block resolves constants against its LEXICAL scope (`Lain`),
+    # not the Data class -- the trap that sends `Request::SYSTEM_PREFIX` into a
+    # reopened class body.
     def tool_uses
       blocks_of_type("tool_use").map { |block| Response::ToolUse.wrap(block) }
     end
@@ -89,9 +84,8 @@ module Lain
       Canonical.digest({ "content" => content, "stop_reason" => stop_reason.to_s })
     end
 
-    # Counts blocks rather than #tool_uses, which would allocate a lens per
-    # block to reach a number -- on the error and debug path, where the object
-    # is being described precisely because something already went wrong.
+    # Counts blocks rather than #tool_uses, which would allocate a lens per block
+    # to reach a number, on the very path something has already gone wrong on.
     def to_s
       "#<Lain::Response #{stop_reason} blocks=#{content.size} tools=#{blocks_of_type("tool_use").size}>"
     end

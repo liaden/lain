@@ -6,40 +6,33 @@
 -- is where that convention is argued; :LainReply, defined after it, follows it
 -- because an answer and an open are the same question asked about the same row.
 
--- The cursor-on-an-item OPEN gesture: <CR> -- and `r`, repointed from the
--- one-line answer prompt it used to raise -- opens the question SET the cursor
--- sits on in lain://question. One verb, one vocabulary: a set of N questions
--- has no single-line answer, so the prompt does not survive as a fast path.
--- :LainReply stays for the answer it can still carry, hand-typed.
+-- The cursor-on-an-item OPEN gesture: <CR> and `r` open the question SET the
+-- cursor sits on in lain://question. A set of N questions has no single-line
+-- answer, so there is no one-line-prompt fast path; :LainReply stays for the
+-- answer it can still carry, hand-typed.
 --
--- :LainPin's shape in every respect that matters, and its comment states the
--- rule this one follows too: the LINE rides as the argument, never a digest.
--- lain://inbox renders no digest on any of its lines (InboxView#line_for), so
--- the Ruby side's own line -> digest index is the only thing that can name the
--- set -- and that index is built by the same pass that produced the lines, one
--- entry per LINE, which is what lets a set's question fold under its
--- summary without a cursor in that fold answering the neighbouring set.
+-- :LainPin's shape: the LINE rides as the argument, never a digest.
+-- lain://inbox renders no digest on any of its lines, so the Ruby side's own
+-- line -> digest index is the only thing that can name the set -- built by the
+-- same pass that produced the lines, one entry per LINE, which is what lets a
+-- set's question fold under its summary without a cursor in that fold answering
+-- the neighbouring set.
 --
--- WHAT THIS SENDS THAT :LainPin DOES NOT, and it is not decoration: the
--- RENDERING STAMP this buffer carries (b:lain_view_generation, written by
--- set_view), because a line number alone names a POSITION and this buffer's
--- positions are not stable the way lain://timeline's are. A timeline only ever
--- grows, so line 7 means one turn forever; the inbox RETIRES rows, and every
--- row below a retired one moves up -- while the render that removes it is still
--- sitting in lain's render queue. In that window Ruby holds a rendering the
--- human is not looking at, and resolving their cursor against it opens the
--- NEIGHBOURING question set.
+-- WHAT THIS SENDS THAT :LainPin DOES NOT: the RENDERING STAMP this buffer
+-- carries (b:lain_view_generation, written by set_view), because a line alone
+-- names a POSITION and this buffer's positions are not stable the way
+-- lain://timeline's are. A timeline only grows, so line 7 means one turn
+-- forever; the inbox RETIRES rows, and every row below a retired one moves up
+-- while the render that removes it is still in lain's render queue. In that
+-- window Ruby holds a rendering the human is not looking at, and resolving their
+-- cursor against it opens the NEIGHBOURING question set.
 --
--- An earlier version sent the LINE COUNT for this, which was the only fact
--- the editor had before the stamp existed -- and a weak one: the queue drains
--- once per RPC tick, so the screen can be several renderings behind, and two
--- renderings of equal height are indistinguishable by count. Ruby then
--- resolved the gesture against the WRONG rendering and reported success. The
--- stamp is exact, and it is still not a digest: it says what the human is
--- looking at, and Ruby remains the only side that can name a set. What it does
--- NOT protect is a cursor that did not move while the list did -- it says
--- which rendering a line belongs to, never whether that is still the set the
--- human aimed at; InboxView::Gestures #open is where that analysis lives.
+-- A LINE COUNT does not do this job: the queue drains once per RPC tick, so the
+-- screen can be several renderings behind, and two renderings of equal height
+-- are indistinguishable by count -- Ruby then resolved the gesture against the
+-- WRONG rendering and reported success. The stamp is exact and is still not a
+-- digest. What it does NOT protect is a cursor that did not move while the list
+-- did; InboxView::Gestures#open is where that analysis lives.
 --
 -- The buffer check is NOT redundant with the buffer-local maps below. `define`
 -- makes every :Lain* command GLOBAL, and this one reads the CURRENT window's
@@ -47,15 +40,13 @@
 -- the inbox lists on ITS line 7, a set the human never looked at. Hand-typing
 -- is an INVITED path here precisely because the maps invoke the command.
 --
--- Which ROW a line belongs to, or nothing at all -- and this is a different
--- question from RECORD_START[INBOX], which is `spanning_record`.
--- "Does a record start here" is true of the blank and the keys under the list
--- and of the empty-state placeholder, none of which names a set: <CR> on one
--- is a keystroke about nothing, and an rpcrequest whose only possible answer
--- is "that line names no set" is worse than silence. The two tests still share
--- their one convention -- a continuation is a line the drawing side indented
--- (05_records' CONTINUATION) -- so the fold a human sees and the row this
--- resolves can never disagree about where an item begins.
+-- Which ROW a line belongs to, or nothing -- a DIFFERENT question from
+-- RECORD_START[INBOX]. "Does a record start here" is true of the blank, the
+-- keys under the list and the empty-state placeholder, none of which names a
+-- set, and an rpcrequest whose only possible answer is "that line names no set"
+-- is worse than silence. The two tests still share the one convention -- a
+-- continuation is a line the drawing side indented -- so the fold a human sees
+-- and the row this resolves cannot disagree about where an item begins.
 --
 -- A ROW is a line that convention did NOT indent, carrying InboxView#line_for's
 -- two-space-padded age. Not anchored at column 1: `from` is a variable-length
@@ -118,13 +109,12 @@ end)
 -- `inbox_row` :LainOpen does, and a local declared later is a global (nil) to
 -- everything above it.
 --
--- It used to send the answer ALONE, and the consumer then guessed: the OLDEST
--- item listed. That guess names a set only while one is pending AND it reached
+-- Sending the answer ALONE makes the consumer guess the OLDEST item listed,
+-- which names a set only while one is pending AND it reached
 -- HumanReplies::Pending at all -- and a question raised from the EDITOR while
 -- the human sits at `you>` never does, so the guess was nil and the human was
--- told the row in front of them was stale. That is what became of the old note
--- here about one question being pending at a time: the invariant it leaned on
--- is ask_human's per-ASKER one, and a fleet has an asker per agent.
+-- told the row in front of them was stale. The "one question pending at a time"
+-- invariant is ask_human's PER-ASKER one, and a fleet has an asker per agent.
 --
 -- THREE CASES, NOT TWO, and the middle one is the whole of this gesture's
 -- safety:

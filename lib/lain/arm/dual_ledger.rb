@@ -10,40 +10,32 @@ module Lain
     # `before_transition` hook so the bench can report replans as a distribution.
     #
     # The outer loop is settled by the LEDGER and bounded by `max_steps`; the
-    # grader is asked exactly once, at the end, for the {Run}'s grade -- the
-    # grade-once-at-the-end protocol {SingleThread} and {OrchestratorWorker}
-    # follow. It used to settle on a grader PASS, which handed this arm an
-    # oracle its controls do not get: a score comparison then measured protocol
-    # rather than strategy, and an ungradeable task spent the whole ceiling in
-    # model calls. Numbers recorded under the old protocol are not comparable to
-    # numbers recorded under this one.
+    # grader is asked exactly once, at the end. It used to settle on a grader
+    # PASS, which handed this arm an oracle its controls do not get: a score
+    # comparison then measured protocol rather than strategy, and an ungradeable
+    # task spent the whole ceiling in model calls. NUMBERS RECORDED UNDER THE
+    # OLD PROTOCOL ARE NOT COMPARABLE TO NUMBERS RECORDED UNDER THIS ONE.
     #
     # HOW a run ended is journaled rather than inferred: `:stalled` for a ledger
-    # that terminally dried up (a stall with its rewrite already spent), `:done`
-    # for everything else -- which is "the CEILING bound it before that
-    # happened", NOT "it finished healthy". A run that stalled on its last step
-    # and bought a rewrite it never got to try also ends `:done`, so counting
-    # `:done` as healthy finishes over-counts.
+    # that terminally dried up, `:done` for everything else -- which means "the
+    # CEILING bound it before that happened", NOT "it finished healthy". A run
+    # that stalled on its last step and bought a rewrite it never got to try
+    # also ends `:done`, so counting `:done` as healthy over-counts. Reading
+    # either means TEE-ing the journal (see `journal_factory:` on {#run});
+    # {Bench::ArmSweep} tees already but counts only `replan`, so the report it
+    # prints does not yet carry the terminal state.
     #
-    # Both are transitions on the same machine the replans ride, so the
-    # termination reason is in the journal and no longer has to be read off the
-    # replan count. Reaching it means TEE-ing that journal (see `journal_factory:`
-    # on #run); {Bench::ArmSweep} tees already but counts only `replan`, so the
-    # report it prints does not yet carry the terminal state.
-    #
-    # The ledger rides the Workspace (`#with`), NOT the Timeline: it reflects
-    # CURRENT truth every step and must not accrete a stale copy per turn (the
-    # whole point of sent-not-stored). One linear Timeline is threaded across the
-    # steps' agents (each spawned over the previous head's Store), so the
-    # returned head reaches every paid turn -- the {Arm::Run} reachability
-    # contract holds trivially here, exactly as it does for {SingleThread}.
+    # The ledger rides the Workspace, NOT the Timeline: it reflects CURRENT
+    # truth every step and must not accrete a stale copy per turn. One linear
+    # Timeline is threaded across the steps' agents, each spawned over the
+    # previous head's Store, so the returned head reaches every paid turn and
+    # the {Arm::Run} reachability contract holds trivially.
     class DualLedger < Arm
       # K: consecutive no-progress steps before the outer loop replans.
       DEFAULT_STALL_LIMIT = 3
-      # The outer loop's ceiling. A run whose ledger keeps advancing has no
-      # settling condition of its own -- nothing here can judge a task COMPLETE,
-      # only whether it moved -- so the loop MUST be bounded or it never returns;
-      # this is that bound.
+      # The outer loop's ceiling. Nothing here can judge a task COMPLETE, only
+      # whether it moved, so a run whose ledger keeps advancing has no settling
+      # condition of its own and the loop MUST be bounded or it never returns.
       DEFAULT_MAX_STEPS = 6
       # Steps a run needs BEYOND K to settle: one that records the first note,
       # and one after the rewrite that proves it did not take. So a config
@@ -60,12 +52,11 @@ module Lain
       # @param replanner [#call] `call(ledger:, task:) -> LedgerState`, how a
       #   stall rewrites the plan; defaults to {DEFAULT_REPLANNER}
       # @param instrument [Instrument] times the whole drive and prices the run's
-      #   journal -- the same measuring collaborator every arm is injected with
-      # @param journal_factory [#call] builds the per-run journal `Instrument#price`
-      #   will drain; inject one that tees pushes into a caller-held sink to
-      #   observe `ledger_transition` records before that drain empties them
-      # @param handoff [#reclaim, #surrender] forwarded to {Arm}'s lease bracket;
-      #   the worker-completion point this arm's lease resolves through
+      #   journal
+      # @param journal_factory [#call] builds the per-run journal
+      #   `Instrument#price` will drain; inject one that tees pushes into a
+      #   caller-held sink to observe `ledger_transition` records first
+      # @param handoff [#reclaim, #surrender] forwarded to {Arm}'s lease bracket
       # @raise [ArgumentError] when the two bounds describe a run that cannot
       #   settle -- see {SETTLING_MARGIN}
       def initialize(name: "dual-ledger", stall_limit: DEFAULT_STALL_LIMIT, max_steps: DEFAULT_MAX_STEPS,
@@ -88,23 +79,19 @@ module Lain
       # the child Workspace (the ledger) per step and threads the Timeline so the
       # conversation stays one linear, fully-reachable head.
       #
-      # The lease lifecycle is the base's {Arm#leased} bracket.
-      #
       # `Instrument#price` DRAINS the journal, which discards this arm's
-      # `ledger_transition` records from the Run's own view -- the returned {Run}
-      # carries a priced Ledger, not the raw transition stream. To count
-      # replans/stalls per run, inject a `journal_factory:` that TEES pushes into
-      # a caller-held sink (see the arm spec's `recording_journal`, and
-      # {Bench::ArmSweep}, which counts replans exactly that way) so the
-      # transitions are observed before that drain empties the channel.
+      # `ledger_transition` records from the Run's own view. To count
+      # replans/stalls per run, inject a `journal_factory:` that TEES pushes
+      # into a caller-held sink so the transitions are observed before that
+      # drain empties the channel.
       def run(task, spawn_seam:, grader:, isolation: NoIsolation)
         leased(isolation:) do
           journal = @journal_factory.call
           # The planner build sits INSIDE the span, where it has always been.
           # `elapsed` is a recorded bench number, so dropping a phase out of it
-          # would make past dual-ledger runs incomparable to future ones --
-          # narrowing the span is a methodology change with its own card, never a
-          # refactor's side effect.
+          # would make past dual-ledger runs incomparable to future ones.
+          # Narrowing the span is a methodology change, never a refactor's
+          # side effect.
           elapsed, state = @instrument.timed do
             drive(task, spawn_seam:, journal:, planner: build_planner(journal))
           end
@@ -116,8 +103,8 @@ module Lain
 
       private
 
-      # A sweep sets both bounds, and neither degenerate case announces itself
-      # at runtime: K below 1 rewrites the plan before any step has failed to
+      # A sweep sets both bounds and neither degenerate case announces itself at
+      # runtime: K below 1 rewrites the plan before any step has failed to
       # progress, and a ceiling below `K + SETTLING_MARGIN` cuts the run off
       # before its settling step, which reads as "the arm always spends its
       # budget" rather than as a misconfiguration.
@@ -142,23 +129,18 @@ module Lain
         Planner.new(transition_listener: Journaling.new(journal))
       end
 
-      # The outer loop, as a small mutable {Loop} folded step by step until the
-      # LEDGER settles or the ceiling binds. Extracted from #run so the bridge
-      # (timing/pricing) and the iteration read as separate concerns, the way
-      # {Agent#run}/{Agent#run_loop} split.
+      # The outer loop, as a {Loop} folded step by step until the LEDGER settles
+      # or the ceiling binds.
       #
-      # The grader is deliberately NOT reachable from here. Reading the scoring
-      # function as a control signal is an oracle the control arms are not given,
-      # so a cross-arm score comparison would measure protocol rather than
-      # strategy -- and on a task no grader can pass it spent the whole ceiling
-      # in model calls. What settles the loop is the ledger's own progress
-      # reading; `max_steps` is the bound; the grade is taken once, at the end.
+      # The grader is deliberately NOT reachable from here: reading the scoring
+      # function as a control signal is an oracle the control arms are not
+      # given, so a cross-arm score comparison would measure protocol rather
+      # than strategy.
       #
       # Both ways out are JOURNALED, because "why did this run stop?" is a bench
       # reading and an inference from the replan count is not one: a terminally
-      # dried-up ledger leaves the machine `:stalled`, and every other exit --
-      # the ceiling binding first, whether or not the last step progressed or
-      # even bought a rewrite -- is closed here with `end_turn!` -> `:done`.
+      # dried-up ledger leaves the machine `:stalled`, and every other exit is
+      # closed here with `end_turn!` to `:done`.
       def drive(task, spawn_seam:, planner:, journal:)
         control = Loop.new(ledger: LedgerState.initial(task:), stall_limit: @stall_limit)
         until planner.terminal? || control.steps >= @max_steps
@@ -182,11 +164,10 @@ module Lain
         advanced.stalled? ? stall(advanced, task, planner:) : advanced
       end
 
-      # K consecutive no-progress steps: a journaled `stall!` on the shared
-      # LoopMachine (announced through `before_transition`). The FIRST one buys
-      # a rewrite; a later one finds the rewrite spent and leaves the machine in
-      # `:stalled`, which is what ends the drive -- so the terminal stall is a
-      # record in the journal rather than a state only this object knew.
+      # The FIRST stall buys a rewrite; a later one finds the rewrite spent and
+      # leaves the machine in `:stalled`, which is what ends the drive -- so the
+      # terminal stall is a record in the journal rather than a state only this
+      # object knew.
       def stall(control, task, planner:)
         planner.stall!
         control.replannable? ? replan(control, task, planner:) : control
@@ -205,24 +186,21 @@ module Lain
     end
 
     class DualLedger
-      # The outer loop's run state, folded step by step. A RESULT CARRIER, not a
-      # value object (it holds a live Timeline, so it is deliberately not
-      # `Ractor.shareable?` -- the same posture {Arm::Run} takes): each transition
-      # returns a fresh Loop so {DualLedger#drive}'s `until` can reassign its
-      # handle without mutating shared state.
+      # The outer loop's run state, folded step by step. A RESULT CARRIER and
+      # not a value object -- it holds a live Timeline, so it is deliberately
+      # not `Ractor.shareable?`, {Arm::Run}'s posture.
       #
-      # `stalls` counts CONSECUTIVE no-progress steps; a step whose ledger
-      # signature advanced resets it to zero. It carries COUNTS and the ledger,
-      # never loop STATE -- what state the run is in is the {Planner}'s to say,
-      # and a second copy of it here would be a state machine nobody could see.
+      # It carries COUNTS and the ledger, never loop STATE: what state the run
+      # is in is the {Planner}'s to say, and a second copy here would be a state
+      # machine nobody could see.
       #
-      # The counter is deliberately not reset by a replan, which is what makes
-      # the rewrite's window exactly one step: `stalls == stall_limit` is the
-      # moment the plan is rewritten, and any further no-progress step pushes
-      # the counter PAST K, where {#replannable?} is false and the stall is
-      # terminal. A step that genuinely advances resets the counter to zero, so
-      # a rewrite that worked earns the full K steps -- and a fresh rewrite --
-      # the next time the ledger dries up.
+      # `stalls` counts CONSECUTIVE no-progress steps and is deliberately not
+      # reset by a replan, which is what makes the rewrite's window exactly one
+      # step: `stalls == stall_limit` is the moment the plan is rewritten, and
+      # any further no-progress step pushes the counter PAST K, where
+      # {#replannable?} is false and the stall is terminal. A step that
+      # genuinely advances resets it to zero, so a rewrite that worked earns the
+      # full K steps -- and a fresh rewrite -- next time the ledger dries up.
       Loop = Data.define(:ledger, :timeline, :steps, :stalls, :stall_limit) do
         def initialize(ledger:, stall_limit:, timeline: nil, steps: 0, stalls: 0)
           super
@@ -244,10 +222,9 @@ module Lain
       end
 
       # The arm's outer orchestration FSM: the SAME {Agent::LoopMachine} the
-      # inner loop runs, instantiated fresh per run and driven by the arm's
-      # control so a stall becomes a first-class, journaled `stall! -> replan!`
-      # transition pair rather than an untracked `if`. Its `before_transition`
-      # hook (inherited from the mixin) announces every move to the injected
+      # inner loop runs, so a stall becomes a first-class journaled
+      # `stall! -> replan!` transition pair rather than an untracked `if`. The
+      # inherited `before_transition` hook announces every move to the injected
       # listener; nothing here overrides the machine.
       class Planner
         include Agent::LoopMachine
@@ -257,19 +234,13 @@ module Lain
           @transition_listener = transition_listener
         end
 
-        # The machine's own terminal reading, and the outer loop's whole exit
-        # condition: `:stalled` is a ledger that terminally dried up, `:done`
-        # the ceiling binding before that happened -- which does NOT mean the
-        # last step made progress, only that no stall was terminal. Asking the
-        # machine is what keeps "what state is this run in" in ONE place -- the
-        # drive holds counters, not a second answer.
+        # Asking the machine is what keeps "what state is this run in" in ONE
+        # place; the drive holds counters, not a second answer.
         def terminal? = stalled? || done?
       end
 
-      # The transition listener the {Planner} announces to: it turns each move
-      # into a {LedgerTransition} on the run's Journal, which is precisely what
-      # "journaled via before_transition" means -- the only path to this journal
-      # is the machine's hook. Satisfies the {Agent::TransitionListener} duck.
+      # The {Agent::TransitionListener} the {Planner} announces to. The machine's
+      # hook is the only path to this journal.
       class Journaling
         def initialize(journal)
           @journal = journal
@@ -281,11 +252,10 @@ module Lain
         end
       end
 
-      # A journaled orchestration transition -- so {Compare} can report replans
-      # and stalls as a distribution alongside tokens and wall-time. Its own
-      # journal type (`ledger_transition`), so {Ledger}'s `turn_usage`-only fold
-      # ignores it and pricing is unaffected. Deeply frozen (Symbols only), so it
-      # is `Ractor.shareable?` like every other {Telemetry} event.
+      # A journaled orchestration transition, so {Compare} can report replans and
+      # stalls as a distribution alongside tokens and wall-time. Its own journal
+      # type, so {Ledger}'s `turn_usage`-only fold ignores it and pricing is
+      # unaffected.
       LedgerTransition = Data.define(:from, :to, :event) do
         include Telemetry::Journalable
 
@@ -294,18 +264,17 @@ module Lain
         end
       end
 
-      # The default progress heuristic. With no model in the loop to JUDGE
-      # progress, "the ledger moved" is approximated structurally: a step
-      # advanced only if it said something NON-EMPTY that DIFFERS from the last
-      # thing recorded. A model looping on identical output -- the canonical
-      # Magentic-One stall -- repeats its last note, so the ledger (and thus its
-      # `signature`) does not move and the stall counter climbs until it replans.
-      # This is deliberately crude (it cannot tell real work from a reworded
-      # non-answer); it exists so the stall path is REACHABLE without wiring
-      # anything, and the `progress:` seam is where a smarter detector goes.
-      # It is also what SETTLES the outer loop, so a detector swapped in here
-      # decides both when the arm replans and when it stops.
-      # `call(ledger:, response:, timeline:)`.
+      # The default progress heuristic, `call(ledger:, response:, timeline:)`.
+      # With no model in the loop to JUDGE progress, "the ledger moved" is
+      # approximated structurally: a step advanced only if it said something
+      # NON-EMPTY that DIFFERS from the last thing recorded. A model looping on
+      # identical output -- the canonical Magentic-One stall -- repeats its last
+      # note, so the signature does not move and the stall counter climbs.
+      #
+      # Deliberately crude: it cannot tell real work from a reworded non-answer,
+      # and exists so the stall path is REACHABLE without wiring anything. It is
+      # also what SETTLES the outer loop, so a detector swapped in here decides
+      # both when the arm replans and when it stops.
       DEFAULT_PROGRESS = lambda do |ledger:, response:, **|
         note = response.text.to_s.strip
         moved = !note.empty? && note != ledger.progress.last

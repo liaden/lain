@@ -3,59 +3,38 @@
 module Lain
   # Mutable state for ONE run, and deliberately not a value object.
   #
-  # Everything else in the harness that the model sees is either content-
-  # addressed and frozen (an {Lain::Event} in the Timeline) or frozen and sent-
-  # not-stored (a {Lain::Workspace}). Session is the exception on purpose: it is
-  # the run's scratch memory -- which files have been read, and the todo list --
-  # and it must accumulate as tools run. So it is never appended to the
-  # Timeline, never enters a turn's content, and stays reachable only from the
-  # Agent and from the {Tool::Invocation#context} threaded to each tool. Keeping
-  # it off the Timeline is what keeps `Ractor.shareable?(turn)` true: the mutable
-  # state lives here, where nothing frozen reaches it. It is also why rewinding
-  # or forking the Timeline can never resurrect (or lose) a todo list: there was
-  # never a copy of it there to begin with, only here.
+  # Everything else the model sees is either content-addressed and frozen (an
+  # {Lain::Event}) or frozen and sent-not-stored (a {Lain::Workspace}). Session
+  # is the exception on purpose: it is the run's scratch memory and must
+  # accumulate as tools run. Keeping it OFF the Timeline is what keeps
+  # `Ractor.shareable?(turn)` true, and it is why rewinding or forking the
+  # Timeline can never resurrect or lose a todo list -- there was never a copy
+  # of it there, only here.
   #
-  # Five responsibilities today:
-  #   * a read-set, so an edit-before-read contract can ask "was this file read
-  #     this session?" (see {Tool::Contracts});
-  #   * a write-set, the read-set's mirror for mutations: the paths structured
-  #     mutating tools wrote this session, which is exactly the scope of a
-  #     workspace snapshot ({Workspace::Snapshot} -- write-set only, the
-  #     documented gap for free-form bash);
-  #   * a pin-set, the turn digests compaction may not elide -- modelled
-  #     on the READ-set, not the write-set: only the read-set is journaled and
-  #     replayed, and a pin that vanished on `--resume` would be worse than no
-  #     pin at all;
-  #   * a reminders channel -- empty until {Tools::TodoWrite} lands the run's
-  #     todo list, then one rendered string -- that the Agent composes into the
-  #     Workspace tail every render;
-  #   * the memory manifest, projected from an injected memory source (the
-  #     session's {Memory::Recorder}) onto that same channel whenever its
-  #     index holds items.
+  # The pin-set (turn digests compaction may not elide) is modelled on the
+  # READ-set rather than the write-set, because only the read-set is journaled
+  # and replayed, and a pin that vanished on `--resume` would be worse than no
+  # pin at all.
   class Session
-    # The manifest block's first line, added HERE rather than inside
-    # {Memory::Manifest#to_reminder} (which stays bare): naming memory_read as
-    # the way to open an id is the session's presentation decision, the same
-    # way the todo block carries its own heading.
+    # Added HERE rather than inside {Memory::Manifest#to_reminder}, which stays
+    # bare: naming memory_read as the way to open an id is the session's
+    # presentation decision, as the todo block's own heading is.
     MANIFEST_HEADING = "Memory manifest, one \"id | description\" per item " \
                        "(call memory_read with an id to open its body):"
 
-    # `memory:` defaults to a fresh, empty {Memory::Recorder} -- an empty
-    # holder satisfying the same duck as the real one (Null Object over nil
-    # checks), so {#reminders} never guards on a missing source.
-    # `worker_env:` defaults to {WorkerEnv.default} -- the live `Dir.pwd` and a
-    # snapshot of `ENV` -- so a run that injects no isolation resolves paths and
-    # shells out exactly as it did before WorkerEnv existed. An overriding
-    # strategy passes a WorkerEnv here, and the tools read it off the context
-    # they already receive.
+    # Both collaborators default to an empty holder answering the same duck as
+    # the real one, so {#reminders} never guards on a missing source.
     #
-    # SNAPSHOT-AT-CONSTRUCTION: a real Session captures `ENV` (and `Dir.pwd`)
-    # ONCE, when it is built. The byte-identical-default claim therefore holds
-    # only absent a mid-run ENV mutation of an EXISTING var: mutate `ENV["X"]`
-    # after this Session exists and the child sees the snapshot's value, not the
-    # live one. (An ADDED var still reaches the child regardless -- the parent's
-    # live ENV is inherited too; see {WorkerEnv}'s additive-override note.)
+    # SNAPSHOT-AT-CONSTRUCTION: a real Session captures `ENV` and `Dir.pwd`
+    # ONCE, when it is built. Mutate an EXISTING `ENV["X"]` mid-run and the
+    # child sees the snapshot's value, not the live one; an ADDED var still
+    # reaches the child, because the parent's live ENV is inherited too.
     # {Session::Null} sidesteps this by recomputing {WorkerEnv.default} per call.
+    #
+    # @param memory [#index] the run's memory source, projected onto
+    #   {#reminders} whenever its index holds items
+    # @param worker_env [WorkerEnv] the host context tools resolve paths and
+    #   shell out against
     def initialize(memory: Memory::Recorder.new, worker_env: WorkerEnv.default)
       @reads = ReadSet.new
       @writes = Set.new
@@ -75,44 +54,36 @@ module Lain
     # @return [WorkerEnv]
     attr_reader :worker_env
 
-    # The read-set's path identity, public so {Session::Journaled} can ask
-    # "which path did that read just normalize to?" without reaching into a
-    # private method -- the one seam a journaling decorator needs to know
-    # WHICH path to record, since it must match exactly what {#read?} will
-    # answer true for afterwards.
+    # The read-set's path identity, public so {Session::Journaled} can record
+    # exactly the path {#read?} will answer true for afterwards.
     #
-    # `cwd:` is required, never defaulted: a class method has no `worker_env`,
-    # and falling back to `Dir.pwd` would let the decorator journal a
-    # process-relative path while the read-set stored a worker-relative one --
-    # a divergence in the Journal, which is the experiment record.
+    # `cwd:` is required, never defaulted: falling back to `Dir.pwd` would let
+    # the decorator journal a process-relative path while the read-set stored a
+    # worker-relative one -- a divergence in the Journal, which is the
+    # experiment record.
     #
-    # The rule itself is {WorkerEnv#resolve}'s -- the one both exec arms
-    # already share -- so this DELEGATES rather than re-deriving it, and a
-    # throwaway WorkerEnv is how a bare `cwd` reaches an instance method. Only
-    # `cwd` is read, hence the empty `env`. `to_s` covers the Symbol and nil
-    # spellings a Set query may arrive in; `resolve` itself wants a String.
+    # The rule is {WorkerEnv#resolve}'s, so this delegates rather than
+    # re-deriving it; only `cwd` is read, hence the empty `env`.
     #
     # @return [String]
     def self.normalize_path(path, cwd:)
       WorkerEnv.new(cwd:, env: {}).resolve(path.to_s)
     end
 
-    # Record that `path` was read this session. Normalized so a later `read?`
-    # cannot be defeated by a different spelling of the same file.
+    # Normalized so a later `read?` cannot be defeated by a different spelling
+    # of the same file.
     #
-    # `complete: false` says the model saw only PART of the file -- today, a
-    # rendering with secrets masked. It has to be distinguishable from a whole
-    # read, because a model that saw `<redacted:1>` and then writes the file
-    # clobbers every secret in it; and it has to be distinguishable from NO
-    # read, so a refusal can say why rather than claim the file was unread.
+    # `complete: false` says the model saw only PART of the file. It must be
+    # distinguishable from a whole read, because a model that saw
+    # `<redacted:1>` and then writes the file clobbers every secret in it; and
+    # from NO read, so a refusal can say why rather than claim it was unread.
     #
     # Completeness is recorded HERE rather than un-recorded from the middleware
-    # that decides to mask: {Tools::ReadFile} records its read below the
-    # middleware, so by the time masking is decided the read already happened,
-    # and the read-set has no retraction. Two ADD-ONLY sets is what keeps it
-    # monotone -- a complete read can never be undone by a later partial one,
-    # so two sibling fibers reading the same file cannot race it backwards.
-    # A single mutable flag per path would lose exactly that.
+    # that decides to mask: {Tools::ReadFile} records below the middleware, so
+    # the read has already happened by then and the read-set has no retraction.
+    # ADD-ONLY sets are what keep it monotone -- two sibling fibers reading the
+    # same file cannot race a complete read backwards into a partial one, which
+    # a single mutable flag per path would allow.
     #
     # @return [self]
     def record_read(path, complete: true)
@@ -127,14 +98,11 @@ module Lain
       @reads.complete?(normalize(path))
     end
 
-    # Record that the model was shown a MASKED rendering of `path`: bytes it
-    # never saw were withheld, so it must not be trusted to rewrite the file.
-    #
-    # Separate from `record_read(complete: false)` because the two facts arrive
-    # from different layers and only this one can arrive AFTER a whole read has
-    # already been recorded -- {Tools::ReadFile} records below the middleware
-    # that decides to mask. See {ReadSet} for why that forces a third set rather
-    # than a retraction.
+    # Bytes were withheld from the model, so it must not be trusted to rewrite
+    # the file. Separate from `record_read(complete: false)` because the two
+    # facts arrive from different layers and only this one can arrive AFTER a
+    # whole read was recorded. See {ReadSet} for why that forces a third set
+    # rather than a retraction.
     #
     # @return [self]
     def record_masked_read(path)
@@ -156,20 +124,15 @@ module Lain
       @reads.masked?(normalize(path))
     end
 
-    # Every path read this session, complete or partial, as sorted normalized
-    # paths -- the read-set's own window, mirroring {#writes}. Sorted for the
-    # same reason: a consumer must not vary with the order reads arrived.
-    #
-    # Deliberately WIDER than {#read?}, which answers only for a complete read:
-    # a partially read path was still read, and is still listed here.
+    # Sorted, so a consumer cannot vary with the order reads arrived.
+    # Deliberately WIDER than {#read?}: a partially read path was still read.
     #
     # @return [Array<String>]
     def reads
       @reads.paths
     end
 
-    # Record that `path` was written this session -- the read-set's mirror,
-    # same normalization, deliberately NOT implying a read: the read-set
+    # The read-set's mirror, deliberately NOT implying a read: the read-set
     # answers the edit-before-read contract, the write-set scopes the snapshot,
     # and a tool that did both says both.
     #
@@ -184,18 +147,17 @@ module Lain
       @writes.include?(normalize(path))
     end
 
-    # The write-set as sorted, normalized paths -- sorted so the snapshot body
-    # built over it cannot vary with the order tools happened to write.
+    # Sorted, so the snapshot body built over it cannot vary with the order
+    # tools happened to write.
     #
     # @return [Array<String>]
     def writes
       @writes.sort.freeze
     end
 
-    # Pin a turn digest: "compaction may not elide this one". Digests are
-    # already content addresses, so unlike a path there is no normalization to
-    # do -- the digest a caller resolved off the Timeline IS the identity, and
-    # interning it keeps the set's members comparable as pointers.
+    # Pin a turn digest: "compaction may not elide this one". A digest is
+    # already a content address, so unlike a path there is nothing to
+    # normalize; interning keeps the set's members comparable as pointers.
     #
     # @return [self]
     def record_pin(digest)
@@ -203,9 +165,9 @@ module Lain
       self
     end
 
-    # Retract a pin. Unpinning what was never pinned is a no-op, not an error:
-    # the pin-set is a SET, and a caller who cannot see it (a replay folding a
-    # log, an operator retyping) should not have to check first.
+    # Unpinning what was never pinned is a no-op, not an error: a caller who
+    # cannot see the set -- a replay folding a log, an operator retyping --
+    # should not have to check first.
     #
     # @return [self]
     def record_unpin(digest)
@@ -222,27 +184,21 @@ module Lain
       @pins.include?(-digest.to_s)
     end
 
-    # The pin-set as sorted digests -- the query a compaction source asks
-    # ("which turns must survive?"), sorted for the same reason {#writes} is:
-    # a consumer must not vary with the order the pins happened to arrive.
-    # The sort is per call, so a hot loop testing MEMBERSHIP wants {#pinned?}
-    # (O(1) on the Set) rather than this.
+    # Which turns must survive a compaction. The sort is per call, so a hot loop
+    # testing MEMBERSHIP wants {#pinned?} -- O(1) on the Set -- rather than this.
     #
     # @return [Array<String>]
     def pins
       @pins.sort.freeze
     end
 
-    # Replaces the ENTIRE todo list -- deterministic, no merge logic, so a
-    # stale item can never linger from a call the model didn't intend to
-    # partially apply. `todos` is any Enumerable of objects answering
-    # `#content`/`#status` ({Tools::TodoWrite} is the only caller today).
+    # Replaces the ENTIRE list, with no merge logic, so a stale item can never
+    # linger from a call the model did not intend to partially apply.
     #
     # The one-string render happens HERE, once per write, rather than inside
-    # {#reminders} -- which the Agent calls every single render via
-    # `@workspace.with(*@session.reminders)`. A run
-    # that writes its list once and takes fifty more turns should not re-join
-    # the same strings fifty times.
+    # {#reminders}, which the Agent calls on every render: a run that writes its
+    # list once and takes fifty more turns should not re-join the same strings
+    # fifty times.
     #
     # @return [self]
     def write_todos(todos)
@@ -253,36 +209,23 @@ module Lain
       self
     end
 
-    # Whether the MOST RECENT {#write_todos} call raised the count of
-    # `"completed"` items -- the plan-step-completion Need signal
-    # ({Compaction::Need::PlanStepCompletion}). `write_todos` replaces the
-    # whole list every call and keeps no history of its own (see that
-    # method's header), so detecting a rise needs the PRIOR structured list
-    # to compare against; {#write_todos} keeps that list (see `@todo_items`)
-    # for exactly this comparison. It is retained the same way the
-    # read-/write-sets are: in memory, for this run only, never appended to
-    # the Timeline and never resurrected on rewind.
+    # Whether the MOST RECENT {#write_todos} raised the count of `"completed"`
+    # items -- {Compaction::Need::PlanStepCompletion}'s signal.
     #
-    # Count-based rather than content-keyed on purpose: content is not a
-    # stable identity for a todo (two items can share the same wording), so
-    # diffing "which content is now completed that wasn't" can mask a real
-    # transition when duplicate content is present. A rising COUNT is
-    # immune to duplicates and to reordering, and it directly expresses the
-    # thing this signal means: "a plan step got completed" -- true whether
-    # that step just flipped to completed or arrived already-done (a brand
-    # new item, or the very first write, landing pre-completed still raises
-    # the count, and still fires).
+    # Count-based rather than content-keyed on purpose: content is not a stable
+    # identity for a todo, so diffing "which content is now completed that was
+    # not" masks a real transition whenever two items share wording. A rising
+    # COUNT is immune to duplicates and to reordering, and it fires whether the
+    # step flipped to completed or arrived already-done.
     #
     # @return [Boolean]
     def plan_step_completed?
       @plan_step_completed
     end
 
-    # State the Agent renders into the Workspace tail each turn: the todo
-    # block (one string, see {#write_todos}), then the memory manifest block
-    # whenever the index is non-empty -- never a Timeline entry, so the
-    # Timeline being rewound or forked has no bearing on either; they live
-    # here, not there.
+    # What the Agent renders into the Workspace tail each turn. Never a Timeline
+    # entry, so rewinding or forking the Timeline has no bearing on either
+    # block.
     #
     # @return [Array<String>]
     def reminders
@@ -295,11 +238,9 @@ module Lain
       @todo_reminder ? [@todo_reminder] : []
     end
 
-    # The same once-per-write rule as {#write_todos},
-    # applied to a source THIS object does not write through: the manifest is
-    # re-rendered only when the index's root moves. The root is a content
-    # address, so it is the free invalidation key -- equal roots mean an
-    # identical corpus by construction.
+    # {#write_todos}'s once-per-write rule, applied to a source this object does
+    # not write through: the index's root is a content address, so it is a free
+    # invalidation key -- equal roots mean an identical corpus by construction.
     def manifest_reminders
       index = @memory.index
       refresh_manifest(index) unless index.root == @manifest_root
@@ -315,19 +256,15 @@ module Lain
       -"#{MANIFEST_HEADING}\n#{Memory::Manifest.new(index).to_reminder}"
     end
 
-    # Path identity is `File.expand_path` against the WORKER's cwd: "./app.rb"
-    # recorded and "app.rb" queried (or the reverse) are the same file, so the
-    # read-set answers on the file, not on the string the model happened to
-    # type -- and on the file the TOOLS resolved, which under isolation is not
-    # the one `Dir.pwd` names.
+    # Against the WORKER's cwd, not the process's: under isolation those differ,
+    # and the read-set must answer on the file the TOOLS resolved.
     def normalize(path)
       self.class.normalize_path(path, cwd: @worker_env.cwd)
     end
 
-    # A digest has no empty spelling the way a path has "" -> the worker's cwd
-    # (see {.normalize_path}), so a blank one is refused rather than coerced:
-    # `-nil.to_s` would otherwise put "" in the set, after which `pinned?(nil)`
-    # answers TRUE and a turn that does not exist reads as protected.
+    # A blank digest is refused rather than coerced: `-nil.to_s` would put "" in
+    # the set, after which `pinned?(nil)` answers TRUE and a turn that does not
+    # exist reads as protected.
     def named!(digest)
       name = -digest.to_s
       raise ArgumentError, "a pin must name a turn digest, got #{digest.inspect}" if name.strip.empty?
@@ -344,46 +281,31 @@ module Lain
       list.count { |todo| todo.status == "completed" }
     end
 
-    # Which files were read, and which of those were read WHOLE -- the one
-    # concept {Session}'s read-set became once a partial read had to be
-    # distinguishable from both a complete one and from no read at all.
+    # Which files were read, and which of those were read WHOLE.
     #
     # THREE add-only sets, never a flag per path, and that is the whole design:
-    # membership, completeness and masking all only ever move forward, so a
-    # complete read cannot be raced backwards into a partial one by a sibling
-    # fiber, and the structure itself carries the monotonicity rather than a
-    # rule some caller has to remember. A Hash of path => complete would express
-    # the same states and lose exactly that guarantee.
+    # membership, completeness and masking only ever move forward, so a sibling
+    # fiber cannot race a complete read backwards into a partial one. The
+    # structure carries the monotonicity rather than a rule a caller has to
+    # remember; a Hash of path => complete would express the same states and
+    # lose exactly that guarantee.
     #
-    # == Why completeness needs TWO sets and not one flag
-    #
-    # `@complete` and `@masked` answer different questions, and collapsing them
-    # is the refactor to refuse:
-    #
-    #   @complete -- was the whole file READ? {#record}'s `complete:` answers
-    #                it, and its answer only ever improves, so a prefix read
-    #                followed by a whole one upgrades and never the reverse.
-    #   @masked   -- were bytes WITHHELD from the model? Only
-    #                {Middleware::RedactSecretReads} can answer it, one layer
-    #                ABOVE the tool that did the reading.
-    #
-    # The distinction is forced by where each fact is known.
+    # Completeness and masking need SEPARATE sets because each fact is known at
+    # a different layer, and collapsing them is the refactor to refuse.
     # {Tools::ReadFile} calls `record_read` inside `#perform`, BELOW the
-    # middleware, and it read the whole file, so `@complete` gains the path
-    # before masking is even decided. A later `record(complete: false)` cannot
-    # take it back -- that is the monotonicity above, working exactly as
-    # designed -- and un-recording is precisely the removal this structure
-    # exists to make impossible. So the masking arm adds to a THIRD set instead,
+    # middleware, having read the whole file -- so the complete set gains the
+    # path before masking is even decided, and a later `record(complete: false)`
+    # cannot take it back. Only {Middleware::RedactSecretReads}, one layer
+    # above, knows bytes were withheld, so the masking arm adds to a THIRD set
     # and {#complete?} is the conjunction: read whole AND nothing withheld.
     #
     # Masking is add-only too, so the composite answer moves only toward
-    # refusing an edit. That direction is the safe one and it is deliberate: a
-    # path masked on an earlier read stays un-editable for the rest of the run
-    # even if a later read releases everything. Over-strict, ticketed, and NOT
-    # to be fixed with a delete.
+    # refusing an edit. A path masked on an earlier read therefore stays
+    # un-editable for the rest of the run even if a later read releases
+    # everything: over-strict on purpose, and NOT to be fixed with a delete.
     #
-    # Members arrive ALREADY normalized: path identity belongs to {Session},
-    # which owns the worker cwd, so this object never has to know about one.
+    # Members arrive ALREADY normalized -- path identity belongs to {Session},
+    # which owns the worker cwd.
     class ReadSet
       def initialize
         @all = Set.new
@@ -391,23 +313,18 @@ module Lain
         @masked = Set.new
       end
 
-      # The strict-boolean check comes FIRST, ahead of both mutations, and that
-      # ordering is the point: read for truthiness instead and `complete:
-      # "false"` records a COMPLETE read -- the unsafe direction, silently. The
-      # journal record's own guard is not a substitute, because it fires one
-      # layer out and only AFTER this has already mutated, which would leave a
-      # caller that rescues holding live state more permissive than what
-      # replays. That inverts the one-way property the design rests on.
+      # The strict-boolean check comes FIRST, ahead of both mutations. Read for
+      # truthiness instead and `complete: "false"` silently records a COMPLETE
+      # read -- the unsafe direction. The journal record's own guard is no
+      # substitute: it fires one layer out and only AFTER this has mutated, so a
+      # caller that rescues would hold live state more permissive than what
+      # replays. It is pure Ruby with no IO, so it runs inside the same
+      # yield-free window rather than widening it.
       #
-      # It costs nothing against the fiber-safety claim: pure Ruby with no IO,
-      # so it runs inside the same yield-free window rather than widening it.
-      #
-      # This DUPLICATES the identical check in {Telemetry::Guards::SessionRead},
-      # deliberately. Neither is redundant: this one guards the in-memory
-      # read-set, which a bare Session mutates with no journal anywhere in
+      # DUPLICATES {Telemetry::Guards::SessionRead} deliberately: this guards
+      # the in-memory read-set, which a bare Session mutates with no journal in
       # sight, and that one guards the record on its way to disk. Deleting
-      # either because the other exists reopens exactly one of those two
-      # boundaries.
+      # either reopens exactly one of those two boundaries.
       #
       # @param path [String] an already-normalized absolute path
       # @param complete [Boolean] whether the whole file was seen
@@ -422,15 +339,13 @@ module Lain
         self
       end
 
-      # Bytes were withheld from the model at this path. Add-only, like the two
-      # sets above, and deliberately NOT a parameter on {#record}: the fact
-      # arrives from a different layer than completeness does (see the class
-      # comment), and a caller that could pass `masked: false` would be able to
-      # spell "this read hid nothing" over a read that hid something.
+      # Deliberately NOT a parameter on {#record}: a caller able to pass
+      # `masked: false` could spell "this read hid nothing" over a read that hid
+      # something.
       #
-      # It records membership too, because a masked read IS a read: without it
-      # a path masked before it was ever recorded would answer false to both
-      # {#complete?} and {#partial?}, i.e. "never read".
+      # It records membership too, because a masked read IS a read: without it a
+      # path masked before it was ever recorded answers false to both
+      # {#complete?} and {#partial?}, which reads as "never read".
       #
       # @param path [String] an already-normalized absolute path
       # @return [self]
@@ -440,23 +355,21 @@ module Lain
         self
       end
 
-      # Was the whole file read AND nothing withheld from the model? Both
-      # halves, because either one alone answers a question the edit-before-
+      # Both halves, because either alone answers a question the edit-before-
       # write contract is not asking.
       #
       # @return [Boolean]
       def complete?(path) = @complete.include?(path) && !@masked.include?(path)
 
-      # Read, but not wholly seen -- whether that is because only part was read
-      # or because part was masked. The two causes are distinguished by
-      # {#masked?}, not here: a caller asking this one wants "is there more of
-      # this file the model has not seen", and for that they are the same fact.
+      # Read, but not wholly seen. A caller asking this wants "is there more of
+      # this file the model has not seen", for which the two causes are the same
+      # fact; {#masked?} tells them apart.
       #
       # @return [Boolean]
       def partial?(path) = @all.include?(path) && !complete?(path)
 
-      # Which of the two causes {#partial?} covers, for a refusal that has to
-      # tell the model whether to re-read or to ask for a release.
+      # Which of {#partial?}'s two causes applies, so a refusal can tell the
+      # model whether to re-read or to ask for a release.
       #
       # @return [Boolean]
       def masked?(path) = @masked.include?(path)
@@ -465,11 +378,9 @@ module Lain
       def paths = @all.sort.freeze
     end
 
-    # The no-op Session, mirroring {Channel::Null} and {Sink::Null}: it satisfies
-    # the same duck so a tool handed a context can always `record_read`/`read?`/
-    # `write_todos` without an `if session` guard. Records nothing, reads back
-    # false, offers no reminders. A single shared frozen instance -- it has no
-    # state to keep.
+    # The no-op Session, mirroring {Channel::Null} and {Sink::Null}, so no tool
+    # ever writes an `if session` guard. A single shared frozen instance: it has
+    # no state to keep.
     class Null
       # `complete:` is accepted and discarded, but it cannot be renamed to the
       # unused-argument underscore: it is a KEYWORD, so the name is the duck.
@@ -489,9 +400,8 @@ module Lain
         self
       end
 
-      # Records nothing, so every path reads back as never-read rather than as
-      # partially read -- {#read?} and this both false is the "no read at all"
-      # answer, and the pair stays mutually exclusive as on a real Session.
+      # False here AND from {#read?} is the "no read at all" answer, so the pair
+      # stays mutually exclusive as it is on a real Session.
       #
       # @return [false]
       def partially_read?(_path)
@@ -558,10 +468,9 @@ module Lain
         [].freeze
       end
 
-      # The default host context, recomputed each call so a bare (context-less)
-      # tool still resolves against the LIVE `Dir.pwd` -- the one shared frozen
-      # Null instance cannot capture a working directory that may change under
-      # it, so it defers to {WorkerEnv.default} every time.
+      # Recomputed per call: the one shared frozen instance cannot capture a
+      # working directory that may change under it, so a context-less tool still
+      # resolves against the LIVE `Dir.pwd`.
       #
       # @return [WorkerEnv]
       def worker_env = WorkerEnv.default
@@ -574,20 +483,14 @@ module Lain
       end
     end
 
-    # A Journal-duck decorator over a real Session -- {Memory::JournalMemoryRoot}'s
-    # shape, applied here: every call forwards to the wrapped Session
-    # untouched, and two of them are ALSO journaled, so
-    # {SessionRecord::Replay} can fold a fresh Session back to the same
-    # run-state. This is the seam that keeps {Session} itself
-    # journal-ignorant -- its own spec never mentions a journal -- because the
-    # journaling lives here, one layer out, not inside the domain object.
+    # A Journal-duck decorator over a real Session, so {SessionRecord::Replay}
+    # can fold a fresh Session back to the same run-state. The seam is what
+    # keeps {Session} itself journal-ignorant.
     #
-    # A read journals only the FIRST time {#read?} would flip false -> true
-    # for a path: a big read/edit loop that revisits the same file every
-    # iteration must not turn into one journal line per iteration (the
-    # escalation this design closes without inventing batching). A todo write
-    # journals every call, unconditionally, as the WHOLE list -- see
-    # {Telemetry::TodoSnapshot}.
+    # A read journals only the FIRST time {#read?} would flip false -> true for
+    # a path: a read/edit loop revisiting the same file every iteration must not
+    # become one journal line per iteration. A todo write journals every call,
+    # unconditionally, as the WHOLE list.
     class Journaled
       # @param session [Session] the real Session every call forwards to
       # @param journal [#<<] where {Telemetry::SessionRead} /
@@ -598,27 +501,24 @@ module Lain
       end
 
       # The check-before-forward pair is fiber-safe: there is no yield point
-      # between the `read?` check and the Set mutation (both pure Ruby, no
-      # IO), and the journal write -- the only place a fiber COULD yield --
-      # runs after the mutation, so two fibers reading the same path cannot
-      # both see "first". This claim carries ToolRunner's gathered dispatch
+      # between the `read?` check and the Set mutation (both pure Ruby, no IO),
+      # and the journal write -- the only place a fiber COULD yield -- runs
+      # AFTER the mutation, so two fibers reading the same path cannot both see
+      # "first". The claim carries ToolRunner's gathered dispatch
       # (docs/concurrency.md, "parallel tools") and is pinned by
       # spec/lain/session_concurrency_spec.rb; if that spec can only pass by
-      # adding a lock here, the claim has failed -- escalate, don't patch.
-      # The completeness check below preserves this exactly: it adds reads to
-      # the pure-Ruby half and nothing to the journal half, so the yield-free
-      # window between check and mutate is the same size it was. Anything that
-      # moves the journal write above the mutation breaks it silently.
+      # adding a lock here, the claim has failed -- escalate, do not patch.
+      # Anything that moves the journal write above the mutation breaks it
+      # silently.
       #
-      # A line is journaled on a read-set STATE TRANSITION, not on a call. With
-      # completeness that is two transitions, not one: nothing-to-recorded, and
+      # A line is journaled on a read-set STATE TRANSITION, not on a call, and
+      # with completeness there are two: nothing-to-recorded and
       # partial-to-complete. So a partial read followed by a complete one
-      # journals TWICE -- correct, because the model genuinely saw two
-      # different things -- while a re-read at the same completeness journals
-      # nothing, which is what keeps a read/edit loop over a redacted file from
-      # emitting one line per iteration. A complete read followed by a partial
-      # one journals nothing further, mirroring the read-set's own refusal to
-      # downgrade: no record stream can ever replay as a downgrade.
+      # journals TWICE, because the model genuinely saw two different things,
+      # while a re-read at the same completeness journals nothing. A complete
+      # read followed by a partial one journals nothing further, mirroring the
+      # read-set's own refusal to downgrade -- no record stream can ever replay
+      # as a downgrade.
       #
       # @return [self]
       def record_read(path, complete: true)
@@ -628,23 +528,17 @@ module Lain
         self
       end
 
-      # Forwards WITHOUT journaling a {Telemetry::SessionRead}, and that is a
-      # decision rather than an omission -- but NOT because the mask goes
-      # unrecorded. It is recorded, as a different record, and replayed from it.
+      # Forwards WITHOUT journaling a {Telemetry::SessionRead}, and the mask is
+      # still recorded -- as a different record, one layer out.
       #
-      # A mask IS a read-set state transition, so by {#record_read}'s own rule
-      # it wants a line. `SessionRead` cannot be that line: it says only
-      # `complete:`, and {SessionRecord::Replay} folds each one through
-      # `record_read`, which by construction cannot reach the masked set. So a
-      # `complete: false` line here would replay to a wholly-read path -- a
-      # record that LOOKS like the mask was persisted while a resumed session
-      # permitted the write the mask exists to refuse.
-      #
-      # {Middleware::RedactSecretReads} already writes a
-      # {Telemetry::ReadRedacted} naming the path, at the same moment, one layer
-      # out, into this same journal; {SessionRecord::Replay#redactions} folds it
-      # back. So a second record here would be a duplicate of a fact the
-      # journal already carries, in a shape that replays wrongly.
+      # `SessionRead` cannot carry it: it says only `complete:`, and
+      # {SessionRecord::Replay} folds each one through `record_read`, which by
+      # construction cannot reach the masked set. A `complete: false` line here
+      # would therefore replay to a wholly-read path -- a record that LOOKS like
+      # the mask was persisted while a resumed session permits the very write
+      # the mask exists to refuse. {Middleware::RedactSecretReads} writes a
+      # {Telemetry::ReadRedacted} into this same journal at the same moment, and
+      # {SessionRecord::Replay#redactions} folds it back.
       #
       # @return [self]
       def record_masked_read(path)
@@ -664,13 +558,10 @@ module Lain
       # @return [Array<String>]
       def reads = @session.reads
 
-      # The write-set forwards without journaling. The write's record is the
-      # :snapshot event {Workspace::Snapshot} lands in the Store -- which is
-      # IN-MEMORY, so that record lives only as long as the process, and a
-      # replayed session rebuilds with an empty write-set. Deliberate:
-      # persistence (scribe wiring plus a journal shape for blob bytes) is
-      # still to come, and a journal line here alone would be a half-copy that
-      # could name blobs no replay can fetch.
+      # Forwards without journaling. The write's record is the :snapshot event
+      # {Workspace::Snapshot} lands in the Store, which is IN-MEMORY, so a
+      # replayed session rebuilds with an empty write-set. Deliberate: a journal
+      # line here alone would be a half-copy naming blobs no replay can fetch.
       #
       # @return [self]
       def record_write(path)
@@ -684,17 +575,15 @@ module Lain
       # @return [Array<String>]
       def writes = @session.writes
 
-      # The pin-set journals BOTH directions, unconditionally: the record
-      # stream is an ordered LOG, not a set of pin events, because a pin
-      # followed by an unpin has to rebuild as NOT pinned. Hence one record
-      # type carrying `pinned:` rather than two types -- a reader folding in
-      # file order gets the retraction for free.
+      # BOTH directions, unconditionally: the record stream is an ordered LOG,
+      # not a set of pin events, because a pin followed by an unpin has to
+      # rebuild as NOT pinned. Hence one record type carrying `pinned:` rather
+      # than two -- a reader folding in file order gets the retraction free.
       #
-      # No first-time dedupe here (unlike {#record_read}): a pin arrives from
-      # an operator command or an auto-pin at a plan boundary, never from a
-      # read/edit loop, so there is no per-iteration flood to suppress -- and
-      # suppressing a repeat would make the log's order-sensitivity subtler
-      # for no gain.
+      # No first-time dedupe, unlike {#record_read}: a pin arrives from an
+      # operator command or a plan boundary, never from a read/edit loop, so
+      # there is no per-iteration flood to suppress, and suppressing a repeat
+      # would only make the log's order-sensitivity subtler.
       #
       # @return [self]
       def record_pin(digest)

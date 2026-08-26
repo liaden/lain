@@ -8,23 +8,19 @@ module Lain
       # one in-flight round trip -- an {Attempt} is what a retry ABANDONS, so
       # whatever the discarded attempt accumulated goes with it.
       #
-      # Ollama had neither, and `ollama.rb` used to state the first absence as
-      # deliberate: free/local spend made invisible retries tolerable. The
-      # 2026-08-17 QA run priced it. `request_timeout` is 300s and `max_retries`
-      # is 3 with `:post` retryable, so a stalled server costs four attempts --
-      # measured at over 400 seconds, printing NOTHING, which is
-      # indistinguishable from the one shape this arm is expected to have (a
-      # local model that thinks for six minutes). An attempt boundary nobody
+      # Why it exists at all: `request_timeout` is 300s and `max_retries` is 3
+      # with `:post` retryable, so a stalled server costs four attempts --
+      # measured at over 400 seconds printing NOTHING, indistinguishable from
+      # the one shape this arm is expected to have. An attempt boundary nobody
       # journals is a boundary nobody can see.
       #
       # == Why the live attempt CANNOT live in instance state
       #
-      # The same argument {Anthropic::RetryTap} makes, and it binds here too: a
-      # Provider is constructed once and reused, and one instance can serve the
-      # chat tier and the summarizer tier for a whole session, so more than one
-      # round trip -- each with its own live attempt -- can be in flight through
-      # this SAME tap. An {Attempt} held in an ivar would let a retry firing for
-      # round trip A abandon whichever sibling opened last.
+      # The same argument {Anthropic::RetryTap} makes: a Provider is constructed
+      # once and reused, and one instance can serve the chat tier and the
+      # summarizer tier for a whole session, so more than one round trip can be
+      # in flight through this SAME tap. An {Attempt} held in an ivar would let
+      # a retry firing for round trip A abandon whichever sibling opened last.
       #
       # It binds HARDER here than it does for Anthropic. SSE carries a
       # `message_start` the assembler can re-sync on; Ollama's NDJSON carries no
@@ -43,23 +39,16 @@ module Lain
         # throwing an attempt away has to undo -- the partial state that must
         # not survive into the attempt replacing it.
         #
-        # ONE PER ROUND TRIP, not one per attempt, despite the name: it is the
-        # thing every attempt of a round trip is abandoned THROUGH, and it
-        # outlives each of them. `#abandon` therefore fires once per retry, and
-        # a rollback must be idempotent enough to survive being called three
-        # times for one `#complete`.
+        # ONE PER ROUND TRIP, not one per attempt, despite the name: it is what
+        # every attempt of a round trip is abandoned THROUGH, and it outlives
+        # each of them. `#abandon` therefore fires once per retry, so a rollback
+        # must survive being called three times for one `#complete`.
         #
         # **A rollback must not raise.** {RetryTap#retry_block} abandons before
         # it journals, so an exception here both loses the
         # {Telemetry::ProviderRetry} for that attempt and replaces the transport
-        # error faraday-retry was carrying -- the retry would surface as
-        # whatever the rollback threw. The streaming assembler's reset is bound
-        # by this: discarding a buffer cannot be allowed to fail.
-        #
-        # Nothing registers one on the ordinary paths yet: the sync body is a
-        # single parsed Hash, so an abandoned attempt leaves nothing behind.
-        # The streaming path registers the assembler's reset here, which is the
-        # whole reason this is a per-round-trip object rather than a counter.
+        # error faraday-retry was carrying. The streaming assembler's reset is
+        # bound by this: discarding a buffer cannot be allowed to fail.
         class Attempt
           # Null Object: a round trip with nothing to discard is abandoned
           # exactly like one that has something, so no caller writes
@@ -89,51 +78,33 @@ module Lain
         # request's frame off the retried env.
         #
         # A frame and an attempt are DELIBERATELY two objects on two context
-        # keys, not one. The attempt's rollback is the retried-stream discard --
-        # a correctness invariant with its own registration -- and folding the
-        # rotation into `on_abandon` would put the two on one seam where either
-        # could displace the other. They are independent lookups so that neither
-        # can.
+        # keys: folding the rotation into `on_abandon` would put the
+        # retried-stream discard and the rotation on one seam where either could
+        # displace the other.
         def open_frame(request_digest:)
           Spool::RotatingFrame.new(spool: @spool, request_digest:)
         end
 
-        # The block faraday-retry calls on every retry. It does three things
-        # that are NOT of equal rank, and the ordering says so: it ABANDONS the
-        # attempt (a correctness invariant -- the discard that stops two
-        # attempts sharing an assembler), it ROTATES this request's WAL frame
-        # (the same invariant one layer out -- a retried attempt's bytes must
-        # not concatenate onto the abandoned attempt's in one complete-marked
-        # frame, which the terminator's byte count cannot catch), and only then
-        # does it JOURNAL (a record).
+        # The block faraday-retry calls on every retry, and the ORDER ranks the
+        # three things it does. It ABANDONS the attempt (the discard that stops
+        # two attempts sharing an assembler), it ROTATES this request's WAL
+        # frame (a retried attempt's bytes must not concatenate onto the
+        # abandoned attempt's inside one complete-marked frame, which the
+        # terminator's byte count cannot catch), and only then does it JOURNAL.
+        # The discard runs first because it is the older guarantee and the one a
+        # regression here would silently reinstate.
         #
-        # The discard runs before the rotation because it is the older
-        # guarantee and the one a regression here would silently reinstate;
-        # both are documented as unable to raise, so neither can cost the other.
+        # A CALLER'S CALLBACK IS COMPOSED, NEVER ALLOWED TO REPLACE. Wiring this
+        # with `||=` was right while the block carried only telemetry; since the
+        # streaming assembler arrived the cost is silent corruption. Measured on
+        # a real socket: a config carrying its own `retry_block` returned a
+        # severed attempt's text concatenated with its replacement's, under a
+        # `stop_reason` of `:end_turn`, with nothing above the Provider able to
+        # tell.
         #
-        # == Why a caller's callback is composed rather than allowed to replace
-        #
-        # {Ollama#journaled_retries} used to wire this with `||=`, which was
-        # right while the block carried only telemetry: a caller who wanted the
-        # callback could have it, and the cost was a missing Journal row. Since
-        # the streaming assembler arrived the cost is silent corruption.
-        # Measured on a real socket: a config carrying its own `retry_block`
-        # returned a severed attempt's text concatenated with its replacement's,
-        # under a `stop_reason` of `:end_turn`, with nothing above the Provider
-        # able to tell -- the whole splice defect, reinstated by a seam
-        # documented as merely lowering telemetry. `ollama_spec.rb` already
-        # ships such a config.
-        #
-        # So the discard is not offerable. A caller's callback is threaded
-        # through `then_call:` and runs in addition, never instead.
-        #
-        # `then_call` runs LAST, after the push, because it is the only part of
-        # this lambda that is not ours: an arbitrary callback that raises must
-        # not be able to cost the attempt its discard OR its
-        # {Telemetry::ProviderRetry}. It can still replace the exception
-        # faraday-retry was carrying -- that was equally true when `||=` gave it
-        # the whole block, and swallowing a caller's exception would hide their
-        # bug rather than ours.
+        # `then_call` runs LAST because it is the only part of this lambda that
+        # is not ours: an arbitrary callback that raises must not cost the
+        # attempt its discard or its {Telemetry::ProviderRetry}.
         #
         # @param then_call [#call, nil] a caller-supplied retry callback, invoked
         #   with the same keywords faraday-retry passed.
@@ -160,20 +131,19 @@ module Lain
 
         private
 
-        # The Attempt this request's transport stashed on its Faraday context.
         # `env[:request]` reads the RequestOptions on a real Faraday::Env and on
-        # a plain-Hash test double alike; nil-safe so a request that opened none
-        # -- the `/api/ps` probe, or a spec injecting its own `config:` -- still
-        # journals rather than crashing on a missing context.
+        # a plain-Hash test double alike; nil-safe so a request that opened no
+        # attempt -- the `/api/ps` probe -- still journals rather than crashing
+        # on a missing context.
         def attempt_on(env)
           context = env[:request]&.context
           context && context[:retry_attempt]
         end
 
-        # This request's {Spool::RotatingFrame}, read the same nil-safe way and
-        # off its own key -- see {#open_frame} for why it is not the attempt's
-        # rollback. A request opened over the Null spool still rotates; the Null
-        # frame simply discards, so no caller writes `if spool`.
+        # Read the same nil-safe way and off its own key -- see {#open_frame}
+        # for why it is not the attempt's rollback. A request over the Null
+        # spool still rotates; the Null frame discards, so no caller writes
+        # `if spool`.
         def frame_on(env)
           context = env[:request]&.context
           context && context[:wal_frame]

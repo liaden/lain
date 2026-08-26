@@ -6,17 +6,15 @@ module Lain
       # One named step of the protocol, and the object the first version of this
       # class was missing.
       #
-      # A step knows four things and nothing else: which {ACTIONS} member it
-      # performs, how to tell from the {Evidence} that its effect is already in
-      # place, how to perform it through the journaled bracket, and what the
-      # {Running} run carries away. With those four, {Landing#call} and
-      # {Landing#resume_from} are one fold over one {Plan} -- there is no second
-      # place a step could be skipped, repeated, or have its verdict dropped.
+      # A step knows four things: which {ACTIONS} member it performs, how to tell
+      # from the {Evidence} that its effect is already in place, how to perform it
+      # through the journaled bracket, and what the {Running} run carries away.
+      # With those four, {Landing#call} and {Landing#resume_from} are one fold
+      # over one {Plan} -- there is no second place a step could be skipped,
+      # repeated, or have its verdict dropped.
       #
       # A module rather than a superclass: the three steps share a PROTOCOL, not
-      # any state, and each holds a different set of collaborators. Inheriting an
-      # empty constructor to satisfy a template would be the shared thing
-      # inventing itself.
+      # any state, and each holds a different set of collaborators.
       module Step
         # Double dispatch, and it is what removes the nil check: the evidence
         # answers a {Evidence::Held} or a {Evidence::Missing}, and IT decides
@@ -29,13 +27,10 @@ module Lain
         def held(run, _value) = run
 
         # Nothing shows it in place, so perform it -- AND READ THE ANSWER.
-        #
         # {Promotion} refuses a diverged remote, an occupied namespace and an
-        # inexact sha as `ok: false` values. A step that discarded that verdict
-        # would carry on to open a pull request from a branch the promotion
-        # never wrote, and merge somebody else's commit as this issue's approved
-        # work. Every refusal in this tier is a value; a value nobody reads is a
-        # refusal that did not happen.
+        # inexact sha as `ok: false` values, and a step that discarded that verdict
+        # would open a pull request from a branch the promotion never wrote and
+        # merge somebody else's commit as this issue's approved work.
         def missing(run)
           answer = call(run)
           return Stopped.new(answer:) unless answer.ok?
@@ -129,13 +124,13 @@ module Lain
 
         private
 
-        # Only DIRTY is a merge CONFLICT. {Gh::Poll} answers UNKNOWN when its
-        # own bound runs out -- GitHub has not finished computing mergeability,
-        # which usually means CI is still running -- and BLOCKED, BEHIND and
-        # UNSTABLE are review and branch protection saying "not yet". Telling a
-        # human there is a merge conflict sends them to resolve nothing, and the
-        # remedy for each of these is different. The state itself is carried
-        # either way, so the record never loses GitHub's own word.
+        # Only DIRTY is a merge CONFLICT. {Gh::Poll} answers UNKNOWN when its own
+        # bound runs out (GitHub has not finished computing mergeability, usually
+        # meaning CI is still running), and BLOCKED, BEHIND and UNSTABLE are review
+        # and branch protection saying "not yet". Telling a human there is a merge
+        # conflict sends them to resolve nothing, and each of these has a different
+        # remedy. The state is carried either way, so the record never loses
+        # GitHub's own word.
         def refusal(state)
           Gh::Answer.new(ok: false,
                          detail: { "reason" => state.to_s == DIRTY ? CONFLICTED : NOT_MERGEABLE, "state" => state })

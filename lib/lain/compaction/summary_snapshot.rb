@@ -7,8 +7,8 @@ module Lain
     # {Context::Compact} invokes (the whole dropped array in, one String out).
     #
     # It exists because a summarizer may never hold the live {Oracle::Eager}.
-    # The Eager accumulates summaries as fires land, so it must stay mutable;
-    # a {Context::Compact} referencing one is not `Ractor.shareable?`, and
+    # The Eager accumulates summaries as fires land, so it must stay mutable; a
+    # {Context::Compact} referencing one is not `Ractor.shareable?`, and
     # {Scheduler::COMPOSE}'s `Ractor.make_shareable` then raises
     # `Ractor::IsolationError` on the first compacting turn -- in the live loop,
     # not in any spec that holds the summarizer by itself. Taking a snapshot
@@ -18,7 +18,7 @@ module Lain
     #
     # It is keyed exactly as the Eager is -- by the SOURCE digest
     # {Effect::Handler::Summarizing} fires under -- so there is one key notion
-    # in this file and no translation layer to drift.
+    # here and no translation layer to drift.
     #
     # ALWAYS BUILD ONE WITH {.take}. `.new(summaries:)` is public only so that
     # `SummarySnapshot.new` can serve as the pure-elision default, and a
@@ -26,25 +26,21 @@ module Lain
     # not a content address, but a MESSAGE digest is a perfectly well-formed
     # content address and would miss every lookup, permanently and silently.
     # {#hits} and {#misses} cannot warn about it either -- a hand-built map
-    # reports 0/0, which is indistinguishable from a snapshot taken over no
-    # messages. `.take` derives the keys itself and is correct by construction.
+    # reports 0/0, indistinguishable from a snapshot taken over no messages.
     #
-    # THE INVARIANT: nothing disappears unattested. Agent correctness gate 2
-    # (`agent.rb:291`) commits every tool_result of one assistant turn into ONE
-    # user message, so the ordinary parallel-tools turn is a message whose
-    # blocks did not all cross Summarizing's byte threshold. Rendering such a
-    # message as a single body would let the un-summarized blocks vanish behind
-    # a line that reads as a complete summary of the turn. So the rendering is
-    # per BLOCK: the message states its role, content address, canonical byte
-    # count, and block count, and every block underneath states its own type,
-    # size, and either its summary or an explicit elision. A reader can always
-    # tell what was there and fetch the original from the Store by address.
+    # THE INVARIANT: nothing disappears unattested. Every tool_result of one
+    # assistant turn is committed into ONE user message, so the ordinary
+    # parallel-tools turn is a message whose blocks did not all cross
+    # Summarizing's byte threshold. Rendering such a message as a single body
+    # would let the un-summarized blocks vanish behind a line reading as a
+    # complete summary of the turn. So the rendering is per BLOCK, and a reader
+    # can always tell what was there and fetch the original by address.
     #
     # That attestation is also the honest degradation: {Oracle::Eager#held}
     # returns nil both for "never summarized" and for "still in flight", and
-    # this object deliberately does not try to tell those apart. What it does
-    # instead is COUNT -- see {#hits} and {#misses}, the bench's read on whether
-    # the fires are landing at all.
+    # this object does not try to tell those apart. What it does instead is
+    # COUNT -- {#hits} and {#misses}, the bench's read on whether the fires are
+    # landing at all.
     class SummarySnapshot
       # A key that is not a content address would be a permanent, total,
       # silent miss. Loud instead, per CLAUDE.md's unknown-values premise.
@@ -59,20 +55,18 @@ module Lain
       # with empty text -- which Anthropic rejects outright.
       NOTHING = "(nothing to summarize)"
 
-      # Interpolation returns a MUTABLE String even under frozen_string_literal
-      # (CLAUDE.md's trap), and this one is reachable from a constant.
+      # Interpolation returns a MUTABLE String even under
+      # frozen_string_literal, and this one is reachable from a constant.
       DIGEST_PREFIX = "#{Canonical::DIGEST_ALGORITHM}:".freeze
 
       # The EXACT shape `Canonical.digest` emits, measured from a real digest
       # rather than hardcoded, so it tracks the algorithm. Length and case are
       # both load-bearing: `blake3:a` and an uppercased digest satisfy a looser
-      # `\h+` pattern yet can never equal a key Summarizing fired -- admitting
-      # them would be precisely the permanent, total, silent miss this rejects.
+      # `\h+` pattern yet can never equal a key Summarizing fired.
       #
       # Measured on FIRST USE, not in the class body: `Canonical.digest` reaches
-      # into the Rust extension, which `lain.rb` requires at :71 while this unit
-      # loads at :24, so taking a digest at load time is a `NameError` on
-      # `Lain::Ext`. Nothing loaded before that line may hash during load.
+      # into the Rust extension, which `lain.rb` requires AFTER this unit, so
+      # taking a digest at load time is a `NameError` on `Lain::Ext`.
       def self.digest_format
         @digest_format ||= begin
           hex_length = Canonical.digest("").delete_prefix(DIGEST_PREFIX).length
@@ -82,27 +76,23 @@ module Lain
 
       # What a message's content is made of, and which parts could carry a
       # summary. Shared by {.take}, which reads the Eager, and `#call`, which
-      # renders -- so the two can never disagree about which parts are
-      # lookupable, which is exactly the disagreement that would leave one
-      # silently unattested.
+      # renders, so the two cannot disagree about which parts are lookupable --
+      # the disagreement that would leave one silently unattested.
       module Blocks
         module_function
 
-        # EVERY element of an Array content, not just the Hashes. Filtering to
-        # blocks would drop a non-Hash element silently AND understate the count
-        # stated one line above it -- the same silence the per-block rendering
-        # exists to end. A String content (an ordinary text turn) has no parts
-        # at all: nothing addressable inside it, and Summarizing never fires on
-        # one.
+        # EVERY element of an Array content, not just the Hashes: filtering to
+        # blocks would drop a non-Hash element silently AND understate the
+        # count stated one line above it. A String content has no parts at all.
         def of(message)
           content = message["content"]
           content.is_a?(Array) ? content : []
         end
 
-        # Byte-for-byte the key `summarizing.rb:56` fires under: the digest of
-        # the Tool::Result's String, which the committed message carries
-        # verbatim inside its tool_result block. A spec proves the round trip
-        # end to end; if it ever broke, every lookup would miss in silence.
+        # Byte-for-byte the key {Effect::Handler::Summarizing} fires under: the
+        # digest of the Tool::Result's String, which the committed message
+        # carries verbatim inside its tool_result block. A spec proves the round
+        # trip end to end; if it broke, every lookup would miss in silence.
         def source_digest(part)
           Canonical.digest(part["content"]) if summarizable?(part)
         end
@@ -121,9 +111,7 @@ module Lain
       # did not -- counted per BLOCK OCCURRENCE over the messages {.take} was
       # given, since the snapshot is frozen and cannot tally during `#call`.
       # `hits.zero?` with `misses` high is the signature of a key regression,
-      # which this card's escalation trigger names as the failure that would
-      # otherwise be invisible in the experiment record. {Source} journals these;
-      # nothing here touches the Journal.
+      # which is otherwise invisible in the experiment record.
       attr_reader :hits, :misses
 
       # Read the Eager once, over the messages this turn might drop, and keep
@@ -149,8 +137,8 @@ module Lain
       #   pure-elision summarizer, which is what a run with no oracle wired gets.
       # @param hits [Integer] see {#hits}. Both counts default to zero because
       #   they describe a TAKE, and a hand-built map was measured against no
-      #   messages at all: a snapshot that claimed `summaries.size` hits it
-      #   never verified is precisely how a mis-keyed map could hide.
+      #   messages at all: a snapshot claiming `summaries.size` hits it never
+      #   verified is precisely how a mis-keyed map could hide.
       # @param misses [Integer] see {#misses}
       def initialize(summaries: {}, hits: 0, misses: 0)
         # `-string` both freezes and dedups. An oracle answer's String arrives
@@ -158,8 +146,8 @@ module Lain
         # the shareability it exists to have.
         #
         # A blank summary is dropped rather than stored, so it renders as the
-        # miss it is instead of a blank body: `.take` can never produce one (the
-        # answer schema requires the field), and the two paths must not diverge.
+        # miss it is instead of a blank body. `.take` can never produce one --
+        # the answer schema requires the field -- and the paths must not diverge.
         @summaries = summaries.to_h { |digest, text| [digest_key(digest), -text.to_s] }
                               .reject { |_, text| text.strip.empty? }
                               .freeze

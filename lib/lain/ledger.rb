@@ -11,30 +11,24 @@ module Lain
   #
   # Two different aggregations meet here, and conflating them is the trap:
   #
-  # 1. CONTENT is deduplicated. Two branches share a prefix; that prefix is one
-  #    set of turns stored once, and naively summing over every branch would
-  #    count it once per branch. So the walk covers UNIQUE reachable digests --
-  #    the payoff of the Timeline being a content-addressed Merkle DAG, and the
-  #    same reason {Lain::Usage} is a commutative monoid: the total must not
-  #    depend on how many branches walk through a shared turn, nor on order.
+  # 1. CONTENT is deduplicated. Two branches share a prefix stored once, so the
+  #    walk covers UNIQUE reachable digests -- the payoff of the content-
+  #    addressed Merkle DAG, and the same reason {Lain::Usage} is a commutative
+  #    monoid: the total must not depend on how many branches cross a shared
+  #    turn, nor on order.
   # 2. PAYMENTS are not. A reachable digest may carry several {Index::Entry}s
   #    (rewind, then identical regeneration), and every one was genuinely paid
-  #    for, so a turn's usage and cost sum over ALL its recorded payments.
+  #    for, so usage and cost sum over ALL of a turn's recorded payments.
   #
-  # Spend on rewound branches whose turns are no longer reachable from any
-  # given head is invisible to this walk BY DESIGN -- reachability is the
-  # question the Ledger answers. Whole-run usage regardless of reachability is
-  # the sum over every journal record, which is what {Agent::Accounting#usage}
-  # already accumulates.
+  # Spend on rewound branches no longer reachable from any given head is
+  # invisible here BY DESIGN -- reachability is the question the Ledger answers.
+  # Whole-run usage regardless of reachability is {Agent::Accounting#usage}.
   #
-  # Not nested under Journal: Ledger CONSUMES journals (it walks a Timeline and
-  # joins against journal-sourced payments), it does not produce or own them.
-  # Journal must not know its readers, so nesting a reader under the thing it
-  # reads would point the dependency the wrong way. This class lives with
-  # pricing/accounting instead.
+  # Not nested under Journal: Ledger CONSUMES journals, and Journal must not know
+  # its readers, so nesting one under it would point the dependency backwards.
   class Ledger
-    # Convenience: fold journal entries (parsed Hashes or raw NDJSON lines)
-    # straight into a priced Ledger.
+    # Fold journal entries -- parsed Hashes or raw NDJSON lines -- into a priced
+    # Ledger.
     #
     # @param entries [Enumerable<Hash, String>]
     # @param price_book [Lain::PriceBook]
@@ -72,9 +66,9 @@ module Lain
 
     private
 
-    # The turn's usage: the monoid sum over every payment recorded against its
-    # digest. A digest the Journal never priced contributes {Usage.zero}, so
-    # user turns and un-instrumented turns are simply free.
+    # The monoid sum over every payment recorded against the digest. A digest the
+    # Journal never priced contributes {Usage.zero}, so user turns and
+    # un-instrumented turns are simply free.
     #
     # @param turn [Lain::Event]
     # @return [Lain::Usage]
@@ -82,10 +76,9 @@ module Lain
       @index.entries_for(turn.digest).reduce(Usage.zero) { |sum, entry| sum + entry.usage }
     end
 
-    # The turn's dollar cost: each payment priced against ITS OWN recorded
-    # model. A payment with no model raises {PriceBook::UnknownModel} -- a
-    # silently-free payment would be a lie -- unless the PriceBook carries a
-    # fallback, which still prices it.
+    # Each payment priced against ITS OWN recorded model. A payment with no model
+    # raises {PriceBook::UnknownModel} -- a silently-free payment would be a lie
+    # -- unless the PriceBook carries a fallback, which still prices it.
     #
     # @param turn [Lain::Event]
     # @return [BigDecimal]
@@ -109,8 +102,7 @@ module Lain
             "provider reports none); pass a PriceBook with a fallback to price these"
     end
 
-    # digest => turn event across all timelines, deduplicated by content-address. A Hash
-    # keyed on the digest is the whole point: the shared prefix collapses to one
+    # Keying on the digest is the whole point: the shared prefix collapses to one
     # entry no matter how many branches reach it.
     def unique_turns(timelines)
       timelines.flatten.each_with_object({}) do |timeline, acc|

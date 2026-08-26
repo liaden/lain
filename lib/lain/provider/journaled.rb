@@ -6,10 +6,10 @@ module Lain
     # {Telemetry::RequestSent} before handing it to the provider it wraps.
     #
     # It exists for the ORACLE tiers. An agent turn's round trip is already
-    # recorded, by {Middleware::JournalRequests} in the model phase; an oracle's
-    # is not, because {Oracle::Model} calls `#complete` directly and no
-    # middleware stack sits anywhere near it. A manual QA round measured that
-    # as journals holding zero records for traffic the run really paid for.
+    # recorded by {Middleware::JournalRequests}; an oracle's is not, because
+    # {Oracle::Model} calls `#complete` directly with no middleware stack
+    # anywhere near it -- measured as journals holding zero records for traffic
+    # the run really paid for.
     #
     # == Why a decorator above the wire, and not a Faraday middleware
     #
@@ -24,13 +24,11 @@ module Lain
     #
     # == It is not applied to every provider, and that is the design
     #
-    # Whether to record requests is a per-experiment wiring decision -- see
-    # {Middleware::JournalRequests}, whose whole header argues it. A bench arm
-    # opts in by putting that middleware in `model_middleware`, and the arms
-    # that do put it INNERMOST on purpose. Wrapping the chat provider here as
-    # well would hand every other arm records it never asked for and give those
-    # two a duplicate per turn. The measured gap is the oracle, so this
-    # wraps the three oracle tiers and nothing else.
+    # Whether to record requests is a per-experiment wiring decision, and a
+    # bench arm opts in through `model_middleware`. Wrapping the chat provider
+    # here as well would hand every other arm records it never asked for and
+    # give the opted-in arms a duplicate per turn. The measured gap is the
+    # oracle, so this wraps the oracle tiers and nothing else.
     #
     # The forwarding is explicit rather than a `SimpleDelegator`, for the reason
     # {CLI::Switchboard::LiveToolset} gives: the surface a decorator passes
@@ -38,10 +36,9 @@ module Lain
     # Provider duck should fail loudly here rather than reach a provider that
     # this object cannot honestly stand in for.
     class Journaled
-      # The provider that will actually make the round trip, so a caller with a
-      # claim about WHICH endpoint answers can assert on the object that answers
-      # it rather than on the decorator in front. `oracle/secret_read_spec.rb`
-      # is that caller: "the judge is a local model" is its security property.
+      # The provider that will actually make the round trip, so a caller whose
+      # security property is "the judge is a local model" can assert on the
+      # object that answers rather than on the decorator in front.
       # @return [Provider]
       attr_reader :inner
 

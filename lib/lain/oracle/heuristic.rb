@@ -5,9 +5,7 @@ module Lain
     # The model-free tier: a pure predicate decides the answer locally, validated
     # through the SAME schema as the model tier and returned as the SAME Promise,
     # so a caller cannot tell which tier answered. No provider is wired -- #ask is
-    # the whole computation. Mirrors the Null-Object second-arm shape of
-    # {Middleware::RefuseSecretWrites::NullOracle}: one swappable arm over one
-    # interface, here decided without a model call.
+    # the whole computation.
     class Heuristic
       # @param definition [Oracle::Definition] owns the schema the answer is
       #   validated against
@@ -22,8 +20,8 @@ module Lain
       end
 
       # Uniform with {Model} so a journaling wrapper reads cost off either tier
-      # blind to which it holds. There is no model call here, so both are
-      # legitimately empty -- a nil model and zero-cost usage, not a gap.
+      # blind to which it holds. Empty legitimately -- there is no model call
+      # here, so this is zero cost, not a gap.
       def model = nil
       def usage = {}
     end

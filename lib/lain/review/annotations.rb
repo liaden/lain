@@ -5,38 +5,32 @@ module Lain
     # The notes an editor hands back, turned into the records the journal keeps.
     #
     # ORDER IS THE OUTPUT. Notes are recorded in the order they arrive, and the
-    # journal's order is the only order any reader gets -- nothing else records
-    # which note the human placed first. So this maps and never sorts, and
-    # `48_annotate.lua` keeps a placement sequence rather than leaning on extmark
-    # order, which is POSITIONAL: notes placed on lines 40, 12 and 25 come back
-    # from `nvim_buf_get_extmarks` as 12, 25, 40, and that reordering is silent.
+    # journal's order is the only order any reader gets. So this maps and never
+    # sorts, and `48_annotate.lua` keeps a placement sequence rather than leaning
+    # on extmark order, which is POSITIONAL: notes placed on lines 40, 12 and 25
+    # come back from `nvim_buf_get_extmarks` as 12, 25, 40, and that reordering is
+    # silent.
     #
     # DRIFT ARRIVES ON THE WIRE. It is measured in the editor, at the moment of
-    # settling, and this side neither computes it nor second-guesses it -- which
-    # is the one thing about this module a reader is most likely to expect
-    # otherwise. Drift is the anchor text against the line the number NOW names,
-    # and that line lives in the editor's BUFFER: not in the diff a session
-    # holds, and not in anything else Ruby has. Measuring it here would mean
-    # holding a document nobody downstream is allowed to cache, and comparing
-    # against a copy that can disagree with what the human is looking at.
+    # settling, and this side neither computes it nor second-guesses it -- the one
+    # thing about this module a reader is most likely to expect otherwise. Drift
+    # is the anchor text against the line the number NOW names, and that line
+    # lives in the editor's BUFFER. Measuring it here would mean holding a
+    # document nobody downstream is allowed to cache, and comparing against a copy
+    # that can disagree with what the human is looking at.
     #
-    # That placement is also what satisfies the extmark contract rather than
-    # merely coexisting with it. A panel measured that a mark inside a
-    # rewritten span MOVES rather than invalidates -- `get_extmark_by_id` still
-    # answers a position and never reports invalid -- so drift can only ever be
-    # a comparison of CONTENT against CONTENT, taken at settle. The editor does
-    # exactly that and sends the boolean.
+    # That placement also satisfies the extmark contract rather than merely
+    # coexisting with it: a panel measured that a mark inside a rewritten span
+    # MOVES rather than invalidates, so drift can only ever be a comparison of
+    # CONTENT against CONTENT, taken at settle.
     #
     # So what is left here is refusing a note that reports no measurement at all,
     # which {AnnotationPlaced} does by giving `drifted` no default: a nil value
     # drops its key from a lua table entirely, and an omitted `drifted` is
-    # precisely the shape a bookkeeping slip in the editor produces. Defaulted to
-    # `false` it would journal "did not drift" for a note nobody compared -- a
-    # reading no later audit can tell from a real one.
+    # precisely the shape a bookkeeping slip in the editor produces.
     #
-    # Nothing here journals. The caller builds the records and writes them
-    # itself, so it can decide what to do with a refusal BEFORE anything reaches
-    # the fd -- the same split {Epic::Review::Annotations} draws.
+    # Nothing here journals. The caller builds the records and writes them itself,
+    # so it can decide what to do with a refusal BEFORE anything reaches the fd.
     module Annotations
       module_function
 

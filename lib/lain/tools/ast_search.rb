@@ -2,34 +2,26 @@
 
 module Lain
   module Tools
-    # Tier 1 (structured): searches source for an ast-grep STRUCTURAL pattern,
-    # not a text/regex one -- `$RECV.save` matches the call node and skips the
-    # same string inside a comment or a `"..."` literal, which {Grep} cannot
-    # tell apart. Built on {Structural::Matcher}; never touches
-    # `Lain::Ext::AstGrep` directly, matching the seam {Structural::Matcher}'s
-    # own doc describes.
+    # Tier 1 (structured): searches source for an ast-grep STRUCTURAL pattern
+    # rather than a text/regex one -- `$RECV.save` matches the call node and
+    # skips the same string inside a comment or a `"..."` literal, which {Grep}
+    # cannot tell apart.
     #
-    # A caller supplies either a raw `pattern` (ast-grep metavariable syntax,
-    # e.g. `"def $NAME($$$A)"`) or a `query` naming one of
-    # {Structural::Patterns::CATALOG}'s named lookups (optionally filled with a
-    # literal via `name`, e.g. `query: "method_call", name: "save"`). A named
-    # query may expand to several templates (a receiver form and a bare form),
-    # all of which run and merge -- the model asks "who calls #save" once, not
-    # twice.
+    # A caller supplies either a raw `pattern` or a `query` naming one of
+    # {Structural::Patterns::CATALOG}'s lookups, optionally filled with a
+    # literal via `name`. A named query may expand to several templates -- a
+    # receiver form and a bare form -- all of which run and MERGE, so the model
+    # asks "who calls #save" once rather than twice.
     #
-    # A malformed pattern, an unknown query, or an unsupported language are
-    # reported as an error {Tool::Result}, never a raise: same discipline as
-    # {Grep}'s invalid-regex handling.
+    # A malformed pattern, an unknown query, or an unsupported language is
+    # reported as an error {Tool::Result}, never a raise.
     class AstSearch < Tool
       # Same rationale and same number as {Grep::MAX_MATCHES}: capped, not
       # silently truncated -- {#format_matches} says so in the body.
       MAX_MATCHES = 200
 
-      # File extensions searched per language, so a directory walk parses only
-      # the files that could plausibly be that language -- mirrors Joel's `ag
-      # rb` helper filtering to `*.rb` rather than letting a `.py` file get fed
-      # to the Ruby grammar. Extend as {Structural::Matcher::SUPPORTED_LANGUAGES}
-      # grows real callers.
+      # So a directory walk parses only the files that could plausibly be that
+      # language, rather than feeding a `.py` file to the Ruby grammar.
       EXTENSIONS = {
         ruby: %w[rb],
         rust: %w[rs],
@@ -79,10 +71,9 @@ module Lain
       end
 
       # Audited: reads Session#worker_env.cwd (a value read, not a mutation) to
-      # resolve the path, then the filesystem (Dir.glob, File.read), running
-      # each match through a fresh, per-call Structural::Matcher -- documented
-      # stateless (astgrep.rs: "Every call is STATELESS", no ext-side index
-      # handle). No Session write, no chdir, no process-global state.
+      # resolve the path, then the filesystem, running each match through a
+      # fresh per-call Structural::Matcher, documented stateless. No Session
+      # write, no chdir, no process-global state.
       def parallel_safe? = true
 
       protected
@@ -96,10 +87,10 @@ module Lain
         patterns = resolve_patterns(input, language)
         matches = capped_matches(path, input.path, language, patterns)
         Tool::Result.ok(RESULT_FORMATTER.call(matches, patterns:, path: input.path))
-      # `EncodingError` rides with the rest despite NOT being a Lain::Error: the
-      # ext refuses a source it would have to transcode (ext/lain/src/read_text.rs)
-      # and Ruby's own class is what comes back. {#each_structural_match} has
-      # already named the file, so the message needs no decoration here.
+      # `EncodingError` rides with the rest despite NOT being a Lain::Error:
+      # the ext refuses a source it would have to transcode, and Ruby's own
+      # class is what comes back. {#each_structural_match} has already named the
+      # file, so the message needs no decoration.
       rescue Structural::Matcher::BadPattern, Structural::Matcher::UnknownLanguage,
              Structural::Patterns::Unknown, EncodingError => e
         Tool::Result.error(e.message)
@@ -107,14 +98,10 @@ module Lain
 
       private
 
-      # A relative path resolves against the session's WorkerEnv cwd (Dir.pwd
-      # under the default, so byte-identical to the pre-WorkerEnv raw path); an
-      # absolute path is honored as given. Matching {Grep}: this is the
-      # FILESYSTEM locator, and every MODEL-FACING mention of the path -- the
-      # match labels (see {#search}) and the no-matches line -- keeps the
-      # model's original spelling instead. An ERROR is the one exception: it
-      # names the resolved path, because "where did it actually look" is the
-      # whole content of that message.
+      # The FILESYSTEM locator, matching {Grep}: every MODEL-FACING mention of
+      # the path keeps the model's original spelling instead. An ERROR is the
+      # one exception, naming the resolved path, because "where did it actually
+      # look" is the whole content of that message.
       def resolved_path(input, invocation)
         File.expand_path(input.path, session_of(invocation).worker_env.cwd)
       end
@@ -160,15 +147,14 @@ module Lain
         matches.lazy.select { |label, line, _text, _captures| seen.add?([label, line]) }
       end
 
-      # An Enumerator, for the same reason as {Grep#search}: the MAX_MATCHES+1
-      # cap in {#perform} stops walking the moment it has enough, rather than
-      # matching every file under `path` before discarding most of the result.
+      # An Enumerator, for {Grep#search}'s reason: the MAX_MATCHES+1 cap stops
+      # walking the moment it has enough, rather than matching every file under
+      # `path` before discarding most of the result.
       #
-      # `path` is the resolved filesystem locator; `display` is the model's
-      # original spelling. A DIRECTORY target labels each hit by its path
-      # relative to the walked root; a SINGLE-FILE target labels its hits with
-      # `display` verbatim -- so a relative `foo.rb` stays `foo.rb:1:` rather
-      # than leaking the WorkerEnv-resolved absolute path.
+      # A DIRECTORY target labels each hit relative to the walked root; a
+      # SINGLE-FILE target labels its hits with the model's own spelling, so a
+      # relative `foo.rb` stays `foo.rb:1:` rather than leaking the resolved
+      # absolute path.
       def search(path, display, language, patterns)
         root = path if File.directory?(path)
         matcher = Structural::Matcher.new
@@ -193,9 +179,8 @@ module Lain
            .sort
       end
 
-      # No entry in {EXTENSIONS} (a language {Structural::Matcher} supports but
-      # this tool has not yet been told the extension for) falls back to
-      # searching every file, rather than silently searching none.
+      # A language with no {EXTENSIONS} entry falls back to searching EVERY
+      # file, rather than silently searching none.
       def language_file?(entry, extensions)
         return true unless extensions
 
@@ -208,11 +193,10 @@ module Lain
         entry.split("/").intersect?(%w[. .. .git])
       end
 
-      # `encoding:` is not decoration. A bare File.read tags its result with
-      # Encoding.default_external, which under a C locale (containers, systemd
-      # units) is US-ASCII -- so every ordinary UTF-8 source file would come back
-      # mislabelled and the ext would refuse it, truthfully but uselessly. The
-      # file is source code; source code is UTF-8; say so at the read.
+      # `encoding:` is not decoration: a bare File.read tags its result with
+      # Encoding.default_external, US-ASCII under a C locale, so every ordinary
+      # UTF-8 source file would come back mislabelled and the ext would refuse
+      # it. The file is source code; source code is UTF-8; say so at the read.
       def each_structural_match(matcher, file, language, patterns)
         source = File.read(file, encoding: Encoding::UTF_8)
         patterns.each do |pattern|

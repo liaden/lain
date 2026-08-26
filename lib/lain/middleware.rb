@@ -6,15 +6,12 @@ module Lain
   # environment on the way in, invoking the downstream via the block, and
   # transforming the result on the way out.
   #
-  # The reason this shape recurs across the project (Faraday, model, tool, turn,
-  # repl) is a single algebraic fact: middleware forms a MONOID under composition.
-  # `>>` nests two middlewares; nesting is associative -- `(a >> b) >> c` and
-  # `a >> (b >> c)` wrap the downstream in exactly the same order -- and
-  # {Identity} is a pass-through unit, `id >> a == a >> id == a`. The law is not
-  # decoration: a composition operator that were not associative would make the
-  # meaning of a stack depend on how it happened to be grouped, which is precisely
-  # the Rack ordering footgun. {Stack} makes the order inspectable and mutable so
-  # the footgun is visible, and the monoid law (property-tested) guarantees
+  # The shape recurs across the project because middleware forms a MONOID under
+  # composition: `>>` is associative and {Identity} is a pass-through unit. The
+  # law is not decoration -- a non-associative composition operator would make
+  # the meaning of a stack depend on how it happened to be grouped, which is
+  # precisely the Rack ordering footgun. {Stack} makes the order inspectable and
+  # mutable so the footgun is visible, and the law (property-tested) guarantees
   # grouping never changes behavior.
   module Middleware
     # The composition operator, mixed into everything that behaves as a
@@ -26,10 +23,9 @@ module Lain
       end
     end
 
-    # Two middlewares nested into one. `outer` wraps `inner` wraps the eventual
-    # downstream app. Associativity falls out of this being plain function
-    # nesting: however you group the `>>`s, the resulting nesting order is the
-    # same, so there is only one behavior to observe.
+    # Two middlewares nested into one. Associativity falls out of this being
+    # plain function nesting: however you group the `>>`s, the resulting nesting
+    # order is the same, so there is only one behavior to observe.
     class Composed
       include Composable
 
@@ -61,10 +57,9 @@ module Lain
       #
       # Subclasses must call this rather than `yield`. A bare `yield` in a
       # middleware raises LocalJumpError the moment anyone calls it outside a
-      # stack -- and no RuboCop cop can catch that statically, because it cannot
-      # prove whether a caller passes a block. Routing every subclass through one
-      # total helper makes the pass-through structural: impossible to forget
-      # rather than merely remembered.
+      # stack, and no cop can catch that statically -- it cannot prove whether a
+      # caller passes a block. One total helper makes the pass-through
+      # structural rather than merely remembered.
       def downstream(env, &app)
         app ? yield(env) : env
       end
@@ -203,16 +198,12 @@ module Lain
 
     # Bounds how long the downstream is allowed to take.
     #
-    # It does NOT preempt. Preemption needs a concurrency model -- a watchdog
-    # thread or fiber to interrupt a blocked call -- and that model is deliberately
-    # deferred (see the plan's "Concurrency model"); writing one here would bake in
-    # a decision the bench is meant to make later, and violate the no-threads
-    # constraint. So Timeout does two honest things instead: it publishes a
-    # monotonic `env[:deadline]` that a cooperative downstream (e.g. a tool
-    # polling for cancellation) can honor, and it measures elapsed time at the
-    # boundary, raising {Exceeded} if the work overran. A truly interrupting
-    # Timeout lands with the concurrency model; until then this bounds what it can
-    # bound without pretending to bound what it cannot.
+    # It does NOT preempt. Preemption needs a watchdog thread or fiber, and that
+    # concurrency model is deliberately deferred -- writing one here would bake
+    # in a decision the bench is meant to make later. So Timeout publishes a
+    # monotonic `env[:deadline]` a cooperative downstream can honor, and
+    # measures elapsed time at the boundary, raising {Exceeded} if the work
+    # overran: what it can bound, without pretending to bound what it cannot.
     class Timeout < Base
       include Declarative
 

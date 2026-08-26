@@ -7,25 +7,21 @@ module Lain
     # The human's reply to one {Question::Set}, and the value that renders into
     # the text the model receives.
     #
-    # It carries the questions as well as the answers, for two reasons. It is
-    # what makes the pair rules checkable at all -- "one option on a
-    # single-select", "an option this question actually offers" are facts about
-    # the pair, and neither value alone can see them. And it is what lets
-    # {#render} print the LABELS the model wrote rather than the ids the
-    # document joins on: an answer read back off an event would otherwise need a
-    # second lookup to say anything a reader understands.
+    # It carries the questions as well as the answers for two reasons. It is what
+    # makes the pair rules checkable at all -- "one option on a single-select",
+    # "an option this question actually offers" are facts about the pair, and
+    # neither value alone can see them. And it lets {#render} print the LABELS
+    # the model wrote rather than the ids the document joins on.
     #
     # There is exactly one answer per question, always, in the order they were
-    # asked. Submitting is never blocked, so `:w` resolves the whole set: a
-    # question the human never touched is filled in as an explicitly unanswered
-    # {Answer} rather than dropped, because the model has to be able to tell
-    # DECLINED from MISSED and an omission says neither.
+    # asked: a question the human never touched is filled in as an explicitly
+    # unanswered {Answer} rather than dropped, because the model has to be able
+    # to tell DECLINED from MISSED and an omission says neither.
     #
-    # `text` is the second answer shape and not a fallback: the TTY reply path
-    # is always live, and a human who types a sentence at the terminal has
-    # answered the whole set in prose rather than by selection. The two are
-    # mutually exclusive -- a set carrying both would have two different
-    # answers to the same question and no rule for which one wins.
+    # `text` is the second answer shape and not a fallback: a human who types a
+    # sentence at the terminal has answered the whole set in prose rather than by
+    # selection. The two are mutually exclusive -- a set carrying both would have
+    # two different answers to the same question and no rule for which wins.
     class AnswerSet
       include Enumerable
 
@@ -34,15 +30,15 @@ module Lain
       MAX_TEXT = Answer::MAX_COMMENT
 
       # {Set::MAX_SET} bounds the questions; this bounds the whole record that
-      # actually reaches the request, which is those questions PLUS everything
-      # the human wrote back. Eight wordy questions each answered at the comment
-      # maximum is megabytes, and nothing else objects.
+      # reaches the request -- those questions PLUS everything the human wrote
+      # back. Eight wordy questions each answered at the comment maximum is
+      # megabytes, and nothing else objects.
       MAX_ANSWER_SET = 512 * 1024
 
       # Reads only the keys it owns, so a richer event body -- one carrying who
-      # answered, or when -- still rebuilds exactly the reply that was given.
-      # The questions ride along in the same body, which is what makes an answer
-      # read back off the Timeline renderable without a join.
+      # answered, or when -- still rebuilds exactly the reply that was given. The
+      # questions ride in the same body, which is what makes an answer read back
+      # off the Timeline renderable without a join.
       def self.from_body(body)
         fields = Rules.string_keyed(body, "an answer set body")
         listed = Rules.array!(Rules.required(fields, "answers", "an answer set body"), "an answer set's answers")
@@ -86,17 +82,14 @@ module Lain
       # `Enumerable#to_h` sits ahead of `Data#to_h` in the ancestor chain and
       # would read our answers as [key, value] pairs. Restored because every
       # Data-aware reader expects the member hash -- including the shareability
-      # walk in `be_deeply_frozen`, which reaches for it only on the FAILURE
-      # path, so nothing but a direct spec notices when this goes missing.
+      # walk in `be_deeply_frozen`, which reaches for it only on the FAILURE path.
       def to_h = { questions:, answers:, text: }
 
-      # The text the model receives. A String, because that is what a
-      # {Tool::Result} carries.
+      # A String, because that is what a {Tool::Result} carries.
       def render = Rendering.new(self).to_s
 
       # Plain wire form for {Canonical}: the question set's own body plus what
-      # came back. A fresh copy, like {Set#to_body}, so the emitter can add its
-      # own keys beside ours.
+      # came back. A fresh copy, so the emitter can add its own keys beside ours.
       def to_body = questions.to_body.merge("answers" => answers.map(&:to_body), "text" => text)
 
       private
@@ -113,21 +106,19 @@ module Lain
     end
 
     class AnswerSet
-      # The rules that need BOTH sides of the pair, on a throwaway carrier that
-      # is checked and discarded -- {Lain::Declarative}'s convention, in plain Ruby
+      # The rules that need BOTH sides of the pair, on a throwaway carrier that is
+      # checked and discarded -- {Lain::Declarative}'s convention, in plain Ruby
       # because none of these are field-shaped: "one option on a single-select"
       # and "an option this question offers" are joins, not presence checks.
       #
-      # It also does the FILLING, because the two are the same pass: an answer
-      # is matched to its question to be validated, and what has no match is a
+      # It also does the FILLING, because the two are the same pass: an answer is
+      # matched to its question to be validated, and what has no match is a
       # question nobody touched.
       class Given
         def initialize(questions, answers, text)
           @questions = questions
           @given = indexed(answers)
           @prose = spoken(text)
-          # One record per question, in the order they were asked, so a reader
-          # never has to ask whether a missing entry means declined or missed.
           # Built BEFORE the pair rules because it is what they walk: the same
           # index answers "which question is this" and "which question got
           # nothing", so the join happens once.
@@ -197,10 +188,9 @@ module Lain
         end
       end
 
-      # The answer set as the model reads it. A separate object because
-      # rendering is a separate responsibility from construction, and because
-      # the two arms -- a set answered by selection and a set answered in prose
-      # -- read as two documents rather than one document with a branch in it.
+      # The answer set as the model reads it. A separate object because the two
+      # arms -- a set answered by selection and a set answered in prose -- read
+      # as two documents rather than one document with a branch in it.
       class Rendering
         def initialize(set)
           @set = set
@@ -228,11 +218,10 @@ module Lain
           ["### `#{answer.question_id}`", *lines(answer, question)].join("\n")
         end
 
-        # An unanswered question is NAMED and reported, never omitted: an
-        # omission would read as an answer the renderer forgot, and the model
-        # has to be able to tell declined from missed. On a `free_text?`
-        # question the prose IS the answer, so calling it a comment would say
-        # the question went unanswered when it did not.
+        # An unanswered question is NAMED, never omitted: an omission would read
+        # as an answer the renderer forgot. On a `free_text?` question the prose
+        # IS the answer, so calling it a comment would say the question went
+        # unanswered when it did not.
         def lines(answer, question)
           return ["Unanswered."] unless answer.answered?
           return ["Answered:", quoted(answer.comment)] if question.free_text?
@@ -240,21 +229,18 @@ module Lain
           [chosen(answer, question), *(answer.comment? ? ["Comment:", quoted(answer.comment)] : [])]
         end
 
-        # The human's prose is the one part of this document nobody reviewed,
-        # and every line of the grammar around it -- the `### `id`` heading, the
-        # `Chose:`/`Unanswered.` lines, the count header, the blank line that
-        # ends a section -- is something a pasted diff or stack trace can hold
-        # verbatim. Unquoted, a comment forges sections: the model receives one
-        # document asserting both `Chose: X` and `Unanswered.` for the same
-        # question. This is {Rules.fenced!}'s concern on the reply side.
+        # The human's prose is the one part of this document nobody reviewed, and
+        # every line of the grammar around it is something a pasted diff or stack
+        # trace can hold verbatim. Unquoted, a comment forges sections: the model
+        # receives one document asserting both a choice and `Unanswered.` for the
+        # same question. This is {Rules.fenced!}'s concern on the reply side.
         #
         # A blockquote prefix rather than a fence, because containment must not
-        # depend on the content: a fence can be ESCAPED by prose that holds a
-        # longer run of the same marker, so it would need the marker computed
-        # from the text (what {Question::Fence} has to do to read one). A
-        # per-line prefix cannot be escaped at all -- no line of human text
-        # reaches column 0, so none can be read as one of ours, and prose
-        # holding its own fence just nests.
+        # depend on the content: a fence can be ESCAPED by prose holding a longer
+        # run of the same marker, so it would need the marker computed from the
+        # text (what {Question::Fence} does to read one). A per-line prefix
+        # cannot be escaped -- no line of human text reaches column 0, so none
+        # can be read as one of ours, and prose holding its own fence just nests.
         #
         # Split on every line ending rather than `String#lines`, which only
         # breaks on \n: a lone \r is a line break to a renderer and would carry
@@ -270,9 +256,8 @@ module Lain
           "Chose: #{labels(answer, question).join(", ")}"
         end
 
-        # Labels rather than ids, because the model wrote the labels and joins
-        # on the ids. Listed in the question's own option order, which is the
-        # order the model reads them in.
+        # Labels rather than ids, because the model wrote the labels and joins on
+        # the ids. Listed in the question's own option order.
         def labels(answer, question)
           question.options.select { |option| answer.option_ids.include?(option.id) }.map(&:label)
         end

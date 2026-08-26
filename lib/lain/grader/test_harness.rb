@@ -16,13 +16,12 @@ module Lain
     # errored, and `#why` names the failing cases.
     #
     # Two hazards this class is built around. First, the result is read from a
-    # file (never stdout), so a child project's deprecation noise cannot corrupt
-    # the parse. Second, the child must not inherit the HOST's framework context:
-    # a Lain suite runs under `bundle exec`, whose BUNDLE_*/BUNDLER_*/RSPEC_* vars
-    # and RUBYOPT would make the child resolve LAIN's Gemfile and config instead
-    # of the subject's. That scrub now lives on {Lain::Exec}, which is where
-    # every backend that spawns a child reads it -- this class named the hazard
-    # first and was for a while the only place that honoured it.
+    # file, never stdout, so a child project's deprecation noise cannot corrupt
+    # the parse. Second, the child must not inherit the HOST's framework
+    # context: a Lain suite runs under `bundle exec`, whose
+    # BUNDLE_*/BUNDLER_*/RSPEC_* vars and RUBYOPT would make the child resolve
+    # LAIN's Gemfile and config instead of the subject's. That scrub lives on
+    # {Lain::Exec}, where every backend that spawns a child reads it.
     #
     # LIMITATION worth stating honestly: because BUNDLE_GEMFILE is scrubbed, the
     # subject's tests run under the HOST's gem resolution, not the subject's own
@@ -38,8 +37,8 @@ module Lain
       # zero into a meaningless score.
       class EmptyRun < Lain::Error; end
 
-      # The child ran past its bound. Wraps mixlib's {Mixlib::ShellOut::CommandTimeout}
-      # in a Lain-taxonomy error naming the command and the limit, so a caller
+      # The child ran past its bound. Wraps mixlib's own timeout in a
+      # Lain-taxonomy error naming the command and the limit, so a caller
       # catches one named type rather than a leaked dependency class.
       class Timeout < Lain::Error; end
 
@@ -61,7 +60,7 @@ module Lain
       # @param adapter [#command,#parse, nil] an explicit adapter; nil auto-detects
       # @param timeout [Numeric] seconds the child suite may run before {Timeout}
       # @param shell_out_factory [#call] the subprocess runner, injected as a
-      #   factory exactly as {Tools::Bash} and the isolation backends do
+      #   factory as {Tools::Bash} and the isolation backends do
       def initialize(root, adapter: nil, timeout: DEFAULT_TIMEOUT,
                      shell_out_factory: Mixlib::ShellOut.public_method(:new))
         @root = File.expand_path(root.to_s)
@@ -81,9 +80,9 @@ module Lain
       private
 
       # The result file lives in a fresh tempdir, not the project, so grading
-      # leaves the subject's tree untouched. Returns the parsed result plus the
-      # child's stderr -- a runner that writes its crash there (rather than to the
-      # result file) still gets surfaced in `#why`.
+      # leaves the subject's tree untouched. The child's stderr rides back too,
+      # so a runner that writes its crash THERE rather than to the result file
+      # still surfaces in `#why`.
       def run(worker_env)
         Dir.mktmpdir("lain-test-harness") do |dir|
           out_path = File.join(dir, "result")

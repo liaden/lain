@@ -328,13 +328,12 @@ end
 -- to anchor a note into a file nobody is reviewing any more, which is a wrong
 -- answer rather than a missing one.
 --
--- IT IS NO LONGER TRUE THAT ONLY TWO BUFFERS EVER CLAIM THE REVIEW, and this
--- comment used to say so. A row the human goes back to inside the review's
--- tabpage takes its stamp back (`reacquire`), so a third and a fourth claim
--- are ordinary. What this function guarantees is the part that matters and is
--- unchanged: the moment the next row opens, every buffer but the pair being
--- drawn stops claiming, and nothing re-claims except through `reacquire`, which
--- can only hand back what THIS round gave THIS buffer.
+-- MORE THAN TWO BUFFERS MAY CLAIM THE REVIEW: a row the human goes back to
+-- inside the review's tabpage takes its stamp back (`reacquire`), so a third and
+-- a fourth claim are ordinary. What this function guarantees is that the moment
+-- the next row opens, every buffer but the pair being drawn stops claiming, and
+-- nothing re-claims except through `reacquire`, which can only hand back what
+-- THIS round gave THIS buffer.
 --
 -- Derived from the live buffer list, like `drop_stale`, so there is no registry
 -- to go stale.

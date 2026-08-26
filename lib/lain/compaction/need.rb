@@ -2,32 +2,26 @@
 
 module Lain
   module Compaction
-    # Marks "compaction needed" WITHOUT compacting. #check is a pure query:
-    # given a snapshot of the run's state, it says which signals fired, and
-    # never touches {Context::Compact}. Deciding whether NOW is a good time to
-    # pay for that rewrite (cache warmth, hard caps) is a separate, later
-    # policy (`cache-aware-compaction.md`'s scheduler); deciding to actually
-    # run it is {Context::Compact}'s job. This object answers only "is a
-    # compaction warranted", and {Result} proves it structurally -- it carries
-    # flags, never rewritten content, so there is nothing for a caller to
-    # accidentally apply.
+    # Marks "compaction needed" WITHOUT compacting. {#check} is a pure query
+    # over a snapshot of the run's state, and {Result} makes that structural:
+    # it carries flags, never rewritten content, so there is nothing for a
+    # caller to accidentally apply. WHEN a warranted compaction runs is
+    # {Scheduler}'s; performing it is {Context::Compact}'s.
     #
     # Four independent signals, each its OWN small object rather than four
-    # branches inside one method (CLAUDE.md: a tripped Metrics/* cop here
-    # would be naming a missing collaborator, not licensing a raised limit).
-    # #check just asks each detector in turn and collects who fired.
+    # branches inside one method.
     class Need
-      # What #check hands each detector. A Data type so the argument list
-      # cannot silently drift from what a detector actually reads -- a fifth
-      # signal means adding a field HERE, visibly, not threading one more
-      # keyword through #check's signature and every detector's #fired?.
+      # What {#check} hands each detector. A Data type so the argument list
+      # cannot silently drift from what a detector actually reads: a fifth
+      # signal means adding a field HERE, visibly, rather than threading one
+      # more keyword through `#check`'s signature and every detector's
+      # `#fired?`.
       #
-      # `window_tokens` is the exception that proves it: a field added for a
-      # PARAMETER, not for a signal. The context window belongs to the model
-      # THIS turn renders through, and `/model` rewrites that mid-session
-      # ({Context::ModelSwitch}), so a window fixed when the Need was built
-      # would keep measuring occupancy against the model the run began with.
-      # Per-turn state travels here; it does not make Need mutable.
+      # `window_tokens` is a field added for a PARAMETER rather than a signal.
+      # The context window belongs to the model THIS turn renders through, and
+      # `/model` rewrites that mid-session, so a window fixed when the Need was
+      # built would keep measuring occupancy against the model the run began
+      # with. Per-turn state travels here; it does not make Need mutable.
       State = Data.define(:head_bytes, :used_tokens, :window_tokens, :manual, :plan_step_completed)
       private_constant :State
 
@@ -44,34 +38,28 @@ module Lain
 
         # This result with one detector's signal withdrawn, for a caller that
         # knows something the detector bank cannot: {Compaction::Source} holds
-        # the window BOOK and so knows whether the number
-        # {ApproachingWindow} compared against was measured, published, or
-        # guessed, while the detector sees only the integer.
+        # the window BOOK and so knows whether the number {ApproachingWindow}
+        # compared against was measured, published or guessed, while the
+        # detector sees only the integer.
         #
         # A message rather than `Result.new(signals: r.signals - [kind])` at
-        # the call site: that reconstructs a frozen value object from outside,
-        # which re-runs its invariant by luck rather than by contract and
-        # spreads the shape of this type into its callers.
+        # the call site, which reconstructs a frozen value object from outside
+        # and spreads the shape of this type into its callers.
         #
-        # Absent kinds pass through unchanged -- withdrawing a signal that did
-        # not fire is not an error, it is the ordinary case.
-        #
-        # @param kind [Symbol] a detector's KIND
+        # @param kind [Symbol] which detector to withdraw, named by its `KIND`
+        #   constant. One that did not fire passes through unchanged, which is
+        #   the ordinary case rather than an error.
         # @return [Result]
         def without(kind) = with(signals: signals - [kind])
       end
 
       # Crosses {Context::Compact}'s own proxy: the canonical byte length of
-      # the candidate messages, not a real tokenizer (see that class's header
-      # comment for why -- a deterministic proxy is the only property this
-      # detector needs).
+      # the candidate messages, not a real tokenizer.
       #
-      # It READS that length rather than measuring it. The candidate span
-      # arrives from an object that already dumped it -- {Compaction::Head}
-      # measures itself at construction and holds the count -- so dumping it
-      # again here was a second full Canonical pass over the droppable
-      # history, on every turn, including every turn that then deferred. One
-      # measurement, two consumers, which is the whole reason {Head} exists.
+      # It READS that length rather than measuring it. {Compaction::Head}
+      # measures itself at construction and holds the count, so dumping it
+      # again here was a second full Canonical pass over the droppable history
+      # on every turn, including every turn that then deferred.
       class TokenThreshold
         KIND = :token_threshold
 
@@ -89,14 +77,13 @@ module Lain
       #
       # It holds the RATIO (a policy, set once) and reads the WINDOW off the
       # state (a fact about this turn's model, which can change under a running
-      # session). That split is what keeps this detector frozen and shareable
-      # while still following a `/model` switch.
+      # session). That split keeps the detector frozen and shareable while
+      # still following a `/model` switch.
       #
-      # The occupancy it measures is {ContextWindow::Occupancy}, the same value
-      # a chat status line reads: the comparison and the number shown to a human
-      # are one calculation, so "90% full" and "fired" cannot disagree. Absence
-      # (no turn yet) is the Null {Occupancy::None}, which never fires -- what
-      # the explicit nil check here used to say.
+      # It measures {ContextWindow::Occupancy}, the same value a chat status
+      # line reads, so "90% full" and "fired" cannot disagree. Absence -- no
+      # turn yet -- is the Null {ContextWindow::Occupancy::None}, which never
+      # fires.
       class ApproachingWindow
         KIND = :approaching_window
 
@@ -121,12 +108,10 @@ module Lain
         def fired?(state) = state.manual
       end
 
-      # A finished plan step is a natural summarization boundary (see
-      # `cache-aware-compaction.md`'s Need-signal list). The transition
-      # itself is detected upstream -- {Session#plan_step_completed?}, fed by
-      # {Tools::TodoWrite} -- so this detector only relays the boolean it is
-      # handed; it does not reach into a Session itself, keeping Need
-      # decoupled from run-state storage.
+      # A finished plan step is a natural summarization boundary. The
+      # transition is detected upstream, so this detector only relays the
+      # boolean it is handed and never reaches into a Session -- which is what
+      # keeps Need decoupled from run-state storage.
       class PlanStepCompletion
         KIND = :plan_step_completion
 
@@ -153,10 +138,9 @@ module Lain
       #   window is a silently wrong threshold, and the one thing worse than
       #   compacting early is never compacting at all.
       # @param head_bytes [Integer] the candidate-for-drop head in
-      #   {Context::Compact}'s byte proxy, ALREADY MEASURED -- {Head#bytesize},
-      #   on the shipped path. Defaults to nothing droppable, which is the
-      #   honest reading for a caller naming no head at all and which no
-      #   threshold anyone would configure can cross.
+      #   {Context::Compact}'s byte proxy, ALREADY MEASURED ({Head#bytesize}).
+      #   Defaults to nothing droppable, the honest reading for a caller naming
+      #   no head at all, which no configurable threshold can cross.
       # @param used_tokens [Integer, nil] current usage against the context window
       # @param manual [Boolean] an explicit, on-demand trigger
       # @param plan_step_completed [Boolean] {Session#plan_step_completed?}'s signal
@@ -170,15 +154,13 @@ module Lain
 
       private
 
-      # The coercion {ApproachingWindow} ran at construction while the window
-      # was its own, moved to where the value now arrives -- and it has to be
-      # here rather than in `#fired?`, which short-circuits on a nil
-      # `used_tokens`. A garbage window would otherwise stay SILENT until the
+      # HERE rather than in `#fired?`, which short-circuits on a nil
+      # `used_tokens`: a garbage window would otherwise stay SILENT until the
       # first turn carrying usage and then surface as a NoMethodError on nil
       # from inside a private detector, naming neither the parameter nor the
-      # fix. Zero and negatives are worse: they raise nothing ever and fire
-      # :approaching_window on every turn forever, which reads as a compaction
-      # policy rather than as the wiring bug it is.
+      # fix. Zero and negatives are worse -- they raise nothing ever and fire
+      # `:approaching_window` on every turn forever, which reads as a
+      # compaction policy rather than as the wiring bug it is.
       def window!(window_tokens)
         tokens = Integer(window_tokens, exception: false)
         return tokens if tokens&.positive?

@@ -3,12 +3,10 @@
 module Lain
   module CLI
     # The read-mostly view of a live conversation that `/ruby` inspects
-    # through. It exposes exactly four collaborators -- the timeline, the
-    # session, the fleet supervisor, and the status feed -- as reader
-    # messages, and hands out a Ruby {Binding} whose `self` is this
-    # object, so an inspected expression resolves `timeline`/`session`/
-    # `supervisor`/`status` and nothing wider (an unqualified `agent` is a
-    # NameError, by design -- the binding is a window, not the whole run).
+    # through. It hands out a Ruby {Binding} whose `self` is this object, so an
+    # inspected expression resolves `timeline`/`session`/`supervisor`/`status`
+    # and nothing wider -- an unqualified `agent` is a NameError, by design,
+    # because the binding is a window, not the whole run.
     #
     # Frozen, so "read-mostly" is mechanical rather than a convention: a console
     # line that tries to reassign an ivar (`@timeline = ...`) raises FrozenError
@@ -16,10 +14,8 @@ module Lain
     # collaborators' own methods stay callable -- this scopes the surface, it
     # does not sandbox the objects.
     class InspectionBinding
-      # Built where a command runs -- the timeline and session come off the live
-      # Agent (so each `/ruby` reads the head as it stands now, not a snapshot
-      # frozen at wiring time), the supervisor and status straight off the
-      # frozen {Command::Env}.
+      # The timeline and session come off the live Agent, so each `/ruby` reads
+      # the head as it stands now rather than a snapshot frozen at wiring time.
       def self.for(env)
         new(timeline: env.timeline, session: env.agent.session,
             supervisor: env.supervisor, status: env.status)
@@ -35,11 +31,9 @@ module Lain
 
       attr_reader :timeline, :session, :supervisor, :status
 
-      # Named `context`, not `binding`: `Kernel#binding` is what produces it, and
-      # a reader called `binding` would shadow that inside the very eval this
-      # hands out. A fresh Binding per call is deliberate -- the console and an
-      # inline eval each get their own, and there is no per-instance state to
-      # memoize on a frozen object anyway.
+      # Named `context`, not `binding`: a reader called `binding` would shadow
+      # `Kernel#binding` inside the very eval this hands out. A fresh Binding
+      # per call, so the console and an inline eval each get their own.
       def context = binding
     end
   end

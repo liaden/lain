@@ -10,8 +10,7 @@ module Lain
     # nothing).
     class SingleThread < Arm
       # @param name [String] the arm's label
-      # @param instrument [Instrument] times the ask and prices the journal --
-      #   the same measuring collaborator every arm is injected with
+      # @param instrument [Instrument] times the ask and prices the journal
       # @param handoff [#reclaim] the worker-completion point, threaded to the
       #   base's own lease bracket
       def initialize(name: "single-thread", instrument: Instrument.new,
@@ -21,18 +20,17 @@ module Lain
       end
 
       # Spawn one agent through `spawn_seam`, ask it the task, and hand back the
-      # graded, priced, timed {Run}. The `spawn_seam` is handed a fresh recording
-      # journal so this arm can price exactly the turns this run produced; the
-      # grader scores the resulting Timeline.
+      # graded, priced, timed {Run}. It is handed a fresh recording journal so
+      # this arm prices exactly the turns this run produced.
       #
-      # `elapsed` times ONLY {Agent#ask} -- the clock stops before grading and
-      # pricing, which run after. So wall-time is the model/tool work under study,
-      # never the harness's own scoring/accounting overhead (which would otherwise
-      # make a slow grader look like a slow arm).
+      # `elapsed` times ONLY {Agent#ask}: the clock stops before grading and
+      # pricing, so wall-time is the model/tool work under study and never the
+      # harness's own accounting overhead, which would make a slow grader look
+      # like a slow arm.
       #
-      # The lease lifecycle is the base's {Arm#leased} bracket. This arm has no
-      # per-worker result to fold a handoff {Isolation::WorkerHandoff::Report}
-      # into, so the Handback journal is what records what the completion did.
+      # This arm has no per-worker result to fold an
+      # {Isolation::WorkerHandoff::Report} into, so the Handback journal is what
+      # records what the completion did.
       #
       # @param task [String] the instruction to ask
       # @param spawn_seam [#call] `call(journal:, **spawn_opts) -> Agent`, a FRESH

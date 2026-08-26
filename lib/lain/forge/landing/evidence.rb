@@ -6,18 +6,17 @@ module Lain
       # What is already true before this run does anything: what this issue's
       # journal settled, and what the world says regardless.
       #
-      # Gathered ONCE, at the top, and every {Unobservable} the gathering meets
-      # is folded into a refusal HERE. {Reconcile} catches that exception only
-      # inside the questions it asks itself ({Reconcile::Observer}'s `ask`), and
-      # the head-ref lookup below is asked outside that fold -- a crashed
-      # pr_create's outcome never recorded the number, so the head ref is the
-      # only address that survives. Asking it deeper in the fold is how the
-      # first version of this class let an exception escape `resume`.
+      # Gathered ONCE, at the top, and every {Unobservable} the gathering meets is
+      # folded into a refusal HERE. {Reconcile} catches that exception only inside
+      # the questions it asks itself, and the head-ref lookup below is asked
+      # outside that fold -- a crashed pr_create's outcome never recorded the
+      # number, so the head ref is the only address that survives. Asking it
+      # deeper in the fold is how the first version let an exception escape
+      # `resume`.
       #
-      # Pure, in {SessionRecord::Salvage}'s sense: it touches no file and opens
-      # no socket of its own. It reads the two ducks it was handed -- entries and
-      # a world -- and answers. Deciding what to DO about an answer is the
-      # {Step}'s, and writing anything at all is the {Journaled} bracket's.
+      # It touches no file and opens no socket of its own: it reads the two ducks
+      # it was handed and answers. Deciding what to DO is the {Step}'s, and
+      # writing anything is the {Journaled} bracket's.
       class Evidence
         # The `--json` field a pull request record carries its number in.
         NUMBER = "number"
@@ -102,16 +101,13 @@ module Lain
         end
 
         # Nothing is known: no journal to fold and no world to ask. {Landing#call}
-        # folds against this, which is what makes a fresh landing and a resumed
-        # one ONE expression over one plan (CLAUDE.md's Null Object rule;
-        # `Sink::Null` is the exemplar).
+        # folds against this, which is what makes a fresh landing and a resumed one
+        # ONE expression over one plan.
         #
-        # Answering {Missing} to everything is the ABSENCE of evidence, not a
-        # claim that nothing has happened -- and every performer in the plan is
-        # idempotent by OBSERVATION rather than by memory ({Promotion}'s
-        # already_promoted, {Gh#pr_create}'s already-exists refusal), so a fresh
-        # run that meets an effect already in place still declines to duplicate
-        # it.
+        # Answering {Missing} to everything is the ABSENCE of evidence, not a claim
+        # that nothing has happened -- every performer in the plan is idempotent by
+        # OBSERVATION rather than by memory, so a fresh run that meets an effect
+        # already in place still declines to duplicate it.
         NONE = new(report: Reconcile::Report.new(settled: [], unsettled: [], orphans: [], unaddressable: []))
 
         private

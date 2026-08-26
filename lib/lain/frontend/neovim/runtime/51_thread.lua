@@ -195,14 +195,12 @@ end
 -- remembered (47_diff's `unstamp`/`drop_stale` discipline): a registry of
 -- buffers is the thing that goes stale.
 --
--- MORE THAN ONE BUFFER CAN CLAIM THE REVIEW, and this comment used to rest on
--- the opposite. 47_diff's `reacquire` hands a stamp back to a row the
--- human returns to inside the review's tabpage, so the pair being drawn is not
--- the whole census. This function is unaffected, and for a reason worth stating
--- rather than inheriting: it matches on PATH AND SIDE, and one path names one
--- buffer per side, so a wider census cannot widen this answer. The claim it once
--- leaned on -- "at most one buffer is stamped" -- was never the property it
--- needed.
+-- MORE THAN ONE BUFFER CAN CLAIM THE REVIEW: 47_diff's `reacquire` hands a stamp
+-- back to a row the human returns to inside the review's tabpage, so the pair
+-- being drawn is not the whole census. This function is unaffected because it
+-- matches on PATH AND SIDE, and one path names one buffer per side, so a wider
+-- census cannot widen this answer -- "at most one buffer is stamped" was never
+-- the property it needed.
 function review_thread.side_buf(path, side)
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.b[buf].lain_review_path == path and vim.b[buf].lain_review_side == side then
@@ -578,18 +576,16 @@ local thread_group = vim.api.nvim_create_augroup("lain_thread", { clear = true }
 -- The trigger, and `false`: a motion may swap the pane's buffer and may not
 -- build a window (see the header).
 --
--- No pattern, and the honest cost, because the first version of this comment
--- had it backwards and a panel measured it. Per dispatch on 0.12.4: dispatching
+-- No pattern, and the honest cost, measured per dispatch on 0.12.4: dispatching
 -- to a global lua callback is ~2.8us over a floor of nothing registered, of
 -- which ~0.8us IS the buffer-name pattern match; the bail-out body itself is
--- ~0.16us; a `buffer=`-scoped autocmd is indexed by bufnr and costs ~0.09us
--- when it does not match. So this pays ~2.8us per cursor move in every buffer
--- in the editor to avoid ~0.8us paid only in review buffers -- the wrong way
--- round, and kept anyway because it is three orders of magnitude under a
--- redraw and because attaching per buffer means attaching in `register`, where
--- the buffers a review stamps are not yet all known. A `buffer=`-scoped
--- CursorMoved is the cheaper and more idiomatic spelling if this is ever a
--- cost that shows.
+-- ~0.16us; a `buffer=`-scoped autocmd is indexed by bufnr and costs ~0.09us when
+-- it does not match. So this pays ~2.8us per cursor move in every buffer in the
+-- editor to avoid ~0.8us paid only in review buffers -- the wrong way round, and
+-- kept anyway because it is three orders of magnitude under a redraw and because
+-- attaching per buffer means attaching in `register`, where the buffers a review
+-- stamps are not yet all known. A `buffer=`-scoped CursorMoved is the cheaper
+-- spelling if this ever shows.
 vim.api.nvim_create_autocmd("CursorMoved", {
   group = thread_group,
   callback = function() review_thread.refresh(false) end,
@@ -659,12 +655,12 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
       -- `__lain.review_refused` (`65_review.lua`), which prepends the `lain: `
       -- this string therefore does not.
       --
-      -- IT DOES NOT FOLLOW THAT THE BUFFER IS CLEAN, and an earlier version of
-      -- this comment claimed it was. `typed` trims and reads only past the
-      -- watermark, so whitespace under the conversation, or an edit of lain's
-      -- own rendered lines, reaches this leg with 'modified' set and no question
-      -- to send -- and nothing here clears it. Deliberately: clearing it would
-      -- be this pane's one write that says "saved" over text lain never took.
+      -- IT DOES NOT FOLLOW THAT THE BUFFER IS CLEAN. `typed` trims and reads
+      -- only past the watermark, so whitespace under the conversation, or an
+      -- edit of lain's own rendered lines, reaches this leg with 'modified' set
+      -- and no question to send -- and nothing here clears it. Deliberately:
+      -- clearing it would be this pane's one write that says "saved" over text
+      -- lain never took.
       _G.__lain.review_refused("nothing has been typed under the conversation, so there is no question to ask -- " ..
         "write it below the last message and :w again")
       return
@@ -672,28 +668,23 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
     local ok, err = pcall(vim.rpcrequest, chan, "lain_command", "review_ask",
       { vim.b[ev.buf].lain_thread_anchor, question })
     if not ok then
-      -- ON THE RAIL AND NOT AS A RAISE, WHICH CLOSES THE RAISING-REFUSAL HOLE IN
-      -- THIS PANE. The argument that kept this one a raise is answered rather
-      -- than dropped: here a question really was typed and really did not reach
-      -- anyone, and `:w` reporting success over that IS the one outcome worse
-      -- than a traceback -- still true, and it turned out not to need a raise.
-      -- Leaving 'modified' set is already the write not succeeding (the order
-      -- note above). A panel measured this leg at `{mode = "r", blocking = true}`
-      -- with the next round trip TIMING OUT; that cost was accepted only while
-      -- a raise was the sole way to fail a write.
+      -- ON THE RAIL AND NOT AS A RAISE. A question really was typed and really
+      -- did not reach anyone, and `:w` reporting success over that IS the one
+      -- outcome worse than a traceback -- but leaving 'modified' set is already
+      -- the write not succeeding (the order note above), so no raise is needed.
+      -- Measured as a raise, this leg read `{mode = "r", blocking = true}` with
+      -- the next round trip TIMING OUT.
       --
       -- `review_refused` is what makes the rail reachable on this leg
-      -- SPECIFICALLY: it is a LOCAL `nvim_echo` (`65_review.lua`), so it still
-      -- delivers when the wire this branch exists to report on has just failed.
-      -- It prepends the `lain: ` this string therefore does not.
-      -- `48_annotate.lua`'s `LainNoteDone` is the same shape.
+      -- SPECIFICALLY: it is a LOCAL `nvim_echo`, so it still delivers when the
+      -- wire this branch exists to report on has just failed. It prepends the
+      -- `lain: ` this string therefore does not.
       --
       -- AND IT IS SHORT BECAUSE THE RAIL ELIDES THE MIDDLE. `v:echospace` is 98
       -- in the cockpit's 110-column pane, so a sentence over 92 characters is
-      -- shown with its middle cut -- which for the first draft of this one was
-      -- exactly `err`, the only part a human cannot guess. At 82 plus `err` the
-      -- cause survives whole for any ordinary wire error, and a long one folds
-      -- into `:messages` rather than over the remedy.
+      -- shown with its middle cut -- which would take exactly `err`, the only
+      -- part a human cannot guess. At 82 plus `err` the cause survives whole for
+      -- any ordinary wire error.
       _G.__lain.review_refused("the question was NOT sent: " .. tostring(err) ..
         " -- your text is untouched; :w again")
       return
@@ -752,16 +743,13 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
 -- above.
 --
 -- AND THE TOKEN A HUMAN CANNOT GUESS GOES LAST, which is the rule the widths
--- below 80 force. `fitted` keeps a sentence's HEAD AND TAIL (`65_review.lua`'s
--- `elided`), so a command name in the MIDDLE is cut in half rather than dropped:
--- at 60 columns an earlier draft of the note refusal read back as
--- `lain: note not handed ... Done gives it a thread`, and `Done` is not a
--- command. The same thing had already eaten the ask-failed refusal's `err`
--- below. Both names here qualify as unguessable and not just unmemorable --
+-- below 80 force. `fitted` keeps a sentence's HEAD AND TAIL, so a command name
+-- in the MIDDLE is cut in half rather than dropped: at 60 columns a refusal read
+-- back as `lain: note not handed ... Done gives it a thread`, and `Done` is not
+-- a command. Both names here are unguessable rather than merely unmemorable --
 -- `48_annotate`'s `<leader>Lt` reaches this refusal without the human having
 -- typed `:LainThread` at all -- so both sentences END on theirs, and
--- `thread_view_spec.rb` pins the elided rendering at 60 columns rather than the
--- rule in prose.
+-- `thread_view_spec.rb` pins the elided rendering at 60 columns.
 define("LainThread", function()
   local buf = vim.api.nvim_get_current_buf()
   local slot = review_thread.OPPOSITE[vim.b[buf].lain_review_side]

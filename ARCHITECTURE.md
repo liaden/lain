@@ -438,6 +438,158 @@ is what runs validate → preconditions → `#perform` → postconditions, which
 implement `#perform` and never `#call`: routing through the public entry point is what makes the
 contract and schema checks unskippable.
 
+### Triaging a bash command
+
+`Shell::Parse` (`lib/lain/shell/parse.rb`) reports what tree-sitter's bash grammar saw, and just
+as importantly what it did not; `Shell::Verdict` (`lib/lain/shell/verdict.rb`) reads that report
+and answers one question — *is this command syntactically literal and fully understood?* — never
+*is it safe*. An allow hands over a **term** (`[["grep", "-r", "foo", "."], ["wc", "-l"]]`) and
+deliberately not the original string, because re-running an accepted string through `sh -c` turns
+every parser/shell disagreement into a live bypass. `Shell::Pipeline` runs that term through
+`Open3.pipeline_r` with no shell anywhere.
+
+Parse carries three independent signals, and the third is the one a designer forgets:
+
+1. **Broken** — an ERROR *or* a MISSING node, in one query. `has_error()` alone was measured
+   letting `")"`, `"def"`, `"1 +"` and `"[1,"` through as silent zero-matches.
+2. **Uncovered bytes** — every non-whitespace byte must sit inside a span the parser recognizes.
+   This is the signal that does not depend on the grammar admitting a mistake: tree-sitter-bash
+   #315 parses `$FOO/$BAR/` into a corrupted `command_name` of `"$FOO/$"` with zero ERROR and zero
+   MISSING nodes, and only the swallowed `$` at byte 5 gives it away.
+3. **Kinds and separators** — the vocabulary a verdict allowlists over.
+
+**Coverage is not a "compound syntax cannot hide here" guarantee.** tree-sitter-bash does not
+model `time` as a keyword, so a leading command word the grammar does not know degrades its whole
+tail to plain `word` nodes in an ordinary `command`: `time { echo PWNED; }`, `time if true; then
+ls; fi` and `time rm -rf /tmp/x` all reach FULL coverage with the blandest possible kind set, and
+the last of them execs faithfully. Swept as a leading token, twelve reserved words reach
+covered-and-unbroken (`}`, `coproc`, `do`, `done`, `elif`, `else`, `esac`, `fi`, `in`, `then`,
+`time`, `]]`); `coproc` is benign only because no such binary exists, where `/usr/bin/time` does.
+Nor is it only the leading stage — `echo hi; time { rm x; }`, `ls | time rm x` and `true && time
+rm -rf /tmp/x` are all fully covered — so a name check reads EVERY stage's `argv.first`. The
+residual risk is therefore a *program name*, which is a judgement, and it lives in Verdict's
+`PROGRAM_RUNNERS` denylist rather than as a "suspicious leading word" heuristic in the parser.
+
+The reconstructed argv is the tree's word splitting and none of a shell's interpretation, so four
+things belong to whoever executes it: quotes survive verbatim (dequoting is interpretation); a
+redirection is an argv term inside the command node and is DROPPED outside it (`echo a >b c`
+yields `["echo", "a"]`, and only `kinds` reporting `redirected_statement` tells you `c` is gone);
+a heredoc body is blanketed rather than tokenised; and a NUL byte parses clean into an ordinary
+word, which `exec` then refuses.
+
+Verdict's three tiers are node kinds (an allowlist, never a metacharacter denylist), program
+names, and **word text** — a glob, a tilde, a brace and a backslash have no node kind at all, so
+`rm *` parses identically to `ls -la`. There is a fourth thing to count: tree-sitter-bash lexes a
+newline as whitespace, so `echo hi\nrm -rf /tmp/x` arrives as two stages and an EMPTY separator
+list. Reading separator texts cannot see it; N stages against N−1 pipes can.
+
+## The secret boundary
+
+The split is forced by *when the answer is available*: a path classifier can answer before a file
+is opened, a region detector cannot until it has the bytes. So there are three places, and
+tier-1 `read_file`/`grep`/`glob`/`list_files` check nothing themselves.
+
+| where | object | question |
+|---|---|---|
+| gate on the effect | `Sensitivity::Policy` | may this CALL happen? |
+| filter on the result | `Middleware::WithholdSecretPaths` → `Sensitivity::Filter` | which rows may the model see? |
+| mask on the content | `Middleware::RedactSecretReads` → `Sensitivity::Masking` | which BYTES may leave? |
+
+`Policy` holds the only `Filter.new` in `lib/`, built in its own `#initialize`, and nothing
+exposes the classifier — so a gate that refuses a path while the listing that found it enumerates
+the same path is *unrepresentable* rather than merely untested. Both gate and filter turn on
+**not ordinary**, never on `Verdict#gated?`, which is false for a DENIED path and would wave
+`~/.ssh/id_rsa` through while withholding `.env`.
+
+`Policy::PATH_FIELDS` is the whole of what the boundary knows about tools — which input field
+names a path, per tool. That coupling cannot be abolished (something must know `bash` names a
+directory in `cwd` while `read_file` names a file in `path`), so it is data in one place, pinned
+by a spec that fails BY NAME when a new path-taking tool ships. That spec has no allowlist:
+an earlier edition scoped out the three AST readers, which made a green suite state three
+bypasses as intended — and `ast_search path=.env pattern="$A = $B"` returns the captured values,
+byte-for-byte what `read_file` returns.
+
+### Detection: measured, with the residual written down
+
+`Sensitivity::Regions` runs two detectors over the same bytes — the credential shapes from
+`CredentialPatterns.for(:content)`, and a Shannon-entropy run detector for tokens no issuer
+prefix names. Entropy is TRIAGE, not a verdict. A region is the assignment's **value alone**, so
+masking leaves a `.env` still legible as a `.env` and partial approval falls out for free.
+
+The gate exists because the patterns alone were unusable: measured over this repo before it
+(`**/*.md` less `references/repos/` and `.claude/`, plus `lib/**/*.rb` and `spec/**/*.rb`) they
+matched **70.9%, 86.0% and 95.4%** of files — `^ident = value` IS Ruby assignment syntax, so a
+name-agnostic assignment shape matches source code by construction. An assignment now yields a
+region only when its NAME hints at a credential over a value with SUBSTANCE, or its VALUE is
+secret-SHAPED. The name is matched as a substring, because `DATABASE_PASSWORD` has no word
+boundary before `PASSWORD`; a value-shape test alone would not do, because a named passphrase is
+low-entropy — exactly the secret a shape test structurally cannot see.
+
+With the gate, the substance floor and the thresholds, over the same three globs:
+
+| corpus | files with a region | regions | pattern / entropy |
+|---|---|---|---|
+| markdown | 28 of 134 (20.9%) | 57 | 7 / 50 |
+| `lib/**/*.rb` | 36 of 602 (6.0%) | 53 | 52 / 1 |
+| `spec/**/*.rb` | 63 of 581 (10.8%) | 262 | 218 / 44 |
+
+The floor sits at the recall-preserving end of its plausible range: at 8 rather than 6 it buys
+back 2, 4 and 20 regions of noise (mostly 6–7 byte fragments like `test")`) and pays for them
+with `hunter2`. What remains in `lib/` is Ruby whose variable happens to be named `token`,
+`session` or `pass` over a substantial value — not a credential among them; the entropy residual
+is blake3 fixtures in `spec/`, correctly hash-shaped, and long URLs and paths in markdown,
+because `/`, `-` and `_` are all base64url characters. Recorded rather than special-cased: a
+documented residual beats a rule nobody can reason about, and every region has a release path
+whose cost is one decision, held to one by the digest.
+
+Note that `regions.rb` and its spec are IN that corpus. Measuring a change to the detector
+against a corpus containing the detector is how a review once produced a false finding: an edit
+that shortened the file by 11 bytes moved two region offsets by 11 and read as behaviour.
+
+A **JWT is three regions**, because `.` is not in the token charset — and the header of every
+HS256 JWT is the identical byte string `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9`, so under
+content-addressed identity, releasing one JWT pre-releases that segment for every future JWT at
+that path. The payload and signature are unaffected. Joining `.`-separated runs into one region
+was measured and NOT taken: on its own it makes a JWT report ZERO regions, since the base64
+shape test does not admit `.` either, and fixing that widens what counts as base64 everywhere.
+
+Detection costs ~0.27ms/KB on ordinary source, linear, with no adversarial blowup (a 1MB base64
+line is 578ms). So it runs per read without a budget under a few hundred KB.
+
+### The release ledger
+
+`Sensitivity::Ledger` holds what this RUN has released, keyed by **(path, digest)**, and the path
+half is the containment. A region is its value alone, so identical bytes in one file are one
+secret and one decision covers both — but across files they are not, and content addressing
+cannot tell them apart (the JWT header above is the proof). The trade is deliberate: a lockfile
+hash approved in one crate of a monorepo is asked about again in the next, which is the direction
+this boundary errs in everywhere — a spurious match costs one prompt, a release that travels
+costs a secret.
+
+**A relative path raises rather than being normalized.** Nothing here opens or stats anything, so
+"any spelling is merely its own key" holds for absolute spellings (`/repo/./.env` and `/repo/.env`
+are two keys — fail-closed, one extra prompt, no merge) and is FALSE for a relative one:
+`config/.env` under a parent's cwd and under a child worktree's cwd are two files behind one key.
+Normalizing cannot fix it, because the ledger is per-RUN and reaches every child through the board
+thunk, so there is no single cwd to normalize against. Raising needs no cwd at all, and the arm
+holding the effect and the worker cwd can resolve before it calls.
+
+Reading **reconciles** in the same call: `#outstanding` drops the releases for digests the file no
+longer holds. Command-query separation would split that, and the failure mode of the second call
+being forgotten is that a secret deleted and later restored is sent without anyone being asked.
+Reconciling is sound only over a COMPLETE detection, so `complete:` is a stated precondition with
+its own keyword — and `complete: false` opts OUT of the containment: under it a deleted region
+stays released, so delete-then-restore at that path is re-sent unasked. That is unavoidable
+(nothing can reconcile what it did not look at) but it compounds, and a file read only ever under
+a size cap never reconciles at all.
+
+The ledger is run-scoped, mutable, and owned beside the run's one `Approval::Queue` and one
+`Sensitivity::Policy`. There is deliberately no persistence path and no Null: remembering "yes,
+send `.env.local`" across runs is exactly what `Approval::Risk::Classification#rememberable?`
+declines to keep, and a Null would answer "nothing outstanding" forever — a release control that
+releases everything, wearing the Null Object idiom as camouflage.
+
+
 ## The Provider boundary
 
 `Provider` (`lib/lain/provider.rb`) is one round trip with no loop: `#capabilities`, `#encode`,
@@ -474,7 +626,10 @@ reproducibility does not transfer (`references/ollama/cloud.md`).
 
 Provider-specific detail (setup, capability masks, wire quirks, local smoke-testing) lives in
 `docs/providers/` (one doc per provider), and the porting trace in
-`docs/porting-providers.md`. Read those rather than looking for it here.
+`docs/porting-providers.md`. Read those rather than looking for it here. Two cross-provider
+transport records live there too: `docs/providers/stall-clock.md` (why the inter-chunk stall
+clock is split between a Faraday middleware and the `on_data` proc, and the five places its
+async raise can land) and `docs/providers/ollama.md`'s "Two context numbers" section.
 
 `Lain::Request` and `Lain::Response` are the provider-neutral value objects every provider
 translates to and from. `Lain::Usage` is a property-tested commutative monoid. `CacheProfile`

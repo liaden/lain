@@ -1,7 +1,6 @@
--- Whole-buffer replace for the ONE editable view, lain://request (4-2.3). It
--- writes WITHOUT the nomodifiable flip set_view does, so the buffer stays
--- editable for the human after the render. Like set_view it never focuses or
--- jumps to the buffer, so a re-render can't steal the cursor mid-edit.
+-- Whole-buffer replace for the ONE editable view, lain://request. It writes
+-- WITHOUT the nomodifiable flip set_view does, so the buffer stays editable
+-- after the render, and like set_view it never focuses or jumps to the buffer.
 function _G.__lain.set_request(name, lines)
   local buf = editable_buf(name)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)

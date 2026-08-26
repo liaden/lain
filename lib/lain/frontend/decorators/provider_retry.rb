@@ -3,15 +3,12 @@
 module Lain
   module Frontend
     module Decorators
-      # Presents a transport-level retry live: a human watching a stalled
-      # provider round trip used to watch a blank screen while every
-      # {Telemetry::ProviderRetry} landed only in the Journal. Same shape as
-      # {ToolOutput} -- a dim attribution label followed by a styled detail --
-      # so repeated waiting stays legible without inventing a second render
-      # pattern. `:label` and `:warning` are both already-registered tokens
-      # (see {Theme::DEFAULT_TOKENS}): a retry is an operational notice, not
-      # the harness's own error and not unstyled prose, so it earns no new
-      # token of its own.
+      # Presents a transport-level retry live, because a human watching a stalled
+      # provider round trip otherwise watches a blank screen. {ToolOutput}'s
+      # shape -- a dim attribution label followed by a styled detail. `:label`
+      # and `:warning` are already-registered tokens: a retry is an operational
+      # notice, not the harness's own error and not unstyled prose, so it earns
+      # no token of its own.
       class ProviderRetry
         # Below this, a rounded value reads "0s" -- indistinguishable from no
         # wait at all, though a real backoff is happening.
@@ -19,10 +16,9 @@ module Lain
 
         def initialize(event) = @event = event
 
-        # A retry notice is composed whole and rendered once, which is what
-        # {#render} has always claimed. Saying so out loud is what lets the
-        # frontend terminate it: four of these in a row must reach the
-        # screen as four rows, not as one run-together string.
+        # Composed whole and rendered once, which is what lets the frontend
+        # terminate it: four of these in a row must reach the screen as four
+        # rows, not as one run-together string.
         def line_shaped? = true
 
         # @param theme [Frontend::Theme]
@@ -46,15 +42,13 @@ module Lain
         end
 
         # The retry middleware hands back a raw Float second count (observed:
-        # 0.14368744774438316), precision nobody reads at, and -- rarely, via
-        # a misbehaving server's oversized Retry-After header parsed to
-        # Float::INFINITY (see AnthropicWire::RESET_HEADER_PARSER) -- a
-        # non-finite one Float#round cannot take at all. So: round to a
-        # readable two places, and drop the decimal tail entirely for a
-        # whole-second backoff so `2.0` does not masquerade as measured to
-        # the millisecond; but for either edge -- non-finite, or too small to
-        # round to anything but a misleading zero -- name an honest bound
-        # instead of a number this render cannot stand behind.
+        # 0.14368744774438316), precision nobody reads at, and -- rarely, via a
+        # misbehaving server's oversized Retry-After header parsed to
+        # Float::INFINITY -- a non-finite one `Float#round` cannot take at all.
+        # So: two places, with the decimal tail dropped for a whole-second
+        # backoff so `2.0` does not masquerade as measured to the millisecond,
+        # and for either edge an honest bound instead of a number this render
+        # cannot stand behind.
         def formatted_backoff
           backoff = @event.will_retry_in
           return "a while" unless backoff.finite?

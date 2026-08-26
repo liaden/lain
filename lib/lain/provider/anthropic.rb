@@ -8,12 +8,12 @@ module Lain
   class Provider
     # The forked provider: Lain's own HTTP transport instead of the official SDK.
     #
-    # It shares {AnthropicEncoding} with {Provider::AnthropicReference}, so `#encode`
-    # produces byte-identical kwargs (the dry differential proves it), and drives
-    # the vendored Faraday/SSE stack through {Transport}. What it does NOT share is
-    # the SDK's -- or RubyLLM's -- response model: both flatten the content array,
-    # and this returns a {Lain::Response} carrying the FULL, ordered block list
-    # with every extended-thinking signature intact (gate 1).
+    # It shares {AnthropicEncoding} with {Provider::AnthropicReference}, so
+    # `#encode` produces byte-identical kwargs (the dry differential proves it).
+    # What it does NOT share is the SDK's -- or RubyLLM's -- response model:
+    # both flatten the content array, and this returns a {Lain::Response}
+    # carrying the FULL, ordered block list with every extended-thinking
+    # signature intact.
     #
     # == encode vs. the wire
     #
@@ -25,42 +25,27 @@ module Lain
     # {AnthropicEncoding}, whose output the oracles must keep seeing as kwargs.
     class Anthropic < Provider
       include AnthropicEncoding
-      # The wire body, the wire response, and the rate-limit backoff -- shared
-      # with {Provider::Bedrock}, which speaks the same Messages API. That is
-      # also where RATE_LIMIT_RESET_HEADER and RESET_HEADER_PARSER now live;
+      # Also where RATE_LIMIT_RESET_HEADER and RESET_HEADER_PARSER live;
       # constant lookup walks ancestors, so `Anthropic::RATE_LIMIT_RESET_HEADER`
       # still resolves.
       include AnthropicWire
-      # APIError / APIStatusError, nested here and rooted at Lain::Error.
-      #
+      # APIError / APIStatusError, nested here and rooted at Lain::Error, and
       # UNRELATED to {Provider::AnthropicReference::APIError}: same name, same
-      # shape, no shared ancestor besides {Lain::Error} -- verified nothing
-      # above the Provider rescues either by name today (Backend can hand chat
-      # either backend depending on whether journaling is on). A caller wanting
-      # "an Anthropic API error" regardless of which backend produced it must
-      # handle both explicitly, or a shared marker module must be introduced
-      # first -- do not assume `rescue Anthropic::APIError` catches an
-      # SDK-oracle failure, or vice versa.
+      # shape, no shared ancestor besides {Lain::Error}. Do not assume `rescue
+      # Anthropic::APIError` catches an SDK-oracle failure, or vice versa --
+      # a caller wanting either must handle both explicitly.
       include ErrorWrapping.under(Lain::Error)
       include StreamStartedSignal
-      # #admitted, over #resolved_endpoint, #queue_for_capacity? and
-      # #wait_journal below.
       include Admitted
 
       DEFAULT_MODEL = "claude-opus-4-8"
       CAPABILITIES = %i[streaming prompt_caching strict_tools thinking parallel_tool_use].freeze
 
-      # The endpoint a bare construction resolves to, and so the {Admission} key
-      # it contends on. It restates the literal inside the vendored
-      # {Provider::HTTP::Providers::Anthropic#api_base}, which has no constant to
-      # borrow -- unlike {Ollama::Transport::DEFAULT_API_BASE}, which this
-      # class's counterpart reuses directly.
-      #
-      # A RESTATEMENT IS A DRIFT HAZARD, so it is pinned rather than trusted:
-      # `admission_spec.rb` asserts a real {Transport} over an empty config
-      # resolves exactly this string. Two providers agreeing on a key neither of
-      # them dials would satisfy every other example in that file while gating
-      # nothing, which is the failure the pin exists to make loud.
+      # The {Admission} key a bare construction contends on. It RESTATES the
+      # literal inside the vendored {Provider::HTTP::Providers::Anthropic#api_base},
+      # which has no constant to borrow, so it is pinned by spec rather than
+      # trusted: two providers agreeing on a key neither of them dials would
+      # satisfy every other admission example while gating nothing.
       DEFAULT_API_BASE = "https://api.anthropic.com"
 
       # @param transport [#sync_post, #stream] injected in specs; a real
@@ -77,17 +62,12 @@ module Lain
       # @param api_base [String, nil] overrides `anthropic_api_base`; ignored when `config:` is
       #   given directly
       # @param queue [Boolean] whether this provider may WAIT for {Admission} to
-      #   free a slot -- see {Provider::Ollama#initialize}, which documents the
-      #   keyword and why it belongs to the caller rather than to a round trip.
-      #   It is a no-op against the hosted default, which resolves NOT LOCAL and
-      #   so takes {Admission::Null}; it starts mattering the moment `api_base:`
-      #   points at a loopback proxy, and carrying it here rather than only on
-      #   the local arm is what keeps the two providers one shape.
+      #   free a slot -- see {Provider::Ollama#initialize}. A no-op against the
+      #   hosted default, which resolves NOT LOCAL and takes {Admission::Null};
+      #   it starts mattering the moment `api_base:` points at a loopback proxy.
       # @param journal [#<<] where a {Telemetry::ProviderWait} lands when this
-      #   provider QUEUES for capacity -- see {Provider::Ollama#initialize},
-      #   which documents why this is not `channel:`. It is a no-op against the
-      #   hosted default for the same reason `queue:` is, and starts mattering
-      #   at the same loopback proxy.
+      #   provider QUEUES for capacity -- see {Provider::Ollama#initialize} for
+      #   why this is not `channel:`.
       def initialize(transport: nil, config: nil, channel: Channel::Null.instance, sink: Sink::Null.new,
                      spool: Spool::Null.new, api_key: nil, api_base: nil, queue: true,
                      journal: Channel::Null::INSTANCE)
@@ -112,25 +92,21 @@ module Lain
       # see {StreamStartedSignal} -- never called on the non-streaming path.
       #
       # {Admission} wraps the WHOLE of this, for the reasons
-      # {Provider::Ollama#complete} sets out at length: it is the one boundary
-      # every round trip crosses, the stall clock arms below it, and the
-      # compaction oracle awaits above it. Against the hosted default the gate is
-      # {Admission::Null} and this costs a Hash lookup -- concurrent subagents
-      # must not serialise on one hosted endpoint -- but the seam is here so an
-      # `api_base:` aimed at a loopback proxy is gated like any other local
-      # server, rather than by which class happened to build the client.
+      # {Provider::Ollama#complete} sets out. Against the hosted default the gate
+      # is {Admission::Null} and this costs a Hash lookup -- concurrent
+      # subagents must not serialise on one hosted endpoint -- but the seam is
+      # here so an `api_base:` aimed at a loopback proxy is gated like any other
+      # local server, rather than by which class happened to build the client.
       def complete(request, on_stream_started: nil)
         admitted { wrapping_errors { build_response(dispatch(request, on_stream_started)) } }
       end
 
       private
 
-      # {Admitted}'s three collaborators. The endpoint is read off the same
-      # Configuration {Transport#api_base} reads, with the same fallback -- see
-      # {DEFAULT_API_BASE} for why that fallback is restated and how the
-      # restatement is pinned. The journal is the session's record, not
-      # `@channel`: one is what a human watches, the other is what a round of QA
-      # reads back.
+      # {Admitted}'s collaborators. The endpoint is read off the same
+      # Configuration {Transport#api_base} reads, with the same fallback. The
+      # journal is the session's record, not `@channel`: one is what a human
+      # watches, the other is what a round of QA reads back.
       def queue_for_capacity? = @queue
 
       def wait_journal = @journal
@@ -141,15 +117,12 @@ module Lain
         config = Provider::HTTP::Configuration.new
         config.anthropic_api_key = api_key || ENV.fetch("ANTHROPIC_API_KEY", nil)
         config.anthropic_api_base = api_base unless api_base.nil?
-        # HTTP::Configuration's own request_timeout/max_retries (300 / 3) are
-        # vendored ruby_llm generic defaults, not Anthropic's, and Backend now
-        # hands this transport live --journal chat traffic where the SDK client
-        # (Anthropic::Client::DEFAULT_TIMEOUT_IN_SECONDS = 600,
-        # DEFAULT_MAX_RETRIES = 2) used to sit, so the effective envelope must
-        # match those, not silently trade timeout/retry budget for a WAL. Set
-        # HERE, not on Configuration's own default, so Ollama/Bedrock (their own
-        # constructors, their own Configuration) are untouched; bench's raw
-        # provider inherits these too, which only tightens its fidelity.
+        # HTTP::Configuration's own 300/3 are vendored ruby_llm generic
+        # defaults, not Anthropic's. This transport sits where the SDK client
+        # (600s, 2 retries) used to, so the effective envelope must match those
+        # rather than silently trade timeout/retry budget for a WAL. Set HERE
+        # and not on Configuration's default, so Ollama and Bedrock are
+        # untouched.
         config.request_timeout = 600
         config.max_retries = 2
         config.retry_block = @retries.retry_block
@@ -157,25 +130,22 @@ module Lain
         apply_rate_limit_backoff(config)
       end
 
-      # The Provider owns frame opening (it computes the digest) AND attempt
-      # boundaries: the frame is threaded onto the request context so a retry
-      # rotates THIS request's frame rather than concatenating two attempts into
-      # one -- reentrant across parallel subagents sharing one Provider (see
-      # {RetryTap}).
+      # The Provider owns frame opening because it computes the digest. The
+      # frame is threaded onto the request context so a retry rotates THIS
+      # request's frame rather than concatenating two attempts into one --
+      # reentrant across parallel subagents sharing one Provider.
       def dispatch(request, on_stream_started)
         payload = wire_payload(request)
         frame = @retries.open_frame(request_digest: request.digest)
         request.stream ? stream_dispatch(payload, frame, request, on_stream_started) : sync_dispatch(payload, frame)
       end
 
-      # The FIRST data chunk the transport hands back is always the
-      # response's own first SSE event (`message_start`, ahead of any
-      # `content_block_start`), so signaling before handing it to the
-      # assembler is signaling before any content_block event -- no need to
-      # inspect `data["type"]` here. `signaled` covers the whole round trip,
-      # not just one attempt: a retry (see {RetryTap}) is still the SAME
-      # logical request, and a stagger scheduler awaiting `request.digest`
-      # wants exactly one signal for it, not one per attempt.
+      # The FIRST data chunk is always the response's own `message_start`,
+      # ahead of any `content_block_start`, so signalling before handing it to
+      # the assembler is signalling before any content_block event -- no need to
+      # inspect `data["type"]`. `signaled` covers the whole round trip rather
+      # than one attempt: a retry is still the SAME logical request, and a
+      # stagger scheduler awaiting `request.digest` wants exactly one signal.
       def stream_dispatch(payload, frame, request, on_stream_started)
         assembler = StreamAssembler.new
         signaled = false

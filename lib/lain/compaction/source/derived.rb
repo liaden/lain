@@ -6,10 +6,9 @@ module Lain
       # The derive-and-substitute step: THIS turn's derived chain, rendered as
       # the messages the provider will see.
       #
-      # Its own object because {Source} is already at the {Metrics/ClassLength}
-      # cap and this is a second responsibility anyway (CLAUDE.md: a tripped
-      # cop names a missing object). {Source} decides WHETHER this turn
-      # compacts; this decides WHAT it renders when it does.
+      # Its own object because {Source} is already at the `Metrics/ClassLength`
+      # cap and this is a second responsibility anyway: {Source} decides
+      # WHETHER this turn compacts, this decides WHAT it renders when it does.
       #
       # == Why a materialized array and not the {Derivation} itself
       #
@@ -20,45 +19,39 @@ module Lain
       # than raising, and the next new span would then die of an uncontained
       # `FrozenError` on the render path. So the derivation runs HERE, off the
       # pipeline, and only {Replay} -- a frozen combinator holding the finished
-      # array -- ever crosses into it. That is what the Open decisions ruling
-      # ("substituted as messages, not handed to `Context#render` as a
-      # timeline") buys, and it is why nothing in this file may be captured by
+      # array -- ever crosses into it. Nothing in this file may be captured by
       # the pipeline it feeds.
       #
       # == Pins are CUT POINTS, not shields
       #
       # {Derivation} takes no pin policy, by design: a pin splits one span into
-      # several ranges rather than being lifted out of one (`#ranges` is an
-      # interval partition, and a pin is a cut point in it). {PinCuts} is
+      # several ranges rather than being lifted out of one, since `#ranges` is
+      # an interval partition and a pin is a cut point in it. {PinCuts} is
       # where that happens, and it is what keeps a pinned turn RETAINED, in
       # position, between the two replacements either side of it. The
       # partition-hoisting a pin could otherwise cause is structurally
-      # unreachable from here: the derivation writes retained turns in source
-      # order and can do nothing else.
+      # unreachable: the derivation writes retained turns in source order and
+      # can do nothing else.
       #
-      # A pinned turn whose tool counterpart is inside a collapsed range is a
-      # different matter, and it is follow-up 14's hole. On this path it does
-      # NOT ship the 400 the projection path ships: {Derivation} validates its
-      # own projection through {Context::Conversation} and raises
-      # {Derivation::Invalid}, so the turn falls back to the uncompacted render
-      # and says so on the record ({Source::DerivationRefused}). Refusing is
+      # A pinned turn whose tool counterpart is inside a collapsed range is
+      # still a hole, but on this path it does NOT ship the 400 the projection
+      # path ships: {Derivation} validates its own projection through
+      # {Context::Conversation} and raises {Derivation::Invalid}, so the turn
+      # falls back to the uncompacted render and says so on the record. That is
       # not the repair -- a session pinned that way stops compacting for as
       # long as the pin stands -- which is why the record carries the streak.
       class Derived
         # The streak at which "one awkward turn" has become "this session has
         # stopped compacting".
         #
-        # TWO, not one, and the reason is that a refusal is deterministic: the
-        # same strategy over the same history refuses identically, so what a
-        # SECOND refusal adds is that it survived a change of history -- a turn
-        # was committed in between and the chain still will not derive. One
-        # refusal is genuinely the awkward turn the class doc above describes.
+        # TWO, not one, because a refusal is deterministic: the same strategy
+        # over the same history refuses identically, so what a SECOND refusal
+        # adds is that it survived a change of history -- a turn was committed
+        # in between and the chain still will not derive.
         #
-        # PRIVATE, and reached only through {.stalled?}. The defect this avoids
-        # was a number nothing read, and the way that recurs is a second reader
-        # growing its own copy of the comparison: exporting the integer would
-        # put a `>=` in {Frontend::PromptComposer::RunState} today and another
-        # in `cli/up/hud.rb` the day it projects the field.
+        # PRIVATE, and reached only through {.stalled?}: exporting the integer
+        # would put a `>=` in {Frontend::PromptComposer::RunState} today and
+        # another in `cli/up/hud.rb` the day it projects the field.
         STALLED_STREAK = 2
         private_constant :STALLED_STREAK
 
@@ -69,8 +62,7 @@ module Lain
         #
         # A class method because the ASKER never has a Derived: this object is
         # per-turn and lives inside the render path, while the readers are a
-        # prompt line and a status bar reading a published number back. What is
-        # shared between them is the judgement, and this is where it lives.
+        # prompt line and a status bar reading a published number back.
         def self.stalled?(streak) = streak >= STALLED_STREAK
 
         Outcome = Data.define(:replay, :hits, :misses) do
@@ -82,15 +74,14 @@ module Lain
         # What this turn renders through, and what finding out cost.
         #
         # `hits`/`misses` are the POLICY's, not a snapshot's: a mis-keyed
-        # content address is invisible except as a count that never rises
-        # ({SummarySnapshot}'s discipline, `summary_snapshot.rb:23-30`), and
-        # after this card the address that matters is the one the strategy
-        # keys its answers under.
+        # content address is invisible except as a count that never rises, and
+        # the address that matters is the one the strategy keys its answers
+        # under.
+        #
+        # Reopened rather than bodied inside the `Data.define(...) do ... end`
+        # block: a constant declared there binds to the enclosing module, not
+        # to the Data class.
         class Outcome
-          # Reopened rather than bodied inside the `Data.define(...) do ... end`
-          # block: a constant declared there binds to the enclosing module, not to
-          # the Data class (the trap {Request::SYSTEM_PREFIX} records).
-
           # A turn that deferred before any derivation was attempted. The rates
           # are honest zeros rather than the last derivation's, which is what
           # keeps a bench reading `summary_hits` from folding warm defers into
@@ -103,8 +94,7 @@ module Lain
         # @param strategy [Strategy::Base, nil] the policy `--compact-strategy`
         #   named. nil is the un-flagged wiring, which collapses a span into
         #   the run's own eager tier exactly as {Context::Compact} did (see
-        #   {Held}) -- a default, not a Null: it is a real policy with a real
-        #   answer, and it is the one every spec that injects nothing gets.
+        #   {Held}) -- a default, not a Null: a real policy with a real answer.
         # @param journal [#<<] where the derivation edge and any refusal land
         def initialize(keep_last:, strategy: nil, journal: Channel::Null.instance)
           @keep_last = keep_last
@@ -131,14 +121,12 @@ module Lain
         def over(timeline, walk:, pins:, snapshot:)
           policy = PinCuts.new(inner: @strategy || Held.new(snapshot), pins:)
           # BOUND FIRST, DELIBERATELY. `#replayed` is the only thing that runs
-          # the strategy, so it is the only thing that moves its counters --
-          # reading them in the same argument list would make the figures
+          # the strategy, so it is the only thing that moves its counters.
+          # Reading them in the same argument list would make the figures
           # correct purely because Ruby evaluates keyword arguments in source
-          # order. Put `hits:` ahead of `replay:` there and every journalled
+          # order: put `hits:` ahead of `replay:` there and every journalled
           # rate shifts back one turn, permanently and silently, with the whole
-          # suite still green. That is the hazard {SummarySnapshot} warns about
-          # ("invisible EXCEPT as a count that never rises") reproduced at the
-          # site that READS the count. The local makes the ordering a statement.
+          # suite still green.
           replay = replayed(policy, timeline, walk)
 
           Outcome.new(replay:, hits: policy.hits, misses: policy.misses)
@@ -146,12 +134,10 @@ module Lain
 
         private
 
-        # The rescue is scoped to the ONE call that can raise {Invalid}, and
-        # `policy` reaches it as a parameter rather than as a local a
-        # method-level rescue would read before its assignment. A method-level
-        # `rescue` sees `policy` as nil whenever anything ahead of it raises,
-        # and the handler then dies of `NoMethodError` while reporting -- the
-        # real error lost behind the reporting of it.
+        # `policy` reaches the rescue as a PARAMETER, not as a local: a
+        # method-level `rescue` sees a local as nil whenever anything ahead of
+        # it raises, and the handler then dies of `NoMethodError` while
+        # reporting -- the real error lost behind the reporting of it.
         def replayed(policy, timeline, walk)
           derived = derivation(policy).derive(timeline, walk:)
           @consecutive = 0
@@ -163,34 +149,28 @@ module Lain
 
         # A fresh {Derivation} per turn, because the policy it is frozen around
         # is this turn's -- {PinCuts} closes over a pin set that moves. Both
-        # are cheap frozen values, the same trade {Source#scheduler_for} makes.
+        # are cheap frozen values.
         def derivation(policy) = Derivation.new(strategy: policy, keep_last: @keep_last, journal: @journal)
 
         # {Derivation::Invalid} and NOTHING wider. `NotAPartition`, `NotBlocks`,
         # `Blank`, `Sealed` and `Canonical::UnsupportedType` all mean the
         # STRATEGY is broken rather than the history awkward, and swallowing
         # them here would turn a defect into a session that quietly stopped
-        # compacting. (`rescue StandardError` would also be wrong for the
-        # opposite reason: `NotImplementedError < ScriptError` escapes it
-        # entirely, so it neither catches what it should nor stops at what it
-        # should.)
+        # compacting. (`rescue StandardError` is wrong for the opposite reason:
+        # `NotImplementedError < ScriptError` escapes it entirely, so it
+        # neither catches what it should nor stops at what it should.)
         #
         # ITS OWN RECORD TYPE, never a {Telemetry::ContextDerived} with empty
         # `spans`: that field's whole purpose is to make an empty collapse
         # readable, and a fallback wearing a derivation's badge would put back
         # the ambiguity `cut` was added to destroy.
         #
-        # It does not raise, at any streak length. A deterministic strategy
-        # over a stable history refuses identically every turn, forever -- the
-        # silent-stop mode wearing a badge -- but raising inside the render
+        # It does not raise, at any streak length: raising inside the render
         # path over a history that is perfectly legal is worse than not
         # compacting ({Boundary}'s own argument). So the STREAK is on the
-        # record instead: `consecutive` rising is the difference between one
-        # awkward turn and a session that has stopped. It is read live as well
-        # as offline -- {StatusFeed} takes the count off this very record (the
-        # journal below IS the tee that sink rides) and publishes it, and the
-        # prompt line says "compaction stalled" for any streak {.stalled?}
-        # answers true for.
+        # record instead, read live as well as offline -- {StatusFeed} takes
+        # the count off this very record and publishes it, and the prompt line
+        # says "compaction stalled" for any streak {.stalled?} answers true for.
         def refused(policy, error)
           @consecutive += 1
           @journal << DerivationRefused.new(strategy: policy.name, violations: error.message,
@@ -199,21 +179,19 @@ module Lain
 
         # A combinator that discards whatever `#render` projected and
         # substitutes the derived chain. {Compaction::Prepared}'s own `Replay`
-        # is the shape (`prepared.rb:138-146`) and not the object: that one is
-        # `private_constant` and computes its compaction from a `compact:`
-        # collaborator, which is the wrong collaborator for a derived chain.
+        # is the shape and not the object: that one is `private_constant` and
+        # computes its compaction from a `compact:` collaborator, which is the
+        # wrong collaborator for a derived chain.
         #
         # `Ractor.make_shareable` on the messages and not merely `freeze` on
         # self. {Scheduler::COMPOSE} makes a PROC shareable, and that does not
         # deep-freeze what the Proc refers to -- it RAISES on anything not
         # already shareable, so a frozen combinator holding an ordinary Array
         # fails with `Ractor::IsolationError` on the first compacting turn of
-        # every real chat. (Measured: the regression at `wiring_spec.rb:397-403`
-        # is exactly this, one object further in.)
-        # Deep-freezing here is safe because the array is ours -- built by
-        # {Derivation.projected} out of already-frozen event bodies -- and it is
-        # what makes "substituted as messages" a shareability argument rather
-        # than a hope.
+        # every real chat, which is what the wiring spec's regression example
+        # pins one object further in. Deep-freezing here is safe because the
+        # array is ours, built by {Derivation.projected} out of already-frozen
+        # event bodies.
         class Replay < Context::Combinator
           def initialize(messages)
             super()
@@ -233,11 +211,10 @@ module Lain
         private_constant :Replay
 
         # The un-flagged policy: collapse a span into the run's eager tier,
-        # which is byte-for-byte what {Context::Compact} rendered through this
-        # same {SummarySnapshot}. It exists so that moving the render onto the
+        # byte-for-byte what {Context::Compact} rendered through this same
+        # {SummarySnapshot}. It exists so that moving the render onto the
         # derived chain does not silently retire the tool-result summarizer
-        # tier -- the eager fires, the snapshot holds, and this is what reads
-        # them back.
+        # tier.
         #
         # One range for the whole span it is offered: the snapshot summarizes
         # per MESSAGE and attests the rest, so where a cut falls changes only
@@ -275,13 +252,10 @@ module Lain
             super()
             @inner = inner
             @pins = pins
-            # SHALLOW, like every other frozen wrapper here: it fixes this
-            # object's own two references and says nothing about `inner`, which
-            # is an operator-chosen strategy that may legitimately hold a live
-            # oracle and a mutable memo and must NOT be frozen (see the class
-            # doc's `make_shareable` paragraph). Its two siblings freeze; this
-            # is the one wrapping something a flag chose, so it is the one
-            # where an accidental ivar rebind would be hardest to find.
+            # SHALLOW: it fixes this object's own two references and says
+            # nothing about `inner`, an operator-chosen strategy that may
+            # legitimately hold a live oracle and a mutable memo and must NOT
+            # be frozen.
             freeze
           end
 
@@ -302,29 +276,27 @@ module Lain
 
           def blocks(messages) = @inner.blocks(messages)
 
-          # THE ONE THE COLLAPSE TAKES, and it has to be forwarded separately:
-          # this wrapper sits between the derivation and EVERY operator-supplied
-          # strategy (`:103`), so an inner {Strategy::Composed} -- which routes a
-          # collapse by the range's tag and implements no `#blocks` of its own --
-          # reached the delegation above, fell through to
-          # {Strategy::Base#blocks}, and died of NotImplementedError with its
-          # ranges perfectly correct.
+          # Forwarded SEPARATELY from `#blocks`, because this wrapper sits
+          # between the derivation and every operator-supplied strategy: an
+          # inner {Strategy::Composed} routes a collapse by the range's tag and
+          # implements no `#blocks` of its own, so without this it fell through
+          # to {Strategy::Base#blocks} and died of `NotImplementedError` with
+          # its ranges perfectly correct.
           def blocks_for(messages, range) = @inner.blocks_for(messages, range)
 
           private
 
-          # The runs a cut leaves are an interval partition of the span in their
-          # own right, so they are built by the value that owns that shape --
-          # and a refusal in them names `IntervalPartition.covering` rather than
+          # The runs a cut leaves are an interval partition of the span in
+          # their own right, so they are built by the value that owns that
+          # shape and a refusal names `IntervalPartition.covering` rather than
           # an inner hook nobody asked.
           def runs(span, pinned)
             IntervalPartition.covering(span, excluding: pinned, owner: cutter).validated
           end
 
           # NOT {Strategy::Base#name}, which this class overrides to answer the
-          # INNER strategy. That is right for the journalled edge and wrong here:
-          # computing the runs is this wrapper's own work, and a fault in it must
-          # not be reported against the strategy an operator chose.
+          # INNER strategy: computing the runs is this wrapper's own work, and
+          # a fault in it must not be reported against an operator's choice.
           def cutter = -(self.class.name || self.class.to_s)
         end
         private_constant :PinCuts

@@ -18,29 +18,28 @@ module Lain
     #
     # `pure on: :call` classifies an OPERATION, so {#pure?} answers about an
     # operation too. A class may hold a pure `#call` and an impure `#reload`,
-    # and an object-level predicate could only ever give one answer for both --
-    # which would make the claim and the check two separate notions free to
-    # disagree. Asking the registry is also what keeps the declaration
-    # load-bearing in `lib/` rather than decoration a spec alone reads.
+    # and an object-level predicate could only ever give one answer for both,
+    # making the claim and the check two notions free to disagree. Asking the
+    # registry is also what keeps the declaration load-bearing in `lib/` rather
+    # than decoration a spec alone reads.
     #
     # Like {Monoid}, `is_a?(Pure)` is not the classification -- it says only
     # that the verbs were granted.
     #
     # == The mechanical proxy, and what an includer must do to pass it
     #
-    # `Ractor.shareable?` is what CLAUDE.md already calls "the mechanical
-    # statement of 'no reachable mutable state'", and that is exactly the
-    # premise re-derivation needs: nothing reachable can differ between two
-    # calls. A frozen collaborator graph therefore passes -- deep immutability
-    # is the property, not an empty ivar list.
+    # `Ractor.shareable?` is what CLAUDE.md calls "the mechanical statement of
+    # 'no reachable mutable state'", which is exactly the premise re-derivation
+    # needs: nothing reachable can differ between two calls. A frozen
+    # collaborator graph therefore passes -- deep immutability is the property,
+    # not an empty ivar list.
     #
     # **An includer must freeze itself to answer true.** The base
     # {Context::Combinator} does not freeze and its subclasses do, so a
-    # downstream Strategy binding to this has to freeze in its constructor the
-    # way every combinator already does. It is a proxy and not a proof --
-    # nothing stops a method body from reading a global -- but it catches the
-    # failure that actually happens, which is a mutable collaborator quietly
-    # injected into a class that claimed to have none.
+    # downstream Strategy binding to this has to freeze in its constructor. It
+    # is a proxy and not a proof -- nothing stops a method body from reading a
+    # global -- but it catches the failure that actually happens, a mutable
+    # collaborator quietly injected into a class that claimed to have none.
     module Pure
       extend ActiveSupport::Concern
 

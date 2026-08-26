@@ -8,32 +8,28 @@ module Lain
     # slot, so the following iteration renders from the Timeline again and the
     # override can never apply twice.
     #
-    # The design constraint this object exists to honor: `Context#render` is
-    # pure, and purity and cache-hit are the same constraint. An edit therefore
-    # never travels THROUGH render's inputs -- nothing is written into the
-    # Timeline or Workspace to carry it. The override preempts the render
-    # (#deliver takes it as a callable, so an overridden dispatch never invokes
-    # it), and everything downstream -- middleware, provider, commit -- sees an
-    # ordinary Request.
+    # Why a slot rather than a write into render's inputs: `Context#render` is
+    # pure, and purity and cache-hit are the same constraint. So the override
+    # PREEMPTS the render -- #deliver takes it as a callable, and an overridden
+    # dispatch never invokes it -- and everything downstream (middleware,
+    # provider, commit) sees an ordinary Request.
     #
-    # Caller contract (the {CLI::ResendBridge} is the intended queuer, via
-    # `Agent#request_override`): the slot is thread-safe, so a #queue may race
-    # the loop without losing an edit -- but WHICH dispatch it lands on is the
-    # queuer's responsibility. This seam permits mid-turn interposition: an
-    # edit queued during tool execution applies to the next dispatch of the
-    # same run, so the pending tool_results commit but never reach the
-    # provider (pinned in the spec). Refusing a mid-flight resend is the
-    # bridge's job, not the slot's. The sanctioned resend entry is: quiesce,
-    # `Agent#rewind`, #queue, `Agent#run`.
+    # The slot is thread-safe, so a #queue may race the loop without losing an
+    # edit, but WHICH dispatch it lands on is the queuer's responsibility
+    # ({CLI::ResendBridge} is the intended one, via `Agent#request_override`).
+    # Mid-turn interposition is permitted and pinned in the spec: an edit queued
+    # during tool execution applies to the next dispatch of the same run, so the
+    # pending tool_results commit but never reach the provider. Refusing a
+    # mid-flight resend is the bridge's job, not the slot's. The sanctioned
+    # resend entry is: quiesce, `Agent#rewind`, #queue, `Agent#run`.
     class RequestOverride
       def initialize
         @lock = Mutex.new
         @request = nil
       end
 
-      # Stage an edited Request for the next dispatch. Last write wins: two
-      # queues before a dispatch mean the user edited twice, and only the
-      # final edit was ever meant to be sent.
+      # Last write wins: two queues before a dispatch mean the user edited
+      # twice, and only the final edit was ever meant to be sent.
       def queue(request)
         @lock.synchronize { @request = request }
         self
@@ -41,24 +37,22 @@ module Lain
 
       def queued? = @lock.synchronize { !@request.nil? }
 
-      # The queued Request, exactly once; otherwise whatever the block renders.
       # The take-or-render primitive under #deliver, without its restore
       # obligation -- callers that dispatch should go through #deliver.
       def resolve
         take || yield
       end
 
-      # Consume-on-success: hand the round trip its Request -- the queued edit
-      # exactly once, else `render.call` -- and if the round trip does NOT
-      # return (a provider raise, a budget stop), put an unsent edit back so a
-      # retry sends R again. This contract is at-least-once-SEND, exactly-once-
-      # COMMIT: a post-provider middleware raise after a successful wire send
-      # still restores R, so a retry re-sends it -- the bridge builds its
-      # refusal/no-auto-retry UX on exactly that (see {CLI::ResendBridge}).
-      # The tap clears the restore obligation only once
-      # the response is in hand; `ensure` catches every non-local exit without
-      # a `rescue Exception`. The render and the round trip both run OUTSIDE
-      # the lock -- only the take and the restore synchronize.
+      # Consume-on-success: the queued edit exactly once, else `render.call`,
+      # and if the round trip does NOT return (a provider raise, a budget stop)
+      # an unsent edit goes back so a retry sends it again. The contract is
+      # at-least-once-SEND, exactly-once-COMMIT: a post-provider middleware
+      # raise after a successful wire send still restores, so a retry re-sends
+      # -- {CLI::ResendBridge} builds its refusal/no-auto-retry UX on exactly
+      # that. The tap clears the restore obligation only once the response is in
+      # hand; `ensure` catches every non-local exit without a
+      # `rescue Exception`. Render and round trip both run OUTSIDE the lock --
+      # only the take and the restore synchronize.
       def deliver(render:)
         taken = take
         yield(taken || render.call).tap { taken = nil }
@@ -68,9 +62,8 @@ module Lain
 
       private
 
-      # The atomic consume. `#tap` is the consume boundary the probe-1
-      # regression spec instruments -- if this stops going through #tap, move
-      # that spec's hook to the new boundary.
+      # The atomic consume. A regression spec instruments `#tap` as the consume
+      # boundary -- if this stops going through it, move that hook.
       def take
         @lock.synchronize { @request.tap { @request = nil } }
       end
@@ -83,10 +76,10 @@ module Lain
       end
 
       # Null Object, the Agent's default: never queued, so every dispatch
-      # renders. Unlike Sink::Null and friends -- which discard *outputs* --
-      # this duck's #queue carries a user's edit, and losing it in silence is
-      # exactly the quiet failure the harness refuses. So None answers the
-      # whole duck but fails #queue loudly.
+      # renders. Unlike Sink::Null and friends, which discard *outputs*, this
+      # duck's #queue carries a user's edit, and losing it in silence is exactly
+      # the quiet failure the harness refuses -- so None answers the whole duck
+      # but fails #queue loudly.
       module None
         module_function
 

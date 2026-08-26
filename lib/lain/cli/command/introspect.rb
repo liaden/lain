@@ -8,83 +8,57 @@ module Lain
       # model-facing half is {Lain::Tools::SessionUsage}.
       #
       # It exists because of a real failure: asked for its own session usage,
-      # the agent invented a metrics table -- a model name it was not running,
-      # plus fabricated memory, CPU, round-trip and network figures -- while
-      # eight `turn_usage` records carrying the true answer sat in the journal
-      # it had itself just written. The defect was REACHABILITY: nothing could
-      # answer the question, so it was answered from nowhere.
+      # the agent invented a metrics table -- a model it was not running, plus
+      # fabricated memory, CPU, round-trip and network figures -- while eight
+      # `turn_usage` records carrying the true answer sat in the journal it had
+      # just written. The defect was REACHABILITY: nothing could answer the
+      # question, so it was answered from nowhere.
       #
-      # == The failure mode this file is written against
+      # A CONFIDENT FALSE NEGATIVE is that same fabrication with better manners:
+      # "review none open" told to a human who is annotating one does the same
+      # damage and is harder to catch, because a plausible number reads as a
+      # measured one. So every row is written to be true of the run it
+      # describes, and what this command cannot see is NAMED under `unreported`
+      # rather than left out.
       #
-      # A CONFIDENT FALSE NEGATIVE is that same fabrication wearing better
-      # manners. "review none open" told to a human who is annotating one, or a
-      # percentage over a denominator nobody vouched for, do the same damage as
-      # an invented table and are harder to catch, because a plausible number
-      # reads as a measured one. So every row here is written to be true of the
-      # run it describes, and everything this command cannot see is NAMED under
-      # `unreported` rather than left out -- an omission a reader can mistake
-      # for an absence is the same lie one step removed.
+      # No dollars: {Lain::Ledger} raises rather than pricing a model it has no
+      # {Lain::PriceBook} entry for, and the ollama-cloud arm has no entry at
+      # all -- so a cost would be guessed for exactly the runs a human is most
+      # likely to ask about.
       #
-      # == Tokens, never dollars
+      # The three it cannot see, each named rather than closed:
       #
-      # A cost in dollars is deliberately absent, for {Lain::Tools::SessionUsage}'s
-      # reason stated one tier over: {Lain::Ledger} raises rather than pricing a
-      # model it has no {Lain::PriceBook} entry for (`ledger.rb:107-109`), and
-      # the ollama-cloud arm has no entry at all -- so a dollar figure would have
-      # to be guessed for exactly the runs a human is most likely to ask about.
-      #
-      # == The three things it cannot see, and why each is said rather than skipped
-      #
-      # * WHICH PROVIDER is serving the run. {CLI::Backend#provider_name} is the
-      #   only authority and no command reaches a Backend.
-      # * HOW LARGE the context window is, and whether that size was published,
-      #   probed or guessed. The run's one book ({CLI::Backend::WindowBook::Live})
-      #   is held privately by {Agent}, {StatusFeed} and {Compaction::Source};
-      #   {Agent} exposes only `#occupancy`, a ratio. Resolving a window here
-      #   from {ContextWindow.default} would be a SECOND book, the drift
-      #   `Backend#context_window`'s memo exists to prevent. Note what this does
-      #   NOT mean: a window WAS resolved -- it is the denominator of the
-      #   occupancy row, and it may be the conservative floor
-      #   `context_window.rb` tags {ContextWindow::GUESSED}. So the occupancy row
-      #   names its denominator as the very window listed below it, and nothing
-      #   here implies no window exists.
-      # * A CHANGESET REVIEW THE AGENT OPENED FOR ITSELF. {Review::Submit::Outbox}
-      #   is the run's ONE outbox and what this reports the review from -- but it
-      #   holds only what `/review` and `/survey` put in it (`outbox.hold(`
-      #   appears in exactly those two lib files). {Tools::RequestReview} opens a
-      #   {Review::Session} of its own and binds it straight to the human's
-      #   editor, touching no outbox, so an unqualified "none open" would be a
-      #   false negative told to a human who is mid-annotation. The authority
-      #   BOTH rails bind is `bind_changeset_review`, private to
-      #   {CLI::HumanReplies} with no reader -- unreachable from a command, which
-      #   is why this is named rather than closed.
-      #
-      # NOT from {CLI::HumanReplies}'s `review_surface`/`review_view` delegation
-      # (`human_replies.rb:211`): that reaches the EDITOR'S RENDERING and nothing
-      # else, both nil on a headless chat ({CLI::ReviewSeams::Unattached}). A
-      # future card looking for review state through `replies` will find a
-      # surface that cannot answer what is open.
+      # * WHICH PROVIDER is serving the run -- {CLI::Backend#provider_name} is
+      #   the only authority, and no command reaches a Backend.
+      # * HOW LARGE the window is, and whether that size was published, probed
+      #   or guessed. The run's one book is private to {Agent}, {StatusFeed} and
+      #   {Compaction::Source}, which expose only `#occupancy`; resolving one
+      #   here would be a SECOND book, the drift `Backend#context_window`'s memo
+      #   exists to prevent. A window WAS resolved -- it is the occupancy row's
+      #   denominator -- so nothing here implies none exists.
+      # * A CHANGESET REVIEW THE AGENT OPENED FOR ITSELF. The outbox holds only
+      #   what `/review` and `/survey` put in it, while {Tools::RequestReview}
+      #   binds a session of its own straight to the editor, so an unqualified
+      #   "none open" would be a false negative told to a human mid-annotation.
+      #   The authority both rails bind, `bind_changeset_review`, is private to
+      #   {CLI::HumanReplies} with no reader -- unreachable from a command.
       class Introspect
         # The one line that keeps a true number from being read as a false one.
         SPEND = "this run's own token spend -- not a plan or subscription quota, and never dollars"
-
         # Two bounds, because the totals are wrong in two directions if either is
-        # missed: {Lain::Agent::Accounting} starts fresh over a Timeline that does
-        # not, and it sums every model the run called, not the one named above.
+        # missed: {Lain::Agent::Accounting} starts fresh over a Timeline that
+        # does not, and it sums every model the run called.
         SCOPE = "this run only -- a --resume starts a fresh ledger, so spend before it is not counted " \
                 "here; the totals cover every model this run called, not just the one named above"
-
-        # ABSENCE, and scoped to the run that can claim it: a resumed chat's
+        # ABSENCE, scoped to the run that can claim it: a resumed chat's
         # Accounting is fresh while its Timeline is not, so an unqualified "no
-        # turn yet" is false about turns that are sitting right there --
-        # {ContextWindow::Occupancy::None}'s own hazard, reproduced in words.
+        # turn yet" is false about turns that are sitting right there.
         NO_TURN = "no turn yet in this run"
 
-        # AS OF, not as of now. {Lain::Agent::Accounting#last_turn_usage} is
+        # AS OF, not as of now: {Lain::Agent::Accounting#last_turn_usage} is
         # written only by `#observe`, so a `/rewind` that drops the turn this
-        # measured leaves the reading where it stood -- and the denominator is
-        # the window the `unreported` block below describes, said here so the two
-        # rows cannot be read as being about different windows.
+        # measured leaves the reading where it stood. It names its denominator
+        # so the two rows cannot be read as being about different windows.
         AS_OF = "%.1f%% at the last model response, of a window whose size is unreported below"
 
         # What the outbox can actually vouch for, named. See the class doc: an
@@ -92,21 +66,20 @@ module Lain
         NO_REVIEW = "none held by /review or /survey"
 
         # {CLI::Chronicle::Null} is what `--no-journal` wires AND what a
-        # directly-constructed {CLI::ChatLaunch} defaults to (`chat_launch.rb:233`),
-        # so naming the flag would tell a bench arm a flag was passed that never
-        # was. The absence is the part that cannot be wrong.
+        # directly-constructed {CLI::ChatLaunch} defaults to, so naming the flag
+        # would tell a bench arm a flag was passed that never was. The absence is
+        # the part that cannot be wrong.
         NO_JOURNAL = "no journal is being written for this run"
 
         # {Lain::Usage#cache_hit_ratio} answers 0.0 when NOTHING was billed on
-        # the way in, which is absence wearing a number -- and on the bench's
-        # first-class cache metric a hard 0.0% invites exactly the wrong
-        # conclusion about a chat that has not spoken yet.
+        # the way in, which is absence wearing a number -- and a hard 0.0% on the
+        # bench's first-class cache metric invites the wrong conclusion about a
+        # chat that has not spoken yet.
         NO_CACHE_READS = "nothing billed on the way in yet"
 
-        # The header of the gaps, and then the gaps. Sentences in the vocabulary
-        # of the question a human is asking at `you>` -- naming `Backend`, a
-        # `book` or an `Env` here would read as a bug report they did not ask
-        # for, about objects with no referent in front of them.
+        # The gaps, in the vocabulary of the question a human is asking at
+        # `you>`: naming a `Backend`, a `book` or an `Env` here would read as a
+        # bug report about objects with no referent in front of them.
         UNREPORTED = "what this report cannot see -- missing from the report, not from the run"
         UNSEEN = {
           "provider" => "which provider is answering, and where it is running",
@@ -115,9 +88,9 @@ module Lain
         }.freeze
 
         # @param outbox [Review::Submit::Outbox] the run's ONE open changeset
-        #   review, the same instance `/review`, `/survey` and `/review-submit`
-        #   share. Injected rather than reached for: a second outbox would report
-        #   no review held while the human is looking at one.
+        #   review, shared with `/review`, `/survey` and `/review-submit`. A
+        #   second outbox would report no review held while the human is looking
+        #   at one.
         def initialize(outbox:)
           @outbox = outbox
           freeze
@@ -149,10 +122,9 @@ module Lain
         def unseen = UNSEEN.map { |label, sentence| ["  #{label}", sentence] }
 
         # One row with nothing held, two with a round open: the count is its own
-        # labelled figure rather than a clause inside the first row, because it
-        # is the one number here a human might act on -- and because "3
-        # annotations" would have to say "1 annotations" on the round that most
-        # often exists.
+        # labelled figure because it is the one number here a human might act on,
+        # and because "3 annotations" would have to say "1 annotations" on the
+        # round that most often exists.
         def review_rows
           return [["review", NO_REVIEW]] unless @outbox.open?
 
@@ -160,10 +132,9 @@ module Lain
            ["  annotations", @outbox.annotation_count]]
         end
 
-        # The four wire fields in {Lain::Usage}'s own declaration order, then the
-        # two totals it derives, then the ratio -- read OFF the value rather than
-        # transcribed into a table here, so a field added to Usage cannot go
-        # unreported by this command while {Lain::Tools::SessionUsage} names it.
+        # {Lain::Usage}'s own declaration order, then its two totals, then the
+        # ratio -- read OFF the value rather than transcribed here, so a field
+        # added to Usage cannot go unreported while SessionUsage names it.
         def counts(usage)
           usage.to_h.map { |field, count| ["  #{count_label(field)}", count] } +
             [["  total input", usage.total_input_tokens], ["  total", usage.total_tokens],
@@ -179,8 +150,7 @@ module Lain
         end
 
         # The AGENT's own derivation, against the book the run measures against
-        # everywhere else -- never a second book resolved here. See {AS_OF} and
-        # the class doc for the two things the wording has to carry.
+        # everywhere else -- never a second book resolved here.
         def occupancy(agent)
           ratio = agent.occupancy
           ratio.nil? ? NO_TURN : format(AS_OF, ratio * 100)

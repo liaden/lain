@@ -52,19 +52,15 @@ local function lain_key(suffix, rhs, desc)
   vim.g.lain_bound_keys = bound
 end
 
--- The same key, scoped to ONE buffer. Two things differ from the global binder
--- and both are consequences of the scope rather than choices:
---
--- It needs no delete-before-create and keeps no record, because the map dies
--- with the buffer -- there is no lhs to strand at an old prefix.
+-- The same key, scoped to ONE buffer. It needs no delete-before-create and keeps
+-- no record, because the map dies with the buffer.
 --
 -- It is still PREFIXED, unlike `x`/`u`/`y`/`n`/`p`/<CR>, and the line between
 -- them is what the buffer IS. Those are claimed on buffers lain built and holds
 -- `nomodifiable`, where a bare letter can collide with nothing the human wanted.
 -- A review DIFF is the opposite: its new side is a real, editable file buffer
--- (`47_diff.lua` keeps `buftype = ""` deliberately, so it is THE FILE and not a
--- scratch copy), so a bare `n` there would cost the human repeat-search in a
--- buffer they are also editing.
+-- (`47_diff.lua` keeps `buftype = ""` deliberately), so a bare `n` there would
+-- cost the human repeat-search in a buffer they are also editing.
 local function lain_buf_key(buf, suffix, rhs, desc)
   vim.keymap.set("n", lain_prefix() .. suffix, rhs, { buffer = buf, desc = "lain: " .. desc })
 end

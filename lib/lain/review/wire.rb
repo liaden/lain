@@ -45,44 +45,34 @@ module Lain
 
       # GIT's C-quoting, undone -- and the emphasis is a contract, not colour.
       # This decodes exactly one wire format, and a source that does not speak it
-      # must NOT route paths through here: a GitHub PR source receives
-      # paths as JSON strings that arrive already decoded, and passing one
-      # through this would silently rewrite any name containing a quote. Should a
-      # second source ever need a different decoding it gets its own function,
-      # never a branch inside this one -- per-source decoders accreting in one
-      # place is the same shape that let the numstat and the diff disagree.
+      # must NOT route paths through here: a GitHub PR source receives paths as
+      # JSON strings that arrive already decoded, and passing one through this
+      # would silently rewrite any name containing a quote. A second source
+      # needing a different decoding gets its own function, never a branch inside
+      # this one.
       #
       # It lives here rather than beside either caller because NEITHER can own
-      # it: putting it with the git invocation would make {Source::Parser}
-      # depend on {Source::LocalBranch}, inverting the port's premise that
-      # everything downstream reads the port's messages and does not know which
-      # source answered them.
+      # it: putting it with the git invocation would make {Source::Parser} depend
+      # on {Source::LocalBranch}, inverting the port's premise. And the whole
+      # reason it is in ONE place is that {Source::LocalBranch} reads a path out
+      # of a numstat while {Source::Parser} reads one out of a diff header, and
+      # those two answers are JOINED. They were not, and an ordinary `we"ird.rb`
+      # took a whole changeset down with an `Unattributed` refusal because each
+      # side spelled it differently.
       #
-      # The one crossing in this module that is not a
-      # record's: {Source::LocalBranch} reads a path out of a numstat and
-      # {Source::Parser} reads one out of a diff header, and the whole reason
-      # this lives in ONE place is that those two answers are JOINED to each
-      # other. They were not, and an ordinary `we"ird.rb` took a whole changeset
-      # down with an `Unattributed` refusal because each side spelled it
-      # differently.
-      #
-      # `core.quotePath=false` -- which {Source::LocalBranch::CONFIG_PINS} sets --
-      # governs NON-ASCII paths only. A name carrying a quote, a backslash, a tab
-      # or a newline is quoted whatever that setting says, so this is not a
-      # fallback for an exotic configuration; it is the ordinary path for those
-      # names.
+      # `core.quotePath=false` governs NON-ASCII paths only. A name carrying a
+      # quote, a backslash, a tab or a newline is quoted whatever that setting
+      # says, so this is the ordinary path for those names.
       #
       # A gsub over quoted RUNS rather than a test on the whole field, because
       # git quotes a rename's two sides INDEPENDENTLY and leaves the ` => `
-      # between them bare (`"d1/a\"b.rb" => "d2/a\"b.rb"`) -- a whole-field test
-      # sees an unquoted composite and decodes neither side. A bare `"` cannot
-      # occur outside a quoted run, since any name containing one is quoted, so
+      # between them bare -- a whole-field test sees an unquoted composite and
+      # decodes neither side. A bare `"` cannot occur outside a quoted run, so
       # the runs cannot be misread.
       #
       # Answers BYTES on purpose: an octal escape decodes to the file's own byte,
-      # and what to do with a byte sequence that is not valid UTF-8 belongs to
-      # the caller -- both of ours hand it straight to a scrub, because a path is
-      # journalled as JSON.
+      # and what to do with a sequence that is not valid UTF-8 belongs to the
+      # caller -- both of ours hand it straight to a scrub.
       #
       # @param value [Object, nil]
       # @return [String, nil] ASCII-8BIT
@@ -104,10 +94,9 @@ module Lain
       #
       # ActiveModel's `%<value>s` renders nil and `""` identically -- as nothing
       # at all, leaving a message ending in a bare "got " -- and a hand-written
-      # "got nil" is simply false whenever the caller passed something else.
-      # Both send a reader looking for an argument they did not pass. A Proc
-      # message is called with the offending value, so `inspect` can tell nil
-      # from `""` from `"  "`.
+      # "got nil" is false whenever the caller passed something else. Both send a
+      # reader looking for an argument they did not pass. A Proc message is called
+      # with the offending value, so `inspect` can tell nil from `""` from `"  "`.
       #
       # @param claim [String] what the field must be, as the message's first half
       # @return [Proc] an ActiveModel message, called with the value it refused

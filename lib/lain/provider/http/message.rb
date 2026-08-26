@@ -3,15 +3,13 @@
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/message.rb.
 # Changed: RubyLLM:: -> Lain::Provider::HTTP::.
 #
-# Leak site 8 (message.rb:106 -- RubyLLM.models.find(model_id) in
-# #model_info): deleted. Cost accounting is `Lain::Usage`'s job. `#cost`
-# went with it -- it existed only to call `#model_info` and build a
-# `RubyLLM::Cost` priced off the (also not vendored) Models registry, so
-# keeping it would have been a method that always raised.
+# `#model_info` and `#cost` are deleted: cost accounting is `Lain::Usage`'s job,
+# and both existed only to price against the Models registry this slice does not
+# vendor -- so keeping them would have been methods that always raised.
 #
 # `#normalize_content`'s Hash branch dropped the second `Content.new` argument
-# now that Content is text-only (leak site 9, see content.rb): upstream passed
-# the whole Hash through as an attachments list.
+# now that Content is text-only; upstream passed the whole Hash through as an
+# attachments list.
 
 module Lain
   class Provider
@@ -24,6 +22,22 @@ module Lain
         attr_reader :role, :model_id, :tool_calls, :tool_call_id, :raw, :thinking, :tokens
         attr_writer :content
 
+        # @param options [Hash] every field of the message, as the vendored
+        #   payload renderers and `StreamAccumulator` build it
+        # @option options [Symbol, String] :role required; one of {ROLES}
+        # @option options [String, Hash, Content] :content required; normalized to
+        #   a {Content}, and permitted to be nil only on an assistant message
+        #   that carries tool calls
+        # @option options [Array<ToolCall>, nil] :tool_calls the calls this
+        #   assistant message asks for
+        # @option options [String, nil] :tool_call_id the call a tool result answers
+        # @option options [String, nil] :model_id the model that produced it
+        # @option options [Tokens, nil] :tokens a prebuilt count; when absent one
+        #   is built from the per-field counts {#build_tokens} names
+        # @option options [Object, nil] :raw the untouched wire object, excluded
+        #   from `#instance_variables` so it never reaches an inspect line
+        # @option options [Thinking, nil] :thinking the extended-thinking block
+        # @raise [ArgumentError] when :role is not one of {ROLES}
         def initialize(options = {})
           @role = options.fetch(:role).to_sym
           @tool_calls = options[:tool_calls]
@@ -103,6 +117,14 @@ module Lain
 
         private
 
+        # @param options [Hash] {#initialize}'s own options hash
+        # @option options [Integer, nil] :input_tokens prompt tokens
+        # @option options [Integer, nil] :output_tokens completion tokens
+        # @option options [Integer, nil] :cached_tokens tokens served from cache
+        # @option options [Integer, nil] :cache_creation_tokens tokens written to cache
+        # @option options [Integer, nil] :thinking_tokens extended-thinking tokens
+        # @option options [Integer, nil] :reasoning_tokens reasoning tokens
+        # @return [Tokens, nil] nil when every count is absent
         def build_tokens(options)
           Tokens.build(
             input: options[:input_tokens],

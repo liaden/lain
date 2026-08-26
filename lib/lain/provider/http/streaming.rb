@@ -7,17 +7,13 @@ require_relative "streaming/error_handling"
 require_relative "streaming/faraday_handlers"
 
 # Vendored from ruby_llm 1.16.0 (2cf34b9), lib/ruby_llm/streaming.rb.
-# Changed: RubyLLM:: -> Lain::Provider::HTTP::. Dropped upstream's `event: error`
-# fast path (`error_chunk?`/`handle_error_chunk`, in {ErrorHandling}) and added
-# an end-of-stream flush ({#flush_stream}). The fast path read
-# `chunk.split("\n")[1]` off a RAW `on_data` fragment, so a transport that split
-# the event line from the data line made `[1]` nil and the provider raised
-# NoMethodError instead of the typed error; `handle_sse`'s `:error` arm reaches
-# the same `parse_error_from_json` through a parser that buffers across
-# fragments. Deleting the fast path alone would have traded that crash for
-# silence, because the parser DISCARDS an event that never got its terminating
-# blank line -- so the flush comes with it, and covers every truncated terminal
-# event rather than just the error one.
+# Dropped upstream's `event: error` fast path and added an end-of-stream flush
+# ({#flush_stream}). The fast path read `chunk.split("\n")[1]` off a RAW
+# `on_data` fragment, so a transport that split the event line from the data
+# line made `[1]` nil and the provider raised NoMethodError instead of the typed
+# error. Deleting it alone would have traded that crash for silence, because the
+# parser DISCARDS an event that never got its terminating blank line -- so the
+# flush comes with it, covering every truncated terminal event.
 #
 # Three methods here are Lain's, not upstream's, and a re-vendor MUST carry them
 # forward or it breaks code outside this directory:
@@ -31,33 +27,22 @@ require_relative "streaming/faraday_handlers"
 # * `assign_on_data(req, handler)` -- upstream's took `(req, accumulator,
 #   &block)` and built the handler itself; it is pure assignment now.
 #
-# This is the base SSE engine -- the provider-generic half of streaming,
-# NOT under `providers/`. It drives Faraday's `on_data` callback, feeds the
-# bytes through `EventStreamParser`, and calls the three universal hooks
-# every provider supplies: `stream_url`, `build_chunk(data)`,
-# `parse_streaming_error(data)`. It is `include`d into the base `Provider`,
-# so `self` inside every method here is a provider instance; a provider that
-# defines no `streaming.rb` of its own still streams, using the generic
-# `parse_streaming_error` in {ErrorHandling} (`Anthropic::Streaming`
-# overrides it, and is included at the subclass level so its version wins for
-# Anthropic).
+# The base SSE engine: the provider-generic half of streaming, `include`d into
+# the base `Provider`, so `self` inside every method here is a provider
+# instance. A provider that defines no `streaming.rb` of its own still streams,
+# using the generic `parse_streaming_error` in {ErrorHandling} --
+# `Anthropic::Streaming` overrides it and is included at the subclass level so
+# its version wins.
 #
-# Streaming *error* handling is a real, separate responsibility (a successful
-# stream never touches it) and lives in {ErrorHandling}, composed in via
-# `include` because those methods must dispatch `parse_streaming_error` and
-# `ErrorMiddleware.parse_error(provider: self)` back through the provider.
-# The Faraday-version `on_data` adapter is {FaradayHandlers}. Both extractions
-# keep this module under the default `Metrics/ModuleLength` without loosening
-# the cop.
+# Streaming *error* handling is a separate responsibility (a successful stream
+# never touches it) and lives in {ErrorHandling}, composed in by `include`
+# because those methods must dispatch back through the provider. Both that
+# extraction and {FaradayHandlers} also keep this module under the default
+# `Metrics/ModuleLength` without loosening the cop.
 #
-# Leak sites 1/2 resolved the same way as everywhere else in this slice:
-# every `RubyLLM.logger.debug { }` (guarded upstream by
-# `RubyLLM.config.log_stream_debug` in one spot, unguarded in others) becomes
-# `stream_debug { }`, which writes to the provider's injected `@sink` and is
-# gated by the injected `@stream_debug` flag. `Sink::Null` + `false` is the
-# default, so the trace is silent unless asked for -- the several upstream
-# call sites that were unguarded only ever emitted when the global logger's
-# level was already DEBUG, which was never the case by default.
+# Every upstream `RubyLLM.logger.debug { }` becomes `stream_debug { }`, writing
+# to the provider's injected `@sink` under the injected `@stream_debug` flag --
+# one of this slice's global-logger removals.
 
 module Lain
   class Provider
@@ -88,8 +73,6 @@ module Lain
 
         private
 
-        # Writes a streaming-debug line to the injected sink, gated by the
-        # injected debug flag. Replaces upstream's `RubyLLM.logger.debug { }`.
         def stream_debug
           @sink.puts(yield) if @stream_debug
         end

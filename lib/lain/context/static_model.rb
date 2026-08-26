@@ -7,10 +7,10 @@ module Lain
     # answer `#current`, so {Context#render} reads the live model through one
     # message regardless of which it holds -- no per-render `respond_to?` probe.
     #
-    # Unlike {ModelSwitch} there is no mutable coordination state here: a
-    # StaticModel is frozen at construction, so a Context wrapping one stays
-    # `Ractor.shareable?` and renders byte-identically to the old bare-String
-    # path (the wrapped value is the SAME interned String that path produced).
+    # Unlike {ModelSwitch} there is no mutable coordination state: a StaticModel
+    # is frozen at construction, so a Context wrapping one stays
+    # `Ractor.shareable?` and renders byte-identically to a bare-String model --
+    # the wrapped value is the SAME interned String.
     class StaticModel
       attr_reader :current
 

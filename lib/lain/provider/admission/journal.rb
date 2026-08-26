@@ -3,43 +3,31 @@
 module Lain
   class Provider
     class Admission
-      # A Journal-duck decorator over any {Admission}: {Isolation::Journal}'s
-      # shape, applied to the capacity seam. `enter` and `try_enter` forward to
-      # the wrapped admission untouched, and a caller that actually QUEUED
-      # additionally leaves a {Telemetry::ProviderWait} record -- so the
-      # admission object never learns a journal exists, and {Null} and a real
-      # {Admission} are wrapped by the same decorator without either knowing.
+      # A Journal-duck decorator over any {Admission}, so the admission object
+      # never learns a journal exists and {Null} and a real gate are wrapped
+      # alike.
       #
       # == Only a caller that queued is journaled, and no threshold was invented
       #
-      # {Admission#enter} yields the seconds queued and returns {NO_WAIT}
-      # exactly when the caller took a slot on its first attempt, before the
-      # clock was ever read. That distinction is EXACT, so "did this caller
-      # queue?" is answered by the gate rather than by a cutoff chosen here --
-      # which matters, because emitting per admission would put a record on
-      # every turn of an ordinary session and bury the ones that mean something.
-      # An idle endpoint journals nothing at all.
+      # {Admission#enter} returns {NO_WAIT} exactly when the caller took a slot
+      # on its first attempt, before the clock was ever read. That distinction
+      # is EXACT, so "did this caller queue?" is answered by the gate rather
+      # than by a cutoff chosen here -- emitting per admission would put a
+      # record on every turn of an ordinary session and bury the ones that mean
+      # something.
       #
-      # The decorator does not measure time. It has no clock and wants none: the
-      # wait is the figure `enter` already yields, and re-timing it here would
-      # both duplicate the reading and add a second site naming the monotonic
-      # clock, which `run_clock_spec.rb` pins to {RunClock::MONOTONIC} alone.
+      # The decorator does not measure time and wants no clock: the wait is the
+      # figure `enter` already yields, and re-timing it would both duplicate the
+      # reading and add a second site naming the monotonic clock, which spec
+      # pins to {RunClock::MONOTONIC} alone.
       #
-      # The resolution a wait is reported at is READ OFF the wrapped gate
-      # ({Admission#poll_interval}), never defaulted. It was a defaulted keyword
-      # once, which meant wrapping a gate built with a non-default poll interval
-      # described it with a figure it does not run at -- and a default that can
-      # be wrong is worse than a required argument, worse again than simply
-      # asking the subject. That reader is the one attribute this decorator
-      # added to {Admission}'s surface, and it is a reader, never a writer.
+      # The resolution is READ OFF the wrapped gate, never defaulted. As a
+      # defaulted keyword it described a gate built with a non-default poll
+      # interval by a figure it does not run at.
       #
-      # == What is NOT journaled
-      #
-      # {#try_enter} forwards untouched. It never queues by construction (the
-      # eager oracle's contract is that the producing turn does not wait on it),
-      # so a busy endpoint there is a SKIP, and a skip is not a wait: filing it
-      # under `provider_wait` would put a record on every turn whose eager
-      # summary was declined and describe it with the wrong noun.
+      # {#try_enter} forwards untouched: it never queues by construction, so a
+      # busy endpoint there is a SKIP, and filing a skip under `provider_wait`
+      # would describe it with the wrong noun.
       #
       # Wrap ONCE, nearest the admission: a provider handed an already-wrapped
       # admission must not decorate again, or every wait double-journals.
@@ -69,18 +57,15 @@ module Lain
         # Enter, journaling the wait if there was one.
         #
         # The record is cut INSIDE the admitted block, so `in_flight` counts
-        # this caller. A {Busy} refusal is journaled and re-raised unchanged --
-        # the decorator observes, and never converts a refusal into a return
-        # value.
+        # this caller. A {Busy} refusal is journaled and re-raised unchanged.
         #
-        # `admitted` is what makes that honest, and it is not defensive
-        # bookkeeping. {Busy} is NOT this gate's private exception: a block
-        # doing work behind a second admission raises the same class, so a bare
-        # `rescue Busy` reads "the work I was let in to do was refused" as "the
-        # gate refused me" -- inventing a refusal for an admitted caller on an
-        # idle gate, and emitting BOTH a wait and a refusal for one call when
-        # the caller had queued first. The flag is set before the emit, because
-        # the gate admitted this caller the moment the block began.
+        # `admitted` is not defensive bookkeeping: {Busy} is NOT this gate's
+        # private exception, so a block doing work behind a SECOND admission
+        # raises the same class, and a bare `rescue Busy` would read "the work I
+        # was let in to do was refused" as "the gate refused me" -- inventing a
+        # refusal on an idle gate, and emitting both a wait and a refusal for
+        # one call. The flag is set before the emit, because the gate admitted
+        # this caller the moment the block began.
         #
         # @yieldparam waited [Float] seconds spent queued; {NO_WAIT} if it never was
         # @return the block's value

@@ -13,23 +13,19 @@ module Lain
       #
       # The resolver duck (`resolve.call(basename) -> entries`) is the seam
       # that keeps filesystem knowledge out of {Loader}: this class never
-      # reads a path itself, only what {Loader} was handed (the escalation
-      # trigger this card was built around).
+      # reads a path itself, only what {Loader} was handed.
       #
-      # The seam's integrity property is fold MEMBERSHIP, not head equality:
+      # The seam's integrity property is fold MEMBERSHIP, not head equality.
       # `resumed_from.head` may be ANY digest the prior file's own fold
-      # verified -- a turn recorded in that file at any fold position, or an
-      # ancestor the file itself chained from -- because a fork legitimately
-      # chains to a head the parent recorded but did not end on, and a parent
-      # that later rewinds below a fork point must not render children forked
-      # above it unloadable. Every candidate digest re-committed to its
-      # content address during that fold, so membership vouches for exactly
-      # the bytes head equality used to (a tampered prefix still refuses);
-      # what it deliberately does NOT promise is that the prior file's tail
-      # ABOVE the recorded head survived -- a closed predecessor's own
-      # `session_closed` anchor covers that, an open one accepts the same
-      # torn-tail limit {SessionRecord} states. Resuming from a never-closed
-      # (open) predecessor is therefore still allowed.
+      # verified, because a fork legitimately chains to a head the parent
+      # recorded but did not end on, and a parent that later rewinds below a
+      # fork point must not render children forked above it unloadable. Every
+      # candidate digest re-committed to its content address during that fold,
+      # so membership vouches for exactly the bytes head equality used to -- a
+      # tampered prefix still refuses. What it deliberately does NOT promise is
+      # that the prior file's tail ABOVE the recorded head survived, so
+      # resuming from a never-closed predecessor is still allowed, at the same
+      # torn-tail limit {SessionRecord} states.
       class ResumeChain
         # Wraps the caller's resolve duck with the basenames already on the
         # walk, so a cyclic `resumed_from` chain (A->A, A->B->A) refuses as
@@ -79,8 +75,7 @@ module Lain
         # @param resolve [#call] `basename -> entries`, consulted only when
         #   `resumed_from` is present
         # @param loader_factory [#new] builds the prior file's Loader;
-        #   defaults to {Loader} itself, injectable only so this file need
-        #   not load after it
+        #   injectable only so this file need not load after {Loader}
         def initialize(resumed_from:, context_factory:, resolve:, loader_factory: Loader)
           @resumed_from = resumed_from
           @context_factory = context_factory
@@ -99,12 +94,10 @@ module Lain
         end
 
         # The prior file's own rebuilt Timeline, checked out at the head THIS
-        # header recorded at resume time. The prior file's own anchor already
-        # verified its own prefix (inside `prior_loader.timeline`); this
-        # checks the SEAM between the two files -- and the check is fold
-        # membership ({Loader#on_chain?}), not head equality: the checkout
-        # itself verifies nothing, so it happens only for a digest the fold
-        # proved (see the class comment).
+        # header recorded at resume time. The prior file's anchor already
+        # verified its own prefix; this checks the SEAM between the two files,
+        # by fold membership rather than head equality -- the checkout itself
+        # verifies nothing, so it happens only for a digest the fold proved.
         #
         # @return [Timeline]
         # @raise [Corrupt] when the recorded resumed_from head was never
@@ -128,12 +121,11 @@ module Lain
 
         private
 
-        # Memoized: {#store}, {#prior_timeline}, and {#prior_messages} all
-        # reach the same prior file, and re-resolving it twice would ask the
-        # injected `resolve` duck for the same file twice. The prior Loader
-        # walks with `guard.visiting(basename)` -- the cycle detection lives
-        # in the resolve seam itself, so it threads through the recursion
-        # without widening {Loader}'s constructor with walk-state.
+        # Memoized: {#store}, {#prior_timeline} and {#prior_messages} all reach
+        # the same prior file. The prior Loader walks with
+        # `guard.visiting(basename)`, so the cycle detection lives in the
+        # resolve seam itself and threads through the recursion without
+        # widening {Loader}'s constructor with walk-state.
         def prior_loader
           @prior_loader ||= begin
             basename = @resumed_from.fetch("file")

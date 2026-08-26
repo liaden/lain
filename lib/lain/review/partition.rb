@@ -34,14 +34,11 @@ module Lain
     # call is the special case, and the missing message is the fix. The hunk
     # count is still reachable the honest way, through {#files}.
     #
-    # == Why the core is TWO members and not five
-    #
-    # Its ancestor was `Changeset::CommitScope`, which carried `sha`, `subject`,
-    # `body`, `numstat` and `files` -- honest for a commit and three lies for
-    # anything else, because a directory has no sha, no body and no numstat.
-    # So the core is what EVERY strategy can answer: a `label`, which is what a
-    # heading renders, and `files`. Whatever a particular strategy knows in
-    # addition rides on `detail`.
+    # The core is TWO members and not five. Its ancestor was
+    # `Changeset::CommitScope`, which carried `sha`, `subject`, `body`, `numstat`
+    # and `files` -- honest for a commit and three lies for anything else, since
+    # a directory has no sha, no body and no numstat. So the core is what EVERY
+    # strategy can answer, and whatever one knows in addition rides on `detail`.
     #
     # == What a detail answers
     #
@@ -50,20 +47,18 @@ module Lain
     # which is how a REFUSAL names the group.
     #
     # `named` is separate from the label because the two audiences want
-    # different things and one member cannot serve both. A 40-column sidebar
-    # heading wants the commit's message; a reader told their review is too
+    # different things and one member cannot serve both: a 40-column sidebar
+    # heading wants the commit's message, while a reader told their review is too
     # large wants something they can `git show`, and subjects repeat (`wip`,
-    # `fixup!`, `Merge branch 'main'`). So the label stays short and the detail
-    # says how to look the group up.
+    # `fixup!`, `Merge branch 'main'`).
     #
-    # {Undetailed} is the Null Object of that port and the default, and it is
-    # not a stub -- reading the counts off the hunks, and naming a group by its
-    # own label, are the only honest answers available to a strategy with no
-    # separate accounting. A strategy that HAS one (a commit's own numstat is
-    # git's, not the diff's) supplies a detail that answers instead.
-    #
-    # The files ride as an argument rather than being held so that a detail is
-    # shareable and survives `#with`, which replaces exactly them.
+    # {Undetailed} is the Null Object of that port and the default, and not a
+    # stub -- reading the counts off the hunks, and naming a group by its own
+    # label, are the only honest answers available to a strategy with no separate
+    # accounting. One that HAS an accounting (a commit's numstat is git's, not
+    # the diff's) supplies a detail that answers instead. The files ride as an
+    # argument rather than being held so a detail is shareable and survives
+    # `#with`, which replaces exactly them.
     #
     # Reopened rather than folded into the `Data.define` block, {Anchor}'s
     # reason: {Undetailed} written inside that block would scope to
@@ -78,22 +73,17 @@ module Lain
       module Undetailed
         module_function
 
-        # == These two READ EVERY HUNK, and something draws them
-        #
-        # Said at the top of both because the note under {#binaries} is about
-        # {#binaries} alone and was read as covering all three.
+        # {#added} and {#deleted} READ EVERY HUNK, and something draws them:
         # `Frontend::Neovim::ReviewView#partition_header` renders `+n -m` on
         # every group heading, in every scope, so `counted` walks every file it
         # is given each time the sidebar is drawn.
         #
         # Over a diff source that is arithmetic on hunks already parsed. Over a
-        # LAZY source it is not: {Review::LazyFile} chunks on its first `#hunks`,
-        # so asking this of an unread corpus chunks it. That is now GUARDED
-        # rather than merely recorded -- `Session::MarkedChangeset::PartitionRow`
-        # answers `#counted?` off its files, the view asks that first, and a
-        # group nobody has read is headed by its size instead. So these two are
-        # reached only over files something has already read, and the walk they
-        # do costs nothing extra.
+        # LAZY source it is not -- {Review::LazyFile} chunks on its first
+        # `#hunks`, so asking this of an unread corpus chunks it. GUARDED rather
+        # than merely recorded: `Session::MarkedChangeset::PartitionRow` answers
+        # `#counted?` off its files, the view asks that first, and a group nobody
+        # has read is headed by its size instead.
         #
         # The guard lives on the ROW and not here on purpose: this module is
         # handed the files and has no standing to decide what a heading claims,
@@ -112,14 +102,10 @@ module Lain
         # at all, so it contributes to neither, and a bare `+0 -0` on an
         # all-binary group would read as "nothing changed".
         #
-        # Say what it does NOT do, because the sentence above overclaimed once:
-        # nothing RENDERS **this one**. `MarkedChangeset::PartitionRow` forwards
-        # it and neither surface draws it, so an all-binary group still shows
-        # `+0 -0` today. That is true of `binaries` and of nothing else here --
-        # see the note on {#added}, where the same disclaimer sat for two panel
-        # reviews while `added` and `deleted` were being drawn on every heading.
-        # This is the honest number for whoever draws it; making something draw
-        # it is a card nobody has written.
+        # Nothing renders THIS one today: `MarkedChangeset::PartitionRow`
+        # forwards it and neither surface draws it, so an all-binary group still
+        # shows `+0 -0`. That is true of `binaries` and of nothing else here --
+        # {#added} and {#deleted} are drawn on every heading.
         #
         # @return [Integer] files whose lines could not be counted
         def binaries(files) = files.count(&:binary?)
@@ -138,13 +124,11 @@ module Lain
       end
 
       # Loaded HERE, mid-body, because {STRATEGIES} below names all three while
-      # this body runs -- `context.rb`'s "where load order dictates", one level
-      # in. They cannot load at the top of the file either: each reopens
-      # `Partition` to nest itself inside it, and a plain `class Partition`
-      # would beat the `Data.define` above to the name.
-      #
-      # The port BEFORE its implementations, the only ordering constraint among
-      # the four: nothing in a strategy's class body cites another strategy.
+      # this body runs. They cannot load at the top of the file either: each
+      # reopens `Partition` to nest itself inside it, and a plain
+      # `class Partition` would beat the `Data.define` above to the name. The
+      # port before its implementations is the only ordering constraint among
+      # the four -- nothing in a strategy's body cites another strategy.
       require_relative "partition/strategy"
       require_relative "partition/whole"
       require_relative "partition/by_directory"
@@ -154,26 +138,24 @@ module Lain
       #
       # ONE frozen instance each, and that is the property to keep rather than
       # the tidiness: a strategy is a plain object with identity equality, so a
-      # registry that minted a fresh one per read would leave two readers
-      # holding strategies that are neither `equal?` nor `==` -- and the first
-      # code to compare or cache a resolved scope would fail silently. There is
-      # a spec pinning {Bounds::COMMIT_STRATEGY} and
-      # {Session::MarkedChangeset::WALK} as the same object.
+      # registry minting a fresh one per read would leave two readers holding
+      # strategies that are neither `equal?` nor `==`, and the first code to
+      # compare or cache a resolved scope would fail silently. A spec pins
+      # {Bounds::COMMIT_STRATEGY} and {Session::MarkedChangeset::WALK} as the
+      # same object.
       #
-      # {Strategy.check!} runs over each one as it is built, which is what makes
-      # "every registered strategy answers the port" a construction guarantee
-      # rather than a spec claim: a strategy that stopped answering raises while
-      # `lain` is being required, not the first time a scope is resolved.
+      # {Strategy.check!} runs over each one as it is built, which makes "every
+      # registered strategy answers the port" a construction guarantee rather
+      # than a spec claim -- one that stopped answering raises while `lain` is
+      # being required, not the first time a scope is resolved.
       #
-      # `strategy.name` and not `strategy::NAME`: the registry reads the PORT,
-      # so a strategy whose two spellings disagreed could not register under the
-      # one it does not answer.
+      # `strategy.name` and not `strategy::NAME`: the registry reads the PORT, so
+      # a strategy whose two spellings disagreed could not register under the one
+      # it does not answer.
       #
       # Declared here rather than in `vocabulary.rb` because THIS is where the
-      # strategies are. It IS the scope vocabulary now -- `vocabulary.rb` used
-      # to hold a `SCOPES` list naming two of the three, and a second
-      # declaration free to disagree is exactly what that file's own doc warns
-      # against.
+      # strategies are -- it IS the scope vocabulary now, and that file used to
+      # hold a second `SCOPES` list naming two of the three.
       STRATEGIES = [Whole, ByCommit, ByDirectory]
                    .map { |strategy| strategy.new.freeze }
                    .each { |strategy| Strategy.check!(strategy) }
@@ -181,15 +163,12 @@ module Lain
                    .freeze
 
       # What an absent `--scope` means, in ONE place rather than the three that
-      # each spelled `cumulative` themselves ({CLI::Review}, {CLI::Command::Review},
-      # {Tools::RequestReview}). Three literals were three chances for the
-      # default to name a grouping nothing serves; `fetch` makes that a
-      # load-time refusal instead.
-      #
-      # The name comes off the registered strategy rather than off
-      # {Whole::NAME} directly, so the constant cannot outlive the registration
-      # -- a default that is not a resolvable scope is the one default that
-      # must not exist.
+      # each spelled `cumulative` themselves -- three literals were three chances
+      # for the default to name a grouping nothing serves, and `fetch` makes that
+      # a load-time refusal instead. The name comes off the REGISTERED strategy
+      # rather than off {Whole::NAME}, so the constant cannot outlive the
+      # registration: a default that is not a resolvable scope is the one default
+      # that must not exist.
       DEFAULT_SCOPE = STRATEGIES.fetch(Whole::NAME.to_sym).name
     end
   end

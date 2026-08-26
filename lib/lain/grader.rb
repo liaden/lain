@@ -1,21 +1,17 @@
 # frozen_string_literal: true
 
 module Lain
-  # Scoring a run. A grader answers one question -- "how good was this?" -- and
-  # every grader answers it in the SAME shape, a {Grade}, so the two kinds are
-  # interchangeable to everything downstream: {Fixture} is a deterministic bundle
-  # of hard assertions (no model), {Rubric} is an LLM judge in a separate context
-  # window. Compare folds a Grade's `#score` into its distribution; speculative
-  # branching argmaxes over it. The one non-negotiable is `#why`: a judgment you
-  # cannot read the reason for is unusable, so both graders populate it.
+  # Scoring a run. Every grader answers "how good was this?" in the SAME shape,
+  # a {Grade}, so the kinds are interchangeable downstream: {Fixture} is a
+  # deterministic bundle of hard assertions with no model, {Rubric} is an LLM
+  # judge in a separate context window.
   #
-  # {Verified} is the one documented exception to the "same shape" rule: it
-  # decorates a finding-producing grader and filters findings through an injected
-  # refuter, so its subject is a set of findings rather than a single Grade.
+  # {Verified} is the one exception to that rule: it decorates a
+  # finding-producing grader and filters findings through an injected refuter,
+  # so its subject is a set of findings rather than a single Grade.
   module Grader
-    # A grader's verdict. `score` is a 0.0..1.0 Float, `pass` a boolean, and
-    # `why` the human-readable reason -- always present, never blank. Frozen, so
-    # two verdicts over the same subject are `==` and safe to share.
+    # `score` is a 0.0..1.0 Float, `pass` a boolean, `why` the human-readable
+    # reason. Frozen, so two verdicts over the same subject are `==`.
     Grade = Data.define(:score, :pass, :why) do
       include Declarative
 
@@ -25,8 +21,8 @@ module Lain
       # Hand-written over `#strip`, and NOT `presence:`: ActiveModel's `blank?`
       # matches Unicode whitespace, `#strip` does not, and a lone U+00A0 `why`
       # has always been accepted here. Widening that is a new refusal, not a
-      # migration -- {Blankness} is where this codebase reaches when it wants
-      # the wider rule, deliberately and by name.
+      # migration -- {Blankness} is where this codebase reaches for the wider
+      # rule, deliberately and by name.
       declare do
         attribute :why
         validate :explains_the_grade

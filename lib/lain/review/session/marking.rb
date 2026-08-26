@@ -4,38 +4,26 @@ module Lain
   module Review
     class Session
       # Turns a wire `(hunk_key, state)` pair into a validated, journaled
-      # {HunkMarked} record -- the one step {Session#mark} and
-      # {Session#mark_row} share, moved out here because `Metrics/ClassLength`
-      # named {Session} as carrying two responsibilities: this validation, and
-      # being the review aggregate itself (the repo's own reading of a
-      # tripped `Metrics` cop -- an object was missing).
+      # {HunkMarked} record -- the one step {Session#mark} and {Session#mark_row}
+      # share, moved out here because `Metrics/ClassLength` named {Session} as
+      # carrying two responsibilities.
       #
       # BUILT FRESH by {Session#marking} for every gesture rather than held,
       # because `known_hunks` is a SNAPSHOT of {Session#hunk_keys}, which is
-      # deliberately not memoized (see that method's own doc: "a survey reads
-      # more of itself as it is looked at"). Holding one {Marking} across two
-      # gestures would answer the second from a set the first was resolved
-      # against, which is exactly the staleness `#hunk_keys` refuses to risk.
+      # deliberately not memoized. Holding one {Marking} across two gestures would
+      # answer the second from a set the first was resolved against.
       #
-      # It does NOT apply the record to `@marks` or notify a surface -- both
-      # stay with `Session`, which is the object that owns that state and
-      # decides who else hears about it (`#mark` tells the surface per call,
-      # `#mark_row` does not; see that method's own doc for why).
+      # It does NOT apply the record to `@marks` or notify a surface -- both stay
+      # with `Session`, which owns that state and decides who else hears about it.
       #
-      # WHY `#mark` KEEPS TELLING THE SURFACE, STATED PRECISELY, because an
-      # earlier draft of this reasoning got it wrong: it is NOT because
-      # `spec/support/shared_examples/review_surface.rb`'s port contract binds
-      # `Session#mark` -- it does not. That contract constructs a SURFACE
-      # (`Surface::Neovim`/`Surface::Text`) and calls `#mark` on IT directly;
-      # `Session` never appears in it, and a mutation check proves the
-      # boundary: deleting `Session#mark`'s `@surface.mark` call leaves every
-      # one of those port-contract examples green, because none of them route
-      # through `Session` at all. The real reason is `Session`'s OWN
-      # commitment, stated once here so it is not re-derived wrongly again:
-      # a hunk marked ANY way this class offers notifies the surface exactly
-      # once, and `#mark` is the leg that still promises that for a single
-      # hunk marked in isolation (`#mark_row` promises it for a whole row,
-      # once, from the caller -- see that method's doc).
+      # WHY `#mark` KEEPS TELLING THE SURFACE, stated precisely because an earlier
+      # draft got it wrong: it is NOT because the port contract binds
+      # `Session#mark`. That contract constructs a SURFACE and calls `#mark` on
+      # IT; `Session` never appears in it, and deleting `Session#mark`'s
+      # `@surface.mark` call leaves every one of those examples green. The real
+      # reason is `Session`'s OWN commitment: a hunk marked any way this class
+      # offers notifies the surface exactly once, and `#mark` is the leg that
+      # promises that for a single hunk marked in isolation.
       class Marking
         # @param journal [#<<] where the record lands
         # @param known_hunks [#include?] this changeset's own keys, as

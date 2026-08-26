@@ -22,33 +22,27 @@ module Lain
         validates :tool, presence: { message: "must name the refused tool, got nil" }
       end
 
-      # A redaction record must carry two non-negative Integer COUNTS, never
-      # anything else -- {Carriers::Dropped}'s shape (the exact reuse target the
-      # card named), doubled onto `regions`/`released`. Without this, `Data`
-      # freezing the record but never its members let a mutable String
-      # ("3") or a Hash of leaked bytes sail straight through, both silently
-      # breaking `Ractor.shareable?` and, for the Hash case, defeating the
-      # entire point of a record whose job is counts instead of content.
+      # Two non-negative Integer COUNTS, never anything else. `Data` freezes the
+      # record but never its members, so without this a mutable String ("3") or
+      # a Hash of leaked bytes sails straight through -- silently breaking
+      # `Ractor.shareable?` and, for the Hash, defeating the entire point of a
+      # record whose job is counts instead of content.
       #
-      # `released <= regions` is asserted too: released is a SUBSET of what
-      # was found, so "released > regions" is not an unsafe value, it is an
-      # impossible one -- shape, same as every other guard here, not a second
-      # security check layered on top.
+      # `released <= regions` is asserted too: released is a SUBSET of what was
+      # found, so "released > regions" is impossible rather than unsafe -- shape,
+      # not a second security check.
       class ReadRedacted < Declarative::Carrier
         attribute :path
         attribute :regions
         attribute :released
-        # {ReadRefused} validates `path` for a record that only DESCRIBES a
-        # refusal; this one now drives a control. `SessionRecord::Replay` folds
-        # a `read_redacted` back into the masked read-set, so a record with no
-        # path is a mask applied to `path.to_s` -> `""` -> whatever the resume's
-        # cwd normalizes to: the mask lands on a directory, the file it was
-        # meant to protect reads back as wholly seen, and `write_file` replaces
-        # the secret with its own placeholder. Not reachable from the live
-        # writer, which always has a resolved path -- but a salvaged or
-        # hand-edited journal is exactly what these records exist to survive
-        # (`replay.rb`'s own doctrine), and that is where an unguarded field
-        # gets its value.
+        # This one DRIVES a control. `SessionRecord::Replay` folds a
+        # `read_redacted` back into the masked read-set, so a record with no
+        # path masks `path.to_s` -> `""` -> whatever the resume's cwd normalizes
+        # to: the mask lands on a directory, the file it was meant to protect
+        # reads back as wholly seen, and `write_file` replaces the secret with
+        # its own placeholder. Unreachable from the live writer, which always
+        # has a resolved path -- but a salvaged or hand-edited journal is what
+        # these records exist to survive.
         validates :path, presence: { message: "must name the redacted path, got nil" }
         validates :regions, numericality: { only_integer: true, greater_than_or_equal_to: 0,
                                             message: "must be a non-negative Integer, got %<value>s" }
@@ -79,14 +73,12 @@ module Lain
     # `Pathname`, and an uncoerced one would leave the in-process field and the
     # journaled JSON string disagreeing.
     #
-    # It is NOT reads only, though the name says so.
-    # {Sensitivity::Policy::PATH_FIELDS} names `write_file`, `edit_file`, `bash`
-    # and `core_exec` beside the readers, and refusing a WRITE to
-    # `~/.ssh/id_ed25519` is as much this boundary's job as refusing a read --
-    # so `tool` carries the verb and a Journal reader tallies on it rather than
-    # counting a refused write as a refused read. The derived type stays
-    # `read_refused`: renaming a shipped record mid-chunk would break every
-    # replay reader keyed on it, to fix a word.
+    # It is NOT reads only, though the name says so: refusing a WRITE to
+    # `~/.ssh/id_ed25519` is as much this boundary's job, so `tool` carries the
+    # verb and a Journal reader tallies on it rather than counting a refused
+    # write as a refused read. The derived type stays `read_refused`, because
+    # renaming a shipped record would break every replay reader keyed on it to
+    # fix a word.
     ReadRefused = Data.define(:tool_use_id, :tool, :path, :reason) do
       include Journalable
 
@@ -98,15 +90,12 @@ module Lain
       end
     end
 
-    # A `read` whose bytes were released with some regions masked -- the
-    # read-masking path. `regions` and `released` are COUNTS, never the masked or
-    # released bytes themselves: the same "name what matched, never the
-    # matched bytes" discipline {WriteRefused} established for a full refusal,
-    # extended here to a partial release. Coerced to `Integer` with `to_i`
-    # rather than passed through raw: {Carriers::ReadRedacted} has already
-    # proven the value numeric by the time this runs, so the coercion only
-    # ever normalizes a numeric-looking String (or an actual Integer) to the
-    # frozen-by-nature Integer the record must hold to stay
+    # A `read` whose bytes were released with some regions masked. `regions`
+    # and `released` are COUNTS, never the masked or released bytes themselves
+    # -- {WriteRefused}'s "name what matched, never the matched bytes"
+    # discipline extended to a partial release. `to_i` runs after
+    # {Carriers::ReadRedacted} has proven the value numeric, so it only
+    # normalizes to the frozen-by-nature Integer the record needs to stay
     # `Ractor.shareable?`.
     ReadRedacted = Data.define(:tool_use_id, :path, :regions, :released) do
       include Journalable

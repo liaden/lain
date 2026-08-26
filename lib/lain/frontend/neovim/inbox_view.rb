@@ -1,10 +1,8 @@
 # frozen_string_literal: true
 
 # {Renderings} and {Row} must exist before this file's body runs
-# `private_constant` on them, so they load FIRST -- the same "load it early"
-# exception neovim.rb documents for {RpcThread}, and still this subtree's index
-# owning the require. Neither reads a constant of this file's at LOAD time
-# (Row's are all inside method bodies), which is what keeps that order legal.
+# `private_constant` on them, so they load FIRST. Neither reads a constant of
+# this file's at LOAD time, which is what keeps that order legal.
 require_relative "inbox_view/renderings"
 require_relative "inbox_view/row"
 
@@ -31,17 +29,15 @@ module Lain
       # it turns records into plain lines; {RpcThread} does the rendering.
       #
       # THREAD CONTRACT, AND THE LOCK. {#update} runs on the frontend's drain
-      # thread; {#open}, {#open_next} and {#digest_at} run on whichever thread
-      # serves the editor's commands (the reply consumer's fiber, on the
-      # reactor); and {#answered} is reached from the TTY's own reply fibers as
-      # well, since a set answered at the terminal must stop being offered by
-      # the editor's advance. They share `@pending` -- mutated by an arrival or a
+      # thread; the gestures run on whichever thread serves the editor's
+      # commands; and {#answered} is reached from the TTY's reply fibers too,
+      # since a set answered at the terminal must stop being offered by the
+      # editor's advance. They share `@pending` -- mutated by an arrival or a
       # retirement, ITERATED by the render that indexes it -- and the rendering
-      # index that a gesture then resolves through, so every one of them takes
-      # one `Mutex`. It is {QuestionView}'s `@slot` for {QuestionView}'s reason:
-      # a check-then-act across this seam does not fail loudly, it opens the
-      # wrong thing. Holding it is also what lets {Renderings} and {Gestures} be
-      # lock-free -- they are only ever reached from inside it.
+      # index a gesture resolves through, so every one of them takes one
+      # `Mutex`: a check-then-act across this seam does not fail loudly, it opens
+      # the wrong thing. Holding it is also what lets {Renderings} and {Gestures}
+      # be lock-free.
       #
       # NOTHING UNDER THIS LOCK MAY WAIT ON THE EDITOR, and that is the
       # invariant the whole gesture rests on rather than a preference. A
@@ -79,13 +75,11 @@ module Lain
         # clamps the row drawn around it.
         WIDTH = 96
 
-        # What marks a continuation line, in the ONE spelling the runtime tests
-        # for (`05_records.lua`'s CONTINUATION). Spelled here rather than read
-        # off {ApprovalView::INDENT} because `neovim.rb`'s manifest loads this
-        # file FIRST -- a constant reference would resolve before that class
-        # exists. The two spellings and the lua pattern are pinned to each other
-        # by inbox_view_spec, which is what keeps them from drifting apart in
-        # silence.
+        # The ONE spelling the runtime tests for (`05_records.lua`'s
+        # CONTINUATION). Spelled here rather than read off {ApprovalView::INDENT}
+        # because `neovim.rb`'s manifest loads this file FIRST, so a constant
+        # reference would resolve before that class exists. inbox_view_spec pins
+        # the two spellings and the lua pattern to each other.
         INDENT = "  "
 
         # What says a summary was cut. ASCII, {ApprovalView::ELISION}'s
@@ -120,52 +114,41 @@ module Lain
         # record stream, not on the Tools tree. Both spellings are spec-pinned.
         RECIPIENT = "human"
 
-        # {Tools::AskHuman::ASKED_BY}, named here for {RECIPIENT}'s reason and
-        # pinned the same way. It is the asker's NAME, and it is what fills the
-        # sender column when the record carries it: `from` is the asker chain's
-        # correlation -- its ROOT digest -- and an `:inherit` child is
-        # `parent.fork`, so a child and its parent share a root PERMANENTLY and
-        # rendered one indistinguishable sender here. The TTY prefers the same
-        # name off the ARRIVAL ({CLI::HumanReplies::InboxItem.asked}); this view
-        # never sees an arrival, so it reads it off the record.
+        # {Tools::AskHuman::ASKED_BY}, named here for {RECIPIENT}'s reason. The
+        # asker's NAME, which fills the sender column when the record carries it:
+        # `from` is the asker chain's correlation -- its ROOT digest -- and an
+        # `:inherit` child is `parent.fork`, so a child and its parent share a
+        # root PERMANENTLY and rendered one indistinguishable sender here.
         ASKED_BY = "asked_by"
 
-        # One listed question: who asked, what, when this view first saw it, and
-        # the record's own body. `asked_at` is OBSERVATION time by necessity --
-        # events are content-addressed and carry no wall clock -- which is
-        # exactly what an inbox's "age" means: how long the item has sat here
-        # unanswered. `body` is kept whole rather than reduced to the summary
-        # line, because the `<CR>` gesture rebuilds the SET a human answers from
-        # exactly the record that produced the row.
+        # `asked_at` is OBSERVATION time by necessity -- events are
+        # content-addressed and carry no wall clock -- which is exactly what an
+        # inbox's "age" means. `body` is kept whole rather than reduced to the
+        # summary line, because the `<CR>` gesture rebuilds the SET a human
+        # answers from exactly the record that produced the row.
         Item = Data.define(:from, :question, :asked_at, :body)
         private_constant :Item
 
-        # Its own file (inbox_view/renderings.rb): reconciling "what I drew"
-        # with "what you are looking at" is a rule of its own, and this class
-        # was over `Metrics/ClassLength` carrying it -- the same thing
-        # {CommandInbox}'s extraction answered, and the cop naming the object
-        # that was missing.
+        # Its own file: reconciling "what I drew" with "what you are looking at"
+        # is a rule of its own.
         private_constant :Renderings
 
-        # Its own file (inbox_view/row.rb) for the same reason and by the same
-        # cop: once an item could span lines, "what a listed set looks like on
-        # screen" stopped being one interpolation and became a rule -- summary,
-        # cut, wrap, and the invariant that ties them.
+        # Its own file, for the same reason: once an item could span lines, "what
+        # a listed set looks like on screen" stopped being one interpolation and
+        # became a rule -- summary, cut, wrap, and the invariant that ties them.
         private_constant :Row
 
-        # The set the `<CR>` gesture opened, or the reason none did:
-        # {Buffers::TimelineView::Pin}'s shape, for its reason -- this object
+        # The set the `<CR>` gesture opened, or the reason none did. This object
         # touches neither nvim nor stdio, so "report the failure" can only mean
         # "hand it back".
         Opened = Data.define(:digest, :report) do
           def opened? = !digest.nil?
         end
 
-        # The question surface nobody wired ({QuestionView::Detached}'s honesty,
-        # one object over): it answers the one message this view sends it, so no
-        # path below asks whether a surface exists -- and it refuses, because an
-        # inbox with nowhere to open a set must say so rather than report an
-        # open that never happened.
+        # The question surface nobody wired: it answers the one message this view
+        # sends it, so no path below asks whether a surface exists -- and it
+        # refuses, because an inbox with nowhere to open a set must say so rather
+        # than report an open that never happened.
         module Unwired
           module_function
 
@@ -209,17 +192,13 @@ module Lain
         def generation = @slot.synchronize { @renderings.generation }
 
         # Which set this view rendered on `line` OF THE RENDERING THE EDITOR IS
-        # HOLDING -- {Buffers::TimelineView#digest_at}'s twin, plus the argument
-        # that view does not need. The row carries no digest, so a line number
-        # is the only thing a gesture can carry back; but a line number alone
-        # names a POSITION, and this view's positions are not stable -- a
-        # retirement removes a row and every row below it moves up, while the
-        # render that removes it is still queued for nvim.
-        #
-        # So the editor says which rendering its position is IN, by sending back
-        # the GENERATION this view stamped that buffer with. A rendering this
-        # view no longer holds answers nothing, rather than the nearest
-        # rendering it happens to have.
+        # HOLDING. The row carries no digest, so a line number is the only thing
+        # a gesture can carry back -- but a line alone names a POSITION, and this
+        # view's positions are not stable: a retirement removes a row and every
+        # row below it moves up while the render that removes it is still queued
+        # for nvim. So the editor sends back the GENERATION this view stamped
+        # that buffer with, and a rendering this view no longer holds answers
+        # nothing rather than the nearest one it happens to have.
         #
         # @param line [Integer] 1-based, as nvim's cursor reports it
         # @param generation [Integer] the stamp on the buffer the human is
@@ -252,35 +231,26 @@ module Lain
         # @return [Opened]
         def answering(line, generation:) = @slot.synchronize { @gestures.answering(line, generation) }
 
-        # The ADVANCE: the human just submitted a document, so open the
-        # next set they have to answer -- of those still pending, the one this
-        # view lists FIRST, which is the one they would have pressed enter on.
-        # No line and no rendering, because this gesture is not a cursor: it is
-        # the submit's own continuation, and it is the CONSUMER of the answer
-        # rail that calls it. It cannot be the `submit` callable and it cannot
-        # be {QuestionView#wrote}: that lock is not reentrant, and this ends in
+        # The ADVANCE: the human just submitted a document, so open the next set
+        # they have to answer. No line and no rendering, because this gesture is
+        # not a cursor. It cannot be the `submit` callable and it cannot be
+        # {QuestionView#wrote}: that lock is not reentrant, and this ends in
         # {QuestionView#open}.
         #
-        # It opens the first set NOT already answered ({#answered}), which has
-        # to be a standing record rather than "the one just submitted": an item
-        # leaves this view only when a committed turn CITES it (the pinned
-        # consumption rule -- a reply is a :message and retires nothing), so
-        # every set answered in a burst is still listed, not merely the last.
+        # It opens the first set NOT already answered, which has to be a standing
+        # record rather than "the one just submitted": an item leaves this view
+        # only when a committed turn CITES it, so every set answered in a burst is
+        # still listed, not merely the last.
         #
         # @return [Opened]
         def open_next = @slot.synchronize { @gestures.open_next }
 
-        # A listed set has been answered -- by the editor's document, by
-        # :LainReply, or at the terminal prompt; the consumer reports all three
-        # through its one delivery path, so this view never has to guess which
-        # surface took it.
+        # A listed set has been answered, by whichever surface took it.
         #
-        # It is remembered rather than retired, because retiring it here would
-        # break the pinned consumption rule ({StatusFeed} parity: a reply is a
-        # :message and clears nothing). The row stays; what changes is that
-        # neither gesture will hand the human a blank document over an answer
-        # they already gave, and {#open_next} walks past it to a set they have
-        # not seen.
+        # REMEMBERED rather than retired, because retiring it here would break the
+        # pinned consumption rule ({StatusFeed} parity: a reply is a :message and
+        # clears nothing). The row stays; what changes is that neither gesture
+        # will hand the human a blank document over an answer they already gave.
         # @return [void]
         def answered(digest)
           @slot.synchronize { @answered << digest }
@@ -324,23 +294,22 @@ module Lain
           Blankness.blank?(named) ? event.from : named
         end
 
-        # The consuming edges ride committed turns, and what the tee carries
-        # for a commit is a {Telemetry::TurnUsage} naming the head -- so the
-        # cited digests are read off the head's chain in the shared Store,
-        # {Buffers#timeline_update}'s idiom, including its never-raise rule: a
-        # head this store cannot resolve is a miss, not a drain-thread death.
-        # ⚠️ MATCHED BY CLASS, and it was a two-method duck. That duck was not
-        # the same test {Lain::StatusFeed#turn_usage?} applies to the same
-        # record, and the gap was silent in the direction that matters: the next
-        # {Lain::Telemetry} record carrying both `#usage` and `#digest` would
-        # have retired HERE and not there, leaving the HUD's count and this
-        # buffer disagreeing with the parity spec between them still green.
-        # {Lain::Telemetry::OracleAnswer} answering `#usage` already cost that
-        # file three derivations at once. The two checks are written out twice
-        # rather than shared, because a frontend view reaching into the status
-        # sink for a predicate is the worse coupling -- and the parity spec now
+        # The consuming edges ride committed turns, and what the tee carries for
+        # a commit is a {Telemetry::TurnUsage} naming the head -- so the cited
+        # digests are read off the head's chain in the shared Store, under the
+        # never-raise rule: a head this store cannot resolve is a miss, not a
+        # drain-thread death.
+        #
+        # MATCHED BY CLASS, never by a duck: a two-method duck is not the test
+        # {Lain::StatusFeed#turn_usage?} applies to the same record, and the gap
+        # is silent in the direction that matters -- the next {Lain::Telemetry}
+        # record carrying both `#usage` and `#digest` would retire HERE and not
+        # there, leaving the HUD's count and this buffer disagreeing with the
+        # parity spec between them still green. The two checks are written out
+        # twice rather than shared, because a frontend view reaching into the
+        # status sink for a predicate is the worse coupling, and the parity spec
         # carries a tripwire that fails the day a second dual-field record
-        # exists, which is the only way the two spellings could come to differ.
+        # exists.
         def consume(event)
           return false unless event.is_a?(Lain::Telemetry::TurnUsage)
 
@@ -356,15 +325,14 @@ module Lain
           end
         end
 
-        # ⚠️ THE RESCUE IS AS WIDE AS "a miss, not a drain-thread death", and it
-        # was not. `MissingObject` alone covers only the head this store does
-        # not HOLD; a head it holds that names something other than a turn walks
-        # into `NoMethodError: undefined method 'parent' for an instance of
+        # THE RESCUE IS AS WIDE AS "a miss, not a drain-thread death".
+        # `MissingObject` alone covers only the head this store does not HOLD; a
+        # head it holds that names something other than a turn walks into
+        # `NoMethodError: undefined method 'parent' for an instance of
         # Event::Payload`, and every message ever written puts such a digest in
-        # the same store. Widened together with {Lain::StatusFeed::Inbox}'s
-        # identical walk, and deliberately in one change: that class is held to
-        # this one's answer by a parity spec, and a rescue that differs between
-        # them is a difference the parity spec cannot see.
+        # the same store. {Lain::StatusFeed::Inbox}'s identical walk must stay as
+        # wide: a rescue that differs between them is a difference the parity
+        # spec cannot see.
         def cited_by_chain(head_digest)
           Timeline.new(head_digest:, store: @store).to_a.flat_map(&:causal_parents)
         rescue StandardError
@@ -385,10 +353,9 @@ module Lain
 
         # The lines and the line -> digest index are ONE pass' two outputs, off
         # one walk of the ordered map: an index built by a SECOND walk would
-        # disagree with the rendering the first time either changed. Multi-line
-        # items changed the index's SHAPE, not that rule -- {Renderings} holds one
-        # entry per LINE now, so an item may draw as many lines as its question
-        # needs and every one of them names the set that drew it.
+        # disagree with the rendering the first time either changed. {Renderings}
+        # holds one entry per LINE, so an item may draw as many lines as its
+        # question needs and every one of them names the set that drew it.
         def render
           return placeholder if @pending.empty?
 
@@ -401,52 +368,41 @@ module Lain
           drawn.flat_map { |digest, lines| Array.new(lines.size, digest) }.freeze
         end
 
-        # THE TRAILER RULE, and it is structural rather than decoration:
-        # `10_folds.lua` closes every fold at rest and then RE-OPENS the one
-        # holding the buffer's LAST line, so a list whose last line belongs to
-        # the last item hands the human that item open, every time (this was
-        # measured on lain://approval, which gets its trailer free from the
-        # keys it already drew). A line below the rows that starts a record of
-        # its own is what absorbs that re-open -- and this one does start one,
-        # on the pattern alone: the runtime's test is "not indented", and
+        # THE TRAILER RULE, structural rather than decoration: `10_folds.lua`
+        # closes every fold at rest and then RE-OPENS the one holding the
+        # buffer's LAST line, so a list whose last line belongs to the last item
+        # hands the human that item open every time (measured on
+        # lain://approval, which gets its trailer free from the keys it drew). A
+        # line below the rows that starts a record of its own absorbs that
+        # re-open, and this one does: the runtime's test is "not indented", and
         # neither the blank nor the keys are.
         #
-        # Only where something FOLDS, which is the whole of the cost control: a
-        # list of one-line items has no fold to protect, so it renders exactly
-        # as this view has always rendered it, down to the bytes.
+        # Only where something FOLDS: a list of one-line items has no fold to
+        # protect, so it renders down to the bytes as it always did.
         def trailer_for(drawn) = drawn.any? { |_, lines| lines.size > 1 } ? TRAILER : []
 
-        # The rendering that names no set. It is REMEMBERED like any other and
-        # not a reset: its one line is the placeholder, and a human still
-        # holding the rendering it replaced has to keep getting the truth about
-        # the row they can see (that its set retired) rather than being told the
-        # buffer they are looking at never existed.
+        # REMEMBERED like any other and not a reset: a human still holding the
+        # rendering it replaced has to keep getting the truth about the row they
+        # can see -- that its set retired -- rather than being told the buffer
+        # they are looking at never existed.
         def placeholder
           @renderings.remember(owners: [].freeze)
           EMPTY.dup
         end
 
-        # ONE ITEM, drawn by {Row} -- which is where the summary, the cut and
-        # the wrap now live, with the clock resolved to an age on the way in so
-        # nothing below this line can race one.
+        # ONE ITEM, drawn by {Row}, with the clock resolved to an age on the way
+        # in so nothing below this line can race one.
         #
-        # A ROW USED TO BE PINNED TO ONE LINE, and the pin is gone rather than
-        # relaxed. It read: a question is prose, so it is folded onto one line
-        # the way {Buffers::TimelineView#preview} folds a turn -- and for the
-        # sharper of that fold's two reasons, that {Renderings} indexed digests
-        # by POSITION, so a two-line row would send `<CR>` to a set the human
-        # did not choose. That was true of the index it described. The index
-        # addresses by IDENTITY now (one entry per LINE, built by {#render}'s
-        # own pass), so the reason a reader would find here no longer holds and
-        # the row may grow -- which is the point: a question a human cannot read
-        # is a question they have to open a document to see.
-        # {RenderQueue#checked_lines} is untouched and still refuses rather than
-        # repairs, and it stays a BACKSTOP rather than the guard: every field a
-        # row draws off the record -- the question AND the sender -- goes through
-        # {Row#prose} first, so nothing this view posts can carry a newline into a
-        # line. The sender was the exception until a review found it, and the
-        # asymmetry was the whole defect: one scrubbed field beside an unscrubbed
-        # one reads as a rule when it is an oversight.
+        # A ROW MAY SPAN LINES, which only holds because {Renderings} addresses
+        # by IDENTITY -- one entry per line, built by {#render}'s own pass. An
+        # index that addressed by POSITION would send `<CR>` to a set the human
+        # did not choose the moment a row grew.
+        #
+        # EVERY field a row draws off the record -- the question AND the sender --
+        # goes through {Row#prose} first, so nothing this view posts can carry a
+        # newline into a line. {RenderQueue#checked_lines} stays a BACKSTOP rather
+        # than the guard, and one scrubbed field beside an unscrubbed one would
+        # read as a rule when it is an oversight.
         def lines_for(item) = Row.new(item, age: age_of(item.asked_at)).lines
 
         def age_of(asked_at)

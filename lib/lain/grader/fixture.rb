@@ -3,12 +3,10 @@
 module Lain
   module Grader
     # A deterministic task: a named bundle of HARD assertions over a subject,
-    # scored with no model in the loop. Each `check` is a description paired with
-    # a predicate; the {Grade}'s score is the fraction of predicates that held,
-    # and it passes only when all did. Because every predicate is a pure function
-    # of the subject, the same subject always scores the same Grade -- the
-    # property that lets speculative branching argmax over a fixture and Compare
-    # treat its score as a real metric rather than noise.
+    # scored with no model in the loop. Because every predicate is a pure
+    # function of the subject, the same subject always scores the same Grade --
+    # the property that lets speculative branching argmax over a fixture and
+    # {Compare} treat its score as a real metric rather than noise.
     #
     #   Fixture.new("byte-stable replay") do |f|
     #     f.check("two model calls") { |dr| dr.steps == 2 }
@@ -43,10 +41,10 @@ module Lain
 
       private
 
-      # nil when the criterion held; otherwise the reason it did not. A predicate
-      # that RAISES is a failed check whose reason is the exception, not a crash
-      # -- a grader that dies on one bad criterion is less useful than one that
-      # reports it, and the failure is still LOUD (it lands in `#why`).
+      # nil when the criterion held; otherwise the reason it did not. A
+      # predicate that RAISES is a failed check whose reason is the exception,
+      # not a crash -- a grader that dies on one bad criterion is less useful
+      # than one that reports it, and the failure still lands in `#why`.
       def evaluate(criterion, subject)
         criterion.predicate.call(subject) ? nil : "did not hold"
       rescue StandardError => e

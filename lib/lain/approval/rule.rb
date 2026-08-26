@@ -6,70 +6,60 @@ module Lain
   module Approval
     # One approval rule: a PARTIAL predicate over a parsed tool call.
     #
-    # This is Emacs' keymap lookup chain applied to approval. A rule that has
-    # nothing to say about a call answers nothing at all, and {RuleChain} asks
-    # the next one -- most policy engines force every rule to be a total
-    # function, which makes "no opinion" indistinguishable from "allow" and
-    # buries the interesting rule under a pile of `true`s.
+    # Emacs' keymap lookup chain applied to approval. A rule with nothing to
+    # say answers nothing at all and {RuleChain} asks the next one -- most
+    # policy engines force every rule to be TOTAL, which makes "no opinion"
+    # indistinguishable from "allow" and buries the interesting rule under a
+    # pile of `true`s.
     #
-    # Abstention is `nil` rather than a Null decision, and that is the one place
-    # this file departs from the house Null-Object preference on purpose: a
-    # decision object must carry a verdict, and every value that field could
-    # hold would be a claim the rule did not make. The ABSENCE of a decision is
-    # the honest encoding, and the caller's response to it is to escalate.
+    # Abstention is `nil` rather than a Null decision, the one place this file
+    # departs from the house Null-Object preference: a decision object must
+    # carry a verdict, and every value that field could hold would be a claim
+    # the rule did not make.
     #
     # == What a rule is handed
     #
-    # A {Call}: the tool itself, plus its input already through the tool's own
+    # A {Call}: the tool, plus its input already through the tool's own
     # {Tool::Input} validation. Never a raw Hash, and the guarantee is the
-    # TYPE's rather than one constructor's good manners: {Call#initialize}
-    # refuses anything that is not a {Tool::Input}, so every door into the value
-    # -- `new`, `Data::[]`, and `#with`, which re-runs `initialize` -- is shut
-    # by the same line.
+    # TYPE's rather than one constructor's good manners -- {Call#initialize}
+    # refuses anything that is not a {Tool::Input}, so `new`, `Data::[]` and
+    # `#with` are all shut by the same line.
     #
-    # What is NOT mechanized here: a tool whose declared field IS a command
-    # String (`Tools::Bash#command`) hands a rule that String, and nothing in
-    # this file stops a rule from prefix-matching it. That is the comforting lie
-    # `lib/lain/tool/input.rb:15-40` names, one layer up. The doctrine is that a
-    # shell command reaches policy as a parsed term (`Shell::Parse` /
-    # `Shell::Verdict`) or not at all.
+    # == The unmechanized half, and the hazard it leaves
     #
-    # The escalation ladder was meant to mechanize that and DID NOT. It built
-    # the ladder ({Approval::Escalation}) and its `rules` rung still calls
-    # `Call.for(tool:, input: effect.input)` with the model's raw input, because
-    # discharging it needs a decision this Call cannot express today: a term is
-    # `[["git", "-c", "...", "status"]]`, no {Tool::Input} declares a field
-    # shaped like one, and most commands ABSTAIN at the verdict, so a
-    # term-carrying Call would be absent for exactly the calls a rule most wants
-    # to read. Widening {Call} to carry both is a reviewed change, not a detail
-    # of the ladder's wiring.
+    # A tool whose declared field IS a command String hands a rule that String,
+    # and nothing here stops a rule from prefix-matching it. The DOCTRINE is
+    # that a shell command reaches policy as a parsed term (`Shell::Parse` /
+    # `Shell::Verdict`) or not at all -- but the escalation ladder does not
+    # enforce it: its `rules` rung still calls `Call.for(tool:, input:
+    # effect.input)` with the model's raw input. Discharging that needs a
+    # decision this Call cannot express today, since no {Tool::Input} declares a
+    # field shaped like `[["git", "-c", "...", "status"]]` and most commands
+    # ABSTAIN at the verdict -- so a term-carrying Call would be absent for
+    # exactly the calls a rule most wants to read.
     #
-    # So this stays doctrine, and the hazard is now specific enough to state:
-    # the ladder consults {Approval::Escalation::Triage} FIRST, which abstains on
-    # `git ...` (git is a program runner), and then hands the `rules` rung the
-    # raw string anyway. A hand-written prefix rule -- `command.start_with?("git
-    # ")` -- would therefore allow `git -c core.fsmonitor=id status`, which
-    # executes `id`. `Remembered` is not that rule (it matches an exact call
-    # shape, not a prefix), so nothing shipped is exploitable today.
-    #
-    # It is carried in `planning/specs/chunk-modes-approval-undo.md`: give
-    # {Call} a term-carrying door and build a command tool's Call from the
-    # parsed term. That document is the trigger, rather than a role to blame --
-    # "the next person to write a rule" is not something anything fires on.
+    # The hazard is specific: the ladder consults
+    # {Approval::Escalation::Triage} FIRST, which abstains on `git ...` because
+    # git is a program runner, and then hands the `rules` rung the raw string
+    # anyway. A hand-written prefix rule -- `command.start_with?("git ")` --
+    # would therefore allow `git -c core.fsmonitor=id status`, which executes
+    # `id`. `Remembered` is not that rule, matching an exact call shape rather
+    # than a prefix, so nothing shipped is exploitable today. The fix is carried
+    # in `planning/specs/chunk-modes-approval-undo.md`: give {Call} a
+    # term-carrying door and build a command tool's Call from the parsed term.
     #
     # == Identity travels with the decision
     #
     # "denied" is not an experiment record; "denied by THIS rule, on THIS tool,
     # at THIS tier" is. So {Decision} carries the deciding rule's name, and
-    # {#name} is derived from the class the way {Telemetry::Journalable} derives
-    # its discriminator -- one less thing to forget, and a rename breaks loudly
-    # rather than silently relabelling records.
+    # {#name} derives from the class, so a rename breaks loudly rather than
+    # silently relabelling records.
     class Rule
       class NotImplemented < Error; end
       class UnknownVerdict < Error; end
 
-      # The closed set. Three-valued policy is verdict PLUS abstention, and
-      # abstention is the absence of a Decision, so only two live here.
+      # Three-valued policy is verdict PLUS abstention, and abstention is the
+      # ABSENCE of a Decision, so only two live here.
       VERDICTS = %i[allow deny].freeze
 
       Decision = Data.define(:verdict, :rule, :tool, :gated, :reason)
@@ -78,14 +68,13 @@ module Lain
       # it. Deeply frozen: strings are interned, `gated` is coerced to a strict
       # Boolean, so `Ractor.shareable?` holds and the record is safe to share.
       class Decision
-        # Reopened rather than written in the `Data.define` block: a constant or
-        # nested class declared inside that block is lexically scoped to the
-        # enclosing module, not to the Data class (see {Request::SYSTEM_PREFIX}).
+        # Reopened rather than written in the `Data.define` block: a constant
+        # there is scoped to the enclosing module, not the Data class.
         include Declarative
 
-        # Refuses an unknown verdict at CONSTRUCTION rather than at the point a
-        # reader branches on it: a record that reaches the journal naming a
-        # verdict nothing handles is a defect no later `else` can undo.
+        # Refused at CONSTRUCTION rather than where a reader branches on it: a
+        # record that reaches the journal naming a verdict nothing handles is a
+        # defect no later `else` can undo.
         #
         # A Proc message, not `%<value>s`: ActiveModel renders nil and `""`
         # identically through the format string, and a verdict is exactly the
@@ -114,11 +103,10 @@ module Lain
       # The subject of every rule: one intended tool call, with its input
       # already validated by the tool's own declaration.
       class Call
-        # Reopened for {Decision}'s reason: a nested class declared inside the
-        # `Data.define` block would belong to the enclosing module instead.
+        # Reopened for {Decision}'s reason.
 
         # A tool whose input is a raw JSON-schema Hash rather than a
-        # {Tool::Input}. There is nothing for a rule to read fields off, so no
+        # {Tool::Input}: nothing for a rule to read fields off, so no
         # deterministic decision is possible and the call must escalate.
         class Undeclared < Error; end
 
@@ -134,36 +122,33 @@ module Lain
           model = tool.input_model
           raise Undeclared, undeclared_message(tool) unless model
 
-          # The same two lines {Tool#validate_with_model} runs, because that one
-          # is private and only reachable by actually performing the call. A
-          # rule must see the coerced object BEFORE anything is performed, so
-          # the check happens here; both go through `Input.build`, which is the
-          # single declaration neither can drift from.
+          # The same two lines {Tool#validate_with_model} runs, which is
+          # private and only reachable by actually performing the call. A rule
+          # must see the coerced object BEFORE anything is performed. Both go
+          # through `Input.build`, the single declaration neither can drift from.
           checked = model.build(input)
           raise Tool::InvalidInput, invalid_message(tool, checked) unless checked.valid?
 
           new(tool:, input: checked)
         end
 
-        # Whether a call can be built for this tool at all -- asked, so a caller
-        # routes an undescribed tool to escalation instead of rescuing.
+        # Asked, so a caller routes an undescribed tool to escalation instead
+        # of rescuing.
         def self.describable?(tool) = !tool.input_model.nil?
 
         # The one line that makes "a rule sees the validated input object" a
         # property of the TYPE. `private_class_method :new` alone shut one of
         # three doors: `Data::[]` is a second public constructor, and `#with`
         # re-runs `initialize` with whatever it is handed -- so both took a raw
-        # Hash, or a bare command String, straight to a rule. Guarding
-        # `initialize` closes all three at once, which is what {Decision} does
-        # with {VERDICTS} twelve lines up.
+        # Hash, or a bare command String, straight to a rule.
         def initialize(tool:, input:)
           raise NotValidated, not_validated_message(input) unless input.is_a?(Tool::Input)
 
           super
         end
 
-        # Kept for the message: a caller reaching for `.new` is told the door
-        # has a name (`.for`) rather than that a keyword was wrong.
+        # Kept for the MESSAGE: a caller reaching for `.new` is told the door
+        # has a name rather than that a keyword was wrong.
         private_class_method :new
 
         def self.undeclared_message(tool)
@@ -178,9 +163,8 @@ module Lain
 
         def tool_name = tool.name
 
-        # The tier a decision is made at: whether the model controls this
-        # tool's command string ({Tool#requires_approval?}), which is the axis
-        # the gate already turns on.
+        # Whether the model controls this tool's command string, which is the
+        # axis the gate already turns on.
         def gated? = tool.requires_approval?
 
         private
@@ -190,10 +174,9 @@ module Lain
         end
       end
 
-      # The rule's identity in every record it produces. Derived from the class
-      # basename, so a `BashOnly` rule is `"bash_only"`. An anonymous rule
-      # cannot answer it and says so: a decision nobody can attribute is not an
-      # experiment record.
+      # Derived from the class basename, so a `BashOnly` rule is `"bash_only"`.
+      # An anonymous rule cannot answer it and says so: a decision nobody can
+      # attribute is not an experiment record.
       ANONYMOUS = "an anonymous rule must define #name -- a decision names the rule that made it"
       private_constant :ANONYMOUS
 

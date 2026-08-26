@@ -2,21 +2,18 @@
 
 module Lain
   # A plan as a deeply frozen value: an ordered list of {Step}s with author-
-  # placed SEAMS between adjacent steps. A seam is a chunk boundary -- the steps
-  # between two seams are one chunk of work, closed and summarized together.
-  # Removing a seam merges the two chunks it separated; that is the whole
-  # point of seams being author-editable.
+  # A plan as a deeply frozen value: an ordered list of {Step}s with
+  # author-placed SEAMS between adjacent steps. A seam is a chunk boundary --
+  # the steps between two seams are one chunk of work, closed and summarized
+  # together, so removing a seam merges the two chunks it separated.
   #
-  # Sent-not-stored through the {Workspace} like {Arm::LedgerState}: #to_reminder
-  # is the live working view the model reads each turn, and every mutation
-  # (#advance, #insert_seam, #remove_seam) returns a NEW value rather than
-  # touching the old one -- so `Ractor.shareable?` stays true and a fork/replay
-  # over the same plan renders byte-identical prompts. #to_markdown is the
-  # author-editable artifact (visible seams and sizes) and round-trips back
-  # through .parse_markdown to the same #digest -- that round-trip IS the
-  # author-review loop. Content-addressed by #digest so the {Store} can hold it
-  # and it survives a fork (Session deliberately never carries a plan; see
-  # session.rb).
+  # Sent-not-stored through the {Workspace} like {Arm::LedgerState}: every
+  # mutation returns a NEW value, so `Ractor.shareable?` stays true and a
+  # fork/replay over the same plan renders byte-identical prompts. #to_markdown
+  # is the author-editable artifact and round-trips back through .parse_markdown
+  # to the same #digest -- that round-trip IS the author-review loop.
+  # Content-addressed by #digest so the {Store} can hold it and it survives a
+  # fork (Session deliberately never carries a plan; see session.rb).
   module Plan
     # A status shown as a one-char mark inside the markdown checkbox, and the
     # exact inverse used to read it back -- one map, both directions, so render

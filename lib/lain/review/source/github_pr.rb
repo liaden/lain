@@ -8,48 +8,39 @@ module Lain
     module Source
       # A changeset read from a GitHub pull request.
       #
-      # == The object database is the workhorse, not the API
-      #
-      # GitHub stops serving a combined diff past 300 changed files, and §3.7
-      # measured a real work changeset at 810, so a source that asked the API
-      # first would fail on exactly the changesets this exists for. It asks git
-      # instead: `refs/pull/N/head` is an ordinary ref, so the pull request's
-      # head fetches into the local object database and everything after that is
-      # {LocalBranch} -- the SAME object, so the diff bytes, the merge-base
-      # resolution, the walk and the per-commit numstat cannot differ between a
-      # branch review and a pull request review. One parser downstream, because
-      # there is one producer here.
+      # THE OBJECT DATABASE IS THE WORKHORSE, NOT THE API. GitHub stops serving a
+      # combined diff past 300 changed files, and a real work changeset was
+      # measured at 810, so a source that asked the API first would fail on
+      # exactly the changesets this exists for. It asks git instead:
+      # `refs/pull/N/head` is an ordinary ref, so the head fetches into the local
+      # object database and everything after that is {LocalBranch} -- the SAME
+      # object, so the diff bytes, the merge-base resolution, the walk and the
+      # per-commit numstat cannot differ between a branch review and a pull
+      # request review.
       #
       # The combined diff is asked for in one case only: the head is not in the
       # object database yet, so GitHub can answer without a fetch. Any refusal
       # takes the fetch instead, and {#diff_origin} says so.
       #
-      # The shape that path CANNOT see is a zero-exit, non-empty, TRUNCATED
-      # diff: there is nothing local to check it against yet, which is the only
-      # reason the API was asked. GitHub's documented behaviour at its ceilings
-      # is a 406 refusal rather than a short answer, so a truncated one would be
-      # a gh or proxy defect rather than the API's limit -- worth saying out
-      # loud, because the port contract runs over this path (it catches a diff
-      # of the WRONG revision range; measured, it does not catch a short one,
-      # since every check there is one-directional: the walk accounts for at
-      # least what the diff shows).
+      # The shape that path CANNOT see is a zero-exit, non-empty, TRUNCATED diff:
+      # there is nothing local to check it against yet, which is the only reason
+      # the API was asked. GitHub's documented behaviour at its ceilings is a 406
+      # refusal rather than a short answer, so a truncated one would be a gh or
+      # proxy defect -- worth saying out loud, because the port contract runs over
+      # this path and catches a diff of the WRONG revision range but (measured)
+      # not a short one.
       #
-      # == A refusal on the diff is a value; an unresolvable pull request raises
+      # A REFUSAL ON THE DIFF IS A VALUE; AN UNRESOLVABLE PULL REQUEST RAISES.
+      # {Forge::Gh}'s line, in both directions: gh refusing the combined diff is
+      # data, because the object database can answer the same question, while a
+      # pull request that does not resolve at all means there is no review to be
+      # had.
       #
-      # {Forge::Gh}'s line, in both directions. gh refusing the combined diff is
-      # data: the object database can answer the same question, so the refusal
-      # becomes a {DiffOrigin} a caller journals rather than an exception it
-      # handles. A pull request that does not resolve at all is the other side
-      # of that line -- there is no review to be had -- so it raises
-      # {UnknownRef}, which is this port's own doctrine.
-      #
-      # == A known limit, pinned rather than discovered
-      #
-      # The oids come from one `gh pr view` and the objects from a later fetch,
-      # so a force-push in between moves `refs/pull/N/head` away from the head
-      # GitHub named. That fails LOUDLY -- the oid is not among the objects
-      # fetched, and {LocalBranch} refuses a ref that does not resolve -- rather
-      # than quietly reviewing whatever the ref points at now. There is a spec.
+      # A KNOWN LIMIT, pinned rather than discovered: the oids come from one
+      # `gh pr view` and the objects from a later fetch, so a force-push in
+      # between moves `refs/pull/N/head` away from the head GitHub named. That
+      # fails LOUDLY -- the oid is not among the objects fetched -- rather than
+      # quietly reviewing whatever the ref points at now.
       class GithubPr
         # {#files} and {#identity}, over THIS class's {#diff} -- which is the
         # reason they are included rather than delegated to {#local} the way
@@ -65,18 +56,14 @@ module Lain
         DEFAULT_TIMEOUT = 60
 
         # gh is not on this machine. Named rather than left as
-        # `Errno::ENOENT - gh`, which tells a newcomer nothing about what is
-        # missing or why this source wanted it.
+        # `Errno::ENOENT - gh`, which tells a newcomer nothing.
         #
-        # BESIDE {UnknownRef} rather than beneath it, and {Forge::Gh}'s doctrine
-        # is what decides that: "gh answering 'no' is data, gh not existing is a
-        # broken machine". Those are categorically different -- one is a fact
-        # about the pull request, the other a fact about the machine, and only
-        # the second is fixed by installing something -- and the class is the
-        # one place a caller can tell them apart cheaply. Sharing a class would
-        # make `rescue UnknownRef` swallow "the GitHub CLI is not here" as
-        # though the pull request had been the problem. Both descend from
-        # {Lain::Error}, so a caller wanting a single rescue still has one.
+        # BESIDE {UnknownRef} rather than beneath it, on {Forge::Gh}'s doctrine:
+        # "gh answering 'no' is data, gh not existing is a broken machine". One is
+        # a fact about the pull request, the other about the machine, and only the
+        # second is fixed by installing something. Sharing a class would make
+        # `rescue UnknownRef` swallow "the GitHub CLI is not here" as though the
+        # pull request had been the problem.
         class NoGh < Error
           def self.for(ref)
             new("gh is not on PATH, and this source needs it to read pull request #{ref.inspect} " \
@@ -88,17 +75,13 @@ module Lain
         # caller means, what GitHub says its refs are, and -- when it can save a
         # fetch -- the combined diff itself.
         #
-        # == Why gh is spawned here rather than through {Forge::Gh}
-        #
-        # Gh is a CLOSED set of four landing verbs whose names are written in
-        # three places (its own methods, and twice in {Forge::Gh::Recorded},
-        # which replays a journal); a verb missing from one of them replays
-        # straight through to the live remote. Reading a pull request needs
-        # `pr diff`, which is not one of them, and a read-only source has no
-        # landing to fold into. So what is reused is the IDIOM, spelled
-        # identically: an argv array through an injected `shell_out_factory`,
-        # never a command string, and no `sh -c` anywhere -- there is no place
-        # to put one.
+        # Spawned here rather than through {Forge::Gh} because Gh is a CLOSED set
+        # of four landing verbs whose names are written in three places, and a
+        # verb missing from one of them replays straight through to the live
+        # remote. Reading a pull request needs `pr diff`, which is not one of
+        # them, and a read-only source has no landing to fold into. What is reused
+        # is the IDIOM, spelled identically: an argv array through an injected
+        # `shell_out_factory`, never a command string, and no `sh -c` anywhere.
         class Remote
           # gh resolves a pull request from a URL, a branch or a number, and the
           # ref is handed over as the human wrote it. Only `refs/pull/N/head`
@@ -119,17 +102,16 @@ module Lain
           # GitHub's own words for the 300-file ceiling, as gh relays them:
           #
           #   could not find pull request diff: HTTP 406: Sorry, the diff
-          #   exceeded the maximum number of files (300) (https://api.github…)
+          #   exceeded the maximum number of files (300) (https://api.github...)
           #
-          # The API answers 406 with `{"code": "too_large"}` and the same
-          # sentence in `message`; the line-count ceiling is worded identically
-          # with "lines" in place of "files", which is why the match stops
-          # before the noun.
+          # The API answers 406 with `{"code": "too_large"}` and the same sentence
+          # in `message`; the line-count ceiling is worded identically with
+          # "lines" in place of "files", which is why the match stops before the
+          # noun.
           #
-          # This pattern NAMES a refusal. It never decides whether there was one
-          # ({#refused?} does that), and the difference is the whole point: a
-          # wording change at GitHub costs a less specific label, never a
-          # silently truncated diff.
+          # This pattern NAMES a refusal and never decides whether there was one
+          # ({#refused?} does that): a wording change at GitHub costs a less
+          # specific label, never a silently truncated diff.
           TOO_LARGE = /diff exceeded the maximum number of/
 
           # What gh answered when asked for the combined diff: the bytes, and
@@ -224,14 +206,12 @@ module Lain
             name.freeze
           end
 
-          # Two ways gh says no, and the second one is the dangerous one. A
-          # non-zero exit is the ordinary refusal. An error on stderr with an
-          # EMPTY stdout and a zero exit is gh answering nothing at all -- it
-          # has shipped that shape (cli/cli#10712) -- and taken at face value it
-          # reads as a pull request that changed no files, which is a review of
-          # an empty changeset reported as a success. That is the silent
-          # truncation octo's own fix introduced (research §4.5), reached from
-          # the other direction.
+          # Two ways gh says no, and the second is the dangerous one. A non-zero
+          # exit is the ordinary refusal. An error on stderr with an EMPTY stdout
+          # and a zero exit is gh answering nothing at all -- it has shipped that
+          # shape (cli/cli#10712) -- and taken at face value it reads as a pull
+          # request that changed no files, which is a review of an empty
+          # changeset reported as a success.
           def refused?(shell)
             !shell.exitstatus.zero? || (shell.stdout.empty? && !shell.stderr.to_s.strip.empty?)
           end
@@ -323,14 +303,12 @@ module Lain
 
         private
 
-        # Whether the object database can answer NOW -- which is not the same
-        # question as the one the constructor asked. `@prefetched` is a snapshot
-        # of a repository this object goes on to CHANGE: {#commits} fetches, so
-        # a reviewer who lists the commits and then asks for the diff would
-        # otherwise send us back to GitHub for something already on disk, and
-        # the same pull request would report a different {#diff_origin} purely
-        # by the order the messages arrived in. `@local` existing is the record
-        # that the fetch has happened.
+        # Whether the object database can answer NOW -- not the question the
+        # constructor asked. `@prefetched` is a snapshot of a repository this
+        # object goes on to CHANGE: {#commits} fetches, so a reviewer who lists
+        # the commits and then asks for the diff would otherwise be sent back to
+        # GitHub for something already on disk, and the same pull request would
+        # report a different {#diff_origin} purely by message order.
         def locally_answerable? = @prefetched || !@local.nil?
 
         # Whether the head was here BEFORE this object touched anything is read

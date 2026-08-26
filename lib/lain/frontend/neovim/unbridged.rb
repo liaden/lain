@@ -3,14 +3,11 @@
 module Lain
   module Frontend
     class Neovim
-      # The resend bridge's Null, the duck a wired
-      # {CLI::ResendBridge} answers: unbridged (plain --nvim, no agent handed
-      # to this frontend), the offer is declined WITHOUT forcing the rebuild
-      # block, so :LainResend stays the pure projection it was before the bridge existed --
-      # journaled, diffed, dispatched nowhere -- even for an edit that parses
-      # as JSON but would not rebuild into a {Request}. Nil, not a notice:
-      # projection-only is this configuration's normal, never an error to
-      # report per resend.
+      # The resend bridge's Null: the offer is declined WITHOUT forcing the
+      # rebuild block, so :LainResend stays a pure projection -- journaled,
+      # diffed, dispatched nowhere -- even for an edit that parses as JSON but
+      # would not rebuild into a {Request}. Nil, not a notice: projection-only
+      # is this configuration's normal, never an error to report per resend.
       module Unbridged
         module_function
 

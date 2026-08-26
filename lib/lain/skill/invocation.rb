@@ -3,9 +3,7 @@
 module Lain
   class Skill
     Invocation = Data.define(:skill, :role, :context, :args) do
-      # `role` and `context` default nil (the in-line shape); `args`
-      # defaults to "" (a skill invoked with no remainder). Values are
-      # normalized to frozen Strings/Symbols so an instance stays
+      # Normalized to frozen Strings/Symbols so an instance stays
       # `Ractor.shareable?` regardless of how the caller built it.
       def initialize(skill:, role: nil, context: nil, args: "")
         super(
@@ -35,9 +33,8 @@ module Lain
     #
     # A line that does not match one of the three shapes above is NOT
     # necessarily malformed -- ordinary prose legitimately starts with `/`
-    # (a path) or `@` (a mention, an email). {.parse} returns `nil` for
-    # those, leaving the caller's `env[:text]` untouched. The rule: only a
-    # leading token that unambiguously ATTEMPTS the grammar raises loudly.
+    # (a path) or `@` (a mention, an email). The rule: only a leading token
+    # that unambiguously ATTEMPTS the grammar raises loudly.
     #
     # - A leading `/` never raises. `/etc/passwd was modified` is
     #   indistinguishable, at the grammar level, from a slash command typo,
@@ -46,22 +43,19 @@ module Lain
     # - A leading `@` raises only when its token (up to the first
     #   whitespace) also contains a `/`. No legitimate mention or email
     #   opens with `@word/` or `@/word` -- that shape occurs only as a
-    #   broken attempt at `@role/skill` or `@role[/skill]` (empty role,
-    #   empty skill, unbalanced bracket), so it fails loudly instead of
-    #   silently discarding the user's intent. A bare `@joel ...` (no `/`)
-    #   is ordinary text and returns `nil`.
+    #   broken attempt at the two role-bound forms -- so it fails loudly
+    #   instead of silently discarding the user's intent. A bare
+    #   `@joel ...` is ordinary text and returns `nil`.
     class Invocation
       # Reopened rather than folded into the `Data.define` block above: per
       # CLAUDE.md's known trap, a `class`/constant written INSIDE that block is
       # lexically scoped to this file's enclosing module (`Lain::Skill`), not
       # to the Data-defined class -- `Malformed` would land as
-      # `Lain::Skill::Malformed` instead of `Lain::Skill::Invocation::Malformed`.
-      # Reopening puts it, and the grammar regexes, where they read (see
-      # `lib/lain/request.rb` for the same pattern with `SYSTEM_PREFIX`).
+      # `Lain::Skill::Malformed`. Reopening puts it, and the grammar regexes,
+      # where they read (`lib/lain/request.rb` does the same for `SYSTEM_PREFIX`).
 
-      # Raised for a line that ATTEMPTS the grammar and breaks it -- distinct from
-      # a line that is simply not an invocation, which parses to nil. See the
-      # disambiguation note on {Invocation} for why the two must not merge.
+      # Raised for a line that ATTEMPTS the grammar and breaks it -- distinct
+      # from a line that is simply not an invocation, which parses to nil.
       class Malformed < Error; end
 
       IDENTIFIER = /[\w-]+/
@@ -70,16 +64,14 @@ module Lain
       FRESH = %r{\A@(?<role>#{IDENTIFIER})\[/(?<skill>#{IDENTIFIER})\](?:\s+(?<args>.*))?\z}m
       INHERIT = %r{\A@(?<role>#{IDENTIFIER})/(?<skill>#{IDENTIFIER})(?:\s+(?<args>.*))?\z}m
 
-      # Tried in this order for a `@`-led line: {FRESH} before {INHERIT}
-      # because the bracket form is the more specific shape -- not that
-      # order is actually load-bearing, since {IDENTIFIER} excludes `[`, so
-      # the two never both match the same line.
+      # {FRESH} before {INHERIT}, the more specific shape first -- though the
+      # order is not load-bearing: {IDENTIFIER} excludes `[`, so the two never
+      # both match the same line.
       ROLE_BOUND_GRAMMAR = [[FRESH, :fresh], [INHERIT, :inherit]].freeze
 
       class << self
         # The parsed invocation, or `nil` if +text+ is not an invocation.
-        # Raises {Malformed} for a line that attempts the grammar and breaks
-        # it -- see the disambiguation rule documented above.
+        # Raises {Malformed} per the disambiguation rule above.
         def parse(text)
           line = text.to_s
           return parse_inline(line) if line.start_with?("/")

@@ -10,44 +10,40 @@ module Lain
       # through one #build_response -- path parity by construction.
       #
       # Streamed `/api/chat` is `application/x-ndjson`: one complete JSON object
-      # per `\n`-terminated line, `message.content` (and `message.thinking`)
-      # arriving in fragments, `tool_calls` on their own line(s), the last line
-      # carrying `done: true` + `done_reason` + the token counts. There is no SSE
-      # framing here -- no `data:` prefix, no `[DONE]` sentinel -- so the vendored
-      # `EventStreamParser` does not apply; this is the NDJSON line-reader it is
-      # replaced by.
+      # per `\n`-terminated line, content and thinking arriving in fragments,
+      # `tool_calls` on their own lines, the last line carrying `done: true` +
+      # `done_reason` + the token counts. There is no SSE framing -- no `data:`
+      # prefix, no `[DONE]` sentinel -- so the vendored `EventStreamParser` does
+      # not apply.
       #
       # == Why byte buffering, not String#each_line on the chunk
       #
-      # A TCP read boundary can split a line -- or a multibyte UTF-8 codepoint --
-      # across two chunks (the `input_json_delta` lesson transposed to whole
-      # lines), and a cassette never reproduces that split. So bytes accumulate in
-      # a BINARY buffer and a line is only cut, re-encoded UTF-8, and parsed once
-      # its terminating `\n` has arrived. This is safe mid-codepoint because
-      # `\n` (0x0A) never appears inside a multibyte sequence -- UTF-8 is self-
-      # synchronizing, every continuation byte is >= 0x80 -- so splitting on the
-      # newline byte can never bisect a character.
+      # A TCP read boundary can split a line -- or a multibyte UTF-8 codepoint
+      # -- across two chunks, and a cassette never reproduces that split. So
+      # bytes accumulate in a BINARY buffer and a line is only cut, re-encoded
+      # UTF-8, and parsed once its terminating `\n` has arrived. Safe
+      # mid-codepoint because `\n` (0x0A) never appears inside a multibyte
+      # sequence -- UTF-8 is self-synchronizing, every continuation byte is
+      # >= 0x80 -- so splitting on the newline byte cannot bisect a character.
       #
       # == Why the discard is DRIVEN, not detected
       #
-      # This accumulates across every #feed and has no way to notice that the
+      # This accumulates across every #feed and cannot notice that the
       # connection under it was replaced. SSE carries a `message_start` an
-      # assembler can re-sync on; NDJSON carries no equivalent marker, so a
-      # retried stream is indistinguishable from a continuation of the attempt it
+      # assembler can re-sync on; NDJSON carries no equivalent, so a retried
+      # stream is indistinguishable from a continuation of the attempt it
       # replaced -- which is how a severed attempt plus a clean retry returned
       # both attempts' text concatenated under a done_reason of "stop". Nothing
-      # in the protocol can fix that. {Ollama#stream_body} therefore registers
-      # #reset on the round trip's {RetryTap::Attempt}, and faraday-retry calls
-      # it before the replacing attempt's first chunk arrives.
+      # in the protocol can fix that, so {Ollama#stream_body} registers #reset
+      # on the round trip's {RetryTap::Attempt}.
       #
-      # The alternative was to rebind the closure -- `open_attempt { assembler =
-      # StreamAssembler.new }` -- which needs no #reset at all and passes the
-      # same tests. #reset was chosen because the discard is then a PROPERTY OF
-      # THIS CLASS, statable and unit-testable on its own (that a discard leaves
-      # an assembler ivar-for-ivar identical to a fresh one is an assertion; that
-      # a local was rebound is not), and because rebinding leans on the block
-      # closing over the same local the chunk callback reads -- a subtlety a
-      # later refactor can break silently. The cost is the rule below.
+      # The alternative was rebinding the closure, which needs no #reset and
+      # passes the same tests. #reset was chosen because the discard is then a
+      # PROPERTY OF THIS CLASS, unit-testable on its own -- that a discard
+      # leaves an assembler ivar-for-ivar identical to a fresh one is an
+      # assertion, that a local was rebound is not -- and because rebinding
+      # leans on the block closing over the same local the chunk callback reads.
+      # The cost is the rule below.
       #
       # ⚠️ EVERY piece of state added to this class must be cleared in #reset.
       # The constructor delegates to it precisely so there is one list rather
@@ -60,28 +56,23 @@ module Lain
         NEWLINE = "\n".b.freeze
 
         # Delegates to the public #reset so the state list exists ONCE. That
-        # does mean the constructor calls an overridable method: harmless here
-        # (nothing subclasses this, and #reset touches nothing a subclass could
-        # have set up first), but a subclass overriding #reset would run its
-        # override inside this constructor. Noted rather than defended against,
-        # since the alternative reintroduces the two-lists drift the delegation
-        # exists to prevent.
+        # does mean the constructor calls an overridable method -- harmless
+        # while nothing subclasses this, and noted rather than defended against,
+        # since the alternative reintroduces the two-lists drift.
         def initialize = reset
 
-        # Discards everything accumulated so far and leaves this assembler as it
-        # was built -- ready to take the next attempt's first chunk, not merely
-        # emptied. The metadata goes too, not just the prose: an attempt that
-        # reached its `done` line before the connection died would otherwise
-        # report ITS done_reason and token counts as the survivor's.
+        # Leaves this assembler as it was BUILT, not merely emptied. The
+        # metadata goes too, not just the prose: an attempt that reached its
+        # `done` line before the connection died would otherwise report ITS
+        # done_reason and token counts as the survivor's.
         #
-        # Two properties this is bound by, both stated on {RetryTap::Attempt}.
-        # It is called once per RETRY, not once per round trip, so three retries
-        # call it three times: assigning fresh literals is why that is the same
-        # operation every time. And it MUST NOT RAISE -- {RetryTap#retry_block}
-        # abandons before it journals, so an exception here would both lose that
-        # attempt's {Telemetry::ProviderRetry} and REPLACE the transport error
-        # faraday-retry was carrying, surfacing a retry as whatever the discard
-        # threw. Nine literal assignments have no failure mode; keep it that way.
+        # Called once per RETRY, so three retries call it three times: assigning
+        # fresh literals is why that is the same operation every time. And it
+        # MUST NOT RAISE -- {RetryTap#retry_block} abandons before it journals,
+        # so an exception here would lose that attempt's
+        # {Telemetry::ProviderRetry} and replace the transport error
+        # faraday-retry was carrying. Literal assignments have no failure mode;
+        # keep it that way.
         def reset
           @buffer = +"".b
           @scanned = 0
@@ -131,10 +122,8 @@ module Lain
           add(JSON.parse(text)) unless text.empty?
         end
 
-        # Accumulate one parsed NDJSON object. Content and thinking fragments
-        # concatenate in arrival order; tool_calls append (they carry their own
-        # parsed arguments, belief (b)); the done line contributes the reason and
-        # counts.
+        # Content and thinking fragments concatenate in arrival order;
+        # tool_calls append, carrying their own already-parsed arguments.
         def add(data)
           accumulate_message(data["message"] || {})
           @model = data["model"] unless data["model"].nil?
@@ -153,10 +142,10 @@ module Lain
           @eval_count = data["eval_count"]
         end
 
-        # Rebuilds the message field-by-field so the reassembled body matches the
-        # non-streaming one key-for-key: thinking/tool_calls appear only when the
-        # stream actually carried them, exactly as the single-body endpoint omits
-        # empty fields.
+        # Field-by-field so the reassembled body matches the non-streaming one
+        # key-for-key: thinking and tool_calls appear only when the stream
+        # carried them, exactly as the single-body endpoint omits empty
+        # fields.
         def build_body
           message = { "role" => "assistant", "content" => @content }
           message["thinking"] = @thinking unless @thinking.empty?

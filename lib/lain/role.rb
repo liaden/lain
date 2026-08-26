@@ -33,14 +33,13 @@ module Lain
       Tool::SpawnPolicy.new(prefix:, posture:, only:, unattended:)
     end
 
-    # The child's system prelude as SEGMENTS, in the pinned order: the
-    # role-invariant bulk first, then this role's tail. Frozen, two elements.
-    # This -- not the joined String below -- is the cache-bearing surface: the
-    # spawn seam renders each segment as its own system block and marks the
-    # BULK, so the breakpoint sits between them and heterogeneous siblings
-    # share the cached tools-plus-bulk prefix. A fused String cannot
-    # deliver that: one block gets one mark, after the role tail. Pure over
-    # the session-fixed `slots`, so repeated spawns render byte-identically.
+    # The child's system prelude as SEGMENTS: the role-invariant bulk first,
+    # then this role's tail. This -- not the joined String below -- is the
+    # cache-bearing surface. The spawn seam renders each segment as its own
+    # system block and marks the BULK, so the breakpoint sits between them and
+    # heterogeneous siblings share the cached tools-plus-bulk prefix; a fused
+    # String cannot, because one block gets one mark, after the role tail. Pure
+    # over the session-fixed `slots`, so repeated spawns render byte-identically.
     def prelude_segments(slots:)
       [slots.render("system").freeze, slots.render_role(name).freeze].freeze
     end
@@ -52,16 +51,12 @@ module Lain
       prelude_segments(slots:).join("\n\n")
     end
 
-    # The factory Context reshaped into this role's persona, ready to be the
-    # spawned child's Context. Its system BECOMES the prelude segments as two
-    # blocks -- segment 0 (the shared bulk) cache-marked so heterogeneous
-    # siblings share the warm tools-plus-bulk prefix, segment 1 (the
-    # role tail) unmarked after the breakpoint -- REPLACING the factory's own
-    # system, never appending: the bulk already IS `slots.render("system")`
-    # (prelude_segments position 0), so appending to a factory whose system is
-    # that same render would double the bulk (the RES double-bulk trap). Model,
-    # max_tokens, stream, and `extra` ride through unchanged, so only the
-    # persona is added.
+    # The factory Context reshaped into this role's persona. Its system BECOMES
+    # the prelude segments as two blocks -- the shared bulk cache-marked, the
+    # role tail unmarked after the breakpoint -- REPLACING the factory's own
+    # system, never appending: the bulk already IS `slots.render("system")`, so
+    # appending to a factory whose system is that same render would emit the
+    # bulk twice. Model, max_tokens, stream and `extra` ride through unchanged.
     def child_context(context, slots:)
       bulk, tail = prelude_segments(slots:)
       Context.new(
@@ -71,34 +66,23 @@ module Lain
     end
   end
 
-  # A subagent role: a named capability attenuation plus a role-specific prompt
-  # slot. A role is a three-way join -- {Toolset#only} attenuation, a role slot
-  # (`.lain/slots/role/<name>.md`), and a spawn
-  # {Tool::SpawnPolicy::AttenuationPosture} -- packaged as a value a spawn seam
-  # reads. Possessing a Role is a recipe, not a running child: it yields the
-  # policy the {Tools::Subagent} tool takes and the system prelude the child
-  # renders, and nothing about the Subagent surface changes to consume them.
+  # A subagent role: a three-way join of {Toolset#only} attenuation, a role slot
+  # (`.lain/slots/role/<name>.md`) and a spawn
+  # {Tool::SpawnPolicy::AttenuationPosture}, packaged as a value a spawn seam
+  # reads. Possessing a Role is a recipe, not a running child.
   #
-  # == The prelude ordering (pinned)
+  # **The prelude ordering is pinned**: role-invariant preamble FIRST, then the
+  # role-specific slot. That order is load-bearing money, not taste -- the
+  # shared bulk sits above the cache line, so heterogeneous sibling spawns share
+  # one warm prefix and only the short role tail differs.
   #
-  # A role's rendered prelude is the role-invariant preamble FIRST -- the base
-  # system prompt every sibling role shares -- then the role-specific slot. The
-  # order is load-bearing money, not taste: the shared bulk sits above the cache
-  # line so heterogeneous sibling spawns share one warm prefix, and only
-  # the short role tail differs. Two spawns of one role in a session render
-  # byte-identical (slots are session-fixed); two different roles share every
-  # byte up to their role slot.
-  #
-  # == Attended and unattended
-  #
-  # A role's `only`-set says what an arm may TOUCH. An unattended role declares
-  # something `only` cannot express: that it may not PARK -- on the approval
-  # gate or on a human -- because it answers with nobody minding it, or with
-  # somebody standing at a surface waiting for the answer to land. Naming the
-  # guarantee rather than the tool is the point: `ask_human` is the only tool
-  # that can park a child today, and a second one must not quietly reach such a
-  # role later. `only` cannot say it because the parking capability is granted
-  # OUTSIDE the attenuation, at the spawn ({Tools::Subagent::ChildBuilder}).
+  # **An unattended role declares something `only` cannot express**: that it may
+  # not PARK, on the approval gate or on a human, because it answers with nobody
+  # minding it. Naming the guarantee rather than the tool is the point --
+  # `ask_human` is the only tool that can park a child today, and a second one
+  # must not quietly reach such a role later. `only` cannot say it because the
+  # parking capability is granted OUTSIDE the attenuation, at the spawn
+  # ({Tools::Subagent::ChildBuilder}).
   class Role
     # Reopened rather than defined in the `Data.define ... do` block above: a
     # constant declared inside that block scopes to the enclosing module, not the
@@ -118,8 +102,8 @@ module Lain
     class Persona
       # Reopened (the effect/handler idiom) to hold the Null identity beside the
       # value: no role wired means the child keeps the factory Context
-      # byte-for-byte, so every pre-RES spawn path renders identically. Frozen --
-      # deep immutability is the shareable-value discipline.
+      # byte-for-byte, so a roleless spawn renders exactly as it did before
+      # roles existed. Frozen -- deep immutability is the shareable discipline.
       Null = Class.new do
         def child_context(context) = context
       end.new.freeze

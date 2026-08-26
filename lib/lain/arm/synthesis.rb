@@ -3,27 +3,23 @@
 module Lain
   class Arm
     # The fan-in half of the orchestrator-worker topology: folds N worker
-    # outcomes into ONE synthesized turn on the lead's Timeline, writing the
-    # FIRST multi-parent causal Event any arm has produced. The fold turn's
-    # `causal_parents` name the worker result turns it folded (event.rb:37, "a
-    # synthesis event names the N results it folded"); its single `render_parent`
-    # is the lead, so the render/first-parent walk is untouched and only the
+    # outcomes into ONE synthesized turn on the lead's Timeline. The fold turn's
+    # `causal_parents` name the worker result turns it folded; its single
+    # `render_parent` is the lead, so the render walk is untouched and only the
     # causal edge records the fan-in.
     #
-    # PRICING REACHABILITY (arm.rb's REACHABILITY CONTRACT, at this grain). The
-    # Ledger prices the turns REACHABLE from a Run's head, and reachability there
-    # is RENDER ancestry ({Timeline#ancestors}) -- which a fresh-root worker's
-    # turns are not on, however the synthesis names them causally. So the fold
-    # RE-ATTRIBUTES each worker's spend onto the synthesis turn's digest, the one
-    # reachable head, exactly the {Bench::DeciderSweep::Arms} accounting pattern
-    # (usage keyed to the spine turn it prices through). The event still NAMES
-    # every worker head (the causal record is intact), while every worker's
-    # tokens price through the reachable fold turn -- so a Run over the returned
-    # head sees ALL of them and never undercounts.
+    # PRICING REACHABILITY, at this grain. The Ledger prices the turns REACHABLE
+    # from a Run's head, and reachability there is RENDER ancestry -- which a
+    # fresh-root worker's turns are not on, however the synthesis names them
+    # causally. So the fold RE-ATTRIBUTES each worker's spend onto the synthesis
+    # turn's digest, the one reachable head. The event still NAMES every worker
+    # head, so the causal record is intact, while every worker's tokens price
+    # through the reachable fold turn and a Run over the returned head never
+    # undercounts.
     class Synthesis
-      # One worker's outcome. A FAILED worker is a named input, not an omission
-      # (an escalation trigger): its error is kept and folded, so a failure is
-      # visible in the synthesis rather than silently dropped.
+      # One worker's outcome. A FAILED worker is a named input, not an omission:
+      # its error is kept and folded, so a failure is visible in the synthesis
+      # rather than silently dropped.
       Result = Data.define(:head_digest, :text, :error, :usage_records) do
         # @param head_digest [String] the worker's final turn, a valid causal parent
         # @param text [String] the worker's answer text, folded into the
@@ -61,10 +57,10 @@ module Lain
       private
 
       # Only committed heads become causal edges. A worker that settled no turn
-      # (a failure) has a nil head and is simply not a causal parent -- but a
-      # NON-nil head the Store never saw is NOT dropped: it flows to
-      # {Timeline#commit}, which raises {Store::MissingObject}, the fail-loud the
-      # escalation trigger demands over silently discarding a dangling parent.
+      # has a nil head and is simply not a causal parent -- but a NON-nil head
+      # the Store never saw is NOT dropped: it flows to {Timeline#commit}, which
+      # raises {Store::MissingObject} rather than silently discarding a dangling
+      # parent.
       def causal_parents(results) = results.filter_map(&:head_digest)
 
       def combined(results)
@@ -74,11 +70,9 @@ module Lain
       # Re-key every worker turn_usage onto the reachable fold turn, but keep the
       # record HONEST: a bare re-key would claim the no-model-call synthesis turn
       # incurred N native payments and lose which worker spent what. So the moved
-      # `"digest"` (the Ledger join) rides alongside `"reattributed" => true` and
-      # `"attributed_from" => <worker head>`, so an auditor recovers per-worker
-      # spend and tells re-attributed usage apart from native. Each keeps its own
-      # model, so per-worker/per-model cost still prices; non-usage records pass
-      # through untouched (they carry no digest join).
+      # `"digest"` rides alongside `"reattributed"` and `"attributed_from"`, and
+      # an auditor recovers per-worker spend and tells re-attributed usage apart
+      # from native. Each keeps its own model, so per-model cost still prices.
       def reattributed(digest, results)
         results.flat_map do |result|
           result.usage_records.map { |record| relabel(record, onto: digest, from: result.head_digest) }

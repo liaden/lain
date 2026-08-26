@@ -4,14 +4,10 @@ module Lain
   module Bench
     class PlanSweep
       # Folds the sweep's {Measurement}s into per-arm distributions and renders
-      # one titled table per metric, plus wall-clock as an ABSENT section. The
-      # Compare-STYLE, ranks-arms-side-by-side shape {ArmSweep::Report} and
-      # {Bench::Sweep} share, whose one implementation is {Compare::ArmFold}:
-      # this class declares the axes and delegates the fold, rather than
-      # reshaping {Compare}'s own run-priced surface (ArmFold's axis is the
-      # transposed one -- see its class comment). No category breakdown (one
-      # plan, one task class), so it is flatter than {ArmSweep::Report}: header,
-      # notes, the metric tables.
+      # one titled table per metric, plus wall-clock as an ABSENT section. This
+      # class declares the axes and delegates the fold to {Compare::ArmFold}. No
+      # category breakdown -- one plan, one task class -- so it is flatter than
+      # {ArmSweep::Report}: header, notes, the metric tables.
       class Report
         # metric label => how to pull one value off a {Measurement} and render it.
         # Wall-clock is deliberately absent -- it has no honest value under mock
@@ -69,9 +65,8 @@ module Lain
         # scrolling back up.
         def label_for(arm) = arm.end_with?("/ none") ? "#{arm} (baseline)" : arm
 
-        # Wall-clock as its own section: one row per arm, n = runs measured, the
-        # four stats ABSENT -- the decider/arm-sweep discipline (mark absent,
-        # never fabricate) for a metric a dry replay cannot honestly produce.
+        # One row per arm, n = runs measured, the four stats ABSENT: mark
+        # absent, never fabricate, for a metric a dry replay cannot produce.
         def wall_clock_section
           fold.absent_section("wall-clock (s)", arms: @arms, count: @runs.size, marker: ABSENT)
         end

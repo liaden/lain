@@ -18,34 +18,29 @@ require_relative "agent/tool_runner"
 require_relative "agent/transition_listener"
 
 module Lain
-  # The loop, written as an explicit state machine rather than a while-loop with
-  # a stack of conditionals.
+  # The loop, written as an explicit state machine rather than a while-loop over
+  # a `case`.
   #
-  # The difference is not stylistic. Every `stop_reason` the wire can carry must
-  # have somewhere to go, and a `case` with no `else` is how a new enum value --
-  # or a forgotten old one like `:stop_sequence` -- becomes a turn that silently
-  # does nothing. Here each reason is a named transition and {StopReason::UNKNOWN}
-  # is a real destination, so an unrecognized value fails loudly instead of
-  # falling through.
+  # Every `stop_reason` the wire can carry must have somewhere to go, and a
+  # `case` with no `else` is how a new enum value -- or a forgotten old one like
+  # `:stop_sequence` -- becomes a turn that silently does nothing. Here each
+  # reason is a named transition and {StopReason::UNKNOWN} is a real
+  # destination, so an unrecognized value fails loudly rather than falling
+  # through.
   #
   # The Agent owns the loop. Both SDKs offered to own it (`tool_runner`,
-  # `Chat#complete`) and both were declined, because the loop is what this project
-  # exists to study.
+  # `Chat#complete`) and both were declined, because the loop is what this
+  # project exists to study.
   class Agent
-    # The state machine -- states, legal transitions, and the journaling seam --
-    # is declared in {LoopMachine} and mixed in here. It also defines {STATES}.
+    # States, legal transitions and the journaling seam; also defines {STATES}.
     include LoopMachine
 
-    # The settled half of {STATES}: the loop is waiting on the human, or it is
-    # over. `:stalled` and `:awaiting_approval` are deliberately absent -- both
-    # are mid-run PARKS that a run resumes from, not a settled loop.
+    # The settled half of {STATES}. `:stalled` and `:awaiting_approval` are
+    # deliberately absent -- both are mid-run PARKS that a run resumes from.
     #
-    # Homed here, beside the derived {STATES}, because it is loop vocabulary
-    # rather than any one reader's policy: {CLI::ResendBridge} gates a resend on
-    # it, and it had been defined there and in the prompt line independently,
-    # byte-identical, cross-referenced from neither side. Two copies of one
-    # closed set over a machine that can gain a state is a drift waiting to
-    # happen; this is the single definition.
+    # Homed here rather than at its reader ({CLI::ResendBridge}) because it had
+    # been defined in two places, byte-identical and cross-referenced from
+    # neither, over a machine that can gain a state.
     QUIESCENT = %i[awaiting_user done failed].freeze
 
     # Kept for callers that rescue the harness's own halt. See Agent::Budget.
@@ -58,95 +53,71 @@ module Lain
                         StopReason::UNKNOWN => "unrecognized stop_reason from provider" }.freeze
     private_constant :FAILURE_REASONS
 
-    # `request_override` is public on purpose: it is the ResendBridge's access
-    # path -- the ResendBridge queues an edited Request through this reader rather than
-    # threading its own handle through construction.
+    # `request_override` is public on purpose: {CLI::ResendBridge} queues an
+    # edited Request through this reader rather than threading its own handle
+    # through construction.
     attr_reader :timeline, :toolset, :context, :workspace, :session,
                 :iterations, :failure_reason, :budget, :request_override, :dispatch_lock
 
-    # {Accounting} owns the run's token roll-up; the Agent just exposes it.
     delegate :usage, to: :accounting
 
-    # The three collaborators the loop drives, delegated to the retained
-    # {Collaborators} resolver rather than mirrored onto three ivars of their
-    # own -- the same idiom as `usage` above, one hop further in. Private:
-    # every private caller below already reached them as bare ivars, and the
-    # curated public surface above (see `request_override`'s comment) is this
-    # class's own decision to widen, not a side effect of this collapse.
+    # Private because every caller below is one: the curated public surface
+    # above is this class's own decision to widen, not a side effect of
+    # delegating through the retained {Collaborators} resolver.
     delegate :model_caller, :tool_runner, :accounting, to: :@collaborators, private: true
 
-    # The argument list is long because the Agent is the wiring point of the whole
-    # harness, and the honest split is three-way, not one big bag: values that are
-    # ALREADY their own collaborators ({Budget}, {Instrumentation}); the injected
-    # *collaborators* it drives (toolset, context, the
-    # {ModelCaller}/{ToolRunner}/{Accounting} triple); and the mutable *run state*
-    # it seeds ({#seed_run_state}). A `Wiring` value object grouping the
-    # collaborators was considered and rejected: it would not remove
-    # `seed_run_state` (run state is orthogonal to collaborators) and it would
-    # move the public keyword surface -- which the `provider_parity` shared group
-    # and the state-machine specs construct against by name -- for no reduction in
-    # moving parts. So the seam stays here, named. ({Collaborators} is not that
-    # object: it resolves what these keywords MEAN and moves none of them.)
+    # The Agent is the wiring point of the whole harness, and the honest split
+    # is three-way: values that are ALREADY their own collaborators ({Budget},
+    # {Instrumentation}); the collaborators the loop drives; and the mutable run
+    # state it seeds ({#seed_run_state}). A `Wiring` value object grouping the
+    # collaborators was rejected -- it would not remove `seed_run_state` (run
+    # state is orthogonal to collaborators), and it would move a public keyword
+    # surface the `provider_parity` shared group and the state-machine specs
+    # construct against by name, for no reduction in moving parts.
     #
-    # Two styles, one seam. The three objects the loop drives may be handed over
-    # WHOLE -- `model_caller:`, `tool_runner:`, `accounting:` -- or as the
-    # INGREDIENTS each is built from, which is what every caller did before they
-    # were injectable: `provider:`/`model_middleware:`, `handler:`/`tool_middleware:`/
-    # `tool_observer:`, `journal:`. Both are supported; mixing them for ONE
-    # collaborator raises ({Collaborators} owns that rule).
+    # Each of the three objects the loop drives may be handed over WHOLE
+    # (`model_caller:`, `tool_runner:`, `accounting:`) or as the INGREDIENTS it
+    # is built from (`provider:`, `handler:`, `journal:` and their middleware),
+    # which is what every caller did before they were injectable. Mixing the two
+    # for ONE collaborator raises; {Collaborators} owns that rule, and
+    # {Instrumentation.resolve} owns the same rule for the seven keywords a run
+    # REPORTS through, still accepted through `**instrumented`.
     #
-    # `instrumentation:` is the same story for the seven keywords a run
-    # REPORTS through, which used to sit here as seven slots and cost this class
-    # seven signature lines. They are still accepted, through `**instrumented`,
-    # and {Instrumentation.resolve} builds the value from them -- so every
-    # existing call site keeps its meaning and an unknown keyword is still an
-    # ArgumentError, now Data's own. Saying both is refused.
-    #
-    # Every collaborator keyword defaults to {Collaborators::OMITTED} rather than
-    # to its value, because the resolution has to tell "not written" from
-    # "written" -- and it cannot default to `nil` either, since an explicit `nil`
-    # is a caller mistake {Collaborators} refuses rather than reads as a default.
-    # The marker never escapes this constructor, and the NAMED default it stands
-    # for is resolved once, inside {Collaborators}.
+    # Collaborator keywords default to {Collaborators::OMITTED} rather than to
+    # their values because resolution has to tell "not written" from "written",
+    # and `nil` cannot serve: an explicit `nil` is a caller mistake
+    # {Collaborators} refuses rather than reads as a default. The marker never
+    # escapes this constructor.
     #
     # @param toolset [Lain::Toolset] the run's capability set, rendered into
     #   every Request and shared with `tool_runner:` -- {Collaborators} refuses
     #   construction if the two disagree.
     # @param context [Lain::Context] the base rendering strategy, `(Timeline,
     #   Toolset, Workspace) -> Request`. Asked for per turn through
-    #   `instrumentation.pipeline_source` rather than read off this ivar
-    #   directly, so a strategy that must re-decide every turn (compaction) has
-    #   somewhere to stand.
+    #   `instrumentation.pipeline_source`, so a strategy that must re-decide
+    #   every turn (compaction) has somewhere to stand.
     # @param instrumentation [Instrumentation] where this run's records, phases
     #   and observers go. Defaults to the all-Null value: a run that reports
-    #   nowhere, which is what an Agent built with no reporting keywords always
-    #   was.
-    # @param model_caller [ModelCaller] the run's ModelCaller, handed over
-    #   WHOLE rather than built from `provider:`/`model_middleware:`. Defaults
-    #   to {Collaborators::OMITTED}; {Collaborators} resolves what an omitted
-    #   value means.
+    #   nowhere.
+    # @param model_caller [ModelCaller] the run's ModelCaller, handed over WHOLE
+    #   rather than built from `provider:`/`model_middleware:`.
     # @param provider [Provider] the raw provider a ModelCaller gets built over
     #   when `model_caller:` is not written -- the INGREDIENT half of that same
-    #   collaborator, paired with `model_middleware:` on `instrumentation:`.
-    #   Defaults to {Collaborators::OMITTED}.
+    #   collaborator.
     # @param tool_runner [ToolRunner] the run's ToolRunner, handed over WHOLE
     #   rather than built from `handler:`/`tool_middleware:`/`tool_observer:`.
-    #   Defaults to {Collaborators::OMITTED}.
     # @param handler [Effect::Handler] the tool-effect interpreter a ToolRunner
-    #   gets built over when `tool_runner:` is not written -- the INGREDIENT
-    #   half of that same collaborator. Defaults to {Collaborators::OMITTED}.
-    # @param accounting [Agent::Accounting] the run's token roll-up, handed
-    #   over WHOLE rather than built from `journal:`. Defaults to
-    #   {Collaborators::OMITTED}.
-    # @param timeline [Timeline, nil] the run's causal history. `nil` (the
-    #   default) builds an empty Timeline over a fresh {Store} -- the common
-    #   case; a caller resuming a session hands one in.
+    #   gets built over when `tool_runner:` is not written.
+    # @param accounting [Agent::Accounting] the run's token roll-up, handed over
+    #   WHOLE rather than built from `journal:`.
+    # @param timeline [Timeline, nil] the run's causal history. `nil` builds an
+    #   empty Timeline over a fresh {Store}; a caller resuming a session hands
+    #   one in.
     # @param workspace [Workspace] the sent-not-stored files/tools context
-    #   rendered into every Request. Frozen, and never appended to the
-    #   Timeline -- see the architecture note above {Workspace}'s own class.
-    # @param session [Session] the run's mutable scratch state (files read,
-    #   the todo list) -- deliberately off the Timeline, so forking or
-    #   rewinding it can never resurrect or lose one.
+    #   rendered into every Request. Frozen, and never appended to the Timeline.
+    # @param session [Session] the run's mutable scratch state (files read, the
+    #   todo list) -- deliberately off the Timeline, so forking or rewinding can
+    #   never resurrect or lose one.
     # @param mailbox [Context::Mailbox] pending actor messages folded into the
     #   rendered tail. Defaults to the Null combinator, which folds nothing.
     # @param budget [Budget] the ceilings that bound this autonomous loop; a
@@ -154,23 +125,20 @@ module Lain
     # @param request_override [RequestOverride] the one-shot slot a frontend
     #   resend queues an edited Request into; the next dispatch sends it
     #   byte-identically and the slot empties itself.
-    # @param context_window [#occupancy] the book {#occupancy} measures
-    #   against. Constructor state rather than a per-call default because the
-    #   one caller that renders the figure to a human --
-    #   {Frontend::PromptComposer::RunState} -- calls `#occupancy` with no
-    #   keyword; a per-call default left the REPL prompt dividing by
-    #   {ContextWindow::CONSERVATIVE_FALLBACK} while the state feed divided
-    #   by the served window, and two surfaces disagreeing about one turn is
-    #   worse than both being uniformly wrong. A wired chat is handed
-    #   {CLI::Backend#context_window}; the default degrades as it always did.
-    # @param snapshot_writer [Workspace::Snapshot] captures which files a
-    #   turn's tools wrote, as a causal-only Store event; a read-only turn
-    #   lands nothing.
+    # @param context_window [#occupancy] the book {#occupancy} measures against.
+    #   Constructor state rather than a per-call default because the one caller
+    #   that renders the figure to a human ({Frontend::PromptComposer::RunState})
+    #   calls `#occupancy` with no keyword: a per-call default left the REPL
+    #   prompt dividing by {ContextWindow::CONSERVATIVE_FALLBACK} while the state
+    #   feed divided by the served window, and two surfaces disagreeing about one
+    #   turn is worse than both being uniformly wrong.
+    # @param snapshot_writer [Workspace::Snapshot] captures which files a turn's
+    #   tools wrote, as a causal-only Store event; a read-only turn lands
+    #   nothing.
     # @param instrumented [Hash{Symbol => Object}] the seven keywords a run
     #   REPORTS through (`turn_middleware:`, `transition_listener:`, etc.),
     #   accepted directly so every call site that predates `instrumentation:`
-    #   keeps its meaning; {Instrumentation.resolve} builds the value from
-    #   them, and writing both `instrumentation:` and one of these raises.
+    #   keeps its meaning. Writing both raises.
     def initialize(toolset:, context:, instrumentation: Collaborators::OMITTED,
                    model_caller: Collaborators::OMITTED, provider: Collaborators::OMITTED,
                    tool_runner: Collaborators::OMITTED, handler: Collaborators::OMITTED,
@@ -193,15 +161,13 @@ module Lain
 
     # Append a user turn and run until the loop settles.
     #
-    # A new user turn reopens a settled loop, so asking again after `:done` (or
-    # `:failed`) continues the conversation rather than raising on `dispatch!`
-    # from a terminal state. The guard keeps the very first `ask` transition-free.
+    # A new user turn reopens a settled loop, so asking again after `:done` or
+    # `:failed` continues the conversation rather than raising on `dispatch!`
+    # from a terminal state. The guard keeps the first `ask` transition-free.
     #
-    # `on_stream_started` is the first-token observer, forwarded verbatim to
-    # {#run}: a sibling fan-out ({Tools::Subagent::Stagger}) hands each child
-    # Agent one so the child's first provider round trip signals the stagger
-    # gate. It defaults to nil and is INERT then -- the whole plumb down to the
-    # provider is byte-identical when no observer is wired.
+    # `on_stream_started` is the first-token observer ({Tools::Subagent::Stagger}
+    # hands each child Agent one to signal the stagger gate). Nil is INERT: the
+    # whole plumb down to the provider is byte-identical with no observer wired.
     #
     # @return [Lain::Response] the final assistant response
     def ask(text, on_stream_started: nil)
@@ -214,73 +180,57 @@ module Lain
 
     # Drive the machine from its current Timeline. Separated from {#ask} so a
     # rewound or forked Timeline can be resumed without inventing a user turn.
-    # The turn phase's env is deliberately minimal: `iteration` is the count of
-    # turns already committed IN THIS RUN. It restarts at 0 on every #run,
-    # because the counter it reads bounds ONE autonomous loop and not a
-    # conversation (see #run_loop) -- so a middleware watching two asks of
-    # two turns each sees 0, 1, 0, 1 and not 0, 1, 2, 3, and 0 means "the first
-    # turn of this loop", never "the first turn of this session". Anything keyed
-    # on it therefore fires per LOOP: a compaction or interrupt trigger wanting
-    # a per-conversation reading has to count for itself, off the Timeline.
-    # `timeline` is the Timeline as of the START of this turn -- the node a
-    # future speculative-fork middleware would fork from, before this turn's own
-    # commit lands. The block adds `:response`/`:settled` on the way back out,
-    # the same in/out shape #call_model uses for `:request`/`:response`. This is
-    # the seam for the future interrupt-hook/speculative-fork point -- placing
-    # it, not building those features yet; the iteration ceiling has since
-    # landed on the counter above.
     #
-    # The Sync bridge: the loop always executes inside a fiber reactor, so its
-    # IO (the provider round trip, a `bash` shellout) yields to the scheduler
-    # and a `Budget#interrupt` lands as structured cancellation at those yield
-    # points. `Sync` joins the caller's reactor when there is one (so an outer
-    # `Async` can stop this run) and spins one up transparently when there is
-    # not -- which is why every non-reactor caller in the suite is unchanged.
-    # `@dispatch_lock` makes a run EXCLUSIVE: at most one drives the loop at a
-    # time. It is reentrant (a Monitor), so #ask -> #run and a bridged resend
-    # that re-enters #run each hold it once. The seam exists for bridged resends: the
+    # The turn phase's env carries `iteration` -- turns already committed IN
+    # THIS RUN, restarting at 0 per #run because the ceiling it feeds bounds one
+    # autonomous loop and not a conversation (see #run_loop). A middleware
+    # watching two asks of two turns each therefore sees 0, 1, 0, 1; anything
+    # wanting a per-conversation reading has to count for itself, off the
+    # Timeline. `timeline` is the Timeline as of the START of this turn, before
+    # this turn's own commit lands.
+    #
+    # `Sync` is what puts the loop inside a fiber reactor, so its IO (the
+    # provider round trip, a `bash` shellout) yields to the scheduler and a
+    # {Budget#interrupt} lands as structured cancellation at those yield points.
+    # It joins the caller's reactor when there is one and spins one up when
+    # there is not, which is why every non-reactor caller is unchanged.
+    #
+    # `@dispatch_lock` makes a run EXCLUSIVE, and is reentrant (a Monitor) so
+    # `#ask` -> `#run` holds it once. It exists for bridged resends:
     # {CLI::ResendBridge} runs on the Neovim resend-worker thread while a user
-    # prompt runs #ask on the conductor's reactor, both driving THIS agent's
-    # bare-ivar state -- so the bridge's quiescence gate would be a
-    # check-then-act race across the two. The bridge acquires this lock
-    # (`try_enter`) to make its gate check-and-act atomic; a busy agent it
-    # cannot enter is a refusal, not a wedge (see the bridge).
+    # prompt runs `#ask` on the conductor's reactor, both driving THIS agent's
+    # bare-ivar state, so the bridge's quiescence gate would otherwise be a
+    # check-then-act race across the two.
     def run(on_stream_started: nil) = @dispatch_lock.synchronize { Sync { run_loop(on_stream_started) } }
 
     # Is a dispatch in flight RIGHT NOW? A different question from {#state},
-    # which records what the loop was last doing, and the two disagree exactly
-    # when a turn is TORN: {#reopen!} fires at the start of the next {#ask}, so
-    # a run that raised out leaves the machine parked at `:awaiting_model`
-    # indefinitely while nothing runs. `Monitor#synchronize` releases on the way
-    # out of a raise, so the lock does not lie about that -- and being held by
-    # any thread, not just this one, it answers for a bridged resend driving the
-    # loop from another thread too.
+    # which records what the loop was last doing. The two disagree exactly when
+    # a turn is TORN: {#reopen!} fires at the start of the next {#ask}, so a run
+    # that raised out leaves the machine parked at `:awaiting_model` indefinitely
+    # while nothing runs. `Monitor#synchronize` releases on the way out of a
+    # raise, so the lock does not lie about that.
     #
-    # A snapshot, not a reservation: a caller that needs the answer to STAY true
-    # must hold the lock itself, which is what {CLI::ResendBridge} does with
-    # `try_enter`. A caller merely describing the run -- the prompt line -- wants
-    # exactly this read, and wants it without acquiring anything.
+    # A snapshot, not a reservation: a caller needing the answer to STAY true
+    # must hold the lock itself ({CLI::ResendBridge} does, with `try_enter`).
     def dispatching? = @dispatch_lock.mon_locked?
 
     # `#done?` and `#failed?` are generated by the state machine, one predicate
     # per state, so they cannot disagree with the declared state set.
 
     # How full the context is right now, as a fraction of the live model's
-    # window: 0.5 is half spoken for. The numerator is {Accounting}'s LAST-turn
-    # input tokens, never its cumulative `#usage` -- a cumulative sum only ever
-    # grows, so it would report a context that never empties even after a
-    # compaction dropped the head. It is the same reading {Compaction::Need}'s
-    # window signal measures, through the same book, so a status line and the
-    # compaction trigger cannot tell a user two different stories.
+    # window: 0.5 is half spoken for.
     #
+    # The numerator is {Accounting}'s LAST-turn input tokens, never its
+    # cumulative `#usage` -- a cumulative sum only ever grows, so it would report
+    # a context that never empties even after a compaction dropped the head.
     # `context.model` is read per call rather than captured, so a mid-session
     # `/model` switch ({Context::ModelSwitch}) moves the denominator with it.
     #
-    # The one story holds only while this reader and {Compaction::Source} ask
-    # the SAME book. Both take one at CONSTRUCTION now, and a live chat hands
-    # both the same instance ({CLI::Backend#context_window}, memoized for the
-    # run), so they cannot come apart -- which they could while this defaulted
-    # per call and a wiring swapped only the Source's.
+    # This and {Compaction::Source} must ask the SAME book or a status line and
+    # the compaction trigger tell a user two different stories. Both take one at
+    # CONSTRUCTION, and a live chat hands both the same instance, so they cannot
+    # come apart -- which they could while this defaulted per call and a wiring
+    # swapped only the Source's.
     #
     # @param context_window [#occupancy] the window book, defaulting to the one
     #   this Agent was CONSTRUCTED with. Written explicitly only by a caller
@@ -288,9 +238,8 @@ module Lain
     #   arm sweeping candidate windows.
     # @return [Float, nil] nil before any turn -- absence, not an empty context
     # @raise [ContextWindow::UnknownModel] if the live model slot is nil or
-    #   blank (a wiring bug, and the book stays loud about one), or if the model
-    #   matches nothing in a book configured with no fallback. This reader is as
-    #   loud as the book it asks: a caller rendering it per prompt either
+    #   blank (a wiring bug), or if the model matches nothing in a book
+    #   configured with no fallback. A caller rendering this per prompt either
     #   guarantees a model or rescues.
     # @raise [ArgumentError] if the book answers a non-positive window, which
     #   measures as Infinity or NaN rather than as a reading. Unreachable
@@ -309,23 +258,17 @@ module Lain
 
     private
 
-    # The loop itself, hosted inside the reactor {#run} establishes. Kept apart
-    # from #run so the bridge (`Sync`) and the iteration (`loop`) read as the two
-    # separate concerns they are.
+    # The loop itself, hosted inside the reactor {#run} establishes.
     #
-    # These two lines are the state ONE loop owns, and this is where a loop
-    # begins, so this is where they are seeded -- #ask is a commit plus a run,
-    # and the bridge's resend ({CLI::ResendBridge#over_wire}) is a run with no
-    # commit, so both start counting from zero. The iteration count belongs here
-    # and not with the conversation because that is what the ceiling has always
-    # claimed to bound: {Budget} says "an autonomous loop" and repeats it in the
-    # refusal, "loop ran N iterations". Seeded once per Agent it was a
-    # whole-session budget instead -- manual-QA round 4 measured 25 turns spread
-    # over nine separate prompts exhausting it, after which every prompt was
-    # committed as a user turn and raised on before the provider was asked: a
-    # session still taking input and no longer able to answer any of it. A
-    # conversation-wide ceiling is a different policy and would need its own
-    # name, number and refusal ({CLI::GoalDriver::Run} is what one looks like).
+    # The two seeded lines are the state ONE loop owns, and both #ask (a commit
+    # plus a run) and a bridged resend (a run with no commit) start counting
+    # from zero. Seeding them per AGENT instead made the iteration ceiling a
+    # whole-session budget: manual QA measured 25 turns spread over nine
+    # separate prompts exhausting it, after which every prompt was committed as
+    # a user turn and raised on before the provider was asked -- a session still
+    # taking input and no longer able to answer any of it. A conversation-wide
+    # ceiling is a different policy needing its own name and refusal
+    # ({CLI::GoalDriver::Run} is what one looks like).
     def run_loop(on_stream_started)
       @failure_reason = nil
       @iterations = 0
@@ -339,21 +282,12 @@ module Lain
       end
     end
 
-    # The collaborators the loop drives -- the provider round trip, tool dispatch
-    # and the token ledger, the first two each behind their own
-    # {Middleware::Stack} -- plus the turn stack the loop wraps every iteration
-    # in and the one-shot {RequestOverride} slot #call_model consults before
-    # rendering. Grouped out of #initialize so the constructor reads as the
-    # wiring seam its own comment describes rather than growing a line per
-    # collaborator.
-    #
     # {Instrumentation} and {Collaborators} each own one half of the two-style
-    # resolution -- handed over whole or built from the individual keywords, and
-    # the clash rule that forbids saying both. Both resolve eagerly, so a wiring
-    # mistake raises HERE and not on the first turn. `instrumented` reaches the
-    # resolver too, because four of its members (`journal`, the model and tool
-    # phases, the observer) are also {Collaborators} ingredients and the clash
-    # table is keyed on the keywords a caller actually wrote.
+    # resolution the constructor describes. Both resolve EAGERLY, so a wiring
+    # mistake raises here and not on the first turn. `instrumented` reaches
+    # {Collaborators} too, because four of its members (`journal`, the model and
+    # tool phases, the observer) are also ingredients and the clash table is
+    # keyed on the keywords a caller actually wrote.
     def wire_callers(request_override:, instrumentation:, instrumented:, **collaborators)
       @instrumentation = Instrumentation.resolve(instrumentation, instrumented)
       @collaborators = Collaborators.new(toolset: @toolset, instrumentation: @instrumentation, **collaborators,
@@ -361,36 +295,19 @@ module Lain
       @request_override = request_override
     end
 
-    # The mutable run context, kept apart from #initialize on purpose: the
-    # collaborators above are the immutable wiring, and these are the state
-    # a run mutates as it goes -- the observer the machine announces transitions
-    # to, the run's single mutable Session (read-set + write-set + reminders,
-    # which -- unlike everything the model sees -- never enters the Timeline),
-    # the snapshot writer (stateful: it remembers the last files map it wrote,
-    # so it is run state exactly as the Session is), the per-turn Context source
-    # (stateful for the same reason -- a live {PipelineSource} accumulates
-    # cache-warmth and idle readings ACROSS turns, which is why it is asked
-    # rather than recomputed), and the iteration count. Naming that seam is the
-    # point; the machine owns the state ITSELF (initial: :awaiting_user), so it
-    # is not seeded here.
+    # The mutable run context, kept apart from #initialize because what is there
+    # is immutable wiring. The state machine owns its own state (initial:
+    # `:awaiting_user`), so that is not seeded here.
     #
-    # {Accounting} is the one that moved: it is run state too (a ledger a run
-    # mutates), but a caller may now inject one, and resolving it beside
-    # the two collaborators it is chosen with keeps that decision in one place.
+    # The transition listener is the one {Instrumentation} member copied to an
+    # ivar, because {LoopMachine} announces through it from a mixin; the turn
+    # stack and the per-turn Context source are asked of the value at their
+    # single use sites instead.
     #
-    # The transition listener is read off {Instrumentation} rather than taken as
-    # a parameter, because that value is where "where does this run report" is
-    # decided. It is the one member copied to an ivar, because {LoopMachine}
-    # announces through it from a mixin; the turn stack and the per-turn Context
-    # source are asked of the value at their single use sites instead.
-    # The {Budget} is seeded HERE rather than beside the collaborators, with the
-    # counter it bounds: `#step` reads `@budget.check_iterations!(@iterations)`
-    # and increments `@iterations` on the next line, and a ceiling separated
-    # from the count it governs is a pair a reader has to reassemble. The value
-    # itself is immutable; what makes it belong here is that only run state
-    # gives it meaning. The zero here is the count an Agent that has never run
-    # reports; #run_loop re-seeds it per run, which is the scope the ceiling
-    # actually bounds.
+    # The {Budget} is seeded here rather than beside the collaborators so it
+    # sits with the counter it bounds -- `#step` checks it and increments
+    # `@iterations` on the next line. The zero is what an Agent that has never
+    # run reports; #run_loop re-seeds it per run, the scope the ceiling bounds.
     def seed_run_state(session, snapshot_writer, budget)
       @transition_listener = @instrumentation.transition_listener
       @session = session
@@ -401,64 +318,56 @@ module Lain
       @dispatch_lock = Monitor.new
     end
 
-    # One turn: bound, count, ask the model, account, record. Extracted from #run
-    # so the loop reads as what it is -- iterate until the machine settles.
     def step(on_stream_started)
       @budget.check_iterations!(@iterations)
       @iterations += 1
-      # The turn's inbox is snapshotted HERE, before the render, and that one
-      # frozen Snapshot is what both sides of the turn consume: the render-side
-      # Mailbox fold (the pipeline wiring) and this turn's commit. The
-      # shared log is mutable DURING the provider round trip -- an actor reply
-      # can land mid-dispatch -- so neither side may read it live: a live read
-      # at commit would claim that arrival as a causal parent of a turn that
-      # never rendered it, marking it consumed and losing it (panel probe #2).
-      # Captured per turn and consumed only by a successful commit, so a raised
-      # dispatch drops the snapshot and the next turn re-captures: re-folds.
+      # Snapshotted HERE, before the render, and that one frozen Snapshot is
+      # what both the render-side Mailbox fold and this turn's commit consume.
+      # The shared log is mutable DURING the provider round trip -- an actor
+      # reply can land mid-dispatch -- so neither side may read it live: a live
+      # read at commit would claim that arrival as a causal parent of a turn
+      # that never rendered it, marking it consumed and losing it. Consumed only
+      # by a successful commit, so a raised dispatch re-captures and re-folds.
       inbox = @mailbox.capture(@timeline)
       call_model(on_stream_started).tap { |response| commit_and_account(response, inbox) }
     end
 
     # The commit->journal pair, shielded as ONE atom against cancellation.
-    # `defer_stop` holds a Budget#interrupt off until the region exits, so a
+    # `defer_stop` holds a {Budget#interrupt} off until the region exits, so a
     # stop can never land between the Timeline commit and its TurnUsage journal
-    # write -- bench cost accounting reads the Journal, and a committed turn
-    # whose usage record vanished with an interrupt would silently price as
-    # free. A stop requested inside the region still lands, at its exit; note
-    # it also preempts a raise from inside the region (a simultaneous stop and
-    # token-ceiling bust settles as the stop -- both are harness halts).
+    # write: bench cost accounting reads the Journal, and a committed turn whose
+    # usage record vanished with an interrupt would silently price as free. The
+    # deferred stop also preempts a raise from inside the region, so a
+    # simultaneous stop and token-ceiling bust settles as the stop.
     def commit_and_account(response, inbox)
       Async::Task.current.defer_stop do
-        # Correctness gate 1: commit the FULL content -- text, thinking, AND
-        # tool_use blocks. Extracting only the text corrupts the very next turn.
-        # `inbox` is the frozen Snapshot #step captured at turn start -- the
-        # same one the render folded -- so the causal_parents recorded here are
-        # exactly the messages this turn's prompt contained, by construction. A
-        # message that arrived during the round trip is NOT in the snapshot and
-        # stays pending for the next turn's capture (see #step).
+        # Commit the FULL content -- text, thinking, AND tool_use blocks.
+        # Extracting only the text corrupts the very next turn. `inbox` is the
+        # frozen Snapshot #step captured at turn start, so the causal_parents
+        # recorded here are exactly the messages this turn's prompt contained.
         @timeline = @timeline.commit(role: :assistant, content: response.content, causal_parents: inbox.folded)
         # Commit BEFORE the token check: a turn that busts the ceiling was still
-        # paid for, so it stays in the record -- Timeline and Journal both --
-        # rather than vanishing with the raise.
+        # paid for, so it stays in the record rather than vanishing with the
+        # raise.
         @budget.check_tokens!(accounting.observe(response, digest: @timeline.head_digest))
       end
     end
 
     # Fire the machine event named for the (already-normalized) stop_reason and
-    # let the machine, not a `case`, decide the resulting state. `StopReason.normalize`
-    # (see response.rb) has closed the wire's open enum to StopReason::ALL before
-    # we get here, and {LoopMachine} declares one event per member, so the send
-    # always names a real event -- a genuinely unrecognized wire value is already
-    # :unknown, which fails to :failed. The only loud arm left is structural:
-    # firing a reason's event from an illegal state raises
-    # StateMachines::InvalidTransition (gate 6). Coupling the event names to
-    # StopReason's vocabulary is deliberate; the totality spec pins it.
+    # let the machine, not a `case`, decide the resulting state.
+    # `StopReason.normalize` has closed the wire's open enum before we get here
+    # and {LoopMachine} declares one event per member, so the send always names
+    # a real event -- an unrecognized wire value arrives as `:unknown`, which
+    # fails to `:failed`. The only loud arm left is structural: firing from an
+    # illegal state raises `StateMachines::InvalidTransition`. Coupling the
+    # event names to StopReason's vocabulary is deliberate; a totality spec pins
+    # it.
     #
-    # Fire the event, then SETTLE the run-context side effects keyed off the
-    # state the machine just reached -- the machine owns the state, the Agent
-    # owns the mutable run context. A paused turn needs nothing: it stays in
-    # :awaiting_model and re-dispatches, counting against max_iterations so a
-    # provider that pauses forever still stops.
+    # The side effects that follow are keyed off the state the machine just
+    # reached: the machine owns the state, the Agent owns the run context. A
+    # paused turn needs nothing -- it stays in `:awaiting_model` and
+    # re-dispatches, counting against max_iterations so a provider that pauses
+    # forever still stops.
     #
     # @return [Symbol] :settled when the loop is finished, :continue otherwise
     def transition(response)
@@ -468,14 +377,13 @@ module Lain
       done? || failed? ? :settled : :continue
     end
 
-    # The override resolves HERE, before {ModelCaller}'s middleware phase, and
-    # this file alone owns that decision: middleware and provider both see the
-    # edited Request as an ordinary one, so ModelCaller stays untouched. The
-    # render rides a callable, so an overridden dispatch never invokes
-    # `Context#render` at all -- the edit bypasses the pure function instead of
-    # traveling through its inputs (a deliberate design constraint) -- and {RequestOverride#deliver}
-    # owns the one-shot's fine print: consumed on success, restored on a raise
-    # so a retry re-sends the edit.
+    # The override resolves HERE, before {ModelCaller}'s middleware phase, so
+    # middleware and provider both see the edited Request as an ordinary one and
+    # ModelCaller stays untouched. The render rides a callable, so an overridden
+    # dispatch never invokes `Context#render` at all -- the edit deliberately
+    # bypasses the pure function rather than traveling through its inputs.
+    # {RequestOverride#deliver} owns the one-shot's fine print: consumed on
+    # success, restored on a raise so a retry re-sends the edit.
     def call_model(on_stream_started)
       dispatch!
       @request_override.deliver(render: -> { render_request }) do |request|
@@ -483,15 +391,14 @@ module Lain
       end
     end
 
-    # Compose the sent-not-stored Workspace with the session's live reminders per
-    # render: same-args-same-bytes still holds, but the args now vary with session
-    # state. Session stays ignorant of Workspace; Workspace stays frozen.
+    # Composing the Workspace with the session's live reminders per render keeps
+    # same-args-same-bytes; the args simply now vary with session state. Session
+    # stays ignorant of Workspace; Workspace stays frozen.
     #
-    # The Context itself is asked for per turn rather than read from `@context`,
-    # because a strategy that must re-decide every turn (compaction) has no other
-    # place to stand -- see {PipelineSource}, whose Null default answers
-    # `@context` and makes this line byte-identical to what it replaced. `usage`
-    # is Accounting's LAST-turn reading, never its cumulative `#usage`: cumulative
+    # The Context is asked for per turn rather than read from `@context` because
+    # a strategy that must re-decide every turn (compaction) has nowhere else to
+    # stand; {PipelineSource}'s Null default answers `@context`. `usage` is
+    # Accounting's LAST-turn reading, never its cumulative `#usage`: cumulative
     # input tokens only ever grow, so a window detector fed them latches on and
     # never clears.
     def render_request
@@ -501,17 +408,14 @@ module Lain
       turn_context.render(timeline: @timeline, toolset: @toolset, workspace: @workspace.with(*@session.reminders))
     end
 
-    # Correctness gate 2: every tool_result for one assistant turn goes back in
-    # ONE user message. Splitting them across messages silently teaches Claude to
-    # stop making parallel tool calls -- a regression with no error attached. The
-    # `tool_use` event has already fired (in #transition); this only commits.
+    # Every tool_result for one assistant turn goes back in ONE user message.
+    # Splitting them across messages silently teaches Claude to stop making
+    # parallel tool calls -- a regression with no error attached.
     #
-    # The commit itself, the workspace snapshot that rides after it, and the
-    # cancellation commit an interrupt mid-dispatch owes all belong to
-    # {ToolDelivery}: this class decides WHEN tools run, and that one decides how
-    # what they produced lands. The Timeline comes back through the block rather
-    # than as a return value because the torn path commits AND re-raises, and a
-    # return value would be discarded by the very interrupt the commit exists to
+    # This class decides WHEN tools run; {ToolDelivery} decides how what they
+    # produced lands. The Timeline comes back through the block rather than as a
+    # return value because the torn path commits AND re-raises, and a return
+    # value would be discarded by the very interrupt the commit exists to
     # survive.
     def perform_tools(response)
       @deliveries.perform(response, timeline: @timeline, session: @session) { |turn| @timeline = turn }

@@ -7,33 +7,27 @@ module Lain
       # in the editor as lain://compose, and `:w` there hands the edited text
       # back to the prompt for the human to review and submit themselves.
       #
-      # THE SPLIT IS THE DESIGN. This object is two halves that must never be
-      # one:
+      # THE SPLIT IS THE DESIGN, and the two halves must never be one:
       #
-      #   {#open}    the body of the C-g key action. It runs ON Reline's input
-      #              loop, inside keypress dispatch, so it posts the draft and
-      #              RETURNS -- it never waits for anything. Reline re-traps INT
-      #              for the duration of a read, and the handler that would
-      #              deliver an interrupt runs from that same loop, so a wait
-      #              here has nothing left to interrupt it.
-      #   {#settle}  the caller's own loop, OUTSIDE
-      #              {Frontend::LineEditor#read}. This is where the waiting
-      #              happens, on a plain blocking queue pop, so
+      #   {#open}    the body of the C-g key action, running ON Reline's input
+      #              loop inside keypress dispatch, so it posts the draft and
+      #              RETURNS. Reline re-traps INT for the duration of a read and
+      #              the handler that would deliver an interrupt runs from that
+      #              same loop, so a wait here has nothing left to interrupt it.
+      #   {#settle}  the caller's own loop, OUTSIDE {Frontend::LineEditor#read},
+      #              where the waiting happens on a plain blocking queue pop, so
       #              {CLI::PromptBreaker}'s `Break` still lands and unwinds it.
       #
       # The two are joined by {#marker}: {#open} leaves it in the prompt's
-      # buffer (the seam's replacement return value), and {#settle} recognises
-      # it on the way back. That also makes the gesture self-describing -- the
-      # human sees, in the terminal, that a compose is in flight and what to do
-      # about it.
+      # buffer, {#settle} recognises it on the way back, and the human sees in
+      # the terminal that a compose is in flight.
       #
       # NOTHING IS EVER SUBMITTED THAT THE HUMAN DID NOT SEE. `:w` is the only
       # path that produces text to send; abandoning the buffer and letting the
-      # bound expire both answer "no message", never the stale draft. Returning
-      # the draft was this object's first design and it was wrong in exactly the
-      # way the card warned about Reline's `vi_histedit`: a human who reads
-      # their draft in the editor, decides against it and `:bd`s the buffer had
-      # it sent unreviewed. {#draft} keeps the text for recovery instead.
+      # bound expire both answer "no message", never the stale draft. Answering
+      # the draft instead means a human who reads it in the editor, decides
+      # against it and `:bd`s the buffer has it sent unreviewed. {#draft} keeps
+      # the text for recovery.
       #
       # THREAD CONTRACT. {#open} and {#settle} both run on the PROMPT thread and
       # are the only writers of `@pending`/`@generation`/`@draft`. {#wrote} and
@@ -47,16 +41,15 @@ module Lain
         # never grows the buffer.
         BUFFER = "lain://compose"
 
-        # {#marker}'s shape. It carries a per-compose number because the marker
-        # is TEXT in the human's terminal: it lands in their scrollback, and a
-        # marker pasted back from an earlier compose must not re-enter the one
-        # it came from.
+        # It carries a per-compose number because the marker is TEXT in the
+        # human's terminal: it lands in their scrollback, and one pasted back
+        # from an earlier compose must not re-enter the one it came from.
         #
-        # The counter is per-Compose and starts at 1, so this distinguishes
-        # composes WITHIN a session, not across them -- a new process's first
-        # marker is byte-identical to the last one's. That is harmless (a match
-        # also requires {#pending?}, and a fresh Compose is not) but it is not
-        # the same claim, so it is not made.
+        # The counter is per-Compose, so this distinguishes composes WITHIN a
+        # session and not across them -- a new process's first marker is
+        # byte-identical to the last one's. Harmless, since a match also
+        # requires {#pending?} and a fresh Compose is not, but not the same
+        # claim.
         MARKER = "[composing in %s #%d -- write it there, then press Enter here]"
 
         # No editor took the draft: either none is attached, or the one that
@@ -64,11 +57,10 @@ module Lain
         # from the human's side.
         DETACHED = "composing needs an attached editor"
 
-        # The buffer was closed without being written. Says only what this
-        # object actually did -- what BECOMES of the draft is the caller's
-        # choice, since it is handed to the re-prompt block, so a notice
-        # promising "your draft is back" would be this object asserting
-        # something it does not control.
+        # Says only what this object actually did: what BECOMES of the draft is
+        # the caller's choice, since it is handed to the re-prompt block, so a
+        # notice promising "your draft is back" would assert something this
+        # object does not control.
         ABANDONED_NOTICE = "compose abandoned; nothing sent"
 
         # The bound expired with the editor silent. Same promise as an abandon:
@@ -87,20 +79,15 @@ module Lain
         ABANDONED = :abandoned
         private_constant :ABANDONED
 
-        # Reports nowhere -- the {Frontend::LineEditor::SILENT} shape, for the
-        # same reason: a Compose built without a notifier still has to do
-        # something with a notice, and the Null keeps {#open} free of a nil
-        # check.
+        # Reports nowhere -- the Null that keeps {#open} free of a nil check.
         SILENT = ->(_message) {}
 
-        # The Null editor, and the DEFAULT: an unwired Compose degrades
-        # honestly rather than pretending. The duck answers a NOTICE explaining
-        # why the draft went nowhere, or nil when it landed -- the
-        # {Unbridged#offer} shape, chosen for the same reason: a boolean would
-        # make the caller invent the sentence, and the object that failed is
-        # the one that knows why. A live {RpcThread#open_compose} answers the
-        # same notice once its editor has died, so "no --nvim" and "nvim went
-        # away" reach the human as one fact.
+        # The Null editor, and the DEFAULT. The duck answers a NOTICE explaining
+        # why the draft went nowhere, or nil when it landed: a boolean would make
+        # the caller invent the sentence, and the object that failed is the one
+        # that knows why. A live {RpcThread#open_compose} answers the same notice
+        # once its editor has died, so "no --nvim" and "nvim went away" reach the
+        # human as one fact.
         module Detached
           module_function
 
@@ -128,10 +115,9 @@ module Lain
           @pending = false
         end
 
-        # What the human had typed when C-g was pressed, continuation markers
-        # already joined out. Captured BEFORE the wait starts, which is what
-        # makes both an interrupt and an abandon survivable: nothing else keeps
-        # a copy once the prompt's buffer is gone.
+        # Captured BEFORE the wait starts, which is what makes both an interrupt
+        # and an abandon survivable: nothing else keeps a copy once the prompt's
+        # buffer is gone.
         # @return [String, nil]
         attr_reader :draft
 
@@ -160,18 +146,16 @@ module Lain
           marker
         end
 
-        # The caller's own loop, run OUTSIDE {Frontend::LineEditor#read} on
-        # whatever the prompt returned. Anything but THIS compose's marker
-        # passes straight through untouched -- and disarms, so a compose the
-        # human walked away from cannot lie in wait for a later prompt.
+        # Run OUTSIDE {Frontend::LineEditor#read} on whatever the prompt
+        # returned. Anything but THIS compose's marker passes through untouched
+        # and DISARMS, so a compose the human walked away from cannot lie in
+        # wait for a later prompt.
         #
         # @param text [String, nil] the line the prompt just returned
         # @yieldparam draft [String] what the human had typed when they pressed
-        #   C-g. Yielded when there is nothing to send (abandoned, or the bound
-        #   expired) -- the caller's chance to prompt again rather than
-        #   dispatch, WITH the text in hand. The key action replaced the
-        #   prompt's buffer with the marker, so by then this is the only copy
-        #   left; handing it over is what keeps "nothing is sent" from also
+        #   C-g, yielded when there is nothing to send. The key action replaced
+        #   the prompt's buffer with the marker, so by then this is the only copy
+        #   left, and handing it over is what keeps "nothing is sent" from also
         #   meaning "nothing is kept". Without a block those paths answer nil,
         #   which most prompt loops read as end-of-conversation.
         # @return [String, nil] the edited text to dispatch, `text` unchanged,
@@ -209,16 +193,12 @@ module Lain
           disarm
         end
 
-        # Pops until THIS compose's answer arrives or the bound expires,
-        # dropping answers belonging to an earlier one.
-        #
-        # The generation is what makes a late answer harmless. Clearing the
-        # queue at {#open} was a cross-thread check-then-act: the clear runs on
-        # the prompt thread while {#wrote} pushes from the RPC thread, so a
-        # write still in flight when the human pressed C-g again landed AFTER
-        # the clear and the new compose settled on the old compose's text.
-        # Dropping mismatches here means correctness no longer depends on that
-        # ordering, and {#disarm}'s clear is hygiene rather than the only
+        # The generation is what makes a late answer harmless. Clearing the queue
+        # at {#open} is a cross-thread check-then-act: the clear runs on the
+        # prompt thread while {#wrote} pushes from the RPC thread, so a write
+        # still in flight when the human pressed C-g again lands AFTER the clear
+        # and the new compose settles on the old compose's text. Dropping
+        # mismatches HERE makes {#disarm}'s clear hygiene rather than the only
         # defence.
         def matching_answer
           deadline = @clock.call + @timeout

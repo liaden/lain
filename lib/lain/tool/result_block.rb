@@ -9,27 +9,24 @@ module Lain
     # shape that IS the wire primitive. Same rule its read-side twin
     # {Response::ToolUse} states: `Canonical.normalize` rebuilds plain hashes and
     # raises on anything that is not one, so the hash stays the value and this is
-    # only a lens onto it -- nothing here reaches the Store, and a committed
-    # digest cannot move because a caller wrapped.
+    # only a lens onto it -- a committed digest cannot move because a caller
+    # wrapped.
     #
-    # {.of} is the write side that {Response::ToolUse} has no need of: the ONE
-    # place a {Result} becomes a wire block. Two correctness gates are
-    # constructor invariants here rather than four lines in a dispatcher --
-    # gate 4 (the block names the tool_use it answers) because {.of} refuses to
-    # build without an id, and gate 3 (a failed tool is reported, never dropped)
-    # because `is_error` is read off the {Result} and is never inferred from the
-    # shape of the content.
+    # {.of} is the write side, the ONE place a {Result} becomes a wire block, and
+    # two correctness gates are constructor invariants here rather than four
+    # lines in a dispatcher: gate 4 (the block names the tool_use it answers)
+    # because {.of} refuses to build without an id, and gate 3 (a failed tool is
+    # reported, never dropped) because `is_error` is read off the {Result} and
+    # never inferred from the shape of the content.
     #
     # **{.of} is the SOLE writer of a string-keyed tool_result block in `lib/`,
-    # reached only from `ToolRunner#delivery`.** That fact is what every named
-    # reader's `fetch` rests on, so a second writer must either come through
-    # here or retire the readers. `is_error` is OPTIONAL on Anthropic's wire and
-    # is not optional on ours: a tool_result that reached a reader was built
-    # here, with all four keys, so a missing one is a builder bug rather than a
-    # shape to tolerate -- and readers may raise on it instead of reading a
-    # failure as a success. The earlier builder wrote all four keys too, so
-    # Stores, journals, and fixtures recorded before this class existed read
-    # exactly the same way.
+    # reached only from `ToolRunner#delivery`.** That is what every named
+    # reader's `fetch` rests on, so a second writer must either come through here
+    # or retire the readers. `is_error` is OPTIONAL on Anthropic's wire and is
+    # not optional on ours: a tool_result that reached a reader was built here,
+    # with all four keys, so a missing one is a builder bug rather than a shape
+    # to tolerate -- and readers may raise on it instead of reading a failure as
+    # a success.
     class ResultBlock
       # How much of a malformed block {#field} quotes. A `read_file`-shaped
       # tool_result carries a whole file in `content`, so an unbounded `inspect`
@@ -42,20 +39,18 @@ module Lain
       # The four keys are written in the order the wire documents them. That
       # order is a CONVENTION this one builder keeps, not an invariant anything
       # downstream can observe: `Canonical` sorts keys for the digest, and the
-      # only NDJSON line that carries a tool_result (`request_sent`) has already
-      # been through `normalize`, so it is key-sorted too. The spec pins the
-      # order so the sole builder cannot drift away from the documented shape --
-      # it does not pin any byte a replay diffs.
+      # only NDJSON line carrying a tool_result (`request_sent`) has already been
+      # through `normalize`. The spec pins the order so the sole builder cannot
+      # drift from the documented shape; it does not pin any byte a replay diffs.
       #
       # The hash is FROZEN because this is the last place the block is a value
       # rather than a record. `ToolRunner` hands it to the observer seam after
       # #result_block and before `Timeline#commit`, so an observer writing
       # `block["content"]` would rewrite the committed experiment record after
-      # gates 3 and 4 had been enforced -- measured, not feared. Frozen, that
-      # write raises where it happens. This does NOT make the lens
-      # `Ractor.shareable?`: the freeze is shallow and a {Result}'s content
-      # String is mutable. Shareability arrives after `Canonical.normalize`
-      # deep-freezes the block, which is the shape {.wrap} sees.
+      # gates 3 and 4 had been enforced -- measured, not feared. This does NOT
+      # make the lens `Ractor.shareable?`: the freeze is shallow and a {Result}'s
+      # content String is mutable. Shareability arrives after
+      # `Canonical.normalize` deep-freezes the block, the shape {.wrap} sees.
       def self.of(result, tool_use_id:)
         refuse_unpaired(tool_use_id)
 
@@ -86,16 +81,14 @@ module Lain
       # Gate 4 is a *pairing*, so an id that cannot pair is refused where the
       # block is built. Most of the shapes this rejects are already unreachable
       # from a real turn, which is the point: `Response#initialize` normalizes,
-      # and `Canonical` maps Symbol to String, so no Symbol survives to
-      # {Response::ToolUse#id}; a block with no id raises `KeyError` at that
-      # lens's `fetch` before it ever reaches here; both providers mint Strings.
-      # The one shape genuinely foreclosed is a NUMERIC id, which Anthropic's
-      # wire rejects anyway -- an ArgumentError at the sole builder beats a 400.
+      # `Canonical` maps Symbol to String, a block with no id raises `KeyError`
+      # at {Response::ToolUse#id}, and both providers mint Strings. The one shape
+      # genuinely foreclosed is a NUMERIC id, which Anthropic's wire rejects
+      # anyway -- an ArgumentError at the sole builder beats a 400.
       #
-      # The message names the class and never the value: an id is
-      # model-supplied text, and an exception message is the wrong place for it.
-      # The empty String is the exception that proves it -- "got String" names
-      # the RIGHT class and so reads as a contradiction of the rule it follows.
+      # The message names the class and never the value: an id is model-supplied
+      # text. The empty String is the exception that proves it -- "got String"
+      # names the RIGHT class and reads as a contradiction of the rule.
       def self.refuse_unpaired(tool_use_id)
         return if tool_use_id.is_a?(String) && !tool_use_id.empty?
 

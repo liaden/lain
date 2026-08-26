@@ -6,20 +6,17 @@ module Lain
   # Lain owns the loop. Both SDKs offer to own it for us -- Anthropic's
   # `beta.messages.tool_runner`, RubyLLM's `Chat#complete` -- and both are
   # declined, because the loop is the object of study. A Provider therefore does
-  # exactly three things: declare what it can do, encode a neutral {Lain::Request}
-  # into its own wire payload, and complete one request into a neutral
-  # {Lain::Response}.
+  # exactly three things: declare what it can do, encode a neutral
+  # {Lain::Request} into its own wire payload, and complete one request into a
+  # neutral {Lain::Response}.
   #
-  # == Capabilities are machine-checked, not documented
-  #
-  # Providers are deliberately NOT symmetric. RubyLLM 1.16 has no server-side
-  # tools, no MCP connector, no memory tool, no Agent Skills, no Batches. If you
-  # A/B a prompt across two providers and half your context tactics silently
-  # became no-ops on one of them, the comparison is a lie. So a Context combinator
-  # declares what it `requires`, a Provider declares what it `capabilities`, and
-  # the mismatch is resolved by an explicit policy (:strict raises, :degrade
-  # no-ops loudly and records the degradation in the Journal) rather than by
-  # nobody noticing.
+  # **Capabilities are machine-checked, not documented.** Providers are
+  # deliberately NOT symmetric, and if you A/B a prompt across two of them while
+  # half your context tactics silently became no-ops on one, the comparison is a
+  # lie. So a Context combinator declares what it `requires`, a Provider
+  # declares its `capabilities`, and the mismatch is resolved by an explicit
+  # policy (:strict raises, :degrade no-ops loudly and records the degradation
+  # in the Journal) rather than by nobody noticing.
   class Provider
     class Unsupported < Error; end
     include Inspectable
@@ -48,10 +45,8 @@ module Lain
     end
 
     # This provider's prompt-cache economics -- see {CacheProfile}. Abstract
-    # like {#capabilities}: a scheduler (cache-aware compaction)
-    # reads real numbers off it rather than a hardcoded constant, and a
-    # provider that has not declared its own must fail loudly, not silently
-    # hand back Anthropic's or nil.
+    # like {#capabilities}, so a provider that has not declared its own fails
+    # loudly rather than silently handing back Anthropic's numbers or nil.
     def cache_profile
       raise NotImplementedError, "#{self.class} must declare #cache_profile"
     end
@@ -59,17 +54,15 @@ module Lain
     # How many tokens this model can take HERE -- on the endpoint this provider
     # is actually pointed at -- or nil when the provider cannot say.
     #
-    # Deliberately NOT abstract like {#capabilities} and {#cache_profile}. Those
-    # two are facts every arm knows about itself and must state; this one is a
-    # fact about a SERVER, and most providers have no endpoint that reports it.
-    # nil is therefore a real answer rather than a hole, and it is the answer
-    # that leaves {ContextWindow}'s conservative fallback in charge.
+    # Deliberately NOT abstract like {#capabilities} and {#cache_profile}: those
+    # are facts every arm knows about itself, while this is a fact about a
+    # SERVER most providers have no endpoint to ask. nil is a real answer, and
+    # the one that leaves {ContextWindow}'s conservative fallback in charge.
     #
-    # The asymmetry that governs every implementation: under-estimating makes
-    # compaction fire early, over-estimating makes it never fire at all
-    # (`context_window.rb:74-77`). So a provider that can see only a number
-    # LARGER than the served window -- a model's trained maximum, say -- must
-    # answer nil, not that number.
+    # The asymmetry governing every implementation: under-estimating makes
+    # compaction fire early, over-estimating makes it never fire at all. So a
+    # provider that can see only a number LARGER than the served window -- a
+    # model's trained maximum, say -- must answer nil, not that number.
     #
     # @param _model [String] the model the answer is about; a served window is
     #   per-model, not per-endpoint
@@ -81,23 +74,19 @@ module Lain
     # The largest window this model could EVER be served, or nil when the
     # provider cannot say.
     #
-    # A CEILING FOR REFUSING A FLAG, NEVER A DENOMINATOR, and the separation is
-    # the whole reason it is a second method rather than a fallback inside
-    # {#context_window_tokens}. The two numbers differ by 8x on this box --
-    # qwen3-coder:30b is trained to 262,144 and served 32,768 -- and dividing
-    # occupancy by the larger is precisely the never-fires failure the method
-    # above spends its docstring refusing. Nothing may pass this to
-    # {ContextWindow::WindowResolution}; {CLI::Backend} reads it to answer one
-    # question -- is an operator's `--num-ctx` above what any runner could
-    # serve? -- and throws it away.
+    # A CEILING FOR REFUSING A FLAG, NEVER A DENOMINATOR -- which is why it is a
+    # second method rather than a fallback inside {#context_window_tokens}. The
+    # two differ by 8x on this box (qwen3-coder:30b is trained to 262,144 and
+    # served 32,768), and dividing occupancy by the larger is exactly the
+    # never-fires failure the method above refuses. Nothing may pass this to
+    # {ContextWindow::WindowResolution}; {CLI::Backend} reads it to ask whether
+    # an operator's `--num-ctx` is above what any runner could serve, then
+    # throws it away.
     #
-    # Unlike the served window this is a property of the model FILE, so it is
-    # knowable before any runner loads, which is what lets the refusal happen at
-    # construction rather than on the first turn.
-    #
-    # nil is a real answer, as it is above: a provider that publishes no trained
-    # maximum must not block a launch, so the refusal fires only where a ceiling
-    # is known AND exceeded.
+    # Unlike the served window this is a property of the model FILE, knowable
+    # before any runner loads, which is what lets the refusal happen at
+    # construction rather than on the first turn. nil is a real answer here too:
+    # a provider publishing no trained maximum must not block a launch.
     #
     # @param _model [String]
     # @return [Integer, nil]
@@ -142,11 +131,11 @@ require_relative "provider/stream_started_signal"
 require_relative "provider/error_wrapping"
 require_relative "provider/anthropic_encoding"
 require_relative "provider/anthropic_wire"
-# NOTE: the official-SDK arms (Provider::AnthropicReference, Provider::BedrockReference) are NOT
-# here. They are `#encode` differential ORACLES that no run constructs -- every
-# hosted path goes through a raw arm over the vendored Faraday transport -- so
-# they live in spec/support/provider_oracles/ and the `anthropic` gem is a test
-# dependency rather than a runtime one. See that directory's own note.
+# The official-SDK arms (Provider::AnthropicReference, Provider::BedrockReference)
+# are NOT here. They are `#encode` differential ORACLES that no run constructs --
+# every hosted path goes through a raw arm over the vendored Faraday transport --
+# so they live in spec/support/provider_oracles/, and the `anthropic` gem is a
+# test dependency rather than a runtime one.
 require_relative "provider/http"
 require_relative "provider/spool/null"
 require_relative "provider/spool/rotating_frame"

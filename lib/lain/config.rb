@@ -27,14 +27,11 @@ module Lain
   # typo, and reading them together forces one on both. {.sensitivity} carries
   # the argument.
   class Config
-    # Named per the error-taxonomy convention: a refusal subclasses
-    # {Lain::Error} next to the owner that raises it (see {Paths::Unwritable}).
     # `path`/`cause` default to nil so a bare `raise Config::Malformed` -- a
-    # caller re-raising without the specifics -- does not itself blow up with
-    # a mismatched-arity ArgumentError; the wrapped parse error still arrives
-    # through Ruby's own `Exception#cause` chaining (set automatically because
-    # this is raised from inside the rescue that caught it), so it is never
-    # duplicated onto a second reader here.
+    # caller re-raising without the specifics -- does not itself blow up with a
+    # mismatched-arity ArgumentError. The wrapped parse error still arrives
+    # through Ruby's own `Exception#cause` chaining, set automatically because
+    # this is raised from inside the rescue that caught it.
     class Malformed < Error
       attr_reader :path
 
@@ -45,12 +42,10 @@ module Lain
 
       private
 
-      # Only a genuine `Tomlrb::ParseError` means the file was actually
-      # handed to the parser and rejected -- "is not valid TOML" is true only
-      # then. `ArgumentError` (bad encoding) and `SystemCallError`
-      # (EACCES/EISDIR and siblings) all mean the file was never successfully
-      # READ in the first place, so claiming it is "not valid TOML" would be
-      # a lie about what happened, however loud and well-pathed the message.
+      # Only a genuine `Tomlrb::ParseError` means the file reached the parser
+      # and was rejected. `ArgumentError` (bad encoding) and `SystemCallError`
+      # (EACCES/EISDIR) mean it was never successfully READ, so calling it "not
+      # valid TOML" would be a lie about what happened.
       def describe(path, cause)
         return "config.toml is malformed" unless path && cause
 
@@ -93,26 +88,22 @@ module Lain
     # adds to the path classifier's built-in tables, and the one thing it may
     # take away.
     #
-    # Read on its own rather than off a loaded {Config}, and the separation is
-    # the whole point. This table RESTRICTS, so a project's denials silently
+    # Read on its own rather than off a loaded {Config}, because the two have
+    # opposite postures about a typo. This table RESTRICTS, so denials silently
     # not being in force is the worst outcome available and it must refuse
-    # loudly. Every OTHER table tolerates its own typo at the cost of its own
-    # feature -- {Project::Consent} drops a broken `[approval]` to a notice,
-    # {CLI::EpicMount} does the same for `[epics]` -- because those grant, so
-    # dropping them fails closed. Reading them together forces one posture on
-    # both, and the posture it forced was the strict one: a typo in `[epics]`
-    # took `lain chat` down with it.
+    # loudly; every OTHER table GRANTS, so tolerating its own typo at the cost
+    # of its own feature fails closed. Reading them together forced the strict
+    # posture on both, and a typo in `[epics]` took `lain chat` down with it.
     #
-    # An unparseable FILE still raises {Malformed} here, because a file nobody
-    # can parse is a sensitivity table nobody can read -- but that is the one
-    # failure {CLI::Wiring::BoardBuild} degrades to a notice, since only there
-    # is there a human to tell.
+    # An unparseable FILE still raises {Malformed}, because a file nobody can
+    # parse is a sensitivity table nobody can read -- the one failure
+    # {CLI::Wiring::BoardBuild} degrades to a notice, since only there is there
+    # a human to tell.
     #
-    # `root:` is REQUIRED, where {.load}'s is defaulted -- this entry is new, its
-    # one production caller holds a resolved {Project}, and a working-directory
-    # default is precisely the divergence this chunk exists to remove
-    # ({Sensitivity.new} refuses one for the same reason). `spec/lain/project/
-    # root_defaults_spec.rb` is the guard, and it caught this.
+    # `root:` is REQUIRED where {.load}'s is defaulted: the one production
+    # caller holds a resolved {Project}, and a working-directory default is the
+    # divergence {Sensitivity.new} refuses for the same reason.
+    # `spec/lain/project/root_defaults_spec.rb` is the guard, and it caught this.
     #
     # @param root [String] a project root; `.lain/config.toml` is resolved under it
     # @return [Sensitivity::Rules] empty when the file or the table is absent
@@ -135,9 +126,8 @@ module Lain
     def self.read(path)
       Tomlrb.load_file(path)
     rescue Tomlrb::ParseError, ArgumentError, SystemCallError => e
-      # ArgumentError: invalid byte sequence (bad encoding). SystemCallError:
-      # EACCES/EISDIR and siblings -- "the file is there but unusable" is one
-      # failure to a caller, whichever of the three raised it.
+      # "The file is there but unusable" is one failure to a caller, whichever
+      # of the three raised it; {Malformed#describe} keeps them apart in words.
       raise Malformed.new(path, e)
     end
 
@@ -163,11 +153,10 @@ module Lain
     #   unless `[epics.gates]` says otherwise
     def gate_policy_for(stage) = epics.gates.policy_for(stage)
 
-    # `instance_of?`, not `is_a?`: a subclass instance and a Config instance
-    # must agree in BOTH directions (`a == b` iff `b == a`), which `is_a?`
-    # breaks (a subclass `is_a?` its parent; a parent is never `is_a?` its
-    # subclass). `#hash` mixes in `self.class` for the same reason `==` checks
-    # it -- two values a Hash should treat as distinct keys must not collide.
+    # `instance_of?`, not `is_a?`: equality must be symmetric, and a subclass
+    # `is_a?` its parent while a parent is never `is_a?` its subclass. `#hash`
+    # mixes in `self.class` for the same reason -- two values a Hash should
+    # treat as distinct keys must not collide.
     def ==(other)
       other.instance_of?(self.class) && epics == other.epics && approval == other.approval
     end
@@ -179,10 +168,9 @@ module Lain
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads
     # `Epic::STAGES` and {Approval::Gate::Policies}, and neither exists yet
-    # while this file loads -- config.rb is twelfth in lain.rb's manifest,
-    # against approval/'s forty-ninth and epic/'s sixty-eighth. A non-empty
-    # default here breaks `require "lain"` outright, which is every spec at
-    # once rather than one, so no test is owed for it.
+    # while this file loads -- config.rb sits far above both in lain.rb's
+    # manifest. A non-empty default here breaks `require "lain"` outright,
+    # which is every spec at once rather than one, so no test is owed for it.
     EMPTY = new(epics: Epics.new(home: :xdg)).freeze
     private_constant :EMPTY
   end

@@ -17,11 +17,10 @@ module Lain
     # `package.json` names a PACKAGE, not the project, so it would fight rung 4
     # and usually lose the case the monorepo user wanted.
     #
-    # **The rungs are searched rung-major, not directory-major.** Each rung
-    # scans the whole ancestry nearest-first before the next rung is tried, so
-    # an explicit `.lain/` high in a tree outranks an inferred `.git` below it.
-    # Directory-major would make depth beat evidence, which inverts the point
-    # of having rungs at all.
+    # **The rungs are searched rung-major, not directory-major.** Each rung scans
+    # the whole ancestry nearest-first before the next is tried, so an explicit
+    # `.lain/` high in a tree outranks an inferred `.git` below it.
+    # Directory-major would make depth beat evidence.
     #
     # **The refusal set is a stop rule on the WALK, not a filter on one rung.**
     # It fires AFTER a rung has matched, which is what keeps it general: `$HOME`
@@ -32,21 +31,19 @@ module Lain
     # and so is rung 6, which never walks anywhere.
     #
     # **The walk is our own; it never shells to `git rev-parse --show-toplevel`,**
-    # because git answers that question from `GIT_DIR`/`GIT_WORK_TREE` before it
-    # looks at the disk, and a bare dotfiles repo in the ambient environment
-    # would then make `$HOME` every session's root. {GIT_ENV_SCRUB} is what a
-    # future card that DOES shell to git must merge into the child's env.
+    # because git answers that from `GIT_DIR`/`GIT_WORK_TREE` before it looks at
+    # the disk, and a bare dotfiles repo in the ambient environment would then
+    # make `$HOME` every session's root. {GIT_ENV_SCRUB} is what anything that
+    # DOES shell to git must merge into the child's env.
     #
     # `home:` is a required, injected collaborator and is never read from `ENV`
-    # by an INSTANCE ({.default_project} is the one class-level exception, and
-    # it injects what it read): a sibling class silently disabled its entire
-    # denied table when
-    # `HOME` was `/` or `""` (Docker's default for a uid with no `/etc/passwd`
-    # entry), so an unusable home raises {UnusableHome} instead of degrading.
-    # The claim is exact and covers `home:` only -- the DEFAULT `paths:` is a
-    # `Paths.new` over the real `ENV`, whose XDG fallbacks are computed from the
-    # ambient `HOME`, so a caller wanting the refusal set free of ambient
-    # environment has to inject `paths:` as well as `home:`.
+    # by an INSTANCE ({.default_project} is the one class-level exception, and it
+    # injects what it read): a sibling class silently disabled its entire denied
+    # table when `HOME` was `/` or `""` (Docker's default for a uid with no
+    # `/etc/passwd` entry), so an unusable home raises {UnusableHome} rather than
+    # degrading. The claim covers `home:` only -- the DEFAULT `paths:` is a
+    # `Paths.new` over the real `ENV`, so a caller wanting the refusal set free of
+    # ambient environment has to inject `paths:` too.
     class Resolver
       # The variables git reads to override its own root detection, mapped to
       # `nil` rather than merely listed: an absent key still leaks from the
@@ -64,25 +61,23 @@ module Lain
       # `.git` is a DIRECTORY in a primary checkout and a one-line `gitdir:`
       # pointer FILE in a linked worktree, so this is only ever tested with
       # `exist?`. {CLI::IsolationBackend#repo_root} reads THIS constant rather
-      # than spelling `".git"` again, so the two walks cannot come to
-      # disagree about what a repository looks like -- and they now share the
-      # ceiling as well: that walk builds a {Refusals} and a {Walk} of its own
-      # from the same inputs.
+      # than spelling `".git"` again, so the two walks cannot disagree about what
+      # a repository looks like; they share the ceiling too, that walk building a
+      # {Refusals} and a {Walk} of its own from the same inputs.
       GIT_ENTRY = ".git"
 
       CONFIG_FILE = "config.toml"
 
-      # `home:` was not a usable absolute directory. Loud rather than
-      # degrading, per the class docstring.
+      # `home:` was not a usable absolute directory. Loud rather than degrading,
+      # per the class docstring.
       #
       # **Narrower than {Lain::Paths::NonAbsoluteHome}, which guards the same
       # variable for a different job.** This home is the STOP of an upward
       # project walk, so `"/"` is refused too: a root of `/` would make every
-      # directory on the machine a project. {Paths} uses home as a JOIN BASE
-      # for the XDG directories, where `/` is a real answer -- it is what root
-      # gets in a container -- so it accepts what this refuses. Two classes
-      # rather than one because load order forces it (`paths.rb` is manifest
-      # line 11, `project.rb` line 43); the bare `rescue UnusableHome` in
+      # directory on the machine a project. {Paths} uses home as a JOIN BASE for
+      # the XDG directories, where `/` is a real answer -- it is what root gets in
+      # a container -- so it accepts what this refuses. Two classes rather than
+      # one because load order forces it; the bare `rescue UnusableHome` in
       # {.default_project} resolves lexically to THIS one and deliberately does
       # not catch the other, which reaches the CLI boundary on its own.
       class UnusableHome < Error
@@ -93,11 +88,10 @@ module Lain
 
       # `$HOME` was unusable when a caller asked for the PROCESS's own project.
       # {UnusableHome} says what is wrong with the value; this says what it cost
-      # and what to do about it, which is the difference between a message a
-      # user can act on and one they cannot. `lain epic status|submit|land`
-      # print their refusal and nothing else, and
-      # `home must be an absolute path other than "/", got nil` names neither
-      # the variable to set nor the fact that no project could be identified.
+      # and what to do about it. `lain epic status|submit|land` print their
+      # refusal and nothing else, and `home must be an absolute path other than
+      # "/", got nil` names neither the variable to set nor the fact that no
+      # project could be identified.
       class UnresolvableProject < Error
         def initialize(cause)
           super("cannot tell which project this is -- #{cause.message}; set HOME to the user's home " \
@@ -105,9 +99,9 @@ module Lain
         end
       end
 
-      # `.lain/config.toml` declared a `root` this walk cannot use as one --
-      # a shape failure, unlike a root that is merely refused or out of
-      # ancestry, which falls through to the next rung instead.
+      # `.lain/config.toml` declared a `root` this walk cannot use as one -- a
+      # shape failure, unlike a root that is merely refused or out of ancestry,
+      # which falls through to the next rung instead.
       class UnusableConfiguredRoot < Error
         def initialize(path, value, why)
           super("#{path} declares root = #{value.inspect}, which #{why}")
@@ -117,10 +111,9 @@ module Lain
       Refusal = Data.define(:directory, :reason, :rung) do
         include Inspectable
 
-        # Interned rather than merely frozen: this string comes out of
-        # `Pathname#to_s`, which hands back a fresh mutable String, and
-        # `Ractor.shareable?` on the enclosing {Report} is the mechanical
-        # statement that nothing here is mutable.
+        # Interned rather than merely frozen: `Pathname#to_s` hands back a fresh
+        # mutable String, and `Ractor.shareable?` on the enclosing {Report} is the
+        # mechanical statement that nothing here is mutable.
         def initialize(directory:, reason:, rung:)
           super(directory: -directory, reason:, rung:)
         end
@@ -134,10 +127,10 @@ module Lain
         REASONS = %i[home filesystem_root temp system xdg mount_boundary unreadable].freeze
       end
 
-      # One resolution: the {Project}, and the refusal that bounded the walk
-      # that produced it. The refusal is always present -- `/` is always in the
-      # set, so every ascent ends at a refused directory -- and is informative
-      # even when it did not change the answer.
+      # One resolution: the {Project}, and the refusal that bounded the walk that
+      # produced it. Always present -- `/` is always in the set, so every ascent
+      # ends at a refused directory -- and informative even when it did not change
+      # the answer.
       Report = Data.define(:project, :refusal) do
         include Inspectable
 
@@ -166,8 +159,8 @@ module Lain
         path
       end
 
-      # The ONE spelling of a project's config file. {Declarations} scans for it
-      # and {Resolver#marker_rung} names it at the boundary; spelled twice, the
+      # The ONE spelling of a project's config file: {Declarations} scans for it
+      # and {Resolver#marker_rung} names it at the boundary, and spelled twice the
       # two could disagree about where rung 2's evidence lives.
       #
       # @param dir [String]
@@ -196,9 +189,9 @@ module Lain
       # paths built once per resolution, plus the device of cwd.
       #
       # Exact paths, never prefixes -- `/tmp` is refused but `/tmp-other` is an
-      # ordinary directory, and a project living at `$XDG_CONFIG_HOME/nvim` is
-      # perfectly legitimate even though its parent is refused. Refusing a
-      # directory stops the walk THERE; it does not ban the subtree below it.
+      # ordinary directory, and a project at `$XDG_CONFIG_HOME/nvim` is legitimate
+      # even though its parent is refused. Refusing a directory stops the walk
+      # THERE; it does not ban the subtree below it.
       class Refusals
         # `/` first because a `$HOME` of `/` is already refused at
         # construction, and the two later tables may legitimately overlap.
@@ -245,8 +238,8 @@ module Lain
         def spellings(path) = Resolver.spellings(path, @filesystem)
 
         # A directory that cannot be stat'd is refused rather than walked
-        # through: fail closed, because the alternative is treating an
-        # unreadable ancestor as ordinary and continuing past it.
+        # through: fail closed, because the alternative is treating an unreadable
+        # ancestor as ordinary and continuing past it.
         def compute(dir)
           return @table[dir] if @table.key?(dir)
 
@@ -274,12 +267,11 @@ module Lain
         # @param refusals [Refusals]
         def initialize(cwd:, refusals:)
           # `Pathname#ascend` is lexical, so what is handed in decides the
-          # ancestry: this class is always given a `realpath`, and
-          # {CLI::IsolationBackend#repo_root} was later reconciled to the same
-          # rule -- it expanded lexically until then, so a symlink whose LEXICAL
-          # parent held a `.git` its real parent does not made that walk find a
-          # repository this one cannot see. It resolves its root before
-          # ascending now, and drives this same class to do the ascending.
+          # ancestry, and this class is always given a `realpath`.
+          # {CLI::IsolationBackend#repo_root} expanded lexically until it was
+          # reconciled to the same rule: a symlink whose LEXICAL parent held a
+          # `.git` its real parent does not made that walk find a repository this
+          # one cannot see.
           ascent = Pathname.new(cwd).ascend.map(&:to_s)
           @candidates = ascent.take_while { |dir| !refusals.refuse?(dir) }
           # Never nil: `/` terminates every absolute ascent and is always in
@@ -295,19 +287,17 @@ module Lain
 
       # Rung 2's scan of the walk: the nearest `root =` the walk can reach.
       #
-      # **LAZY, and that is a correctness property, not an optimisation.**
-      # `first match wins` has to mean the scan STOPS -- an eager scan opens
-      # every `.lain/config.toml` in the ancestry after the nearest one has
-      # already answered, so one stale or hostile file high in a tree makes
-      # `lain` refuse to start in every project beneath it. The files this
-      # class opens are exactly the untrusted input {#declared} worries about,
-      # so the fewer of them the walk touches, the better.
+      # **LAZY, and that is a correctness property, not an optimisation.** "First
+      # match wins" has to mean the scan STOPS -- an eager scan opens every
+      # `.lain/config.toml` in the ancestry after the nearest one has answered, so
+      # one stale or hostile file high in a tree makes `lain` refuse to start in
+      # every project beneath it. These files are untrusted input, so the fewer
+      # the walk touches the better.
       #
       # Only the files ABOVE an answer go unopened. A broken config the walk
-      # reaches BEFORE any answer still raises, and deliberately: rung 2 scans
-      # the whole reachable ancestry before rung 3 is tried, so a config a user
-      # can see and the parser cannot read is a real error, not something to
-      # swallow.
+      # reaches BEFORE any answer still raises, deliberately: rung 2 scans the
+      # whole reachable ancestry before rung 3 is tried, so a config a user can
+      # see and the parser cannot read is a real error.
       class Declarations
         def initialize(walk:, filesystem:)
           @walk = walk
@@ -316,9 +306,8 @@ module Lain
         end
 
         # Asked at most once per resolution -- {Resolver#walked} is lazy over
-        # {WALKED_RUNGS}, so rung 2 answers once and is never revisited -- which
-        # is why there is deliberately no memo here. One would defend nothing,
-        # and no spec could tell a live memo from a dead one.
+        # {WALKED_RUNGS} -- which is why there is deliberately no memo: one would
+        # defend nothing, and no spec could tell a live memo from a dead one.
         #
         # @return [String, nil] the nearest declared root the walk can reach
         # @raise [UnusableConfiguredRoot] on a declaration of the wrong shape
@@ -326,10 +315,9 @@ module Lain
         def root = @walk.lazy.filter_map { |dir| declared_in(dir) }.first
 
         # Whether a declaration this scan REACHED named this directory and was
-        # turned down for it -- which is how {Report#refusal} can say that a
-        # rung-2 declaration, not merely a bare marker, is what the stop rule
-        # rejected. Empty until {#root} has run: an explicit `--root` never
-        # scans, and nothing was declined because nothing was read.
+        # turned down for it -- how {Report#refusal} can say a rung-2 declaration,
+        # not merely a bare marker, is what the stop rule rejected. Empty until
+        # {#root} has run: an explicit `--root` never scans.
         #
         # @param directory [String]
         # @return [Boolean]
@@ -353,15 +341,14 @@ module Lain
 
         # A `~` is refused LEXICALLY and never handed to `File.expand_path`,
         # which would resolve it through getpwnam -- on an SSSD or LDAP-backed
-        # host that is a network call, made here on behalf of a file a cloned
-        # repository may well have written (`approval/risk.rb:212-220` refuses
-        # it for the same reason).
+        # host that is a network call, made on behalf of a file a cloned
+        # repository may well have written (`approval/risk.rb` refuses it for the
+        # same reason).
         #
-        # Out-of-ancestry is NOT a shape failure: the refusal set makes rungs
-        # fall through rather than raise, and a declared root the walk cannot
-        # reach -- because it is outside cwd's ancestry, or because the stop
-        # rule cut the walk below it -- is the same situation. It is recorded
-        # rather than discarded so the report can still name it.
+        # Out-of-ancestry is NOT a shape failure: the refusal set makes rungs fall
+        # through rather than raise, and a declared root the walk cannot reach is
+        # the same situation. It is recorded rather than discarded so the report
+        # can still name it.
         def reachable(path, declared, dir)
           raise UnusableConfiguredRoot.new(path, declared, "is not a string") unless declared.is_a?(String)
           raise UnusableConfiguredRoot.new(path, declared, "is empty") if declared.empty?
@@ -379,21 +366,14 @@ module Lain
       # through {CLI::ChatLaunch}'s default `project_factory:`; a
       # directly-constructed {CLI::Wiring} takes it as a keyword default; and
       # `lain epic status|submit|land` each default their `root:` to its root,
-      # which is what keeps a chat and the subcommands looking at one set of
-      # epics from anywhere in the tree.
+      # which keeps a chat and the subcommands looking at one set of epics from
+      # anywhere in the tree.
       #
-      # It lived on {CLI::Wiring} until a re-review, which is the wrong arrow
-      # twice over: three subcommands depended on the CHAT ASSEMBLER for a
-      # question with nothing to do with chat wiring, and a method whose own
-      # docstring claims to be the single authority on projects does not belong
-      # on the object that merely happens to have needed it first.
-      #
-      # It is the ONE exception to the "never read from `ENV` here" rule the
-      # class docstring states, and deliberately: that rule is about the
-      # INSTANCE's `home:` collaborator, which stays required and injected. This
-      # is the process-default construction, so somebody has to read the process
-      # environment, and doing it in one named place is what keeps every other
-      # caller honest.
+      # It is the ONE exception to the "never read from `ENV` here" rule the class
+      # docstring states: that rule is about the INSTANCE's `home:` collaborator,
+      # which stays required and injected. This is the process-default
+      # construction, so somebody has to read the process environment, and doing
+      # it in one named place keeps every other caller honest.
       #
       # rubocop:disable Style/EnvHome -- `Dir.home` falls through to getpwuid
       # with `HOME` unset and raises a bare ArgumentError, which is neither a
@@ -465,8 +445,8 @@ module Lain
 
       def marker(dir, *names) = File.join(dir, *names)
 
-      # A declined rung-2 declaration outranks the boundary's bare markers: when
-      # a user wrote an explicit `root =` and the stop rule turned it down, the
+      # A declined rung-2 declaration outranks the boundary's bare markers: where
+      # a user wrote an explicit `root =` and the stop rule turned it down, a
       # report saying `rung none` would be a lie about what happened.
       def refusal_for(walk, declarations)
         rung = declarations.declined?(walk.boundary) ? :config : marker_rung(walk.boundary)
@@ -486,10 +466,9 @@ module Lain
 
       def kind_for(root) = @home.covers?(root) ? :home : :project
 
-      # {Project} renames its own `SystemCallError`s to {Project::Unresolvable}
-      # so `exe/lain`'s `rescue Lain::Error` still catches them; resolving here
-      # first must not undo that, so it raises the same named refusal with the
-      # same role.
+      # {Project} renames its own `SystemCallError`s to {Project::Unresolvable} so
+      # `exe/lain`'s `rescue Lain::Error` still catches them; resolving here first
+      # must not undo that.
       def resolve!(role, path)
         @filesystem.realpath(path)
       rescue SystemCallError => e

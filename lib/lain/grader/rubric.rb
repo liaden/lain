@@ -28,9 +28,7 @@ module Lain
       # becoming data.
       class Unparseable < Lain::Error; end
 
-      # The judge's marching orders: score against the criteria, and reply as a
-      # single JSON object so the verdict is machine-readable. Kept terse -- the
-      # criteria carry the substance.
+      # Kept terse: the criteria carry the substance.
       INSTRUCTION = <<~PROMPT
         You are a strict grader. Score how well the answer below satisfies the criteria.
         Reply with ONE JSON object and nothing else:
@@ -50,13 +48,11 @@ module Lain
 
       # Score `subject` against the criteria.
       #
-      # NOTE on `Grade#pass?`: a Rubric scores on a CONTINUOUS 0..1 scale, so the
-      # returned Grade's `#pass?` carries {Grade}'s default meaning (score >=
-      # 1.0) and is rarely useful -- an LLM judge almost never returns a hard
-      # 1.0. Threshold `#score` yourself for a pass/fail decision (e.g.
-      # `grade.score >= 0.8`); do not read `#pass?` as the judge's verdict. It is
-      # deliberately not overridden here because a Rubric has no one true
-      # threshold -- that policy belongs to the caller, not the judge.
+      # DO NOT READ `Grade#pass?` AS THE JUDGE'S VERDICT. A Rubric scores on a
+      # CONTINUOUS 0..1 scale, so `#pass?` carries {Grade}'s default meaning
+      # (score >= 1.0) and an LLM judge almost never returns a hard 1.0.
+      # Threshold `#score` yourself. It is not overridden here because a Rubric
+      # has no one true threshold -- that policy belongs to the caller.
       #
       # @param subject [#to_s] the answer/output under judgment
       # @return [Grade] score + mandatory explanation

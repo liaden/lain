@@ -5,82 +5,66 @@ module Lain
     # Masks the sensitive regions of a `read_file` result that nobody has agreed
     # to send, and parks an approval so somebody can.
     #
-    # {RefuseSecretWrites}' mirror image: same phase, same seam, same journaling
-    # discipline, and the same argument turned around. That one withholds a
-    # write because a credential inside a Memory::Item is indexed and durable
-    # and there is no un-indexing it. This one rewrites `env[:result]` on the way
-    # OUT of the tool phase, so unreleased bytes never exist above the
-    # middleware -- never in an {Event}, never in a digest, never in the
-    # prompt-cache prefix. Both are the same rule: the only place a leak can be
-    # stopped is before the thing that remembers it.
+    # {RefuseSecretWrites}' mirror image, and the same rule turned around: the
+    # only place a leak can be stopped is before the thing that remembers it. This
+    # one rewrites `env[:result]` on the way OUT of the tool phase, so unreleased
+    # bytes never exist above the middleware -- never in an {Event}, never in a
+    # digest, never in the prompt-cache prefix.
     #
     # == Why this boundary exists when the path boundary already refused
     #
-    # {Sensitivity::Policy} judges a PATH before the read, which is the only
-    # thing it can judge -- content is not knowable until the bytes are in hand.
-    # So this is the one boundary that can see a secret in a file classified
-    # ORDINARY: a `.env` copied to `notes.txt`, a key pasted into a fixture, a
-    # token committed to a spec. A path rule structurally cannot catch those.
+    # {Sensitivity::Policy} judges a PATH before the read, which is the only thing
+    # it can judge -- content is not knowable until the bytes are in hand. So this
+    # is the one boundary that can see a secret in a file classified ORDINARY: a
+    # `.env` copied to `notes.txt`, a key pasted into a fixture, a token committed
+    # to a spec. A path rule structurally cannot catch those.
     #
     # == Masking always comes with a release path
     #
-    # An arm that only masked would leave the agent reading `Cargo.lock`,
-    # getting `<redacted:1>` forever, with no move available to model or human.
-    # So when anything would be masked this parks a {Approval::Queue::Pending}
-    # carrying the outstanding regions and awaits it. Approve and the full bytes
-    # are returned and those regions are released to the ledger; deny, defer or
-    # time out and the masked projection stands. The fail-closed default is the
-    # queue's own -- an unanswered window denies -- and is not reimplemented
-    # here.
-    #
-    # An unreleased region renders as `<redacted:N>` and a released one as its
-    # real bytes, so the model keeps the file's STRUCTURE -- for a `.env`, the
-    # key names -- and partial approval falls out of that for free.
+    # An arm that only masked would leave the agent reading `Cargo.lock`, getting
+    # `<redacted:1>` forever, with no move available to model or human. So when
+    # anything would be masked this parks a {Approval::Queue::Pending} and awaits
+    # it; the fail-closed default is the queue's own and is not reimplemented
+    # here. An unreleased region renders as `<redacted:N>` and a released one as
+    # its real bytes, so the model keeps the file's STRUCTURE and partial approval
+    # falls out for free.
     #
     # == The ordinal in the placeholder is not the region's length
     #
-    # `N` counts masked regions in reading order, so three masked values render
-    # as three distinguishable placeholders and the model can say which one it
-    # needs. The obvious alternative -- the byte length withheld -- would
-    # disclose how long the secret is, which is a fact about the secret. The
-    # ordinal discloses only how many there are, which the prompt already tells
-    # the human.
+    # `N` counts masked regions in reading order, so three masked values render as
+    # three distinguishable placeholders and the model can say which one it needs.
+    # The obvious alternative -- the byte length withheld -- would disclose how
+    # long the secret is, which is a fact about the secret. The ordinal discloses
+    # only how many there are, which the prompt already tells the human.
     #
     # == It never short-circuits, and it never lets a raise escape
     #
-    # {Middleware::Env} is `fetch`-based, so a phase that forgets its out-key
-    # fails loudly. This calls {Base#downstream} first and merges afterwards, so
-    # `:result` is always set by the tool and only ever REPLACED here.
+    # {Base#downstream} runs first and the merge happens afterwards, so `:result`
+    # is always set by the tool and only ever REPLACED here.
     #
-    # Keeping that true needs an explicit rescue now, which it did not when this
-    # was pure masking: {#settle} AWAITS a human, and an await has failure modes
-    # a fold over bytes does not. A raise from here escapes into
+    # Keeping that true needs an explicit rescue, which pure masking did not:
+    # {#settle} AWAITS a human. A raise from here escapes into
     # {Agent::ToolRunner}, which has already committed the `tool_use` -- so the
     # turn ends with a tool_use no tool_result answers, the state machine wedges
     # at `awaiting_tools`, and every later turn is a 400 from the real API.
-    # {Provider::Mock} accepts that shape, which is why no spec would show it.
-    #
-    # The rescue answers with an ERROR result and never with the bytes: a read
-    # this class could not finish checking is a read whose secrets it cannot
-    # vouch for, so the fail-closed answer is the only one available.
+    # {Provider::Mock} accepts that shape, which is why no spec would show it. The
+    # rescue answers with an ERROR result and never with the bytes.
     #
     # == Detection is not size-capped, deliberately
     #
     # {Sensitivity::Regions} costs ~0.22ms/KB, linearly, with no blowup on
-    # adversarial input, and its docstring hands the cap decision to whichever
-    # arm holds the bytes. This one declines to set one. A cap has exactly two
-    # shapes and both are worse than the cost: scan a prefix and the tail ships
-    # unmasked, which is a leak the size of the file; refuse the read outright
-    # and a legitimate large file becomes unreadable with no move -- the dead end
-    # the release path above exists to prevent. A megabyte costs ~0.2s once, on
-    # the same fiber, before anything parks. If a cap is ever taken it must come
-    # back through `complete: false`, or every read past it forgets its releases
-    # and re-prompts forever.
+    # adversarial input, and hands the cap decision to whichever arm holds the
+    # bytes. This one declines: a cap has two shapes and both are worse than the
+    # cost -- scan a prefix and the tail ships unmasked, a leak the size of the
+    # file; refuse the read outright and a legitimate large file becomes
+    # unreadable with no move. A megabyte costs ~0.2s once, before anything parks.
+    # If a cap is ever taken it must come back through `complete: false`, or every
+    # read past it forgets its releases and re-prompts forever.
     class RedactSecretReads < Base
       # Exact membership, {RefuseSecretWrites::GUARDED_TOOLS}' rule: a tool that
       # returns file bytes under some other name is unguarded by design until it
       # earns a place here. `bash` reading a file with `cat` is deliberately NOT
-      # in this set -- that is the path boundary's job and a different card's.
+      # in this set -- that is the path boundary's job.
       GUARDED_TOOLS = Set["read_file"].freeze
 
       # The provider content-block key this can read. Anything else in an Array
@@ -91,30 +75,24 @@ module Lain
       # because {TEXT} above is a different string that happens to look related.
       PATH_INPUT = "path"
 
-      # The queue an unattended run does not wire. `--non-interactive` is its
-      # only caller: {CLI::Switchboard#approvals} is nil there, and of the three
-      # answers available -- full bytes, refuse, or mask with no release -- the
-      # last leaves the model `<redacted:1>` forever with nobody able to answer.
-      # This one returns the bytes and records the release as real.
+      # The queue an unattended run does not wire. `--non-interactive` is its only
+      # caller: {CLI::Switchboard#approvals} is nil there, and of the three answers
+      # available -- full bytes, refuse, or mask with no release -- the last leaves
+      # the model `<redacted:1>` forever with nobody able to answer.
       #
       # THIS IS A FAIL-OPEN, and the only one left in such a run: the SAME nil
       # `Switchboard#approvals` selects DENY at the gate and APPROVE at the
-      # release. Stated as the condition rather than the mechanism -- how the
-      # gate reaches deny is {CLI::Switchboard}'s business and has changed shape
-      # more than once.
+      # release. Its justification was that `--yolo` approved everywhere else; the
+      # flag is gone and the behaviour stayed. Flipping it to deny is deferred to
+      # its own measurement, because it changes what EVERY unattended run returns
+      # for a sensitive read, and both halves are pinned together in
+      # `cli/tool_guard_spec.rb` so the flip lands as a red example rather than a
+      # lying comment.
       #
-      # The justification here used to be that `--yolo` answered approve
-      # everywhere else, which held while the flag was the caller; round 10
-      # deleted the flag and left the behaviour. Flipping this to deny is
-      # deferred to round 11 with its own measurement, because it changes what
-      # EVERY unattended run returns for a sensitive read. Both halves are
-      # pinned together on one board in `cli/tool_guard_spec.rb`, so that flip
-      # lands as a red example rather than a lying comment.
-      #
-      # It is passed EXPLICITLY and `queue:` carries no default, so this cannot
-      # be reached by forgetting an injection -- {Sensitivity::Ledger}'s no-Null
-      # rule honoured rather than dodged: what it forbids is silent approval
-      # arriving by omission, not a named object that approves on purpose.
+      # It is passed EXPLICITLY and `queue:` carries no default, so this cannot be
+      # reached by forgetting an injection: what {Sensitivity::Ledger}'s no-Null
+      # rule forbids is silent approval arriving by omission, not a named object
+      # that approves on purpose.
       class Unqueued
         # The one message this middleware reads off a settled
         # {Approval::Queue::Pending}.
@@ -144,17 +122,16 @@ module Lain
 
       # {LEDGER_CONTRACT}'s sibling, and it names the approval OUT LOUD. This
       # message is read at exactly the moment somebody is hunting for a value to
-      # inject, so "pass Unqueued" on its own would read as an instruction to
-      # open the run's one fail-open without saying that is what it does.
+      # inject, so "pass Unqueued" on its own would read as an instruction to open
+      # the run's one fail-open without saying that is what it does.
       QUEUE_CONTRACT = "pass Middleware::RedactSecretReads::Unqueued where a run wires none -- " \
                        "but it APPROVES every release; see its docstring"
 
-      # Readable for {Agent::ToolRunner#handler}'s reason: what a guard was
-      # wired to is not private business when the caller did not build it, and
-      # the wiring spec has to be able to assert IDENTITY -- that this holds the
-      # board's one ledger and the board's one queue, not a second of either.
-      # Asserting on behaviour instead cannot tell a fresh ledger from the
-      # board's, which is exactly the mutation that survived review.
+      # Readable for {Agent::ToolRunner#handler}'s reason, plus one: the wiring
+      # spec has to be able to assert IDENTITY -- that this holds the board's one
+      # ledger and the board's one queue, not a second of either. Asserting on
+      # behaviour instead cannot tell a fresh ledger from the board's, which is
+      # exactly the mutation that survived review.
       attr_reader :ledger, :queue, :journal
 
       # @param ledger [Sensitivity::Ledger] the run's ONE region ledger.
@@ -168,10 +145,9 @@ module Lain
       # @raise [ArgumentError] on a nil ledger or queue
       def initialize(ledger:, queue:, journal: Channel::Null.instance)
         # A missing KEYWORD is Ruby's error; a nil VALUE is not, and nil is
-        # exactly what `Switchboard#approvals` carries in an unattended run --
-        # so without this the argument that "no default means no silent
-        # approval" rests on nobody ever passing the value the wiring actually
-        # holds.
+        # exactly what `Switchboard#approvals` carries in an unattended run -- so
+        # without this the argument that "no default means no silent approval"
+        # rests on nobody ever passing the value the wiring actually holds.
         raise ArgumentError, "a ledger is required: #{LEDGER_CONTRACT}" unless ledger
         raise ArgumentError, "a queue is required: #{QUEUE_CONTRACT}" unless queue
 
@@ -188,31 +164,23 @@ module Lain
 
       Withheld = Data.define(:session, :path, :scan, :unreleased)
 
-      # What one masking decision needs to carry, so the collaborators it
-      # touches do not become five parameters on every method.
+      # What one masking decision needs to carry, so the collaborators it touches
+      # do not become five parameters on every method.
       class Withheld
         def found = scan.regions.length
 
         # Counts, never bytes -- what {Telemetry::ReadRedacted} carries.
         #
-        # DERIVED from the snapshot, deliberately, and NOT re-asked of the
-        # ledger. An earlier edition asked, on the argument that a subtraction
-        # merely restates the line above it. That argument was wrong twice over.
+        # DERIVED from the snapshot and NOT re-asked of the ledger: `unreleased`
+        # is captured BEFORE the park and the ledger is read AFTER it, with a human
+        # await in between and {Tools::ReadFile#parallel_safe?} siblings in the
+        # same reactor. Measured with two concurrent reads, one approved and one
+        # denied, the ledger form reports `released: 1` for the read that masked
+        # the region and sent nothing.
         #
-        # The two are not equal. `unreleased` is captured BEFORE the park and
-        # the ledger is read AFTER it, with a human await in between and
-        # {Tools::ReadFile#parallel_safe?} siblings running in the same reactor
-        # -- so a sibling read of the same file, approved while this one waited,
-        # moves the ledger under this record. Measured: two concurrent reads,
-        # one approved and one denied, and the ledger form reports `released: 1`
-        # for the read that masked the region and sent nothing.
-        #
-        # That is the wrong direction. This record describes ONE read: how many
-        # regions it found, and how many of them it actually rendered as real
-        # bytes. The snapshot is what that read acted on, so the snapshot is
-        # what it must report. Reading the ledger later answers a different
-        # question -- "what does the run believe now" -- and writing that answer
-        # here puts a false entry inside the very count
+        # This record describes ONE read, so the snapshot it acted on is what it
+        # must report. The ledger answers "what does the run believe now", and
+        # writing that here puts a false entry inside the very count
         # {Telemetry::Guards::ReadRedacted}'s `released <= regions` validator
         # exists to keep honest.
         def released = found - unreleased.length
@@ -228,10 +196,10 @@ module Lain
 
       private
 
-      # `Async::Stop` is deliberately NOT rescued: it is not a StandardError,
-      # and a stopped requester must keep unwinding. {#settle}'s `ensure` is
-      # what makes that safe -- it has already recorded the mask by the time the
-      # stop passes through here.
+      # `Async::Stop` is deliberately NOT rescued: it is not a StandardError, and
+      # a stopped requester must keep unwinding. {#settle}'s `ensure` is what
+      # makes that safe -- it has already recorded the mask by the time the stop
+      # passes through here.
       def guarded(carried, effect)
         result = carried.fetch(:result)
         # A failed read carries a message, never file bytes, so there is nothing
@@ -241,8 +209,8 @@ module Lain
         adjudicate(carried, effect, result)
       rescue StandardError => e
         # The CLASS only. An exception's message can quote the input that
-        # produced it, and the input here is a file full of the bytes this
-        # class exists to withhold.
+        # produced it, and the input here is a file full of the bytes this class
+        # exists to withhold.
         carried.merge(result: Tool::Result.error(
           "#{effect.name} could not be checked for unreleased secrets (#{e.class}); nothing was returned."
         ))
@@ -255,9 +223,9 @@ module Lain
       def adjudicate(carried, effect, result)
         scan = Scan.new(result.content)
         # Refused BEFORE the ledger is touched. `outstanding` RECONCILES -- it
-        # drops the releases for regions the file no longer holds -- so asking
-        # it about a view we are about to refuse would forget releases for
-        # regions nobody looked at, and re-prompt for them forever after.
+        # drops the releases for regions the file no longer holds -- so asking it
+        # about a view we are about to refuse would forget releases for regions
+        # nobody looked at, and re-prompt for them forever after.
         return unreadable(carried, effect) unless scan.readable?
 
         withheld = withheld_in(carried, effect, scan)
@@ -281,8 +249,8 @@ module Lain
       # `complete: true` unconditionally, and that is a claim this class earns
       # rather than assumes: content it could not fully scan is REFUSED above,
       # never scanned in part, and there is no size cap. So a scan that reaches
-      # the ledger has by construction seen every byte, which is exactly what
-      # makes the reconcile inside `outstanding` sound.
+      # the ledger has by construction seen every byte, which is what makes the
+      # reconcile inside `outstanding` sound.
       def withheld_in(carried, effect, scan)
         session = carried.fetch(:context) || Session::Null.instance
         # ABSOLUTE, resolved against the READING WORKER's cwd and never the
@@ -297,44 +265,34 @@ module Lain
       end
 
       # Already asked about, and not approved. Asking again cannot produce a
-      # different answer without a human doing something the model cannot
-      # prompt for, and each re-ask costs another full timeout window -- 300
-      # seconds by default -- so a model told to re-read a denied file turns
-      # one refusal into an unbounded series of five-minute stalls.
+      # different answer without a human doing something the model cannot prompt
+      # for, and each re-ask costs another full timeout window -- 300 seconds by
+      # default -- so a model told to re-read a denied file turns one refusal into
+      # an unbounded series of five-minute stalls. A TIMEOUT counts as a decline:
+      # nobody answered.
       #
-      # A TIMEOUT counts as a decline for the same reason a denial does: nobody
-      # answered, and the queue's own doctrine is that an unattended gate
-      # refuses. Approval is the only answer that clears it.
-      #
-      # Run-scoped and add-only, like everything else on this boundary, so the
-      # worst it can do is mask something a human would have released -- and
-      # they can still release it by reading a file whose regions have changed.
-      # Two sibling fibers can both park for the same digests (the check and
-      # the record sit either side of the await), which costs one extra prompt
-      # and nothing else.
+      # Run-scoped and add-only, so the worst it can do is mask something a human
+      # would have released. Two sibling fibers can both park for the same digests
+      # (the check and the record sit either side of the await), which costs one
+      # extra prompt and nothing else.
       def declined?(withheld) = withheld.unreleased.all? { @declined.include?([withheld.path, _1.digest]) }
 
       # The await is the only place in this class that can be unwound from
       # outside, and the read-set is already wrong when it is.
       #
       # {Tools::ReadFile} recorded a COMPLETE read below this middleware before
-      # the park ever began, and `@masked` is add-only, so if control leaves
-      # here without a verdict nothing later repairs it: `read?` stays true,
+      # the park began, and `@masked` is add-only, so if control leaves here
+      # without a verdict nothing later repairs it: `read?` stays true,
       # `masked_read?` stays false, and `edit_file` is ALLOWED over a file whose
-      # secrets the model never saw. The control fails OPEN, in the one
-      # direction it exists to prevent. The window is the queue's, 300 seconds
-      # by default, and a Ctrl-C at the prompt is enough to reach it -- a park
-      # `read_file` never had before this class.
+      # secrets the model never saw -- fail-OPEN, in the one direction this exists
+      # to prevent, and a Ctrl-C at the prompt is enough to reach it.
       #
-      # `ensure`, and gated on a DECISION rather than on the call returning,
-      # because both halves can be skipped: a surface that raises unwinds
-      # `adjudicate` itself, and a requester stopped mid-park raises
-      # `Async::Stop`, which is not a StandardError and no rescue sees. Gating
-      # on `settled` alone would still miss a duck whose `approved?` raises.
-      #
-      # Recording the mask up front and retracting it on approval is the
-      # obvious alternative and is not available: `@masked` has no removal, by
-      # {Session::ReadSet}'s design.
+      # `ensure`, gated on a DECISION rather than on the call returning, because
+      # both halves can be skipped: a surface that raises unwinds `adjudicate`
+      # itself, and a requester stopped mid-park raises `Async::Stop`, which no
+      # rescue sees. Gating on `settled` alone would miss a duck whose `approved?`
+      # raises. Recording the mask up front and retracting it on approval is not
+      # available: `@masked` has no removal, by {Session::ReadSet}'s design.
       def settle(carried, effect, withheld)
         outstanding = Approval::Queue::Outstanding.new(path: withheld.path, regions: withheld.unreleased)
         decided = false
@@ -348,8 +306,8 @@ module Lain
         withheld.session.record_masked_read(withheld.path) unless decided
       end
 
-      # Nothing was withheld, so nothing is recorded and nothing is journaled:
-      # the approval's own decision record is what says a secret was sent, and a
+      # Nothing was withheld, so nothing is recorded and nothing is journaled: the
+      # approval's own decision record is what says a secret was sent, and a
       # {Telemetry::ReadRedacted} over a read that redacted nothing would be a
       # false finding in the experiment record.
       def release(carried, withheld)
@@ -358,13 +316,12 @@ module Lain
       end
 
       # Journaled on a STATE TRANSITION, not on a call --
-      # {Session::Journaled#record_read}'s rule, which this has to match or
-      # break. That method emits ONE line however many times a read/edit loop
-      # revisits a file; a redaction line per read would mean an unmasked file
-      # journals once over ten iterations and a masked one journals ten times,
-      # so the record would be noisiest exactly where the loop is most likely.
-      # `@declined` already holds "these digests at this path have been ruled
-      # on", which is the transition, so the check goes BEFORE it is added to.
+      # {Session::Journaled#record_read}'s rule, which this has to match or break.
+      # A redaction line per read would mean an unmasked file journals once over
+      # ten iterations and a masked one ten times, so the record would be noisiest
+      # exactly where the loop is most likely. `@declined` already holds "these
+      # digests at this path have been ruled on", which IS the transition, so the
+      # check goes BEFORE it is added to.
       def mask(carried, effect, withheld)
         withheld.session.record_masked_read(withheld.path)
         record(redaction(effect, withheld)) unless declined?(withheld)
@@ -377,19 +334,15 @@ module Lain
                                     regions: withheld.found, released: withheld.released)
       end
 
-      # Evidence about a turn must never be able to COST the turn --
-      # {Approval::Queue#record_evidence}'s argument, and this seam sits under
-      # it too: the mask above has already happened, so a closed Journal or a
-      # full disk must not convert a correctly-masked read into the error
-      # result {#guarded}'s rescue would otherwise produce.
+      # Evidence about a turn must never be able to COST the turn: the mask has
+      # already happened, so a closed Journal or a full disk must not convert a
+      # correctly-masked read into the error result {#guarded}'s rescue produces.
       #
       # It SWALLOWS rather than degrading into a `journal_error` record the way
-      # Queue does, because this journal is a `#<<` Channel and has no such
-      # shape to fall back to. The cost is stated rather than hidden: this
-      # record is also what {SessionRecord::Replay#redactions} reads, so a lost
-      # write means a resumed session does not know the path was masked. The
-      # LIVE session still does, and a journal that cannot be written to is not
-      # one a resume was going to work from anyway.
+      # {Approval::Queue} does, because this journal is a `#<<` Channel with no
+      # such shape. The cost, stated rather than hidden: this record is also what
+      # {SessionRecord::Replay#redactions} reads, so a lost write means a resumed
+      # session does not know the path was masked. The LIVE session still does.
       def record(entry)
         @journal << entry
       rescue StandardError
@@ -400,38 +353,30 @@ module Lain
       # rendering of it.
       #
       # `content` is a String or an Array of provider content blocks, so "the
-      # file's bytes" is not one thing, and the difference is decided here
-      # rather than papered over with a `to_s` that would corrupt a legitimate
-      # result. A String IS the whole file. An Array is a partial view: its text
-      # blocks are readable and everything else -- an image, a document -- is
-      # bytes this detector structurally cannot see, so those blocks pass
-      # through untouched and {#complete?} answers false.
-      #
-      # That false is not a formality. `complete: false` is what stops
-      # {Sensitivity::Ledger#outstanding} reconciling releases away against
-      # regions nobody looked at, which would re-prompt for secrets already
-      # approved, forever.
+      # file's bytes" is not one thing, and the difference is decided here rather
+      # than papered over with a `to_s` that would corrupt a legitimate result. A
+      # String IS the whole file. An Array is a partial view: its text blocks are
+      # readable and everything else -- an image, a document -- is bytes this
+      # detector structurally cannot see.
       #
       # `read_file` returns a String today, so the Array arm is unexercised in
-      # production. It is here because the arm that guesses is the one that
-      # ships a corrupted result the first time a tool returns blocks -- which
-      # means it has to be ready in the RIGHT direction. An earlier edition was
-      # not: a text block spelled any way this did not recognise (a Symbol
-      # `:text` key, a bare String element, text nested a level down) simply
-      # produced no regions, and a result with no regions takes the early
-      # return -- so the bytes went to the model unmasked with nobody asked.
-      # Fail-open, in the class whose whole purpose is the opposite.
+      # production. It is here because the arm that guesses ships a corrupted
+      # result the first time a tool returns blocks. An earlier edition guessed
+      # wrong: a text block spelled any way it did not recognise (a Symbol `:text`
+      # key, a bare String element, text nested a level down) produced no regions,
+      # and a result with no regions takes the early return -- so the bytes went to
+      # the model unmasked with nobody asked. Fail-open, in the class whose whole
+      # purpose is the opposite.
       #
-      # So {#readable?} is now the question, and an Array carrying anything this
-      # cannot read is REFUSED rather than passed through. That is deliberately
-      # loud and deliberately inconvenient: whoever first makes a guarded tool
-      # return image or document blocks will get a refusal and has to decide
-      # what masking means for them, which is a decision this class must not
+      # So {#readable?} is the question now, and an Array carrying anything this
+      # cannot read is REFUSED. Deliberately loud and deliberately inconvenient:
+      # whoever first makes a guarded tool return image or document blocks has to
+      # decide what masking means for them, which is not a decision this class may
       # make silently on their behalf.
       class Scan
-        # A piece of scannable text, and the key it has to be written back
-        # under. `key` is nil when the block IS the String, so there is nothing
-        # to merge into.
+        # A piece of scannable text, and the key it has to be written back under.
+        # `key` is nil when the block IS the String, so there is nothing to merge
+        # into.
         Piece = Data.define(:text, :key)
 
         def initialize(content)
@@ -441,16 +386,15 @@ module Lain
           freeze
         end
 
-        # Whether every piece of this content is text this could scan. False
-        # means the result must not be sent at all: there is no "scan the part
-        # I understood and forward the rest", because the rest is what would
-        # carry the secret out.
+        # Whether every piece of this content is text this could scan. False means
+        # the result must not be sent at all: there is no "scan the part I
+        # understood and forward the rest", because the rest is what would carry
+        # the secret out.
         #
-        # This replaced a `complete?` that answered the ledger's narrower
-        # question -- "did I see the whole file?" -- and then let an incomplete
-        # scan through anyway. Once an unreadable result is refused outright,
-        # the two questions collapse into this one and the ledger is always
-        # told `complete: true`, truthfully.
+        # It replaced a `complete?` that answered the ledger's narrower "did I see
+        # the whole file?" and then let an incomplete scan through anyway. Once an
+        # unreadable result is refused outright the two questions collapse into
+        # this one, and the ledger is always told `complete: true`, truthfully.
         def readable? = @pieces.all?
 
         # @return [Array<Sensitivity::Regions::Region>] every region found, in
@@ -472,15 +416,14 @@ module Lain
 
         private
 
-        # Every spelling of "this block is text", and nil for anything else.
-        # A bare String element and a Symbol `:text` key are both text and were
-        # both silently unscanned before; nil now refuses the result rather than
+        # Every spelling of "this block is text", and nil for anything else. A
+        # bare String element and a Symbol `:text` key are both text and were both
+        # silently unscanned before; nil now refuses the result rather than
         # letting it through unmasked.
         #
         # The KEY is carried, not just the text, because writing the masked text
         # back under a hardcoded `"text"` beside an existing `:text` leaves the
-        # original -- the secret survives in the same Hash, one key over. Caught
-        # by the Symbol-key example, which is exactly why it exists.
+        # original -- the secret survives in the same Hash, one key over.
         def piece_of(block)
           return Piece.new(text: block, key: nil) if block.is_a?(String)
           return nil unless block.is_a?(Hash)
@@ -493,8 +436,8 @@ module Lain
         # only the piece bookkeeping around it: {Survey::Projection} withholds
         # regions too, and two walks over the same byte offsets is how the read
         # path and a survey would drift on what a masked file looks like.
-        # `ordinals` is threaded through so the numbering stays consecutive
-        # ACROSS the pieces of one result.
+        # `ordinals` is threaded through so the numbering stays consecutive ACROSS
+        # the pieces of one result.
         def redact(piece, hidden, ordinals) = Sensitivity::Masking.render(piece, hidden, ordinals:)
 
         # Written back under the key it was READ from, never a hardcoded one --

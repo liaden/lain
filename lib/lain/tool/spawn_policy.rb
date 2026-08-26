@@ -3,10 +3,10 @@
 module Lain
   class Tool
     # The two orthogonal axes of a spawn, as small strategy objects the
-    # {Tools::Subagent} tool reads at dispatch. Keeping them here -- a leaf that
+    # {Tools::Subagent} tool reads at dispatch. Kept here -- a leaf that
     # references {Timeline} and {Toolset} only from inside method bodies, never
-    # at load time -- is what lets `tool.rb` require it while those units still
-    # load later (see the load-order manifest in `lain.rb`).
+    # at load time -- so `tool.rb` can require it while those units still load
+    # later (see the manifest in `lain.rb`).
     #
     # * **Prefix strategy** decides whose render prefix the child's bytes share:
     #   `fresh` (a new root over the shared Store -- `meet(child, parent)` empty),
@@ -20,25 +20,22 @@ module Lain
     #
     # Two axes, not one enum, because they carry independent money: prefix is a
     # cache-prefix decision (`cache-economics.md`) and posture is a
-    # schema-vs-enforcement decision. A {SpawnPolicy} value groups them with the
-    # `only`-set the child is attenuated to.
+    # schema-vs-enforcement decision.
     #
-    # `unattended` is the third thing a policy carries, and it is a different
-    # kind of fact from the two axes: not a strategy the spawner picks but a
-    # guarantee the ROLE claims -- that this arm answers with nobody watching,
-    # so it may hold no tool that can block on a human. It rides here because
-    # {Tools::Subagent::ChildBuilder} is handed a policy and never a {Role}.
+    # `unattended` is a different kind of fact from the two axes: not a strategy
+    # the spawner picks but a guarantee the ROLE claims -- that this arm answers
+    # with nobody watching, so it may hold no tool that can block on a human. It
+    # rides here because {Tools::Subagent::ChildBuilder} is handed a policy and
+    # never a {Role}.
     #
     # The methods and the two strategy modules live in the REOPENED class below,
     # NOT in a `Data.define ... do` block: a constant referenced inside that
     # block resolves against the enclosing module (`Lain::Tool`), not the Data
-    # class, so `PrefixStrategy` would not be found (the trap `Request` documents).
+    # class, so `PrefixStrategy` would not be found (the trap `Request`
+    # documents).
     SpawnPolicy = Data.define(:prefix, :posture, :only, :unattended)
 
     class SpawnPolicy
-      # Reopened (not a `Data.define ... do` block) so its constants resolve
-      # against the Data class -- see the note on {SpawnPolicy} above.
-
       # `prefix`/`posture` accept either a strategy instance or its short name
       # (`:fresh`, `:handler_union`) so a caller writes the arm, not a
       # constructor. `only` normalizes to a frozen Array of INTERNED Strings --

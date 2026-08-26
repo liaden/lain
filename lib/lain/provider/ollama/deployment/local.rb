@@ -6,36 +6,28 @@ module Lain
       module Deployment
         Local = Data.define
 
-        # The loopback arm, as an object rather than as five assumptions
-        # spread through {Ollama}.
+        # The loopback arm, as an object rather than as five assumptions spread
+        # through {Ollama}.
         #
-        # Every value here is the one the ollama arm has answered since it was
-        # written, and that is the whole point: `Local` is a pure RESTATEMENT.
-        # A bench axis is only readable if the arm it is measured against did
-        # not move underneath it, so this class introducing a new number would
-        # invalidate every ollama measurement already recorded rather than add
-        # one.
+        # Every value here is one the ollama arm has answered since it was
+        # written, and that is the point: `Local` is a pure RESTATEMENT. A bench
+        # axis is only readable if the arm it is measured against did not move
+        # underneath it, so a new number here would invalidate every ollama
+        # measurement already recorded rather than add one.
         #
-        # It carries no state at all -- there is exactly one loopback server to
-        # talk about -- so it is a memberless `Data`: still a value, still
-        # `Ractor.shareable?`, and `Local.new == Local.new`. The split into a
-        # bare `Data.define` and this reopen is the constant-scoping trap
-        # `Request::SYSTEM_PREFIX` documents; the docstring sits on the reopen
-        # because `Local` is not a unique name in `lib/` (`Exec::Local`), and
-        # `.rubocop.yml`'s `AllowedConstants` list would blind the cop
-        # repo-wide if it carried a name that recurs.
+        # Memberless -- there is exactly one loopback server to talk about --
+        # so still a value, still `Ractor.shareable?`, and
+        # `Local.new == Local.new`. The split into a bare `Data.define` and this
+        # reopen is the constant-scoping trap, and the docstring sits on the
+        # reopen because YARD keeps only that one.
         class Local
-          # A loopback server asks for no credential, and the empty Hash is a
-          # CONSTANT rather than a `{}.freeze` per call so `#headers` hands
-          # back the same object every time -- the deep-freeze invariant the
-          # sibling {Cloud} has to work for.
+          # A CONSTANT rather than a `{}.freeze` per call, so `#headers` hands
+          # back the same object every time.
           NO_AUTHORIZATION = {}.freeze
 
-          # Today's list, restated. It is pinned against
-          # {Provider::Ollama::CAPABILITIES} by a spec rather than read from it:
-          # if the two ever disagree, this class has stopped being a
-          # restatement, and that is a fact worth failing on rather than
-          # absorbing silently.
+          # Pinned against {Provider::Ollama::CAPABILITIES} by a spec rather
+          # than read from it: if the two ever disagree this class has stopped
+          # being a restatement, which is worth failing on.
           CAPABILITIES = %i[streaming thinking structured_output].freeze
 
           # The vendored envelope, unchanged. 300s is not generosity: this is
@@ -81,22 +73,15 @@ module Lain
           # what ran before it.
           #
           # THE KEY IS CLEARED, and that is the field this method exists for.
-          # Not writing one is not enough: a configuration that {Cloud} touched
+          # Not writing one is not enough: a configuration {Cloud} touched
           # carries an `ollama_api_key`, and leaving it beside a loopback base
-          # sends an ollama.com Bearer to `http://localhost:11434` in plaintext,
-          # to whatever is listening on that port. Today's arm cannot leak a key
-          # because it has no key concept at all; `Local` has to PRESERVE that
-          # property rather than depend on nobody having set one.
+          # sends an ollama.com Bearer in plaintext to whatever holds port
+          # 11434.
           #
-          # `--api-base` is deliberately NOT honoured here. An earlier design
-          # wrote the base only when unset so the flag would survive, and that
-          # is precisely what let one arm's base sit beside another's
-          # credential -- this object cannot tell an operator's flag from the
-          # previous deployment's write, and only the provider can, because
-          # only it knows whether `api_base:` was passed. So the hand-off is
-          # explicit: the caller applies the deployment first and re-applies
-          # an explicit `api_base:` afterwards, which is the order
-          # `Provider::Ollama#build_config` is specified to use.
+          # `--api-base` is deliberately NOT honoured here, because this object
+          # cannot tell an operator's flag from the previous deployment's write.
+          # Only the provider knows whether `api_base:` was passed, so it
+          # applies the deployment first and re-applies the flag afterwards.
           #
           # @param config [Provider::HTTP::Configuration]
           # @return [Provider::HTTP::Configuration] the same object, so a

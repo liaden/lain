@@ -22,9 +22,7 @@ module Lain
   # `class` keyword written inside that block binds to the enclosing module --
   # here `Lain` -- and not to the Data class, however natural
   # `Question::MAX_BODY` looks from the call site (see {Request::SYSTEM_PREFIX}
-  # for the same trap). Reopening puts the constants, the guard, and the nested
-  # {Option} where they read, and where every method below finds them by
-  # ordinary lexical lookup.
+  # for the same trap).
   class Question
     SINGLE = "single"
     MULTI = "multi"
@@ -50,14 +48,14 @@ module Lain
 
     # An id is rendered inline into the answer document, inside a code span and
     # on one line, so neither the delimiter nor a line break may appear in one.
-    # These are the same three characters {Epic::ID_RESERVED} reserves, and the
-    # duplication is deliberate: the shared markdown-identifier object that both
-    # files should depend on does not exist yet, so each states the rule and
-    # this comment is where the agreement between them is recorded.
+    # The same three characters {Epic::ID_RESERVED} reserves, duplicated
+    # deliberately: the shared markdown-identifier object both files should
+    # depend on does not exist yet, so this comment is where their agreement is
+    # recorded.
     #
-    # `fetch`ed on purpose, as {Epic::Issue#reserved!} does: growing
-    # ID_RESERVED without saying which grammar the new character belongs to
-    # fails loudly instead of mislabelling it.
+    # The grammar table is `fetch`ed on purpose, as {Epic::Issue#reserved!}
+    # does: growing the pattern without saying which grammar the new character
+    # belongs to fails loudly instead of mislabelling it.
     ID_RESERVED = /[`\r\n\u{200B}-\u{200D}\u{2060}\u{FEFF}]/
     ID_GRAMMARS = { "`" => "the code span the document renders an id inside",
                     "\r" => "the one-line question heading",
@@ -77,14 +75,12 @@ module Lain
     # The answer document's question heading, and the one rule a body carries on
     # that document's behalf.
     #
-    # {Document::HEADING} is the same shape with capture groups, built from
-    # {Document::KIND_LABELS}. This is a second, deliberate statement of it, for
-    # {ID_RESERVED}'s reason and with a stronger remedy: Document loads AFTER
-    # this file and a value must not reach forward to its own renderer, so the
-    # two copies are held to each other by a spec that matches every heading the
-    # writer emits against BOTH patterns (spec/lain/question/document_spec.rb).
-    # Change a label there and that spec fails, rather than this rule silently
-    # widening what a body may hold.
+    # {Document::HEADING} is the same shape with capture groups. This is a
+    # second, deliberate statement of it, for {ID_RESERVED}'s reason and with a
+    # stronger remedy: Document loads AFTER this file and a value must not reach
+    # forward to its own renderer, so the two copies are held to each other by a
+    # spec matching every heading the writer emits against BOTH patterns
+    # (spec/lain/question/document_spec.rb).
     #
     # Why the VALUE refuses it, rather than the renderer: the editor's `x` keymap
     # finds a question by scanning UP from an option line to the nearest heading,
@@ -159,9 +155,10 @@ module Lain
     # A family, and named as one because the missing name is what cost us: ids
     # were held to {padded!} and labels to nothing, so a model writing "Yes "
     # built a question the renderer would write and the parser would then refuse
-    # -- blaming the human for a line they never touched. The asymmetry is
-    # obvious once the four sit together and was invisible while they were four
-    # rules among fifteen. A fuzzer found it: 109 unparseable documents in 1240.
+    # -- blaming the human for a line they never touched, and leaving the
+    # question permanently unanswerable. The asymmetry is obvious once the four
+    # sit together and was invisible while they were four rules among fifteen. A
+    # fuzzer found it: 109 unparseable documents in 1240.
     #
     # These are the only rules in this unit that exist for a DOWNSTREAM artifact
     # rather than for the value itself: {Rules.bounded} and {Rules.normalized}
@@ -177,14 +174,10 @@ module Lain
                              "read back as a different one"
       end
 
-      # {padded!}'s sibling, for the other value the answer document renders:
-      # a label lands at the END of an option line, and that document's parse
-      # strips every line it reads -- so a label that does not survive an
-      # `rstrip` is one the renderer writes and the parser then refuses, telling
-      # the human to fix a line they never touched and leaving the question
-      # permanently unanswerable. `ask_human`'s label is model-written text, so
-      # a trailing space is entirely ordinary and the failure lands on the wrong
-      # person. Found by a fuzzer: 109 unparseable documents in 1240.
+      # {padded!}'s sibling, for the other value the answer document renders: a
+      # label lands at the END of an option line, and that document's parse
+      # strips every line it reads. `ask_human`'s label is model-written text, so
+      # a trailing space is entirely ordinary.
       #
       # Stated as the rstrip itself rather than as a whitespace class, because
       # `String#rstrip` is ASCII-only and also eats NUL: a label ending in
@@ -373,15 +366,11 @@ module Lain
 
     # Validated on a throwaway carrier that is checked and discarded, so the
     # frozen value never carries ActiveModel's ivars (see
-    # {Lain::Declarative::Carrier}). Only the field-shaped rules live here;
-    # "these two options share an id" is a rule about a LIST and reads better as
-    # the raise it is.
+    # {Lain::Declarative::Carrier}).
     #
     # `check!` and not `settle!`: every field reaching it has already been
-    # through {Rules}, which interns via {Canonical} and refuses with a message
-    # naming the field in the answer document's own vocabulary ("a question
-    # id", not "id"). A settled copy would dup those interned Strings back
-    # apart and buy nothing.
+    # through {Rules}, which interns via {Canonical}. A settled copy would dup
+    # those interned Strings back apart and buy nothing.
     class Fields < Declarative::Carrier
       attribute :id
       attribute :body

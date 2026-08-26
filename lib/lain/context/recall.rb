@@ -3,22 +3,18 @@
 module Lain
   class Context
     # Recalls memory hits into the message tail: a pure function of a frozen
-    # index snapshot and the message list. It is NOT part of the default
-    # pipeline -- `Context.pipeline` is `Reminder >> CacheBreakpoints`, with no
-    # memory index to search -- but an opt-in stage a custom pipeline composes
-    # AFTER CacheBreakpoints (push-recall is a swept axis; the bench decides
-    # whether it earns its tokens). Composed there, today's retrieval never
-    # rewrites yesterday's cached prefix: the recall block rides the same
-    # UNCACHED SUFFIX Reminder's workspace tail does, landing strictly after
-    # the last neutral marker. `Request#prefix_digests` is block-granular
-    # precisely so that displaced marker still computes rather than raising.
+    # index snapshot and the message list. NOT part of the default pipeline but
+    # an opt-in stage a custom pipeline composes AFTER CacheBreakpoints, so
+    # today's retrieval never rewrites yesterday's cached prefix -- the recall
+    # block rides the same UNCACHED SUFFIX Reminder's workspace tail does.
+    # `Request#prefix_digests` is block-granular precisely so that displaced
+    # marker still computes rather than raising.
     #
-    # Query extraction is a pinned rule, not a heuristic: take the text
-    # blocks of the last user message, excluding <workspace>-tagged blocks
-    # (Reminder's own injection) and tool_result blocks. After a tool turn
-    # the last user message IS the tool_results, which are not a query, so
-    # the search steps one user message further back at a time until it
-    # finds real text -- or finds none, in which case nothing is injected.
+    # Query extraction is a pinned rule, not a heuristic: the text blocks of the
+    # last user message, excluding <workspace>-tagged blocks and tool_result
+    # blocks. After a tool turn the last user message IS the tool_results, which
+    # are not a query, so the search steps one user message further back at a
+    # time until it finds real text -- or finds none and injects nothing.
     class Recall < Combinator
       include TailInjection
       include Declarative
@@ -31,9 +27,8 @@ module Lain
         validates :k, numericality: { greater_than: 0, message: "must be positive, got %<value>s" }
       end
 
-      # `k:` is the pinned constructor shape from the plan card --
-      # top-k retrieval is exactly what it is elsewhere in the literature,
-      # and a longer name would only paraphrase that.
+      # `k:` is top-k retrieval's name everywhere else in the literature; a
+      # longer one would only paraphrase it.
       # rubocop:disable Naming/MethodParameterName
       def initialize(index:, k:)
         super()
@@ -63,13 +58,10 @@ module Lain
 
       private
 
-      # Walks user messages tail-first (lazily, so the walk stops the moment
-      # real text is found): the last user message is the pinned primary
-      # case, and falling further back only happens when it turns out to be
-      # entirely tool_results or a bare workspace tail. The extraction rule
-      # (real text minus <workspace> blocks) lives on {MessageEnvelope}; this
-      # method owns only the tail-first walk. Changing the rule would move the
-      # pinned bench-card behavior -- don't (see MessageEnvelope#workspace_tagged?).
+      # Lazily, so the walk stops the moment real text is found. Falling
+      # further back than the last user message only happens when it turns out
+      # to be entirely tool_results or a bare workspace tail. The extraction
+      # RULE lives on {MessageEnvelope}; this method owns only the walk.
       def derive_query(messages)
         messages.reverse_each.lazy
                 .map { |message| MessageEnvelope.wrap(message) }

@@ -65,10 +65,9 @@ module Lain
             verdicts: state.fetch(:verdicts) }
         end
 
-        # Mutates `state` in place -- an ordinary fold accumulator, not a
-        # value object: {#build_for} owns its lifetime start to finish, and
-        # nothing outside that one method ever sees it. Extracted purely to
-        # keep build_for's own branching within the Metrics budget.
+        # Mutates `state` in place -- an ordinary fold accumulator, not a value
+        # object: {#build_for} owns its lifetime start to finish, and nothing
+        # outside that method ever sees it.
         def apply_case(state, tier, arm, kase)
           typed = ask(tier, kase)
           state.fetch(:verdicts)[kase.fetch("id")] = typed.stale
@@ -81,22 +80,17 @@ module Lain
         end
 
         # {Oracle::Definition#answer} always hands back an ALREADY-resolved
-        # {Promise} (its own doc), so `#await` never truly parks -- `Sync` is
-        # the degenerate synchronous case that machinery falls out of, the
-        # same shape {Oracle::Recorded}'s own spec awaits through.
+        # {Promise}, so `#await` never truly parks: `Sync` is the degenerate
+        # synchronous case that machinery falls out of.
         def ask(tier, kase)
           Sync { tier.ask(**oracle_inputs(kase)).await }
         end
 
         # {Oracle::PruneScoring::TEMPLATE} pulls both slots through
-        # {Prompt::LockedBinding}'s `render` helper, which re-evaluates a
-        # slot's VALUE as nested ERB source (that is how a partial composes)
-        # -- so every slot value must be a String, never a raw Integer, or
-        # ERB's own `ERB.new` breaks on `#encoding` before Purity ever gets a
-        # look. `content` was always a String; `age_turns` was not, because
-        # no existing spec had rendered this template before this sweep
-        # (only the heuristic tier, which skips #render entirely, was
-        # exercised).
+        # {Prompt::LockedBinding}'s `render` helper, which re-evaluates a slot's
+        # VALUE as nested ERB source -- that is how a partial composes -- so
+        # every slot value must be a String, never a raw Integer, or `ERB.new`
+        # breaks on `#encoding` before Purity gets a look.
         def oracle_inputs(kase)
           { age_turns: kase.fetch("age_turns").to_s, content: kase.fetch("content") }
         end
@@ -107,10 +101,9 @@ module Lain
             .commit(role: :assistant, content: text(typed.reason.to_s))
         end
 
-        # heuristic runs live (real, zero-cost predicate); every other arm is
+        # heuristic runs live -- a real, zero-cost predicate; every other arm is
         # replayed through {Oracle::Recorded}, fed this sweep's OWN
-        # manufactured recordings ({#oracle_answer_records}) -- never a live
-        # provider, by default.
+        # manufactured recordings and never a live provider.
         def tier_for(arm)
           return Oracle::PruneScoring.heuristic(stale_after_turns: @fixture.stale_after_turns) if arm == "heuristic"
 

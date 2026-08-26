@@ -17,190 +17,33 @@ module Lain
       # variables are exactly its four collaborators, and a spec asserts that
       # by name rather than by inspection of what happens to be in them.
       #
-      # == Which rail each message rides, and why two of them share one
-      #
-      # `present` -> `set_review`, through {Frontend::Neovim::ReviewView}, which
-      # is the object that turns a changeset into sidebar rows and holds the
-      # line -> file index a `<CR>` resolves through. The view's {Rendered}
-      # carries the lines AND the stamp they belong to, and both go out
-      # together -- there is no `#generation` reader to read them apart, which
-      # is deliberate on the view's side and is what keeps a gesture from
-      # resolving rendering N's row against rendering N+1's stamp.
-      #
-      # `annotate` and `thread` -> `set_thread`, both of them, THROUGH
-      # {Frontend::Neovim::ThreadView}, because the thread pane is keyed by
-      # ANCHOR ID and a note at an anchor is a message in that anchor's
-      # conversation. `thread` sends no message at all (this object keeps no
-      # history to replay -- {Surface::Text#thread} makes the same honest
-      # reading of "open"), so the view renders its own invitation to ask;
-      # `annotate` sends the note as one message. The extmark rail a note would
-      # ALSO ride does not exist yet, so a note is visible in the pane and
-      # nowhere else until it does.
-      #
-      # THE VIEW IS THE ONE OWNER OF THAT PAYLOAD, and this object may not
-      # build one itself. It used to: both messages posted `@rpc.set_thread(
-      # anchor.id, lines)` -- a bare String where the editor half refuses
-      # anything but a table `{id, path, side, line}`, because the pane is
-      # cursor-driven and an id names no position. The refusal travelled over a
-      # NOTIFY, so it reached nobody, and `Review::Session#annotate` -- the
-      # whole production route to this rail -- produced no pane at all while
-      # this object answered "it landed". Two owners of one wire shape is what
-      # allowed the two to drift; there is now one, and this object's share is
-      # deciding what ENTRIES a note becomes.
-      #
-      # `mark` and `refuse` and `verdict` and `settle` -> `review_refused`, the
-      # review's ONE notice rail (`runtime/65_review.lua` echoes it into the
-      # message area).
-      # `refuse` is what that rail was built for. `mark` is there because
-      # redrawing the sidebar so the file's tri-state marker moves needs the
-      # CHANGESET, which is exactly the state this object must not hold. The
-      # redraw does now happen -- {Review::Handover::Redraw} makes it, from the
-      # gesture rail, which holds both the session and the scope -- so this
-      # notice is no longer the only thing that says a mark landed; it stays
-      # because it is the one that says so in WORDS, at the moment of the
-      # gesture, and it is what a mark reaching this surface from anywhere but
-      # that rail still has. `verdict` posts the ASK, because on an
-      # interactive surface asking a human for a decision is a thing you do
-      # rather than a thing you wait for; `settle` posts the ANSWER to that
-      # ask, and it is here for `mark`'s reason plus one more -- a sidebar row
-      # says what is REVIEWED and nothing in a row can say the round is CLOSED,
-      # so words are the only place that fact fits.
-      #
-      # == What a message answers
-      #
-      # A refusal SENTENCE when the editor did not take it, and nothing that is
-      # a String when it did -- {RenderInlet}'s own convention, passed straight
-      # up rather than translated, because a detached editor is a fact the
-      # caller has to be able to say out loud and an exception is the one shape
-      # a port whose adapters DECLINE IN WORDS must not use. The four rails
-      # already answer exactly this, so every command below is a tail call.
-      #
-      # {#verdict} is the exception and the reason is not tidiness:
-      # `Review::VERDICTS` are Strings, so a refusal returned from the one
-      # message that answers a verdict could not be told apart from a verdict.
-      # It answers `nil`, the same as {Surface::Null#verdict} and
-      # {Surface::Text#verdict}.
-      #
-      # A NULL VERDICT VALUE DOES NOT CLOSE THIS, and saying so is the point of
-      # the paragraph -- an earlier draft here pointed at `Verdict::None`
-      # as the fix and a review panel was right that it is not one. A null
-      # verdict says "no verdict"; it still cannot tell the caller that the
-      # HUMAN DECLINED from that the EDITOR WAS DETACHED, which are different
-      # facts with different things to do about them. What closes it is the
-      # object this port does not have: an answer value carrying
-      # verdict-or-refusal, returned by every message. That same object would
-      # make the port's refusal law uniform and delete its `#verdict`
-      # exemption (`spec/support/shared_examples/review_surface.rb`, law #5),
-      # which is the one place the panel found nvim's convention shaping the
-      # port. Left open deliberately rather than closed badly.
-      #
-      # {#settle} DOES NOT CLOSE IT EITHER, and the two must not be read as one
-      # gesture. `settle` carries a verdict INWARD, so its answer has no
-      # ambiguity to resolve and it obeys the refusal law like every other
-      # command; `verdict` asks a human OUTWARD and still has nowhere to put a
-      # refusal. Adding the one did not un-exempt the other.
-      #
-      # == The gesture leg, and where `drifted:` is measured
-      #
-      # {#marked_at} and {#marked} are the way BACK: the editor marked a row,
-      # and the session is what records it. Nothing is recomputed on the way --
-      # {Frontend::Neovim::ReviewView#marks} says which hunks the row named
-      # against the rendering the human is actually looking at, and every key it
-      # answers is forwarded verbatim.
-      #
-      # The ANNOTATE write joins the same leg, and `drifted:` is neither this
-      # object's to compute nor the session's. Drift is the anchor text against
-      # the line the number NOW names, and that line lives in the EDITOR
-      # BUFFER -- which is neither the diff the session holds nor anything this
-      # object may hold. So the comparison is made where the buffer is, in the
-      # note rail's lua half at settle time, content against content, and
-      # arrives INBOUND as a field on the `review_annotate` payload. This surface
-      # FORWARDS it, the session receives it, and nobody computes it from state
-      # they do not have. That is also exactly what the extmark contract
-      # requires: a mark inside a rewritten span MOVES rather than
-      # invalidating, so whether it survived can never answer the question and
-      # only content can. The leg itself waits on `ReviewWrite::KEYS`, which
-      # carries neither `drifted` nor the buffer's revision in this tree.
-      #
-      # THAT LEG REFUSES UNIFORMLY OR NOT AT ALL, and that is a rule rather
-      # than a description of what it happens to do. Notes arrive ONE AT A
-      # TIME, and the editor forgets the batch only after the last one lands
-      # -- so a `wrote_annotation` that takes note 1 and refuses note 2 leaves
-      # note 1 recorded while the editor still holds every note, and the
-      # human's retry records note 1 a SECOND time. A note-by-note rail is safe
-      # only while no consumer refuses per-note; that is a property of the
-      # CONSUMERS, and this is one of them.
-      #
-      # So the refusal is computed from exactly one predicate -- is a session
-      # bound to record against ({Unbound}) -- which cannot vary within a
-      # batch. Everything a note CARRIES is either already judged at the
-      # boundary by `Neovim::ReviewWrite` (shape, every key present, side and
-      # kind closed, path and text non-blank, and `line` against
-      # `Review::Anchor.line!`'s own domain, asked there precisely so nothing
-      # downstream has to say it by raising), or is JOURNALED rather than
-      # refused. `revision` and `drifted` are the second kind, deliberately:
-      # `AnnotationPlaced` carries a revision so that "authored against one
-      # diff, submitted against another" stays DETECTABLE IN THE RECORD, and
-      # refusing it at the wire would defeat that AND make the refusal
-      # per-note. A `validates`-shaped check added here -- one that can pass
-      # one note and fail the next -- reintroduces the duplicate the moment it
-      # exists.
-      #
-      # THIS OBJECT CAN NEVER ITSELF BE `@changeset_review`, and that is worth
-      # knowing before somebody tries. `CLI::HumanReplies::Gestures` sends
-      # `mark(line, state, generation:)`, which is exactly {#marked_at}'s shape
-      # under another name -- but the PORT owns `mark` on this object for the
-      # opposite direction (`mark(hunk_key, state)`, model to surface), so the
-      # name is taken and cannot be shared. A separate gesture adapter,
-      # answering `open`/`mark`/`ask` and delegating to this surface and its
-      # view, is what `bind_changeset_review` has to be handed. That is a
-      # wiring card's object, not this one's; the collision is stated here so
-      # it is discovered by reading rather than by a rail that silently does
-      # nothing.
-      #
-      # == The one leg this object cannot grow, and why
-      #
-      # {Frontend::Neovim::ReviewView}'s `changesets:` collaborator -- what a
-      # `<CR>` on a sidebar row opens -- is NOT this object. Taking a changeset
-      # in {#present} and rendering it immediately is not caching, and nothing
-      # here does otherwise; but `changesets.open(path, line)` is driven by a
-      # gesture arriving ARBITRARILY LATER than the `present` that drew the row,
-      # and it needs that file's old side and both revisions. That is a
-      # changeset held to answer a later message, which is the one state this
-      # class is defined by not keeping.
-      # {Frontend::Neovim::ReviewView::Unwired} keeps the gesture honest until
-      # the object that holds the diff answers it.
+      # Six arguments behind this adapter live in `docs/review.md` under "The
+      # editor's review surface": which rail each message rides and why
+      # `annotate` and `thread` share one, what a message answers and why
+      # {#verdict} alone cannot carry a refusal, where `drifted:` is measured and
+      # why the note leg refuses uniformly or not at all, why this object can
+      # never itself be `@changeset_review`, and the one leg it cannot grow.
       class Neovim
-        # A mark, in words, because the sidebar row that would show it as a
-        # glyph cannot be redrawn without the changeset (see the class doc).
-        # The state goes LAST and unadorned so `reviewed` and `unreviewed` are
-        # told apart by a word boundary rather than by a substring -- the trap
+        # A mark, in words, because the sidebar row that would show it as a glyph
+        # cannot be redrawn without the changeset (see the class doc). The state
+        # goes LAST and unadorned so `reviewed` and `unreviewed` are told apart
+        # by a word boundary rather than by a substring -- the trap
         # `spec/support/shared_examples/review_surface.rb` names explicitly.
         #
-        # `hunk_key` here is already TRUNCATED by {#mark}, through
-        # {Surface.preview} -- see that method's doc for how much of the
-        # key survives and why. A real `Hunk` key is a 64-hex-character
-        # content digest behind `Hunk::CONTENT_SCHEME` ("hunk-content-v1:"),
-        # and the untruncated message runs past 90 characters.
+        # `hunk_key` is already TRUNCATED by {#mark}, through {Surface.preview}.
         #
-        # `65_review.lua:37` echoes this notice with `nvim_echo`, which
-        # writes the MESSAGE AREA -- `&columns` wide, the whole editor over
-        # `&cmdheight` lines -- NOT the review WINDOW a three-way
-        # cockpit split narrows to 40 columns. (An earlier draft of this
-        # comment named the review pane's own width as the constraint;
-        # verified against a real embedded UI that it is not --
-        # `nvim_echo` never reads the window.) Measured at `columns=40/80/
-        # 120`: the untruncated message (96 characters, 102 once
-        # `65_review.lua:37`'s `"lain: "` prefix is added) fits one message
-        # line only at 120; this surface's own truncated message fits at
-        # 80 and 120, not 40. A message that does not fit one line is what
-        # the `Press ENTER or type command to continue` prompt was traced
-        # back to -- and that prompt blocks RPC on every mark -- so shorter
-        # is what keeps the ordinary case out of it, at ordinary terminal
-        # widths. No file name reaches this surface (`Session#mark` sends
-        # only the key and the state -- see `review/session.rb`), so a
-        # prefix of the key is the only identifying substance a human can
-        # be shown here.
+        # `65_review.lua:37` echoes this notice with `nvim_echo`, which writes the
+        # MESSAGE AREA -- `&columns` wide -- and NOT the review WINDOW a three-way
+        # cockpit split narrows to 40 columns. (An earlier draft named the review
+        # pane's width as the constraint; verified against a real embedded UI that
+        # `nvim_echo` never reads the window.) Measured at `columns=40/80/120`:
+        # the untruncated message (96 characters, 102 with the `"lain: "` prefix)
+        # fits one message line only at 120, while the truncated one fits at 80
+        # and 120. A message that does not fit one line is what the
+        # `Press ENTER or type command to continue` prompt was traced back to --
+        # and that prompt blocks RPC on every mark. No file name reaches this
+        # surface (`Session#mark` sends only the key and the state), so a prefix
+        # of the key is the only identifying substance a human can be shown here.
         MARKED = "%<hunk_key>s is now %<state>s"
 
         # A session that took some of a row's hunks and refused the rest. The
@@ -213,32 +56,24 @@ module Lain
         # `spec/refusal_width_discipline_spec.rb`'s bar in service.
         PARTLY_MARKED = "marked %<landed>d of %<total>d hunks on that row; the rest were refused -- %<refusal>s"
 
-        # The ask, naming the vocabulary rather than the command. An earlier
-        # edition of this comment said the verb had no lua caller; it has one --
-        # `46_sidebar.lua`'s `:LainReviewVerdict` rpcrequests `review_verdict`,
-        # which `Frontend::Neovim::RpcThread` routes -- so what is left is the
-        # reason the wording did not follow: the COMMAND is taught once, in
-        # {Review::OpenedBanner}, at the moment the round opens, and what this
-        # ask supplies is the part the human still has to choose. Repeating the
-        # verb here would also lengthen a notice that must fit one `nvim_echo`
-        # line, for {MARKED}'s reason.
+        # The ask, naming the vocabulary rather than the command: the COMMAND is
+        # taught once, in {Review::OpenedBanner}, at the moment the round opens,
+        # and what this ask supplies is the part the human still has to choose.
+        # Repeating the verb would also lengthen a notice that must fit one
+        # `nvim_echo` line, for {MARKED}'s reason.
         ASK_VERDICT = "this review is waiting for a verdict -- one of %s"
 
-        # The answer to that ask, once a policy admitted it and the journal
-        # holds it. {MARKED}'s width argument applies unchanged and is why this
-        # is one short clause: `65_review.lua:37` echoes it with `nvim_echo`
-        # into the MESSAGE AREA, and a notice that does not fit one line stalls
-        # nvim on `Press ENTER or type command to continue` -- which would block
-        # RPC on the one gesture that ends the review. At `Review::VERDICTS`'
-        # longest member this runs well inside a 40-column line, prefix
-        # included.
+        # The answer to that ask, once a policy admitted it and the journal holds
+        # it. {MARKED}'s width argument applies unchanged and is why this is one
+        # short clause. At `Review::VERDICTS`' longest member it runs well inside
+        # a 40-column line, prefix included.
         SETTLED = "this review is settled: %<verdict>s"
 
         # The session nobody bound. {Frontend::Neovim::ReviewView::Unwired}'s
-        # honesty, one object over: it answers the one message this surface
-        # sends it, so no path here asks whether a session exists, and it
-        # REFUSES, because a gesture the human made that reaches no model must
-        # say so rather than be dropped.
+        # honesty, one object over: it answers the one message this surface sends
+        # it, so no path here asks whether a session exists, and it REFUSES,
+        # because a gesture that reaches no model must say so rather than be
+        # dropped.
         module Unbound
           NO_SESSION = "no review session is bound here -- open a review before marking a hunk"
 
@@ -268,45 +103,39 @@ module Lain
           @thread_view = thread_view
         end
 
-        # The thread pane, for a collaborator that renders a CONVERSATION into
-        # it rather than one message. {Review::Docent} is that collaborator and
-        # the only one: its answers arrive on a task of their own, seconds after
-        # the gesture that asked, so it draws them itself and cannot go through
-        # {#annotate} -- which posts exactly one entry and is the note rail.
+        # The thread pane, for a collaborator that renders a CONVERSATION into it
+        # rather than one message. {Review::Docent} is that collaborator and the
+        # only one: its answers arrive on a task of their own, seconds after the
+        # gesture that asked, so it draws them itself and cannot go through
+        # {#annotate}, which posts exactly one entry.
         #
-        # IT HANDS OVER THE HELD INSTANCE and never builds a second, which is
-        # the whole of the safety argument. The class doc's rule is that there
-        # is ONE owner of a `set_thread` payload; a caller that assembled its own
-        # view over some other inlet would be a second, drawing an answer into a
-        # pane keyed by the same anchor from a different rail. So the reader
-        # exists precisely so nobody has to.
+        # IT HANDS OVER THE HELD INSTANCE and never builds a second: there is ONE
+        # owner of a `set_thread` payload, and a caller assembling its own view
+        # over some other inlet would be a second, drawing into a pane keyed by
+        # the same anchor from a different rail.
         #
         # NOT one of {Review::Surface}'s messages, and it must not become one: a
         # text surface has no pane, the port's promise is what the two adapters
-        # SHARE, and a docent is a capability only the editor's surface can
-        # carry. A caller wanting one therefore asks whether this collaborator
-        # plays that role, the way {Review::Docent#arm_role} asks its answerer
-        # and {Tools::RequestReview::Implementation::Seams} asks its seams.
+        # SHARE, and a docent is a capability only the editor's surface can carry.
         #
         # @return [#show] takes `(anchor, entries)` and answers the notice
         #   saying why the render did not land, or nil
         attr_reader :thread_view
 
-        # @param changeset [#files, #partitions, #sides] see {Review::Surface}'s class
-        #   doc for the one place this duck is stated; {Frontend::Neovim::ReviewView}
-        #   needs five members beyond it (a file's `#hunk_keys`, `#chunked?` and
-        #   `#hunks`; a group's `#counted?` with either its `#added`/`#deleted`
-        #   or its `#rendered_lines`) and its own doc says why
+        # The sides ride THIS post and not {#open}'s, and the ordering forces it:
+        # the editor builds its panes from the sidebar render, at first paint,
+        # before any row is opened -- so a fact carried by the changeset open
+        # arrives after the window it would have prevented already exists. It is
+        # a FACT about the round and never an instruction, for {#focus}'s reason:
+        # Ruby says what the round has, and what to build out of that is a layout
+        # only the editor can see.
+        #
+        # @param changeset [#files, #partitions, #sides] see {Review::Surface}'s
+        #   class doc for the one place this duck is stated;
+        #   {Frontend::Neovim::ReviewView} needs five members beyond it and its
+        #   own doc says why
         # @param scope [Symbol] the name of a {Review::Partition} strategy as a
         #   Symbol; anything else raises from the view's own `fetch`
-        # The sides ride THIS post and not {#open}'s, and the ordering is what
-        # forces it: the editor builds its panes from the sidebar render, at
-        # first paint, before any row is opened -- so a fact carried by the
-        # changeset open arrives after the window it would have prevented
-        # already exists. It is a FACT about the round and never an instruction,
-        # for {#focus}'s reason one line down: Ruby says what the round has, and
-        # what to build out of that is a layout only the editor can see.
-        #
         # @return [String, nil] the editor's refusal, or nothing
         def present(changeset, scope:)
           rendered = @view.render(changeset, scope:)
@@ -353,30 +182,24 @@ module Lain
           nil
         end
 
-        # The ask's answer, coming back the other way. Unlike {#verdict} this
-        # one CAN carry a refusal: the verdict travels inward as the argument,
-        # so a String answered here is the editor's own "nobody took this" and
-        # nothing else -- which is why it is a tail call like the rest.
-        # @param verdict [String] a member of `Review::VERDICTS`, as journaled
+        # The ask's answer, coming back the other way. Unlike {#verdict} this one
+        # CAN carry a refusal: the verdict travels inward as the argument, so a
+        # String answered here is the editor's own "nobody took this".
+        #
         # THE EDITOR IS TOLD THE ROUND IS OVER, FIRST, and that is a teardown
-        # rather than a notice. Nothing about a verdict is visible in the editor:
-        # its tabpage, its panes and every buffer it opened survive one, so the
-        # review's stamps and the round the tabpage vouches for would outlive the
-        # review itself -- and `47_diff.lua` hands a stamp back to any file the
-        # round opened when the human re-enters it. A note placed after this
-        # point would then name a review nobody is holding, which is a wrong
-        # answer rather than a missing one. This message is the only moment any
-        # adapter learns a round ended, so it is the only place the teardown can
-        # go.
+        # rather than a notice. Nothing about a verdict is visible in the editor
+        # -- its tabpage, panes and buffers all survive one, and `47_diff.lua`
+        # hands a stamp back to any file the round opened when the human
+        # re-enters it, so a note placed after this point would name a review
+        # nobody is holding. This message is the only moment any adapter learns a
+        # round ended. BEFORE the notice, because the notice is what a human
+        # reads as "it is over", and an editor that says so while still accepting
+        # notes is telling them two different things.
         #
-        # BEFORE the notice, because the notice is what a human reads as "it is
-        # over" -- an editor that says so while still accepting notes into the
-        # round is telling them two different things.
+        # Its answer is DISCARDED and the notice's handed back: both legs refuse
+        # the same way, and the sentence is the one the caller can act on.
         #
-        # Its answer is DISCARDED and the notice's is handed back: both legs
-        # refuse the same way when no editor took them, and the sentence is the
-        # one the caller can do something about.
-        #
+        # @param verdict [String] a member of `Review::VERDICTS`, as journaled
         # @return [String, nil]
         def settle(verdict)
           @rpc.review_settled
@@ -388,14 +211,13 @@ module Lain
 
         # The one gesture that travels the OTHER way: the editor marked a hunk,
         # and the session is what records it. Unchanged in both arguments and
-        # forwarded to nobody else -- an adapter that normalized a hunk key
-        # here would be a second, quieter place the review's identity is
-        # decided, and the key is a content digest the editor never invents.
+        # forwarded to nobody else -- an adapter that normalized a hunk key here
+        # would be a second, quieter place the review's identity is decided.
         #
-        # Named for what HAPPENED rather than `mark`, which the port already
-        # takes for the other direction: the two carry different arguments and
-        # mean opposite things, and one name for both is how a surface ends up
-        # marking a hunk because the model told it a hunk was marked.
+        # Named for what HAPPENED rather than `mark`, which the port takes for
+        # the other direction: the two carry different arguments and mean
+        # opposite things, and one name for both is how a surface ends up marking
+        # a hunk because the model told it a hunk was marked.
         #
         # @param hunk_key [String] `Review::Hunk`'s content key
         # @param state [Symbol, String] one of `Review::MARK_STATES`
@@ -406,33 +228,27 @@ module Lain
         # state, generation]]`. A sidebar row renders no hunk key and a key is a
         # content digest that never crosses the wire, so the editor sends the
         # LINE and the stamp of the rendering it came from, and the view -- the
-        # only object that can -- says which hunks that row named.
-        #
-        # Every one of them is marked, because a row IS a file and its marker
-        # already means the whole file's tri-state.
+        # only object that can -- says which hunks that row named. Every one of
+        # them is marked, because a row IS a file and its marker already means
+        # the whole file's tri-state.
         #
         # BOTH refusals fold into the one answer, and the second is the whole
         # reason this method is not three lines. The view can refuse (a stamp it
-        # cannot resolve, a row naming no hunk) and so can the SESSION --
-        # {Unbound} does, and a bound one may -- while
-        # {CLI::HumanReplies::Gestures} asks `#marked?` and nothing else.
-        # Handing the view's answer straight back therefore told the human a
-        # mark had landed that nothing recorded, which is exactly the report
-        # this leg exists to make honest.
+        # cannot resolve, a row naming no hunk) and so can the SESSION, while
+        # {CLI::HumanReplies::Gestures} asks `#marked?` and nothing else --
+        # handing the view's answer straight back therefore told the human a mark
+        # had landed that nothing recorded.
         #
         # A refusal EMPTIES `hunk_keys`, because `#marked?` answers the human's
-        # question -- did this gesture land -- and the answer to that is no.
-        # What did reach the session is not thrown away, it is named in the
-        # report: a session whose `#mark` takes one key and refuses the next
-        # leaves the row partly marked, which is the same batch hazard the
-        # annotate write's prohibition above exists for, and saying so is what
-        # keeps it visible instead of silent.
+        # question -- did this gesture land. What did reach the session is named
+        # in the report instead: a session whose `#mark` takes one key and
+        # refuses the next leaves the row partly marked, the same batch hazard
+        # the annotate write's prohibition exists for.
         #
         # A String is a refusal and anything else is "taken" -- `RenderInlet`'s
-        # convention and this port's own (law #5 in
-        # `spec/support/shared_examples/review_surface.rb`), asked of the
-        # session for the same reason: a refusal has to be a value an adapter
-        # can hand back rather than an exception it has to catch.
+        # convention and this port's own -- asked of the session for the same
+        # reason: a refusal has to be a value an adapter can hand back rather
+        # than an exception it has to catch.
         #
         # @param line [Integer] 1-based, as nvim's cursor reports it
         # @param state [Symbol, String] one of `Review::MARK_STATES`

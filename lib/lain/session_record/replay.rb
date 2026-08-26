@@ -2,31 +2,25 @@
 
 module Lain
   module SessionRecord
-    # Rebuilds a fresh {Session}'s run-state from a session record -- the
-    # read side of {Session::Journaled} and {Tools::TodoWrite}: a
-    # {Telemetry::SessionRead} folds straight into {Session#record_read} --
-    # carrying its completeness, so a partial read cannot come back as a whole
-    # one (see `#completeness`); the read-set's own add-only monotonicity then
-    # folds a partial-then-complete pair to complete however the two records
-    # are ordered in the file. A {Telemetry::TodoSnapshot} folds into
-    # {Session#write_todos} in RECORDED order, so its own replace-not-merge
-    # semantics do the rest -- folding N snapshots and keeping only the last
-    # one's effect is exactly what one direct call already does, applied N
-    # times.
+    # Rebuilds a fresh {Session}'s run-state from a session record -- the read
+    # side of {Session::Journaled} and {Tools::TodoWrite}. A
+    # {Telemetry::SessionRead} folds straight into {Session#record_read} carrying
+    # its completeness, so a partial read cannot come back as a whole one (see
+    # `#completeness`); the read-set's own add-only monotonicity then folds a
+    # partial-then-complete pair to complete however the two are ordered. A
+    # {Telemetry::TodoSnapshot} folds into {Session#write_todos} in RECORDED
+    # order, so its replace-not-merge semantics do the rest.
     #
-    # The manifest needs no third record type: a run's
-    # `turn` / `memory_root` chain is already exactly what
-    # {Bench::Session::MemoryReplay} reconstructs a {Memory::Index} from, and
-    # that index is exactly what {Session}'s `memory:` wants. The reference
-    # to `Bench::Session::MemoryReplay` sits inside a method body, resolved
-    # at CALL time -- the same lazy cross-unit reach {Session}'s OWN
-    # `memory: Memory::Recorder.new` default already makes from #21 in
-    # `lain.rb`'s load order to Memory at #40, well before either runs.
+    # The manifest needs no third record type: a run's `turn` / `memory_root`
+    # chain is already what {Bench::Session::MemoryReplay} reconstructs a
+    # {Memory::Index} from, and that index is what {Session}'s `memory:` wants.
+    # That constant is reached inside a method body, resolved at CALL time -- the
+    # same lazy cross-unit reach {Session}'s own `memory:` default already makes
+    # from #21 in `lain.rb`'s load order to Memory at #40.
     #
-    # A record type with zero occurrences replays to that type's neutral
-    # state (no reads, no todo reminder, an empty manifest) -- the same
-    # tolerant zero-record precedent {Bench::Session::MemoryReplay} itself
-    # already sets for a `memory_root`-free chain.
+    # A record type with zero occurrences replays to that type's neutral state
+    # (no reads, no todo reminder, an empty manifest) -- the tolerant
+    # zero-record precedent {Bench::Session::MemoryReplay} itself sets.
     class Replay
       # A record of ours whose FIELDS are not what the writer's guard promised
       # -- the shape a salvaged or hand-edited journal reaches us in. Distinct

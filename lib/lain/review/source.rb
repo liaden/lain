@@ -5,8 +5,7 @@ module Lain
     # The changeset-source port: where a reviewable changeset comes from.
     #
     # A source answers SEVEN messages, and the shared example group
-    # `"a review changeset source"` (spec/support/shared_examples/review_source.rb)
-    # is the contract, not this comment:
+    # `"a review changeset source"` is the contract, not this comment:
     #
     #   #files        the changed files, as model values -- {ChangedFile}s
     #   #identity     the {Identity} an address is computed from
@@ -18,106 +17,23 @@ module Lain
     #
     # {LocalBranch#diff} and {LocalBranch#commits} are NOT on that list. They
     # belong to sources that have unified-diff bytes and a commit walk, which is
-    # a real category and not the port -- see "Not every source has two
-    # witnesses" below. A local branch and a GitHub pull request are today's two
-    # implementations, and everything downstream -- the anchors, the marks, the
-    # session's address -- reads only the seven, so none of them knows which it
-    # has. That last clause is the whole design, and it used to be false: an
-    # earlier edition of this list said "answers six... reads only these five",
-    # which was a miscount in both halves.
+    # a real category and not the port. Everything downstream -- the anchors, the
+    # marks, the session's address -- reads only the seven, so none of them knows
+    # which source it has.
     #
-    # == {#sides}, and why the question is the SOURCE's
-    #
-    # A corpus has no old side -- not "not this time", but structurally, for
-    # every file it will ever hold, because its base holds nothing. A changeset
-    # has two even when a particular file is an addition. Those are different
-    # facts, and only the first one means an editor should not build the window.
-    #
-    # Nothing downstream can tell them apart. {Changeset#old_side} answers `[]`
-    # for a file with no old path whichever kind it came from, so an editor
-    # reading `old_lines` off one opened row sees the same value in both cases
-    # -- and it has already built its panes by then, at first paint, before any
-    # row is opened. So the fact belongs to the object that knows it without
-    # reading anything, and it travels on the render that PRECEDES the layout
-    # ({Surface::Neovim#present}).
-    #
-    # The one downstream reader that needs the walk is {Partition::ByCommit},
-    # through {Changeset#commits}. It is also the one a source without a walk
-    # collides with, which is why a strategy answers `#supports?(source)` rather
-    # than being assumed to apply: the refusal names the strategy and what the
-    # source lacks, instead of a `NoMethodError` from inside a grouping.
-    #
-    # == The port hands down MODEL VALUES, not bytes
-    #
-    # {Changeset} used to hold a source's diff and parse it. That made "a source"
-    # mean "a thing with unified-diff bytes in it", so a source with no diff --
-    # a corpus of files reviewed as they stand -- could not exist without
-    # synthesizing bytes for the changeset to take apart again. So {Parser},
-    # {ChangedFile} and {Unparseable} live HERE, with the sources that have bytes
-    # to parse, and {Diffed} is the two lines of shape that turns bytes into the
-    # values the port owes.
-    #
-    # {Identity} is the same move for the ADDRESS. `Session.digest` used to
-    # compose the parts itself, which meant one method knew what every kind of
-    # source was made of; now the object that HAS the parts supplies them, and
-    # there is no type test anywhere above.
-    #
-    # == Not every source has two witnesses
-    #
-    # The port's laws split in two, and the split is forced rather than
-    # convenient. Assertions about shape, and about a source agreeing with its
-    # OWN other answers, hold for anything: a source may not name a SIDE its own
-    # {LocalBranch#file_at} cannot read. But the reversed-diff and
-    # binary-agreement cross-checks hold {LocalBranch#diff} against
-    # {LocalBranch#commits} -- two witnesses -- and a source with only one cannot
-    # satisfy them however correct it is. Those live in
-    # `"a diff-bearing review changeset source"`, which diff sources include and
-    # which runs the universal group itself.
-    #
-    # The two messages themselves went with them, and that correction is worth
-    # recording: a law calling `#diff` on a source that has none does not fail
-    # as a shape violation, it raises `NoMethodError` -- so leaving it universal
-    # would have been the port still demanding bytes while its own doc promised
-    # otherwise. It was not hypothetical; a corpus-shaped source was built and
-    # failed exactly those two examples and nothing else.
-    #
-    # == {LocalBranch#file_at}, and why a diff is not enough
-    #
-    # It is the one message about a single PATH rather than
-    # about the whole changeset, and it is here because a unified diff cannot be
-    # DRAWN from. An editor showing the old side beside the new needs the whole
-    # old file; a diff carries the hunks and three lines around them. Every
-    # consumer of that is a renderer, so the read belongs to the source that
-    # already knows where the bytes live rather than to a renderer that would
-    # have to be handed a repository to find out.
-    #
-    # == {DiffOrigin}, and why it is on the PORT
-    #
-    # It began as {GithubPr}'s alone, and its first consumer ({CLI::Review})
-    # therefore asked `respond_to?(:diff_origin)` -- a type test in duck costume,
-    # and the one place a consumer branched on WHICH source it was handed. The
-    # answer is not a defter conditional: it is that a source which never asks an
-    # API still has an answer to "where did these bytes come from", and
-    # {LocalBranch} gives it. The conditional is gone, and with it a live defect
-    # -- the guard was tested on one leg only, and an ordinary pull request
-    # rendered a fallback note with an empty reason.
-    #
-    # == Refusals here are RAISED, unlike {Forge::Gh}'s
-    #
-    # Gh's doctrine is that a refusal is a VALUE, because a landing folds over
-    # answers and journals them. This port is not that: a ref that does not
-    # resolve is the caller naming something that does not exist, which is Gh's
-    # OWN distinction on the other side of the line -- "gh answering no is data,
-    # gh not existing is a broken machine". There is no review to be had and no
-    # fold to carry a not-ok answer, so {UnknownRef} raises.
+    # Six arguments behind this port live in `docs/review.md` under "The
+    # changeset-source port": why {#sides} is the SOURCE's question and not a
+    # file's, why the port hands down model values rather than bytes, why the
+    # laws split into universal and diff-bearing halves, why {#file_at} exists
+    # when a diff does not carry enough to draw from, why {DiffOrigin} is on the
+    # port rather than under {GithubPr}, and why refusals here RAISE where
+    # {Forge::Gh}'s are values.
     module Source
       # Whether each of {Review::SIDES} rests on the BASE revision. The literals
-      # are KEYS here rather than answers, and the two sets below are selected
-      # out of the vocabulary through it: `Submit::SIDES`' shape and its reason
-      # -- a `%w[new]` written as an answer would be a second declaration of
-      # membership, free to disagree with the set that decides it, while a
-      # `fetch` against a table makes the dependency real. Add a side to
-      # {Review::SIDES} and this raises while the module body runs.
+      # are KEYS here rather than answers: a `%w[new]` written as an answer would
+      # be a second declaration of membership, free to disagree with the set that
+      # decides it, while a `fetch` against a table makes the dependency real.
+      # Add a side to {Review::SIDES} and this raises while the module body runs.
       RESTS_ON_BASE = { "old" => true, "new" => false }.freeze
       private_constant :RESTS_ON_BASE
 
@@ -180,16 +96,13 @@ module Lain
       # Where {LocalBranch#diff} came from, and why. The requirement is that a
       # fallback be REPORTED rather than silent, and this is the report: a value
       # a caller renders or journals, carrying gh's own words rather than a
-      # paraphrase of them.
-      #
-      # On the PORT rather than under {GithubPr}, where it was first written --
-      # see the module doc for what asking one source and not the other cost.
+      # paraphrase. On the PORT rather than under {GithubPr}, where it was first
+      # written -- see the module doc for what asking one source and not the
+      # other cost.
       DiffOrigin = Data.define(:origin, :reason, :message, :fell_back) do
         # The object database could answer, so no API was ever asked. Both
-        # sources reach it: {GithubPr} when the head was already fetched (or an
-        # earlier message fetched it), and {LocalBranch} always -- a branch
-        # review has no API in it at all, and "the objects are here and nobody
-        # was asked" is the same fact for both.
+        # sources reach it: {GithubPr} when the head was already fetched, and
+        # {LocalBranch} always.
         def self.already_local
           new(origin: "object_database", reason: "already_local", message: "", fell_back: false)
         end
@@ -237,28 +150,22 @@ module Lain
       # hunks. They are still files here, because dropping them would lose the
       # fact that they changed.
       #
-      # == Where the marks-derived tri-state is NOT
-      #
-      # This answers {#status} -- the diff's own fact -- and deliberately not
+      # It answers {#status} -- the diff's own fact -- and deliberately not
       # `#state`, which is what {Surface::Text} reads as the marks-derived
       # tri-state. A file value cannot know that; joining the two is the
       # session's, and putting both meanings on one message name is how a table
       # renders the wrong glyph without anything failing.
       #
       # Reopened rather than folded into the `Data.define` block, {Anchor}'s
-      # reason exactly: {STATUSES} written inside that block would scope to
-      # `Lain::Review` and `#status` would not find it, because `class_eval`
-      # resolves a constant against the block's own lexical scope and not against
-      # the class it is evaluated on. The docstring lives HERE for the second
-      # half of the same rule -- YARD keeps one per namespace and discards the
-      # rest.
+      # reason: {STATUSES} written inside that block would scope to
+      # `Lain::Review` and `#status` would not find it. The docstring lives HERE
+      # for the second half of the same rule -- YARD keeps one per namespace.
       class ChangedFile
         # The Symbol projection of {Review::FILE_STATUSES}, keyed by the String
-        # spelling that declares it. `Anchor::SIDES`' shape, with one difference
-        # that is the point of it: this projection is read by PRODUCTION code.
-        # The first cut declared the vocabulary and then never referenced it --
-        # `#status` restated four Symbol literals and a spec held the two lists
-        # equal, which is a shared vocabulary in name only.
+        # spelling that declares it -- and read by PRODUCTION code, which is the
+        # point of it. The first cut declared the vocabulary and never referenced
+        # it: `#status` restated four Symbol literals and a spec held the two
+        # lists equal, which is a shared vocabulary in name only.
         STATUSES = Review::FILE_STATUSES.to_h { |name| [name, name.to_sym] }.freeze
 
         # `fetch` makes the dependency real: drop or rename a member of
@@ -274,25 +181,21 @@ module Lain
         end
 
         # What this file costs a reader, in {Bounds::Size}'s unit: each hunk's
-        # body plus its `@@` header, and never the four-line `diff --git` /
-        # `index` / `---` / `+++` preamble, which is a constant per file and is
-        # what the file ceiling already governs.
+        # body plus its `@@` header, never the four-line preamble, which is a
+        # constant per file and is what the file ceiling already governs.
         #
         # On the FILE because a bound must be able to size a view without
         # chunking it. {Bounds} used to sum `file.hunks` itself, which is free
-        # here -- these hunks are the ones the parser already produced -- and is
-        # the whole corpus for a source whose files have not been chunked yet.
-        # So the question goes to the file, and each kind answers from what it
-        # already knows: this one counts, {LazyFile} was told.
+        # here and is the whole corpus for a source whose files are unchunked. So
+        # the question goes to the file: this one counts, {LazyFile} was told.
         #
         # @return [Integer]
         def rendered_lines = hunks.sum { |hunk| hunk.lines.size + 1 }
 
-        # Always, and for the same reason {#rendered_lines} is free here: a
-        # parser has already produced these hunks, so there is no moment at
-        # which one of these files is unread. {LazyFile} is the kind that has
-        # one, and the question goes to the file so that nothing above has to
-        # ask which kind it is holding.
+        # Always, for {#rendered_lines}' reason: a parser has already produced
+        # these hunks, so there is no moment at which one of these files is
+        # unread. {LazyFile} is the kind that has one, and the question goes to
+        # the file so nothing above has to ask which kind it is holding.
         #
         # @return [Boolean]
         def chunked? = true
@@ -304,22 +207,19 @@ module Lain
         end
       end
 
-      # What a source answers when asked what changeset it is, for addressing
-      # purposes -- ONE message and one value, not two.
+      # What a source answers when asked what changeset it is, for addressing --
+      # ONE message and one value, not two. A scheme and its parts travel
+      # together and are consumed together (`Keying.digest(scheme, parts)`), so
+      # two messages would be a data clump the single call site had to re-join.
+      # Carrying them as one value is also what lets a source name its OWN
+      # scheme: a corpus reviewed as it stands is not a diff, and an address that
+      # claimed otherwise would be forgeable across the two.
       #
-      # A scheme and its parts travel together and are consumed together
-      # (`Keying.digest(scheme, parts)`), so two messages would be a data clump
-      # that the single call site had to re-join. Carrying them as one value is
-      # also what lets a source name its OWN scheme: a corpus reviewed as it
-      # stands is not a diff, and an address that claimed otherwise would be
-      # forgeable across the two.
-      #
-      # Deeply frozen, {Event}'s rule and for {Event}'s reason: this is what an
-      # address is computed from, and an address already journalled must not be
-      # editable under the session that wrote it. `-part.to_s` is what makes that
-      # true for the members as well as the tuple -- string interpolation returns
-      # a MUTABLE String, and one of those anywhere in the array is enough for
-      # `Ractor.shareable?` to answer false.
+      # Deeply frozen, {Event}'s rule and reason: an address already journalled
+      # must not be editable under the session that wrote it. `-part.to_s` is
+      # what makes that true of the members as well as the tuple -- string
+      # interpolation returns a MUTABLE String, and one of those anywhere in the
+      # array is enough for `Ractor.shareable?` to answer false.
       class Identity
         # @return [String] `<scheme>:<hex>`, the address itself
         def digest = Keying.digest(scheme, parts)
@@ -329,12 +229,10 @@ module Lain
       # under it, and the address they compose.
       #
       # INCLUDED by each diff source rather than delegated from one to the other,
-      # and that is the point rather than a detail. {GithubPr#diff} has two
-      # producers and the API-served bytes never reach {LocalBranch}, so a
-      # `#files` delegated the way `#commits` is would parse a locally
-      # regenerated diff instead of the bytes actually served -- silently, and
-      # only on the leg nobody has observed. Reading `diff`, the includer's own
-      # message, makes that structural rather than a rule to remember.
+      # and that is the point. {GithubPr#diff} has two producers and the
+      # API-served bytes never reach {LocalBranch}, so a `#files` delegated the
+      # way `#commits` is would parse a locally regenerated diff instead of the
+      # bytes actually served -- silently, and only on the leg nobody observes.
       module Diffed
         # Hashed, never merely prefixed -- {Hunk#key}'s lesson, for the same
         # forgery reason, and this address IS journaled.
@@ -343,32 +241,25 @@ module Lain
         # @return [Array<ChangedFile>] in the diff's own (path-sorted) order
         def files = @files ||= Parser.new(diff).files.freeze
 
-        # Both, and it is HERE for the same reason {#files} is: having a diff IS
-        # having two revisions, so this is what the includer already knows
-        # rather than a fact each diff source would have to restate. It does not
-        # move with the files -- a diff whose only file is an addition is still
-        # a round with an old side, and collapsing the two is exactly the guess
-        # this message exists to remove.
+        # Both, and HERE for {#files}' reason: having a diff IS having two
+        # revisions. It does not move with the files -- a diff whose only file is
+        # an addition is still a round with an old side, and collapsing the two is
+        # exactly the guess this message exists to remove.
         #
         # @return [Array<String>] {BOTH_SIDES}
         def sides = BOTH_SIDES
 
         # The changeset's content address: base, paths, statuses and hunk keys --
-        # and deliberately NOT the head.
+        # and deliberately NOT the head. The head moves every time the author
+        # commits, and surviving that is the entire purpose of {Hunk}'s
+        # content-addressed keys; an address including it would open a new round
+        # on every amend and throw away every mark. The BASE is in it because
+        # {Marks} refuses to cross one at all. Statuses and paths are in it so a
+        # change no hunk can express -- a pure rename, a mode change, a binary
+        # blob swapped -- still moves the address.
         #
-        # The head moves every time the author commits, and surviving that is the
-        # entire purpose of {Hunk}'s content-addressed keys; an address that
-        # included it would open a new round on every amend and throw away every
-        # mark. The BASE is in it because {Marks} refuses to cross one at all, so
-        # a base change is genuinely a different review.
-        #
-        # Statuses and paths are in it so a change no hunk can express -- a pure
-        # rename, a mode change, a binary blob swapped -- still moves the address.
-        #
-        # WHICH parts, in which order, is all this decides. How they are framed
-        # and how the scheme is bound to them belong to {Review::Keying}, where
-        # both properties have specs of their own rather than a comment here
-        # claiming them.
+        # WHICH parts, in which order, is all this decides; how they are framed
+        # and how the scheme is bound to them belong to {Review::Keying}.
         #
         # @return [Identity]
         def identity = @identity ||= Identity.new(scheme: DIGEST_SCHEME, parts: identity_parts)
@@ -513,26 +404,21 @@ module Lain
         # SCRUBBED, unlike an anchor's text: a path is journalled as JSON and is
         # joined against the numstat paths this port already scrubbed, so bytes
         # that cannot survive either would break the join and the record both. A
-        # hunk heading gets the same treatment for the same reason -- it is
-        # display text, never evidence.
+        # hunk heading gets the same treatment -- display text, never evidence.
         #
-        # == The trade this makes, and what it costs
-        #
-        # A filename whose bytes are not valid UTF-8 is legal on this filesystem
-        # and git does NOT quote it (`core.quotePath` governs non-ASCII, not
-        # invalid), so `bad\xFF.rb` arrives as those bytes and leaves here as
-        # `bad<U+FFFD>.rb`. That name is journallable, and it still JOINS --
-        # {LocalBranch#text} scrubs identically, which is the half the commit walk
-        # needs -- but it is NOT a name any caller can open. `File.read` will not
-        # find it, so {Anchor#drifted?} and file-opening cannot reach that one
-        # file.
+        # The trade, and what it costs: a filename whose bytes are not valid
+        # UTF-8 is legal on this filesystem and git does NOT quote it
+        # (`core.quotePath` governs non-ASCII, not invalid), so `bad\xFF.rb`
+        # leaves here as `bad<U+FFFD>.rb`. That name is journallable and it still
+        # JOINS ({LocalBranch#text} scrubs identically), but it is NOT a name any
+        # caller can open, so {Anchor#drifted?} and file-opening cannot reach that
+        # one file.
         #
         # The journal won on purpose: the alternative is a BINARY String reaching
         # `JSON.generate`, which raises, into the NDJSON Journal where one bad
         # line breaks the parse of the whole experiment record. The fix, when
         # something needs it, is to carry the raw bytes BESIDE the scrubbed name
-        # rather than instead of it. Nothing does yet -- and pretending the cost
-        # is zero is how it would go unnoticed when something does.
+        # rather than instead of it.
         def path_text(bytes) = -bytes.dup.force_encoding(Encoding::UTF_8).scrub
 
         # {Wire.unquote}, never a private copy. {LocalBranch} decodes the NUMSTAT
@@ -544,13 +430,9 @@ module Lain
 
       # Where a chat's `implementation` review reads its diff from: this
       # repository, at whatever base the model named, against the working tree's
-      # own head.
-      #
-      # The `changesets:` seam {Tools::RequestReview} takes, and the only
-      # implementation of it in the tree -- {Tools::RequestReview::NoChangesets}
-      # is its null, and until this existed that null was the only thing any
-      # production wiring passed, so every `implementation` call in every real
-      # process refused with `no_changeset`.
+      # own head. The `changesets:` seam {Tools::RequestReview} takes, and the
+      # only implementation of it -- until this existed, every `implementation`
+      # call in every real process refused with `no_changeset`.
       #
       # A FACTORY and not a source, because `base` is the model's argument and
       # arrives per call: {LocalBranch} resolves its refs in its constructor and
@@ -558,8 +440,7 @@ module Lain
       # to guess a base -- the guess that tool's `base` field exists to refuse.
       #
       # `source` and not `call`, deliberately: {Tools::RequestReview#live} treats
-      # anything answering `call` as a thunk to be read with no arguments, so a
-      # callable seam here would be invoked as one.
+      # anything answering `call` as a thunk read with no arguments.
       class Repository
         # @param repo_root [String] the repository every git call reads
         def initialize(repo_root: Dir.pwd)
@@ -580,9 +461,9 @@ end
 
 # This file is the source/ subtree's index. LocalBranch reads UnknownRef, Commit
 # and FileStat from the module above, so it loads AFTER the module body, and
-# GithubPr reads LocalBranch's constants, so it loads after LocalBranch. Corpus
-# reads Survey, LazyFile and Bounds -- all of which load LATER than this file --
-# so every one of those names is read from a method body or a default argument.
+# GithubPr reads LocalBranch's constants. Corpus reads Survey, LazyFile and
+# Bounds -- all of which load LATER than this file -- so every one of those names
+# is read from a method body or a default argument.
 require_relative "source/local_branch"
 require_relative "source/github_pr"
 require_relative "source/corpus"

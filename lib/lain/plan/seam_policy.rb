@@ -3,29 +3,23 @@
 module Lain
   module Plan
     # What the mainline continues AS once a chunk closes. The two execution
-    # shapes ({ForkPerStep}, {LinearRewrite}) have DIFFERENT state effects, and
-    # this value says so out loud instead of hiding it -- a continuation has
-    # exactly two halves, one per effect a shape is allowed to have:
+    # shapes have DIFFERENT state effects, and this value says so out loud
+    # instead of hiding it -- one half per effect a shape is allowed to have.
     #
-    # * +head_digest+ -- the mainline Timeline to continue on. A Timeline IS a
-    #   (head digest, Store) pair over a SHARED Store, so the head digest is its
-    #   whole identity; the Store is ambient (the {Runner} holds it and every
-    #   fork shares it), which is why the timeline half rides as a digest, not a
-    #   Timeline object. That is ALSO what lets a Continuation be
-    #   +Ractor.shareable?+ (pinned by spec): a Store-bearing Timeline never is
-    #   (it holds a Monitor and a mutable Hash), so encoding the timeline half as
-    #   its digest is the only representation that keeps the whole value
-    #   shareable -- the stronger sibling of {Bench}'s "non-Timeline members are
-    #   shareable" convention. +nil+ is the empty timeline.
-    # * +pipeline+ -- the render strategy every SUBSEQUENT turn builds its
-    #   {Context} around ({Context.new}(pipeline:)); a shareable {Context::Combinator}
-    #   or a +->(workspace)+ provider (the injected-pipeline shape).
+    # +head_digest+ is the mainline to continue on. A Timeline IS a (head
+    # digest, Store) pair over a SHARED Store, so the head digest is its whole
+    # identity and the Store is ambient. That is ALSO what lets a Continuation be
+    # +Ractor.shareable?+ (pinned by spec): a Store-bearing Timeline never is (it
+    # holds a Monitor and a mutable Hash). +nil+ is the empty timeline.
     #
-    # {ForkPerStep} acts on the timeline half (advances +head_digest+, leaves
-    # +pipeline+); {LinearRewrite} acts on the pipeline half (swaps +pipeline+,
-    # leaves +head_digest+). Neither ever touches both -- if a future hybrid
-    # shape needs a third effect, this value WIDENS deliberately (a named member),
-    # never grows an options Hash (an escalation trigger).
+    # +pipeline+ is the render strategy every SUBSEQUENT turn builds its
+    # {Context} around -- a shareable {Context::Combinator} or a
+    # +->(workspace)+ provider.
+    #
+    # {ForkPerStep} acts on the timeline half, {LinearRewrite} on the pipeline
+    # half. Neither ever touches both -- if a future hybrid shape needs a third
+    # effect, this value WIDENS deliberately (a named member), never grows an
+    # options Hash (an escalation trigger).
     Continuation = Data.define(:head_digest, :pipeline) do
       def initialize(head_digest:, pipeline:)
         # The digest is frozen so the whole value is deeply immutable; the
@@ -50,17 +44,14 @@ module Lain
     #
     #   at_seam(state:, closure:) -> Continuation
     #
-    # where +state+ is the CURRENT {Continuation} (its +head_digest+ names where
-    # the just-closed chunk's turns landed -- the fork's tail -- and its
-    # +pipeline+ is the strategy that rendered them) and +closure+ is that
-    # chunk's deterministic {Closure}. The policy returns the NEXT continuation.
+    # where +state+ is the CURRENT {Continuation} -- its +head_digest+ names the
+    # just-closed chunk's tail, its +pipeline+ is the strategy that rendered it
+    # -- and +closure+ is that chunk's deterministic {Closure}.
     #
-    # This module is the documented duck, not a base class: {ForkPerStep} and
-    # {LinearRewrite} share only the message, not implementation, so depending on
-    # the message (Sandi Metz) rather than a type is the honest coupling. There
-    # is no default +at_seam+ to inherit -- a policy that did nothing would be a
-    # silent third shape, and this contract exists precisely to make the shapes
-    # explicit.
+    # A documented duck, not a base class: {ForkPerStep} and {LinearRewrite}
+    # share only the message. There is deliberately no default +at_seam+ to
+    # inherit -- a policy that did nothing would be a silent third shape, and
+    # this contract exists to make the shapes explicit.
     module SeamPolicy
     end
 

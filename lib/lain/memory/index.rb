@@ -116,8 +116,7 @@ module Lain
       end
 
       # Membership by id. Not #include?: that is Enumerable's, and it answers
-      # over the yielded Items. Store-parallel API; the consumer arrives with
-      # Recall (unit 5-3.4).
+      # over the yielded Items. Store-parallel API.
       def key?(id)
         nodes.any? { |node| node.id == id }
       end

@@ -58,23 +58,17 @@ module Lain
 
       attr_reader :lines
 
-      # Sorted HERE: "sorted by id" is Manifest's own claim, so Manifest
-      # enforces it rather than inheriting Index#each's walk order.
-      # Duplicate-id resolution (last write wins) stays the Index's job --
-      # Manifest trusts the source for LWW, never for ordering.
+      # Sorted HERE: "sorted by id" is Manifest's own claim, so Manifest enforces
+      # it rather than inheriting Index#each's walk order. The `sort_by(&:id)` is
+      # redundant over an Index (whose #each already yields id-sorted) but kept
+      # as cheap defensive ordering: the source contract is only "#maps items
+      # responding to #id and #description", and Manifest's determinism claim
+      # must not lean on an iteration-order promise the duck never made.
+      # Duplicate-id resolution (last write wins) stays the Index's job.
       #
-      # @entries/@lines look like a duplicate of the Index's items, but they
-      # are a RENDER cache, not a second copy of the same data: @entries is
-      # tokenized (Entry#tokens) and joined into one String (@reminder) --
-      # work #search and #to_reminder would otherwise redo on every call.
-      # LWW is already resolved by the source that fed #initialize, so
-      # consolidating the two would not remove a responsibility, only force
-      # the tokenize+join to happen once per render instead of once per
-      # Manifest. The sort_by(&:id) below is redundant over an Index (whose
-      # #each already yields id-sorted) but kept as cheap defensive ordering:
-      # the source contract is only "#maps items responding to #id and
-      # #description", and Manifest's determinism claim must not lean on an
-      # iteration-order promise the duck never made.
+      # The `@entries`/`@lines` pair looks like a duplicate of the Index's items
+      # but is a RENDER cache: `@entries` is tokenized and joined into one
+      # String -- work #search and #to_reminder would otherwise redo per call.
       def initialize(index)
         @entries = index.map { |item| entry_for(item) }.sort_by(&:id).freeze
         @lines = @entries.map { |entry| -"#{entry.id} | #{entry.description}" }.freeze

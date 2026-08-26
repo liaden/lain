@@ -3,51 +3,41 @@
 module Lain
   module Review
     # The sentence every review surface shows once its sidebar is up: where to
-    # read it, and the two gestures that reach it. ONE object because the
-    # banner was duplicated byte-for-byte between {CLI::Command::Survey} and
-    # {CLI::Command::Review} until it drifted from the protocol without
-    # anything failing -- two files carrying one instruction string about
-    # two different surfaces is exactly how it drifted, and it is the same
-    # failure shape each command's own class doc already names for the
-    # HEADLINE half of this sentence ("so the two surfaces cannot describe
-    # the same review differently"). This class is that promise, kept for the
-    # gesture half too.
+    # read it, and the two gestures that reach it. ONE object because the banner
+    # was duplicated byte-for-byte between {CLI::Command::Survey} and
+    # {CLI::Command::Review} until it drifted from the protocol without anything
+    # failing -- the same failure shape each command's own class doc names for the
+    # HEADLINE half of the sentence.
     #
     # `:LainReviewDone` is NOT what either surface hands back with, though it
     # reads as though it should: it is a protocol-5 EPIC command whose guard
-    # (`runtime/65_review.lua:93-98`) requires `b:lain_review_epic_slug`, which
-    # neither a survey nor a changeset review ever stamps. `:LainReviewVerdict
-    # {verdict}` (`runtime/46_sidebar.lua:188`, protocol 10) is the command
-    # that actually exists for these two surfaces.
+    # requires `b:lain_review_epic_slug`, which neither a survey nor a changeset
+    # review ever stamps. `:LainReviewVerdict {verdict}` is the command that
+    # actually exists for these two surfaces.
     class OpenedBanner
-      # The WALK is named because `<CR>` lands in the sidebar, not in the file:
-      # a review is drawn beside the human rather than under their cursor, so
-      # the marking keys the sidebar owns are the keys that work where they
-      # land. `:LainNote` reads the current buffer and wants a stamped review
-      # side, so it correctly refuses from the sidebar -- and a banner that
-      # named the command without the motions taught a sequence whose second
-      # step fails.
+      # The WALK is named because `<CR>` lands in the sidebar, not in the file: a
+      # review is drawn beside the human rather than under their cursor, so the
+      # marking keys the sidebar owns are the keys that work where they land.
+      # `:LainNote` reads the current buffer and wants a stamped review side, so
+      # it correctly refuses from the sidebar -- and a banner that named the
+      # command without the motions taught a sequence whose second step fails.
       #
-      # HOW MANY motions is per-ROUND and is why this class is handed the sides
-      # at all. The editor draws the sidebar and then the slots the round
-      # actually presents, in {Review::SIDES} order, so the file sits one hop
-      # further right for every side that precedes it: a changeset review is
-      # `sidebar | OLD | NEW` and takes two, a survey is `sidebar | NEW` and
-      # takes one. A fixed two overshot the survey into whatever else the
-      # tabpage held -- and this sentence is the DOCUMENTED way in
-      # (`planning/survey-dogfood-2026-08-25.md`), so it is followed literally.
+      # HOW MANY motions is per-ROUND, which is why this class is handed the
+      # sides. The editor draws the sidebar and then the slots the round presents,
+      # in {Review::SIDES} order, so the file sits one hop further right for every
+      # side that precedes it: a changeset review is `sidebar | OLD | NEW` and
+      # takes two, a survey is `sidebar | NEW` and takes one. A fixed two overshot
+      # the survey into whatever else the tabpage held.
       TEMPLATE = "%<headline>s\nwalk it in lain://review; <CR> opens a row beside you, " \
                  "%<walk>s reaches the file where :LainNote annotates, " \
                  ":LainReviewVerdict %<verdict>s hands it back"
 
-      # One window right, and REPEATED rather than counted. `2<C-w>l` is the
-      # same motion to nvim and a character shorter, but it is a different
-      # STRING, and the two-sided sentence has to stay byte-identical to the one
-      # a human has already been taught -- `planning/survey-dogfood-2026-08-25.md`
-      # records one being followed literally. A count would also put the only
-      # part of the motion that VARIES at the front, where a reader scanning for
-      # the keystroke they recognise finds `<C-w>l` and stops before the digit
-      # that changes what it does.
+      # One window right, and REPEATED rather than counted. `2<C-w>l` is the same
+      # motion to nvim and a character shorter, but it is a different STRING, and
+      # the two-sided sentence has to stay byte-identical to the one a human has
+      # already been taught. A count would also put the only part of the motion
+      # that VARIES at the front, where a reader scanning for the keystroke they
+      # recognise finds `<C-w>l` and stops before the digit that changes it.
       HOP = "<C-w>l"
 
       # Which side the file on disk is, asked of the table that already decides
@@ -57,13 +47,10 @@ module Lain
       # that membership, free to disagree with the one the sources answer from.
       FILE_SIDE = Source::HEAD_SIDE_ONLY.first
 
-      # `.first`, not the whole vocabulary: the banner shows ONE exemplar a
-      # human can copy verbatim, not a grammar to read -- `usage`'s `--scope`
-      # list enumerates every registered strategy because a human choosing a
-      # scope has to see them all, but a human confirming a review needs to
-      # see one working command. Deliberately order-dependent only while
-      # {VERDICTS} holds a single member (its own class doc says why); the day
-      # it does not, this becomes a real choice rather than an arbitrary one.
+      # `.first`, not the whole vocabulary: the banner shows ONE exemplar a human
+      # can copy verbatim, not a grammar to read. Deliberately order-dependent
+      # only while {VERDICTS} holds a single member; the day it does not, this
+      # becomes a real choice rather than an arbitrary one.
       #
       # @param headline [String] the caller's own -- {CLI::Survey::HEADLINE} or
       #   {CLI::Review::HEADLINE}, already resolved -- so this class describes

@@ -2,22 +2,19 @@
 
 module Lain
   module Memory
-    # A Manifest::Hit-duck search index over an injected {Embedder}: an
-    # exact (no ANN) cosine ranking over embeddings, the third boosting arm
-    # alongside Bm25 (lexical) and Graph (wikilink) -- Manifest stays the
-    # always-runs floor these only rank on top of
-    # (references/memory-and-retrieval.md #2).
+    # A Manifest::Hit-duck search index over an injected {Embedder}: an exact (no
+    # ANN) cosine ranking over embeddings, the third boosting arm alongside Bm25
+    # (lexical) and Graph (wikilink) -- Manifest stays the always-runs floor
+    # these only rank on top of (references/memory-and-retrieval.md #2).
     #
-    # Items are embedded ONCE at construction, in one batched #embed call --
-    # Bm25's build-once shape (bm25.rb:32-42), and the same reason the
-    # Embedder seam itself is batched (see embedder.rb): crossing a network
-    # or FFI boundary once per corpus, never once per item. A search query is
-    # a second, single-text batch call, never one call per candidate.
+    # Items are embedded ONCE at construction in one batched #embed call, which
+    # is Bm25's build-once shape and the reason the Embedder seam is batched at
+    # all: cross a network or FFI boundary once per corpus, never once per item.
+    # A search query is a second single-text batch call.
     #
     # Not a Rust binding candidate: cosine over a handful of item vectors is
-    # neither hot per-turn (CLAUDE.md rule 3) nor a data structure Ruby's
-    # object model makes asymptotically worse (rule 2) -- it is a handful of
-    # Array#sum calls, which is exactly the shape that stays in Ruby.
+    # neither hot per-turn (CLAUDE.md rule 3) nor a data structure Ruby's object
+    # model makes asymptotically worse (rule 2).
     class Vector
       # @param index [#to_a] a Memory::Index snapshot (or any duck yielding
       #   Items), sent, not stored -- the same contract Bm25 and Graph have.

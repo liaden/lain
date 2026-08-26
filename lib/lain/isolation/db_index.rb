@@ -14,36 +14,30 @@ module Lain
     # DECORATOR, not a `worker_env_for` override. The base's enrichment seam only
     # names extra env vars; a per-worker DB also owns a RELEASE (dropdb, index
     # return) that must compose WITH the inner backend's own release, so this
-    # wraps a whole inner {Lease} rather than subclassing {Worktree}. It layers
-    # over EITHER inner backend unchanged.
+    # wraps a whole inner {Lease} rather than subclassing {Worktree}.
     #
-    # Provisioning is the IMPERATIVE SHELL. The declarations ({Services::Postgres},
-    # {Services::Redis}) are frozen, pure value objects; the side effects
-    # (createdb, index allocation) all run here, at lease time. When a project
+    # Provisioning is the IMPERATIVE SHELL. The declarations are frozen, pure
+    # value objects; the side effects run here, at lease time. When a project
     # declares no services the loop over an empty collection provisions nothing
-    # and the lease is the inner one, enriched with no vars -- a code-only lease
-    # by an empty enumeration, not a nil check.
+    # -- Null-Object by an empty enumeration, not a nil check.
     #
     # CREDENTIALS STAY IN THE LEASE. The injected URLs live only in the leased
-    # WorkerEnv (sent-not-stored, like {Workspace}); they never reach a turn's
-    # content or a digest. The journalable identity of a provisioned service is
+    # WorkerEnv -- sent, not stored -- and never reach a turn's content or a
+    # digest. The journalable identity of a provisioned service is
     # {Provisioned#service_name} plus the worker key, never its URL.
     class DbIndex
       # A refusal, surfaced LOUDLY -- the strategy never hands back a lease that
-      # silently shares a database or wraps onto a used Redis index. Two causes: a
-      # `createdb` collision with a pre-existing database, or Redis DB-index pool
-      # exhaustion. Named per the error-taxonomy convention, next to the backend
-      # that raises it (mirrors {Worktree::Refused}).
+      # silently shares a database or wraps onto a used Redis index. Two causes:
+      # a `createdb` collision with a pre-existing database, or Redis DB-index
+      # pool exhaustion.
       class Refused < Error; end
 
-      # One provisioned service's outcome: the env var it injects, the URL that
-      # var takes, and the release that reclaims it. `service_name` is the
-      # journalable identity -- paired with the worker key, NEVER the URL.
+      # One provisioned service's outcome. `service_name` is the journalable
+      # identity, paired with the worker key and NEVER the URL.
       Provisioned = Data.define(:service_name, :env_var, :url, :release)
 
-      # The lease-time imperative capabilities a service provisions against: run a
-      # command, and claim/release a Redis DB-index from the shared pool. This is
-      # the imperative shell the frozen declarations orchestrate but never embody.
+      # The lease-time imperative capabilities a service provisions against: the
+      # shell the frozen declarations orchestrate but never embody.
       class Provisioner
         def initialize(worker_key:, shell_out_factory:, pool:)
           @worker_key = worker_key
@@ -64,10 +58,9 @@ module Lain
       end
 
       # The Redis DB-index allocator, shared across every worker one backend
-      # leases. Indices run 1..(max-1) -- index 0 is the reserved default a worker
-      # draws OFF of. Serialized so concurrent acquires never hand two workers one
-      # index, and loud on exhaustion (the card's escalation: never wrap onto a
-      # used index).
+      # leases. Indices run 1..(max-1) -- index 0 is the reserved default a
+      # worker draws OFF of. Serialized so concurrent acquires never hand two
+      # workers one index, and loud on exhaustion: never wrap onto a used index.
       class Pool
         def initialize
           @claimed = Set.new
@@ -93,8 +86,8 @@ module Lain
       # @param services [Enumerable<#provision>] the declared services ({Services})
       # @param inner [#acquire] the backend whose lease this enriches ({Null}/{Worktree})
       # @param paths [Paths] supplies the per-worker DB-name key via {Paths#project_hash}
-      # @param shell_out_factory [#call] builds the subprocess runner, injected as
-      #   a factory exactly as {Worktree} and {Tools::Bash} do, so a spec substitutes it
+      # @param shell_out_factory [#call] builds the subprocess runner, a factory
+      #   exactly as {Worktree} takes one, so a spec substitutes it
       def initialize(services:, inner: Null.new, paths: Paths.new,
                      shell_out_factory: Mixlib::ShellOut.public_method(:new))
         @services = services
@@ -104,9 +97,8 @@ module Lain
         @pool = Pool.new
       end
 
-      # Lease the inner backend, provision every declared service for this worker,
-      # and hand back a lease whose WorkerEnv carries the inner cwd plus the
-      # service URLs, and whose release reclaims the services then the inner lease.
+      # The lease's WorkerEnv carries the inner cwd plus the service URLs, and
+      # its release reclaims the services then the inner lease.
       # @param worker_id [Object] keyed through {Paths#project_hash} into the DB-name hash
       # @return [Lease]
       # @raise [Refused] on a createdb collision or Redis pool exhaustion
@@ -117,17 +109,16 @@ module Lain
                   on_release: -> { release(provisioned, base) })
       rescue StandardError
         # provision_all rolls back the SERVICES it provisioned; the inner lease
-        # it already acquired is ours to reclaim here, or a Worktree inner leaks a
-        # checkout on every failed acquire.
+        # is ours to reclaim here, or a Worktree inner leaks a checkout on every
+        # failed acquire.
         base&.release
         raise
       end
 
       private
 
-      # Provision each service in order; on ANY failure, roll back what already
-      # provisioned (the accumulator so far) so a failed acquire leaks no
-      # database or held index.
+      # On ANY failure, roll back the accumulator so far, so a failed acquire
+      # leaks no database and no held index.
       def provision_all(worker_key)
         context = Provisioner.new(worker_key:, shell_out_factory: @shell_out_factory, pool: @pool)
         @services.each_with_object([]) do |service, provisioned|
@@ -138,9 +129,8 @@ module Lain
         end
       end
 
-      # Undo a partial acquire. Secondary release errors are swallowed on purpose
-      # -- the ORIGINAL provisioning failure is the one worth raising, and a best-
-      # effort cleanup must not mask it.
+      # Secondary release errors are swallowed on purpose: the ORIGINAL
+      # provisioning failure is the one worth raising.
       def roll_back(provisioned)
         provisioned.each do |one|
           one.release.call
@@ -154,11 +144,11 @@ module Lain
         WorkerEnv.new(cwd: worker_env.cwd, env: worker_env.env.merge(additions))
       end
 
-      # Reclaim every service INDEPENDENTLY -- a raising teardown (a failing
-      # dropdb) must not abort the loop and strand its siblings (a held Redis
-      # index would leak for the process lifetime). Every teardown is attempted,
-      # failures are aggregated, and the first is re-raised loudly afterward; the
-      # inner lease is ALWAYS released in the ensure, even on that re-raise.
+      # Reclaim every service INDEPENDENTLY: a raising teardown (a failing
+      # dropdb) must not abort the loop and strand its siblings, since a held
+      # Redis index would leak for the process lifetime. Every teardown is
+      # attempted and the first failure is re-raised afterward; the inner lease
+      # is ALWAYS released in the ensure, even on that re-raise.
       def release(provisioned, base)
         failures = provisioned.filter_map { |one| release_error(one) }
         raise failures.first unless failures.empty?

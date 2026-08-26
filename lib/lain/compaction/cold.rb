@@ -3,32 +3,28 @@
 module Lain
   module Compaction
     # WHETHER the prompt cache is cold, kept apart from {Need} (whether a
-    # compaction is warranted at all) and from any later scheduling policy
-    # (`cache-aware-compaction.md`'s soft-defer/hard-cap policy, not
-    # built yet) that decides whether a *needed* compaction should wait for a
-    # cold cache or run anyway now. Coldness is two independent signals,
-    # not one -- idle time alone is a GUESS (a provider's TTL is nominal, not
-    # a guarantee the server actually evicted the entry), and
-    # `cache_read_input_tokens == 0` alone cannot tell "genuinely cold" apart
-    # from "first turn ever, nothing was written to cache yet." So
-    # idle-past-TTL only raises a PENDING mark; the very next response's
-    # cache-read either CONFIRMS it (journaled) or CANCELS it -- a hit proves
-    # the cache was warm the whole time, so the idle clock's guess was wrong.
+    # compaction is warranted at all) and from the scheduling policy that
+    # decides whether a *needed* compaction waits for a cold cache.
+    #
+    # Coldness is two independent signals, not one. Idle time alone is a GUESS
+    # -- a provider's TTL is nominal, not a guarantee the server evicted the
+    # entry -- and `cache_read_input_tokens == 0` alone cannot tell "genuinely
+    # cold" from "first turn ever, nothing written to cache yet". So
+    # idle-past-TTL raises only a PENDING mark, and the next response's
+    # cache-read either CONFIRMS it or CANCELS it: a hit proves the cache was
+    # warm the whole time.
     #
     # A provider whose `cache_profile` carries no real TTL -- an
-    # OpenAI-compatible arm with nothing to name, or Ollama's own
+    # OpenAI-compatible arm with nothing to name, or Ollama's
     # `NO_CACHING_PROFILE` (`ttl: 0`) -- has nothing for idle time to compare
-    # against, so {#idle!} is a no-op for it; {#observe} falls back to the
-    # `cache_read == 0` signal ALONE, confirming cold on every zero-read
-    # response instead of waiting on a pending mark idle timing could never
-    # set for it in the first place. Assuming Anthropic's sliding-TTL
+    # against, so {#idle!} is a no-op and {#observe} falls back to the
+    # `cache_read == 0` signal ALONE. Assuming Anthropic's sliding-TTL
     # semantics for a provider that has none would mean this detector simply
     # never fires for that arm.
     class Cold
-      # One journaled record: which path confirmed the cache cold.
-      # `:idle_confirmed` means idle-past-TTL was corroborated by a zero
-      # cache-read; `:signal_only` means a TTL-less provider's zero
-      # cache-read confirmed it on its own (see the class comment).
+      # Which path confirmed the cache cold: `:idle_confirmed` for
+      # idle-past-TTL corroborated by a zero cache-read, `:signal_only` for a
+      # TTL-less provider's zero cache-read confirming on its own.
       REASONS = %i[idle_confirmed signal_only].freeze
 
       CacheColdConfirmed = Data.define(:reason) do
@@ -60,37 +56,27 @@ module Lain
       # @return [Boolean] the cache is CONFIRMED cold
       def cold? = @cold
 
-      # The idle-time signal: `idle_seconds` is the caller's own measurement
-      # of time since the cache was last touched (Journal ts deltas -- the
-      # same reading {StatusFeed#cache_deadline} slides forward off a
-      # {Telemetry::TurnUsage}, taken here as elapsed seconds instead). A
-      # no-op for a TTL-less provider (see the class comment): nothing here
-      # ever raises a pending mark it has no TTL to compare against.
+      # The idle-time signal. A no-op for a TTL-less provider: nothing here
+      # raises a pending mark it has no TTL to compare against.
       #
-      # @param idle_seconds [Numeric]
+      # @param idle_seconds [Numeric] the caller's own measurement of time
+      #   since the cache was last touched
       # @return [void]
       def idle!(idle_seconds)
         @pending = true if ttl? && idle_seconds > @ttl
       end
 
-      # The response signal, fed every model response's usage -- a
-      # {Telemetry::TurnUsage} (or anything answering `#usage` the same way,
-      # matching {StatusFeed#slide_cache_deadline}'s own duck) or its nested
-      # `usage` Hash directly. The STRING-keyed bracket read
-      # (`usage["cache_read_input_tokens"]`) happens INSIDE this method, on
-      # purpose: `TurnUsage#usage` is `Canonical.normalize`d wire form
-      # (String keys only), and a caller who extracted the count themselves
-      # could reach for `usage[:cache_read_input_tokens]` (Symbol) and get a
-      # silent `nil` -- which reads as "zero" and confirms cold on a WARM
-      # turn. Centralizing the read here is what makes that mistake
-      # impossible to make at a call site (see cold_spec.rb's real-TurnUsage
-      # examples, which pin the String-key contract against Canonical's
-      # actual normalization, not a hand-rolled Hash).
+      # The response signal, fed every model response's usage. The STRING-keyed
+      # read happens INSIDE this method on purpose: `TurnUsage#usage` is
+      # `Canonical.normalize`d wire form (String keys only), and a caller who
+      # extracted the count themselves could reach for
+      # `usage[:cache_read_input_tokens]` and get a silent `nil` -- which reads
+      # as zero and confirms cold on a WARM turn.
       #
       # A zero read confirms cold: a pending idle mark on a TTL-bearing
-      # provider, or, TTL-less, on its own. A positive read cancels a
-      # pending OR already-confirmed mark, because a hit means the cache is
-      # warm right now regardless of what idle time guessed.
+      # provider, or, TTL-less, on its own. A positive read cancels a pending
+      # OR already-confirmed mark, because a hit means the cache is warm right
+      # now regardless of what idle time guessed.
       #
       # @param turn_usage [#usage, Hash] a {Telemetry::TurnUsage} (or same
       #   duck) or its `usage` Hash directly

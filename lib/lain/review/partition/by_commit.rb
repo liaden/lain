@@ -18,24 +18,22 @@ module Lain
       # answers: {Source::Commit} carries a numstat, not a per-commit diff. Real
       # hunk-level provenance would need a fifth message on the port.
       #
-      # == What a consumer may and may not claim about a group
-      #
-      # A group means "this commit is the LAST in the range to touch these files,
-      # and here are their net hunks". It does not mean "this commit did this",
-      # and one case makes the difference stark rather than academic: with a
-      # merge in the range, `--diff-merges=first-parent` re-reports everything
-      # the merge brought in, so the merge's numstat names the side branch's
-      # files too and last-writer-wins hands them ALL to the merge. The commit
-      # that actually authored a side-branch file then shows an EMPTY group.
+      # WHAT A CONSUMER MAY AND MAY NOT CLAIM ABOUT A GROUP. It means "this commit
+      # is the LAST in the range to touch these files, and here are their net
+      # hunks". It does not mean "this commit did this", and one case makes the
+      # difference stark: with a merge in the range,
+      # `--diff-merges=first-parent` re-reports everything the merge brought in,
+      # so the merge's numstat names the side branch's files too and
+      # last-writer-wins hands them ALL to the merge. The commit that actually
+      # authored a side-branch file then shows an EMPTY group.
       #
       # Empty groups for an empty commit or an add-then-delete pair are honest.
       # An empty group for real work absorbed by a merge is not, and it cannot be
       # fixed from inside this object: telling a merge from an ordinary commit
-      # needs a parent count, and {Source::Commit} carries sha, subject, body and
-      # numstat with no parents. That is a port change. Until then {Commit}
-      # keeps `numstat` -- the commit's OWN figure, which a merge does not steal
-      # -- so a sidebar that needs "what did this commit do" has something true
-      # to read. There is a spec pinning the behaviour, not endorsing it.
+      # needs a parent count, and {Source::Commit} carries none. That is a port
+      # change. Until then {Commit} keeps `numstat` -- the commit's OWN figure,
+      # which a merge does not steal. There is a spec pinning the behaviour, not
+      # endorsing it.
       class ByCommit
         NAME = "commits"
 
@@ -46,26 +44,22 @@ module Lain
         # what git reported IT changed.
         #
         # The line accounting comes off the numstat and ignores the files it is
-        # handed, which is the whole reason a detail may answer at all: a
-        # commit's own figure is not its share of the cumulative diff, and
+        # handed, which is the whole reason a detail may answer at all: a commit's
+        # own figure is not its share of the cumulative diff, and
         # {Partition::Undetailed}'s hunk count would quietly replace one with the
         # other. `numstat` stays the frozen `Array<Source::FileStat>` it is --
         # shadowing that name with an aggregate is the defect a review panel
-        # found, since a double would read as satisfied and the real object
-        # would raise.
+        # found, since a double would read as satisfied and the real object would
+        # raise.
         #
-        # A binary file's stats are nil rather than 0 -- git spells it `-` for
-        # exactly that reason -- so they are skipped in the sums, and
-        # {#binaries} says how many were. Nothing RENDERS that count yet, so an
-        # all-binary commit still shows `+0 -0`; the number is honest and the
-        # card that draws it has not been written.
+        # A binary file's stats are nil rather than 0, so they are skipped in the
+        # sums and {#binaries} says how many were. Nothing RENDERS that count yet.
         #
-        # {#named} is what a refusal calls the group, and it is deliberately
-        # LONGER than the heading: a sidebar has 40 columns and wants the
-        # message, while a reader told their review is too large needs something
-        # they can `git show`. Subjects repeat (`wip`, `fixup!`,
-        # `Merge branch 'main'`) and `--allow-empty-message` makes one blank, so
-        # a subject alone is neither lookup-able nor always non-empty.
+        # {#named} is what a refusal calls the group, deliberately LONGER than the
+        # heading: a sidebar has 40 columns and wants the message, while a reader
+        # told their review is too large needs something they can `git show`.
+        # Subjects repeat and `--allow-empty-message` makes one blank, so a
+        # subject alone is neither lookup-able nor always non-empty.
         Commit = Data.define(:sha, :subject, :body, :numstat) do
           def added(_files) = total(:added)
           def deleted(_files) = total(:deleted)

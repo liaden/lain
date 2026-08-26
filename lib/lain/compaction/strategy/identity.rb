@@ -8,19 +8,16 @@ module Lain
       # the monoid unit law rather than an arbitrary check, and it is what makes
       # this the control arm every comparison of compaction policies needs.
       #
-      # It is a strategy and not a `nil` the derivation branches on -- the same
-      # role {Sink::Null} and {Context::Identity} play. Nobody writes
-      # `if strategy`.
+      # A strategy and not a `nil` the derivation branches on -- the same role
+      # {Sink::Null} and {Context::Identity} play.
       #
       # Purity is declared on {#propose_ranges} and not on `#blocks`, because
-      # those are different claims and this object only makes one of them: it
-      # proposes no ranges, so it is never asked to collapse one, and inheriting
-      # the loud refusal is the honest answer to a question it cannot be asked in
-      # the first place.
+      # those are different claims and this object makes only one: it proposes
+      # no ranges, so it is never asked to collapse one, and inheriting the loud
+      # refusal is the honest answer to a question it cannot be asked.
       class Identity < Base
-        # It holds nothing, so the whole of its construction is the freeze every
-        # value object repeats (see {Lain::Freezable}). Not on {Base}, for the
-        # reason {Elide} states.
+        # It holds nothing, so the whole of its construction is the freeze. Not
+        # on {Base}, for the reason {Elide} states.
         prepend Freezable
 
         include Algebra::Pure

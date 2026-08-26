@@ -3,17 +3,13 @@
 module Lain
   module Telemetry
     module Carriers
-      # A provider-wait record must land on one of the two outcomes a queued
-      # caller can have, name the endpoint it queued for, and carry a wait
-      # figure exactly when it completed one -- so a refusal can never be
-      # written as though it were a wait that finished, which is the very
-      # distinction the record exists to make.
+      # A wait figure is carried exactly when one completed, so a refusal can
+      # never be written as though it were a wait that finished.
       #
-      # `resolution_seconds` is guarded hardest, because it is the field the
-      # record's honesty rests on. It went unvalidated once, and a nil arrived
-      # as `0.0` -- a record claiming the wait was measured EXACTLY, which is
-      # the single misreading the field exists to prevent. Zero is refused for
-      # that reason and not merely for being falsy.
+      # `resolution_seconds` is guarded hardest, because the record's honesty
+      # rests on it: unvalidated, a nil arrived as `0.0` -- a record claiming
+      # the wait was measured EXACTLY, the single misreading the field exists to
+      # prevent. Zero is refused for that reason, not merely for being falsy.
       class ProviderWait < Declarative::Carrier
         attribute :kind
         attribute :endpoint
@@ -44,47 +40,35 @@ module Lain
     # journals nothing at all. That is what keeps this off the "thousands of
     # records nobody reads" path without anybody picking a threshold.
     #
-    # `endpoint` is the RESOLVED endpoint, not the flag that produced it, for
-    # {Provider::Admission}'s own reason -- one `--api-base` serves every tier,
-    # so only the resolved string tells a hosted turn from a local one. It is
-    # also the CANONICAL spelling of that server rather than the caller's, since
-    # {Provider::Admission.for} canonicalises before it builds and `#endpoint`
-    # reports what the gate was keyed on: a caller that said
-    # `http://127.0.0.1:11434` journals `http://localhost:11434`. That is the
-    # property this field needs, not an accident of it -- `endpoint` is what a
-    # report sums a server's waits over, and two spellings of one ollama must
-    # not become two rows. It matches the endpoint {Provider::Admission::Busy}
-    # names, so a refusal message and a record agree.
+    # `endpoint` is the RESOLVED endpoint, not the flag that produced it: one
+    # `--api-base` serves every tier, so only the resolved string tells a hosted
+    # turn from a local one. It is also the CANONICAL spelling -- a caller that
+    # said `http://127.0.0.1:11434` journals `http://localhost:11434` -- which
+    # is the property this field needs, since a report sums a server's waits
+    # over it and two spellings of one ollama must not become two rows.
     #
     # == `waited_seconds` is a reading, not a measurement
     #
     # Admission learns a slot is free only when a waiter next wakes, so the
-    # figure is quantised to the poll interval: measured 0.0501s reported
-    # against a ~0.040s true queue. `resolution_seconds` travels beside it and
-    # names that granularity, so a reader can see that 0.05 against a 0.05
-    # resolution means "queued at all" rather than "queued for 50ms" -- the
-    # record refuses to present a quantised reading as a measurement by making
-    # its resolution unskippable, and its {Carriers::ProviderWait} carrier is what
-    # makes that a guarantee rather than a convention. For the same reason the
-    # wait is rounded to milliseconds: digits below the resolution are noise
-    # dressed as precision, and an NDJSON line a human scans is worse for
-    # carrying them.
+    # figure is quantised to the poll interval: measured 0.0501s against a
+    # ~0.040s true queue. `resolution_seconds` travels beside it and names that
+    # granularity, so 0.05 against a 0.05 resolution reads as "queued at all"
+    # rather than "queued for 50ms". The wait is rounded to milliseconds for the
+    # same reason: digits below the resolution are noise dressed as precision.
     #
-    # The DISTINCTION is exact even though the magnitude is not -- a caller that
-    # took a slot on its first attempt never reads the clock at all
-    # ({Provider::Admission::NO_WAIT}) -- which is what lets the emitter decide
-    # "queued or not" without inventing a threshold.
+    # The DISTINCTION is exact even though the magnitude is not, because a
+    # caller that took a slot on its first attempt never reads the clock at all
+    # -- which is what lets the emitter decide "queued or not" without inventing
+    # a threshold.
     #
-    # `in_flight` is how many callers were inside the endpoint when the record
-    # was cut, so a report can tell one queued caller behind a single holder
-    # from a genuinely saturated server. Width is deliberately NOT carried: it
-    # is constant per endpoint for a process's life, and
-    # {Provider::Admission::Null#width} is `Float::INFINITY`, which is not JSON.
+    # `in_flight` is how many callers were inside when the record was cut, so a
+    # report can tell one queued caller behind a single holder from a genuinely
+    # saturated server. Width is deliberately NOT carried: it is constant per
+    # endpoint for a process's life, and {Provider::Admission::Null#width} is
+    # `Float::INFINITY`, which is not JSON.
     #
-    # Emitted by {Provider::Admission::Journal}, the Journal-duck decorator that
-    # wraps ANY admission's `enter`/`try_enter` -- never by an admission itself,
-    # which stays journal-ignorant, exactly as {Isolation::Journal} keeps every
-    # isolation backend.
+    # Emitted by {Provider::Admission::Journal}, never by an admission itself,
+    # which stays journal-ignorant.
     ProviderWait = Data.define(:kind, :endpoint, :waited_seconds, :resolution_seconds, :in_flight) do
       include Journalable
 

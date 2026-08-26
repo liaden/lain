@@ -2,46 +2,33 @@
 
 module Lain
   module Tools
-    # Tier 1 (structured): the in-agent composition primitive. Given a skill name
-    # (and optional args), it RENDERS that skill's scaffold via {Skill::Renderer}
-    # and returns the finished markdown AS ITS tool_result -- so the skill's
-    # guidance becomes the next thing the SAME agent reads. It is a CONTINUATION,
-    # not a spawn: no child Agent, no fresh Timeline, no `you>` prompt. (The
-    # repl's `@role/skill` surface -- a real delegation -- is a different seam;
-    # this one is what a mid-loop agent calls to pull a skill's scaffold into its
-    # own context.)
+    # Tier 1 (structured): the in-agent composition primitive. It RENDERS a
+    # skill's scaffold and returns the markdown AS ITS tool_result, so the
+    # guidance becomes the next thing the SAME agent reads. A CONTINUATION, not
+    # a spawn: no child Agent, no fresh Timeline, no `you>` prompt.
     #
-    # Rendering text has no egress and mutates nothing, so it is tier 1 and needs
-    # no approval gate (the default). A skill that does not exist, or a static
-    # include cycle, is reported as an error {Tool::Result} -- never a raise --
-    # so the loop reads the problem and continues.
+    # Rendering text has no egress and mutates nothing, so it is tier 1 and
+    # needs no approval gate. An unknown skill or a static include cycle is
+    # reported as an error {Tool::Result}, never a raise.
     #
-    # == The dispatch-time backstop (a per-run invocation BUDGET, not a depth)
+    # == The dispatch-time backstop: a per-run invocation BUDGET, not a depth
     #
     # A rendered scaffold can itself say "call run_skill ...", so the model can
-    # read a scaffold, call run_skill, read another, call again -- unbounded
-    # recursion the render-time {Prompt::CircularSlot} guard cannot see, because
-    # each render finishes and returns before the next call is even made. This is
-    # distinct from a static include cycle: it is a chain of SEPARATE dispatches,
-    # not one render.
+    # recurse without bound in a way the render-time {Prompt::CircularSlot}
+    # guard cannot see -- each render finishes and returns before the next call
+    # is made, so it is a chain of SEPARATE dispatches rather than one render.
     #
-    # The bound lives HERE, on the tool instance, set at construction and never
-    # threaded through session state. It is deliberately NOT a nesting depth like
-    # {Tools::Subagent}'s `max_depth`: that ceiling DECREMENTS into a per-child
-    # copy of the tool, so N sibling spawns never exhaust it (true nesting).
-    # run_skill has no child and no toolset copy -- its "recursion" is just
-    # repeated calls to the ONE instance in the ONE agent's toolset, with no
-    # return signal to count down on. So the honest bound is a cumulative,
-    # cross-skill, never-reset per-run invocation COUNT against `max_invocations`:
-    # every call is charged, whatever skill, and past the budget the next call
-    # refuses (an is_error Result) doing no work. That still satisfies the AC --
-    # a self-calling scaffold cannot recurse without bound -- but it is a session
-    # QUOTA, so the refusal says "budget", not "depth".
+    # Deliberately NOT a nesting depth like {Tools::Subagent}'s `max_depth`:
+    # that ceiling DECREMENTS into a per-child copy of the tool, so N sibling
+    # spawns never exhaust it. run_skill has no child and no toolset copy, so
+    # its "recursion" is repeated calls to the ONE instance with no return
+    # signal to count down on. The honest bound is therefore a cumulative,
+    # cross-skill, never-reset per-run COUNT -- a session QUOTA, which is why
+    # the refusal says "budget" and not "depth".
     #
-    # This is a belt-and-suspenders SAFETY NET, not the primary cap: {Agent::Budget}
-    # (turns/tokens) is what actually stops a runaway self-calling loop. So the
-    # default is set well above realistic legitimate composition and only trips on
-    # a genuine runaway.
+    # A belt-and-suspenders SAFETY NET, not the primary cap: {Agent::Budget} is
+    # what actually stops a runaway self-calling loop, so the default sits well
+    # above realistic composition and trips only on a genuine runaway.
     class RunSkill < Tool
       # The wire shape: the skill to render, and the concrete input it operates
       # on. `args` is optional -- an argless invocation is the bare scaffold.
@@ -55,11 +42,8 @@ module Lain
 
       input_model Input
 
-      # The per-run invocation budget, set well ABOVE realistic legitimate
-      # composition -- this is the runaway backstop, not a working limit; a
-      # legitimate multi-skill session never approaches it, and {Agent::Budget}
-      # (turns/tokens) is the primary cap on a self-calling loop. Named so a
-      # caller wiring the tool can raise or lower it in one readable line.
+      # Well ABOVE realistic composition: the runaway backstop, not a working
+      # limit. Named so a caller wiring the tool can move it in one line.
       MAX_INVOCATIONS = 64
 
       def initialize(renderer:, max_invocations: MAX_INVOCATIONS)
@@ -87,19 +71,16 @@ module Lain
         @invocations += 1
         Tool::Result.ok(expand(input))
       rescue Lain::Error => e
-        # An unknown skill ({Skill::Catalog::Unknown}), a static include cycle
-        # ({Prompt::CircularSlot}), or any other named composition failure: the
-        # model asked a reasonable question and gets an answer it can act on, so
-        # the loop continues. A genuine bug (a NoMethodError, say) is NOT a
+        # A named composition failure gets an answer the model can act on, so
+        # the loop continues. A genuine bug -- a NoMethodError, say -- is NOT a
         # Lain::Error and still propagates to the handler's gate-3 conversion.
         Tool::Result.error(e.message)
       end
 
       private
 
-      # Mirrors {Middleware::SkillDispatch#expand}: the rendered scaffold, then
-      # the caller's args verbatim after a blank line; an argless call is the
-      # bare scaffold with no trailing blank.
+      # Mirrors {Middleware::SkillDispatch#expand}: an argless call is the bare
+      # scaffold with no trailing blank.
       def expand(input)
         scaffold = @renderer.render(input.name)
         args = input.args.to_s

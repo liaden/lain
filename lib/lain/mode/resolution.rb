@@ -2,96 +2,58 @@
 
 module Lain
   class Mode
-    # The one place a posture's declared symbols become objects: a capability
-    # set, an approval policy, and the name of a snapshot scope, resolved
-    # together against the collaborators a session actually holds.
+    # The one place a posture's declared symbols become objects, resolved
+    # against the collaborators a session actually holds. Pure: it wires
+    # nothing, mutates nothing, touches no filesystem.
     #
-    # Pure, and that is the whole design. Resolving takes a mode, a BASE
-    # toolset and a queue, and answers a value; it wires nothing, mutates
-    # nothing, and touches no filesystem. Everything that has to be plugged in
-    # lives one card up, at the switchboard.
+    # {Toolset} attenuation is monotone, so a resolution may never build on the
+    # toolset a previous posture left behind. It always starts from the
+    # session's BASE set, which makes leaving `plan` an ordinary resolution
+    # rather than a re-grant and keeps monotonicity an unbroken claim about
+    # every Toolset that exists.
     #
-    # == Why `base:` is named that, and why re-resolving is not a widening
+    # It does not decide WHETHER a posture attenuates -- {Posture#attenuate}
+    # owns that, and a second `toolset.only(...)` here would be the copy that
+    # goes on granting after the list changes. Nor does it construct a snapshot
+    # scope: only {Workspace::Snapshot} knows the root and the moment the
+    # session began, so the `snapshot_scope` stays an inert Symbol all the way
+    # down. Frozen but NOT `Ractor.shareable?`, unlike the rest of the mode
+    # family: it holds live collaborators on purpose.
     #
-    # {Toolset} attenuation is monotone -- a dropped capability cannot be
-    # regained by the holder -- so a resolution may never build on the toolset
-    # a previous posture left behind. It always starts from the session's base
-    # set, which makes leaving `plan` an ordinary resolution rather than a
-    # re-grant, and keeps the monotonicity law an unbroken claim about every
-    # Toolset that exists. `base` says so at every call site.
-    #
-    # == The two things this object deliberately does NOT do
-    #
-    # It does not decide WHETHER a posture attenuates. {Posture#attenuate} owns
-    # that, through its {Posture::Permits} Null Object, and a second
-    # `toolset.only(...)` written here would be a copy of a rule with one home
-    # -- the copy being the one that goes on granting after the list changes.
-    #
-    # It does not construct a snapshot scope. {Workspace::Snapshot#initialize}
-    # primes the scope it is given via `#baseline(root)`, precisely so a
-    # posture's `snapshot_scope` can stay an inert Symbol the whole way down:
-    # only Snapshot knows the root and the moment the session began, so only
-    # Snapshot can prime a difference-detecting scope. Resolving one here would
-    # need a root this object has no business holding.
-    #
-    # A Resolution is frozen but is NOT `Ractor.shareable?`, unlike every other
-    # value in the mode family: it holds live collaborators on purpose. That is
-    # the line between {Mode}, which is a declaration and crosses anywhere, and
-    # this, which is a wiring answer bound to one session.
-    #
-    # == `==` DOES NOT ANSWER "did the posture change"
-    #
-    # Two resolutions of the SAME mode compare unequal under `plan` and `auto`,
-    # and equal under `manual` and `accept_edits` -- exactly backwards from what
-    # a reader expects. The asking rungs resolve to the one session queue, which
-    # is identical to itself; the other two allocate a fresh stateless
-    # {Effect::Handler::Gate::DenyAll} or `ApproveAll` per call, and `Data#==`
-    # compares those by identity. So `resolution == previous_resolution` reports
-    # "changed" on every re-resolve under half the ladder. Compare the {Mode}
-    # values, which are proper frozen values, and never these.
-    #
-    # The house fix -- hoisting the two stateless policies to shared frozen
-    # constants the way {Posture::Permits::All} does one file over -- is not
-    # available here: `lain.rb` loads `lain/mode` ten entries before
-    # `lain/effect`, so an eager `DenyAll.new` in this class body is a hard
-    # NameError at load. A follow-up ticket owns it.
+    # ⚠️ `==` DOES NOT ANSWER "did the posture change", and answers backwards
+    # from expectation: two resolutions of the SAME mode compare unequal under
+    # `plan` and `auto` and equal under `manual` and `accept_edits`. The asking
+    # rungs resolve to the one session queue, identical to itself; the other two
+    # allocate a fresh stateless gate per call, which `Data#==` compares by
+    # identity. Compare the {Mode} values, never these.
     Resolution = Data.define(:toolset, :gate_policy, :snapshot_scope)
 
     class Resolution
-      # Reopened rather than written inside a `Data.define ... do` block: constants
-      # declared there scope to the enclosing module, so `GATE_POLICIES` would
-      # land as `Lain::Mode::GATE_POLICIES` and `Unknown` as `Lain::Mode::Unknown`
-      # (the trap {Request::SYSTEM_PREFIX} documents). Keeping `.for` here too
-      # puts the factory in the same scope as the table it reads.
+      # Reopened rather than written inside a `Data.define ... do` block:
+      # constants declared there scope to the enclosing module, so
+      # `GATE_POLICIES` would land as `Lain::Mode::GATE_POLICIES` (the trap
+      # {Request::SYSTEM_PREFIX} documents).
 
-      # Raised when the gate policy cannot be resolved at all -- because the
-      # posture names one nothing declares, or because the session handed over
-      # no queue to resolve the asking rungs against. Loud rather than
-      # defaulted, and one class for both because the consequence is the same:
-      # a silently-dropped policy is an approval gate that quietly stops
-      # guarding.
+      # Loud rather than defaulted, and one class for both causes because the
+      # consequence is the same: a silently-dropped policy is an approval gate
+      # that quietly stops guarding.
       class Unknown < Error; end
 
-      # Takes the whole {Mode} and reads only `posture` from it. Deliberate: a
-      # layer that attenuates or that moves the gate is a declared possibility
-      # ({Mode::Layer}'s `alters_outcome`), and folding one in later is then a
-      # change to this method's BODY rather than to its signature and every
-      # caller. Passing `mode.posture` here instead would push that Demeter hop
-      # onto the switchboard and buy nothing.
+      # Takes the whole {Mode} and reads only `posture`: a layer that attenuates
+      # or moves the gate is a declared possibility ({Mode::Layer}'s
+      # `alters_outcome`), and folding one in later is then a change to this
+      # method's body rather than to its signature and every caller.
       #
       # @param mode [Lain::Mode] the mode this session is in
       # @param base [Lain::Toolset] the session's FULL set, never an attenuated
       #   one -- see the monotonicity note above
       # @param queue [#call] the approval policy `(effect, context) -> Boolean`
-      #   the asking rungs resolve to. Required, with no Null Object default,
-      #   and that is a ruling rather than an omission: `manual` and
-      #   `accept_edits` resolved without a queue would silently become `plan`'s
-      #   gate -- the same class -- so every tier-3 call would answer "approval
-      #   denied", no human would ever be asked, and the journal would record
-      #   the arm as `manual`. On a bench, an arm quietly degrading into a
-      #   different arm corrupts the record. `auto` and `plan` never touch it,
-      #   but "absent" being legitimate on two rungs and a wiring bug on the
-      #   other two is exactly the shape that must not be defaulted.
+      #   the asking rungs resolve to. Required, with no Null Object default:
+      #   `manual` and `accept_edits` resolved without one would silently become
+      #   `plan`'s gate -- the same class -- so every tier-3 call would answer
+      #   "approval denied", no human would be asked, and the journal would
+      #   still record the arm as `manual`. On a bench, an arm degrading into a
+      #   different arm corrupts the record.
       # @return [Resolution]
       # @raise [Lain::Toolset::UnknownTool] when the posture names a tool `base`
       #   does not hold
@@ -100,12 +62,11 @@ module Lain
       def self.for(mode:, base:, queue:)
         posture = mode.posture
         # The required keyword catches an OMITTED queue; this catches a named
-        # one that answered nil, which is what a mis-wired session actually
-        # produces. Refused for EVERY posture, not only the two that consult it:
-        # a nil that `auto` tolerates is the same wiring bug one `/mode manual`
-        # away, and refusing here is the difference between a refusal at the
-        # switchboard and a NoMethodError on `nil.call` inside the Gate at
-        # approval time. Ahead of the attenuation, so nothing has moved.
+        # one that answered nil. Refused for EVERY posture, not only the two
+        # that consult it: a nil `auto` tolerates is the same wiring bug one
+        # `/mode manual` away, and refusing here beats a NoMethodError on
+        # `nil.call` inside the Gate at approval time. Ahead of the
+        # attenuation, so nothing has moved.
         raise Unknown, format(MISSING_QUEUE, posture: posture.name) if queue.nil?
 
         new(toolset: posture.attenuate(base),
@@ -113,10 +74,9 @@ module Lain
             snapshot_scope: posture.snapshot_scope)
       end
 
-      # @raise [Unknown] naming the declared set, the same shape
-      #   {Workspace::Snapshot::Scope.fetch} and {Toolset#only} take. Reachable
-      #   only from a hand-built {Posture}, which is exactly when a reader needs
-      #   telling what the four rungs are allowed to say.
+      # @raise [Unknown] naming the declared set. Reachable only from a
+      #   hand-built {Posture}, which is exactly when a reader needs telling
+      #   what the four rungs are allowed to say.
       def self.gate_policy_for(name, queue)
         GATE_POLICIES.fetch(name) do
           raise Unknown, "unknown gate policy #{name.inspect}, expected one of #{GATE_POLICIES.keys.inspect}"
@@ -124,34 +84,23 @@ module Lain
       end
       private_class_method :gate_policy_for
 
-      # Said when the session wired no approval policy at all. Names the posture
-      # because that is what tells a reader which half of the ruling above they
-      # tripped, and names the consequence because "queue is nil" alone reads as
-      # a missing argument rather than as an arm about to become a different arm.
       MISSING_QUEUE = "cannot resolve the %<posture>s posture: `queue:` is nil, and no Null Object stands " \
                       "behind it. An asking posture resolved without a queue silently becomes plan's gate -- " \
                       "every gated call would answer \"approval denied\", no human would ever be asked, and " \
                       "the journal would still record the arm as %<posture>s."
       private_constant :MISSING_QUEUE
 
-      # Each declared gate policy as a function of the session's queue, so the
-      # queue arm is a member of the table rather than a branch beside it.
-      # {Effect::Handler::Gate::ApproveAll} and {Effect::Handler::Gate::DenyAll}
-      # are built per resolution because they hold no state; the queue is passed
-      # through untouched, since it is the session's one parking place and a
-      # copy of it would park fibers nobody is watching.
+      # Each policy as a function of the session's queue, so the queue arm is a
+      # member of the table rather than a branch beside it. The queue is passed
+      # through untouched: it is the session's one parking place, and a copy
+      # would park fibers nobody is watching.
       #
-      # Declared after the methods that read it, as {Mode::Layer} does with
-      # DECLARED: nothing above needs a forward reference.
-      #
-      # The lambdas are lambdas because this file carries real load-order debt
-      # and defers it. `lain.rb` requires `lain/mode` ten entries before
-      # `lain/effect`, so `Effect::Handler::Gate::DenyAll` does not exist when
-      # this table is built -- the obvious refactor, mapping each name straight
-      # to its policy class or to a shared frozen instance, is a hard NameError
-      # at load rather than a style preference. Wrapping each arm in a lambda
-      # moves the constant lookup to call time, which is the only reason the
-      # manifest may keep `mode` above `effect`.
+      # The arms are lambdas because `lain.rb` requires `lain/mode` ten entries
+      # before `lain/effect`, so `Effect::Handler::Gate::DenyAll` does not exist
+      # when this table is built -- mapping each name straight to its policy
+      # class or to a shared frozen instance is a hard NameError at load, not a
+      # style preference. Deferring the lookup to call time is the only reason
+      # the manifest may keep `mode` above `effect`.
       GATE_POLICIES = {
         deny_all: ->(_queue) { Effect::Handler::Gate::DenyAll.new },
         queue: ->(queue) { queue },

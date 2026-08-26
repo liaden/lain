@@ -2,34 +2,30 @@
 
 module Lain
   class Skill
-    # Composes a skill's scaffold into finished prompt bytes: it renders the
-    # shipped scaffold ONCE, fills each declared hole via {Prompt::Slots#render_skill}
-    # (the pure LEAF render), and inlines each statically-declared `include` by
-    # rendering the named skill in turn. Composition lives HERE, not in the locked
-    # binding: the Renderer holds the catalog (to resolve an include to a scaffold)
-    # and the slots (to resolve a hole to its fill); the binding stays a pure leaf
-    # that only knows how to evaluate one template. One renders, one composes --
-    # they are not two homes for the same job.
+    # Composes a skill's scaffold into finished prompt bytes: the scaffold is
+    # rendered ONCE, each declared hole filled via {Prompt::Slots#render_skill}
+    # (the pure LEAF render), each statically-declared `include` inlined by
+    # rendering the named skill in turn. Composition lives HERE, not in the
+    # locked binding: the Renderer holds the catalog and the slots, and the
+    # binding stays a pure leaf that only evaluates one template.
     #
     # == Splice, never a second ERB pass
     #
-    # A rendered hole or a rendered include is FINISHED markdown. It must never be
-    # fed back through ERB: a fragment whose OUTPUT bytes look like ERB (`<%- ...`,
+    # A rendered hole or include is FINISHED markdown and must never be fed back
+    # through ERB: a fragment whose OUTPUT bytes look like ERB (`<%- ...`,
     # `<%%`) would be re-parsed on a second pass and silently mangled --
     # `50%% off <%- code` collapses to `50%% off  code`, bytes dropped with no
-    # error. That breaks the verbatim-injection guarantee and is exactly the silent
-    # truncation the bench forbids. So the scaffold's ONE ERB pass emits an inert
-    # {PLACEHOLDER} for each hole/include, and the pre-rendered fragments are
-    # spliced in AFTERWARD in a single pass. Purity is still enforced at the
-    # legitimate first eval: an impure scaffold fails in its own render pass, an
-    # impure hole in {Prompt::Slots#render_skill} before it is ever a fragment.
+    # error. So the scaffold's ONE ERB pass emits an inert {PLACEHOLDER} per
+    # hole/include, and the pre-rendered fragments are spliced in AFTERWARD in a
+    # single pass. Purity is still enforced at the legitimate first eval: an
+    # impure scaffold fails in its own render pass, an impure hole in
+    # {Prompt::Slots#render_skill} before it is ever a fragment.
     #
     # An include cycle (A includes B includes A) is caught by a render stack and
-    # surfaced as {Prompt::CircularSlot} naming the chain -- never an infinite
-    # loop, never a silent truncation. The stack lives here rather than in the
-    # binding because each skill's scaffold renders in its OWN binding (its holes
-    # resolve against ITS slots), so the binding's per-template guard cannot see
-    # across an include; the cross-skill guard is the Renderer's.
+    # surfaced as {Prompt::CircularSlot} naming the chain. The stack lives here
+    # rather than in the binding because each skill's scaffold renders in its
+    # OWN binding (its holes resolve against ITS slots), so the binding's
+    # per-template guard cannot see across an include.
     #
     # Rendering is a pure function of the frozen catalog and frozen slots, so
     # identical inputs yield byte-identical output.
@@ -37,8 +33,7 @@ module Lain
       # The inert token the scaffold's single ERB pass emits in place of a
       # hole/include, keyed by fragment index and spliced afterward. A NUL byte
       # (0x00) cannot occur in a markdown partial, so the token can neither
-      # collide with real content nor be mistaken for an ERB tag on the
-      # scaffold's own pass.
+      # collide with real content nor be mistaken for an ERB tag.
       SENTINEL = "\u0000"
       PLACEHOLDER = /#{SENTINEL}lain-fragment:(?<index>\d+)#{SENTINEL}/
       private_constant :SENTINEL, :PLACEHOLDER
@@ -65,12 +60,12 @@ module Lain
         splice(engine.render_template(skill.scaffold, "skill/#{skill.name}"), fragments)
       end
 
-      # The scaffold's `render(name)` helper: resolve the name the scaffold
-      # declared -- a hole (front-matter `slots`) to its rendered fill, or an
-      # include (front-matter `includes`) to that skill's own composed scaffold --
-      # stash the finished fragment, and hand back an inert placeholder for the
-      # scaffold's one ERB pass to emit. A name the scaffold declared NEITHER is a
-      # loud authoring error, never a silent empty splice.
+      # The scaffold's `render(name)` helper: resolve the declared name -- a hole
+      # (front-matter `slots`) to its rendered fill, or an include (front-matter
+      # `includes`) to that skill's own composed scaffold -- stash the finished
+      # fragment, and hand back an inert placeholder for the scaffold's one ERB
+      # pass to emit. A name declared NEITHER is a loud authoring error, never a
+      # silent empty splice.
       def collector(skill, stack, fragments)
         lambda do |name|
           fragments.push(fragment_for(skill, name.to_sym, stack))
@@ -86,8 +81,8 @@ module Lain
       end
 
       # A single pass: gsub scans the rendered scaffold once, so a fragment whose
-      # own bytes happen to contain a placeholder-shaped token is never rescanned
-      # and cannot trigger a re-substitution.
+      # own bytes contain a placeholder-shaped token is never rescanned and
+      # cannot trigger a re-substitution.
       def splice(rendered, fragments)
         rendered.gsub(PLACEHOLDER) { fragments.fetch(Regexp.last_match[:index].to_i) }
       end

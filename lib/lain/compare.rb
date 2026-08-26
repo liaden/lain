@@ -165,18 +165,12 @@ module Lain
        posture_clause].join(" | ")
     end
 
-    # The posture belongs in the HEADER rather than as a per-run column, and
-    # that is a choice, not a constraint (a column appended last shifts nothing
-    # a report parser reads). It sits beside `degraded:` because it is the same
-    # KIND of fact -- what makes these runs comparable at all, guarded up front
-    # -- and not a measurement of one run the way every appendix column is. It
-    # also states one value where a column would repeat it on every row, which
-    # is the whole shape of a designed sweep: an arm fixes its posture.
+    # In the HEADER beside `degraded:` rather than as a per-run column, because
+    # it is the same KIND of fact -- what makes these runs comparable at all --
+    # and not a measurement of one run the way every appendix column is.
     #
-    # One posture when every run reads the same -- including the all-unrecorded
-    # case every pre-modes report is -- and otherwise one per run, named. An
-    # absence is stated as an absence rather than dropped: a report that omitted
-    # it would read as though the axis had been controlled for.
+    # An absence is stated as an absence rather than dropped: a report that
+    # omitted it would read as though the axis had been controlled for.
     def posture_clause
       labels = @runs.map { |run| run.posture.to_s }
       return "posture: #{labels.first}" if labels.uniq.size == 1
@@ -190,11 +184,10 @@ module Lain
       METRICS.keys.select { |key| key != :score || @runs.all?(&:graded?) }
     end
 
-    # Compare's rows are METRICS, not arms -- but the column-to-cell pairing
-    # under n/mean/median/min/max is the very one {ArmFold#row} owns, so this
-    # borrows the row and supplies its own first column. What is shared is the
-    # pairing, not the axis: this table still folds ACROSS the runs, which is why
-    # Compare is not an ArmFold (see that class's comment).
+    # Compare's rows are METRICS, not arms, but the column-to-cell pairing under
+    # n/mean/median/min/max is {ArmFold#row}'s. What is shared is the pairing,
+    # not the axis: this table still folds ACROSS the runs, which is why Compare
+    # is not an ArmFold.
     def summary_table
       rows = shown_metrics.map { |key| stat_fold.row(key, distribution(key), fmt: METRICS.fetch(key).fetch(:fmt)) }
       Table.new(headers: ["metric", *ArmFold::HEADERS.drop(1)], rows:).to_s
@@ -218,14 +211,10 @@ module Lain
   end
 end
 
-# After the class body: both reopen Compare, and neither is referenced before
-# runtime -- ArmFold appears only inside method bodies (#summary_table), so this
-# require may sit here in either order, and either child may equally be required
-# at the top. The constraint that DOES bind is in lain.rb: `lain/compare` must
-# load before `lain/bench` (:64 before :65), because Bench::Sweep resolves
-# Compare::ArmFold::HEADERS while evaluating its own COLUMNS constant. Swap those
-# two lines and the suite dies with
-# `sweep.rb: uninitialized constant Lain::Bench::Sweep::Compare`.
+# The constraint that binds is in lain.rb, not here: `lain/compare` must load
+# before `lain/bench`, because Bench::Sweep resolves Compare::ArmFold::HEADERS
+# while evaluating its own COLUMNS constant. Swap those two lines and the suite
+# dies with `sweep.rb: uninitialized constant Lain::Bench::Sweep::Compare`.
 require_relative "compare/table"
 require_relative "compare/arm_fold"
 require_relative "compare/posture"

@@ -32,12 +32,9 @@ module Lain
 
       NULL = Null.new
 
-      # Construct a fresh installer and {#guarding} it for the duration of the
-      # block -- the convenience form for a caller with no Signals instance of
-      # its own yet. A caller that already holds one (e.g. {CLI::Conductor},
-      # which must keep routing its OWN instance for the ask's duration, not a
-      # freshly constructed one) calls {#guarding} directly instead; both share
-      # this one install/yield/ensure-uninstall implementation.
+      # The convenience form, for a caller with no Signals instance of its own
+      # yet. A caller that already holds one ({CLI::Conductor} must keep
+      # routing ITS instance for the ask's duration) calls {#guarding} directly.
       #
       # @param sink [#signal] the initial routing target
       def self.guarding(sink: NULL, &block)
@@ -76,11 +73,9 @@ module Lain
         self
       end
 
-      # {#install}, yield self, {#uninstall} -- even on a raise. The one
-      # implementation of the install/yield/ensure-uninstall pattern; {.guarding}
-      # (the class method) delegates here on a freshly constructed instance,
-      # and {CLI::Conductor#guard} delegates here on its already-injected
-      # instance, so there is exactly one place this ordering is written.
+      # {#install}, yield self, {#uninstall} -- even on a raise. Both {.guarding}
+      # and {CLI::Conductor#guard} delegate here, so the ordering is written in
+      # exactly one place.
       def guarding
         install
         yield self
