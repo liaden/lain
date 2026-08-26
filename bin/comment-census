@@ -1,0 +1,665 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "prism"
+require "strscan"
+require "tmpdir"
+require "open3"
+
+# The instrument the comment sweep is measured with, and the thing that makes
+# its central claim -- "the sweep changed no code" -- a diff rather than an
+# assertion.
+#
+# Four modes:
+#
+#   census  (default)   code lines, YARD tag lines and prose comment lines,
+#                       counted separately, over the documented scope.
+#   --strip             each file with its comments removed, per language.
+#                       `--strip > before.txt`, sweep, `--strip > after.txt`,
+#                       `diff` -- an empty diff IS the no-code-changed proof.
+#   --tickets           every site citing a project-internal ticket scheme,
+#                       plus the sites the classifier will not place.
+#   --verify            proves the stripper on each file, against something
+#                       that is NOT the stripper: Ruby's real lexer, and Lua's
+#                       real compiler.
+#
+# Pure stdlib, like bin/lint-price-freshness and for the same reason: it reads
+# source as TEXT and never needs the gem, Bundler, or the compiled extension.
+#
+# WHY A COMMENT IS NOT A `#`: a `#` inside a heredoc, a regex or a string is
+# code, and so is a `--` inside a Lua long bracket. Both languages are handled
+# by something that knows the difference, because a stripper that read raw text
+# would "prove" the sweep changed nothing while quietly corrupting every
+# heredoc it touched.
+module CommentCensus
+  # The documented scope, and the only thing scanned. Kept in step with
+  # CLAUDE.md's ticket rule by spec/lain/comment_census_spec.rb, which reads
+  # the rule back out of the prose and compares: a rule wider than its
+  # enforcement is false on landing. Rust is deliberately absent -- `///` and
+  # `//!` there are doc ATTRIBUTES under `#![deny(missing_docs)]`, so deleting
+  # one is a denied lint and orphaning one is a compile error.
+  SCAN_PATHS = ["lib/", "spec/", "lib/lain/frontend/neovim/runtime/*.lua"].freeze
+
+  EXTENSIONS = { ".rb" => :ruby, ".lua" => :lua }.freeze
+
+  # A YARD tag line starts with `@` (or `@!` for a directive) once the comment
+  # marker is off. They are exempt from the density rule: they carry the
+  # skimmable shape a reader navigates by, so they are counted apart from the
+  # prose rather than argued about with it.
+  YARD_TAG = /\A\s*(?:#|-)+\s*@!?\w/
+
+  # One comment, in source-line terms. `text` is the raw comment including its
+  # marker, so a ticket report can quote the reason rather than the number.
+  Comment = Struct.new(:first_line, :last_line, :text, :range)
+
+  # A code line, a YARD tag line and a prose comment line are three different
+  # things, and the sweep's mandate treats them differently: prose is what gets
+  # judged, YARD is exempt, code is the denominator.
+  Tally = Struct.new(:code, :yard, :prose) do
+    def +(other) = Tally.new(code + other.code, yard + other.yard, prose + other.prose)
+
+    def comments = yard + prose
+
+    def self.zero = Tally.new(0, 0, 0)
+  end
+
+  # A single citation, with enough context to rewrite it in place.
+  Site = Struct.new(:path, :line, :token, :verdict, :text) do
+    def to_s = "#{path}:#{line}: #{token} -- #{text.strip[0, 120]}"
+  end
+
+  # @!attribute [r] ok?
+  #   @return [Boolean] true when stripping provably preserved the code
+  # @!attribute [r] reason
+  #   @return [String, nil] nil on success; what differed
+  # @!attribute [r] checked_with
+  #   @return [String] how the claim was established, so an UNPROVEN file reads
+  #     as unproven rather than as a pass
+  Proof = Struct.new(:ok?, :reason, :checked_with)
+
+  # Is this `<LETTER><NUMBER>` one of ours, or somebody else's?
+  #
+  # The letter alone cannot decide it. `E4` is an enhancement note of ours and
+  # `E382` is nvim's "cannot write, buftype is nofile"; `C1` is a plan ticket
+  # in twelve comments in this tree and Unicode's C1 control block in a
+  # thirteenth. A magnitude heuristic ("big numbers are nvim's") is a guess,
+  # and this classifier decides roughly 3,200 rewrites, where a false positive
+  # deletes a reader's only pointer into somebody else's documentation.
+  #
+  # So it is enumerated, and it refuses to guess:
+  #
+  #   1. an exact THIRD_PARTY token wins outright, even against a project
+  #      prefix -- this is how `E382` and `E4` sit on opposite sides of one
+  #      letter;
+  #   2. an AMBIGUOUS token -- one this tree genuinely uses both ways -- is
+  #      reported under its own heading and never swept automatically;
+  #   3. a THIRD_PARTY_PREFIX family (standards, encodings, hash names)
+  #      survives;
+  #   4. a PROJECT_SCHEME prefix is a ticket;
+  #   5. anything else is UNKNOWN. It is listed, and it fails
+  #      `--check-tickets`, so a scheme nobody has classified stops the gate
+  #      instead of being quietly swept or quietly ignored.
+  #
+  # The bias is deliberate and one-directional: where the evidence is thin the
+  # third-party reading wins, because a missed ticket is a leftover and a
+  # missed citation is a deleted fact.
+  module Classifier
+    # This repo writes `AC 1` and `FIX 3` as often as `AC1`, so a space has to
+    # be a legal separator -- but ONLY for schemes known to use one. Admitting
+    # a space generally would read `THAT 66`, `NOT 240`, `IS 23` and `HTTP 406`
+    # as citations, and `OR 4` would collide with the real `OR-4` scheme with
+    # nothing left to tell them apart. Three prefixes opt in; every other
+    # scheme needs its digits against its letters.
+    SPACED_SCHEMES = %w[AC FIX NIT].freeze
+
+    TOKEN = /(?<!\w)(?:#{SPACED_SCHEMES.join("|")}) \d{1,4}(?!\w)|(?<!\w)[A-Z]{1,4}-?\d{1,4}(?!\w)/
+
+    # nvim error codes, cited by the runtime Lua and its specs as load-bearing
+    # documentation of editor behaviour. They collide head-on with the `E`
+    # scheme, which is why they are named one by one rather than guessed at.
+    NVIM_ERRORS = %w[E21 E32 E36 E89 E94 E95 E149 E325 E326 E382 E471 E488 E492 E565 E5108 E5560].freeze
+
+    # Exact tokens that are never ours, whatever their prefix says. Every entry
+    # was read in place in this tree before being added:
+    #
+    #   C0      Unicode's C0 control block (U+0000-U+001F)
+    #   H1 H2   markdown heading levels, in the survey chunker
+    #   N-1 N-2 arithmetic -- "N stages against N-1 pipes", "1-write-N-1-reads"
+    #   U3      git's `-U3` diff context flag
+    #   Z0      the `[a-zA-Z0-9]` character class, quoted in prose
+    #   TA3     a probe script's filename
+    #   NET-1   RFC 5737's TEST-NET-1 address block
+    THIRD_PARTY_TOKENS = (NVIM_ERRORS + %w[C0 H1 H2 N-1 N-2 U3 Z0 TA3 NET-1]).to_set.freeze
+
+    # Ours AND somebody else's, in this same tree. No mechanical rule separates
+    # those readings, so the sweep is told about them by name and a human
+    # decides each one.
+    AMBIGUOUS_TOKENS = %w[C1].to_set.freeze
+
+    # Whole families that are never a project scheme. Safe as families because
+    # no project scheme shares a prefix with any of them.
+    THIRD_PARTY_PREFIXES = %w[UTF SHA MD HS RS ES ISO RFC CP BM HTTP API].to_set.freeze
+
+    # The project's own schemes: plan tickets, QA findings, enhancement notes,
+    # roadmap entries, panel rounds, acceptance criteria. There is no exempt
+    # tier -- finding numbers are in here on the human's ruling that a
+    # citation's value is ephemeral while the work is in flight, and that git
+    # history is the archive afterwards.
+    PROJECT_SCHEMES = %w[
+      A AC B C CAC CE D E F FG FIX G GG GR I M MA N NIT OM OR P PC PS R RES S SF T TL UX W
+    ].to_set.freeze
+
+    # @param token [String] the matched citation, e.g. "T15", "OM-6", "E382"
+    # @return [Symbol] :third_party, :ambiguous, :project or :unknown
+    def self.classify(token)
+      return :third_party if THIRD_PARTY_TOKENS.include?(token)
+      return :ambiguous if AMBIGUOUS_TOKENS.include?(token)
+
+      prefix = token[/\A[A-Z]+/]
+      return :third_party if THIRD_PARTY_PREFIXES.include?(prefix)
+      return :project if PROJECT_SCHEMES.include?(prefix)
+
+      :unknown
+    end
+
+    # @param text [String] one comment's text
+    # @return [Array<Array(String, Symbol)>] each citation and its verdict
+    def self.citations(text) = text.scan(TOKEN).map { |token| [token, classify(token)] }
+  end
+
+  # Ruby comments, found by the real parser.
+  #
+  # Prism answers both questions the stripper needs, and nothing short of a
+  # parser can answer either: where the comments are (so a `#` in a heredoc, a
+  # regex, a string or a symbol is never mistaken for one), and which lines lie
+  # wholly INSIDE a literal (so a blank line in a heredoc body is not dropped
+  # as spacing -- it is part of the string's value, and dropping it changes the
+  # code).
+  module Ruby
+    # Nodes whose interior is literal text.
+    LITERAL = /(?:String|Symbol|RegularExpression|MatchLastLine)Node\z/
+
+    # @param source [String] the file's contents
+    # @return [Array<Comment>]
+    def self.comments(source)
+      Prism.parse(source).comments.map do |comment|
+        at = comment.location
+        Comment.new(at.start_line, at.end_line, comment.slice, at.start_offset...at.end_offset)
+      end
+    end
+
+    # @param source [String] the file's contents
+    # @return [Set<Integer>] lines whose blankness is load-bearing
+    def self.protected_lines(source)
+      ranges = []
+      walk(Prism.parse(source).value) { |node| ranges << content_range(node) }
+      CommentCensus.fully_covered_lines(source, ranges.compact)
+    end
+
+    # A literal's CONTENT, not its span: the delimiters sit on lines that also
+    # hold code, and only a line whose every byte is content -- its newline
+    # included -- is one whose blankness belongs to the string. A `<<~FOO`
+    # heredoc reaches Prism as parts whose `content_loc` is the body, which is
+    # exactly the range this needs, and is why the opener's own location (just
+    # the `<<~FOO` token, on the line above) is never consulted.
+    #
+    # @param node [Prism::Node] a literal node
+    # @return [Range, nil]
+    def self.content_range(node)
+      at = node.respond_to?(:content_loc) ? node.content_loc : nil
+      at && (at.start_offset...at.end_offset)
+    end
+
+    def self.walk(node, &)
+      yield node if node.class.name.to_s.match?(LITERAL)
+      node.compact_child_nodes.each { |child| walk(child, &) }
+    end
+    private_class_method :walk
+  end
+
+  # Lua comments, found by a bracket-aware scanner.
+  #
+  # Lua has no parser in Ruby's stdlib, so this walks the source in the states
+  # the language's own lexer uses: code, short string, long bracket, comment.
+  # That is the whole of what makes `--` ambiguous. `"a -- b"` is a string,
+  # `[[ -- ]]` is a long string, `--[[ ... ]]` is a long comment, and
+  # `[==[ ]] ]==]` closes only at its own level -- a scanner blind to the level
+  # would end that string at the first `]]` and read the rest as code.
+  #
+  # The claim is not "this is careful"; it is that `--verify` compiles the file
+  # before and after with `luac` and compares, so a state machine that got any
+  # of those wrong fails loudly against the real tree.
+  module Lua
+    # Anything that cannot begin a comment, a string, or a long bracket.
+    ORDINARY = /[^-'"\[\n]+/
+
+    # @param source [String] the file's contents
+    # @return [Array(Array<Comment>, Set<Integer>)]
+    def self.scan(source)
+      state = { scanner: StringScanner.new(source), line: 1, comments: [], contents: [] }
+      step(state) until state[:scanner].eos?
+      [state[:comments], CommentCensus.fully_covered_lines(source, state[:contents])]
+    end
+
+    # @param source [String] the file's contents
+    # @return [Array<Comment>]
+    def self.comments(source) = scan(source).first
+
+    # @param source [String] the file's contents
+    # @return [Set<Integer>]
+    def self.protected_lines(source) = scan(source).last
+
+    def self.step(state)
+      scanner = state[:scanner]
+      return if scanner.scan(ORDINARY)
+      return state[:line] += 1 if scanner.scan("\n")
+      return comment(state) if scanner.scan("--")
+      return short_string(state) if scanner.scan(/['"]/)
+      return long_bracket(state, :string) if scanner.check(/\[=*\[/)
+
+      scanner.getch
+    end
+    private_class_method :step
+
+    def self.comment(state)
+      return long_bracket(state, :comment) if state[:scanner].check(/\[=*\[/)
+
+      start = state[:scanner].pos - 2
+      state[:scanner].scan(/[^\n]*/)
+      record(state, :comment, state[:line], start, 0)
+    end
+    private_class_method :comment
+
+    # A short string ends at its own unescaped quote. `\` escapes whatever
+    # follows, newline included (Lua's line continuation), so an escaped pair
+    # is consumed as a unit rather than character by character.
+    def self.short_string(state)
+      quote = state[:scanner].matched
+      body = state[:scanner].scan(/(?:\\.|[^\\#{quote}\n])*/m).to_s
+      state[:scanner].scan(quote)
+      state[:line] += body.count("\n")
+    end
+    private_class_method :short_string
+
+    def self.long_bracket(state, kind)
+      scanner = state[:scanner]
+      start_line = state[:line]
+      start = scanner.pos - (kind == :comment ? 2 : 0)
+      scanner.scan(/\[(=*)\[/)
+      level = scanner[1].length
+      body = scanner.scan_until(/\]={#{level}}\]/) || scanner.scan(/.*/m).to_s
+      state[:line] = start_line + body.count("\n")
+      record(state, kind, start_line, start, level)
+    end
+    private_class_method :long_bracket
+
+    def self.record(state, kind, start_line, start, level)
+      scanner = state[:scanner]
+      delimiter = level + 2
+      return state[:contents] << ((start + delimiter)...(scanner.pos - delimiter)) if kind == :string
+
+      state[:comments] << Comment.new(start_line, state[:line],
+                                      scanner.string.byteslice(start, scanner.pos - start),
+                                      start...scanner.pos)
+    end
+    private_class_method :record
+  end
+
+  # Proof that stripping a file removed comments and nothing else.
+  #
+  # A diff of stripped trees proves nothing if the stripper is wrong the same
+  # way on both sides, so the stripper is checked against something that is not
+  # the stripper: Ruby's real lexer, and Lua's real compiler.
+  module Verifier
+    # Comments and line terminators are exactly what stripping is allowed to
+    # change; every other token is code and must survive byte for byte.
+    TRIVIA = %i[COMMENT EMBDOC_BEGIN EMBDOC_LINE EMBDOC_END NEWLINE IGNORED_NEWLINE EOF].to_set.freeze
+
+    # `luac -s -l -l` lists every instruction, constant and upvalue of every
+    # prototype with the debug section already dropped. What survives `-s` and
+    # still moves is the line ANNOTATION on each instruction, the line span in
+    # each prototype's header, and the run's heap addresses. Those are
+    # normalised away; everything else must match exactly. A `--` misread
+    # inside a long string shortens a constant, and a dropped code line deletes
+    # an instruction -- both survive the normalisation and fail here.
+    LINE_ANNOTATION = /\t\[\d+\]\t/
+    RUN_SPECIFIC = /<[^>]*:\d+,\d+>|0x\h+/
+
+    LUAC = !system("luac", "-v", out: File::NULL, err: File::NULL).nil?
+
+    # @param before [String] the original source
+    # @param after [String] the stripped source
+    # @param language [Symbol] :ruby or :lua
+    # @return [Proof]
+    def self.verify(before, after, language:)
+      language == :lua ? lua(before, after) : ruby(before, after)
+    end
+
+    # @param before [String] the original source
+    # @param after [String] the stripped source
+    # @return [Proof]
+    def self.ruby(before, after)
+      return Proof.new(false, "the stripped source does not parse", "prism") unless Prism.parse(after).success?
+
+      original = significant(before)
+      stripped = significant(after)
+      return Proof.new(true, nil, "prism") if original == stripped
+
+      Proof.new(false, "token stream differs at #{divergence(original, stripped)}", "prism")
+    end
+
+    # @param source [String] any Ruby source
+    # @return [Array<Array>] its tokens with comments and line breaks removed
+    def self.significant(source)
+      Prism.lex(source).value.reject { |token, _state| TRIVIA.include?(token.type) }
+                             .map { |token, _state| [token.type, token.value] }
+    end
+
+    def self.divergence(original, stripped)
+      index = original.zip(stripped).index { |left, right| left != right } || [original.size, stripped.size].min
+      "#{index}: #{original[index].inspect} vs #{stripped[index].inspect}"
+    end
+
+    # @param before [String] the original source
+    # @param after [String] the stripped source
+    # @return [Proof]
+    def self.lua(before, after)
+      return Proof.new(true, "luac not installed: stripping is UNPROVEN here", "none") unless LUAC
+
+      stripped = listing(after)
+      return Proof.new(false, "the stripped source does not compile", "luac") if stripped.nil?
+      return Proof.new(true, nil, "luac") if listing(before) == stripped
+
+      Proof.new(false, "the compiled listing differs", "luac")
+    end
+
+    # @param source [String] any Lua source
+    # @return [String, nil] its compiled listing, or nil if it does not compile
+    def self.listing(source)
+      compile(source)&.gsub(LINE_ANNOTATION, "\t")&.gsub(RUN_SPECIFIC, "")
+    end
+
+    # @param source [String] any Lua source
+    # @return [String, nil]
+    def self.compile(source)
+      Dir.mktmpdir("comment-census") do |dir|
+        input = File.join(dir, "in.lua")
+        File.write(input, source)
+        out, _err, status = Open3.capture3("luac", "-s", "-l", "-l", "-o", File.join(dir, "out"), input)
+        status.success? ? out : nil
+      end
+    end
+  end
+
+  module_function
+
+  # @param path [String, Pathname] any path
+  # @return [Symbol, nil] :ruby, :lua, or nil for a file with no known syntax
+  def language_for(path) = EXTENSIONS[File.extname(path.to_s)]
+
+  def scanner_for(language) = language == :lua ? Lua : Ruby
+
+  def comments(source, language:) = scanner_for(language).comments(source)
+
+  def protected_lines(source, language:) = scanner_for(language).protected_lines(source)
+
+  # Which lines lie ENTIRELY inside one of these byte ranges, terminator and
+  # all. Single-line ranges are discarded first: only a literal that spans a
+  # newline can own a blank line, and that filter is what keeps this linear
+  # rather than lines-times-literals on a file full of short strings.
+  #
+  # @param source [String] the file's contents
+  # @param ranges [Array<Range>] byte ranges of literal content
+  # @return [Set<Integer>]
+  def fully_covered_lines(source, ranges)
+    spanning = ranges.select { |range| multiline?(source, range) }
+    return Set.new if spanning.empty?
+
+    line_spans(source).filter_map do |number, from, to|
+      number if spanning.any? { |range| range.begin <= from && range.end >= to }
+    end.to_set
+  end
+
+  def multiline?(source, range) = source.byteslice(range.begin, range.size).to_s.include?("\n")
+
+  # @param source [String] the file's contents
+  # @return [Array<Array(Integer, Integer, Integer)>] line number, and the byte
+  #   offsets it starts and stops at, its terminator included
+  def line_spans(source)
+    offset = 0
+    source.each_line.with_index(1).map do |line, number|
+      from = offset
+      offset += line.bytesize
+      [number, from, offset]
+    end
+  end
+
+  # Every line of the source with its comments taken out.
+  #
+  # A line that held nothing but a comment goes entirely, and so does a blank
+  # line -- otherwise a sweep that deleted a comment block along with the blank
+  # line under it would show up as a diff in code that did not change. The one
+  # exception is a blank line INSIDE a multi-line literal, which is part of a
+  # string's value and not spacing at all.
+  #
+  # @param source [String] the file's contents
+  # @param language [Symbol] :ruby or :lua
+  # @return [String]
+  def strip(source, language:)
+    masked = mask(source, comments(source, language:)).lines
+    guarded = protected_lines(source, language:)
+    touched = comment_lines(source, language:)
+    original = source.lines
+    masked.each_with_index
+          .filter_map { |line, index| emit(line, original[index], index + 1, guarded, touched) }.join
+  end
+
+  # Blank the comment bytes in place, preserving every newline so that line
+  # numbers still line up with the source they came from.
+  #
+  # @param source [String] the file's contents
+  # @param found [Array<Comment>] its comments
+  # @return [String]
+  def mask(source, found)
+    masked = source.dup.force_encoding(Encoding::BINARY)
+    found.each { |comment| masked[comment.range] = masked[comment.range].gsub(/[^\n]/n, " ") }
+    masked.force_encoding(source.encoding)
+  end
+
+  # Trailing whitespace is trimmed only on a line a comment was actually taken
+  # off. Elsewhere it may be the inside of a string literal, where it counts.
+  def emit(line, original, number, guarded, touched)
+    return original if guarded.include?(number)
+
+    text = touched.include?(number) ? "#{line.rstrip}\n" : line
+    text.strip.empty? ? nil : text
+  end
+
+  # @param source [String] the file's contents
+  # @param language [Symbol] :ruby or :lua
+  # @return [Set<Integer>] every line any comment occupies
+  def comment_lines(source, language:)
+    comments(source, language:).each_with_object(Set.new) { |one, set| set.merge(one.first_line..one.last_line) }
+  end
+
+  def yard_tag?(line) = line.match?(YARD_TAG)
+
+  # @param source [String] the file's contents
+  # @param language [Symbol] :ruby or :lua
+  # @return [Tally] code, YARD tag and prose comment lines, counted separately
+  def tally(source, language:)
+    marked = comment_lines(source, language:)
+    lines = source.lines
+    yard = marked.count { |number| yard_tag?(lines[number - 1].to_s) }
+    Tally.new(strip(source, language:).lines.count, yard, marked.size - yard)
+  end
+
+  # @return [Array<Site>] every citation in the source, classified
+  def sites(source, language:, path: "-")
+    comments(source, language:).flat_map do |comment|
+      Classifier.citations(comment.text).map do |token, verdict|
+        Site.new(path, comment.first_line, token, verdict, comment.text)
+      end
+    end
+  end
+
+  # @return [Array<Site>] every project-scheme citation in the source
+  def tickets(source, language:, path: "-") = sites(source, language:, path:).select { |s| s.verdict == :project }
+
+  # Shapes the classifier will not place. They are reported rather than swept,
+  # and they fail `--check-tickets`, so a scheme nobody has classified stops
+  # the gate instead of being guessed at in either direction.
+  #
+  # @return [Array<Site>]
+  def unknowns(source, language:, path: "-") = sites(source, language:, path:).select { |s| s.verdict == :unknown }
+
+  # @return [Array<Site>] citations this tree uses both ways; a human decides
+  def ambiguous(source, language:, path: "-") = sites(source, language:, path:).select { |s| s.verdict == :ambiguous }
+
+  # @return [Proof] that stripping this source changed no code
+  def verify(source, language:) = Verifier.verify(source, strip(source, language:), language:)
+
+  # @return [Proof] the same check against a candidate somebody else produced
+  def verify_pair(source, candidate, language:) = Verifier.verify(source, candidate, language:)
+
+  # @param root [Pathname, String] the repository root
+  # @return [Array<String>] every file in the documented scope, deduplicated
+  def scan_files(root)
+    base = File.expand_path(root.to_s)
+    SCAN_PATHS.flat_map { |entry| expand(base, entry) }.uniq.sort
+  end
+
+  def expand(base, entry)
+    pattern = entry.end_with?("/") ? File.join(base, entry, "**", "*") : File.join(base, entry)
+    Dir.glob(pattern).select { |path| File.file?(path) && language_for(path) }
+  end
+
+  # The scope CLAUDE.md's ticket rule states, read back out of the prose, so
+  # that the spec can compare it against {SCAN_PATHS} mechanically. A rule
+  # whose stated scope and enforced scope differ is the exact defect the sweep
+  # exists to remove, and prose drift is silent by construction.
+  SCOPE_SENTENCE = /^\s*-\s+\*\*Scope\*\*.*?: (?<paths>.+)$/
+
+  # @param claude_md [String] the contents of CLAUDE.md
+  # @return [Array<String>] the paths its ticket rule names
+  def documented_scope(claude_md)
+    sentence = claude_md[SCOPE_SENTENCE, :paths]
+    sentence ? sentence.scan(/`([^`]+)`/).flatten : []
+  end
+
+  # The command line. Every mode reads the documented scope when handed no
+  # paths of its own.
+  module CLI
+    USAGE = <<~TEXT
+      usage: bin/comment-census [--strip | --tickets | --check-tickets | --verify] [FILE...]
+
+        (no flag)        code, YARD tag and prose comment lines, counted separately
+        --strip          each file with its comments removed, one banner per file.
+                         `--strip > before.txt`, sweep, `--strip > after.txt`, diff:
+                         an empty diff is the proof that the sweep changed no code.
+        --tickets        every project-scheme citation, plus the sites the
+                         classifier will not place
+        --check-tickets  as --tickets, exiting non-zero if anything is found
+        --verify         prove the stripper on each file, against Prism (Ruby)
+                         or luac (Lua)
+    TEXT
+
+    MODES = {
+      nil => :census, "--strip" => :strip, "--tickets" => :tickets,
+      "--check-tickets" => :check_tickets, "--verify" => :verify
+    }.freeze
+
+    def self.run(argv)
+      flag = argv.find { |arg| arg.start_with?("--") }
+      mode = MODES[flag]
+      return warn(USAGE) || exit(2) unless mode
+
+      paths = argv.reject { |arg| arg.start_with?("--") }
+      public_send(mode, paths.empty? ? CommentCensus.scan_files(Dir.pwd) : paths)
+    end
+
+    # Paths are reported relative to the working directory. The sweep's proof
+    # is a diff of two `--strip` runs, and an absolute path would make that
+    # diff a function of where the two trees happen to be checked out.
+    def self.each_file(paths)
+      paths.each do |path|
+        language = CommentCensus.language_for(path)
+        yield path.delete_prefix("#{Dir.pwd}/"), File.read(path), language if language
+      end
+    end
+
+    def self.census(paths)
+      total = CommentCensus::Tally.zero
+      files = 0
+      top_heavy = 0
+      each_file(paths) do |_path, source, language|
+        tally = CommentCensus.tally(source, language:)
+        total += tally
+        files += 1
+        top_heavy += 1 if tally.comments > tally.code
+      end
+      print_census(total, files, top_heavy)
+    end
+
+    def self.print_census(total, files, top_heavy)
+      rows(total, files, top_heavy).each { |label, value| row(label, value) }
+    end
+
+    def self.rows(total, files, top_heavy)
+      [["files", files], ["code lines", total.code], ["YARD tag lines", total.yard],
+       ["prose comment lines", total.prose],
+       ["comment:code", total.comments.fdiv(total.code).round(2)],
+       ["prose:code", total.prose.fdiv(total.code).round(2)],
+       ["files with more comment", "#{top_heavy}  (#{(top_heavy.fdiv(files) * 100).round}%)"]]
+    end
+
+    def self.row(label, value) = puts("#{label.ljust(26)}#{value.to_s.rjust(10)}")
+
+    def self.strip(paths)
+      each_file(paths) do |path, source, language|
+        puts "===== #{path}"
+        print CommentCensus.strip(source, language:)
+      end
+    end
+
+    def self.tickets(paths) = report(paths, exit_on_findings: false)
+
+    def self.check_tickets(paths) = report(paths, exit_on_findings: true)
+
+    def self.report(paths, exit_on_findings:)
+      found = collect(paths)
+      print_sites("PROJECT SCHEMES -- banned in comments", found[:project])
+      print_sites("AMBIGUOUS -- ours somewhere and somebody else's somewhere; decide each by hand",
+                  found[:ambiguous])
+      print_sites("UNCLASSIFIED -- teach the classifier before sweeping these", found[:unknown])
+      exit 1 if exit_on_findings && !(found[:project] + found[:unknown]).empty?
+    end
+
+    def self.collect(paths)
+      found = { project: [], ambiguous: [], unknown: [] }
+      each_file(paths) do |path, source, language|
+        CommentCensus.sites(source, language:, path:).each { |site| found[site.verdict]&.<< site }
+      end
+      found
+    end
+
+    def self.print_sites(heading, sites)
+      puts "\n#{heading} (#{sites.size})"
+      sites.each { |site| puts "  #{site}" }
+    end
+
+    def self.verify(paths)
+      failed = false
+      each_file(paths) do |path, source, language|
+        proof = CommentCensus.verify(source, language:)
+        failed ||= !proof.ok?
+        puts "#{proof.ok? ? "ok" : "FAIL"}  #{proof.checked_with.ljust(6)} #{path}#{note(proof)}"
+      end
+      exit 1 if failed
+    end
+
+    def self.note(proof) = proof.reason ? " -- #{proof.reason}" : ""
+  end
+end
+
+CommentCensus::CLI.run(ARGV) if $PROGRAM_NAME == __FILE__

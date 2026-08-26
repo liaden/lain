@@ -103,6 +103,42 @@ telling you an object is missing. Config that encodes a *reasoned policy* is fin
 - **Value objects are deeply frozen.** `Ractor.shareable?(event)` must stay `true` — the
   mechanical statement of "no reachable mutable state". There is a spec.
 
+## Comments
+
+The rule above says a comment explains WHY. These say how much of it there may be, and what
+one is allowed to cite. `bin/comment-census` measures all three and is the worklist.
+
+- **Density is set by an exemplar, not by a ratio.** `lib/lain/timeline.rb` is the measured
+  shape: **0.82 prose:code, longest comment block 24 lines**. Write toward that file rather
+  than toward a number — the mandate is *whatever comments remain are genuinely useful*, and
+  a ratio met by deleting a reason is a failure wearing a pass's clothes. For scale, the
+  census reads `lib/` today at 68,713 prose lines against 44,873 code lines (1.53:1), with
+  520 of 709 files (73%) carrying more comment than code.
+
+- **YARD tags are exempt from all of it.** ~3,900 lines across `lib/` and `spec/`, and they
+  carry the shape a reader skims by: `@param`, `@return`, `@!attribute` and their kin are
+  never what a density argument is about. The census counts them as their own figure for
+  exactly this reason.
+
+- **Ticket references are banned in comments — every project-internal `<LETTER><NUMBER>`
+  scheme.** `T15`, `F31`, `B12`, `E4`, `AC 2`, `OM-6`, `CE-5`, `RES2`: all out, and there is
+  **no exempt tier**. QA finding numbers go with the rest, on the human's ruling that a
+  citation's value is ephemeral while the work is in flight and that git history is the
+  archive afterwards. **What replaces a citation is the reason in words** — never delete the
+  surrounding sentence to lose a number, and a comment that only ever said "F31" was
+  carrying no reason at all, so that one goes whole.
+  - **Scope**, and exactly what the checker scans: `lib/`, `spec/`, `lib/lain/frontend/neovim/runtime/*.lua`.
+  - **Not Rust.** `///` and `//!` under `ext/lain` and `crates/` are doc *attributes* held up
+    by `#![deny(missing_docs)]`: deleting one is a denied lint and orphaning one is a compile
+    error. A rule wider than its enforcement is false on landing, so this one stops at Ruby
+    and Lua — and `spec/lain/comment_census_spec.rb` reads the scope named here back out of
+    this file and compares it against what `bin/comment-census --check-tickets` really opens.
+  - **A third-party identifier is not a ticket, and the letter cannot decide which is which.**
+    `E4` is an enhancement note of ours; `E382` is nvim refusing `:write` on a `nofile`
+    buffer. `C1` is a plan ticket in twelve comments here and Unicode's C1 control block in a
+    thirteenth. So the classifier is **enumerated, not heuristic**, and a shape it cannot
+    place is reported UNCLASSIFIED rather than swept — teach it before you sweep.
+
 ## Output discipline
 
 Only the frontend may touch `$stdout`/`$stderr`. Everything else writes to an injected
