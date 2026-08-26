@@ -2,14 +2,14 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A handback record must name the worker whose work it disposed of and
       # land on one of the outcomes the operation can reach. The kinds are
       # {Isolation::Worktree::Handback::Outcome::KINDS}, held verbatim here
-      # rather than referenced: this Guard's class body evaluates at
+      # rather than referenced: this carrier's class body evaluates at
       # telemetry load time, before the isolation/ unit loads (the same
       # load-order reason {SeamDecision} holds {Plan::SIZES} verbatim).
-      class Handback < Guard
+      class Handback < Declarative::Carrier
         attribute :worker_key
         attribute :outcome
         validates :worker_key, presence: { message: "must name the worker handed back, got nil" }
@@ -42,7 +42,7 @@ module Lain
 
       def initialize(worker_key:, outcome:, ref: nil)
         outcome = outcome.to_sym
-        Guards::Handback.check!(worker_key:, outcome:)
+        Carriers::Handback.check!(worker_key:, outcome:)
 
         super(worker_key: worker_key.to_s.dup.freeze, outcome:, ref: ref&.dup&.freeze)
       end
