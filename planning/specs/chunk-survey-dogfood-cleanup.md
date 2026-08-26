@@ -279,6 +279,174 @@ Execute-plan must **not** start a card gated on one of these.
   `planning/followups-from-survey-dogfood-wave1.md`.
 - **Eight follow-ups banked**, in that same file.
 
+- **Staleness check wave 2, 2026-08-26 — PASS with drift noted.** `human_replies.rb` is at
+  `lib/lain/cli/human_replies.rb` (the plan's bare `human_replies.rb:842-851` is `:843-852`); no
+  `survey_add` route, confirmed. `46_sidebar.lua`'s `:LainSurveyAdd` is now at `:345` and C1 already
+  converted its buffer refusal to `review_refused` (`:349`), so C10's second escalation trigger is
+  discharged. `47_diff.lua` stamp/unstamp/withdraw at `:304/:319/:330`, `open_changeset` at `:535`;
+  `48_annotate.lua` `review_notes.stamp` at `:129`, `BufEnter` at `:651` (was `:631`).
+  `surface.rb#builtins` at `:135-139` with the ABC-budget comment intact at `:145`.
+  `status_feed.rb`'s T13 KNOWN GAP block is intact; `observe_usage` `:458`, `observe_turn` `:545`,
+  `observed` `:596`. All shifts are C1/C7's own edits. No card invalidated.
+
+- **ROOT CAUSE of wave 1's stale-worktree failure, identified 2026-08-26.** It is not orchestrator
+  inattention and it will recur on every wave unless handled: the Agent tool's
+  `isolation: "worktree"` creates its branch **from `origin/main`**, not from the branch the chunk is
+  being built on (`git reflog show worktree-agent-<id>` says `branch: Created from origin/main`
+  verbatim). `origin/main` is **28 commits** behind `survey/dogfood-2026-08-25`, so a wave-2 agent
+  opened a tree with **no wave-1 commit in it at all** — C12's dependency `lib/lain/tools/session_usage.rb`
+  simply absent, C13's `status_feed.rb` missing C7's 163 lines, C10's `46_sidebar.lua` missing C1's
+  conversion, and the plan doc itself untracked. Wave 1's "18 commits" was the same distance measured
+  earlier.
+  **Standing procedure for every remaining wave:** immediately after spawning, run
+  `git worktree list` and confirm each agent's SHA. If it is not the branch head, `git -C <wt> merge
+  --ff-only <head>` **while the tree is still clean** (checked with `git -C <wt> status --porcelain`),
+  then `SendMessage` each agent to discard what it has read and re-read, quoting the corrected line
+  numbers. Done for wave 2 with zero work lost; the window is roughly the agent's first two minutes.
+
+- **Findings against THIS PLAN, from wave 2** (running tally):
+  1. **C10's shared-file list was incomplete.** The card named only
+     `spec/lain/frontend/neovim_runtime_spec.rb`, but `spec/lain/frontend/neovim_spec.rb` carries its
+     own `describe "the add-to-survey gesture on a real file buffer"` block — six `:nvim` examples
+     written for an earlier card, with a header comment stating they test emission-only *pending a
+     route that never landed*. Four went red the moment the gesture stopped emitting. Orchestrator
+     applied the implementer's replacement (5 examples before, 5 after; every assertion rehomed
+     rather than dropped) and stripped the card ids from its comments.
+  2. **C10's runtime-spec examples could not be run by their author**, because the file is
+     orchestrator-owned and append-only — so they were written blind, and **one had a real setup
+     bug**: it asserted the `lain://journal` wrong-buffer refusal without ever switching to that
+     buffer, so it exercised the *unnamed*-buffer path and asserted a sentence that never appears.
+     Caught on the orchestrator's first run of the appended block. **The append-only rule trades a
+     merge conflict for an unrunnable spec; the orchestrator must run every appended block before
+     believing it.**
+  3. **C13's `chat_launch.rb` scope was wrong.** `ChatLaunch` never holds an Agent, so the Store
+     binding can only live in `Wiring` — the card scoped a file that needed no code change.
+  4. **`Wiring` had exactly one line of `Metrics/ClassLength` headroom**, and C13 spends it. Four
+     shapes were measured; only an endless-def fits. Anything else wanting a line in that class is
+     now blocked behind the extraction `Wiring#assemble_surface`'s own comment already calls for.
+  5. **Comment drift is worse than the sweep assumes.** `46_sidebar.lua`'s block comment cited three
+     `file:line` targets (`human_replies.rb:609-611`, `rpc_thread.rb:741`, `:1118-1121`); none
+     matched before this chunk touched anything — the real lines are `843-852`, `831`, `1221`. C17's
+     cards should expect stale line citations throughout, not just verbose prose.
+
+- **Open decision 4 — RESOLVED 2026-08-26: `Command::Env` is NOT widened, and the card's premise for
+  review state was wrong.** C12 determined that `Env` already reaches model (`model_switch.current`),
+  usage (`agent.usage`), occupancy (`agent.occupancy`) and the journal path; it does **not** reach the
+  provider (`Backend#provider_name`) or the window+provenance (`Agent` holds the one `WindowBook::Live`
+  privately and exposes only a ratio). A reader for those is a **three**-file change (`env.rb` +
+  `wiring.rb` + `surface.rb` — Surface assembles the Env and takes no backend), so it is out of this
+  card; `/introspect` says plainly that it does not report them, which is the card's own thesis.
+  Separately, **the card's `replies` route does not exist**: `delegate :review_surface, :review_view`
+  reaches the editor's *rendering* (nil when headless), not the open round, and `HumanReplies` keeps
+  `@changeset_review` private. The open review is reachable only through `Review::Submit::Outbox`.
+
+- **Orchestrator ruling — `Metrics/ModuleLength` excluded for spec files, and it is policy, not a
+  loosening.** AC3 forced two rows into `deletability_spec.rb`'s `DeletionMap`, putting it at
+  **102/100**. `.rubocop.yml`'s RSpec block already argues that "never loosen a `Metrics/*` limit" is
+  about `lib/` objects "where a tripped cop means a missing collaborator", and `Metrics/BlockLength`
+  is already `Exclude`d for specs on that basis. `DeletionMap` is a spec-side **registry** whose own
+  docstring says its rows are named together precisely so they cannot "drift apart one marker at a
+  time" — splitting it would defeat its purpose. Excluded, with the argument written above the entry.
+  This is CLAUDE.md's permitted "config that encodes a reasoned policy".
+
+- **Follow-up banked, NOT actioned: `Wiring` has no headroom and the tightness hides a design problem.**
+  C13's panel independently measured `Wiring` at exactly **110/110** `Metrics/ClassLength`: only an
+  endless-def fits, so a line was *golfed* to fit rather than an object extracted, in a codebase whose
+  standard is that a tripped cop names a missing collaborator. `Wiring#assemble_surface`'s own comment
+  already says an object is missing there. The panel credits `Inbox` as the genuine contrast — a real
+  extraction that left `StatusFeed` at 102/110, headroom rather than a shave. **Anything else wanting a
+  line in `Wiring` is blocked behind that extraction card.**
+
+- **The same shape, a second time: `Surface#builtins` is now at exactly 17.0/17 `Metrics/AbcSize`**
+  (independently confirmed by C12's panel with a scratch `Max: 1` config: `[<0, 17, 0> 17/1]`).
+  Parameterless it measured 15; C12's `outbox:` keyword cost two branches. No offense today, and **the
+  next command added to `#builtins` trips it.** The sharp version, which the panel found: `#builtins`'
+  own docstring says the split into `#review_commands` exists so ABC "stays honest as the set grows"
+  — **and the split has now itself run out.** Fifteen constructors on one list with one group already
+  extracted is the shape asking for a **`Command::Catalog`**, and the extraction has to happen
+  *before* the next command card, not inside one.
+  Two cards in one wave have now spent a class's last line rather than extracted the object the cop
+  was naming — `Wiring` at 110/110 and `Surface` at 17.0/17. **`Command::Catalog` and the
+  `Wiring#assemble_surface` extraction are the two cards this chunk owes its successor**, and the
+  measurements above are what it hands them.
+
+- **C12's panel found the chunk's sharpest defect, and it is worth recording as a lesson about F77
+  rather than a bug.** `/introspect` — built precisely so the agent stops asserting state it cannot
+  see — printed `review none open` as unqualified fact while a human annotated an **agent-opened**
+  review. `Tools::RequestReview` opens a real `Review::Session` and binds a real `Handover`
+  (`request_review.rb:624,653-657`) and never touches the `Outbox`; `outbox.hold(` appears in exactly
+  two lib files, both `/`-commands. So the honesty command reproduced F77's exact shape at a smaller
+  scale, from an assumption in its own docstring ("the outbox is the source"). **The lesson: naming a
+  single source of truth is a claim that needs the same verification as any other**, and this one was
+  verified against the two callers the card already knew about.
+
+- **Wave 2 LANDED 2026-08-26** — C10, C13, C12, C11 in four commits `ed394ff3..64cf02cb`, full suite
+  green through the real pre-commit gate at each. Final count **16,051 examples, 0 failures, 15
+  pendings** against a 15,983 start. Every card went through the panel; **three of the four returned
+  REQUEST-CHANGES or a blocker**, and in each case the blocker was a *lie the code told*, not a crash:
+  a counter whose only production wiring had no assertion, an honesty command asserting `review none
+  open` while a review was open, and a review that kept issuing stamps after it had settled. The
+  panel is earning its cost on exactly the defect class this chunk is about.
+
+- **The wing's foundation contradicted its own card, with measurements.** D1 reports
+  `ValidateOnInitialize`'s frictionless population is **two**, not the healthy non-`Data` remainder the
+  card assumed: of 65 `check!` files, 15 are non-`Data` and only 4 check from their own `initialize`.
+  **`context/prune.rb` — which D1's card names as a taker — cannot take the prepend at all** (it
+  checks a `predicate:` derived from a block), and `purge_failed_inputs.rb` only became one after a
+  declared-names filter was added. All four use a *named external* carrier rather than their own
+  `declare`, so each conversion costs moving the declaration out of its `Guards` namespace. The card
+  said "if it turns out empty, that is a finding" — it is not empty, but it is thin enough that D3's
+  question 3 should expect "no" as the common answer rather than the exception.
+
+- **D1 inverted its own crux, and the inversion is better than the card.** The card asked `settle!` to
+  distinguish value attributes from collaborator attributes. D1 found no reliable predicate for that
+  and asked a different question instead — **"may I COPY this?"** — on one invariant: *`settle!` never
+  calls `#freeze` on an object its caller handed it.* Already-shareable is returned by identity;
+  `String`/`Array`/`Hash` are rebuilt frozen; everything else is refused by attribute name. That makes
+  the `$stdout`-freezing hazard **structurally unreachable** rather than correctly classified, which is
+  a stronger guarantee than the card asked for.
+
+- **LANDING HAZARD, C11 — do not land it by copying `neovim_runtime_spec.rb`.** C11's worktree was
+  cut *before* C10 landed, and both cards append to that orchestrator-owned file. Measured: the
+  landed file holds **76** examples (74 base + C10's 2); C11's worktree holds **84** (74 base + its
+  own 10, on a pre-C10 base). A wholesale file copy yields 84 and **silently deletes C10's two** —
+  and the suite would still be green, because the two lost examples take their own subject with them.
+  Correct result is **86**. Land C11 by taking its **diff against its own base** for that file and
+  applying it to the current tree; both changes are appends at the end, so it applies. Then assert
+  the count, because the failure mode here is a green suite with fewer examples — CLAUDE.md's own
+  "check the COUNT, not the failure count" in its purest form.
+  **The general rule: an append-only shared file makes two cards' work invisible to each other. Any
+  card whose base predates a sibling's landing must be landed by patch, never by copy.** C12 was
+  checked the same way and has **zero** overlap with the landed set, so it copies safely.
+
+- **Orchestrator process failure, wave 2: an applied wiring diff was verified against too narrow a
+  set.** I applied C13's `Wiring#run` diff and ran a targeted five-file selection (333 examples,
+  green). Restoring the assertion in the fix round then exposed **13 broken examples across three
+  files I never ran** — six spec files pass a bare `instance_double(Lain::StatusFeed)`, and
+  `repl_spec.rb` actually drives `Wiring#run`. **Rule: a wiring diff that changes a collaborator's
+  message set must be verified against every spec that doubles that collaborator**, found by grepping
+  for the double, not by the orchestrator's guess at the blast radius. A green targeted run over a
+  set chosen by the person who wrote the diff is not evidence.
+
+- **C20 added, then simplified by a second ruling, 2026-08-26.** The card began as "consolidate the QA
+  findings rounds", since git history is the archive. Planning surfaced a trap: 325 sites in `lib/`
+  and `spec/` cite 49 distinct F-numbers, and C15's policy at the time made F-numbers the *one* ticket
+  scheme still legal in a comment, on the ground that they were durably documented — so a bare
+  deletion would have converted all 325 into exactly the dangling references C16 sweeps out. The card
+  answered that with a `findings-ledger.md` plus a `bin/lint-findings-ledger` gate.
+
+  **The human then ruled the whole premise away: every internal `<LETTER><NUMBER>` scheme is ephemeral
+  and none belongs in a committed comment.** So C15's carve-out for F-numbers is gone, C16's scope
+  grew by those 325 sites (~2,380 total, not ~2,050), C17's F-number nuance collapsed to "C16 should
+  have got them; report any survivor as a classifier miss", and **C20 lost the ledger and the lint
+  entirely** — with nothing left to resolve, there is nothing to keep a ledger for. The card is now a
+  straight deletion plus an index fixup, and dropped from medium risk to low. Worth recording as a
+  case where tightening a rule deleted more work than it created.
+
+  **The new hard part is C15's classifier**, not the sweep: `E4` (our enhancement notes) and `E382`
+  (nvim's error codes) are the same letter on opposite sides of the ban, and the runtime Lua is full
+  of legitimate `E`-codes. That is now C15's stop condition.
+
 ## Waves
 
 ```
@@ -291,7 +459,7 @@ Wave 6:  D4 (←D3a…D3e)                               — delete Guard and Gu
 Wave 7:  C15                                         — the sweep begins only now
 Wave 8:  C16 (←C15)
 Wave 9:  C17a … C17j (←C16)                          — ten disjoint subtrees, ONE commit
-Wave 10: C19 (←C17a…C17j, ←C18)
+Wave 10: C19 (←C17a…C17j, ←C18), C20 (←C15, ←C16)
 ```
 
 **Code critical path: C1 → C11 → C14 (3 deep).** The Declarative wing (waves 4-6) and the sweep
@@ -1477,8 +1645,21 @@ Three rules into `CLAUDE.md`: (a) density stated against the measured exemplar (
 0.79 prose:code, longest block 24) rather than a bare number; (b) **YARD tags exempt** — they are
 10% of the mass and carry the skimmable shape; (c) plan-ticket references banned in comments,
 **scoped to exactly what C16 sweeps** (`lib/`, `spec/`, the runtime Lua — **not** Rust, see below),
-because a rule wider than its enforcement is false on landing. QA finding numbers (`F31`) stay
-allowed: globally unique, durably documented.
+because a rule wider than its enforcement is false on landing.
+
+**The ban covers EVERY project-internal `<LETTER><NUMBER>` scheme, QA finding numbers included** —
+human's ruling 2026-08-26: *their value is ephemeral while the work is in flight, not long term.* So
+`T15`, `F31`, `B12`, `E4`, `OM-6`, `N-1` are all out of committed comments. This reverses the earlier
+carve-out for F-numbers, and it is the simpler rule: there is no tier of identifier a reader is
+expected to resolve, so no document has to stay alive to serve one. **What replaces a citation is the
+reason in words** — C16's rule holds unchanged, and **never delete the surrounding sentence to lose a
+number.** A comment that only ever said "F31" and nothing else was carrying no reason, and goes whole.
+
+**The checker must distinguish our schemes from third-party identifiers, and this is the hard part.**
+`E382` (nvim: `:w` on a `nofile` buffer), `E5108`, HTTP `429`, `UTF-8`, `SHA-256`, `RFC 3339` name
+things in *someone else's* documentation and a reader can still resolve them — they stay. Our own
+allocations do not. The letter alone cannot decide it: the plan's own enhancement notes are `E1`/`E4`
+while nvim's errors are `E382`/`E5108`, the same letter on both sides of the rule.
 
 **Builds the enforcement C16's central AC depends on**: a `--strip` mode emitting each file with
 comments removed, per-language, so "the sweep changed no code" is a real diff and not an assertion.
@@ -1498,10 +1679,16 @@ Scenario: the stripper knows a comment from a hash in a string
   Then those characters survive
   And only real comment lines are removed
 
-Scenario: ticket references are found and finding numbers are not
-  Given a comment citing "T15" and another citing "F31"
+Scenario: every project-internal scheme is found, including finding numbers
+  Given comments citing "T15", "F31", "B12", "E4" and "OM-6"
   When I run "bin/comment-census --tickets"
-  Then the T15 site is listed and the F31 site is not
+  Then all five sites are listed
+
+Scenario: third-party identifiers are not tickets
+  Given a comment citing nvim's "E382", another "SHA-256" and another "RFC 3339"
+  When I run "bin/comment-census --tickets"
+  Then none of those sites is listed
+  And a comment citing "E4" in the same file still is
 
 Scenario: the checker's scope matches the documented ban
   Given CLAUDE.md's ticket rule
@@ -1510,15 +1697,18 @@ Scenario: the checker's scope matches the documented ban
 → spec file: `spec/lain/comment_census_spec.rb`
 
 **Escalation triggers:**
-- The ticket regex matches nvim error codes (`E95`, `E32`), encodings (`UTF-8`, `SHA-256`) or HTTP
-  shapes. The first census run produced exactly these. If the classifier cannot exclude them
-  without also excluding real tickets, **stop** — C16's entire safety rests on it.
+- **The classifier cannot separate `E4` from `E382`.** The same letter sits on both sides of the rule
+  — our enhancement notes against nvim's error codes — so a magnitude heuristic is a guess, not a
+  rule, and the runtime Lua is full of legitimate `E`-codes. If an allow-list of third-party
+  identifiers (nvim `E`-codes, RFCs, HTTP status, encodings, hash names) cannot be made to hold,
+  **stop**: C16 rewrites 2,000+ sites on this classifier's word, and a false positive there deletes a
+  reader's only pointer into someone else's documentation.
 - The stripper cannot be made correct for Lua or Ruby heredocs. Then C16's "no code changed" AC is
   unenforceable and the sweep must not proceed on an assertion.
 
 ---
 
-### C16 — Sweep plan-ticket references out of comments   [wave 8] [risk: high]
+### C16 — Sweep every internal ticket reference out of comments   [wave 8] [risk: high]
 
 **Depends on:** C15
 **Files:** comment lines only, across `lib/**/*.rb`, `spec/**/*.rb`,
@@ -1529,8 +1719,13 @@ Scenario: the checker's scope matches the documented ban
 that is enforced by the `--strip` diff, not asserted.
 **Reachable from:** N/A — comment-only.
 
-Measured: `lib/` **731** references, `spec/` **1,323**. Both are swept, because C15's rule covers
-both. **Rust is excluded**: ~2,400 `///`/`//!` lines in `ext/lain` and `crates/` are doc
+Measured, plan tickets alone: `lib/` **731** references, `spec/` **1,323**. Both are swept, because
+C15's rule covers both. **Add the QA finding numbers, now in scope by the human's 2026-08-26 ruling:
+325 further sites across `lib/` and `spec/` citing 49 distinct F-numbers** — so the sweep is ~2,380
+sites, not ~2,050. Re-census at the start rather than trusting these figures; C17 runs after this
+card, so nothing has thinned them yet.
+
+**Rust is excluded**: ~2,400 `///`/`//!` lines in `ext/lain` and `crates/` are doc
 *attributes* under `#![deny(missing_docs)]` and `#[deny(clippy::missing_docs_in_private_items)]`
 (`ext/lain/src/lib.rs:2,42`) — deleting one is a denied lint, orphaning one is a compile error, and
 reflowing one can break an intra-doc link into another denied lint.
@@ -1624,6 +1819,12 @@ architectural argument to `ARCHITECTURE.md` or `docs/` with a one-line pointer l
 **YARD tags are preserved** — they are 10% of the mass, they carry the skimmable shape, and the
 human named them as important. Where a `@tag` is *wrong* (see the ACs), fix it rather than delete it.
 
+**Ticket references are C16's job, not this card's** — by wave 9 every internal `<LETTER><NUMBER>`
+should already be gone from `lib/` and `spec/`. If this pass finds survivors, they are C16 misses:
+remove them under the same rule (**the reason in words, never delete the sentence to lose a number**)
+and **report the count**, because a miss means C16's classifier has a hole and the next repo-wide
+claim built on it is false.
+
 **Acceptance criteria** (each card asserts over its own subtree only):
 
 ```gherkin
@@ -1632,6 +1833,12 @@ Scenario: the subtree's prose comes down without losing reasons
   When I run "bin/comment-census" over it
   Then its prose-to-code ratio is lower than the pre-pass census
   And every file that fell by more than half is listed in the hand-off with what moved where
+
+Scenario: no internal ticket reference survives this subtree
+  Given this card's subtree
+  When I run "bin/comment-census --check-tickets" over it
+  Then it exits zero
+  And any site this card had to remove itself is reported as a C16 miss
 
 Scenario: the subtree is yard-lint clean
   Given this card's subtree
@@ -1753,6 +1960,78 @@ Scenario: the entry says what it is
 **Escalation triggers:**
 - The sweep landed as more than one commit. Then every SHA must be listed, and the hand-off must say
   so — a partial list silently reintroduces the noise this card exists to remove.
+
+### C20 — Delete the closed QA findings rounds   [wave 10] [risk: low]
+
+**Depends on:** C16 (which removes the last code reference into these documents). Independent of
+C19 — different files, may run beside it.
+**Files:** the closed `planning/qa-findings-round*.md` (delete), `planning/README.md`,
+`planning/qa/README.md`, `ROADMAP.md`
+**Reuse:** none — this card removes.
+**Shared-file wiring:** none
+**Reachable from:** N/A — documentation only.
+
+**Measured 2026-08-26.** Fourteen `planning/qa-findings-round*.md` files, **516K over 7,327 lines**.
+Nothing in `lib/` or `spec/` links to them *by path* — every citation is in `planning/` or
+`ROADMAP.md`. The human's ruling: **git history is the archive**, so the working tree does not need
+to carry the narrative.
+
+**This card became simple because C15/C16 got stricter.** An earlier drafting built a
+`findings-ledger.md` plus a `bin/lint-findings-ledger` gate, to keep 325 in-code `F31`-style
+citations resolvable. The human then ruled that **every internal `<LETTER><NUMBER>` scheme is
+ephemeral and none belongs in committed comments** — so C16 removes those 325 sites outright, and by
+wave 10 no comment cites a finding number at all. **With nothing to resolve, there is nothing to keep
+a ledger for, and no durability to enforce.** The ledger and the lint were deleted from this card, not
+deferred: they existed only to serve a rule that no longer exists. Deleting them is the point.
+
+**Keep any round still in flight as its own file.** `qa-findings-round13-2026-08-25.md` is untracked
+and belongs to a QA round in progress; `qa-findings-round11-survey-2026-08-25.md` is *this chunk's own
+source* and is cited by its Intent. Delete a round only once it is closed, and say in the hand-off
+which rounds went and which stayed, with why.
+
+**Fix the indexes rather than leaving dead links.** `planning/README.md`'s chunk table, the rounds
+list in `planning/qa/README.md`, and `ROADMAP.md` all link to these files. Where a table row's only
+pointer was a findings link, keep the row's *description* — those summaries are the durable record
+now — and drop the link.
+
+**Acceptance criteria:**
+
+```gherkin
+Scenario: closed rounds leave the tree
+  Given a QA round whose findings are all discharged
+  Then its planning/qa-findings-round*.md file is deleted
+
+Scenario: an in-flight round is not deleted
+  Given a QA round whose findings are not yet all discharged
+  Then its file is still present
+  And the hand-off says why it stayed
+
+Scenario: no dead links remain
+  Given planning/README.md, planning/qa/README.md and ROADMAP.md
+  Then no link targets a deleted findings file
+  And every chunk-table row that cited one keeps its description
+
+Scenario: nothing in code pointed here anyway
+  When I grep lib/ spec/ and exe/ for the deleted filenames
+  Then there are no matches
+```
+→ spec file: none — a documentation deletion with no Ruby subject, verified by the greps in the ACs.
+
+**Escalation triggers:**
+- A code comment still cites a finding number when this card opens. That is a **C16 miss**, not this
+  card's problem to paper over — report it and stop, because deleting the documents would then strand
+  a live reference and C16's repo-wide claim is false.
+- Deleting a round would lose a **deferral pointer aimed at future work** rather than a closed
+  finding. Round 10's chunk spec records that a `--yolo` purge card nearly erased a live deferral
+  (`redact_secret_reads.rb:106-112`). A deferred finding is not a closed one — that round stays.
+- `ROADMAP.md` cites a findings file as the *only* record of why a roadmap item exists. Move the
+  reason into the item before deleting the file.
+
+**Adjacent, and deliberately NOT in this card:** `planning/specs/` is **3.6M across 59 chunk specs,
+37 of them `status: done`** — a larger accumulation than the findings rounds by a factor of seven,
+and the same argument applies. Recorded here so it is not lost.
+
+---
 
 ## Integration checks
 
