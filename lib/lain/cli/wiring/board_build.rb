@@ -3,11 +3,18 @@
 module Lain
   module CLI
     class Wiring
-      # What the run's {Switchboard} is BUILT FROM. BOTH halves turn the
-      # resolved {Lain::Project} into an authority the board holds, and neither
-      # is the board's own question: {Project::Consent} says which remembered
-      # answers this root may contribute, and the path boundary below says
-      # which paths it gates and which it refuses outright.
+      # What the run's {Switchboard} is BUILT FROM. Every half turns the
+      # resolved {Lain::Project} into an authority, and none is the board's own
+      # question: {Project::Consent} says which remembered answers this root
+      # may contribute, the path boundary below says which paths it gates and
+      # which it refuses outright, and {.shell_verdict} says which programs it
+      # refuses by name.
+      #
+      # That last one is the odd member and is here anyway, because this is
+      # where a project's config becomes an authority. It is the only one the
+      # board SHARES with something outside itself -- {Lain::Tools::Bash} holds
+      # the same instance -- so it is built here and handed back to {Wiring}
+      # rather than kept.
       #
       # == They are two vocabularies, and the resemblance is a trap
       #
@@ -28,6 +35,13 @@ module Lain
         UNREADABLE = "this project's [sensitivity] rules are not in force (the built-in credential rules still " \
                      "apply): %<reason>s"
 
+        # The same sentence for the other restricting table, and a separate one
+        # because a separate feature is lost: one broken file costs the project
+        # its path rules AND its excluded programs, and saying so once would
+        # leave an operator believing the other half survived.
+        NO_EXCLUSIONS = "this project's [shell] exclusions are not in force (no program is refused by name): " \
+                        "%<reason>s"
+
         module_function
 
         # @param chronicle [CLI::Chronicle] resolves the journal the switches record onto
@@ -39,19 +53,56 @@ module Lain
         #   `[approval]` table reports through
         # @param paths [Paths] supplies the HOME the classifier anchors its
         #   home-relative rules against
+        # @param verdict [#call] the session's ONE shell verdict, built by
+        #   {.shell_verdict} and passed in rather than built here: the bash
+        #   tool holds the same instance, and this module is called AFTER the
+        #   toolset exists. A default built here could not be shared, so it is
+        #   the permissive one and the production call site must pass the
+        #   session's -- which is what this file's identity example pins.
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
         # @return [Switchboard]
-        def for(chronicle:, options:, model:, toolset:, project:, notice: nil, paths: Paths.new)
+        def for(chronicle:, options:, model:, toolset:, project:, notice: nil, paths: Paths.new,
+                verdict: Lain::Shell::Verdict.new)
           # Compiled ONCE and handed to both readers: {.rules} parses the
           # config file and, when it cannot, SAYS so through `notice`, so a
           # second call would parse the same file twice and tell the operator
           # the same thing twice for one broken config.
           table = rules(project:, notice:)
-          Switchboard.for(chronicle:, options:, model:, toolset:,
+          Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
                           rules: Project::Consent.for(project:, notice:).rules,
                           sensitivity: policy(project:, paths:, table:),
                           classifiers: classifiers(project:, paths:, table:))
+        end
+
+        # The session's ONE {Lain::Shell::Verdict}, over the programs this
+        # project has ruled out. Built here because this is where a project's
+        # config becomes an authority, and handed BACK rather than kept: the
+        # bash tool and the approval ladder's triage rung must hold the same
+        # instance, and {Wiring} is the only object above both.
+        #
+        # `capability_set` is the third safety mechanism in this codebase that
+        # was written, spec'd and never wired -- {Shell::Verdict::AnyProgram}
+        # permits every program, and nothing in lib/ ever built another. This
+        # method is what makes a `deny` reachable in a real session.
+        #
+        # Two failures, two postures, and they are {.rules}' exactly. A
+        # malformed `[shell]` table RAISES: the table RESTRICTS, so dropping it
+        # fails OPEN, and a session quietly running with a project's refusals
+        # un-parsed is the worst outcome available. A file that will not PARSE
+        # is rescued and SAID instead, because the typo is as likely in
+        # `[epics]` and taking `lain chat` down over an unrelated syntax error
+        # is a regression a user meets mid-task.
+        #
+        # @param project [Lain::Project]
+        # @param notice [#call, nil]
+        # @raise [Lain::Shell::Exclusions::Refusal] when the table itself is malformed
+        # @return [Lain::Shell::Verdict]
+        def shell_verdict(project:, notice: nil)
+          Lain::Shell::Verdict.new(capability_set: Config.shell_exclusions(root: project.root))
+        rescue Config::Malformed => e
+          (notice || SILENT).call(format(NO_EXCLUSIONS, reason: e.message))
+          Lain::Shell::Verdict.new
         end
 
         # The run's path boundary, wrapped in the policy both gates read

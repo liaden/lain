@@ -83,14 +83,16 @@ module Lain
       #   so the direct-construction seams a spec drives are unchanged
       # @param classifiers [#call] the triage rung's `cwd -> #classify` factory,
       #   on `new`'s terms
+      # @param verdict [#call] the triage rung's shell verdict, on `new`'s terms
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal -- the only flag this entry reads off `options`, so
       #   a board built here differs from `new` in exactly that one resolution
       # @return [Switchboard]
       def self.for(chronicle:, options:, model:, toolset:, rules: [],
                    sensitivity: Sensitivity::Policy::Null.instance,
-                   classifiers: Approval::Escalation::Triage::AnyPath.new)
-        new(journal: chronicle.record_journal, model:, toolset:, rules:, sensitivity:, classifiers:,
+                   classifiers: Approval::Escalation::Triage::AnyPath.new,
+                   verdict: Lain::Shell::Verdict.new)
+        new(journal: chronicle.record_journal, model:, toolset:, rules:, sensitivity:, classifiers:, verdict:,
             attended: !options[:non_interactive])
       end
 
@@ -123,6 +125,29 @@ module Lain
       #   behaviour: dropping the argument at the one call site restores this
       #   default and disarms the rung with a fully green suite, which is how
       #   the argv check came to be dead for two chunks.
+      # @param verdict [#call] `String -> Shell::Verdict::Decision`, the
+      #   session's ONE shell verdict, handed on to the ladder's triage rung.
+      #   THE SAME INSTANCE {Lain::Tools::Bash} chooses its arm with: {Wiring}
+      #   builds it from the project's `[shell]` table and gives it to the
+      #   toolset and to this board, so the verdict a record names and the
+      #   verdict a command ran under are one object rather than two agreeing
+      #   parses. Its exclusion table is also the only thing on this ladder
+      #   that can DENY on the model's own words.
+      #
+      #   Which posture a session is in decides whether any of that is
+      #   consulted, and all three answer differently. An attended board asks
+      #   this ladder. `/mode auto` resolves the Gate's policy to
+      #   {Effect::Handler::Gate::ApproveAll}, which never reaches a rung -- so
+      #   the exclusion table denies NOTHING there, while the tool still holds
+      #   the same verdict and still picks its arm. An unattended session gets
+      #   the one-rung {Unattended} ladder below, which refuses without asking
+      #   this rung anything. The asymmetry is a fact about those postures, not
+      #   a defect here.
+      #
+      #   Defaults to a verdict restricting no program, so a board built
+      #   without a project behaves as it did before the table existed --
+      #   resolved at CALL time, because `lain.rb` loads `lain/cli` before
+      #   `lain/shell`.
       # @param attended [Boolean] whether a human is at this session's terminal
       #   at all. `--non-interactive` says no, which answers "who decides a
       #   gated call" with "nobody can, so refuse" -- see {#seed} for why
@@ -131,10 +156,15 @@ module Lain
       #   no reader has to un-negate it twice.
       def initialize(journal:, model:, toolset:, rules: [],
                      sensitivity: Sensitivity::Policy::Null.instance,
-                     classifiers: Approval::Escalation::Triage::AnyPath.new, attended: true)
+                     classifiers: Approval::Escalation::Triage::AnyPath.new,
+                     verdict: Lain::Shell::Verdict.new, attended: true)
         @attended = attended
         @sensitivity = sensitivity
-        @classifiers = classifiers
+        # The rung itself, not the two things it is built from: a board that
+        # held them apart would be holding a constructor's argument list, and
+        # both are read at exactly one place. It is frozen and holds no state,
+        # so building it before the ladder that may not want it costs nothing.
+        @triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict:)
         @rules = rules.to_a.freeze
         @ledger = Sensitivity::Ledger.new
         # Kept, where the switches merely borrow it: {#gate}'s path refusals
@@ -261,11 +291,14 @@ module Lain
       # It is still NOT a quiet demotion to `plan`: the posture stays what it
       # says, the capability set is untouched, and only the gate's answer
       # changes.
+      #
+      # The unattended arm builds no triage rung at all, which is why the
+      # session's verdict and its exclusion table reach nothing here: refusing
+      # everything is already stricter than any table could be.
       def build_ladder(journal:)
         return Approval::Escalation.new([Unattended.new], journal:) unless @approvals
 
-        Approval::Escalation.for(queue: @approvals, tools: @toolset, journal:, rules: @rules,
-                                 triage: Approval::Escalation::Triage.new(sensitivity: @classifiers))
+        Approval::Escalation.for(queue: @approvals, tools: @toolset, journal:, rules: @rules, triage: @triage)
       end
 
       # The posture's declared symbols as this session's live collaborators.

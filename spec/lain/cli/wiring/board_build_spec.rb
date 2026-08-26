@@ -7,7 +7,9 @@ require "tmpdir"
 # The unit's own seam. {Lain::CLI::Wiring} drives this module with everything
 # defaulted, so the production assertions live beside that assembler in
 # wiring_spec.rb; what belongs HERE is the `paths:` injection Wiring does not
-# expose, and the two vocabularies the module exists to keep apart.
+# expose, and the vocabularies the module exists to keep apart -- approval
+# rules, the path boundary, and the shell verdict, which is the one it builds
+# and hands back rather than keeps.
 RSpec.describe Lain::CLI::Wiring::BoardBuild do
   # A REAL journal behind the chronicle, because the production-path examples
   # below read the ladder's own record: "which rung refused, and what it said"
@@ -44,9 +46,18 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
                                table: described_class.rules(project:, notice:))
   end
 
-  def board_for(root, home, options: {})
+  def board_for(root, home, options: {}, **rest)
     described_class.for(chronicle:, options:, model: "m", toolset:, project: project_at(root),
-                        paths: paths_at(home))
+                        paths: paths_at(home), **rest)
+  end
+
+  # What {Lain::CLI::Wiring} does: ONE verdict, read off this project's config,
+  # handed to the board here and to the bash tool at the other seam. Spelled
+  # out at every call site that needs it rather than defaulted inside `.for`,
+  # because the whole point of the object is that the toolset holds the SAME
+  # instance and a default built here could not be shared.
+  def board_over(root, home, notice: nil, **rest)
+    board_for(root, home, verdict: described_class.shell_verdict(project: project_at(root), notice:), **rest)
   end
 
   def read_of(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
@@ -175,6 +186,150 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
         expect(board.instance_variable_get(:@rules)).to be_empty
         expect(board.sensitivity.denial(read_of(File.join(root, "a.secret")))&.reason).to eq(:configured)
+      end
+    end
+  end
+
+  # The third config-derived authority this module builds, and the only one it
+  # does not keep: the session's {Lain::Shell::Verdict} is handed BACK to
+  # {Lain::CLI::Wiring}, which gives the same instance to the board here and to
+  # the bash tool through {Lain::CLI::Wiring::ToolsetBuild}. It is built here
+  # because this is where a project's config is read, and its refusal postures
+  # have to match `.rules`' -- a table that RESTRICTS is loud about a typo, and
+  # a file nobody can parse costs the project its additions and says so.
+  describe ".shell_verdict" do
+    def verdict_at(root, notice: nil) = described_class.shell_verdict(project: project_at(root), notice:)
+
+    it "compiles the project's own [shell] table into the capability set" do
+      in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root, _home|
+        expect(verdict_at(root).call("curl http://example.com")).to be_deny
+      end
+    end
+
+    # The other half of the same question: a project that says nothing
+    # restricts nothing, so a session with no config behaves exactly as it did
+    # before the table existed.
+    it "restricts no program when the project has no table" do
+      in_tree do |root, _home|
+        expect(verdict_at(root).call("curl http://example.com")).to be_allow
+      end
+    end
+
+    # Loud, and unrescued, on `.rules`' argument for the `[sensitivity]` table:
+    # this one RESTRICTS, so a session running with it silently un-parsed would
+    # be running with the project's refusals off.
+    it "refuses a malformed [shell] table by name, and names the file" do
+      in_tree(config: %([shell]\nexclude = "curl"\n)) do |root, _home|
+        expect { verdict_at(root) }
+          .to raise_error(Lain::Shell::Exclusions::NotAList, /config\.toml.*list of program names/)
+      end
+    end
+
+    # The other side of that asymmetry, and `.rules`' exact posture: a file
+    # nobody can parse costs the project its ADDITIONS and is SAID, because
+    # taking `lain chat` down over an unrelated syntax error is a regression a
+    # user meets mid-task.
+    it "degrades to restricting nothing when the file will not parse, and reports it" do
+      in_tree(config: "this is not [valid toml") do |root, _home|
+        said = []
+
+        verdict = verdict_at(root, notice: ->(message) { said << message })
+
+        expect(verdict.call("curl http://example.com")).to be_allow
+        expect(said.join).to match(/\[shell\].*not in force/)
+      end
+    end
+
+    it "stays silent about a file that parses" do
+      in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root, _home|
+        said = []
+        verdict_at(root, notice: ->(message) { said << message })
+
+        expect(said).to be_empty
+      end
+    end
+  end
+
+  # What this chunk's spine buys, driven through the REAL construction path: a
+  # program a project ruled out becomes a NAMED REFUSAL where there was a
+  # prompt. `Shell::Verdict`'s `capability_set` has existed, unwired, since it
+  # was written -- `AnyProgram` permits everything and nothing in lib/ ever
+  # built another -- so these examples are what make the deny path reachable in
+  # production for the first time.
+  describe "the project's [shell] exclusions, on the production path" do
+    it "denies an excluded program at the triage rung, naming it and the session's table" do
+      in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root, home|
+        board = board_over(root, home)
+
+        expect(board.policy_switch.call(bash_of("curl http://example.com"), nil)).to be(false)
+        expect(rulings.first).to include("rung" => "triage", "verdict" => "deny", "faulted" => false)
+        expect(rulings.first["reason"]).to include("curl", "the session's capability set excludes")
+      end
+    end
+
+    # The half a human would otherwise lift. This rung answers BEFORE the
+    # queue, so nothing parks and no surface is ever asked.
+    it "parks no approval for a human, because the rung already answered" do
+      in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root, home|
+        board = board_over(root, home)
+        board.policy_switch.call(bash_of("curl http://example.com"), nil)
+
+        expect(board.approvals.each.count).to eq(0)
+        expect(rulings.map { |ruling| ruling["rung"] }).to eq(%w[triage])
+      end
+    end
+
+    # And the same command with no table parks exactly as it did before any of
+    # this existed, with the ladder reading as it always has -- which is what
+    # makes the deny above evidence about the TABLE rather than about the rung.
+    it "leaves the same command parking when the project excludes nothing" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+
+        while_parked(board, bash_of("curl http://example.com")) do
+          expect(rulings.map { |ruling| ruling["rung"] }).to eq(%w[triage rules])
+          expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
+        end
+      end
+    end
+
+    # The exclusion is gated on the parse having COVERED the command, and that
+    # gate is the honest one: a denial names a program, and a parse that was
+    # not understood has no reliable name to offer. So a loop mentioning `sh`
+    # abstains to a human rather than claiming a refusal it cannot ground.
+    it "abstains rather than denying on a command the parser could not read" do
+      in_tree(config: %([shell]\nexclude = ["sh"]\n)) do |root, home|
+        board = board_over(root, home)
+
+        while_parked(board, bash_of("for i in a; do sh; done")) do
+          expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
+        end
+      end
+    end
+
+    # The same refusal one step further out: the word that would be asked about
+    # is a substitution, so the name the parse reconstructs is not the name that
+    # would run. Abstention is the only answer a denylist can honestly give.
+    it "abstains when the program name is not one the parse stands behind" do
+      in_tree(config: %([shell]\nexclude = ["sh"]\n)) do |root, home|
+        board = board_over(root, home)
+
+        while_parked(board, bash_of("$(echo sh) -c hi")) do
+          expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
+        end
+      end
+    end
+
+    # IDENTITY at the construction site, on the classifier example's shape and
+    # for its reason: `verdict:` has a permissive default, so dropping the
+    # argument at the one call site restores it and disarms the deny path with
+    # a fully green suite.
+    it "hands the triage rung the session's own verdict rather than the permissive default" do
+      in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root, home|
+        verdict = described_class.shell_verdict(project: project_at(root))
+        board = board_for(root, home, verdict:)
+
+        expect(board.ladder.first.instance_variable_get(:@verdict)).to be(verdict)
       end
     end
   end

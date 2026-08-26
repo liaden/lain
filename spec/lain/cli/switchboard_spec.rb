@@ -134,6 +134,52 @@ RSpec.describe Lain::CLI::Switchboard do
       end
     end
 
+    # The FOURTH thing that rung reads, and the only one the board shares with
+    # something outside itself: the session's {Lain::Shell::Verdict} is also
+    # what {Lain::Tools::Bash} chooses its arm with, so this board must carry
+    # the instance it was handed rather than construct its own. Two default
+    # constructions cannot disagree -- the object is frozen and pure -- but a
+    # board holding its own would leave the project's exclusion table off the
+    # ladder while the tool still honoured it.
+    describe "the triage rung's shell verdict" do
+      def verdict_of(board) = board.ladder.first.instance_variable_get(:@verdict)
+
+      let(:excluding_curl) do
+        Lain::Shell::Verdict.new(capability_set: Lain::Shell::Exclusions.new(patterns: ["curl"]))
+      end
+      let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+
+      it "hands the rung whatever the session was built with" do
+        expect(verdict_of(switchboard(verdict: excluding_curl))).to be(excluding_curl)
+      end
+
+      # `.for` is the only construction a real chat reaches, so a verdict this
+      # entry dropped would be the exclusion table disarmed everywhere while
+      # `new` stayed green.
+      it "carries it through the wiring entry to the ladder" do
+        board = described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+                                    verdict: excluding_curl)
+
+        expect(verdict_of(board)).to be(excluding_curl)
+      end
+
+      # The default restricts nothing, which is what a board built with no
+      # project has to mean.
+      it "defaults to a verdict that restricts no program" do
+        expect(verdict_of(switchboard).call("curl http://example.com")).to be_allow
+      end
+
+      # The THIRD posture, and it is a fact about the wiring rather than a
+      # defect: a session with nobody to ask gets a one-rung ladder that
+      # refuses everything, so the exclusion table is never consulted there.
+      # The tool still holds the same verdict and still chooses its arm.
+      it "is not consulted at all by an unattended session's one-rung ladder" do
+        board = switchboard(attended: false, verdict: excluding_curl)
+
+        expect(board.ladder.map(&:name)).to eq(%w[unattended])
+      end
+    end
+
     # The default is what every caller gets until one passes a consented
     # project's answers, and it has to be the behaviour from before that rung existed, exactly: an
     # empty rung abstains, and the call goes on parking on the queue.

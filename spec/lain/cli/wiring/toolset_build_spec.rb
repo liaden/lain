@@ -112,6 +112,49 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
+    # The OTHER thing that has to reach the bash tool, and the reason it is
+    # threaded from {Lain::CLI::Wiring} rather than resolved here: the run's
+    # {Lain::Shell::Verdict} is ALSO what the approval ladder's triage rung
+    # consults, and the board is built from the finished toolset. One instance
+    # at both seams is what makes "the journalled verdict is the verdict the
+    # tool acted on" true by construction.
+    #
+    # `@verdict` is read through the ivar for `@exec`'s reason: the tool
+    # publishes neither, and widening its surface to reach a spec would be the
+    # spec shaping the subject.
+    describe "the shell verdict the bash tool chooses its arm with" do
+      def bash_verdict(toolset) = toolset.fetch("bash").instance_variable_get(:@verdict)
+
+      let(:excluding_curl) do
+        Lain::Shell::Verdict.new(capability_set: Lain::Shell::Exclusions.new(patterns: ["curl"]))
+      end
+
+      it "hands the bash tool the verdict it was built with, by identity" do
+        toolset = build_with(options, verdict: excluding_curl).build(recorder, ask_human:)
+
+        expect(bash_verdict(toolset)).to be(excluding_curl)
+      end
+
+      # The floor is what a child attenuates FROM, so the child's bash IS the
+      # parent's bash and cannot hold a different table. Asserted through
+      # {Lain::Tools::Subagent#attenuates_from} rather than by rebuilding the
+      # floor, because the claim is about the object the spawn inherits.
+      it "gives an attenuated child the same verdict instance, never a fresh one" do
+        full = build_with(options, verdict: excluding_curl).build(recorder, ask_human:)
+
+        expect(bash_verdict(full.fetch("subagent").attenuates_from)).to be(excluding_curl)
+      end
+
+      # The default is what an unwired build gets: a verdict restricting no
+      # program, so a build with no session behaves as it did before the
+      # keyword existed.
+      it "defaults to a verdict that restricts no program" do
+        toolset = toolset_build.build(recorder, ask_human:)
+
+        expect(bash_verdict(toolset).call("curl http://example.com")).to be_allow
+      end
+    end
+
     it "layers the capability floor, the child seam, and the three main-agent-only tools" do
       names = toolset_build.build(recorder, ask_human:).names
 

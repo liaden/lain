@@ -17,13 +17,62 @@ module Lain
         #   {Lain::CLI::ExecBackend} at the site that knows the project's root.
         #   Defaulted rather than required so the callers that only want the
         #   floor's SHAPE stay byte-identical to before the flag existed.
-        def build(recorder, exec: Lain::Exec::Local.new)
+        # @param verdict [#call] `String -> Shell::Verdict::Decision`, the
+        #   session's ONE shell verdict -- the object {Lain::Tools::Bash} picks
+        #   its arm with AND the object the approval ladder's triage rung
+        #   judges with. {Lain::CLI::Wiring} builds it from the project's
+        #   `[shell]` table and hands the same instance to both, which is what
+        #   makes "the journalled verdict is the verdict the tool acted on"
+        #   true by construction: the object is frozen and pure, so two holders
+        #   of ONE instance compute the identical Decision from the identical
+        #   String, and nothing has to be carried between the gate and the tool.
+        #
+        #   The default restricts no program, so a floor built with no session
+        #   -- `bash_spec` constructs the tool alone, and
+        #   {Lain::Tools::Subagent} runs an ungated handler -- is unchanged.
+        #   Sharing the instance is an INJECTION and never a dependency: the
+        #   tool must stay correct with nobody above it. The default is written
+        #   here rather than in a constant because `lain.rb` loads `lain/cli`
+        #   before `lain/shell`, so it can only be resolved at CALL time --
+        #   the same debt `escalation.rb` records at the other seam.
+        #
+        #   == A DENY MOVES THE COMMAND ONTO THE LESS CONSTRAINED ARM
+        #
+        #   Stated here because this is where the verdict reaches the object
+        #   that picks the arm, and a reader reasoning about arms will not
+        #   think to look at a Switchboard keyword. `Tools::Bash#perform` is
+        #   `decision.allow? ? decision.term : input.command`, so `deny` and
+        #   `abstain` are one branch to it. MEASURED, through the real tool
+        #   over a recording backend:
+        #
+        #     no table          curl http://example.com  allow  [["curl","http://example.com"]]
+        #     exclude = ["curl"] curl http://example.com  deny   "curl http://example.com"
+        #
+        #   So excluding a program takes it OFF the reconstructed argv this
+        #   layer exists to produce and onto `sh -c` -- more shell, not less,
+        #   for the one program the project named. Attended sessions never see
+        #   it, because the ladder's triage rung denies before the tool is
+        #   reached. The two postures that DO reach the tool are exactly the
+        #   two that skip the ladder: `/mode auto`, whose gate policy is
+        #   {Effect::Handler::Gate::ApproveAll} (`mode/resolution.rb:107`), and
+        #   a child spawned over {Lain::Tools::Subagent::UNGATED}
+        #   (`subagent.rb:311`), which is the same class.
+        #
+        #   NOT a defect this card may fix: what a deny should MEAN at the tool
+        #   -- refuse outright, or run as a term anyway -- is a design question
+        #   about the tool's contract rather than about the wiring, and the
+        #   answer changes `Tools::Bash`. Named instead as the NEXT RUNG on the
+        #   chunk's "what reaches a shell" axis, whose position today is
+        #   "understood commands run as reconstructed argv; everything else
+        #   through `sh -c`": the rung after it is a deny that does not fall
+        #   through to the string arm.
+        def build(recorder, exec: Lain::Exec::Local.new, verdict: Lain::Shell::Verdict.new)
           [Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new, Lain::Tools::Grep.new,
            Lain::Tools::EditFile.new, Lain::Tools::WriteFile.new, Lain::Tools::TodoWrite.new,
            Lain::Tools::MemoryWrite.new(recorder:), Lain::Tools::MemoryRead.new(index: recorder),
-           Lain::Tools::Bash.new(exec:), Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new, Lain::Tools::AstDump.new,
-           Lain::Tools::TestPattern.new, Lain::Tools::AstSearch.new, Lain::Tools::CodeOutline.new,
-           Lain::Tools::FileSymbols.new]
+           Lain::Tools::Bash.new(exec:, verdict:), Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
+           Lain::Tools::AstDump.new, Lain::Tools::TestPattern.new, Lain::Tools::AstSearch.new,
+           Lain::Tools::CodeOutline.new, Lain::Tools::FileSymbols.new]
         end
       end
     end

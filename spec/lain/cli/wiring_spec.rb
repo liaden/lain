@@ -2070,6 +2070,56 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    # The other object a real chat's board is built from, and the only one it
+    # SHARES with the toolset: {Wiring#verdict} is memoized, so #build_toolset
+    # and #switchboard read one slot and the bash tool and the ladder's triage
+    # rung end up holding one {Lain::Shell::Verdict}. That is what makes "the
+    # journalled verdict is the verdict the tool acted on" true by
+    # construction -- nothing is carried between the gate and the tool, so
+    # nothing can be forged in transit either.
+    describe "the shell verdict a real chat builds" do
+      def verdict_of_rung(board) = board.ladder.first.instance_variable_get(:@verdict)
+
+      def verdict_of_tool(board) = board.toolset.fetch("bash").instance_variable_get(:@verdict)
+
+      # `equal?` and never `eq`, because identity is the CLAIM: one object at
+      # two seams, so nothing has to be carried between the gate and the tool.
+      # `eq` would assert something weaker and different -- that two verdicts
+      # agree -- which is exactly what the regression this guards against
+      # produces ({ToolsetBuild} and {BoardBuild} each calling
+      # `Shell::Verdict.new`, restoring the double parse with a green suite).
+      #
+      # `eq` happens to catch it TODAY, and only by coincidence of two
+      # unrelated classes inheriting `Object#==`. Measured:
+      # `Verdict.new == Verdict.new` and `Parse.new == Parse.new` are both
+      # false, while `Exclusions` is a `Data` and already compares equal. The
+      # coincidence rests on nothing anyone declared and nothing any spec pins:
+      # {Shell::Parse} is a STATELESS frozen object (`def initialize = freeze`,
+      # no ivars), which is the shape that becomes a value. Measured with a
+      # `Data.define(:parse, :capability_set)` stand-in: two verdicts over two
+      # fresh Parses are not `eq`, two over a SHARED Parse are. So the guard
+      # fails open the moment either half turns value-like. Do not simplify it.
+      it "gives the triage rung and the bash tool the same instance, not two equal ones" do
+        in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root|
+          board = board_for(root:)
+
+          expect(verdict_of_rung(board)).to equal(verdict_of_tool(board))
+        end
+      end
+
+      # And the shared instance is the PROJECT's, not a shared permissive
+      # default -- without this, the example above would still pass over two
+      # branches that agreed on restricting nothing.
+      it "carries the project's own exclusion table to both of them" do
+        in_tree(config: %([shell]\nexclude = ["curl"]\n)) do |root|
+          board = board_for(root:)
+
+          expect(verdict_of_rung(board).call("curl http://example.com")).to be_deny
+          expect(verdict_of_tool(board).call("curl http://example.com")).to be_deny
+        end
+      end
+    end
+
     # The TOOL phase, from the production board. Two independent things had to
     # be true for this axis to fire, and asserting only one is how the card
     # half-lands and looks done: the stack has to CARRY the listing guard, and

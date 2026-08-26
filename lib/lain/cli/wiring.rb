@@ -303,7 +303,7 @@ module Lain
                                           chronicle:, options:, root: project.root, usage: -> { @agent&.usage },
                                           supervisor: @supervisor, parent:, journal:, library: backend.library,
                                           switchboard: -> { @switchboard }, askers: @askers,
-                                          epic: epic_mount(notice))
+                                          epic: epic_mount(notice), verdict: verdict(notice))
         @toolset_build.build(recorder, ask_human:)
       end
 
@@ -352,8 +352,26 @@ module Lain
       # {Lain::Sensitivity::Policy::Null} default, so `gates?` answered false for
       # every path in every real chat and the whole axis was dark.
       def switchboard(backend, toolset, notice = nil)
-        @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:, notice:)
+        @switchboard ||= BoardBuild.for(chronicle:, options:, model: backend.context.model, toolset:, project:,
+                                        notice:, verdict: verdict(notice))
       end
+
+      # The session's ONE {Lain::Shell::Verdict}, and the memo is the whole
+      # mechanism. #build_toolset gives it to the bash tool and #switchboard
+      # gives it to the approval ladder's triage rung, so the gate and the tool
+      # hold the same frozen, pure object: two holders of one instance compute
+      # the identical Decision from the identical String, which makes "the
+      # journalled verdict is the verdict the tool acted on" true by
+      # construction and leaves nothing to be carried -- or forged -- between
+      # them. Built HERE because the toolset is finished before the board
+      # exists, so neither branch can build it for the other.
+      #
+      # Reached first from #build_toolset, which is ahead of `chronicle.start`:
+      # the same refusal-before-journal ordering #switchboard keeps, and it
+      # matters because a malformed `[shell]` table refuses rather than
+      # degrading. The notice is passed on every call and fires on the first,
+      # for {BoardBuild.for}'s reason -- one broken config, one sentence.
+      def verdict(notice = nil) = @verdict ||= BoardBuild.shell_verdict(project:, notice:)
 
       # What the drain is handed is the DIRECTORY, not the run's one asker:
       # "which asker holds the set this answer names" is a question only the
@@ -417,9 +435,7 @@ module Lain
       # parked approval, and a human question waiting for an answer. The inbox
       # half is safe to read because {HumanReplies} is built in #build_repl
       # before the driver, so the slot is set by the time a poll can run.
-      def quiescent?
-        (approvals.nil? || approvals.each.all?(&:decided?)) && !@replies.pending?
-      end
+      def quiescent? = (approvals.nil? || approvals.each.all?(&:decided?)) && !@replies.pending?
     end
   end
 end

@@ -195,6 +195,15 @@ module Lain
         #   unrecognized `--exec` refuses before {Chronicle#start} pins the
         #   session header -- the refusal-before-journal ordering
         #   {Wiring#fleet_isolation} keeps.
+        # @param verdict [#call] `String -> Shell::Verdict::Decision`, the
+        #   session's ONE shell verdict, threaded to {BaseTools} and no
+        #   further. NOT resolved here, where `exec:` is, and the difference is
+        #   the point: which transport a capability uses is a fact about the
+        #   TOOLSET, while which programs a project has ruled out is a fact
+        #   about the PROJECT -- and the approval ladder consults the same
+        #   object. So {Wiring} builds it above both branches and hands the one
+        #   instance down each. The default restricts nothing and is resolved
+        #   at CALL time, on {BaseTools.build}'s load-order note.
         # @param usage [#call, nil] a thunk resolving to the live Agent's
         #   cumulative {Lain::Usage}, for the main-agent-only
         #   {Lain::Tools::SessionUsage}. Late-bound for `parent:`'s exact reason:
@@ -209,11 +218,13 @@ module Lain
         #   that order.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
                        root:, switchboard: -> { NoSwitchboard }, askers: Askers.unwired, usage: nil,
+                       verdict: Lain::Shell::Verdict.new,
                        exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:))
           @library = library
           @backend = backend
           @options = options
           @exec = exec
+          @verdict = verdict
           @epic = epic
           @askers = askers
           @usage = usage
@@ -231,7 +242,7 @@ module Lain
         #   replier fiber parks on the same object
         # @return [Lain::Toolset]
         def build(recorder, ask_human:)
-          base = Lain::Toolset.new(BaseTools.build(recorder, exec: @exec))
+          base = Lain::Toolset.new(BaseTools.build(recorder, exec: @exec, verdict: @verdict))
           @role_spawn = role_spawn_seam(base)
           @docent = Lain::Review::Docent::Answerer.new(spawn: @role_spawn)
           @auto_surface = (Lain::Approval::AutoSurface.new(role_spawn: @role_spawn) if options[:auto_approve])
