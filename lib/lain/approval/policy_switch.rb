@@ -43,9 +43,12 @@ module Lain
       # `announces_as:` name {Tools::Subagent} already enrols its asker under.
       # A context nobody wrapped names nobody, which is the parent's own turn.
       class Requested < SimpleDelegator
+        include Declarative
+
         # One bare word, which is what every wired requester is: `"agent"`,
         # {CLI::Wiring::ToolsetBuild::SPAWN_REQUESTER}, and every
-        # {Role::Catalog} name. See {#initialize} for why the rule is mechanical.
+        # {Role::Catalog} name. See the declaration below for why the rule is
+        # mechanical.
         NAME = /\A[\w-]+\z/
         private_constant :NAME
 
@@ -75,10 +78,23 @@ module Lain
         # happen to be literals" is prose. A whitelist rather than a blacklist,
         # for `Outstanding`'s reason: the escapes worth refusing are not a set
         # anyone can finish enumerating.
+        #
+        # The attribute is deliberately UNTYPED: ActiveModel's format validator
+        # already matches against `value.to_s`, so an untyped slot applies the
+        # same rule while leaving the refusal free to `inspect` what the caller
+        # actually passed -- a typed one would report the cast String and lose
+        # the difference between nil and `""`.
+        declare do
+          attribute :requester
+          validates :requester,
+                    format: { with: NAME,
+                              message: lambda { |_record, error|
+                                "must name who is asking in one bare word, got #{error[:value].inspect}"
+                              } }
+        end
+
         def initialize(context, requester)
-          unless requester.to_s.match?(NAME)
-            raise ArgumentError, "a requester must name who is asking in one bare word, got #{requester.inspect}"
-          end
+          self.class.check!(requester:)
 
           super(context)
           @requester = -requester.to_s

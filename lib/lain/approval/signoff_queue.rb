@@ -60,16 +60,16 @@ module Lain
       # {Approval::GateDecision}).
       JOURNAL_TYPE = "gate_decision"
 
-      # SignoffQueue's OWN construction contracts -- not {Approval::Guards},
+      # SignoffQueue's OWN construction contracts -- not {Approval::Contracts},
       # which carries the gate record's. Same validate-then-freeze convention:
-      # a {Lain::Guard} carrier checked before the auto-frozen Data value exists,
-      # so neither value object ever touches ActiveModel and both stay
+      # a {Lain::Declarative::Carrier} checked before the auto-frozen Data value
+      # exists, so neither value object ever touches ActiveModel and both stay
       # `Ractor.shareable?`.
-      module Guards
+      module Contracts
         # An empty partition key is worse than a wrong one: it still constructs,
         # still folds, and can never be matched back by the epic and stage a
         # boundary check asks about. Refused where it is built.
-        class Partition < Guard
+        class Partition < Declarative::Carrier
           attribute :epic_slug
           attribute :stage
           validates :epic_slug, presence: { message: "must name the epic this sign-off belongs to, got nil" }
@@ -78,7 +78,7 @@ module Lain
 
         # A parked sign-off is an ADDRESS waiting to be answered; without the
         # digest there is nothing to answer about.
-        class Item < Guard
+        class Item < Declarative::Carrier
           attribute :artifact_digest
           validates :artifact_digest, presence: { message: "must name the artifact awaiting sign-off, got nil" }
         end
@@ -99,13 +99,13 @@ module Lain
         # drained.
         #
         # `approved` is checked as a TRUNCATION CANARY, not for tidiness.
-        # {Guards::GateDecision} makes it mandatory at every write, so no
+        # {Contracts::GateDecision} makes it mandatory at every write, so no
         # producible record is ever rejected by this clause -- the only thing it
         # can catch is a line that was damaged or hand-made. And a truncation
         # that took `approved` could equally have taken `policy`, the field the
         # fold actually branches on, so a record missing either is evidence the
         # record cannot be trusted about the other.
-        class Decision < Guard
+        class Decision < Declarative::Carrier
           attribute :type
           attribute :policy
           attribute :approved
@@ -129,7 +129,7 @@ module Lain
           # on the raw object and then keys a partition nothing can match.
           epic_slug = -epic_slug.to_s
           stage = -stage.to_s
-          Guards::Partition.check!(epic_slug:, stage:)
+          Contracts::Partition.check!(epic_slug:, stage:)
 
           super
         end
@@ -158,7 +158,7 @@ module Lain
           # interns both of ITS members for exactly this reason; the digest is
           # dup'd-and-frozen rather than interned, the {GateDecision} split.
           artifact_digest = artifact_digest.to_s
-          Guards::Item.check!(artifact_digest:)
+          Contracts::Item.check!(artifact_digest:)
           partition = Partition.new(epic_slug:, stage:)
 
           # Every member settled into frozen bytes, prose included: deep
@@ -213,7 +213,7 @@ module Lain
       # @return [Item, nil] the item that was holding, or nil if none was
       def drain(artifact_digest:, epic_slug:, stage:)
         artifact_digest = artifact_digest.to_s
-        Guards::Item.check!(artifact_digest:)
+        Contracts::Item.check!(artifact_digest:)
 
         partition = Partition.new(epic_slug:, stage:)
         # A throwaway Hash rather than the frozen {NOTHING} the read paths get:
@@ -261,7 +261,7 @@ module Lain
       # PUBLIC, and therefore guarded on its own rather than trusting
       # {.from_journal}'s type filter: this is the seam a live session folds its
       # own decisions through, and it is reachable with any Hash at all. A
-      # record that is not a whole `gate_decision` raises ({Guards::Decision}),
+      # record that is not a whole `gate_decision` raises ({Contracts::Decision}),
       # because both ways of getting it wrong are unsafe -- misreading one
       # drains a sign-off nobody answered, and skipping one loses a deferral
       # just as quietly. Fail closed means the fold refuses, not that it
@@ -271,8 +271,8 @@ module Lain
       # @return [self]
       # @raise [ArgumentError] naming the field that made the record unreadable
       def apply(decision)
-        Guards::Decision.check!(type: decision["type"], policy: decision["policy"],
-                                approved: decision["approved"])
+        Contracts::Decision.check!(type: decision["type"], policy: decision["policy"],
+                                   approved: decision["approved"])
         deferred?(decision) ? park(**parked_attributes(decision)) : drain(**address_attributes(decision))
         self
       end

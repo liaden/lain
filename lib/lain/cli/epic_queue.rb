@@ -304,7 +304,7 @@ module Lain
 
         # A deferral stamped AFTER now is a damaged record, and it is refused
         # here rather than allowed downstream. Left alone it reached
-        # {Guards::GateDecision} as a negative latency and came back as a bare
+        # {Contracts::GateDecision} as a negative latency and came back as a bare
         # `ArgumentError` naming neither this surface nor a remedy -- and the
         # item could not be drained at all until the wall clock caught up, while
         # the listing rendered `waiting -3600s`. Clock skew between the machine
@@ -325,7 +325,7 @@ module Lain
         # `to_f` would turn a missing `ts` into 0.0 -- "answered instantly", a
         # measurement nobody made -- written into the experiment record.
         # {Journal#record} stamps every line it writes, so no producible record
-        # trips this: it is a truncation canary, the {SignoffQueue::Guards}
+        # trips this: it is a truncation canary, the {SignoffQueue::Contracts}
         # idiom.
         def parked_at(deferral, item)
           Time.iso8601(deferral["ts"].to_s)

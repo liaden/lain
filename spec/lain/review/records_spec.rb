@@ -319,7 +319,7 @@ RSpec.describe Lain::Review::AnnotationPlaced do
   # records back in from the journal, where a line is already an Integer and
   # WireInteger is never called. Without this example the clause deletes clean.
   it "re-refuses a line through its guard alone, where WireInteger cannot reach" do
-    carrier = described_class.guard_carrier.new(line: -1)
+    carrier = described_class.declared_carrier.build(line: -1)
     carrier.valid?
 
     expect(carrier.errors.where(:line).map(&:message))

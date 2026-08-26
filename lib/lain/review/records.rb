@@ -16,9 +16,9 @@ module Lain
     # anchor is computed against the merge base.
     ChangesetOpened = Data.define(:source, :base_ref, :head_ref, :digest) do
       include Telemetry::Journalable
-      include Guardable
+      include Declarative
 
-      guard do
+      declare do
         attribute :source
         attribute :base_ref
         attribute :head_ref
@@ -57,9 +57,9 @@ module Lain
     # designed to be changed.
     HunkMarked = Data.define(:hunk_key, :state) do
       include Telemetry::Journalable
-      include Guardable
+      include Declarative
 
-      guard do
+      declare do
         attribute :hunk_key
         attribute :state
         validates :hunk_key, presence: { message: Wire.refusal("must name the hunk that was marked") }
@@ -92,9 +92,9 @@ module Lain
     # judges the vocabulary only.
     ReviewVerdict = Data.define(:verdict, :changeset_digest) do
       include Telemetry::Journalable
-      include Guardable
+      include Declarative
 
-      guard do
+      declare do
         attribute :verdict
         attribute :changeset_digest
         # The message names the DECISION rather than the set, because the two
@@ -146,9 +146,9 @@ module Lain
     AnnotationPlaced = Data.define(:id, :path, :side, :line, :anchor_text, :text, :kind, :drifted,
                                    :revision) do
       include Telemetry::Journalable
-      include Guardable
+      include Declarative
 
-      guard do
+      declare do
         attribute :id
         attribute :path
         attribute :side
@@ -163,7 +163,7 @@ module Lain
         validates :side, inclusion: { in: SIDES, message: Wire.refusal("must be one of #{SIDES.join("/")}") }
         # For the READ side, and it is not dead. A record BUILT here never
         # reaches this message -- {Epic::WireInteger} refuses the same values
-        # earlier and more tersely -- but {Guardable} exposes the carrier, so a
+        # earlier and more tersely -- but {Lain::Declarative} exposes the carrier, so a
         # reader folding a journaled record back in re-checks a line that is
         # already an Integer and never passes through WireInteger at all. One
         # declaration serving both sides is the whole point of the guard.

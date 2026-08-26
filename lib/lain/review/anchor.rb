@@ -69,7 +69,7 @@ module Lain
       end
 
       # Shape refusal shared by the String-domain fields below: one class, not
-      # one per field, matching {Guardable}'s own rule that a per-rule
+      # one per field, matching {Lain::Declarative}'s own rule that a per-rule
       # exception class moves the translation into the wrong object -- the
       # field name is already in the message.
       class InvalidField < Error; end

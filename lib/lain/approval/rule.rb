@@ -81,14 +81,26 @@ module Lain
         # Reopened rather than written in the `Data.define` block: a constant or
         # nested class declared inside that block is lexically scoped to the
         # enclosing module, not to the Data class (see {Request::SYSTEM_PREFIX}).
+        include Declarative
 
         # Refuses an unknown verdict at CONSTRUCTION rather than at the point a
         # reader branches on it: a record that reaches the journal naming a
         # verdict nothing handles is a defect no later `else` can undo.
+        #
+        # A Proc message, not `%<value>s`: ActiveModel renders nil and `""`
+        # identically through the format string, and a verdict is exactly the
+        # slot where "which nothing arrived" is the diagnosis.
+        declare raising: UnknownVerdict do
+          attribute :verdict
+          validates :verdict,
+                    inclusion: { in: VERDICTS,
+                                 message: lambda { |_record, error|
+                                   "must be one of #{VERDICTS.inspect}, got #{error[:value].inspect}"
+                                 } }
+        end
+
         def initialize(verdict:, rule:, tool:, gated:, reason:)
-          unless VERDICTS.include?(verdict)
-            raise UnknownVerdict, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
-          end
+          self.class.check!(verdict:)
 
           super(verdict:, rule: -rule.to_s, tool: -tool.to_s, gated: gated == true, reason: -reason.to_s)
         end

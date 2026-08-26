@@ -4,12 +4,12 @@ module Lain
   module Approval
     class Gate
       class Adjudicator
-        # {Adjudicator}'s OWN construction contract -- not {Approval::Guards},
+        # {Adjudicator}'s OWN construction contract -- not {Approval::Contracts},
         # which carries {GateDecision}'s. Same validate-then-freeze convention:
-        # a {Lain::Guard} carrier checked before the auto-frozen Data value
+        # a {Lain::Declarative::Carrier} checked before the auto-frozen Data value
         # exists, so the record never touches ActiveModel and stays
         # `Ractor.shareable?`.
-        module Guards
+        module Contracts
           # All three members that make this record JOINABLE, guarded together.
           # The artifact digest joins a `gate_evidence` line to the
           # `gate_decision` it was reached under; `(epic_slug, stage)` is the
@@ -26,7 +26,7 @@ module Lain
           # `latency` is guarded rather than coerced for {GateDecision}'s
           # reason: `to_f` turns nil into 0.0, writing "the spike was instant"
           # -- a measurement nobody made -- into the experiment record.
-          class Evidence < Guard
+          class Evidence < Declarative::Carrier
             attribute :artifact_digest
             attribute :epic_slug
             attribute :stage
@@ -96,7 +96,7 @@ module Lain
           # decision naming bytes nobody kept.
           #
           # Blank findings are refused HERE as well as in {Adjudicator#findings},
-          # as a canary -- the {SignoffQueue::Guards::Decision} idiom, where a
+          # as a canary -- the {SignoffQueue::Contracts::Decision} idiom, where a
           # clause no producible value can trip still earns its place.
           # `Canonical.digest("")` is a real address, so a record built this way
           # would answer `gathered?` true and let a bare APPROVE close a gate on
@@ -119,7 +119,7 @@ module Lain
             # partition key nothing can match back.
             joinable = { artifact_digest: frozen(artifact_digest), epic_slug: interned(epic_slug),
                          stage: interned(stage) }
-            Guards::Evidence.check!(**joinable, latency:)
+            Contracts::Evidence.check!(**joinable, latency:)
 
             super(**joinable, question: clamped(question), digest:, text: text && clamped(text),
                               latency: latency.to_f, reason: frozen(reason))

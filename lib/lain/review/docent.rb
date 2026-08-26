@@ -958,9 +958,9 @@ module Lain
     class Docent
       DocentAsked = Data.define(:anchor_id, :path, :side, :line, :hunk_key, :role, :brief_key, :question) do
         include Telemetry::Journalable
-        include Guardable
+        include Declarative
 
-        guard do
+        declare do
           attribute :anchor_id
           attribute :path
           attribute :side
@@ -1019,9 +1019,9 @@ module Lain
 
       DocentAnswered = Data.define(:anchor_id, :question, :answer) do
         include Telemetry::Journalable
-        include Guardable
+        include Declarative
 
-        guard do
+        declare do
           attribute :anchor_id
           attribute :question
           attribute :answer
@@ -1049,9 +1049,9 @@ module Lain
 
       DocentRefused = Data.define(:anchor_id, :question, :reason) do
         include Telemetry::Journalable
-        include Guardable
+        include Declarative
 
-        guard do
+        declare do
           attribute :anchor_id
           attribute :question
           attribute :reason
@@ -1080,9 +1080,9 @@ module Lain
 
       DocentAbandoned = Data.define(:anchor_id, :question) do
         include Telemetry::Journalable
-        include Guardable
+        include Declarative
 
-        guard do
+        declare do
           attribute :anchor_id
           attribute :question
           validates :anchor_id, presence: { message: Wire.refusal("must name the thread the question was put in") }

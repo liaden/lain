@@ -126,6 +126,7 @@ module Lain
         # Reopened rather than written in the `Data.define` block: a constant or
         # nested class declared inside that block is lexically scoped to the
         # enclosing module, not to the Data class (see {Request::SYSTEM_PREFIX}).
+        include Declarative
 
         # What a human is told when a call may be approved for this one use but
         # never written down -- and what to do instead, since "no" without a
@@ -133,12 +134,7 @@ module Lain
         REFUSAL = "approvable for this call, but never remembered from the prompt -- " \
                   "to persist it, edit the config by hand"
         KEEPABLE = "not risky: this answer may be remembered"
-        NOT_BOOLEAN = "risky must be true or false"
 
-        # Two invariants, both enforced by CONSTRUCTION rather than documented,
-        # so every door -- `new`, `Data::[]`, and `#with`, which re-runs this --
-        # is shut by the same two lines.
-        #
         # `risky` is checked rather than coerced. `risky == true` would make
         # every truthy-but-not-true value ("yes", 1) answer NOT risky and keep
         # its keepsake -- a wrong value returning the permissive answer in
@@ -146,12 +142,31 @@ module Lain
         # {Rule::Decision} coerces `gated`, which merely describes, and raises
         # on `verdict`, which decides; `risky` decides.
         #
+        # `inclusion:` and not `presence:`, which cannot reject `false` -- the
+        # answer most calls give. {Approval::Contracts::GateDecision} guards its
+        # own boolean the same way, and this is now the same declaration rather
+        # than a second spelling of it.
+        #
+        # A Proc message, not `%<value>s`: ActiveModel renders nil and `""`
+        # identically through the format string, and which one arrived is the
+        # whole diagnosis ({Review::Wire.refusal} carries the long version).
+        declare do
+          attribute :risky
+          validates :risky,
+                    inclusion: { in: [true, false],
+                                 message: ->(_record, error) { "must be true or false, got #{error[:value].inspect}" } }
+        end
+
+        # The invariant is enforced by CONSTRUCTION rather than documented, so
+        # every door -- `new`, `Data::[]`, and `#with`, which re-runs this -- is
+        # shut by the same line.
+        #
         # The keepsake is built HERE, from the call, and only when the answer is
         # no -- so a risky call never pays to dup-and-freeze an input that is
         # about to be discarded, and {Keepsake.for} has exactly one caller,
         # which is why it is private and reached by `send`.
         def initialize(risky:, reasons:, call: nil, keepsake: nil)
-          raise ArgumentError, "#{NOT_BOOLEAN}, got #{risky.inspect}" unless [true, false].include?(risky)
+          self.class.check!(risky:)
 
           super(risky:, reasons: reasons.map { |reason| -reason.to_s }.uniq.freeze,
                 keepsake: risky ? nil : (keepsake || token_for(call)))

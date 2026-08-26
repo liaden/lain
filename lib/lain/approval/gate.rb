@@ -5,17 +5,17 @@ require "async"
 module Lain
   module Approval
     # Construction contract for {GateDecision}, the same validate-then-freeze
-    # convention {Telemetry::Guards} carries -- a {Lain::Guard} carrier checked
-    # BEFORE the auto-frozen Data value exists, so the record never touches
+    # convention {Telemetry::Guards} carries -- a {Lain::Declarative::Carrier}
+    # checked BEFORE the auto-frozen Data value exists, so the record never touches
     # ActiveModel and stays `Ractor.shareable?`.
-    module Guards
+    module Contracts
       # The verdict a surface hands back must BE a verdict. {Gate::Answer} is
       # what decides whether a digest is registered, so a non-boolean here is
       # worse than the same value in {GateDecision}: `"yes"` is truthy, so
       # `#approved?` would open the gate and only the record's own guard would
       # object -- after the fact, and (before the ordering fix) too late. The
       # deciding value guards itself, at the same standard as the recorded one.
-      class Answer < Guard
+      class Answer < Declarative::Carrier
         attribute :approved
         attribute :surface
         validates :approved, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
@@ -27,7 +27,7 @@ module Lain
       # and under which policy. `approved` is guarded by inclusion rather than
       # `presence:`, which cannot reject `false` -- the very verdict this record
       # most often carries (the {Telemetry::Guards::RequestSent} idiom).
-      class GateDecision < Guard
+      class GateDecision < Declarative::Carrier
         attribute :artifact_digest
         attribute :epic_slug
         attribute :stage
@@ -52,12 +52,12 @@ module Lain
       # it. Narrower than {GateDecision} on purpose: the fold reads only these
       # two fields (which digest, which verdict), so guarding the rest would
       # check bytes it never looks at -- the same restraint
-      # {SignoffQueue::Guards::Decision} takes, checking `type`/`policy`/
+      # {SignoffQueue::Contracts::Decision} takes, checking `type`/`policy`/
       # `approved` rather than the full nine-member shape.
       #
       # `approved` is a TRUNCATION CANARY, not for tidiness -- the same
-      # reasoning {SignoffQueue::Guards::Decision} states explicitly.
-      # {Guards::GateDecision} makes it mandatory (as `inclusion:`, since
+      # reasoning {SignoffQueue::Contracts::Decision} states explicitly.
+      # {Contracts::GateDecision} makes it mandatory (as `inclusion:`, since
       # `presence:` cannot reject `false`) at every WRITE, so no record this
       # process ever produced can be missing it or spell it as the STRING
       # `"false"` -- the only way either reaches here is a line damaged by
@@ -66,7 +66,7 @@ module Lain
       # is the fail-closed answer: silently skipping would let a fold-past
       # denial masquerade as "nothing to see here" just as quietly as folding
       # a truncated `true` INTO the registry would.
-      class RegistryEntry < Guard
+      class RegistryEntry < Declarative::Carrier
         attribute :artifact_digest
         attribute :approved
         validates :artifact_digest, presence: { message: "must name the artifact it judged, got nil" }
@@ -116,8 +116,8 @@ module Lain
         stage = interned(stage)
         answered_by = interned(answered_by)
         policy = interned(policy)
-        Guards::GateDecision.check!(artifact_digest:, epic_slug:, stage:, approved:, answered_by:, policy:,
-                                    latency:)
+        Contracts::GateDecision.check!(artifact_digest:, epic_slug:, stage:, approved:, answered_by:, policy:,
+                                       latency:)
 
         super(artifact_digest: artifact_digest.dup.freeze, epic_slug:, stage:, approved:, answered_by:, policy:,
               latency: latency.to_f, evidence_digest: evidence_digest&.dup&.freeze, reason: reason&.dup&.freeze)
@@ -242,7 +242,7 @@ module Lain
 
         def initialize(approved:, surface:)
           surface = -surface.to_s
-          Guards::Answer.check!(approved:, surface:)
+          Contracts::Answer.check!(approved:, surface:)
 
           super
         end
@@ -299,7 +299,7 @@ module Lain
         answer, latency = await(asker.ask(artifact.gate_question))
 
         # Journal FIRST, register second, and never the other way round: a
-        # journal that raises -- a full disk, or {Guards::GateDecision} refusing
+        # journal that raises -- a full disk, or {Contracts::GateDecision} refusing
         # a nil digest or an unnamed stage -- must leave NO standing approval
         # behind, or `ensure_approved!` would open for a digest with no record of
         # anyone approving it. Fail-closed is not only about the timeout; it is
@@ -358,8 +358,11 @@ module Lain
       # @param entries [Enumerable<Hash, String>] journal lines or records;
       #   foreign record types are skipped, the same contract {Journal.records}
       #   gives every reader here
-      # @param options [Hash] forwarded verbatim to {#initialize} (`journal:`
-      #   required, `timeout:`/`clock:` default the same way a plain `.new` does)
+      # @param options [Hash] forwarded verbatim to {#initialize}, which is what
+      #   keeps the defaults in one place
+      # @option options [Journal] :journal required, as for a plain `.new`
+      # @option options [Numeric] :timeout defaults to `DEFAULT_TIMEOUT`
+      # @option options [#call] :clock defaults to `RunClock::MONOTONIC`
       # @return [Gate]
       def self.from_journal(entries, **options)
         new(**options).tap { |gate| gate.send(:absorb, entries) }
@@ -382,8 +385,8 @@ module Lain
       # folds into.
       #
       # Guarded per record even though {Journal.records}'s type filter already
-      # ran: {Guards::RegistryEntry} is the same TRUNCATION CANARY reasoning
-      # {SignoffQueue::Guards::Decision} applies to this exact wire shape, and
+      # ran: {Contracts::RegistryEntry} is the same TRUNCATION CANARY reasoning
+      # {SignoffQueue::Contracts::Decision} applies to this exact wire shape, and
       # for the same reason -- skipping a damaged record would be exactly as
       # silent a failure as folding a truncated one in.
       #
@@ -391,7 +394,7 @@ module Lain
       # @return [self]
       def absorb(entries)
         Journal.records(entries, type: SignoffQueue::JOURNAL_TYPE).each do |decision|
-          Guards::RegistryEntry.check!(artifact_digest: decision["artifact_digest"], approved: decision["approved"])
+          Contracts::RegistryEntry.check!(artifact_digest: decision["artifact_digest"], approved: decision["approved"])
           @approved << decision["artifact_digest"] if decision["approved"]
         end
         self
