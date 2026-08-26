@@ -1634,20 +1634,21 @@ failure count alone.
 ### Cards
 
 - [x] T1 — algebra doc correction — `174fad5e` (the closure is real; its safety content is the audited list)
-- [ ] T2 — honest tool descriptions
+- [x] T2 — honest tool descriptions — `0bb167b1` (the rule now covers shell escapes, not just argument-runners)
 - [x] T3 — `#takes_term?` and the arm chooser — `1d97c490` (contract made executable, not aspirational)
 - [x] T4 — excluded-programs config table — `173dcd5d` (the deny path is reachable from config)
 - [x] T5 — shell-arm journal record — `3b9d8fba` (its own spec is its only coverage; the sweeps cannot build it)
-- [ ] T6 — one verdict, injected at both seams
+- [x] T6 — one verdict, injected at both seams — `e92a97d6` (sameness is structural; the deny path is reachable)
 - [ ] T7 — bash journals its arm
 - [ ] T8 — `Rule::Call` carries a derived term
 - [ ] T9 — the composed-term approval rule
 - [ ] T10 — shell manual-QA scenario
-- [ ] T11 — `web_fetch` egress floor
+- [x] T11 — `web_fetch` egress floor — `fde1a0be` (metadata, loopback and RFC1918 refused before connecting)
 
 ### Landed, in order
 
-`173dcd5d` T4 · `3b9d8fba` T5 · `174fad5e` T1 · `1d97c490` T3 · `ede7d5cf` census
+`173dcd5d` T4 · `3b9d8fba` T5 · `174fad5e` T1 · `1d97c490` T3 · `ede7d5cf` census ·
+`fde1a0be` T11 · `0bb167b1` T2 · `e92a97d6` T6
 
 `ede7d5cf` is orchestrator-owned and belongs to no card: `NAT64` was reported
 UNCLASSIFIED by `bin/comment-census --check-tickets` when T11 wanted it in prose.
@@ -1669,3 +1670,40 @@ Three traps cost real time here and are recorded so the next run does not re-pay
    killed run's `parallel_rspec` children also **outlive the aborted `git commit`**.
 3. **A commit whose hook runs the suite needs more than two minutes.** Killing it mid-hook
    is what produces trap 2.
+
+### Two follow-on cards this chunk earned, and they are scheduled rather than noted
+
+**`Wiring::ProjectPolicy`.** `CLI::Wiring` now measures **exactly 110/110 `ClassLength`** with no
+compression left. T6 funded its two new lines by converting `#quiescent?` to an endless method —
+honestly named as compression, not extraction — and the panel's Metz seat approved landing on
+that basis *only* because the missing object is not load-bearing for T6's properties: the memo
+already makes sameness structural. The object it stands in for is real and named: the three
+config-derived authorities a session resolves once from its `Project` — the shell verdict, the
+`[sensitivity]` table, and the consented `[approval]` rules. `BoardBuild.shell_verdict` is the
+tell: the board does not hold that authority, it builds it and hands it straight back, and its
+only relation to the board is that both read one file.
+
+**What a deny should mean at the tool.** Measured through the real `Tools::Bash` over a recording
+backend: `curl http://example.com` with no table reaches `allow` and runs as argv through
+`execvp`; with `exclude = ["curl"]` it reaches `deny` and runs as **`sh -c`**. `#arm_for` is
+`decision.allow? ? term : string`, so `deny` and `abstain` are the same arm and **a restricting
+table moves an excluded program onto the less constrained arm.** Attended sessions never reach
+the tool — the rung denies first — but `/mode auto`'s `ApproveAll` and `Subagent::UNGATED` both
+do. Recorded at `base_tools.rb` where the arm is chosen, and named as the next rung on the *what
+reaches a shell* axis. Not fixed here: what a deny should mean at the tool is a design question,
+not a patch.
+
+### A defect shape this chunk produced five times
+
+**A comment stating a reason nobody ran.** Two were caught by review; three only by asking a card
+to audit its own explanatory claims after the fact. In each case the conclusion was right and the
+*reason* was false — which is worse than no comment, because a stated why reads as measured.
+Instances: `IPAddr` strips brackets so the `hostname`/`host` choice had no safety consequence; a
+dot-stripping rule "would change what every other host is matched against" (it changes 4 of 34);
+"IPv6 transition space, **every prefix of which** carries a v4 address" (false for `fec0::/10`);
+"nothing in `lib/` ever built another `capability_set`" (inherited from this plan, not run — it
+does hold); and `Shell::Parse` described as value-equal (`Parse.new == Parse.new` is `false`).
+
+**The tell, four times out of five, was a quantifier** — *every other host*, *every prefix*, *both
+collaborators*, *nothing in `lib/`*. Every card after this one is asked to run the same audit and
+to report it even when clean.
