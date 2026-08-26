@@ -193,8 +193,16 @@ end
 -- The diff buffer `47_diff` stamped for this side of this file, or nil when the
 -- human is looking at another file. Derived from the live buffer list rather than
 -- remembered (47_diff's `unstamp`/`drop_stale` discipline): a registry of
--- buffers is the thing that goes stale, and 47_diff withdraws a stamp the moment
--- the human moves on, so at most one buffer answers.
+-- buffers is the thing that goes stale.
+--
+-- MORE THAN ONE BUFFER CAN CLAIM THE REVIEW, and this comment used to rest on
+-- the opposite. 47_diff's `reacquire` (F73) hands a stamp back to a row the
+-- human returns to inside the review's tabpage, so the pair being drawn is not
+-- the whole census. This function is unaffected, and for a reason worth stating
+-- rather than inheriting: it matches on PATH AND SIDE, and one path names one
+-- buffer per side, so a wider census cannot widen this answer. The claim it once
+-- leaned on -- "at most one buffer is stamped" -- was never the property it
+-- needed.
 function review_thread.side_buf(path, side)
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     if vim.b[buf].lain_review_path == path and vim.b[buf].lain_review_side == side then

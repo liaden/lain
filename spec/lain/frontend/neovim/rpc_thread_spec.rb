@@ -142,7 +142,8 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
     expect(inlet.open_changeset("lib/lain/agent.rb", ["was"], 12, revisions)).to be_nil
     expect(inlet.set_thread("anchor-1", ["why this way?"])).to be_nil
     expect(inlet.review_focus).to be_nil
-    expect(wakes.size).to eq(10)
+    expect(inlet.review_settled).to be_nil
+    expect(wakes.size).to eq(11)
   end
 
   # An editor that stopped draining and an editor that died are ONE fact from a
@@ -159,7 +160,8 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
       sidebar: inlet.set_review(["  M lib/lain/agent.rb"], 3, %w[old new]),
       changeset: inlet.open_changeset("lib/lain/agent.rb", ["was"], 12, revisions),
       thread: inlet.set_thread("anchor-1", ["why this way?"]),
-      focus: inlet.review_focus }
+      focus: inlet.review_focus,
+      settled: inlet.review_settled }
   end
 
   def own_words
@@ -170,7 +172,8 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
       sidebar: described_class::SIDEBAR_DETACHED,
       changeset: described_class::CHANGESET_DETACHED,
       thread: described_class::THREAD_DETACHED,
-      focus: described_class::FOCUS_DETACHED }
+      focus: described_class::FOCUS_DETACHED,
+      settled: described_class::SETTLE_UNREPORTED }
   end
 
   it "refuses every open in its own words when the queue is full" do
@@ -234,6 +237,43 @@ RSpec.describe Lain::Frontend::Neovim::RenderInlet do
     expect(session).to have_received(:notify).with("nvim_exec_lua",
                                                    Lain::Frontend::Neovim::RenderQueue::OPEN_REVIEW,
                                                    ["/epics/alpha/epic.md", 7, "alpha"])
+  end
+end
+
+# THE SEAM BETWEEN THE TWO, which neither of their own describes can see. The
+# block above builds a {RenderInlet} directly and never names {RpcThread}, so it
+# is structurally incapable of observing the delegator list -- and every caller
+# in `lib/` reaches these rails through the THREAD, never through the inlet
+# (`Review::Surface::Neovim`, `ChangesetDiff`, `ThreadView`, the frontend's own
+# views). A rail added to the inlet and forgotten there answers `NoMethodError`
+# at the only place it is ever called.
+#
+# WHICH IS A SILENT REGRESSION AND NOT A LOUD ONE, and that is why this is a law
+# rather than a convention. {Review::Surface.acknowledge} rescues `StandardError`
+# and answers nil -- deliberately, and its own comment names the residual as "an
+# F4 regression that cannot announce itself". Measured, once, on this card: the
+# teardown rail was added to the inlet and left off the delegators, and the whole
+# visible failure was one end-to-end example TIMING OUT with no error anywhere,
+# while the round it was supposed to end went on handing stamps back. A missing
+# delegator is therefore a regression of a BLOCKER wearing the face of a hang.
+#
+# DERIVED, never listed: the subject set is whatever the inlet publishes today,
+# so a rail added tomorrow joins the law by itself. `close` and `drain` are
+# excluded by name because they are the LOOP's lifecycle -- the thread owns them
+# and answers them itself, which is a different relationship from handing a rail
+# on.
+RSpec.describe Lain::Frontend::Neovim::RpcThread, "the rails it hands on" do
+  def rails
+    (Lain::Frontend::Neovim::RenderInlet.public_instance_methods(false) - %i[close drain]).sort
+  end
+
+  it "delegates every rail the inlet publishes" do
+    missing = rails.reject { |rail| described_class.public_method_defined?(rail) }
+
+    expect(missing).to be_empty,
+                       "RenderInlet rails missing from RpcThread's def_delegators: #{missing.inspect}. " \
+                       "Every caller in lib/ reaches these through the thread, and " \
+                       "Review::Surface.acknowledge swallows the NoMethodError."
   end
 end
 

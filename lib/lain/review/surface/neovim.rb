@@ -358,8 +358,30 @@ module Lain
         # so a String answered here is the editor's own "nobody took this" and
         # nothing else -- which is why it is a tail call like the rest.
         # @param verdict [String] a member of `Review::VERDICTS`, as journaled
+        # THE EDITOR IS TOLD THE ROUND IS OVER, FIRST, and that is a teardown
+        # rather than a notice. Nothing about a verdict is visible in the editor:
+        # its tabpage, its panes and every buffer it opened survive one, so the
+        # review's stamps and the round the tabpage vouches for would outlive the
+        # review itself -- and `47_diff.lua` hands a stamp back to any file the
+        # round opened when the human re-enters it. A note placed after this
+        # point would then name a review nobody is holding, which is a wrong
+        # answer rather than a missing one. This message is the only moment any
+        # adapter learns a round ended, so it is the only place the teardown can
+        # go.
+        #
+        # BEFORE the notice, because the notice is what a human reads as "it is
+        # over" -- an editor that says so while still accepting notes into the
+        # round is telling them two different things.
+        #
+        # Its answer is DISCARDED and the notice's is handed back: both legs
+        # refuse the same way when no editor took them, and the sentence is the
+        # one the caller can do something about.
+        #
         # @return [String, nil]
-        def settle(verdict) = @rpc.review_refused(format(SETTLED, verdict:))
+        def settle(verdict)
+          @rpc.review_settled
+          @rpc.review_refused(format(SETTLED, verdict:))
+        end
 
         # @return [String, nil]
         def refuse(message) = @rpc.review_refused(message)

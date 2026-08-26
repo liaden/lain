@@ -445,7 +445,24 @@ define("LainNote", function(opts)
   local buf = vim.api.nvim_get_current_buf()
   local stamp = review_notes.stamp(buf)
   if stamp == nil then
-    _G.__lain.review_refused(":LainNote needs a buffer lain has open for review")
+    -- THE REMEDY IS THE TAIL, and it is what F73 leaves this refusal owing. A
+    -- buffer the round already opened re-acquires its stamp on entry now, so the
+    -- human who reaches this sentence is in a file no row has opened -- a `gf`
+    -- into a neighbour, most likely.
+    --
+    -- IT NAMES A GESTURE THAT WORKS FROM WHERE THEY ARE, which is why it is not
+    -- the sidebar's `<CR>`. `gf` replaces the buffer in the window it was pressed
+    -- in, so out of the navigator it takes the sidebar off the screen and out of
+    -- the file pane it takes the diff: a refusal naming a surface this very
+    -- gesture can have hidden is a remedy the human cannot take. `<C-o>` is
+    -- nvim's own way back from a jump, it needs no window they can still see, and
+    -- landing is what re-acquires the stamp -- so the sentence and the fix are
+    -- one keystroke. Measured against a real `gf` in `neovim_runtime_spec.rb`.
+    --
+    -- 74 columns with the rail's prefix, against
+    -- `refusal_delivery_discipline_spec.rb`'s 80 -- which measures this literal
+    -- mechanically, on every run, rather than leaving it to a reader's eye.
+    _G.__lain.review_refused(":LainNote needs a buffer lain has open for review -- <C-o> goes back")
     return
   end
   local kind = opts.fargs[1]
@@ -613,6 +630,14 @@ vim.api.nvim_create_autocmd("BufUnload", {
 -- refuses teaches the human that notes are broken, where a key that is absent
 -- teaches them they are somewhere else.
 --
+-- AND IT FOLLOWS BOTH WAYS, which is F73: entering a buffer is also the moment a
+-- withdrawn stamp can become true again -- and the moment a stamp that has left
+-- the review's tabpage stops being true. `review_diff.entered` decides both, and
+-- it is called here rather than from a second `BufEnter` of its own so the order
+-- is written down instead of inherited from module load order. It is not a
+-- second membership test: it may put a stamp back or take one away, and the line
+-- below still asks `review_notes.stamp` the one question that decides the keys.
+--
 -- THE CMDLINE IS PRE-FILLED, NOT EXECUTED -- no `<CR>`, no `vim.ui.input`. The
 -- prompt version is the obvious one and it is wrong here for the reason stated
 -- above `:LainNote`: `vim.ui.input` is asynchronous under the dressing plugins
@@ -638,6 +663,7 @@ local NOTE_KEYS = {
 }
 
 local function bind_note_keys(buf)
+  review_diff.entered(buf)
   local stamped = review_notes.stamp(buf) ~= nil
   for _, key in ipairs(NOTE_KEYS) do
     if stamped then
@@ -648,7 +674,14 @@ local function bind_note_keys(buf)
   end
 end
 
-vim.api.nvim_create_autocmd("BufEnter", {
+-- `WinEnter` BESIDE `BufEnter`, because the rule `review_diff.entered` keeps is
+-- about the TABPAGE, and `BufEnter` cannot see a tabpage change that does not
+-- change the buffer. The same file shown in the review's pane and in a window of
+-- another tabpage is ONE buffer, so crossing between them with `gt` moves the
+-- human over the boundary twice while nvim reports no buffer entry at all -- and
+-- the keys would be whatever the last buffer switch left them. Entering a
+-- tabpage always enters a window, so this is the event that closes it.
+vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
   group = vim.api.nvim_create_augroup("lain_review_note_keys", { clear = true }),
   callback = function(ev) bind_note_keys(ev.buf) end,
 })

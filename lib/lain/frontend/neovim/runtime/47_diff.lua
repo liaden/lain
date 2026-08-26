@@ -301,10 +301,24 @@ end
 -- nothing pinning it to this one. The new side could not answer it anyway: its name is
 -- the ABSOLUTE path the editor resolved, while everything Ruby-side keys on the
 -- repository-relative path it sent. One variable, both sides, no string surgery.
+--
+-- THE ROUND'S MEMORY IS DROPPED HERE, which is the other half of `withdraw`'s
+-- (F73). The triple is in exactly one of two places at any moment: HELD, as the
+-- three stamps below, or PUT DOWN, as `lain_review_round` -- never both, so
+-- there is no second copy free to disagree with the live one.
+--
+-- Not tidiness. A file reviewed in one round and reviewed AGAIN in a later one
+-- is the same buffer, and it reaches here carrying the FIRST round's record:
+-- without this line `reacquire` would put that record back over the stamp this
+-- call just made, and every rail downstream would read the new review at the old
+-- revision. Measured -- `thread_view_spec.rb`'s "a second review of the same
+-- file does not show a previous changeset's threads" catches exactly that, via
+-- the `BufEnter` `review_place` fires two statements later.
 function review_diff.stamp(buf, side, revision, path)
   vim.b[buf].lain_review_side = side
   vim.b[buf].lain_review_revision = revision
   vim.b[buf].lain_review_path = path
+  vim.b[buf].lain_review_round = nil
 end
 
 -- A stamp is a claim that this buffer IS the review, so it has to be withdrawn
@@ -313,6 +327,14 @@ end
 -- review entirely -- so a stamp left on it tells the note and diagnostic rails
 -- to anchor a note into a file nobody is reviewing any more, which is a wrong
 -- answer rather than a missing one.
+--
+-- IT IS NO LONGER TRUE THAT ONLY TWO BUFFERS EVER CLAIM THE REVIEW, and this
+-- comment used to say so. A row the human goes back to inside the review's
+-- tabpage takes its stamp back (`reacquire`, F73), so a third and a fourth claim
+-- are ordinary. What this function guarantees is the part that matters and is
+-- unchanged: the moment the next row opens, every buffer but the pair being
+-- drawn stops claiming, and nothing re-claims except through `reacquire`, which
+-- can only hand back what THIS round gave THIS buffer.
 --
 -- Derived from the live buffer list, like `drop_stale`, so there is no registry
 -- to go stale.
@@ -327,11 +349,150 @@ end
 -- The three stamps, dropped together. One expression, because a stamp read
 -- without its revision is a note anchored to no diff -- the same reason
 -- `open_changeset` refuses a missing revision before it builds anything.
+--
+-- THE STAMP IS PUT DOWN, NOT THROWN AWAY (F73). What was withdrawn is copied
+-- into `lain_review_round` first, in one variable, and `reacquire` below is the
+-- only thing that ever reads it: a buffer this round opened and moved on from is
+-- a buffer the human can come BACK to, and inside the review's tabpage coming
+-- back has to put the stamp back. Withdrawing is the exact moment that record
+-- can be made honestly -- these three values ARE what the round handed this
+-- buffer, so nothing is derived and no side or path is ever recovered from a
+-- buffer's name (`stamp` above refuses that string surgery, and this inherits
+-- the refusal by copying rather than parsing).
+--
+-- It is written INSIDE the guard, so a buffer that was never stamped -- every
+-- buffer in the editor, on every `unstamp` sweep -- gets no record and cannot
+-- re-acquire anything. `lain_review_round` is never a membership test:
+-- `review_notes.stamp` is still the single one, and it reads the three above.
 function review_diff.withdraw(buf)
   if vim.b[buf].lain_review_side ~= nil then
+    vim.b[buf].lain_review_round = { side = vim.b[buf].lain_review_side,
+      revision = vim.b[buf].lain_review_revision, path = vim.b[buf].lain_review_path }
     vim.b[buf].lain_review_side = nil
     vim.b[buf].lain_review_revision = nil
     vim.b[buf].lain_review_path = nil
+  end
+end
+
+-- The round's memory, dropped -- which `withdraw` deliberately does NOT do.
+-- Withdrawing a stamp says "not right now"; forgetting the round says "never
+-- again", and exactly one event means the second. `:saveas` renames the buffer,
+-- so the path this round handed it names a different file: re-acquiring that
+-- stamp would anchor a note into the file the human renamed TO, wearing the name
+-- of the one they were reviewing. Every other way out of a review -- the next
+-- row, another tabpage, any buffer the human wanders into -- is temporary by
+-- design, and is what `reacquire` exists to undo.
+function review_diff.forget_round(buf)
+  vim.b[buf].lain_review_round = nil
+end
+
+-- Which round this tabpage is showing, as the two revisions it is between.
+--
+-- ON THE TABPAGE, `41_layout`'s choice and its reason: `vim.t[tab].lain_review`
+-- dies with the tabpage, so there is no registry to go stale. It is also the
+-- whole of what `reacquire` needs from outside the buffer, which is what keeps
+-- that callback off the wire -- asking Ruby which revisions this round is
+-- between would be an RPC round trip per `BufEnter`, on the rail a human
+-- navigates with.
+function review_diff.round(tab, old_revision, new_revision)
+  vim.t[tab].lain_review_revisions = { old = old_revision, new = new_revision }
+end
+
+-- A buffer THIS round already opened, re-entered inside the review's tabpage,
+-- takes its stamp back.
+--
+-- F73: the new side is a real, editable, file-backed buffer -- deliberately, so
+-- the language server and treesitter attach -- which invites the `gf`, the `:b#`
+-- and the quickfix jump that lead straight out of it. `unstamp` had withdrawn
+-- the stamp when the next row opened, so coming back left the human inside the
+-- file they were reviewing with none of the review's keys on it, and no way back
+-- but the sidebar. Within the review's tabpage, navigating is not leaving.
+--
+-- IT ONLY EVER ADDS A STAMP, which is what keeps it from fighting `unstamp`: it
+-- puts back a stamp `unstamp` took, at a strictly later moment, and never takes
+-- one `unstamp` left. `unstamp`'s rule is unchanged and is the rule being kept
+-- here, read forwards -- a stamp is a claim that this buffer IS the review, and
+-- inside the review's tabpage, for a file this round opened, it is.
+--
+-- Only a WITHDRAWN stamp is ever put back, because `withdraw` is the only writer
+-- of the record and `stamp` clears it: a buffer that still holds its stamp
+-- carries no record and needs nothing from this, and one that never held a stamp
+-- has nothing to put back.
+--
+-- A BUFFER THE ROUND NEVER OPENED IS NOT THE REVIEW and cannot be made one here.
+-- It carries no record, and the side, revision and path it would need are facts
+-- only Ruby holds; the alternative is deriving a repository-relative path from a
+-- buffer name, which is the second silent spelling of `OLD_PREFIX` that `stamp`
+-- refuses one screen up. So a `gf` onto a file no row has opened gets no keys,
+-- and `:LainNote`'s refusal names the way in.
+--
+-- THE TABPAGE TEST AND THE ROUND TEST ARE ONE READ. A tabpage that is not the
+-- review's carries no revisions at all, so the same buffer opened in a second
+-- tabpage stays cold; a review tabpage on a LATER round carries different ones,
+-- so a buffer a settled round stamped cannot re-acquire against a diff nobody is
+-- reviewing. A review tabpage the human closed and lain rebuilt is the honest
+-- corner: the new tabpage carries no revisions until the next row opens in it,
+-- and until then nothing re-acquires.
+function review_diff.reacquire(buf)
+  local round = vim.b[buf].lain_review_round
+  if type(round) ~= "table" then
+    return
+  end
+  local revisions = vim.t[vim.api.nvim_get_current_tabpage()].lain_review_revisions
+  if type(revisions) ~= "table" or revisions[round.side] ~= round.revision then
+    return
+  end
+  review_diff.stamp(buf, round.side, round.revision, round.path)
+end
+
+-- What ENTERING a buffer means for its claim, which is the whole of the tabpage
+-- rule and the only caller of `reacquire`.
+--
+-- THE TEST RUNS ON EVERY ENTRY, NOT ON THE FIRST. A stamp is a BUFFER variable,
+-- so it follows the buffer into any window that shows it -- and a rule checked
+-- once would let a human who revisited a row inside the review then annotate it
+-- from a tabpage the review is not in. That is authority, not decoration: the
+-- note rail would take it. So outside the review's tabpage a claim is withdrawn,
+-- and withdrawal is what RECORDS the round, which is why coming back restores it
+-- rather than losing it.
+--
+-- A REVIEW WITH NO TABPAGE AT ALL IS NOT A REVIEW SOMEBODY LEFT. Closing the
+-- review tabpage is the human's DISMISS gesture and the review stays open --
+-- 41_layout's own ruling, and `51_thread` rebuilds the whole layout for a render
+-- that arrives afterwards, finding the pair by the stamps this would otherwise
+-- have taken. So the question is asked of `review_panes.tab()` rather than of
+-- the current tabpage's marker: with no review tabpage there is no boundary to
+-- be outside of, and the claim stands until the round settles. It costs a scan
+-- of the tabpage list per entry, which is the same scan `review_panes.holds`
+-- makes and is bounded by how many tabpages a human keeps.
+--
+-- WHAT THE WITHDRAWAL LEG COSTS, recorded because it is silent. `51_thread`
+-- finds the pair by these stamps (`side_buf`), so a human reading the reviewed
+-- file OUTSIDE the review tabpage has a buffer `side_buf` no longer answers for
+-- -- and `register` then places the anchor's extmark nowhere and returns nil,
+-- with no crash and no sentence. Reachable when an AGENT-initiated `annotate`
+-- lands in exactly that window of time; before this leg existed the stamp
+-- survived and it registered. It is not repaired here because the withdrawal is
+-- the correct half of the boundary -- a stamp outside the review tabpage is the
+-- authority defect this leg exists to end -- and because a thread pane silently
+-- not anchoring is a refusal somebody has to design, on the rail that owns it.
+-- Written down rather than fixed in passing.
+--
+-- SAFE DURING A PLACEMENT, measured rather than assumed. `open_changeset` stamps
+-- before `review_place` draws, so the question is whether a placement fires a
+-- `BufEnter` outside the review's tabpage while a fresh stamp is on. It fires
+-- exactly one, and it arrives BEFORE the stamp does (the `bufadd`/`bufload` in
+-- `new_side`, with the buffer not yet stamped and no window slot); every later
+-- one is inside the review tabpage. So there is never a stamp for it to take.
+function review_diff.entered(buf)
+  local tab = review_panes.tab()
+  if tab == nil then
+    return
+  end
+  if tab == vim.api.nvim_get_current_tabpage() then
+    review_diff.reacquire(buf)
+  else
+    review_diff.withdraw(buf)
   end
 end
 
@@ -346,9 +507,19 @@ end
 -- `BufFilePost` fires after the rename, on the main loop (no `vim.schedule`
 -- needed -- see this module's header on E5560), in a CLEARED augroup, which is
 -- every lain autocmd's convention and what makes a re-attach idempotent.
+--
+-- BOTH, and the second is what makes the first stick now that `withdraw`
+-- REMEMBERS what it withdrew: a withdrawal alone would be undone by `reacquire`
+-- the next time the human entered the renamed buffer inside the review's
+-- tabpage, putting the stamp back on a buffer that no longer is the file the
+-- record names. This is the one exit that is permanent, so it is the one that
+-- forgets.
 vim.api.nvim_create_autocmd("BufFilePost", {
   group = vim.api.nvim_create_augroup("lain_review_diff", { clear = true }),
-  callback = function(event) review_diff.withdraw(event.buf) end,
+  callback = function(event)
+    review_diff.withdraw(event.buf)
+    review_diff.forget_round(event.buf)
+  end,
 })
 
 -- The old side is per-FILE, so the previous file's buffer is wiped rather than
@@ -561,8 +732,56 @@ function _G.__lain.open_changeset(path, old_lines, line, revisions)
   local old_win = sided and _G.__lain.review_place("old", old_buf) or nil
   local new_win = _G.__lain.review_place("new", new_buf)
 
+  -- The round, onto the tabpage the review is actually drawn in -- which only a
+  -- window that has just landed can name, because `review_place` BUILDS that
+  -- tabpage when there is none. Both revisions are the checked ones from the
+  -- top, so a survey (which draws no old side) still records what its old side
+  -- would be, and every note of one round names the same pair.
+  review_diff.round(vim.api.nvim_win_get_tabpage(new_win), old_revision, new_revision)
+
   review_diff.drop_stale(old_buf)
   review_diff.pair(sided and { old_win, new_win } or { new_win })
   review_diff.focus_line(new_win, new_buf, line)
   vim.api.nvim_set_current_win(review_diff.landing(old_win, new_win))
+end
+
+-- The round is over: the tabpage stops vouching for it, and every claim it
+-- issued is withdrawn.
+--
+-- NOTHING IN THE EDITOR CAN SEE A SETTLE. The tabpage, its panes, the sidebar
+-- and every file buffer survive a verdict untouched -- `Review::Surface::Neovim#settle`
+-- echoes a sentence and changes no editor state -- so the round's revisions
+-- would sit on the tabpage for the rest of the session, and every file the round
+-- opened would go on re-acquiring on entry. A note would then land in a review
+-- nobody is holding: `unstamp`'s own "a wrong answer rather than a missing one",
+-- one gesture further along. This is the editor half of being told.
+--
+-- THREE HALVES, and none of them is tidying. Clearing the revisions stops
+-- anything re-acquiring; withdrawing stops what is STILL stamped, which is the
+-- last row's pair -- a claim that outlived its review even before F73 widened
+-- what could re-claim; and FORGETTING is what keeps the withdrawal from arming
+-- what it just took. `withdraw` is the writer of the round record, so a sweep
+-- that only withdrew would leave every buffer of the settled round remembering
+-- it -- a teardown whose own mechanism re-arms every claim it retires. Harmless
+-- while the revisions are gone, and exactly the state `forget_round` exists to
+-- refuse to leave lying around: settling is as permanent for a round as
+-- `:saveas` is for one buffer, so it ends the same way, with both.
+--
+-- Written out here rather than through `unstamp(nil, nil)`: that function's
+-- subject is the two buffers still under review, and it has no third argument
+-- for "and forget them" -- reaching for its degenerate case would be borrowing a
+-- rule that says something else.
+--
+-- IDEMPOTENT, and it has to be: a settle can be echoed to an editor that never
+-- drew this round at all (another tabpage's session, a cockpit restarted
+-- mid-review), where there is no review tabpage to clear and no stamp to take.
+function _G.__lain.review_settled()
+  local tab = review_panes.tab()
+  if tab ~= nil then
+    vim.t[tab].lain_review_revisions = nil
+  end
+  for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+    review_diff.withdraw(buf)
+    review_diff.forget_round(buf)
+  end
 end

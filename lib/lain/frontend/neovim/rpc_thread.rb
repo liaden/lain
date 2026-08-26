@@ -101,6 +101,17 @@ module Lain
         # last called the render.
         REVIEW_FOCUS = "if _G.__lain then _G.__lain.review_layout() end"
 
+        # The round is over. NO ARGUMENTS, {REVIEW_FOCUS}'s shape and its reason:
+        # what a settled round leaves on screen is the editor's own question, and
+        # the runtime is the only side that can see its tabpage.
+        #
+        # It exists because nothing about a verdict is visible in the editor --
+        # the tabpage, its panes and every buffer survive one -- so the review's
+        # stamps and the tabpage's round would outlive the review that issued
+        # them, and a note placed afterwards would name a review nobody holds
+        # (`47_diff.lua`'s `review_settled` carries the measurement).
+        REVIEW_SETTLED = "if _G.__lain then _G.__lain.review_settled() end"
+
         # Open one changed file as the diff PAIR: the new side is the real
         # file on disk, the old side a scratch buffer whose content rides in
         # this argument list. Ruby runs git, never the editor -- `old_lines` is
@@ -251,6 +262,11 @@ module Lain
         # second opinion about a layout only the editor can see.
         def post_review_focus = @queue.push(Command.new(args: [], lua: REVIEW_FOCUS), true)
 
+        # No arguments either, and non-blocking like its three neighbours: this
+        # is posted from the review session's own verdict path, which is serving
+        # a gesture the human just made.
+        def post_review_settled = @queue.push(Command.new(args: [], lua: REVIEW_SETTLED), true)
+
         def post_changeset(path, old_lines, line, revisions)
           @queue.push(Command.new(args: [path, old_lines, line, revisions], lua: OPEN_CHANGESET), true)
         end
@@ -366,6 +382,16 @@ module Lain
         # answers are four facts.
         UNREPORTED = "the editor did not take this notice"
 
+        # The teardown's own, and its own FACT: a notice that did not land cost
+        # the human a sentence, while an end-of-round that did not land leaves an
+        # editor still holding a review nobody is in -- stamps live, keys bound,
+        # and a note placed afterwards naming a round that is over. Nobody reads
+        # this one either ({Review::Surface::Neovim#settle} discards it and hands
+        # back the notice's answer), and it is still named rather than shared:
+        # the two legs fail differently, and a shared sentence would say they do
+        # not.
+        SETTLE_UNREPORTED = "the editor did not take the end of this review"
+
         # The backlog is BUILT here rather than injected: {RpcThread} holding
         # both the queue and the door to it was how the five copies got there
         # in the first place. The loop reaches it through {#drain} and
@@ -439,6 +465,11 @@ module Lain
         def set_thread(anchor_id, lines) = refusable(THREAD_DETACHED) { @queue.post_thread(anchor_id, lines) }
 
         def review_focus = refusable(FOCUS_DETACHED) { @queue.post_review_focus }
+
+        # Answers {SETTLE_UNREPORTED} rather than raising, like every other leg:
+        # a detached editor is also an editor with no review tabpage to tear
+        # down, so a refusal here is a fact and never an error.
+        def review_settled = refusable(SETTLE_UNREPORTED) { @queue.post_review_settled }
 
         # lain://approval's, and its refusal is READ rather than reported:
         # {ApprovalView} withholds the stamp of a rendering nothing took, so a
@@ -1085,8 +1116,8 @@ module Lain
         # from any thread: they touch only the {RenderQueue} and the wake pipe,
         # never nvim.
         def_delegators :@inlet, :post_render, :post_view, :open_compose, :open_question, :open_review,
-                       :review_refused, :set_review, :review_focus, :open_changeset, :set_thread,
-                       :set_approval
+                       :review_refused, :set_review, :review_focus, :review_settled, :open_changeset,
+                       :set_thread, :set_approval
 
         # Stop the loop, wake it out of its select, join, and close the fds this
         # thread owns. Idempotent enough for a defensive double call.

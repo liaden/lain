@@ -54,6 +54,13 @@ class RecordingReviewInlet
     @refusal
   end
 
+  # The teardown leg, and argument-free for {#review_focus}'s reason: what a
+  # settled round leaves on screen is the editor's own question.
+  def review_settled
+    @posted << [:review_settled]
+    @refusal
+  end
+
   # Everything that reached the editor, as text. Arrays are flattened because a
   # render posts lines and a notice posts a sentence, and the shared group's
   # laws ask one question of both: did this argument get out of the surface.
@@ -452,7 +459,22 @@ RSpec.describe Lain::Review::Surface::Neovim do
     it "posts a notice naming the verdict the review landed on" do
       surface.settle("approve")
 
-      expect(inlet.posted).to eq([[:review_refused, "this review is settled: approve"]])
+      expect(inlet.posted).to eq([[:review_settled], [:review_refused, "this review is settled: approve"]])
+    end
+
+    # THE TEARDOWN, and it is not decoration on the notice. Nothing about a
+    # verdict is visible in the editor -- `47_diff.lua` keeps the round on the
+    # tabpage and hands a stamp back to any file the round opened when the human
+    # re-enters it -- so a review that settled silently goes on taking notes.
+    # This message is the only moment any adapter learns a round ended.
+    #
+    # ORDER IS ASSERTED, not just presence: the notice is what a human reads as
+    # "it is over", and an editor still accepting notes into the round while
+    # that sentence is on screen tells them two different things.
+    it "tears the round down in the editor before it says the review is settled" do
+      surface.settle("approve")
+
+      expect(inlet.posted.map(&:first)).to eq(%i[review_settled review_refused])
     end
 
     # It rides the same notice rail as #mark and #refuse, so it answers what
@@ -472,7 +494,7 @@ RSpec.describe Lain::Review::Surface::Neovim do
     it "fits one message line at an ordinary width, prefix included" do
       surface.settle("approve")
 
-      expect(inlet.posted.dig(0, 1).length).to be < 40
+      expect(inlet.posted.dig(1, 1).length).to be < 40
     end
   end
 
