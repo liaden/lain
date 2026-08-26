@@ -550,18 +550,37 @@ RSpec.describe Lain::Exec::Docker do
         .to raise_error(Lain::Exec::Unsupported, /grep/)
     end
 
-    # WHY the contract paragraph in exec.rb had to be corrected rather than
-    # left alone. It called Unsupported "a CALLER's bug" that no tool rescues,
-    # on the premise that a caller holding both shapes would not offer a term
-    # to a string-only backend. {Tools::Bash} holds both and offers whatever
-    # the verdict returns -- and the verdict ALLOWS an ordinary pipeline, so
-    # this is reachable in normal use, not a programming error.
-    it "is reachable from an ordinary command, because the verdict allows a pipeline" do
+    # The verdict ALLOWS an ordinary pipeline, so a caller that offered every
+    # allowed term here would meet this refusal in ordinary use. That is what
+    # the predicate is for: {Tools::Bash} asks first and falls back to the
+    # model's own string. The refusal stays, as the answer for a caller that
+    # does not ask -- and stays a refusal rather than a rejoin, because a
+    # rejoined string is what the term path exists to keep away from a shell.
+    it "refuses a term the verdict allows, for any caller that offers one without asking" do
       decision = Lain::Shell::Verdict.new.call("grep -r foo . | wc -l")
 
       expect(decision).to be_allow
       expect(decision.term.size).to be > 1
       expect { run(command: decision.term) }.to raise_error(Lain::Exec::Unsupported)
+    end
+
+    # The only row of the seam's truth table with two different answers in it,
+    # which is why the predicate is asked WITH a term: one stage runs, a pipe
+    # cannot, and no argument-less question could say so.
+    def run_term(term) = run(command: term)
+    def terms_taken = [[%w[grep -r foo .]]]
+    def terms_refused = [[%w[grep -r foo .], %w[wc -l]]]
+
+    it_behaves_like "an exec backend answering for a term"
+
+    # The wrong answer available here: EVERY command this backend runs reaches
+    # its inner backend as one docker argv, so a predicate reading that would
+    # call a piped term one-stage. The question is about what the CALLER holds.
+    it "answers about the caller's term, never about the docker argv it wraps" do
+      run(command: "echo hi")
+
+      expect(inner.command.size).to eq(1)
+      expect(backend.takes_term?([%w[echo hi], %w[cat]])).to be(false)
     end
   end
 

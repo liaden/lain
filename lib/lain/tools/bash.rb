@@ -14,11 +14,23 @@ module Lain
     # syntactically literal and fully understood?"* -- never "is it safe" --
     # and it is free to abstain, which most commands do.
     #
-    # * *allow* -- {Shell::Pipeline} runs the RECONSTRUCTED ARGV. No shell is
-    #   started, so a disagreement between that parser and a real shell
-    #   degrades to a broken command rather than an attacker-chosen one. There
-    #   is deliberately no path from an allow back to the string: falling back
-    #   would hand `sh -c` exactly the command the term path was chosen for.
+    # * *allow* -- {Shell::Pipeline} runs the RECONSTRUCTED ARGV, wherever the
+    #   backend has a shape for one. No shell is started, so a disagreement
+    #   between that parser and a real shell degrades to a broken command
+    #   rather than an attacker-chosen one. A backend that answers
+    #   `#takes_term?` with false -- {Exec::Docker} handed a pipe,
+    #   {Exec::Core} handed anything -- is given the model's own string, which
+    #   is the only arm it ever had for that command. What still never happens
+    #   is a term JOINED back into a string: that would hand `sh -c` a command
+    #   this tool composed, and the term path exists to keep one away from it.
+    #
+    #   NAME WHAT THE FALLBACK TRADES AWAY. "No string is composed" and "no
+    #   shell sees this command" are different claims, and only the first
+    #   survives: a shell DOES read the model's string on that path --
+    #   {Exec::Docker} runs it as `["sh", "-c", command]` INSIDE the container
+    #   -- so the term arm's no-shell property is gone there, and what carries
+    #   safety in its place is containment plus the same gate, never the
+    #   absence of a shell.
     # * *anything else* -- the string runs through `sh -c`, under the same gate.
     #
     # Both arms render through {.render_output}, so which one ran is not
@@ -137,9 +149,7 @@ module Lain
       # the tool itself could not produce a result -- a timeout, or output too
       # large to hand back -- never a subprocess's own exit code.
       def perform(input, invocation)
-        decision = @verdict.call(input.command)
-        capture = @exec.call(command: decision.allow? ? decision.term : input.command,
-                             **runtime(input, invocation))
+        capture = @exec.call(command: arm_for(input.command), **runtime(input, invocation))
         self.class.render_output(exit_status: capture.exit_status,
                                  stdout: capture.stdout, stderr: capture.stderr)
       rescue Exec::Timeout => e
@@ -147,6 +157,19 @@ module Lain
       end
 
       private
+
+      # ASK BEFORE OFFERING. An allow yields a term, but a backend may have no
+      # shape for that term, and hearing so as an {Exec::Unsupported} mid-call
+      # is how `--exec docker` used to answer an ordinary pipeline with a tool
+      # error nobody wrote. The fallback is `input.command` itself -- never the
+      # term rejoined -- so the string arm sees exactly the bytes the model
+      # wrote, under the same gate.
+      def arm_for(command)
+        decision = @verdict.call(command)
+        return command unless decision.allow? && @exec.takes_term?(decision.term)
+
+        decision.term
+      end
 
       # Cwd resolution lives on {WorkerEnv#resolve} -- one rule shared with
       # {CoreExec}.

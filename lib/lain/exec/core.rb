@@ -36,6 +36,11 @@ module Lain
         freeze
       end
 
+      # @param _term [Array<Array<String>>] the term a caller is about to offer
+      # @return [false] for every term -- the wire has one command shape, and
+      #   {#accepts!} refuses by reading this answer rather than restating it
+      def takes_term?(_term) = false
+
       # Live sinks are accepted and dropped: the RPC protocol carries no
       # streaming, so this arm buffers everything until the reply. That is an
       # inherent asymmetry with {Local} rather than an omission -- see
@@ -73,7 +78,7 @@ module Lain
       # wrong; there is deliberately no join back to a string, for the reason
       # {Shell::Pipeline} gives for having no path from a term to one.
       def accepts!(command)
-        return if command.is_a?(String)
+        return if command.is_a?(String) || takes_term?(command)
 
         raise Unsupported, "lain-core runs `sh -c <string>` and has no wire shape for a term: #{command.inspect}"
       end

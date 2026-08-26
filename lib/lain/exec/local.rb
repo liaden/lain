@@ -26,6 +26,23 @@ module Lain
         freeze
       end
 
+      # Both arms are this backend's own, so its answer does not depend on the
+      # term. It is still ASKED about one, because the contract's question is
+      # about a shape rather than about a backend: {Docker} takes a one-stage
+      # term and refuses a pipe, which no argument-less predicate could say.
+      #
+      # ⚠️ THIS LINE HOLDS UP THE TWO-ARM BYTE-IDENTITY INVARIANT. Because it
+      # is true for EVERY term, no command that reaches the term arm here can
+      # fall back to the string arm, so the two arms never run the same command
+      # differently. Narrow it -- a subclass answering `term.size == 1` is
+      # enough -- and `cat README.md | head -20` silently takes the string arm
+      # on a term-capable backend, which is the divergence
+      # `spec/lain/tools/bash_spec.rb` pins.
+      #
+      # @param _term [Array<Array<String>>] the term a caller is about to offer
+      # @return [true]
+      def takes_term?(_term) = true
+
       # @param command [String, Array<Array<String>>] a shell command string, or
       #   a TERM -- an Array of argv Arrays, which never reaches a shell
       # @param cwd [String] already resolved by the caller ({WorkerEnv#resolve})

@@ -17,23 +17,32 @@ module Lain
   # non-zero". `command` is a String (the shell's problem: `sh -c`, tier 3) or a
   # TERM, an Array of argv Arrays ({Shell::Pipeline}, no shell at all). One entry
   # point, so the arm a command took cannot change the environment it runs under.
+  # It answers one more message -- `#takes_term?(term)` -- and the first
+  # carve-out below is what that is for.
   #
-  # Two carve-outs a tool rescuing this contract has to know about:
+  # Two carve-outs a caller holding a term has to know about:
   #
-  # * **Not every backend takes both shapes.** {Core} has no wire shape for a
-  #   TERM, {Docker} none for a PIPED one -- a container takes one argv. Both
-  #   refuse with {Unsupported}, and never by joining the term back into a
-  #   string, which would hand `sh -c` the very command the term path exists to
-  #   keep away from it.
+  # * **Not every backend takes both shapes**, so every backend also answers
+  #   `#takes_term?(term)` and a caller ASKS BEFORE IT OFFERS. {Core} takes no
+  #   term at all -- the wire has one command shape; {Docker} takes a one-stage
+  #   term and no piped one -- a container takes one argv; {Local} takes any.
   #
-  #   ⚠️ THIS IS NOT A CALLER'S BUG. {Tools::Bash} offers whichever shape
-  #   {Shell::Verdict} returns, and the verdict ALLOWS an ordinary pipeline
-  #   (`grep -r foo . | wc -l`, pinned in `spec/lain/exec/docker_spec.rb`), so
-  #   under `--exec docker` an ordinary command reaches a backend with no shape
-  #   for it through nobody's mistake. What catches it is a blanket
-  #   `rescue StandardError` in Effect::Handler::Live, not a design. The missing
-  #   piece is a MESSAGE -- a `#takes_term?` predicate the arm-chooser could ask
-  #   -- and it touches {Local}, {Core} and {Tools::Bash} together.
+  #   THE PREDICATE TAKES THE TERM, not nothing. The three answers differ by
+  #   SHAPE and not merely by backend, so an argument-less question could not
+  #   express {Docker} at all. Each backend derives its {Unsupported} refusal
+  #   from its own answer rather than restating the rule, which is what makes a
+  #   disagreement between the two unrepresentable. A refusal is never a join
+  #   back into a string: that would hand `sh -c` the very command the term
+  #   path exists to keep away from it.
+  #
+  #   {Tools::Bash} asks, and falls back to the string the model itself wrote,
+  #   which is why `--exec docker` no longer answers an ordinary pipeline
+  #   (`grep -r foo . | wc -l`) with a tool error nobody wrote. A caller that
+  #   does not ask still gets {Unsupported}, caught only by a blanket
+  #   `rescue StandardError` in Effect::Handler::Live. That fallback trades the
+  #   term arm's no-shell property for whatever confinement the backend has --
+  #   {Docker} runs the string as `sh -c` INSIDE the container -- which
+  #   {Tools::Bash} states at the allow bullet in its own class doc.
   # * **A backend can fail to enforce its own deadline**, a different fact from
   #   a command that hit one. {Unenforced} says which, and IS a {Timeout}, so the
   #   single `rescue Exec::Timeout` this contract advertises still holds.

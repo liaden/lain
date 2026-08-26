@@ -86,6 +86,21 @@ RSpec.describe Lain::Exec::Local do
     end
   end
 
+  # Whether a backend can take a term is a question about THE TERM, not about
+  # the backend: Exec::Docker answers differently for a one-stage term and a
+  # piped one. This backend runs both through the same pipeline, so its answer
+  # is the same for every term -- and a caller holding one asks before it
+  # offers. Declared below as this backend's row of the seam's truth table; the
+  # CONTRACT that row is checked against is one shared file, so the seam's third
+  # required message cannot stay a promise only a comment makes.
+  describe "the terms it says it can take" do
+    def run_term(term) = run(term)
+    def terms_taken = [[%w[printf hi]], [%w[printf hi], %w[cat]]]
+    def terms_refused = []
+
+    it_behaves_like "an exec backend answering for a term"
+  end
+
   describe "a deadline that passes" do
     it "raises Exec::Timeout when a String command outlives its timeout" do
       # The injected factory only shortens mixlib's hardcoded TERM->KILL grace.

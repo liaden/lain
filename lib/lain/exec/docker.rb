@@ -82,6 +82,16 @@ module Lain
 
       attr_reader :image, :project
 
+      # A container takes ONE argv, so the answer is about the TERM's shape and
+      # not about this backend -- which is why the seam's predicate is asked
+      # with one. It is the CALLER's term that is answered for, never the
+      # single docker argv every command is wrapped into below; that wrapper is
+      # one stage for a pipe as much as for anything else.
+      #
+      # @param term [Array<Array<String>>] the term a caller is about to offer
+      # @return [Boolean] true for a one-stage term
+      def takes_term?(term) = term.size == 1
+
       # ⚠️ NO VALUE GOES ON THE COMMAND LINE. `/proc/<pid>/cmdline` is
       # WORLD-READABLE while `/proc/<pid>/environ` is owner-only, so a
       # `--env NAME=value` argv would disclose to every user on the box what
@@ -151,11 +161,12 @@ module Lain
 
       def entrypoint(command) = command.is_a?(String) ? ["sh", "-c", command] : one_stage(command)
 
-      # A container takes ONE argv and a pipe needs a shell. Refused rather than
-      # joined back into a string: joining would hand a shell the very command
-      # the term path exists to keep away from one ({Shell::Verdict}'s rule).
+      # Refused rather than joined back into a string: joining would hand a
+      # shell the very command the term path exists to keep away from one
+      # ({Shell::Verdict}'s rule). The rule itself is {#takes_term?}, read here
+      # rather than restated, so the answer and the refusal cannot disagree.
       def one_stage(term)
-        return term.first if term.size == 1
+        return term.first if takes_term?(term)
 
         raise Unsupported, "docker run takes one argv and a pipe needs a shell, so this backend has no " \
                            "shape for a #{term.size}-stage term: #{term.inspect}"

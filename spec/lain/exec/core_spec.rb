@@ -127,6 +127,19 @@ RSpec.describe Lain::Exec::Core do
   # Tools::CoreExec reports as a bad cwd. Threading these backends into
   # Tools::Bash, which DOES hold terms, stops this being unreachable there.
   describe "a shape it has no wire for" do
+    # A caller holding a term can ask before it offers one, which is what stops
+    # Tools::Bash handing this backend a shape it has no wire for. The row is
+    # the whole of this backend's share of the seam's truth table -- it takes no
+    # term at all -- and the shared contract is what checks its refusal against
+    # its own answer rather than against a copy of the rule kept here.
+    let(:backend) { described_class.new(client:) }
+
+    def run_term(term) = run(command: term)
+    def terms_taken = []
+    def terms_refused = [[%w[printf hi]], [%w[grep foo], %w[wc -l]]]
+
+    it_behaves_like "an exec backend answering for a term"
+
     it "refuses a term by name, rather than packing one the daemon cannot decode" do
       expect { run(command: [%w[printf hi]]) }
         .to raise_error(Lain::Exec::Unsupported, /no wire shape for a term/)

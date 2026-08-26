@@ -302,6 +302,13 @@ RSpec.describe Lain::Tools::Bash do
     # Byte-identity is what keeps the term arm a transparent optimization rather
     # than a behavior change: same exit status, same stdout, same stderr, same
     # encoding, through the one shared template.
+    #
+    # WHAT HOLDS IT UP IS ONE LINE, `Exec::Local#takes_term?` answering true for
+    # every term: nothing that reaches the term arm here can fall back to the
+    # string arm, so the two arms never run one command two ways. Narrowing that
+    # answer -- a subclass saying `term.size == 1` is enough -- sends
+    # `cat README.md | head -20` down the string arm on a term-capable backend
+    # and this comparison stops being about the same execution at all.
     it "renders byte-identical content on either arm" do
       ["printf hi", "grep -q lain-no-such-pattern /dev/null", "cat /nonexistent/lain/probe",
        "ls -d ."].each do |command|
@@ -323,6 +330,104 @@ RSpec.describe Lain::Tools::Bash do
       expect(tool.call({ command: "exit 3" }, invocation).content).to include("exit status: 127", "exit")
       expect(described_class.new(verdict: abstaining).call({ command: "exit 3" }, invocation).content)
         .to include("exit status: 3")
+    end
+  end
+
+  # Not every backend has a shape for every term -- a container takes one argv,
+  # the daemon takes none -- so the tool ASKS before it offers one. The fallback
+  # is the string the model itself wrote, which on such a backend is the only
+  # arm that command ever had; this tool still never composes a string out of a
+  # term it was given.
+  describe "asking the backend whether it can take the term" do
+    # A real Exec::Local whose two arms both record the shape they were handed,
+    # so which arm ran is read from the backend rather than inferred from the
+    # result -- the rendering deliberately makes the arms indistinguishable.
+    def recording_local
+      seen = []
+      pipeline = lambda do |term, **|
+        seen << term
+        Lain::Shell::Pipeline::Result.new(exit_status: 0, stdout: "", stderr: "")
+      end
+      factory = lambda do |command, **options|
+        seen << command
+        Mixlib::ShellOut.new("true", **options)
+      end
+      [Lain::Exec::Local.new(pipeline:, shell_out_factory: factory), seen]
+    end
+
+    # A REAL Exec::Docker -- the predicate and the refusal under test are its
+    # own -- with only the docker client's spawn recorded, so these examples
+    # need no container and no client on PATH.
+    def recording_docker
+      inner = Class.new do
+        attr_reader :command
+
+        def call(command:, **)
+          @command = command
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+        end
+      end.new
+      [Lain::Exec::Docker.new(project: Dir.pwd, image: "img:1", exec: inner,
+                              prober: ->(_timeout) { "Docker version 27.3.1" }), inner]
+    end
+
+    # What the container is asked to run, at the tail of the client's argv.
+    def entrypoint(inner) = inner.command.first.last(3)
+
+    it "hands the term to a backend that takes any term" do
+      backend, seen = recording_local
+
+      described_class.new(exec: backend).call({ command: "cat README.md | head -20" }, invocation)
+
+      expect(seen).to eq([[%w[cat README.md], %w[head -20]]])
+    end
+
+    # The user-visible win: `--exec docker` stops erroring on an ordinary
+    # pipeline. What reaches the container is what the model wrote, byte for
+    # byte, because the fallback is the input string and never a rejoined term.
+    it "hands the model's own string to a backend that takes only a one-stage term" do
+      backend, inner = recording_docker
+      command = "grep -r foo . | wc -l"
+
+      result = described_class.new(exec: backend).call({ command: }, invocation)
+
+      expect(result).to be_ok
+      expect(entrypoint(inner)).to eq(["sh", "-c", command])
+      expect(entrypoint(inner).last.encoding).to eq(command.encoding)
+    end
+
+    it "still offers a one-stage term to that backend, which has a shape for one" do
+      backend, inner = recording_docker
+
+      described_class.new(exec: backend).call({ command: "ls -la" }, invocation)
+
+      expect(inner.command.first.last(3)).to eq(["img:1", "ls", "-la"])
+    end
+
+    # An abstention produces no term to offer, so the predicate is never
+    # consulted and every backend sees the string the model wrote.
+    it "runs an abstained command as the string, whatever the backend can take" do
+      backend, seen = recording_local
+      docker, inner = recording_docker
+
+      described_class.new(exec: backend).call({ command: "echo a && echo b" }, invocation)
+      described_class.new(exec: docker).call({ command: "echo a && echo b" }, invocation)
+
+      expect(seen).to eq(["echo a && echo b"])
+      expect(entrypoint(inner)).to eq(["sh", "-c", "echo a && echo b"])
+    end
+
+    # Through the floor `--exec docker` really builds, because the seam that
+    # matters is the one a session assembles rather than the one a spec does.
+    it "runs an ordinary pipeline through the tool floor --exec docker builds" do
+      docker, inner = recording_docker
+      floor = Lain::CLI::Wiring::BaseTools.build(Lain::Memory::Recorder.new, exec: docker)
+
+      result = floor.find { |tool| tool.name == "bash" }
+                    .call({ command: "grep -r foo . | wc -l" }, invocation)
+
+      expect(result).to be_ok
+      expect(entrypoint(inner)).to eq(["sh", "-c", "grep -r foo . | wc -l"])
     end
   end
 
