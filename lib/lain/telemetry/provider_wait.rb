@@ -2,7 +2,7 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A provider-wait record must land on one of the two outcomes a queued
       # caller can have, name the endpoint it queued for, and carry a wait
       # figure exactly when it completed one -- so a refusal can never be
@@ -14,7 +14,7 @@ module Lain
       # as `0.0` -- a record claiming the wait was measured EXACTLY, which is
       # the single misreading the field exists to prevent. Zero is refused for
       # that reason and not merely for being falsy.
-      class ProviderWait < Guard
+      class ProviderWait < Declarative::Carrier
         attribute :kind
         attribute :endpoint
         attribute :waited_seconds
@@ -64,7 +64,7 @@ module Lain
     # names that granularity, so a reader can see that 0.05 against a 0.05
     # resolution means "queued at all" rather than "queued for 50ms" -- the
     # record refuses to present a quantised reading as a measurement by making
-    # its resolution unskippable, and its {Guards::ProviderWait} carrier is what
+    # its resolution unskippable, and its {Carriers::ProviderWait} carrier is what
     # makes that a guarantee rather than a convention. For the same reason the
     # wait is rounded to milliseconds: digits below the resolution are noise
     # dressed as precision, and an NDJSON line a human scans is worse for
@@ -90,7 +90,7 @@ module Lain
 
       def initialize(kind:, endpoint:, resolution_seconds:, in_flight: 0, waited_seconds: nil)
         kind = kind.to_sym
-        Guards::ProviderWait.check!(kind:, endpoint:, waited_seconds:, resolution_seconds:)
+        Carriers::ProviderWait.check!(kind:, endpoint:, waited_seconds:, resolution_seconds:)
 
         super(
           kind:,

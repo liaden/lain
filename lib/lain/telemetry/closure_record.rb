@@ -2,11 +2,11 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A closure pointer must name the closure it points at, the step it
       # closed, the plan that step belongs to, and the step's S/M/L size class
       # (P5 calibrates seam placement over size from the Journal alone).
-      class ClosureRecord < Guard
+      class ClosureRecord < Declarative::Carrier
         attribute :closure_digest
         attribute :step_id
         attribute :plan_digest
@@ -38,7 +38,7 @@ module Lain
       include Journalable
 
       def initialize(closure_digest:, step_id:, plan_digest:, size:, chunk_turn_digests:)
-        Guards::ClosureRecord.check!(closure_digest:, step_id:, plan_digest:, size:)
+        Carriers::ClosureRecord.check!(closure_digest:, step_id:, plan_digest:, size:)
 
         super(
           closure_digest: closure_digest.dup.freeze,

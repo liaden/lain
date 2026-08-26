@@ -2,13 +2,13 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A read refusal must name why it refused AND which path it refused.
       # Widens {WriteRefused}'s "name what matched, never the matched bytes"
       # contract to also require `path`: the path itself can be the finding
       # (`/home/joel/.ssh/id_ed25519`), and a refusal a reader cannot attribute
       # to a file is not actionable.
-      class ReadRefused < Guard
+      class ReadRefused < Declarative::Carrier
         attribute :path
         attribute :reason
         attribute :tool
@@ -23,7 +23,7 @@ module Lain
       end
 
       # A redaction record must carry two non-negative Integer COUNTS, never
-      # anything else -- {Guards::Dropped}'s shape (the exact reuse target the
+      # anything else -- {Carriers::Dropped}'s shape (the exact reuse target the
       # card named), doubled onto `regions`/`released`. Without this, `Data`
       # freezing the record but never its members let a mutable String
       # ("3") or a Hash of leaked bytes sail straight through, both silently
@@ -34,7 +34,7 @@ module Lain
       # was found, so "released > regions" is not an unsafe value, it is an
       # impossible one -- shape, same as every other guard here, not a second
       # security check layered on top.
-      class ReadRedacted < Guard
+      class ReadRedacted < Declarative::Carrier
         attribute :path
         attribute :regions
         attribute :released
@@ -74,7 +74,7 @@ module Lain
     # denial path, and {WriteRefused}'s counterpart on the read side of the
     # house. `reason` names WHAT refused (a pattern name or a declined
     # judgment), never the file's bytes, matching {WriteRefused}'s discipline;
-    # `path` is the deliberate widening documented on {Guards::ReadRefused}.
+    # `path` is the deliberate widening documented on {Carriers::ReadRefused}.
     # `path` is coerced with `to_s` because T12 plausibly hands this a
     # `Pathname`, and an uncoerced one would leave the in-process field and the
     # journaled JSON string disagreeing.
@@ -91,7 +91,7 @@ module Lain
       include Journalable
 
       def initialize(tool_use_id:, tool:, path:, reason:)
-        Guards::ReadRefused.check!(path:, reason:, tool:)
+        Carriers::ReadRefused.check!(path:, reason:, tool:)
 
         super(tool_use_id: tool_use_id.dup.freeze, tool: tool.to_s.dup.freeze,
               path: path.to_s.dup.freeze, reason: reason.dup.freeze)
@@ -103,7 +103,7 @@ module Lain
     # released bytes themselves: the same "name what matched, never the
     # matched bytes" discipline {WriteRefused} established for a full refusal,
     # extended here to a partial release. Coerced to `Integer` with `to_i`
-    # rather than passed through raw: {Guards::ReadRedacted} has already
+    # rather than passed through raw: {Carriers::ReadRedacted} has already
     # proven the value numeric by the time this runs, so the coercion only
     # ever normalizes a numeric-looking String (or an actual Integer) to the
     # frozen-by-nature Integer the record must hold to stay
@@ -112,7 +112,7 @@ module Lain
       include Journalable
 
       def initialize(tool_use_id:, path:, regions:, released:)
-        Guards::ReadRedacted.check!(path:, regions:, released:)
+        Carriers::ReadRedacted.check!(path:, regions:, released:)
 
         super(tool_use_id: tool_use_id.dup.freeze, path: path.to_s.dup.freeze,
               regions: regions.to_i, released: released.to_i)

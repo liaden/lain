@@ -4,7 +4,7 @@ require "bigdecimal"
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A compaction record must name what fired it and land on one of the
       # three cache states the scheduler's policy actually reaches. Both stay
       # REQUIRED: a record with no trigger or an unknown cache state is a bug,
@@ -15,7 +15,7 @@ module Lain
       # neither. It emits neither TOGETHER -- one figure beside a missing one
       # would read as a real zero on the missing side, which is exactly the
       # confusion absence exists to remove.
-      class Compaction < Guard
+      class Compaction < Declarative::Carrier
         attribute :trigger
         attribute :cache_state
         attribute :cost_saved
@@ -102,7 +102,7 @@ module Lain
     # unlisted model (`price_book.rb:112`) is the same doctrine one tier up: a
     # figure that cannot be stood behind is not emitted.
     #
-    # Absence is nil on BOTH figures or on neither ({Guards::Compaction}
+    # Absence is nil on BOTH figures or on neither ({Carriers::Compaction}
     # enforces the pair), and it is deliberately not a zero: `cost_spent`
     # legitimately zeroes on a `:cold` compaction and both zero on an unpriced
     # scheduler, so a switched run reporting zero would be indistinguishable
@@ -173,7 +173,7 @@ module Lain
         cache_state = cache_state.to_sym
         cost_saved = Telemetry.fixed_point(cost_saved)
         cost_spent = Telemetry.fixed_point(cost_spent)
-        Guards::Compaction.check!(trigger:, cache_state:, cost_saved:, cost_spent:)
+        Carriers::Compaction.check!(trigger:, cache_state:, cost_saved:, cost_spent:)
         super(trigger:, cache_state:, bytes_before: Integer(bytes_before), bytes_after: Integer(bytes_after),
               cost_saved:, cost_spent:, model: model&.to_s&.freeze,
               collapse_strategy: collapse_strategy&.to_s&.freeze)

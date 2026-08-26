@@ -2,12 +2,12 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A grade attestation must name the grader that produced it, the subject
       # it judged, say whether it passed as a real boolean (the same
       # `presence:`-cannot-reject-`false` reasoning as {Verdict}'s `survived`),
       # and explain itself.
-      class GradeRecord < Guard
+      class GradeRecord < Declarative::Carrier
         attribute :grader
         attribute :subject_digest
         attribute :pass
@@ -60,7 +60,7 @@ module Lain
 
       def initialize(grader:, score:, pass:, why:, subject_digest:, criteria_digest: nil)
         grader = grader.to_s
-        Guards::GradeRecord.check!(grader:, subject_digest:, pass:, why:)
+        Carriers::GradeRecord.check!(grader:, subject_digest:, pass:, why:)
 
         super(
           grader: grader.dup.freeze,

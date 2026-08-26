@@ -2,10 +2,10 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # An oracle-answer record must name the oracle it answered (the digest
       # replay substitutes on) and carry the question that was asked.
-      class OracleAnswer < Guard
+      class OracleAnswer < Declarative::Carrier
         attribute :oracle_digest
         attribute :question
         validates :oracle_digest, presence: { message: "must name the oracle it answered, got nil" }
@@ -39,7 +39,7 @@ module Lain
       include Journalable
 
       def initialize(oracle_digest:, question:, answer:, model: nil, usage: {}, wall_clock: 0.0)
-        Guards::OracleAnswer.check!(oracle_digest:, question:)
+        Carriers::OracleAnswer.check!(oracle_digest:, question:)
 
         super(
           oracle_digest: oracle_digest.dup.freeze,

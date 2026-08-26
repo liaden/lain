@@ -2,9 +2,9 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A dispatch marker must name the resent request it dispatched.
-      class ResendDispatched < Guard
+      class ResendDispatched < Declarative::Carrier
         attribute :digest
         validates :digest, presence: { message: "must name the resent request it dispatched, got nil" }
       end
@@ -27,11 +27,10 @@ module Lain
     ResendDispatched = Data.define(:digest) do
       include Journalable
 
-      def initialize(digest:)
-        Guards::ResendDispatched.check!(digest:)
-
-        super(digest: digest.dup.freeze)
-      end
+      # `settle!`, not `check!`: the carrier's frozen copy of `digest` is
+      # exactly the `dup.freeze` this constructor spelled out by hand. The
+      # keyword stays explicit -- see {StreamStarted} for what `**attrs` costs.
+      def initialize(digest:) = super(**Carriers::ResendDispatched.settle!(digest:))
     end
   end
 end

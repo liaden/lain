@@ -2,7 +2,7 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A malformed-response record must name the reading it made, the tool the
       # envelope named, and the text it read that from.
       #
@@ -12,7 +12,7 @@ module Lain
       # the one misreading this record cannot survive. It reports a model
       # failure to a human who will not have the turn in front of them, so the
       # quote is the whole of what makes it checkable.
-      class MalformedResponse < Guard
+      class MalformedResponse < Declarative::Carrier
         attribute :kind
         attribute :tool_name
         attribute :excerpt
@@ -60,7 +60,7 @@ module Lain
         # reaches the guard and is refused BY NAME rather than dying in a
         # NoMethodError one frame lower.
         kind = kind&.to_sym
-        Guards::MalformedResponse.check!(kind:, tool_name:, excerpt:)
+        Carriers::MalformedResponse.check!(kind:, tool_name:, excerpt:)
 
         super(kind:, model: model&.dup&.freeze, tool_name: tool_name.dup.freeze,
               # Qualified, not bare: a `def` inside a `Data.define` block keeps

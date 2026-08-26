@@ -2,13 +2,13 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A park record must name the call, the tool, and who it was asked for.
       # All three REQUIRED, and this is the whole reason the guard exists: every
       # field is a String coerced with `to_s`, so a nil would journal `""` --
       # a record that looks like evidence and names nothing, in a codebase whose
       # premise is loud failure.
-      class ApprovalPending < Guard
+      class ApprovalPending < Declarative::Carrier
         attribute :requester
         attribute :tool
         attribute :tool_use_id
@@ -70,7 +70,7 @@ module Lain
       # two equal records must share one String rather than hold two copies of
       # the same bytes.
       def initialize(requester:, tool:, tool_use_id:)
-        Guards::ApprovalPending.check!(requester:, tool:, tool_use_id:)
+        Carriers::ApprovalPending.check!(requester:, tool:, tool_use_id:)
 
         super(requester: -requester.to_s, tool: -tool.to_s, tool_use_id: -tool_use_id.to_s)
       end

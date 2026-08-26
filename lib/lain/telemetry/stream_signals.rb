@@ -5,10 +5,10 @@ module Lain
     # CE-5's transient scheduling signal and its failure record -- the provider
     # round-trip's transient signals, not the durable stream they ride beside.
 
-    module Guards
+    module Carriers
       # A stream-started record must name the request whose response began
       # streaming -- there is no committed turn yet to name instead.
-      class StreamStarted < Guard
+      class StreamStarted < Declarative::Carrier
         attribute :digest
         validates :digest, presence: { message: "must name the request whose response started, got nil" }
       end
@@ -30,11 +30,14 @@ module Lain
     StreamStarted = Data.define(:digest) do
       include Journalable
 
-      def initialize(digest:)
-        Guards::StreamStarted.check!(digest:)
-
-        super(digest: digest.dup.freeze)
-      end
+      # `settle!`, not `check!`: the carrier's own frozen copy of `digest` IS
+      # the `dup.freeze` this constructor used to spell out, so validating and
+      # taking the settled values leaves nothing for a body to do.
+      #
+      # The keyword stays EXPLICIT. A bare `**attrs` hands arity to ActiveModel,
+      # which hands every rule-less attribute a free nil -- and `Data`'s "you
+      # must name this" is the check that would be lost.
+      def initialize(digest:) = super(**Carriers::StreamStarted.settle!(digest:))
     end
 
     # An injected observer callback -- so far, only CE-5's `on_stream_started`

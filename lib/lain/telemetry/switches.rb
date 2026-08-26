@@ -38,14 +38,14 @@ module Lain
       end
     end
 
-    module Guards
+    module Carriers
       # Every field of a switch record is stringified on the way in, so a nil
       # would journal `""` -- a line that parses, sits in the experiment record,
       # and names neither the flip nor who made it. All five are REQUIRED, and
       # the two layer lists are refused as nil rather than coerced: `Array(nil)`
       # answers `[]`, which is a perfectly ordinary layer set and would record
       # "no layers were active" for a caller that knew nothing at all.
-      class ModeSwitch < Guard
+      class ModeSwitch < Declarative::Carrier
         attribute :from
         attribute :to
         attribute :from_layers
@@ -122,7 +122,7 @@ module Lain
       include Journalable
 
       def initialize(from:, to:, from_layers:, to_layers:, surface:)
-        Guards::ModeSwitch.check!(from:, to:, from_layers:, to_layers:, surface:)
+        Carriers::ModeSwitch.check!(from:, to:, from_layers:, to_layers:, surface:)
 
         super(from: -from.to_s, to: -to.to_s, surface: -surface.to_s,
               from_layers: interned_names(from_layers), to_layers: interned_names(to_layers))

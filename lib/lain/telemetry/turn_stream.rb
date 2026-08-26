@@ -5,16 +5,16 @@ module Lain
     # The durable per-turn/per-request telemetry stream: what left for the
     # model, what it cost, and what a tool produced.
 
-    module Guards
+    module Carriers
       # A dropped-event count must be a positive Integer.
-      class Dropped < Guard
+      class Dropped < Declarative::Carrier
         attribute :count
         validates :count, numericality: { only_integer: true, greater_than: 0,
                                           message: "must be a positive Integer, got %<value>s" }
       end
 
       # A usage record must name the turn it paid for and why the model stopped.
-      class TurnUsage < Guard
+      class TurnUsage < Declarative::Carrier
         attribute :digest
         attribute :stop_reason
         validates :digest, presence: { message: "must name the committed turn, got nil" }
@@ -24,22 +24,29 @@ module Lain
       # `stream` must be a real boolean so it round-trips through the journal. A
       # required boolean is validated by inclusion in [true, false], because
       # `presence: true` would reject `false` (the Tool::Input idiom).
-      class RequestSent < Guard
+      class RequestSent < Declarative::Carrier
         attribute :stream
         # %<value>s echoes the offender un-inspected ("got yes", not 'got "yes"')
         # -- the one diagnostic byte lost versus the hand-rolled guard.
         validates :stream, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
       end
 
-      # A memory-root record must name the committed turn it snapshots.
-      class MemoryRoot < Guard
+      # A memory-root record must name the committed turn it snapshots. `root`
+      # carries no rule -- nil is the empty index's identity, not an absence --
+      # but it is declared, because `settle!` hands back exactly the attributes
+      # the carrier names and the record needs both.
+      class MemoryRoot < Declarative::Carrier
         attribute :turn_digest
+        attribute :root
         validates :turn_digest, presence: { message: "must name the committed turn, got nil" }
       end
 
       # A refusal record must name its reason -- the pattern that matched, or
-      # the judgment that declined (never the matched bytes).
-      class WriteRefused < Guard
+      # the judgment that declined (never the matched bytes). `tool_use_id` is
+      # declared without a rule for the reason {MemoryRoot}'s `root` is: it is
+      # what `settle!` must hand back, not something to refuse over.
+      class WriteRefused < Declarative::Carrier
+        attribute :tool_use_id
         attribute :pattern
         validates :pattern, presence: { message: "must name what matched or what declined, got nil" }
       end
@@ -48,13 +55,36 @@ module Lain
       # survived as a real boolean (so `presence:` cannot silently reject
       # `false`, the same reasoning as {RequestSent}'s `stream`), and explain
       # itself.
-      class Verdict < Guard
+      class Verdict < Declarative::Carrier
         attribute :digest
         attribute :survived
         attribute :why
         validates :digest, presence: { message: "must name the finding it judged, got nil" }
         validates :survived, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
         validates :why, presence: { message: "must explain the verdict, got nil" }
+      end
+
+      # Tool output must name a real stream. This one was still a hand-rolled
+      # `raise ArgumentError` in the constructor after every sibling had moved,
+      # and it is a `check!` rather than a `settle!` for the reason {ToolOutput}'s
+      # own `bytes.freeze` gives: settling COPIES, and copying possibly-large
+      # subprocess output would double it.
+      class ToolOutput < Declarative::Carrier
+        STREAMS = %i[stdout stderr].freeze
+
+        attribute :stream
+        validate :stream_is_known
+
+        private
+
+        # Bespoke rather than `inclusion:`, so the refusal keeps the hand-rolled
+        # guard's exact bytes: `%<value>s` renders a Symbol un-inspected ("got
+        # nope"), losing the colon that says the offender was one.
+        def stream_is_known
+          return if STREAMS.include?(stream)
+
+          errors.add(:stream, "must be one of #{STREAMS.inspect}, got #{stream.inspect}")
+        end
       end
     end
 
@@ -69,10 +99,7 @@ module Lain
       include Journalable
 
       def initialize(tool_use_id:, stream:, bytes:)
-        streams = %i[stdout stderr]
-        unless streams.include?(stream)
-          raise ArgumentError, "stream must be one of #{streams.inspect}, got #{stream.inspect}"
-        end
+        Carriers::ToolOutput.check!(stream:)
 
         # bytes is frozen in place, not dup'd: copying possibly-large subprocess output would double it.
         super(tool_use_id: tool_use_id.dup.freeze, stream:, bytes: bytes.freeze)
@@ -88,7 +115,7 @@ module Lain
       include Journalable
 
       def initialize(count:)
-        Guards::Dropped.check!(count:)
+        Carriers::Dropped.check!(count:)
         super
       end
     end
@@ -130,7 +157,7 @@ module Lain
       include Journalable
 
       def initialize(digest:, model:, stop_reason:, usage:)
-        Guards::TurnUsage.check!(digest:, stop_reason:)
+        Carriers::TurnUsage.check!(digest:, stop_reason:)
 
         super(
           digest: digest.dup.freeze,
@@ -201,7 +228,7 @@ module Lain
       # still need freezing, at O(markers) cost.
       def initialize(digest:, payload:, stream:, extra:, prefix_digests: nil, prefix_chain_version: nil,
                      normalized: false)
-        Guards::RequestSent.check!(stream:)
+        Carriers::RequestSent.check!(stream:)
 
         super(
           digest: digest.dup.freeze,
@@ -261,11 +288,12 @@ module Lain
     MemoryRoot = Data.define(:turn_digest, :root) do
       include Journalable
 
-      def initialize(turn_digest:, root:)
-        Guards::MemoryRoot.check!(turn_digest:)
-
-        super(turn_digest: turn_digest.dup.freeze, root: root&.dup&.freeze)
-      end
+      # A nil `root` needs no `&.` here: `settle!` copies what it is given and
+      # nil is already `Ractor.shareable?`, so absence survives untouched. But
+      # `root` must still be NAMED: it carries no validation to catch an
+      # accidental nil, so its keyword is the only thing standing between a
+      # caller and a record that silently claims the index was empty.
+      def initialize(turn_digest:, root:) = super(**Carriers::MemoryRoot.settle!(turn_digest:, root:))
     end
 
     # Something declared it `requires` a capability the Provider does not have,
@@ -310,6 +338,15 @@ module Lain
     # the event stays Ractor-shareable.
     SlotFills = Data.define(:digests, :fills) do
       include Journalable
+      include Declarative
+
+      # Declared rather than spelled out in the constructor: canonical wire form
+      # is what these two maps ARE. Anonymous (`declare`), because the record
+      # carries no validation a reader would ever go looking for by name.
+      declare do
+        attribute :digests, :lain_canonical
+        attribute :fills, :lain_canonical
+      end
 
       # The session's one record, attributing what ACTUALLY rendered. Built
       # from the loaded {Prompt::Slots} -- per-slot rendered-byte digests and
@@ -325,9 +362,9 @@ module Lain
         new(digests: { "system" => Canonical.digest(override) }, fills: { "system" => override })
       end
 
-      def initialize(digests:, fills:)
-        super(digests: Canonical.normalize(digests), fills: Canonical.normalize(fills))
-      end
+      # Explicit keywords: `Canonical.normalize(nil)` is nil, so a nameless
+      # construction would build a perfectly valid record attributing nothing.
+      def initialize(digests:, fills:) = super(**self.class.settle!(digests:, fills:))
     end
 
     # A `memory_write` withheld by {Middleware::RefuseSecretWrites} before it
@@ -349,11 +386,10 @@ module Lain
     WriteRefused = Data.define(:tool_use_id, :pattern) do
       include Journalable
 
-      def initialize(tool_use_id:, pattern:)
-        Guards::WriteRefused.check!(pattern:)
-
-        super(tool_use_id: tool_use_id.dup.freeze, pattern: pattern.dup.freeze)
-      end
+      # `tool_use_id` is the correlation key onto the call that was refused, and
+      # it carries no validator -- so, like {MemoryRoot}'s `root`, its keyword is
+      # what keeps a refusal from journaling as uncorrelatable.
+      def initialize(tool_use_id:, pattern:) = super(**Carriers::WriteRefused.settle!(tool_use_id:, pattern:))
     end
 
     # A finding's refutation verdict ({Grader::Verified}'s second pass): whether
@@ -375,7 +411,7 @@ module Lain
       include Journalable
 
       def initialize(digest:, survived:, score:, why:)
-        Guards::Verdict.check!(digest:, survived:, why:)
+        Carriers::Verdict.check!(digest:, survived:, why:)
 
         super(digest: digest.dup.freeze, survived:, score: score.to_f.clamp(0.0, 1.0), why: -why.to_s)
       end

@@ -2,10 +2,10 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # An isolation-lease record must land on one of the lifecycle kinds and
       # name the worker it belongs to.
-      class IsolationLease < Guard
+      class IsolationLease < Declarative::Carrier
         attribute :kind
         attribute :worker_key
         validates :kind, inclusion: { in: %i[acquired released service_provisioned service_torn_down],
@@ -50,7 +50,7 @@ module Lain
 
       def initialize(kind:, worker_key:, backend:, service: nil)
         kind = kind.to_sym
-        Guards::IsolationLease.check!(kind:, worker_key:)
+        Carriers::IsolationLease.check!(kind:, worker_key:)
 
         super(
           kind:,

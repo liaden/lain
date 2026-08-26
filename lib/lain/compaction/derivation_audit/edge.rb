@@ -35,10 +35,10 @@ module Lain
 
         # The record type's own WRITE-side contract, plus the two things it cannot see:
         # that the keys are there at all, and that the heads are heads.
-        # Reusing the guard is what keeps a reader's idea of the shape from
+        # Reusing it is what keeps a reader's idea of the shape from
         # drifting from the writer's -- there is one definition of what a
         # `context_derived` record is, and this is it.
-        def violations = absent + misshapen + guarded
+        def violations = absent + misshapen + carried
 
         private
 
@@ -65,13 +65,13 @@ module Lain
           ["#{record["derived_head"].inspect} is named as derived from no source head at all"]
         end
 
-        # The guard is a throwaway {Lain::Declarative::Carrier}, asked with `valid?`
-        # rather than `check!`: a reader reports what is wrong with a record it
-        # did not write, and never raises over it.
-        def guarded
-          guard = Telemetry::Guards::ContextDerived.new(strategy: record["strategy"], spans: record["spans"],
-                                                        cut: record["cut"]&.to_s&.to_sym)
-          guard.valid? ? [] : guard.errors.full_messages
+        # A throwaway {Lain::Declarative::Carrier}, asked with `valid?` rather
+        # than `check!`: a reader reports what is wrong with a record it did not
+        # write, and never raises over it.
+        def carried
+          carrier = Telemetry::Carriers::ContextDerived.new(strategy: record["strategy"], spans: record["spans"],
+                                                            cut: record["cut"]&.to_s&.to_sym)
+          carrier.valid? ? [] : carrier.errors.full_messages
         end
 
         # Interned on the way out: a digest read off the Journal is a fresh

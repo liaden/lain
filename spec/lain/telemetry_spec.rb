@@ -18,18 +18,23 @@ RSpec.describe Lain::Telemetry do
     end
   end
 
-  # The five events whose hand-rolled guards moved to validate-then-freeze
-  # (Ruling 2). Construction validates a throwaway Lain::Guard carrier BEFORE
-  # the auto-frozen Data value exists, so the value never carries ActiveModel's
+  # The events whose hand-rolled guards moved to validate-then-freeze (Ruling 2).
+  # Construction validates a throwaway Lain::Declarative::Carrier BEFORE the
+  # auto-frozen Data value exists, so the value never carries ActiveModel's
   # @errors / @context_for_validation ivars and stays Ractor-shareable.
+  #
+  # The carriers are NAMED (a {Telemetry::Carriers} constant apiece) rather than
+  # anonymous declarations, and this is what pins that: Compaction's
+  # DerivationAudit builds one by name and asks it `valid?` to report on a
+  # record it did not write.
   describe "validate-then-freeze construction" do
-    it "exposes a reachable ActiveModel Guard carrier per converted event" do
-      expect(Lain::Telemetry::Guards::Dropped.new(count: 0)).to be_invalid
-      expect(Lain::Telemetry::Guards::TurnUsage.new(digest: nil, stop_reason: :x)).to be_invalid
-      expect(Lain::Telemetry::Guards::RequestSent.new(stream: "yes")).to be_invalid
-      expect(Lain::Telemetry::Guards::MemoryRoot.new(turn_digest: nil)).to be_invalid
-      expect(Lain::Telemetry::Guards::WriteRefused.new(pattern: nil)).to be_invalid
-      expect(Lain::Telemetry::Guards::StreamStarted.new(digest: nil)).to be_invalid
+    it "exposes a reachable ActiveModel carrier per converted event" do
+      expect(Lain::Telemetry::Carriers::Dropped.new(count: 0)).to be_invalid
+      expect(Lain::Telemetry::Carriers::TurnUsage.new(digest: nil, stop_reason: :x)).to be_invalid
+      expect(Lain::Telemetry::Carriers::RequestSent.new(stream: "yes")).to be_invalid
+      expect(Lain::Telemetry::Carriers::MemoryRoot.new(turn_digest: nil)).to be_invalid
+      expect(Lain::Telemetry::Carriers::WriteRefused.new(pattern: nil)).to be_invalid
+      expect(Lain::Telemetry::Carriers::StreamStarted.new(digest: nil)).to be_invalid
     end
 
     it "raises ArgumentError naming the attribute AND echoing the value, never ActiveModel::ValidationError" do
@@ -56,6 +61,42 @@ RSpec.describe Lain::Telemetry do
         expect(event).to be_deeply_frozen
         expect(event.instance_variables).not_to include(:@errors)
       end
+    end
+
+    # A `settle!` constructor must keep EXPLICIT keywords. `def initialize(**attrs)`
+    # reads as a tidy delegation and is not one: it hands arity to ActiveModel,
+    # which gives every attribute without a declared default a free nil. `Data`
+    # was the thing enforcing "you must name this", and a bare `**attrs` throws
+    # that away silently -- no validator fires, because nothing here is invalid,
+    # only absent.
+    #
+    # {TodoSnapshot} and {SlotFills} are why this is pinned rather than trusted:
+    # `Canonical.normalize(nil)` is `nil`, so a nameless constructor returns a
+    # VALID, journalable record carrying nothing. Evidence that names nothing is
+    # the one shape a bench's experiment record must not be able to hold.
+    it "refuses a nameless construction on every record that settles, rather than defaulting it to nil" do
+      settling = [
+        Lain::Telemetry::StreamStarted, Lain::Telemetry::ResendDispatched,
+        Lain::Telemetry::MemoryRoot, Lain::Telemetry::WriteRefused,
+        Lain::Telemetry::SessionRead, Lain::Telemetry::SessionPin,
+        Lain::Telemetry::SupersessionRecord, Lain::Telemetry::ToolCancelled,
+        Lain::Telemetry::TodoSnapshot, Lain::Telemetry::SlotFills
+      ]
+
+      settling.each do |record|
+        expect { record.new }.to raise_error(ArgumentError, /missing keyword/),
+                                 "#{record}.new built a record from no arguments at all"
+      end
+    end
+
+    # The sharper half: an attribute declared WITHOUT a rule -- purely so
+    # `settle!` hands it back -- is exactly the one whose arity check vanishes,
+    # because no presence validator stands behind it to catch the nil.
+    it "keeps a rule-less declared attribute required, which declaring it for settle! quietly un-required" do
+      expect { Lain::Telemetry::MemoryRoot.new(turn_digest: "blake3:turn") }
+        .to raise_error(ArgumentError, /missing keyword: :root/)
+      expect { Lain::Telemetry::WriteRefused.new(pattern: "aws access key id") }
+        .to raise_error(ArgumentError, /missing keyword: :tool_use_id/)
     end
   end
 
@@ -768,7 +809,8 @@ RSpec.describe Lain::Telemetry do
     # Loud failure, the same validate-then-freeze contract every sibling record
     # has: a nameless park would journal `{"tool":""}` and read as evidence.
     it "refuses a record that names no tool, no call, or no requester" do
-      expect(Lain::Telemetry::Guards::ApprovalPending.new(requester: nil, tool: nil, tool_use_id: nil)).to be_invalid
+      expect(Lain::Telemetry::Carriers::ApprovalPending.new(requester: nil, tool: nil, tool_use_id: nil))
+        .to be_invalid
       expect { described_class.new(requester: "agent", tool: nil, tool_use_id: "tu_1") }
         .to raise_error(ArgumentError, /tool must name the gated tool/)
       expect { described_class.new(requester: "agent", tool: "bash", tool_use_id: nil) }
@@ -842,7 +884,8 @@ RSpec.describe Lain::Telemetry do
     # has. A record with no kind, no tool and no evidence would journal
     # `{"tool_name":""}` and read as a finding.
     it "refuses a record that names no reading, no tool, or no evidence" do
-      expect(Lain::Telemetry::Guards::MalformedResponse.new(kind: nil, tool_name: nil, excerpt: nil)).to be_invalid
+      expect(Lain::Telemetry::Carriers::MalformedResponse.new(kind: nil, tool_name: nil, excerpt: nil))
+        .to be_invalid
       expect { described_class.new(kind: :something_else, model: "m", tool_name: "bash", excerpt: "x") }
         .to raise_error(ArgumentError, /kind must be one of prose_tool_call/)
       expect { described_class.new(kind: :prose_tool_call, model: "m", tool_name: nil, excerpt: "x") }
@@ -882,7 +925,7 @@ RSpec.describe Lain::Telemetry do
   #
   # The shared function is nil-tolerant, because nil is a value one of the two
   # records genuinely journals. Loudness moves to the record that has no refusal
-  # to express: {Guards::SeamDecision} now requires both figures, so the nil that
+  # to express: {Carriers::SeamDecision} now requires both figures, so the nil that
   # used to blow up inside BigDecimal is named at the boundary instead.
   describe ".fixed_point" do
     it "formats fixed-point, never the scientific notation BigDecimal#to_s reaches for" do

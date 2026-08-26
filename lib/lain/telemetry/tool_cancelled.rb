@@ -2,15 +2,22 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A cancellation record must name the assistant turn whose calls were
       # cancelled and at least one cancelled call. The second is not pedantry:
       # a turn torn AFTER every tool returned commits its real results and is
       # not a cancellation at all, so a record with an empty `cancelled` would
       # be the one shape that reads as a cancellation while describing none.
-      class ToolCancelled < Guard
+      # The two optional lists are declared with their defaults so `settle!`
+      # can hand the record a fresh, deeply frozen Array per construction --
+      # a bare `default: []` would share ONE Array across every record that
+      # omitted it, which is the classic Ruby default-argument hazard the
+      # lambda closes.
+      class ToolCancelled < Declarative::Carrier
         attribute :head
         attribute :cancelled
+        attribute :running, default: -> { [] }
+        attribute :completed, default: -> { [] }
         validates :head, presence: { message: "must name the assistant turn whose calls were cancelled, got nil" }
         validates :cancelled, presence: { message: "must name at least one cancelled call" }
       end
@@ -41,18 +48,18 @@ module Lain
     ToolCancelled = Data.define(:head, :cancelled, :running, :completed) do
       include Journalable
 
-      def initialize(head:, cancelled:, running: [], completed: [])
-        Guards::ToolCancelled.check!(head:, cancelled:)
-
-        super(head: head.dup.freeze, cancelled: freeze_ids(cancelled),
-              running: freeze_ids(running), completed: freeze_ids(completed))
+      # The defaults and the deep freeze both live on the carrier now: `settle!`
+      # rebuilds each id list as a frozen Array of frozen Strings, which is what
+      # the private `freeze_ids` did and what keeps the record `Ractor.shareable?`
+      # -- an Array of Strings is only as immutable as its elements.
+      #
+      # `head`/`cancelled` are named so they stay REQUIRED; the two optional
+      # lists ride in `**optional` so that omitting them reaches the carrier's
+      # `default: -> { [] }` rather than being re-defaulted here. Naming them
+      # with `running: []` would put the default back in two places at once.
+      def initialize(head:, cancelled:, **optional)
+        super(**Carriers::ToolCancelled.settle!(head:, cancelled:, **optional))
       end
-
-      private
-
-      # Deeply frozen, so the record stays `Ractor.shareable?` like every other
-      # event: an Array of Strings is only as immutable as its elements.
-      def freeze_ids(ids) = ids.map { |id| id.dup.freeze }.freeze
     end
   end
 end

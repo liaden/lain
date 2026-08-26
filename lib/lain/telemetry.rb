@@ -35,15 +35,16 @@ module Lain
       end
     end
 
-    # Construction contracts for the events whose hand-rolled guards moved to
-    # validate-then-freeze (Ruling 2). Each is a throwaway {Lain::Guard} carrier
-    # validated BEFORE the (auto-frozen) Data value exists -- see {Lain::Guard}
-    # for why validation must live off the frozen value. Named, so they stay
+    # The construction contracts of the records in this module: one named
+    # {Lain::Declarative::Carrier} subclass per record that has one. Each is
+    # validated and discarded BEFORE the (auto-frozen) Data value exists -- see
+    # {Lain::Declarative::Carrier} for why validation must live off the frozen
+    # value. Named rather than anonymous (`declare do ... end`), so they stay
     # reachable for introspection and shoulda-matchers.
     #
     # Each record group declares its own carriers into this namespace, from its
     # own file in `telemetry/`.
-    module Guards
+    module Carriers
     end
 
     # A money figure as a fixed-point ("F") decimal String, the form every priced
@@ -61,7 +62,7 @@ module Lain
     # `BigDecimal`, which raises on `"false"` as it always did.
     #
     # Tolerating nil here is NOT permission to journal one. A record whose figures
-    # are not optional says so in its own {Guard} ({Guards::SeamDecision} does), so
+    # are not optional says so in its own carrier ({Carriers::SeamDecision} does), so
     # the loudness lives with the record that holds the contract rather than in a
     # shared formatter, which cannot know which caller has a refusal to express.
     #

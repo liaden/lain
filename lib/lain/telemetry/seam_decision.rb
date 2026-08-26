@@ -4,12 +4,12 @@ require "bigdecimal"
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A seam-EV verdict must name a REAL chunk size class it weighed (not just
       # any non-nil string -- an "XL" reaching this record through the calibrated
       # estimate path would otherwise journal silently) and land on one of the
       # two answers the policy reaches. The S/M/L set is {Plan::SIZES}, held
-      # verbatim here rather than referenced: this Guard's class body evaluates
+      # verbatim here rather than referenced: this carrier's class body evaluates
       # at telemetry load time, before the plan/ unit loads.
       #
       # BOTH cost figures are required, and this record is where they differ from
@@ -19,7 +19,7 @@ module Lain
       # because the shared {Telemetry.fixed_point} is nil-tolerant for
       # {Compaction}'s sake -- without this validation an unquoted side would
       # journal `null` into a money field and only surface later, in a reader.
-      class SeamDecision < Guard
+      class SeamDecision < Declarative::Carrier
         attribute :size
         attribute :verdict
         attribute :rewrite_cost
@@ -68,7 +68,7 @@ module Lain
     # Integer or Float (a calibrated median may be fractional) -- both JSON-safe
     # and already immutable. Both figures format through {Telemetry.fixed_point},
     # the one formatter every priced record quotes through; unlike {Compaction}
-    # this record REQUIRES them (see {Guards::SeamDecision}).
+    # this record REQUIRES them (see {Carriers::SeamDecision}).
     #
     # Emitted by {Plan::SeamDecision#call} -- the same decide-then-journal
     # pairing {Compaction::Scheduler} makes for its own {Compaction} accounting,
@@ -83,7 +83,7 @@ module Lain
         verdict = verdict.to_sym
         rewrite_cost = Telemetry.fixed_point(rewrite_cost)
         payback = Telemetry.fixed_point(payback)
-        Guards::SeamDecision.check!(size:, verdict:, rewrite_cost:, payback:)
+        Carriers::SeamDecision.check!(size:, verdict:, rewrite_cost:, payback:)
 
         super(
           size: -size, estimated_turns:, calibrated: calibrated ? true : false,

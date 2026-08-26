@@ -6,12 +6,12 @@ module Lain
     # decorator that keeps {Session} itself journal-ignorant, so neither the
     # Agent nor any tool ever constructs one directly.
 
-    module Guards
+    module Carriers
       # A read record must name the file read, and say whether the model saw
       # the WHOLE file. `presence:` is wrong for `complete` -- it would reject
       # `false`, which is exactly the partial read this field exists to express
       # (the reason {SessionPin}'s `pinned` avoids it too).
-      class SessionRead < Guard
+      class SessionRead < Declarative::Carrier
         attribute :path
         attribute :complete
         validates :path, presence: { message: "must name the file read, got nil" }
@@ -44,7 +44,7 @@ module Lain
       # moved, as a real boolean -- `presence:` would silently reject `false`,
       # which is exactly the retraction this record exists to express (the
       # same reasoning {RequestSent}'s `stream` carries).
-      class SessionPin < Guard
+      class SessionPin < Declarative::Carrier
         attribute :digest
         attribute :pinned
         validates :digest, presence: { message: "must name the turn it pins, got nil" }
@@ -71,11 +71,10 @@ module Lain
     SessionRead = Data.define(:path, :complete) do
       include Journalable
 
-      def initialize(path:, complete:)
-        Guards::SessionRead.check!(path:, complete:)
-
-        super(path: path.dup.freeze, complete:)
-      end
+      # `settle!` is safe on `path` because {Session::Journaled} normalizes it
+      # through `File.expand_path` before it ever gets here, so what arrives is
+      # a String; a Pathname would be refused rather than silently stringified.
+      def initialize(path:, complete:) = super(**Carriers::SessionRead.settle!(path:, complete:))
     end
 
     # One pin transition, recorded so a `--resume` rebuilds the pin-set. This
@@ -93,11 +92,7 @@ module Lain
     SessionPin = Data.define(:digest, :pinned) do
       include Journalable
 
-      def initialize(digest:, pinned:)
-        Guards::SessionPin.check!(digest:, pinned:)
-
-        super(digest: digest.dup.freeze, pinned:)
-      end
+      def initialize(digest:, pinned:) = super(**Carriers::SessionPin.settle!(digest:, pinned:))
     end
 
     # The run's ENTIRE todo list, one record per {Tools::TodoWrite} call --
@@ -109,6 +104,16 @@ module Lain
     # same shape {Tools::TodoWrite}'s own Item carries.
     TodoSnapshot = Data.define(:todos) do
       include Journalable
+      include Declarative
+
+      # The one coercion this record has, declared instead of spelled out: the
+      # canonical wire form is what `todos` IS, not something its constructor
+      # happens to do on the way past. Anonymous (`declare`) rather than a named
+      # {Carriers} entry because nothing else would ever mention the carrier --
+      # there is no validation here for a reader to go and look up.
+      declare do
+        attribute :todos, :lain_canonical
+      end
 
       # Built from the duck {Session#write_todos} itself accepts -- any
       # Enumerable of objects answering `#content`/`#status` -- so the
@@ -118,9 +123,9 @@ module Lain
         new(todos: todos.map { |todo| { "content" => todo.content, "status" => todo.status } })
       end
 
-      def initialize(todos:)
-        super(todos: Canonical.normalize(todos))
-      end
+      # Explicit keyword: `Canonical.normalize(nil)` is nil, so `new` with no
+      # argument would journal `{"todos": null}` as a valid record.
+      def initialize(todos:) = super(**self.class.settle!(todos:))
     end
   end
 end

@@ -2,7 +2,7 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A derivation record must name the strategy that derived the chain --
       # "journal the edge, re-derive on resume" is only exact if the edge names
       # WHICH function was applied -- must land on one of the three answers to
@@ -13,7 +13,7 @@ module Lain
       # empty timeline is a no-op that still records the edge, and a strategy
       # that drops every span answers the empty chain. A `presence:` on either
       # would refuse an honest record.
-      class ContextDerived < Guard
+      class ContextDerived < Declarative::Carrier
         attribute :strategy
         attribute :spans
         attribute :cut
@@ -115,7 +115,7 @@ module Lain
         strategy = named(strategy)
         spans = Canonical.normalize(spans)
         cut = cut.to_sym
-        Guards::ContextDerived.check!(strategy:, spans:, cut:)
+        Carriers::ContextDerived.check!(strategy:, spans:, cut:)
 
         super(source_head: source_head&.dup&.freeze, derived_head: derived_head&.dup&.freeze,
               strategy:, spans:, cut:, moved: Integer(moved), keep_last: keep_last&.then { |n| Integer(n) })
