@@ -1,6 +1,6 @@
 # Chunk — the pipeline algebra: deterministic approval over parsed shell terms
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby
 panel: Torvalds, Evans, Metz, Schneeman, Patterson, plus the category-theory seat for T1 and
@@ -1603,3 +1603,44 @@ Run after the last wave lands, from a tree with nothing else in flight.
     citation, and the surrounding sentence is never deleted just to lose a number.
 13. **Comment density:** `bin/comment-census` on the files this chunk touches, written toward
     `lib/lain/timeline.rb`'s measured shape rather than toward a ratio.
+
+---
+
+## Execution log
+
+**Base ref: `main`.** Established 2026-08-26 at the top of execution, and it is the branch every
+card lands on. Where the refs sat at that moment:
+
+| ref | sha | relation to the base |
+|---|---|---|
+| `main` | `18065ecf` | the base |
+| `origin/main` | `b1927ce7` | **54 behind** — the remote has not been pushed; never fork a worktree from it |
+| `survey/dogfood-2026-08-25` | `12e5715c` | 5 behind, and its working tree carries another session's uncommitted edits in ~16 files including `planning/qa/README.md`, which T10 modifies |
+
+`main` is `12e5715c` (the Grounding commit) plus three commits, and **`git diff --stat
+12e5715c..main` touches `ROADMAP.md` and two planning docs only** — no `lib/`, no `spec/`. So
+every `file.rb:line` citation in Grounding holds verbatim against the base. Spot-checked before
+the first spawn: `exec.rb:13-36`, `core.rb:75-87`, `docker.rb:151-161`, `bash.rb:105-147`,
+`verdict.rb:155-220`, `config.rb:110-125`, `web_fetch.rb:355-375,425-460`, and the three unit
+indexes.
+
+Because commits land as waves do, the head moves and every base goes stale again — worktrees are
+re-cut from the then-current `HEAD` at the top of each wave, never from a ref resolved earlier.
+
+**Pre-chunk suite baseline, measured on the base ref: 16,176 examples, 0 failures, 15 pendings**
+(`bundle exec rake pspec`, 80s). Integration check 1 compares against this number, not against a
+failure count alone.
+
+### Cards
+
+- [ ] T1 — algebra doc correction
+- [ ] T2 — honest tool descriptions
+- [ ] T3 — `#takes_term?` and the arm chooser
+- [ ] T4 — excluded-programs config table
+- [ ] T5 — shell-arm journal record
+- [ ] T6 — one verdict, injected at both seams
+- [ ] T7 — bash journals its arm
+- [ ] T8 — `Rule::Call` carries a derived term
+- [ ] T9 — the composed-term approval rule
+- [ ] T10 — shell manual-QA scenario
+- [ ] T11 — `web_fetch` egress floor
