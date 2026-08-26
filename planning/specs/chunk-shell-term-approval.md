@@ -38,14 +38,14 @@ and that `Approval::Rule`'s own class comment names as its unmechanized half.
 
 ## Grounding
 
-Verified 2026-08-26 against `survey/dogfood-2026-08-25` at `12e5715c`, **which landed on `main`
-in merge `8179ca2c` — so `main` now carries every line this plan cites and is the correct base
-ref.** Recorded because it was briefly not: before that merge, `main` was 22 commits behind and
-every citation here was wrong against it (`verdict.rb` 384 lines there against 359,
-`escalation.rb` 662 against 611, `bash.rb` 195 against 173), and the `Declarative` work this plan
-builds on (`eaccf600 guard: delete it, and Guardable with it`) was absent entirely. Confirm the
-base ref in the staleness check regardless; suite at the merge was **16,176 examples, 0 failures,
-15 pendings**. Everything below was read or measured, not
+Verified 2026-08-26 against **`survey/dogfood-2026-08-25` at `12e5715c`**, which is 22 commits
+ahead of `main` (`345b1e98`). **Every line citation below is measured against that branch and is
+wrong on `main`** — `verdict.rb` is 359 lines there against 384 on main, `escalation.rb` 611
+against 662, `bash.rb` 173 against 195 — and the `Declarative` work the plan builds on
+(`eaccf600 guard: delete it, and Guardable with it`) is not on main at all. **So this chunk must
+be based on that branch, or on a `main` that has absorbed it; forking a worktree from today's
+`main` misfires every card.** Confirm the base ref in the staleness check before spawning
+anything. Everything below was read or measured, not
 inferred; where a doc and the code disagreed, the code won and the doc is a card.
 
 **`Shell::Pipeline` is on the live production path** — the opposite of what this chunk's
@@ -296,7 +296,7 @@ more predicate rather than a restructuring — T9 carries that requirement expli
 | **What reaches a shell** | Understood commands run as reconstructed argv through `execvp`; everything else through `sh -c`. Coverage measured, not assumed. | Flag-aware per-program policy, so `git log` earns the term arm without allowlisting the name |
 | **Who decides** | A deterministic rule approves fully-safe terms with no human and no LLM; a config table denies by name. | Widen what qualifies as flag-awareness lands; project-expressible term policy |
 | **Program identity** | **Trusted by name.** `PATH` is inherited and uncontrolled; `execvp` resolves argv0 against it. Qualified names (`/tmp/evil/cat`) are refused, so this is no weaker than a human reading the string. | Resolve and record the absolute path — cheap, changes no decision, prerequisite for everything above it |
-| **Content the command pulls in** | Nothing. `curl X \| sh` abstains to a human who has seen only a URL, and `web_fetch`'s egress allowlist is **nil in production**, so any host including cloud metadata and localhost is reachable. | Wire the `web_fetch` allowlist; then fetch-once / content-address / approve the digest / run those exact bytes |
+| **Content the command pulls in** | `web_fetch` refuses non-routable destinations — cloud metadata, loopback, RFC1918 — unconditionally and on every redirect hop (**T11**). The check is lexical on the host. `curl X \| sh` still abstains to a human who has seen only a URL. | Refuse by **resolved** address, so a public name pointing into a blocked range is caught (needs connect-to-resolved-IP or DNS rebinding reopens it); then fetch-once / content-address / approve the digest / run those exact bytes |
 | **Where it runs** | Local process with an inherited environment, or a container under `--exec docker` — which this chunk makes usable for ordinary pipelines for the first time. | Piped terms inside a container, which needs a design rather than a card |
 | **What the record proves** | Which arm ran, in both attended and `auto` mode. | Which binary actually ran (rung 1 of program identity) |
 
@@ -310,8 +310,8 @@ a question no rung of this chunk asks.
 safety mechanisms in this codebase exist, are specced, and have never been wired: `Triage`'s
 `AnyPath` classifier (found in QA round 10 — "lain's protected-path argv check already exists and
 has never run"), `Shell::Verdict`'s `capability_set` (this chunk, T4/T6), and `Tools::WebFetch`'s
-host allowlist (still unwired — `base_tools.rb:24` constructs it with no argument, and nil means
-no restriction). A Null Object default is what makes a collaborator injectable, and it is also
+host allowlist (`base_tools.rb:24` constructs it with no argument, and nil means no restriction —
+**T11**). A Null Object default is what makes a collaborator injectable, and it is also
 what lets an unwired guard ship green forever. **Any card here that adds a seam with a permissive
 default owes an acceptance criterion driving the production construction path**, which is why
 every capability in this plan names one.
@@ -400,14 +400,16 @@ rather than re-deriving it.
 ## Waves
 
 ```
-Wave 1: T1, T3, T4, T5          (no unmet deps)
+Wave 1: T1, T3, T4, T5, T11     (no unmet deps)
 Wave 2: T2, T6 (<-T4)
 Wave 3: T7 (<-T5,T6), T8 (<-T6)
 Wave 4: T9 (<-T6,T8)
 Wave 5: T10 (<-T2,T7,T9)
 ```
 
-Critical path: **T4 → T6 → T8 → T9 → T10** (five waves).
+Critical path: **T4 → T6 → T8 → T9 → T10** (five waves). T11 depends on nothing and could land
+anywhere; it sits in wave 1 because it is the only card closing a **presently exploitable** gap
+rather than building a capability.
 
 T6 is the spine. It builds one frozen `Shell::Verdict` from config and injects it at both seams
 that construct one today, which is simultaneously the config wiring, the end of the double
@@ -423,7 +425,8 @@ T2 sits in wave 2 only to keep it off `lib/lain/tools/bash.rb` while T3 is editi
 blocks nothing but T10.
 
 No two same-wave cards modify the same file. Wave 1: T1 (a planning doc), T3 (`exec/*` and
-`bash.rb`), T4 (`shell/exclusions.rb`, `config.rb`), T5 (`telemetry/`). Wave 2: T2 (`bash.rb`,
+`bash.rb`), T4 (`shell/exclusions.rb`, `config.rb`), T5 (`telemetry/`), T11
+(`tools/web_fetch.rb`). Wave 2: T2 (`bash.rb`,
 `core_exec.rb`), T6 (`cli/wiring/*`). Wave 3: T7 (`bash.rb`), T8 (`approval/rule.rb`,
 `approval/escalation.rb`).
 
@@ -1222,7 +1225,7 @@ Scenario: the rule is actually in the shipped ladder
 
 ### T10 — A manual-QA scenario for the shell subsystem [wave 5] [risk: low]
 
-**Depends on:** T2, T7, T9
+**Depends on:** T2, T7, T9, T11
 **Files:** create `planning/qa/scenarios/shell-terms.md`; modify `planning/qa/README.md`
 **Reuse:** `planning/qa/scenarios/survey.md` as the structural model — the precedent for a
 scenario owning a subsystem nobody scheduled (`README.md:59-61`).
@@ -1251,8 +1254,11 @@ Sections it must cover, at minimum: arm selection across allow/abstain/deny thro
 config deny path, which is new and has never been driven; that a fully safe pipeline is approved
 with no prompt **while `cat .netrc` under a denying config still reaches a human** — the negative
 control matters more than the positive one here; that the shell-arm record appears in **both**
-attended and `/mode auto`; that `--exec docker` runs an ordinary pipeline; and one paid section
-reading the arm distribution back out of a real session's journal.
+attended and `/mode auto`; that `--exec docker` runs an ordinary pipeline; **that `web_fetch`
+refuses `http://169.254.169.254/latest/meta-data/` and follows no redirect into a blocked range**
+(T11 — zero-model, and it closes a presently exploitable gap, so the standing rule puts it in the
+cheap set); and one paid section reading the arm distribution back out of a real session's
+journal.
 
 **Name the three postures explicitly**, because they decide differently and a driver who conflates
 them will file a false finding: attended runs the ladder, `/mode auto` replaces it with
@@ -1300,6 +1306,102 @@ Scenario: it covers what this chunk built, including the negative controls
 - `method.md:693-712` lists three ways a check passes while asserting nothing. A section with
   that shape is worse than no section — report it.
 
+### T11 — `web_fetch` refuses the destinations no agent should reach [wave 1] [risk: medium]
+
+**Depends on:** none
+**Files:** modify `lib/lain/tools/web_fetch.rb` (`egress_problem` at :434-441); modify
+`spec/lain/tools/web_fetch_spec.rb`
+**Reuse:** `egress_problem` (`web_fetch.rb:434-441`) is exactly the right seam and already has
+the right shape — it returns a named refusal string or nil, runs **before** any connection, and
+`follow` (`web_fetch.rb:363-371`) re-applies it on **every redirect hop**, with a comment saying
+so. `ALLOWED_SCHEMES` is the model for a constant this class owns and enforces unconditionally.
+**Shared-file wiring:** none
+**Reachable from:** `Wiring::ToolsetBuild` → `BaseTools.build` → `Lain::Tools::WebFetch.new`
+(`base_tools.rb:24`). **Deliberately reachable without touching that line** — see below.
+
+Measured against a production-shaped `WebFetch`:
+
+```
+https://example.com/x                      PERMITTED
+http://169.254.169.254/latest/meta-data/   PERMITTED   <- cloud instance metadata
+http://localhost:6379/                     PERMITTED   <- whatever is listening locally
+file:///etc/passwd                         refused (the scheme guard works)
+```
+
+The host allowlist exists, is written, and is tested — and `base_tools.rb:24` constructs the tool
+with no argument, where `allowlist_problem` returns nil ("no restriction") for a nil allowlist
+(`web_fetch.rb:448-455`). So the scheme guard is the only egress control production has.
+
+**The fix is a floor the class enforces itself, NOT another injected collaborator, and that is the
+whole design decision.** This chunk's **Defense in depth** section names an unwired guard as a
+recurring defect shape and this is its third instance; answering it with a fourth optional seam
+that a wiring line must remember to fill would be repeating the mistake in the act of fixing it.
+So: refuse non-routable destinations unconditionally, as a property of the tool, with no
+constructor argument and no way for a caller to forget. The existing optional domain allowlist
+stays exactly as it is, for a project that wants to narrow *further* — a floor and a ceiling, not
+two spellings of one thing.
+
+What the floor covers, lexically, from the URL's host: loopback (`127.0.0.0/8`, `::1`,
+`localhost`), link-local — **`169.254.0.0/16` is the one that matters, it is where every major
+cloud serves instance credentials** — the RFC1918 private ranges, IPv6 unique-local, `0.0.0.0`,
+and the `.internal` / `.local` suffixes. Because `follow` re-applies the guard per hop, a redirect
+into any of these is refused for free; write a spec proving that rather than assuming it.
+
+**State the limit honestly, because this is rung one of two.** The check is lexical, so it stops
+`http://169.254.169.254/` and does **not** stop `http://evil.com/` whose A record points there.
+Closing that needs resolution before connect plus connecting to the resolved address, or DNS
+rebinding reopens it between check and connect — real work, named as the next rung in **Defense in
+depth**, not attempted here. Nothing in this file resolves a name or sees an address today (no
+`Resolv`, no `IPAddr`, no `Socket`), so rung two is a genuine change in what this class does, not
+a widening of what it already does.
+
+**A refusal must say which rule fired.** `web_fetch`'s existing refusals name themselves
+(`"web_fetch: host … is not on the allowlist"`); a blocked-range refusal that reads the same as an
+allowlist miss would send a reader to the wrong config.
+
+**Acceptance criteria:**
+
+```gherkin
+Scenario: the cloud metadata endpoint is refused by default
+  Given a web_fetch tool built the way a live session builds one, with no allowlist configured
+  When it is asked for "http://169.254.169.254/latest/meta-data/"
+  Then it refuses without connecting
+  And the refusal names the blocked range rather than the allowlist
+
+Scenario: loopback and private ranges are refused by default
+  Given the same tool
+  Then "http://localhost:6379/", "http://127.0.0.1/", "http://[::1]/" and "http://10.0.0.1/"
+    are each refused without connecting
+
+Scenario: ordinary public hosts still work
+  Given the same tool
+  When it is asked for "https://example.com/x"
+  Then the egress guard permits it
+
+Scenario: a redirect into a blocked range is refused too
+  Given a response redirecting to "http://169.254.169.254/"
+  When the redirect is followed
+  Then it is refused, because the guard re-runs on every hop
+
+Scenario: the optional allowlist still narrows further, and cannot widen past the floor
+  Given a configured allowlist naming a host that resolves inside a blocked range literally
+  Then the blocked range still refuses it
+```
+→ spec file: `spec/lain/tools/web_fetch_spec.rb`
+
+**Escalation triggers:**
+- If any existing spec or fixture fetches a loopback or private address — a stubbed local server
+  is the likely shape — this card breaks it. **Stop and report**: a test-only exemption is a hole
+  in exactly the guard being added, and the orchestrator decides whether the fixture moves to a
+  public-shaped host or the guard gains a seam it should not have.
+- If `web_fetch` turns out to be constructed anywhere with a non-nil allowlist that this floor
+  would now contradict, report it rather than reconciling them silently.
+- If implementing the floor requires resolving a hostname, **stop** — that is rung two, it carries
+  a TOCTOU problem this card does not solve, and doing it halfway is worse than not doing it.
+- `web_fetch`'s `#requires_approval?` is deliberately `false` (`web_fetch.rb:16-18`: "a subagent
+  that owns this tool gets no Gate, so a `true` here would be a no-op, and the real safety is the
+  structure, not a gate"). If this card is tempted to make it `true`, that comment is why not.
+
 ## Integration checks
 
 Run after the last wave lands, from a tree with nothing else in flight.
@@ -1338,17 +1440,21 @@ Run after the last wave lands, from a tree with nothing else in flight.
    - `gzip somefile` is not approved, though `gzip` sits on `Shell::Pipeline::STDIN_SAFE`;
    - **`/tmp/evil/cat README.md` is not approved**, though `cat` is on the allowlist and the
      name basenames to it. Create the shim and confirm it did not run.
-9. **`--exec docker` runs an ordinary pipeline** rather than returning a tool error — the
+9. **Egress floor, driven by hand:** `web_fetch` on `http://169.254.169.254/latest/meta-data/`
+   refuses **without connecting**, and a redirect into a blocked range is refused on the hop.
+   Confirm an ordinary public fetch still works — a guard that refuses everything passes the first
+   half of this check and fails the point of it.
+10. **`--exec docker` runs an ordinary pipeline** rather than returning a tool error — the
    user-visible fix from T3. Needs a docker daemon; if unavailable, say so rather than marking
    it done.
-10. **Manual QA pass**, owed to a human at a real cockpit: drive
+11. **Manual QA pass**, owed to a human at a real cockpit: drive
     `planning/qa/scenarios/shell-terms.md` end to end per `.claude/skills/manual-qa/SKILL.md`,
     in the sandbox that skill's Phase 2 proves. Every expected string in that scenario is a
     **prediction** until a round drives it; the first round should expect to correct the
     document as much as to find defects, and should say which it did. **This is not
     orchestrator-runnable and must not be marked done by the executing session.**
-11. **Ticket references:** `bin/comment-census --check-tickets` clean. This chunk writes new
+12. **Ticket references:** `bin/comment-census --check-tickets` clean. This chunk writes new
     comments in `lib/` and `spec/`, and the ban has no exempt tier — a reason in words replaces a
     citation, and the surrounding sentence is never deleted just to lose a number.
-12. **Comment density:** `bin/comment-census` on the files this chunk touches, written toward
+13. **Comment density:** `bin/comment-census` on the files this chunk touches, written toward
     `lib/lain/timeline.rb`'s measured shape rather than toward a ratio.
