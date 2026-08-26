@@ -11,7 +11,7 @@ module Lain
     class Unobservable < Error; end
 
     # An action nothing here knows how to observe. Unreachable while
-    # {Guards::Intent} closes {ACTIONS} to what {Reconcile::Observer} handles --
+    # {Contracts::Intent} closes {ACTIONS} to what {Reconcile::Observer} handles --
     # it is the canary for a later card widening one of those and not the other.
     class UnknownAction < Error; end
 
@@ -72,7 +72,7 @@ module Lain
     # verdicts for one question -- but a promote still costs a `ref_exists?` and
     # a `sha_of` that are not atomic with each other.
     class Reconcile
-      # The two verdicts, spelled out as constants and closed by a guard rather
+      # The two verdicts, spelled out as constants and closed by a contract rather
       # than reached through `method_missing` on a String: the premise here is
       # that an unknown value fails loudly, and a typo'd `.completed_externaly?`
       # must not answer false in silence (CLAUDE.md's rejection of
@@ -88,12 +88,12 @@ module Lain
       MERGED_STATE = "merged"
 
       # This class's own construction contract, in the house validate-then-freeze
-      # convention. Named {Guards} like {Forge::Guards} and shadowing it inside
-      # this lexical scope, which is harmless because nothing here reaches for
-      # the record guards directly -- {Intent.from_record} owns that.
-      module Guards
+      # convention. Named {Contracts} like {Forge::Contracts} and shadowing it
+      # inside this lexical scope, which is harmless because nothing here reaches
+      # for the record contracts directly -- {Intent.from_record} owns that.
+      module Contracts
         # A verdict must be one of the two this fold can reach. See {VERDICTS}.
-        class Verdict < Guard
+        class Verdict < Declarative::Carrier
           attribute :verdict
           validates :verdict, inclusion: { in: VERDICTS,
                                            message: "must be one of #{VERDICTS.join("/")}, got %<value>s" }
@@ -111,7 +111,7 @@ module Lain
       Unsettled = Data.define(:intent, :verdict) do
         def initialize(intent:, verdict:)
           verdict = -verdict.to_s
-          Guards::Verdict.check!(verdict:)
+          Contracts::Verdict.check!(verdict:)
 
           super
         end
@@ -216,7 +216,7 @@ module Lain
         # A line of some other tier's is not ours to read -- {Journal.records}'
         # skip-what-you-do-not-recognize contract, since a session journal's fd
         # is shared. Our OWN records are a different matter: {Intent.from_record}
-        # and {Outcome.from_record} re-check the write-side guards, so a
+        # and {Outcome.from_record} re-check the write-side contracts, so a
         # malformed forge record aborts the fold rather than vanishing from it.
         # Skipping one would lose exactly the intent nobody would then retry.
         def absorb(record, seq)
@@ -369,7 +369,7 @@ module Lain
         #
         # Stating what an address IS rather than enumerating what it is not is
         # what keeps the next type from being a third round of this.
-        # {Guards::Outcome} refuses a missing `ok` on exactly this reasoning; an
+        # {Contracts::Outcome} refuses a missing `ok` on exactly this reasoning; an
         # address owes the same rule.
         def address(intent, key)
           value = intent.params.fetch(key) { raise Unobservable, unaddressed(intent, key, "carries no") }

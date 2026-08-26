@@ -69,7 +69,7 @@ module Lain
         # {Reconcile}'s job, not this one's.
         #
         # A malformed forge record ABORTS rather than being skipped --
-        # {Outcome.from_record} re-checks the write-side guards. Skipping one
+        # {Outcome.from_record} re-checks the write-side contracts. Skipping one
         # would replay a landing with a step silently missing from it.
         #
         # @param entries [Enumerable<Hash, String>]

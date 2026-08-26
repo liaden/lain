@@ -3,13 +3,13 @@
 module Lain
   module Epic
     # The epic tier's one write path. {IssueTransition} and {StageTransition}
-    # already refuse a bad shape at construction (see {Guards} in records.rb),
+    # already refuse a bad shape at construction (see {Contracts} in records.rb),
     # so a Scribe is thin on purpose: it names the epic once, builds the
     # record, and hands it to the Journal. That thinness is the point --
     # nothing else in lib constructs either record (`scribe_write_side_spec.rb`
-    # pins it), so the write-side guard is checked in exactly one place.
+    # pins it), so the write-side contract is checked in exactly one place.
     #
-    # {Progress.fold} re-checks the same {Guards} on the way back in, but it is
+    # {Progress.fold} re-checks the same {Contracts} on the way back in, but it is
     # NOT the only other place a shape gets judged, and this comment used to
     # say so. The fold also judges two things the write side structurally
     # cannot: graph membership (`Lineage`, raising {UnknownIssue} for an id no
@@ -17,20 +17,20 @@ module Lain
     # {ForeignJournal}). The second of those is why {Home.checked_name} is run
     # here too -- see below.
     #
-    # A raised Guard error happens before `@journal <<` runs -- both records'
+    # A raised contract error happens before `@journal <<` runs -- both records'
     # `#initialize` validate before `Data`'s own `super` freezes the value --
     # so a refused transition never reaches the journal at all.
     class Scribe
       # `epic_slug` is passed through {Home.checked_name}, not merely
-      # presence-checked. `Guards::IssueTransition`/`Guards::StageTransition`
+      # presence-checked. `Contracts::IssueTransition`/`Contracts::StageTransition`
       # only demand a non-blank string, but `Refold#mine?` partitions
       # journaled records on byte-exact equality against the slug a caller
       # names to {Progress.fold} -- and that slug always came from a real
       # {Home}, which refuses anything {Home.checked_name} would refuse. A
       # Scribe built on " demo", "Demo", or "the-plan " would pass the
-      # transition's own guard, write happily, and then partition as SOMEONE
+      # transition's own contract, write happily, and then partition as SOMEONE
       # ELSE'S epic: `mine?` drops it as foreign rather than the record's own
-      # guard refusing it, so the transition simply never folds in -- silently,
+      # contract refusing it, so the transition simply never folds in -- silently,
       # in an append-only file, with no exception UNLESS every other record in
       # the journal happens to share the same bad slug (in which case the
       # journal-level {ForeignJournal} check fires, backwards from what an

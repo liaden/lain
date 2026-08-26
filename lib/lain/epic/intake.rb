@@ -126,11 +126,35 @@ module Lain
       # {Home#write_epic} put on disk -- pass them explicitly only when the write
       # is on record as something else.
       Written = Data.define(:bytes, :graph) do
+        include Declarative
+
+        # Only the SHAPE of the written side is declared. `raising:` is
+        # per-declaration, and the other refusal on this constructor's path
+        # ({#recorded}) is a {MalformedDocument} about whether two members
+        # AGREE -- a different question with a different answer class, so
+        # folding it in here would have to change one of the two.
+        #
+        # `bytes` is deliberately undeclared: it is not judged, it is either
+        # emitted or parsed, and declaring it would put a member in the contract
+        # that the contract has nothing to say about.
+        declare raising: MalformedGraph do
+          attribute :graph
+
+          validate :must_be_a_graph
+
+          def must_be_a_graph
+            return if graph.is_a?(Graph)
+
+            errors.add(:graph, "is the written side of an intake, so it must be an Epic::Graph " \
+                               "(got #{graph.inspect})")
+          end
+        end
+
         # `bytes:` defaults to nil rather than to the emit because a keyword
         # default is evaluated BEFORE the body, so a `graph` that is not a Graph
         # would reach Document as a NoMethodError instead of a refusal.
         def initialize(graph:, bytes: nil)
-          refuse_stranger!(graph)
+          self.class.check!(graph:)
           super(bytes: bytes.nil? ? Document.to_markdown(graph) : recorded(graph, bytes), graph:)
         end
 
@@ -138,12 +162,6 @@ module Lain
         def graph_digest = graph.digest
 
         private
-
-        def refuse_stranger!(graph)
-          return if graph.is_a?(Graph)
-
-          raise MalformedGraph, "the written side of an intake must be an Epic::Graph (got #{graph.inspect})"
-        end
 
         # Caller-supplied bytes only. Bytes and graph that disagree make every
         # delta computed from them contradict itself: the disk can match the
@@ -186,8 +204,26 @@ module Lain
       # running the grammar over one would report ordinary prose as a malformed
       # epic: a false alarm about the human's work rather than a report of it.
       Prose = Data.define(:bytes) do
+        include Declarative
+
+        # `check!` and not `settle!`: settling would hand back `bytes.dup.freeze`
+        # where the constructor interns instead, and prose is the one artifact
+        # whose bytes are repeated verbatim across every review of it.
+        declare raising: MalformedDocument do
+          attribute :bytes
+
+          validate :must_be_the_written_bytes
+
+          def must_be_the_written_bytes
+            return if bytes.is_a?(String)
+
+            errors.add(:bytes, "are what lain wrote, so the written side of a prose intake is a String " \
+                               "(got #{bytes.inspect})")
+          end
+        end
+
         def initialize(bytes:)
-          refuse_stranger!(bytes)
+          self.class.check!(bytes:)
           # Interned rather than normalized through {Canonical}, which pins
           # UTF-8: prose is never parsed, so nothing downstream needs it to be
           # text, and a written side that refused a note saved in another
@@ -197,15 +233,6 @@ module Lain
 
         def byte_digest = Intake.byte_digest(bytes)
         def graph_digest = nil
-
-        private
-
-        def refuse_stranger!(bytes)
-          return if bytes.is_a?(String)
-
-          raise MalformedDocument, "the written side of a prose intake is the bytes lain wrote " \
-                                   "(got #{bytes.inspect})"
-        end
       end
     end
   end

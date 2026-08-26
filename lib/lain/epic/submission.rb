@@ -2,17 +2,17 @@
 
 module Lain
   module Epic
-    module Guards
-      # Reopened from {Records}' own `module Guards` (see that file's header): one
-      # validate-then-freeze carrier per record shape, checked BEFORE the
+    module Contracts
+      # Reopened from {Records}' own `module Contracts` (see that file's header):
+      # one validate-then-freeze carrier per record shape, checked BEFORE the
       # auto-frozen Data value exists, so {Submission} never touches ActiveModel
       # and stays `Ractor.shareable?`.
 
-      # `stage` IS restated here, unlike {Guards::StageTransition}'s deliberate
-      # omission: a Submission is built directly by its own class methods below
-      # rather than passed a caller-supplied stage, so there is no {Stage} value
-      # anywhere on this path to own the check instead.
-      class Submission < Guard
+      # `stage` IS restated here, unlike {Contracts::StageTransition}'s
+      # deliberate omission: a Submission is built directly by its own class
+      # methods below rather than passed a caller-supplied stage, so there is no
+      # {Stage} value anywhere on this path to own the check instead.
+      class Submission < Declarative::Carrier
         attribute :stage
         attribute :slug
         attribute :content_digest
@@ -26,14 +26,17 @@ module Lain
 
         private
 
-        # `presence:` alone lets a Hash/Array/Integer digest through -- every
-        # one of those answers `#dup`/`#freeze` too, but only SHALLOWLY: a
-        # Hash whose values are ordinary Strings still holds MUTABLE Strings
-        # inside it, which flips `Ractor.shareable?(submission)` to false and
-        # lets a caller mutate the "content address" after construction. A
-        # String is the one digest shape `#dup.freeze` below actually
-        # deep-freezes, and it is what all three of this class's own
-        # constructors already produce -- `implementation` is the one path
+        # `presence:` alone lets a Hash/Array/Integer digest through, and a
+        # content ADDRESS is a String or it is not an address: `#digest`
+        # composes this value into `Canonical.digest`, so a Hash here acquires a
+        # real gate identity for something nobody can look up.
+        #
+        # This outlived the `dup.freeze` it was first written against.
+        # {Submission} settles through this carrier now, which deep-copies a
+        # container rather than shallow-freezing it, so the SHAREABILITY half of
+        # the original argument is answered by the settling; what is left is the
+        # half that was always the point. A String is what all three of this
+        # class's own constructors produce -- `implementation` is the one path
         # that takes a digest from OUTSIDE, so it is the one path that needs
         # this checked rather than assumed. Skipped when nil, which
         # `presence:` above already reports -- reporting both would repeat
@@ -83,7 +86,7 @@ module Lain
       # bytes"), not a malformed artifact -- whether zero bytes of prose is
       # worth asking a human to approve is a Policy/UX question, not a shape
       # this constructor is positioned to judge.
-      class Prose < Guard
+      class Prose < Declarative::Carrier
         attribute :text
         validate :must_be_prose
 
@@ -100,7 +103,7 @@ module Lain
       # to it -- the same reasoning as {Prose}, once removed: `nil.digest`
       # raises unnamed, and anything answering `#digest` (a stray Hash-like
       # double, say) would silently pass as an epic plan.
-      class GraphArtifact < Guard
+      class GraphArtifact < Declarative::Carrier
         attribute :graph
         validate :must_be_a_graph
 
@@ -117,7 +120,7 @@ module Lain
       # of `fact`'s interpolation would ever catch a blank one: `"issue "` is
       # non-blank prose, so a human ends up asked to approve an unnamed issue
       # rather than the constructor refusing to build at all.
-      class IssueId < Guard
+      class IssueId < Declarative::Carrier
         attribute :issue_id
         validates :issue_id, presence: { message: "must name the issue this submission is for, got nil" }
       end
@@ -148,7 +151,7 @@ module Lain
     # {Epic::Issue#digest}/{Epic::Graph#digest} are: the value is frozen and
     # the hash is cheap, so memoizing would buy nothing and cost the deep
     # freeze. It is documented as TOTAL over every constructible Submission --
-    # {Guards::Submission#slug_is_canonicalizable} is what keeps that true (see
+    # {Contracts::Submission#slug_is_canonicalizable} is what keeps that true (see
     # its comment): a slug that cannot round-trip through `Canonical.normalize`
     # is refused at construction rather than surfacing as an unnamed exception
     # out of `Approval::Gate#call`.
@@ -195,17 +198,17 @@ module Lain
     # ever touching {Epic::Home}.
     Submission = Data.define(:stage, :slug, :content_digest, :fact) do
       def self.research(text:, slug:)
-        Guards::Prose.check!(text:)
+        Contracts::Prose.check!(text:)
         new(stage: "research", slug:, content_digest: Canonical.digest(text), fact: "#{text.bytesize} bytes")
       end
 
       def self.epic_plan(graph:, slug:)
-        Guards::GraphArtifact.check!(graph:)
+        Contracts::GraphArtifact.check!(graph:)
         new(stage: "epic_plan", slug:, content_digest: graph.digest, fact: "#{graph.issues.size} issues")
       end
 
       def self.issue_plan(text:, slug:, issue_id:)
-        Guards::Prose.check!(text:)
+        Contracts::Prose.check!(text:)
         issue_id = clean_issue_id(issue_id)
         new(stage: "issue_plan", slug:, content_digest: Canonical.digest(text),
             fact: "issue #{issue_id}, #{text.bytesize} bytes")
@@ -216,34 +219,39 @@ module Lain
         new(stage: "implementation", slug:, content_digest: digest, fact: "issue #{issue_id}")
       end
 
-      # Interned/stripped BEFORE the guard, so `presence:` judges the bytes
+      # Interned/stripped BEFORE the contract, so `presence:` judges the bytes
       # that actually land in `fact` -- the same ordering {Records::IssueTransition}
       # uses for its own `issue_id`. Shared by the two constructors that take
       # one; `research`/`epic_plan` have no issue to name.
       def self.clean_issue_id(issue_id)
         cleaned = -issue_id.to_s.strip
-        Guards::IssueId.check!(issue_id: cleaned)
+        Contracts::IssueId.check!(issue_id: cleaned)
         cleaned
       end
       private_class_method :clean_issue_id
 
       def initialize(stage:, slug:, content_digest:, fact:)
-        # Interned/dup'd-and-frozen BEFORE the guard, so `presence:` judges the
-        # bytes that actually get asked and journaled -- the same ordering
+        # Interned BEFORE the contract, so `presence:` judges the bytes that
+        # actually get asked and journaled -- the same ordering
         # {Approval::GateDecision} and {Records::IssueTransition} both use.
         stage = -stage.to_s
         slug = -slug.to_s
         fact = -fact.to_s
-        Guards::Submission.check!(stage:, slug:, content_digest:, fact:)
-
-        super(stage:, slug:, content_digest: content_digest.dup.freeze, fact:)
+        # `settle!` rather than `check!` for the one member interning cannot
+        # reach: `content_digest` arrives from outside on the `implementation`
+        # path, and settling deep-freezes it exactly as the `dup.freeze` this
+        # replaces did -- but it validates FIRST, so the copy only ever happens
+        # to a value {Contracts::Submission} has already agreed is a String. The
+        # three interned members are already shareable and pass through
+        # untouched, so nothing loses its deduplication.
+        super(**Contracts::Submission.settle!(stage:, slug:, content_digest:, fact:))
       end
 
       # THE GATE IDENTITY -- see the class header for why this composes
       # stage + slug + artifact rather than answering the artifact's content
       # address alone. This is what {Approval::Gate#call}/`#ensure_approved!`
       # key their registry on. TOTAL over every constructible Submission --
-      # see {Guards::Submission#slug_is_canonicalizable}.
+      # see {Contracts::Submission#slug_is_canonicalizable}.
       def digest
         Canonical.digest("stage" => stage, "epic" => slug, "artifact" => content_digest)
       end
@@ -258,7 +266,7 @@ module Lain
         # slug carrying a literal newline must not break the line it lands on
         # -- `#inspect`'s escaping is what keeps the rendered question
         # JSON-safe. (An invalid-UTF-8 slug never reaches here at all --
-        # {Guards::Submission#slug_is_canonicalizable} refuses it at
+        # {Contracts::Submission#slug_is_canonicalizable} refuses it at
         # construction.)
         #
         # `-"..."` rather than a plain literal: a shareable Submission must

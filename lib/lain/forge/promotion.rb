@@ -279,8 +279,8 @@ module Lain
           "directory, so delete or rename #{blocker} on the remote before promoting this issue"
       end
 
-      # {Gh::Answer}, not a value of this class's own, and the reason is a guard
-      # rather than tidiness: {Gh::Guards::Answer} refuses a non-boolean flag and
+      # {Gh::Answer}, not a value of this class's own, and the reason is a contract
+      # rather than tidiness: {Gh::Contracts::Answer} refuses a non-boolean flag and
       # refuses `ok: false, observed: true` outright, so the contradiction "a
       # refusal that claims the effect was already in place" is unrepresentable
       # here instead of merely never written. A promotion is not a gh call, but

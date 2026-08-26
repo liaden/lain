@@ -456,7 +456,7 @@ RSpec.describe Lain::Forge::Promotion, :seam do
     # from a promotion that never reached the remote.
     #
     # The invariant is held by CONSTRUCTION, not by this file: the answer is the
-    # guarded {Gh::Answer}, whose {Gh::Guards::Answer} refuses the pair outright.
+    # guarded {Gh::Answer}, whose {Gh::Contracts::Answer} refuses the pair outright.
     # A value of our own that merely never happened to be built wrong would put
     # the same guarantee back in the hands of whoever edits `#answer` next.
     it "answers the guarded Gh::Answer rather than a twin of its own" do

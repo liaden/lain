@@ -7,8 +7,9 @@
 # crash leaves a readable bet rather than a silence. {Forge::Reconcile} is what
 # reads those back and asks the world which of them actually landed.
 #
-# `intent` carries the unit's ACTIONS and its Guards and so loads first;
-# `reconcile` folds the records those guards define.
+# `intent` carries the unit's ACTIONS and the construction contracts for its
+# two journal records, and so loads first; `reconcile` folds the records
+# those contracts define.
 #
 # The unit sits after `epic` in lain.rb. Nothing here resolves an Epic constant
 # -- the coupling is by slug and issue id, which are strings -- but a forge

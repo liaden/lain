@@ -103,7 +103,7 @@ module Lain
       private
 
       # A record naming ANOTHER epic is not ours and is dropped. A record naming
-      # NO epic is KEPT, so its own guard refuses it downstream -- a filter that
+      # NO epic is KEPT, so its own contract refuses it downstream -- a filter that
       # swallowed the unattributable line would silently skip exactly the record
       # that most needs refusing.
       def mine?(record)
@@ -152,13 +152,13 @@ module Lain
       def document_statuses = @graph.to_h { |issue| [issue.id, issue.status] }
 
       # The live id this transition moves, or nil when it moves an id that is
-      # inert history. Guarded on the same {Guards::IssueTransition} the WRITE
-      # side uses: a record that cannot be read whole aborts the fold, because
+      # inert history. Checked against the same {Contracts::IssueTransition} the
+      # WRITE side uses: a record that cannot be read whole aborts the fold, because
       # skipping it would leave its issue reading at the document's stale status
       # -- which is the very answer the Journal exists to override.
       def moved_id(record)
-        Guards::IssueTransition.check!(epic_slug: record["epic_slug"], issue_id: record["issue_id"],
-                                       from_status: record["from_status"], to_status: record["to_status"])
+        Contracts::IssueTransition.check!(epic_slug: record["epic_slug"], issue_id: record["issue_id"],
+                                          from_status: record["from_status"], to_status: record["to_status"])
         id = record["issue_id"].to_s
         return id if @lineage.current?(id)
         return nil if @lineage.superseded?(id)
@@ -182,7 +182,7 @@ module Lain
       # The last stage STARTED, or the first stage when nothing has started.
       # A completion advances nothing: inventing the successor would claim work
       # began that no record shows, and an epic can sit between stages for days.
-      # Every record is guarded, completions included -- a malformed one is
+      # Every record is checked, completions included -- a malformed one is
       # unreadable about which stage it names either way.
       def current_stage
         started = of_type(StageTransition::JOURNAL_TYPE).filter_map { |record| checked_start(record) }
@@ -190,7 +190,7 @@ module Lain
       end
 
       def checked_start(record)
-        Guards::StageTransition.check!(epic_slug: record["epic_slug"], event: record["event"])
+        Contracts::StageTransition.check!(epic_slug: record["epic_slug"], event: record["event"])
         stage = Stage.new(record["stage"].to_s)
         stage if record["event"].to_s == STAGE_EVENTS.first
       end
@@ -287,7 +287,7 @@ module Lain
       # Interned first, so the check judges the bytes that get stored: a slug
       # object whose #to_s is blank passes a naive presence test and then names
       # a partition nothing can match -- the reason {Approval::SignoffQueue}'s
-      # own Partition interns before its guard. Asserted here for the reason the
+      # own Partition interns before its contract. Asserted here for the reason the
       # member type above is: this constructor is public, and every other member
       # of this value is refused when it cannot do its job.
       def named_epic(epic_slug)

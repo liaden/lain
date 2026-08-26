@@ -71,14 +71,62 @@ module Lain
               error: error.message.freeze, error_kind: error.class.name.freeze)
         end
 
+        include Declarative
+
         # Total by construction, the way Graph and Issue are: the member shapes
-        # first, then the two invariants this class's doc claims. Data#with
-        # re-enters here, so a delta cannot be edited into a state .diff would
-        # never build.
+        # and the two invariants this class's doc claims, in one declaration.
+        # Data#with re-enters the constructor, so a delta cannot be edited into a
+        # state .diff would never build.
+        #
+        # {DELTA_MEMBERS} is read here rather than restated: the table is still
+        # the one place a member's shape is written, and the declaration is what
+        # turns each entry into a rule that names its own attribute.
+        #
+        # `check!` and not `settle!`: `account` is an {Account}, which settling
+        # refuses -- it may not copy a value it cannot rebuild -- and this class
+        # freezes nothing that was not already frozen when it arrived.
+        #
+        # Both semantic rules re-test the shape they depend on, which the
+        # ordered cascade this replaces got for free by raising on the first
+        # failure. A declaration reports EVERY broken rule at once, so a rule
+        # that would send `#empty?` to a nil account has to say so itself.
+        declare raising: MalformedDelta do
+          DELTA_MEMBERS.each_key { |name| attribute name }
+
+          DELTA_MEMBERS.each do |name, (shape, holds)|
+            validate do
+              errors.add(name, "is #{shape} (got #{public_send(name).inspect})") unless holds.call(public_send(name))
+            end
+          end
+
+          # {Delta}'s own pairing rule: a message with no kind cannot be told
+          # from a grammar refusal, and a kind with no message says nothing.
+          validate do
+            unless error.nil? == error_kind.nil?
+              errors.add(:error, "and its kind are named together (got #{error.inspect} and " \
+                                 "#{error_kind.inspect})")
+            end
+          end
+
+          # A failed parse produced no account at all, so carrying one would make
+          # "empty account" mean two different things and turn #malformed? from a
+          # fact into a convention.
+          #
+          # Worded as the RULE and not as a denial of what was found. The join
+          # reads `"<attribute> <message>" (<value>)`, so a phrasing like "is not
+          # carried by a delta that names a parse error" asserts, of a delta that
+          # is plainly carrying one, that it is not -- a false sentence around a
+          # true refusal, and the one the first conversion of this cascade wrote.
+          validate do
+            if error && account.is_a?(Account) && !account.empty?
+              errors.add(:account, "must be empty on a delta that names a parse error -- nothing was " \
+                                   "compared (got #{account.changes.inspect})")
+            end
+          end
+        end
+
         def initialize(**members)
-          refuse_shapes!(members)
-          refuse_partial_error!(members[:error], members[:error_kind])
-          refuse_uncompared_account!(members[:account], members[:error])
+          self.class.check!(**members)
           super
         end
 
@@ -104,33 +152,6 @@ module Lain
         # a second predicate over one field is one more thing that can disagree
         # with the first.
         def malformed? = !error.nil?
-
-        private
-
-        def refuse_shapes!(members)
-          broken = DELTA_MEMBERS.find { |name, (_shape, holds)| !holds.call(members[name]) }
-          return if broken.nil?
-
-          name, (shape, _holds) = broken
-          raise MalformedDelta, "a delta's #{name} is #{shape} (got #{members[name].inspect})"
-        end
-
-        def refuse_partial_error!(error, error_kind)
-          return if error.nil? == error_kind.nil?
-
-          raise MalformedDelta, "a delta names its parse error and that error's kind together " \
-                                "(got #{error.inspect} and #{error_kind.inspect})"
-        end
-
-        # A failed parse produced no account at all, so carrying one would make
-        # "empty account" mean two different things and turn #malformed? from a
-        # fact into a convention.
-        def refuse_uncompared_account!(account, error)
-          return if error.nil? || account.empty?
-
-          raise MalformedDelta, "a delta carrying a parse error holds no account -- nothing was compared " \
-                                "(got #{account.changes.inspect})"
-        end
       end
     end
   end

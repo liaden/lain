@@ -5,7 +5,7 @@ require "stringio"
 # The epic tier's one write path. {Epic::Scribe} is the only thing in lib
 # permitted to construct an {Epic::IssueTransition} or {Epic::StageTransition}
 # -- everywhere else, a caller that wants a transition journaled goes through
-# here, so the write-side guards in {Epic::Guards} are checked in exactly one
+# here, so the write-side contracts in {Epic::Contracts} are checked in exactly one
 # place. {Epic::Progress.fold} is the read-side oracle: these specs prove what
 # the scribe wrote is what the fold sees, never re-asserting the fold's own
 # behaviour (that belongs to progress_spec.rb).
@@ -63,7 +63,7 @@ RSpec.describe Lain::Epic::Scribe do
     expect(scribe.stage_completed("research")).to be(scribe)
   end
 
-  # T4 review, fix 1 -- probe_t4b.rb's central finding: `Guards::IssueTransition`
+  # T4 review, fix 1 -- probe_t4b.rb's central finding: `Contracts::IssueTransition`
   # only demands a non-blank epic_slug, but `Refold#mine?` partitions on
   # BYTE-EXACT equality against the slug a caller names to `Progress.fold`.
   # A Scribe built on a slug that differs only in whitespace or case therefore

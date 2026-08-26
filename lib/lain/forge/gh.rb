@@ -96,13 +96,30 @@ module Lain
       # instead of sleeping and no example ever waits a real second
       # ({CLI::Watch}'s sleeper seam, same shape).
       class Poll
+        include Declarative
+
         DEFAULT_BOUND = 5
         DEFAULT_INTERVAL = 2
         DEFAULT_SLEEPER = ->(seconds) { sleep(seconds) }
 
-        def initialize(bound: DEFAULT_BOUND, interval: DEFAULT_INTERVAL, sleeper: DEFAULT_SLEEPER)
-          raise ArgumentError, "a poll must run at least once, got bound #{bound.inspect}" unless bound.to_i.positive?
+        # `check!` and not `settle!`: `sleeper` is a live collaborator and
+        # `interval` is nobody's business but the sleeper's, so the declaration
+        # covers the one member that has a rule and the constructor keeps the
+        # other two. `bound.to_i` stays the reading, rather than a strict type,
+        # because it is the reading the refusal is written against.
+        declare do
+          attribute :bound
+          validate :must_run_at_least_once
 
+          def must_run_at_least_once
+            return if bound.to_i.positive?
+
+            errors.add(:bound, "is what makes a poll run at least once, got #{bound.inspect}")
+          end
+        end
+
+        def initialize(bound: DEFAULT_BOUND, interval: DEFAULT_INTERVAL, sleeper: DEFAULT_SLEEPER)
+          self.class.check!(bound:)
           @bound = bound.to_i
           @interval = interval
           @sleeper = sleeper
@@ -145,15 +162,25 @@ module Lain
       # member would have to be re-derived, and re-derivation is where two
       # readings of one record drift apart.
       Answer = Data.define(:ok, :observed, :detail) do
-        # rubocop:disable Naming/MethodParameterName -- `ok` is {Outcome}'s
-        # journaled field name, which this value is folded into verbatim; a
-        # longer parameter would have to be renamed back on the way to the wire.
-        def initialize(ok:, observed: false, detail: {})
-          Guards::Answer.check!(ok:, observed:)
-
-          super(ok:, observed:, detail: Canonical.normalize(detail.to_h))
+        # `settle!` rather than `check!`: the boolean default and the
+        # canonicalization both live in the declaration, and settling is what
+        # hands them to the value. It also retires the
+        # `Naming/MethodParameterName` exemption `ok:` used to need -- the wire
+        # name is spelled once now, in the contract.
+        #
+        # `detail.to_h` stays HERE, and is deliberately not folded into the
+        # declaration. It is a TOLERANCE, not a rule: nil means "no detail", and
+        # a verb may hand over anything answering `#to_h`. A declared `default:`
+        # fires only for an ABSENT key, so an explicit nil sails straight past
+        # it and into the value -- the same hazard that keeps {Forge::Outcome}
+        # on `check!`, and the reason "detail is a Hash" has to be bought at the
+        # entry point rather than declared. That costs this constructor the
+        # one-liner it briefly had, which is the right side of the trade:
+        # {#value} and two CLI readers subscript `detail`, so its being a Hash
+        # is this value's public contract rather than a habit of today's verbs.
+        def initialize(detail: {}, **flags)
+          super(**Contracts::Answer.settle!(**flags, detail: detail.to_h))
         end
-        # rubocop:enable Naming/MethodParameterName
 
         def ok? = ok
 
@@ -166,14 +193,14 @@ module Lain
       end
 
       # This class's construction contract, in the house validate-then-freeze
-      # convention. Named {Guards} like {Forge::Guards} and shadowing it inside
-      # this lexical scope, which is harmless because nothing here reaches for
-      # the record guards -- {Journaled} owns that.
-      module Guards
+      # convention. Named {Contracts} like {Forge::Contracts} and shadowing it
+      # inside this lexical scope, which is harmless because nothing here reaches
+      # for the record contracts -- {Journaled} owns that.
+      module Contracts
         # Both flags are FOLDED on downstream and both go on the wire through
-        # {Outcome}, whose own guard refuses a non-boolean for the same reason:
-        # a missing field reads as `false`, and `false` here is a verdict nobody
-        # reached.
+        # {Outcome}, whose own contract refuses a non-boolean for the same
+        # reason: a missing field reads as `false`, and `false` here is a verdict
+        # nobody reached.
         #
         # The PAIR is checked too, not just each flag alone. `observed` means the
         # effect was found already in place and confirmed, which entails success,
@@ -183,9 +210,23 @@ module Lain
         # flags straight out of a journaled {Outcome}, so a truncated or
         # hand-edited journal would replay a contradiction as though somebody had
         # decided it.
-        class Answer < Guard
+        class Answer < Declarative::Carrier
           attribute :ok
-          attribute :observed
+          # The one default with no coercion standing in front of it, declared
+          # rather than written into a signature: {Answer} settles through this
+          # carrier, so what is declared here IS what the value is built from.
+          attribute :observed, default: false
+          # `Canonical.normalize` as a declared type. The payload journals
+          # deterministically, addresses the same whichever key flavour a verb
+          # passed, and arrives deeply frozen -- which is what lets `settle!`
+          # hand it straight to a `Ractor.shareable?` value.
+          #
+          # No `default:` here on purpose. {Answer}'s constructor must run
+          # `#to_h` before this type ever sees the payload, so it defaults
+          # `detail` itself; a second default declared here would be config
+          # nothing can reach. The canonicalization still runs once per
+          # construction, so two answers omitting `detail` do not share a Hash.
+          attribute :detail, :lain_canonical
           validates :ok, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
           validates :observed, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
           validate :observed_entails_ok

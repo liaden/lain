@@ -15,20 +15,20 @@ module Lain
     DOC_KINDS = %w[research epic issue plan].freeze
 
     # Construction contracts for the unit's journal records, in its own
-    # validate-then-freeze convention: a throwaway {Lain::Guard} checked BEFORE
-    # the auto-frozen Data value exists, so no record ever touches ActiveModel
-    # and all of them stay `Ractor.shareable?`.
+    # validate-then-freeze convention: a throwaway {Lain::Declarative::Carrier}
+    # checked BEFORE the auto-frozen Data value exists, so no record ever touches
+    # ActiveModel and all of them stay `Ractor.shareable?`.
     #
-    # These same guards are what {Epic::Progress} re-checks each journaled
+    # These same contracts are what {Epic::Progress} re-checks each journaled
     # record against on the way back IN. A record that cannot be read whole must
     # abort the fold rather than be skipped, so the shape a write refuses and
     # the shape a read refuses have to be one declaration.
-    module Guards
+    module Contracts
       # A transition must name the epic it belongs to and the issue it moves,
       # and both sides of the move must be statuses an issue may CARRY --
       # `ready` is derived from the blocks graph and no transition can arrive at
       # it (see {DERIVED_STATUSES}).
-      class IssueTransition < Guard
+      class IssueTransition < Declarative::Carrier
         attribute :epic_slug
         attribute :issue_id
         attribute :from_status
@@ -46,7 +46,7 @@ module Lain
       # and refuses an unknown name as an {UnknownStage}, which is a Lain::Error
       # exe/lain renders. Restating the membership test would be a second copy
       # of STAGES waiting to disagree with the first.
-      class StageTransition < Guard
+      class StageTransition < Declarative::Carrier
         attribute :epic_slug
         attribute :event
         validates :epic_slug, presence: { message: "must name the epic this transition belongs to, got nil" }
@@ -57,7 +57,7 @@ module Lain
       # A write ack must name the epic, the artifact inside it, and the bytes
       # that landed. `graph_digest` is absent here on purpose: only an epic
       # write has a graph, so it is the one member a valid record may omit.
-      class DocWritten < Guard
+      class DocWritten < Declarative::Carrier
         attribute :epic_slug
         attribute :kind
         attribute :path
@@ -73,9 +73,9 @@ module Lain
       # replay, and the two digests that are its oracle. Its ARGUMENTS are not restated here:
       # {Epic::GraphFiber} refuses a payload it could not replay at its own
       # construction, and a second copy of that contract beside the journal is
-      # exactly the drift {Guards} exists to prevent -- so this guard reads
+      # exactly the drift {Contracts} exists to prevent -- so this contract reads
       # {REVISION_OPS} rather than a list of its own.
-      class GraphRevision < Guard
+      class GraphRevision < Declarative::Carrier
         attribute :epic_slug
         attribute :operation
         attribute :before
@@ -93,7 +93,7 @@ module Lain
       # rules would be two things that can drift, and a `review_closed` whose
       # generation is judged more loosely than its `review_opened` is exactly
       # the record {Review::Replay} cannot pair back up.
-      class ReviewRecord < Guard
+      class ReviewRecord < Declarative::Carrier
         attribute :epic_slug
         attribute :path
         attribute :generation
@@ -109,7 +109,7 @@ module Lain
         # the same values earlier and more tersely, because the write side has
         # to read the wire's `"3"` before it can store one. The declaration is
         # for the READ side, which re-checks a journaled record whose generation
-        # is already an Integer -- and that is the whole point of one guard
+        # is already an Integer -- and that is the whole point of one contract
         # serving both.
         validates :generation, numericality: { only_integer: true, greater_than: 0,
                                                message: "must be the positive integer identifying this " \
@@ -165,7 +165,7 @@ module Lain
         end
       end
 
-      # One note a human left on a document under review. The guard is about the
+      # One note a human left on a document under review. The contract is about the
       # two things nobody could reconstruct afterwards -- what they wrote, and
       # what they wrote it ON -- plus the two keys that place it.
       #
@@ -173,7 +173,7 @@ module Lain
       # `graph_digest` rule: nil is the honest attribution for a note in the
       # preamble, which encloses no issue, and for a note whose anchor drifted,
       # where the line number is no longer evidence of which issue was meant.
-      class Annotation < Guard
+      class Annotation < Declarative::Carrier
         attribute :epic_slug
         attribute :generation
         attribute :issue_id
@@ -216,14 +216,14 @@ module Lain
       include Telemetry::Journalable
 
       def initialize(epic_slug:, issue_id:, from_status:, to_status:)
-        # Interned BEFORE the guard, so `presence:` judges the bytes that get
+        # Interned BEFORE the contract, so `presence:` judges the bytes that get
         # journaled: an id object whose #to_s is blank passes a presence check on
         # the raw object and then names an issue no fold can match back.
         epic_slug = -epic_slug.to_s
         issue_id = -issue_id.to_s.strip
         from_status = -from_status.to_s
         to_status = -to_status.to_s
-        Guards::IssueTransition.check!(epic_slug:, issue_id:, from_status:, to_status:)
+        Contracts::IssueTransition.check!(epic_slug:, issue_id:, from_status:, to_status:)
 
         super
       end
@@ -255,7 +255,7 @@ module Lain
         # {Stage} value is accepted as readily as its name -- both answer #to_s.
         stage = Stage.new(stage.to_s).name
         event = -event.to_s
-        Guards::StageTransition.check!(epic_slug:, event:)
+        Contracts::StageTransition.check!(epic_slug:, event:)
 
         super
       end
@@ -309,7 +309,7 @@ module Lain
         # `&&=`, so an absent graph stays absent rather than interning to "" --
         # a blank digest would read as a graph nothing can match.
         graph_digest &&= -graph_digest.to_s
-        Guards::DocWritten.check!(epic_slug:, kind:, path:, byte_digest:)
+        Contracts::DocWritten.check!(epic_slug:, kind:, path:, byte_digest:)
 
         super
       end
@@ -338,10 +338,10 @@ module Lain
 
       def initialize(epic_slug:, operation:, arguments:, preimage:, results:, before:, after:)
         epic_slug = -epic_slug.to_s
-        # The record's own guard first, so an out-of-range op reads as the
+        # The record's own contract first, so an out-of-range op reads as the
         # ArgumentError every other epic record raises rather than as the
         # MalformedGraph the fiber underneath would.
-        Guards::GraphRevision.check!(epic_slug:, operation: -operation.to_s, before:, after:)
+        Contracts::GraphRevision.check!(epic_slug:, operation: -operation.to_s, before:, after:)
         super(epic_slug:, **GraphFiber.new(operation:, arguments:, preimage:, results:, before:, after:).to_h)
       end
     end
@@ -371,10 +371,10 @@ module Lain
 
     # The four members that identify a review, normalized to the bytes that get
     # stored. Both halves of a review carry them and both must read them the
-    # same way, so this is one declaration rather than two -- {Guards::ReviewRecord}
+    # same way, so this is one declaration rather than two -- {Contracts::ReviewRecord}
     # is the same argument on the validation side.
     #
-    # Everything is interned BEFORE its guard, the unit's usual order and for
+    # Everything is interned BEFORE its contract, the unit's usual order and for
     # its usual reason: a slug object whose `#to_s` is blank passes a naive
     # presence test and then names a partition nothing can match. `generation`
     # goes through {WireInteger} for the sharper version of that: it arrives off
@@ -435,7 +435,7 @@ module Lain
       def initialize(epic_slug:, path:, generation:, written_digest:, graph_digest: nil)
         claim = ReviewClaim.interned(epic_slug:, path:, generation:, written_digest:)
         graph_digest &&= -graph_digest.to_s
-        Guards::ReviewOpened.check!(**claim, graph_digest:)
+        Contracts::ReviewOpened.check!(**claim, graph_digest:)
 
         super(**claim, graph_digest:)
       end
@@ -492,13 +492,13 @@ module Lain
         # blank one would say that about every settlement that went fine.
         error &&= -error.to_s
         error_kind &&= -error_kind.to_s
-        Guards::ReviewClosed.check!(**claim, disk_digest:, changes:, lossy:, error:, error_kind:)
+        Contracts::ReviewClosed.check!(**claim, disk_digest:, changes:, lossy:, error:, error_kind:)
 
-        # `changes` is normalized AFTER its guard rather than before it, the one
-        # departure from {ReviewClaim}'s order and a forced one: the guard's
-        # question is whether the summary is a Hash at all, and the
+        # `changes` is normalized AFTER its contract rather than before it, the
+        # one departure from {ReviewClaim}'s order and a forced one: the
+        # contract's question is whether the summary is a Hash at all, and the
         # normalization cannot run on a value that is not one. It preserves
-        # every key it touches, so the guard still judges what gets stored.
+        # every key it touches, so the contract still judges what gets stored.
         super(**claim, disk_digest:, changes: summarized(changes), lossy:, error:, error_kind:)
       end
 
@@ -518,16 +518,16 @@ module Lain
       JOURNAL_TYPE = "review_closed"
     end
 
-    # Normalization for {Annotation}, in the unit's intern-then-guard order and
-    # through the unit's own guard: a bespoke validator here could not be
+    # Normalization for {Annotation}, in the unit's intern-then-check order and
+    # through the unit's own contract: a bespoke validator here could not be
     # re-checked by a reader folding these records back in, which is the whole
-    # bargain {Guards} strikes.
+    # bargain {Contracts} strikes.
     module AnnotationValue
       def self.interned(epic_slug:, generation:, issue_id:, line:, anchor_text:, text:, drifted: false)
         values = { epic_slug: -epic_slug.to_s, generation: ReviewClaim.generation(generation),
                    issue_id: issue_id && -issue_id.to_s.strip, line: WireInteger.read(line, field: "line"),
                    anchor_text: -anchor_text.to_s, text: -text.to_s, drifted: }
-        Guards::Annotation.check!(**values)
+        Contracts::Annotation.check!(**values)
 
         values
       end

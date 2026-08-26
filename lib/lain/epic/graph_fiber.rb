@@ -7,7 +7,7 @@ module Lain
     # because {Canonical.normalize} sorts the keys a fiber carries. One
     # declaration, so an operation nothing can replay is exactly an operation no
     # fiber may carry, and a fiber holding another operation's keys cannot
-    # construct: {Guards::GraphRevision} reads this same set, and so does
+    # construct: {Contracts::GraphRevision} reads this same set, and so does
     # {GraphFiber}'s argument check, rather than a second copy of either drifting
     # beside the journal.
     #

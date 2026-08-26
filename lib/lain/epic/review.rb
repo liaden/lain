@@ -228,7 +228,7 @@ module Lain
         end
 
         # A record naming ANOTHER epic is not ours and is dropped; one naming NO
-        # epic is KEPT so its own guard refuses it below. {Progress::Refold}'s
+        # epic is KEPT so its own contract refuses it below. {Progress::Refold}'s
         # rule, and for its reason: a filter that swallowed the unattributable
         # line would skip exactly the record that most needs refusing.
         def mine(records)
@@ -244,7 +244,7 @@ module Lain
           record["type"].to_s == ReviewOpened::JOURNAL_TYPE ? park(record) : release(record)
         end
 
-        # Guarded on the same contract the WRITE side uses, so a record that
+        # Checked against the same contract the WRITE side uses, so a record that
         # cannot be read whole aborts the rebuild rather than being skipped --
         # {Progress::Refold}'s rule again. Both ways of getting it wrong are
         # unsafe here: a skipped `review_opened` hands the baton back to lain
@@ -277,7 +277,7 @@ module Lain
         # their live review was already settled. There is no shape of journal
         # this fold refuses to finish, and that is the property to keep.
         def park(record)
-          Guards::ReviewOpened.check!(**common(record), graph_digest: record["graph_digest"])
+          Contracts::ReviewOpened.check!(**common(record), graph_digest: record["graph_digest"])
           generation = ReviewClaim.generation(record["generation"])
           @settled.delete(generation)
           @open[generation] = token(record, generation)
@@ -290,17 +290,17 @@ module Lain
         end
 
         def release(record)
-          Guards::ReviewClosed.check!(**common(record),
-                                      disk_digest: record["disk_digest"], changes: record["changes"],
-                                      lossy: record["lossy"], error: record["error"],
-                                      error_kind: record["error_kind"])
+          Contracts::ReviewClosed.check!(**common(record),
+                                         disk_digest: record["disk_digest"], changes: record["changes"],
+                                         lossy: record["lossy"], error: record["error"],
+                                         error_kind: record["error_kind"])
           generation = ReviewClaim.generation(record["generation"])
           @open.delete(generation)
           @settled << generation
         end
 
         # The four members both halves share, which is exactly what
-        # {Guards::ReviewRecord} declares -- each half adds its own on top.
+        # {Contracts::ReviewRecord} declares -- each half adds its own on top.
         def common(record)
           { epic_slug: record["epic_slug"], path: record["path"],
             generation: ReviewClaim.generation(record["generation"]), written_digest: record["written_digest"] }

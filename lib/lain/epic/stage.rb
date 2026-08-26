@@ -39,15 +39,47 @@ module Lain
     # is asked about is the caller's fact, not the value's.
     Stage = Data.define(:name) do
       include Comparable
+      include Declarative
+
+      # The closed set, declared rather than written as a guard clause -- one
+      # place a reader finds both the rule and the refusal it raises.
+      #
+      # A hand-written `validate` and not `inclusion:`, because the message is
+      # the thing this refusal is for: a stage is a partition key, so the reader
+      # of the failure needs the pipeline AND the offending name.
+      #
+      # It is also the one refusal in this unit a HUMAN reads directly.
+      # `CLI::EpicSubmit` turns argv into a Stage before it does anything else,
+      # and {UnknownStage} is a {Lain::Error}, so exe/lain renders this as a
+      # one-line message at the terminal. `Declarative` joins every refusal as
+      # `"<attribute> <message>"`, which puts `name` in front of whatever is
+      # written here -- so the wording has to go on reading as a sentence after
+      # that word, and it is phrased as the closed set followed by what arrived
+      # rather than as a fact about the carrier's attribute. This is the house
+      # message shape every other contract in the unit already uses
+      # ({Contracts::StageTransition}, {Contracts::DocWritten}), and a spec
+      # pins it whole so a rewrite cannot quietly lead with a word nobody typed.
+      #
+      # `check!`, not `settle!`, because the name is interned before it is
+      # judged and settling would hand back an unshared copy of it.
+      declare raising: UnknownStage do
+        attribute :name
+
+        validate :must_name_a_stage
+
+        def must_name_a_stage
+          return if STAGES.include?(name)
+
+          errors.add(:name, "must be one of #{STAGES.join(" -> ")}, got #{name.inspect}")
+        end
+      end
 
       # Every stage, in pipeline order.
       def self.all = STAGES.map { |name| new(name) }
 
       def initialize(name:)
         name = -name.to_s
-        unless STAGES.include?(name)
-          raise UnknownStage, "unknown epic stage #{name.inspect} (the pipeline is #{STAGES.join(" -> ")})"
-        end
+        self.class.check!(name:)
 
         super
       end

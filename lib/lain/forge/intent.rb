@@ -31,18 +31,18 @@ module Lain
     ACTIONS = [PROMOTE, PR_CREATE, PR_MERGE, REVIEW_SUBMIT].freeze
 
     # Construction contracts for the tier's two journal records, in the house
-    # validate-then-freeze convention: a throwaway {Lain::Guard} carrier checked
-    # BEFORE the auto-frozen Data value exists, so neither record ever touches
-    # ActiveModel and both stay `Ractor.shareable?`.
+    # validate-then-freeze convention: a throwaway {Lain::Declarative::Carrier}
+    # checked BEFORE the auto-frozen Data value exists, so neither record ever
+    # touches ActiveModel and both stay `Ractor.shareable?`.
     #
-    # These same guards are what {Reconcile} re-checks each journaled record
+    # These same contracts are what {Reconcile} re-checks each journaled record
     # against on the way back IN, so the shape a write refuses and the shape a
     # read refuses are one declaration rather than two that can drift.
-    module Guards
+    module Contracts
       # An action must be one this tier can run, and an intent must say which
       # epic and issue it is doing the work for -- an unattributed intent is one
       # no reconcile can report to a human as anybody's problem.
-      class Intent < Guard
+      class Intent < Declarative::Carrier
         attribute :action
         attribute :epic_slug
         attribute :issue_id
@@ -54,10 +54,10 @@ module Lain
 
       # `ok` and `observed` are checked as booleans rather than for truthiness
       # because both are FOLDED on, and a record missing either is evidence the
-      # line was damaged -- {Approval::SignoffQueue::Guards::Decision}'s
-      # truncation-canary reasoning, for the same reason: a missing field reads
+      # line was damaged -- {Approval::SignoffQueue}'s decision contract states
+      # the same truncation-canary reasoning: a missing field reads
       # as `false`, and `false` here is a verdict nobody recorded.
-      class Outcome < Guard
+      class Outcome < Declarative::Carrier
         attribute :intent_id
         attribute :ok
         attribute :observed
@@ -65,6 +65,8 @@ module Lain
         validates :ok, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
         validates :observed, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
         validate :observed_entails_ok
+
+        private
 
         def observed_entails_ok
           return unless observed == true && ok == false
@@ -151,7 +153,7 @@ module Lain
       #   `params`, which is what every fresh intent wants; {.from_record}
       #   passes the recorded one
       def initialize(action:, epic_slug:, issue_id:, params: {}, intent_id: nil)
-        # Interned BEFORE the guard, so `presence:` judges the bytes that get
+        # Interned BEFORE the contract, so `presence:` judges the bytes that get
         # journaled: an id object whose #to_s is blank passes a presence check
         # on the raw object and then names work no fold can match back.
         action = -action.to_s
@@ -162,7 +164,7 @@ module Lain
         # passed, and it is deeply frozen. `nil.to_h` is the empty params, so
         # "no params" needs no nil check.
         params = Canonical.normalize(params.to_h)
-        Guards::Intent.check!(action:, epic_slug:, issue_id:)
+        Contracts::Intent.check!(action:, epic_slug:, issue_id:)
         intent_id = intent_id.nil? ? self.class.id_for(action:, params:) : -intent_id.to_s
 
         super
@@ -194,7 +196,7 @@ module Lain
       # A record missing `ok` or `observed` is refused rather than defaulted:
       # both are written on every outcome this tier produces, so the only line
       # that can lack one is a damaged line, and defaulting it would invent a
-      # verdict nobody recorded. See {Guards::Outcome}.
+      # verdict nobody recorded. See {Contracts::Outcome}.
       def self.from_record(record)
         new(intent_id: record["intent_id"], ok: record["ok"], observed: record["observed"],
             detail: record["detail"])
@@ -206,7 +208,7 @@ module Lain
       def initialize(intent_id:, ok:, observed: false, detail: {})
         intent_id = -intent_id.to_s
         detail = Canonical.normalize(detail.to_h)
-        Guards::Outcome.check!(intent_id:, ok:, observed:)
+        Contracts::Outcome.check!(intent_id:, ok:, observed:)
 
         super
       end
