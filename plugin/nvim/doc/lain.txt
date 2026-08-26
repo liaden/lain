@@ -280,8 +280,8 @@ Defined by the runtime at attach (they do not exist before it): `:LainSend`,
 (defined, but refuses every time -- NOT YET AVAILABLE, see |:LainSurveyAdd|
 below), and -- only meaningful inside a review
 buffer lain opened (|lain-review|) -- `:LainAnnotate` and `:LainReviewDone`.
-Inside a changeset diff (|lain-review-diff|): `:LainNote`, `:LainNoteDone` and
-`:LainThread`.
+Inside a changeset diff (|lain-review-diff|): `:LainNote`, `:LainNoteCompose`,
+`:LainNoteDone` and `:LainThread`.
 
 In `lain://inbox`, `r` and <CR> both run `:LainOpen`, which opens the question
 set your cursor is on in `lain://question` (|lain-question|) for you to tick
@@ -747,11 +747,12 @@ file. The pair is reused as you move between files, and the old side's buffer
 is wiped as it is replaced, so a long review leaves no buffer per file behind.
 
                                                                   *:LainNote*
+                                                           *:LainNoteCompose*
                                                               *:LainNoteDone*
 
-Notes go on either side of the pair, and both commands work only in a buffer
-lain has open for review -- the stamps above are the test, so a file you have
-moved on from refuses.
+Notes go on either side of the pair, and all three commands work only in a
+buffer lain has open for review -- the stamps above are the test, so a file you
+have moved on from refuses.
 
 The same stamp is what binds the keys, so they exist exactly where a note may
 be left and nowhere else -- a review diff is a real editable file buffer, so
@@ -760,10 +761,13 @@ lain claims no bare letter in it:
     <leader>Ln              Pre-fill `:LainNote note ` on the cmdline
     <leader>Lq              ... `:LainNote question `
     <leader>Lb              ... `:LainNote blocker `
+    <leader>Lc              ... `:LainNoteCompose ` -- the kind, then as
+                            much of the note as you like, and it opens in a
+                            pane
     <leader>LN              |:LainNoteDone|
     <leader>Lt              |:LainThread|
 
-The first three leave the cmdline OPEN: type your words and press <CR>. That is
+The first four leave the cmdline OPEN: type your words and press <CR>. That is
 not an oversight -- see |:LainNote|'s note on why it is synchronous. The prefix
 is |g:lain_prefix|, and moving it moves these too. They are removed from a
 buffer whose stamp lain has withdrawn, so a key that is there always works.
@@ -782,9 +786,49 @@ buffer whose stamp lain has withdrawn, so a key that is there always works.
                             path AT THE MOMENT YOU LEAVE IT, so it still says
                             what it meant after you move to the next file.
 
+    :LainNoteCompose {kind} [text]
+                            The same note, in a pane, for when the cmdline is
+                            too cramped for what you have to say. Opens a
+                            split against the line the cursor is on; type as
+                            many lines as you like and `:w` places the note.
+                            {kind} is the same closed set, completed with
+                            <Tab>, and anything you type after it seeds the
+                            pane rather than being dropped -- so the key and
+                            the keystrokes are the same as `:LainNote`'s right
+                            up to the moment you want a second line.
+
+                            YOUR PLACE IN LINE IS TAKEN WHEN THE PANE OPENS,
+                            not when you write it. So a long note begun on one
+                            line and a quick `:LainNote` dropped on another
+                            while you are still typing come back from
+                            |:LainNoteDone| in the order you decided them,
+                            which is the order the journal records. It follows
+                            that |:LainNoteDone| REFUSES while a pane is still
+                            unwritten: settling around one would file it in a
+                            later batch than the note it was reserved before.
+                            Write it, or `:bwipeout` it to drop it.
+
+                            The pane is `lain://note/N` and it is UNLISTED, so
+                            `:ls` does not show it and only `:ls!` does. It is
+                            named for you when it opens, and `:b` on that name
+                            is the way back to a draft you have `:q`d -- which
+                            keeps it, modified and hidden, rather than
+                            discarding it. `:bwipeout` is how you throw one
+                            away on purpose. Renaming the pane with `:file` or
+                            `:saveas` takes it out of lain's hands entirely:
+                            the text is yours, and its place in line is given
+                            back.
+
+                            An empty pane refuses and stays 'modified' -- your
+                            text is never reported as saved unless lain took
+                            it. Once placed, the pane is spent: a second `:w`
+                            places nothing, and <leader>Lc opens a fresh one.
+
     :LainNoteDone           Hand every note back, in the order you placed
                             them -- across both sides and across every file
-                            you visited, not just the pair on screen. The
+                            you visited, and including one still being typed
+                            in a |:LainNoteCompose| pane, which it refuses to
+                            settle around rather than leave behind. The
                             markers are cleared as they are handed over, so a
                             second `:LainNoteDone` sends nothing rather than
                             filing your notes twice. If lain refuses the
