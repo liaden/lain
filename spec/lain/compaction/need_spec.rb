@@ -34,7 +34,7 @@ RSpec.describe Lain::Compaction::Need do
       expect(result.signals).not_to include(:token_threshold)
     end
 
-    # T17. The candidate span arrives ALREADY MEASURED, because the object that
+    # The candidate span arrives ALREADY MEASURED, because the object that
     # owns it measured it: {Lain::Compaction::Head} dumps its messages at
     # construction and holds the count, and dumping the same list again here was
     # a second full Canonical pass over the history's droppable span -- paid on
@@ -79,7 +79,7 @@ RSpec.describe Lain::Compaction::Need do
       expect(result.signals).not_to include(:approaching_window)
     end
 
-    # C1. The window is whatever THIS check was handed, so one Need answers for
+    # The window is whatever THIS check was handed, so one Need answers for
     # a session whose model changed under it -- the same occupancy fires against
     # a small window and stays quiet against a large one, with no rebuild.
     describe "the window is per-check, not per-Need" do
@@ -188,7 +188,7 @@ RSpec.describe Lain::Compaction::Need do
   # Deliberately REQUIRED, and pinned so it stays that way: a defaulted window
   # is a threshold nobody chose, silently applied to every model that forgets to
   # pass one -- and an over-estimate is the failure that never fires at all. The
-  # whole point of C1 is that the window comes from the turn, so a default here
+  # whole point is that the window comes from the turn, so a default here
   # would quietly restore the startup-time constant it replaced.
   it "demands a window rather than assuming one" do
     expect { need.check }.to raise_error(ArgumentError, /window_tokens/)
@@ -248,7 +248,7 @@ RSpec.describe Lain::Compaction::Need do
     end
   end
 
-  # T9. A caller can know something no detector does -- {Compaction::Source}
+  # A caller can know something no detector does -- {Compaction::Source}
   # holds the window BOOK, so it knows whether the number
   # {Need::ApproachingWindow} compared against was measured, published or
   # guessed, while the detector sees only the integer. Withdrawing a signal is

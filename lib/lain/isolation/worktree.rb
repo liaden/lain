@@ -49,9 +49,9 @@ module Lain
       # exports these) or any GIT_*-polluted env would otherwise have its shelled
       # `git` resolve the index/dir against the WRONG repository -- the hook's,
       # not the leased worktree's -- so every git call scrubs them. Mapping each
-      # to `nil` deletes it in the child (the {WorkerEnv} scrub semantics B1
-      # pinned; `Mixlib::ShellOut` and `Process.spawn` agree on it, which is what
-      # lets {Shell::Out} and an injected mixlib both run these calls), leaving
+      # to `nil` deletes it in the child (the pinned {WorkerEnv} scrub semantics;
+      # `Mixlib::ShellOut` and `Process.spawn` agree on it, which is what lets
+      # {Shell::Out} and an injected mixlib both run these calls), leaving
       # `-C @repo_root` the sole authority on which repo git operates in.
       GIT_CONTEXT_SCRUB = {
         "GIT_DIR" => nil, "GIT_INDEX_FILE" => nil, "GIT_WORK_TREE" => nil,
@@ -119,8 +119,8 @@ module Lain
       protected
 
       # The WorkerEnv a lease hands the worker: the worktree as cwd, the process
-      # env otherwise. The overridable seam a per-service strategy (B3/B4)
-      # enriches with extra vars (DATABASE_URL, ...) without reshaping this base;
+      # env otherwise. The overridable seam a per-service strategy enriches
+      # with extra vars (DATABASE_URL, ...) without reshaping this base;
       # `worker_id` rides through so that enrichment can name per-worker vars.
       def worker_env_for(path, _worker_id) = WorkerEnv.new(cwd: path, env: ENV.to_h)
 

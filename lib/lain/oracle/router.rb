@@ -2,7 +2,7 @@
 
 module Lain
   module Oracle
-    # OR-5, the router arm: "which model (and shared sibling template, if any)
+    # The router arm: "which model (and shared sibling template, if any)
     # should THIS child run under" -- answered from the task's own text, at
     # spawn time, before any child exists. {Arm::AdaptiveRouter} is the one
     # caller: it asks this oracle inside `#run`, BEFORE `spawn_seam.call`, and

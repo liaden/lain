@@ -11,14 +11,14 @@ module SummarySnapshotFixtures
   BASE = Ractor.make_shareable(->(_workspace) { Lain::Context::Identity })
 end
 
-# A4: a summarizer may never hold the live {Lain::Oracle::Eager}. The Eager is
+# A summarizer may never hold the live {Lain::Oracle::Eager}. The Eager is
 # mutable by design (it accumulates summaries as fires land), so a
 # {Lain::Context::Compact} referencing one is not `Ractor.shareable?` and
 # `Compaction::Scheduler::COMPOSE` raises `Ractor::IsolationError` on the first
 # compacting turn -- not in any spec that holds the summarizer alone. The
 # snapshot is the frozen per-turn value that stands between them.
 RSpec.describe Lain::Compaction::SummarySnapshot do
-  # The summarizer oracle's schema, as PC-7's eager_spec establishes it: one
+  # The summarizer oracle's schema, as `eager_spec` establishes it: one
   # required `summary` field, which is the message the held answer speaks.
   let(:schema) do
     Class.new(Lain::Tool::Input) do
@@ -299,7 +299,7 @@ RSpec.describe Lain::Compaction::SummarySnapshot do
     # the same hazard on the response side. Plan::ClosureSummary never returned
     # empty, so this summarizer is what made the trap reachable.
     #
-    # T4 closed the trap one level up rather than leaving this summarizer as its
+    # The trap was closed one level up rather than leaving this summarizer as its
     # only defence: Compact now DECLINES when nothing is summarizable, returning
     # the history untouched. So the guarantee is stronger than it was -- there is
     # no empty text block because there is no summary message at all, and no

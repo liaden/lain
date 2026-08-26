@@ -77,7 +77,7 @@ module Lain
     # `command` for metacharacters and {OutsideRoot} looks at path-NAMED fields
     # for escapes, so `sudo rm -rf ..` in a `command` field is seen by neither's
     # other half. The real answer is the ladder building a bash {Rule::Call}
-    # from a parsed term (T15/T16/T21) rather than from the raw string; until
+    # from a parsed term rather than from the raw string; until
     # then this is a hole with a name.
     class Risk
       # A keepsake built, or altered, by anything other than a classification.
@@ -320,10 +320,10 @@ module Lain
       # answers true for every UTF-16 and UTF-32 String, which then raises
       # Encoding::CompatibilityError out of the first Regexp below -- and that
       # is NOT an ArgumentError, so no rescue here would catch it. A raise out
-      # of `classify` reaches a persister directly on the T20 write path, where
-      # there is no chain to turn it into a fault. Undecodable input is also
-      # precisely the shape nobody should be able to store an answer about, so
-      # it is risky in its own right.
+      # of `classify` reaches a persister directly on the remembered-answer
+      # write path, where there is no chain to turn it into a fault. Undecodable
+      # input is also precisely the shape nobody should be able to store an
+      # answer about, so it is risky in its own right.
       def reasons_for(field, value)
         return ["#{field.inspect} is not decodable as ASCII-compatible text"] unless readable?(value)
 

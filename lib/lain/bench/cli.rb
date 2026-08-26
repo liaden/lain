@@ -59,7 +59,7 @@ module Lain
       def sweep_report(k: Sweep::DEFAULT_K) = Sweep.new(k: check_k(k)).report
       # rubocop:enable Naming/MethodParameterName
 
-      # The B12 arms sweep: the three orchestration arms (single-thread control,
+      # The arms sweep: the three orchestration arms (single-thread control,
       # orchestrator-worker, dual-ledger) over the ArmTasks suite, replayed
       # offline through committed recordings -- no provider, no money, no network,
       # byte-identical across runs, like {#sweep_report}. The paths are explicit
@@ -71,7 +71,7 @@ module Lain
         ArmSweep.new(tasks_path:, recordings_path:).report
       end
 
-      # The PC-6 shape x density plan sweep: six arms (linear/fork x
+      # The shape x density plan sweep: six arms (linear/fork x
       # every/thinned/none) over one fixed plan and its scripted runs, replayed
       # offline -- no provider, no money, no network, byte-identical across runs,
       # like {#arm_sweep_report}. The paths are explicit (no lib->spec fixture
@@ -156,8 +156,8 @@ module Lain
       #
       # `isolation` is the `--isolation` NAME, and nil means UNSET, not "none" --
       # see {#arm_report} for what that distinction buys and {#lease_options} for
-      # how it survives the call. A SET name REQUIRES `journal:`; B3 is written
-      # against that, and {#lease_options} says why.
+      # how it survives the call. A SET name REQUIRES `journal:`; this signature
+      # is written against that, and {#lease_options} says why.
       #
       # @param fixture_path [String] the committed {ArmTasks} suite the arms run
       # @param backend [Lain::CLI::Backend] the resolved provider-and-Context
@@ -238,7 +238,7 @@ module Lain
         prompts = prompts_from(taskfile)
         provider ||= recording_provider(backend)
         context = backend.context(system_override: system)
-        # PS-2 must attribute what ACTUALLY rendered: `--system` renders
+        # The slot attribution must name what ACTUALLY rendered: `--system` renders
         # instead of the slots, and SlotFills.from owns that distinction.
         attribution = Telemetry::SlotFills.from(backend.slots, override: system)
         run_recorder = RunRecorder.new(provider:, context:, attribution:, prompts:)

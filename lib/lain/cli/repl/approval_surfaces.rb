@@ -39,7 +39,7 @@ module Lain
           @conductor = conductor
         end
 
-        # The editor's approval list (T36), bound rather than injected because
+        # The editor's approval list, bound rather than injected because
         # {Repl} builds this collaborator in its constructor and the frontend
         # only exists once {Repl#run} has attached one. nil is the honest value
         # for a headless chat and is what keeps the fourth fiber unspawned --
@@ -78,7 +78,7 @@ module Lain
         # {Approval::Queue}'s own fail-closed timer -- so the worst case of
         # withholding this one is a call REFUSED, never one silently granted.
         #
-        # Since T15 it is also the only surface that CONSUMES the queue's
+        # It is also the only surface that CONSUMES the queue's
         # arrivals -- every other one reads the parked set -- so an `/inbox`
         # line leaves `Approval::Queue`'s arrival buffer undrained for its
         # duration. Harmless, and worth saying because this comment reasons

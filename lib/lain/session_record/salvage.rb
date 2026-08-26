@@ -6,7 +6,7 @@ require "event_stream_parser"
 module Lain
   module SessionRecord
     # Recovers a paid-for-but-uncommitted response from the response WAL when a
-    # session resumes open (T18). {Middleware::JournalRequests} journals a
+    # session resumes open. {Middleware::JournalRequests} journals a
     # `request_sent` BEFORE the round trip dispatches (see that class's doc
     # comment), and {Agent#commit_and_account} commits the Timeline turn and
     # journals its `turn_usage` as ONE atom, deferred against a stop -- so a
@@ -19,7 +19,7 @@ module Lain
     # The candidate is the session's LAST `request_sent` record, but only when
     # nothing SUPERSEDES it later in the file: a `turn_usage` after it is
     # proof the round trip already committed normally (the atom above), and a
-    # `rewound` record after it (T15) is the user explicitly abandoning that
+    # `rewound` record after it is the user explicitly abandoning that
     # branch -- committing the "recovered" response onto the post-rewind head
     # would silently reverse the rewind. Either way: {Nothing}, a clean no-op.
     #

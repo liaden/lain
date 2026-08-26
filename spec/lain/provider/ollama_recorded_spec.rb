@@ -66,9 +66,9 @@
 # below replays as a single write, and a regression that SPLIT an NDJSON line
 # across two TCP reads -- or spliced a retried attempt's bytes onto an abandoned
 # one's -- would replay green here forever. These cassettes pin decode,
-# tool-call correlation, usage and the served-window read; they do NOT cover
-# F7b/F7c, which need a real severable socket and belong to T10 and T12. A
-# cassette that appeared to cover them would be worse than no cassette.
+# tool-call correlation, usage and the served-window read; they do NOT cover the
+# retry-splice defects, which need a real severable socket and belong elsewhere.
+# A cassette that appeared to cover them would be worse than no cassette.
 #
 # == The other thing to know before adding an example
 #
@@ -173,7 +173,7 @@ module T13RecordedOllama
 
   def cassette_dir = File.expand_path("../../fixtures/vcr_cassettes", __dir__)
 
-  # Every ollama cassette, not merely this card's three: T14's run-loop cassette
+  # Every ollama cassette, not merely this card's three: the run-loop cassette
   # lands in the same directory and is swept by the same guard.
   def cassettes = Dir.glob(File.join(cassette_dir, "ollama_*.yml"))
 end
@@ -253,8 +253,8 @@ RSpec.describe Lain::Provider::Ollama, records: :ollama do
   # `/api/ps` is the ONLY endpoint that states the served window, and the
   # empty-models stub in spec/support/ollama_probe.rb answers every other
   # example's probe -- so `nil` here would mean the cassette had lost to the
-  # stub, which is T3's contract failing rather than this one's. An Integer is
-  # the proof that the recorded probe won.
+  # stub, which is the stub's own contract failing rather than this one's. An
+  # Integer is the proof that the recorded probe won.
   describe "the served context window", vcr: { cassette_name: "ollama_process_status" } do
     it "answers the window the runner was actually loaded with" do
       expect(T13RecordedOllama.provider.context_window_tokens("qwen3:4b"))
@@ -273,7 +273,7 @@ RSpec.describe Lain::Provider::Ollama, records: :ollama do
   # the card that wires capability discovery can be written and tested by
   # somebody with no GPU.
   #
-  # The trained figure is no longer in that position. T6 gave it a decoder --
+  # The trained figure is no longer in that position. It has a decoder now --
   # {Lain::Provider#trained_context_tokens}, a ceiling for refusing a `--num-ctx`
   # and never a denominator -- so the second example drives the PROVIDER and
   # reds on a real regression, against a real GGUF's real KV table rather than a
@@ -306,7 +306,7 @@ end
 # after these three, and a permanent repository rule should not be reached
 # through a module named for a plan card that will be archived.
 RSpec.describe "the committed ollama cassettes" do
-  # T14's run-loop cassette is named here as well as this card's three, because
+  # The run-loop cassette is named here as well as this card's three, because
   # this list is the only place a reader can check that it IS swept -- the glob
   # above is what does the sweeping, and a name absent from here reads as a file
   # the guard does not know about.

@@ -44,8 +44,8 @@ module Lain
     # {Context}'s constructor inputs plus the tool schema, reminders, and the
     # head anchor. `head:` defaults to nil -- the OPEN marker -- because the
     # scribe writes this before any turn commits and never rewrites it.
-    # `resumed_from:` (T14's chain shape, `{"file" =>, "head" =>}`) merges in
-    # only when present: a fresh session's header must stay byte-identical to
+    # `resumed_from:` (the resume-chain shape, `{"file" =>, "head" =>}`) merges
+    # in only when present: a fresh session's header must stay byte-identical to
     # the pre-resume format, so absence is no key, never a nil value.
     def header(context:, toolset:, workspace: Workspace.empty, head: nil, resumed_from: nil)
       record = { "type" => HEADER_TYPE, "context_class" => context.class.name,
@@ -74,7 +74,7 @@ module Lain
       turn.causal_parents.empty? ? record : record.merge("causal_parents" => turn.causal_parents)
     end
 
-    # T15: the render head moved BACKWARD -- the one record that changes the
+    # The render head moved BACKWARD -- the one record that changes the
     # fold position instead of extending it. Both digests are already recorded
     # (`to: nil` is the empty session), so a loader folding in file order
     # checks out `to` and verifies later turns as extending it, while the

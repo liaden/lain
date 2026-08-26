@@ -139,7 +139,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
   # ---- Scenario: cancellation propagates -------------------------------------
 
   describe "a stop mid-fan-out cancels every child and answers the parent's calls as cancelled" do
-    # CHANGED BY T6 (F46), deliberately, and the argument belongs here because
+    # CHANGED deliberately, and the argument belongs here because
     # this example used to pin the opposite -- "commits nothing", no
     # tool_result turn at all.
     #
@@ -155,9 +155,9 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
     # three children STARTED, none finished, and the Store already held 3
     # `spawn` and 6 `turn` events -- the children's fresh roots and their first
     # turns, durable and content-addressed. What the run failed to commit was an
-    # ANSWER to the parent's calls, which is exactly the strand F46 names. It is
-    # also why the notice's "its effects may be partly applied" is not hedging
-    # here: three subagent lineages exist with no results behind them.
+    # ANSWER to the parent's calls, which is exactly the strand this example
+    # names. It is also why the notice's "its effects may be partly applied" is
+    # not hedging here: three subagent lineages exist with no results behind them.
     #
     # What this example guards is unchanged, and is still the point of the file:
     # cancellation genuinely propagates, and no child's answer is invented.

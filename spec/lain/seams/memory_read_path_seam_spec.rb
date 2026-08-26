@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# The T1 acceptance: the memory READ path, wired end to end through the live
+# The acceptance for the memory READ path, wired end to end through the live
 # session. A Session holding the run's Memory::Recorder renders the manifest
 # into the Request's workspace tail -- the same uncached-suffix channel todos
 # ride -- and Tools::MemoryRead over the same recorder closes the loop: what

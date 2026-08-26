@@ -3,7 +3,7 @@
 module Lain
   # A skill: a named, reusable prompt scaffold plus the config saying how it slots
   # into a spawn. CONFIG ONLY -- a Skill renders nothing, spawns nothing, calls no
-  # agent. It is the recipe a later seam reads (A2 renders the scaffold, B2
+  # agent. It is the recipe later seams read (one renders the scaffold, another
   # dispatches it); holding one grants no behavior, exactly as holding a {Role}
   # value is a recipe and not a running child. There is deliberately no
   # +Skill#call+: the config-vs-behavior boundary is the whole point of the value.

@@ -3,10 +3,10 @@
 module Lain
   module CLI
     # Resolves `lain chat --resume [SESSION]` into the pieces the thin exe
-    # wires: the chain-verified Timeline the Agent is seeded with (T15's
+    # wires: the chain-verified Timeline the Agent is seeded with (the
     # injection seam), the replayed Session run-state and its memory recorder
-    # (T16, shared -- one index, three views), the chained-header fields the
-    # NEW journal opens with (T14's `resumed_from` shape), and the notices the
+    # (shared -- one index, three views), the chained-header fields the
+    # NEW journal opens with (its `resumed_from` shape), and the notices the
     # frontend renders. The recorded tool schema and model in the old header
     # are display-only: the live toolset and provider always come from the
     # current flags, and a disagreement is LOUD-and-continue ({#notices}),
@@ -96,14 +96,14 @@ module Lain
       #   compared against the recording for the mismatch notice
       # @param provider [String, nil] the provider name ({CLI::Backend}'s
       #   naming, e.g. "anthropic") the current `--provider` flag resolved to,
-      #   compared against the recorded header for the mismatch notice (RES2)
+      #   compared against the recorded header for the mismatch notice
       # @return [Result]
       # @raise [Refusal]
       def call(selector: nil, model: nil, provider: nil)
         rebuild(Selector.new(dir:).call(selector), model, provider)
       end
 
-      # T3 fork mode: `--fork "<session>@<digest-prefix>"` via {ForkPoint} --
+      # Fork mode: `--fork "<session>@<digest-prefix>"` via {ForkPoint} --
       # the new run starts at that recorded turn instead of the parent's final
       # head. READ-ONLY BY CONSTRUCTION: this path holds only `File.foreach`
       # enumerators and has no salvage step, so a {Salvager} (whose #close!
@@ -119,7 +119,7 @@ module Lain
       #   check as {#call})
       # @param provider [String, nil] the provider name ({CLI::Backend}'s naming,
       #   e.g. "anthropic") the current `--provider` flag resolved to, compared
-      #   against the forked file's recorded header for the mismatch notice (RES2)
+      #   against the forked file's recorded header for the mismatch notice
       # @return [Result] whose `resumed_from` names `{file, fork digest}`
       # @raise [Refusal]
       def fork(selector:, model: nil, provider: nil)
@@ -150,7 +150,7 @@ module Lain
 
       def dir = @dir ||= @paths.sessions_dir
 
-      # T18: an OPEN recording gets one salvage attempt before anything else
+      # An OPEN recording gets one salvage attempt before anything else
       # runs. A {Salvager#close!} retroactively turns a Recovered crash into
       # an ordinary closed file, so the reload below reuses the SAME
       # {Bench::Session::Loader}/{Bench::Session::Anchor} machinery every
@@ -216,7 +216,7 @@ module Lain
 
       # Salvage only ever runs against an open session: a gracefully closed
       # file already flushed everything it could -- its last `request_sent`,
-      # if any, already has a `turn_usage` (T18's card, Scenario 3). A
+      # if any, already has a `turn_usage`. A
       # Recovered outcome closes the file through {Salvager#close!}; {#rebuild}
       # is what reloads it afterward, so this stays a pure lookup either way.
       #
@@ -229,7 +229,7 @@ module Lain
         salvager.outcome
       end
 
-      # `recording.memory` (file-scoped -- T14's stated Loader limit) is
+      # `recording.memory` (file-scoped -- the Loader's stated limit) is
       # deliberately unused: the recorder must cover the WHOLE chain, so it is
       # `replay.memory` over the chain's concatenated records instead. The
       # timeline rides separately from the recording because fork mode's is a
@@ -262,16 +262,16 @@ module Lain
           "cancelled so the session can continue -- the journal is unchanged"
       end
 
-      # F46, and the ONE place either door repairs -- both {#resumed_result} and
+      # The ONE place either door repairs a torn point -- both {#resumed_result} and
       # {#fork_result} come through {#result}, so a fork of a torn point is
       # repaired exactly as a resume of one.
       #
       # Repairing HERE, at load, rather than at the tear is what makes it
       # trigger-agnostic: the interrupt that tore round 8's session was never
       # identified, and SIGKILL, an OOM and a reactor teardown are invisible to
-      # every in-process handler while being identical from this side. (T6 adds
-      # the in-process case it CAN see; the block it commits is {Cancellation}'s,
-      # so the two repairs cannot come to disagree.)
+      # every in-process handler while being identical from this side. (The
+      # in-process case a handler CAN see is repaired by {Cancellation}, and the
+      # block committed there is this same one, so the two cannot disagree.)
       #
       # The journal is not rewritten. This commit lands on the rebuilt
       # in-memory Timeline, which is what the NEW session starts from -- and

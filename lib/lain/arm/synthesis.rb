@@ -22,8 +22,8 @@ module Lain
     # head sees ALL of them and never undercounts.
     class Synthesis
       # One worker's outcome. A FAILED worker is a named input, not an omission
-      # (B8 escalation): its error is kept and folded, so a failure is visible in
-      # the synthesis rather than silently dropped.
+      # (an escalation trigger): its error is kept and folded, so a failure is
+      # visible in the synthesis rather than silently dropped.
       Result = Data.define(:head_digest, :text, :error, :usage_records) do
         # @param head_digest [String] the worker's final turn, a valid causal parent
         # @param text [String] the worker's answer text, folded into the

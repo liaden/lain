@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-# UX5's enforcement, and the ONE definition of "this is how a byte count becomes
-# a token count" in the whole of `lib/`. The compaction subsystem's history
-# proxy is `Canonical.dump(messages).bytesize` -- bytes, never tokens -- while
-# every field of {Lain::Usage} and every {Lain::PriceBook} rate is per TOKEN.
-# Two pricing sites consume the proxy ({Lain::Compaction::Scheduler} and
+# The enforcement point, and the ONE definition of "this is how a byte count
+# becomes a token count" in the whole of `lib/`. The compaction subsystem's
+# history proxy is `Canonical.dump(messages).bytesize` -- bytes, never tokens
+# -- while every field of {Lain::Usage} and every {Lain::PriceBook} rate is per
+# TOKEN. Two pricing sites consume the proxy ({Lain::Compaction::Scheduler} and
 # {Lain::Plan::SeamDecision}); both cross here, so there is one divisor to
 # correct and no second copy promising to agree with it.
 RSpec.describe Lain::ProxyBytes do
@@ -39,9 +39,9 @@ RSpec.describe Lain::ProxyBytes do
   end
 
   # The whole point of the type. `Usage#initialize` coerces every field with
-  # `Integer()`, which refuses this object outright -- so the mistake UX5 named
-  # (pricing a byte count at a per-token rate) is now a raise rather than a
-  # plausible-looking dollar figure.
+  # `Integer()`, which refuses this object outright -- so the mistake it guards
+  # against (pricing a byte count at a per-token rate) is now a raise rather
+  # than a plausible-looking dollar figure.
   it "cannot be spent as a token count without that crossing" do
     expect { Lain::Usage.new(input_tokens: described_class.new(count: 4_096)) }.to raise_error(TypeError)
     expect { Lain::Usage.new(cache_creation_input_tokens: described_class.new(count: 4_096)) }

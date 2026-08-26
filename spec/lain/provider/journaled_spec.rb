@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
-# F28. The decorator that puts an ORACLE's model round trip into the Journal.
+# The decorator that puts an ORACLE's model round trip into the Journal.
 #
 # The round trip a turn makes is already recorded by
 # {Lain::Middleware::JournalRequests}, which a bench arm opts into. An oracle's
 # is not: it goes through {Lain::Oracle::Model}, which calls `#complete`
-# directly with no middleware stack anywhere near it. F28 measured that gap as
-# zero oracle records in a whole QA round.
+# directly with no middleware stack anywhere near it. A QA round measured that
+# gap as zero oracle records.
 RSpec.describe Lain::Provider::Journaled do
   let(:journal) { RecordingChannel.new }
 
@@ -114,7 +114,7 @@ RSpec.describe Lain::Provider::Journaled do
   # every bench arm records it never asked for and DOUBLE them for the arms that
   # already opt into Middleware::JournalRequests innermost
   # (`bench/cli/run_recorder.rb`, `bench/variance_fixtures.rb`). The agent turn
-  # is already journaled by that middleware; the gap F28 measured is the oracle.
+  # is already journaled by that middleware; the measured gap is the oracle.
   describe "what is deliberately NOT wrapped" do
     it "leaves the chat provider CLI::Backend builds undecorated" do
       backend = Lain::CLI::Backend.new(provider: "ollama", model: "qwen3:4b", max_tokens: 64)

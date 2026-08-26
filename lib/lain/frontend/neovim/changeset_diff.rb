@@ -3,10 +3,10 @@
 module Lain
   module Frontend
     class Neovim
-      # What a `<CR>` on a `lain://review` row actually reaches (T32a): the
-      # object that turns "open this file at this line" into the diff PAIR, by
-      # reading the file's old side off the changeset the round was opened on and
-      # posting `open_changeset` down the render inlet.
+      # What a `<CR>` on a `lain://review` row actually reaches: the object that
+      # turns "open this file at this line" into the diff PAIR, by reading the
+      # file's old side off the changeset the round was opened on and posting
+      # `open_changeset` down the render inlet.
       #
       # It is {ReviewView}'s `changesets:` collaborator, and until it existed
       # that seam was {ReviewView::Unwired} in every real process -- so `<CR>`
@@ -62,7 +62,7 @@ module Lain
       # looking at -- not because it has no hunk, but because nobody asked.
       #
       # So this object sends {Review::Changeset#read}. Not {ReviewView}, and the
-      # distinction is load-bearing rather than tidy: B19 (`b45553e`) removed the
+      # distinction is load-bearing rather than tidy: `b45553e` removed the
       # view's accidental forcing of every file at RENDER time, which is what
       # made drawing a fifty-file survey free, and `review_view_spec.rb` pins it
       # with an entry whose `#hunks` raises. The read belongs to the gesture that
@@ -159,7 +159,6 @@ module Lain
         # it reports success at acceptance -- and post-then-read is still the
         # right order, because the alternative is reading the file before
         # knowing whether anything will draw it.
-        #
         def drawn(changeset, file, line)
           old_lines = changeset.old_side(file)
           return format(NO_OLD_SIDE, path: file.path, base: changeset.base_ref) if old_lines.nil?

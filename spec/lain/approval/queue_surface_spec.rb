@@ -84,7 +84,7 @@ RSpec.describe Lain::Approval::QueueSurface do
     end
   end
 
-  # S1. The property neither surface could assert about itself.
+  # The property neither surface could assert about itself.
   describe "the partition between the two shipped surfaces" do
     let(:auto) { Lain::Approval::AutoSurface.new(role_spawn: ->(*) { Lain::Tool::Result.ok("DEFER") }) }
     let(:secret) do
@@ -119,7 +119,7 @@ RSpec.describe Lain::Approval::QueueSurface do
     end
   end
 
-  # S2. A pending whose `outstanding:` was explicitly nil used to raise inside
+  # A pending whose `outstanding:` was explicitly nil used to raise inside
   # `mine?`, killing the watch fiber for the rest of the session -- so a LATER
   # well-formed pending was never asked about, with nothing journaled and the
   # queue still looking healthy. Two answers, and both are pinned: the Pending

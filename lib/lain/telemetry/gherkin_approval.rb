@@ -18,7 +18,7 @@ module Lain
       end
     end
 
-    # One GG-1 approval verdict over a {Gherkin::Criteria}. `criteria_digest`
+    # One approval verdict over a {Gherkin::Criteria}. `criteria_digest`
     # is the {Gherkin::Criteria#digest} the gate judged -- the JOIN KEY a
     # downstream refuses to consume unapproved, and precisely why an edited
     # clause (a different digest) is a distinct, un-approved criteria rather

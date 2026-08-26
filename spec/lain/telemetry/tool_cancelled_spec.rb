@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T6/F46: the record a tool-calling turn leaves behind when the run was
+# The record a tool-calling turn leaves behind when the run was
 # interrupted in the middle of it. The EMITTER is spec'd where it lives --
 # `spec/lain/agent_spec.rb` for when it is written and
 # `spec/lain/seams/tool_cancellation_spec.rb` for a real tear; what is asserted

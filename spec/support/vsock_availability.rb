@@ -3,9 +3,9 @@
 require "socket"
 
 # Answers "can this host bind an AF_VSOCK socket?" -- the precondition the
-# :vsock tag's before-hook checks (spec/support/tags.rb, hand-back only; see
-# .handback-T3.md -- T3 cannot edit that shared file itself) and that
-# VsockDaemon relies on before it ever spawns a daemon.
+# :vsock tag's before-hook checks (spec/support/tags.rb, which is shared and so
+# was changed by hand-back rather than here) and that VsockDaemon relies on
+# before it ever spawns a daemon.
 #
 # The answer comes from TRYING the bind and rescuing, never from parsing
 # `lsmod` or shelling out: `vsock_loopback` autoloads unprivileged the first

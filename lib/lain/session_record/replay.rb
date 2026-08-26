@@ -14,7 +14,7 @@ module Lain
     # one's effect is exactly what one direct call already does, applied N
     # times.
     #
-    # The manifest needs no third record type (T16's card, AC2): a run's
+    # The manifest needs no third record type: a run's
     # `turn` / `memory_root` chain is already exactly what
     # {Bench::Session::MemoryReplay} reconstructs a {Memory::Index} from, and
     # that index is exactly what {Session}'s `memory:` wants. The reference
@@ -67,7 +67,7 @@ module Lain
       end
 
       # The ONE recorder {#session}'s manifest projects from -- public and
-      # memoized (T19) so a resume can hand the SAME object to the memory
+      # memoized so a resume can hand the SAME object to the memory
       # tools ("one index, three views"); a second recorder here would give
       # the manifest and the tools silently divergent indexes.
       #

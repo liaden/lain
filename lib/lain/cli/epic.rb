@@ -152,7 +152,7 @@ module Lain
         end
       end
 
-      # `root:` defaults to the RESOLVED project's, not to `Dir.pwd` (T5). A
+      # `root:` defaults to the RESOLVED project's, not to `Dir.pwd`. A
       # `lain chat` mounts its epic under {Project::Resolver.default_project}'s
       # root, and this command has to ask the same question of the same object
       # or the two go blind to each other's epics -- no flag required, because
@@ -341,11 +341,12 @@ module Lain
         private
 
         # `sessions_dir`'s OWN default -- the working directory -- and not
-        # `project_hash(@root)`, which this line said until T5. The two used to
-        # be the same string, because `@root` WAS `Dir.pwd`; once `@root` became
-        # the resolved project root this line quietly stopped folding the
-        # directory `lain epic submit` and `lain epic land` write into, and a
-        # verdict submitted from a subdirectory became invisible to `status`.
+        # `project_hash(@root)`, which this line said until the project
+        # resolver landed. The two used to be the same string, because `@root`
+        # WAS `Dir.pwd`; once `@root` became the resolved project root this line
+        # quietly stopped folding the directory `lain epic submit` and `lain
+        # epic land` write into, and a verdict submitted from a subdirectory
+        # became invisible to `status`.
         #
         # The epic tier keys its CONTAINER on the resolved root and its JOURNAL
         # DIRECTORY on the cwd. Two keyings, each uniform; the alternative is

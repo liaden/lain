@@ -9,10 +9,10 @@ module Lain
     # each {Approval::Queue::Pending} it draws from the queue and decides it.
     #
     # This class used to BE Gate's policy (`#call(effect, context)`, ask inline,
-    # answer inline). It became a surface when the queue took over that seam
-    # (I4): {Effect::Handler::Gate} now holds the queue, the gated fiber parks
-    # there, and this object is just one watcher answering pendings -- which is
-    # what lets a second surface (a Neovim view) coexist, first answer winning.
+    # answer inline). It became a surface when the queue took over that seam:
+    # {Effect::Handler::Gate} now holds the queue, the gated fiber parks there,
+    # and this object is just one watcher answering pendings -- which is what
+    # lets a second surface (a Neovim view) coexist, first answer winning.
     # It still lives in Frontend because asking the question IS the terminal
     # write; the queue, which touches no IO, lives in lib proper.
     #
@@ -97,14 +97,14 @@ module Lain
       private
 
       # One arrival, asked about in a CHILD fiber, and let go of the moment the
-      # pending is decided by anyone -- this surface or another (F40).
+      # pending is decided by anyone -- this surface or another.
       #
       # The read is what needed releasing. A y/N read with no human behind it
       # never returns, so a surface that answered its arrivals inline stayed
       # inside that read after the editor had already decided the call -- and
       # every gated call after it queued behind a prompt that was moot,
-      # unrendered and unanswerable. That is T15's session-wide silence reached
-      # through the other door: not an arrival STOLEN, an arrival HELD.
+      # unrendered and unanswerable. That is the same session-wide silence
+      # reached through the other door: not an arrival STOLEN, an arrival HELD.
       #
       # The race is between two things that both end at {Pending#decide}, which
       # is why it needs no new primitive. `Async::Variable#resolve` signals
@@ -146,7 +146,7 @@ module Lain
       # sibling surface already guards it ({Approval::QueueSurface#swept},
       # {CLI::HumanReplies::AnswerLoop#exchange}); this is the one it is FATAL
       # for, because a `--no-nvim` chat has no second surface and every later
-      # gated call would then reach nobody at all (T15).
+      # gated call would then reach nobody at all.
       #
       # THE GUARD COVERS THE ASK, AND ONLY THE ASK. It used to wrap the whole
       # of one arrival; the race in {#answered} now sits outside it, which is
@@ -181,8 +181,9 @@ module Lain
         report(e)
       end
 
-      # A refusal with no reason is the silence that hid T15 in the first place,
-      # so this is worth attempting -- and worth never costing the denial above.
+      # A refusal with no reason is the silence that hid the session-wide
+      # approval stall in the first place, so this is worth attempting -- and
+      # worth never costing the denial above.
       #
       # Known seam, stated rather than wished away: under the injected reader
       # `@output` is the default `$stdout`, so this line reaches the terminal

@@ -4,9 +4,9 @@ module Lain
   module Compaction
     # WHETHER the prompt cache is cold, kept apart from {Need} (whether a
     # compaction is warranted at all) and from any later scheduling policy
-    # (`cache-aware-compaction.md`'s soft-defer/hard-cap policy, CAC-4, not
+    # (`cache-aware-compaction.md`'s soft-defer/hard-cap policy, not
     # built yet) that decides whether a *needed* compaction should wait for a
-    # cold cache or run anyway now. This is CAC-3: two independent signals,
+    # cold cache or run anyway now. Coldness is two independent signals,
     # not one -- idle time alone is a GUESS (a provider's TTL is nominal, not
     # a guarantee the server actually evicted the entry), and
     # `cache_read_input_tokens == 0` alone cannot tell "genuinely cold" apart
@@ -15,7 +15,7 @@ module Lain
     # cache-read either CONFIRMS it (journaled) or CANCELS it -- a hit proves
     # the cache was warm the whole time, so the idle clock's guess was wrong.
     #
-    # A provider whose `cache_profile` (CAC-2, T15) carries no real TTL -- an
+    # A provider whose `cache_profile` carries no real TTL -- an
     # OpenAI-compatible arm with nothing to name, or Ollama's own
     # `NO_CACHING_PROFILE` (`ttl: 0`) -- has nothing for idle time to compare
     # against, so {#idle!} is a no-op for it; {#observe} falls back to the
@@ -43,7 +43,7 @@ module Lain
         end
       end
 
-      # @param cache_profile [Hash] a provider's `#cache_profile` (CAC-2);
+      # @param cache_profile [Hash] a provider's `#cache_profile`;
       #   only `:ttl` is read here.
       # @param journal [#<<] where the cold confirmation lands; the Null
       #   channel by default, so no caller guards `if journal`.

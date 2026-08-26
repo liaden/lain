@@ -67,7 +67,7 @@ module Lain
         self
       end
 
-      # Restore the handlers that were in force before {#install}. T22's teardown
+      # Restore the handlers that were in force before {#install}. The teardown
       # order removes traps FIRST, then disposes the coordinator's pipe -- see
       # {Shutdown::Ingress#signal}'s ordering asterisk.
       def uninstall

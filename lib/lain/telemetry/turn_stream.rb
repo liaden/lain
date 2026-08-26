@@ -186,7 +186,7 @@ module Lain
     # short; if it bites, the fix is content-addressed dedupe (journal digests,
     # store the blocks once), not trimming the record.
     #
-    # `prefix_digests` is the request's own CE-2 digest chain --
+    # `prefix_digests` is the request's own digest chain --
     # `Request#prefix_digests`, `[[position, digest], ...]`, where position -1
     # (`Request::SYSTEM_PREFIX`) names a marker in the system blocks and
     # message indices are always >= 0 -- carried alongside rather than
@@ -254,7 +254,7 @@ module Lain
     # to rebuild the request -- a marker there would ride onto the wire on any
     # rebuild-and-dispatch.
     #
-    # Since T18, a resend CAN go on to dispatch: {CLI::ResendBridge} journals a
+    # A resend CAN now go on to dispatch: {CLI::ResendBridge} journals a
     # {ResendDispatched} marker (attempt-first) and runs the edit through the
     # loop, whose wire path then journals its own ORDINARY request_sent/
     # turn_usage pair -- the loop saw an ordinary Request, and the join key
@@ -325,7 +325,7 @@ module Lain
       end
     end
 
-    # Attribution for the session-fixed prompt slots (PS-2), written ONCE at
+    # Attribution for the session-fixed prompt slots, written ONCE at
     # session start. Two maps keyed by slot name: `digests` content-addresses
     # each slot's RENDERED bytes -- the join key onto a {RequestSent}'s system
     # blocks, whose rendered text is already journaled in full -- and `fills`

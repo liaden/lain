@@ -2,8 +2,8 @@
 
 module Lain
   module Grader
-    # The "build it once" substrate GR-2 (T10, selection frequency) and GR-3
-    # (T11, outcome-lineage walks) both read from: an offline projection over a
+    # The "build it once" substrate the selection-frequency detector and the
+    # outcome-lineage walks both read from: an offline projection over a
     # Journal's `turn` records pairing every `tool_use` with its outcome.
     #
     # No production writer emits a standalone `tool_result` RECORD -- results
@@ -26,7 +26,7 @@ module Lain
       # A referenced predecessor (a turn's `parent` or root `spawned_from`)
       # names a digest absent from this index's entry set -- {Bench::Session::Corrupt}'s
       # precedent, applied to lineage: a partial journal slice must never
-      # read as a shorter-but-genuine chain root, or GR-3 (T11) could not
+      # read as a shorter-but-genuine chain root, or the lineage walk could not
       # tell the two apart.
       class DanglingLineage < Error; end
 
@@ -64,7 +64,7 @@ module Lain
       end
 
       # Every paired call, in turn order then `tool_use` order -- the flat
-      # view a selection-frequency fold (GR-2) wants. `Enumerable` rides this.
+      # view a selection-frequency fold wants. `Enumerable` rides this.
       def each(&block)
         return enum_for(:each) unless block_given?
 
@@ -74,7 +74,7 @@ module Lain
       # The causal lineage of `turn_digest`: itself, then each render-parent
       # within its own chain, and -- at a chain root whose meta names
       # `spawned_from` -- the turn it was spawned from, continuing the walk
-      # into the PARENT chain. This is how GR-3 resolves an outcome back to
+      # into the PARENT chain. This is how an outcome is resolved back to
       # its causing turn across a fan-out: the walk follows the content
       # addresses the records carry (`parent`, `meta.spawned_from`), never
       # the order entries happen to sit in the journal, so it agrees no

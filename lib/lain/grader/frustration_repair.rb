@@ -2,16 +2,16 @@
 
 module Lain
   module Grader
-    # GR-3 (T11): behavioral failure signals -- an agent stuck re-trying the
-    # same tool after it errored -- walked back through the causal DAG to the
-    # turn that plausibly caused them, rather than credited to whichever turn
-    # happens to sit immediately before.
+    # Behavioral failure signals -- an agent stuck re-trying the same tool
+    # after it errored -- walked back through the causal DAG to the turn that
+    # plausibly caused them, rather than credited to whichever turn happens to
+    # sit immediately before.
     #
-    # Built on T8's {ToolCallIndex}: `#calls` supplies the deterministic
+    # Built on the {ToolCallIndex}: `#calls` supplies the deterministic
     # name/is_error signal per turn, and `#lineage` supplies the causal walk
     # (render `parent`, then -- at a chain root -- `spawned_from`) that
-    # attribution rides. T8's own doc names this exact mechanism as "how GR-3
-    # resolves an outcome back to its causing turn across a fan-out," so
+    # attribution rides. That index was built for this exact mechanism --
+    # resolving an outcome back to its causing turn across a fan-out -- so
     # {#nearest_prior_use} spends no new machinery inventing a second walk --
     # it climbs {ToolCallIndex#lineage}'s ancestors and skips any that did not
     # call the same tool. That skip is the whole point: a decoy call to an

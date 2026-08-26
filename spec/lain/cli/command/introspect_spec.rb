@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# F75/F77, the human-facing half. Asked what the session had spent, the agent
+# The human-facing half. Asked what the session had spent, the agent
 # invented a metrics table -- a model name it was not running, plus fabricated
 # memory, CPU, round-trip and network figures -- while eight `turn_usage`
 # records carrying the true answer sat in the journal it had just written.
@@ -11,16 +11,16 @@
 # Every example drives a REAL {Lain::Agent} over a scripted provider, because
 # the claim is about what the run accrued: stubbing `#usage` or `#occupancy`
 # would assert that this command formats whatever it is handed, and nothing
-# about the seam that made F77 possible.
+# about the seam that made the honest answer possible.
 #
 # == The honesty examples are the point of the file
 #
-# A confident FALSE NEGATIVE is F77 wearing better manners: "review none open"
-# told to a human who is annotating one, or a percentage over a denominator
-# nobody vouched for, are the same defect as an invented metrics table. Every
-# example below the `cannot know` banner came from a review probe that caught
-# this command stating something it could not know, and each pins the
-# qualification that made the statement true.
+# A confident FALSE NEGATIVE wears better manners: "review none open" told to
+# a human who is annotating one, or a percentage over a denominator nobody
+# vouched for, are the same defect as an invented metrics table. Every example
+# below the `cannot know` banner came from a review probe that caught this
+# command stating something it could not know, and each pins the qualification
+# that made the statement true.
 RSpec.describe Lain::CLI::Command::Introspect do
   let(:model) { "test-model" }
   # A small window, so an occupancy reads as a figure a human could check by
@@ -70,8 +70,8 @@ RSpec.describe Lain::CLI::Command::Introspect do
   end
 
   # Reported rather than left for the reader to add up: an arithmetic step
-  # somebody takes is an arithmetic step somebody can get wrong, which is F77
-  # in miniature.
+  # somebody takes is an arithmetic step somebody can get wrong, which is the
+  # same fabrication in miniature.
   it "reports the totals Usage derives, and the bench's cache hit ratio" do
     expect(report(asked_twice)).to include("total input 117", "total 124", "cache hit ratio 85.5%")
   end
@@ -95,7 +95,7 @@ RSpec.describe Lain::CLI::Command::Introspect do
   # {Lain::Ledger} raises rather than pricing a model it has no {Lain::PriceBook}
   # entry for, and the ollama-cloud arm has no entry at all -- so a dollar
   # figure here would have to be guessed for exactly the runs a human is most
-  # likely to ask about. That is F77 with better manners.
+  # likely to ask about. That is the same fabrication with better manners.
   #
   # What this forbids is a FIGURE, not the word: the report says "never dollars"
   # out loud, and that sentence is the lever keeping a reader from reaching for
@@ -141,14 +141,14 @@ RSpec.describe Lain::CLI::Command::Introspect do
     expect(rendered).not_to match(/window \d|\bpublished\b|\bprobed\b/i)
   end
 
-  # S6. The sentences are for a human at a prompt, not for the implementer:
+  # The sentences are for a human at a prompt, not for the implementer:
   # `Backend`, `book` and "reaches no command" have no referent at `you>` and
   # read as a bug report nobody asked for.
   it "explains its gaps in the reader's vocabulary, not the harness's" do
     expect(report(asked_twice)).not_to match(/Backend|second book|reaches no command|Env\b/)
   end
 
-  # ---- PROBE 2 (B2): the occupancy denominator may itself be a guess ---------
+  # ---- PROBE 2: the occupancy denominator may itself be a guess --------------
   #
   # The percentage is correct arithmetic over a window the run's own book
   # resolved -- and that book's answer can be {Lain::ContextWindow::GUESSED},
@@ -184,7 +184,7 @@ RSpec.describe Lain::CLI::Command::Introspect do
     expect(report(agent)).to include("occupancy 64.0% at the last model response")
   end
 
-  # ---- PROBE 1 (S3): "no turn yet" is false on a resumed chat ----------------
+  # ---- PROBE 1: "no turn yet" is false on a resumed chat ---------------------
   #
   # {Lain::ContextWindow::Occupancy::None}'s own docstring names this hazard for
   # the value 0.0 -- "a resumed session's Accounting is fresh while its Timeline
@@ -218,7 +218,7 @@ RSpec.describe Lain::CLI::Command::Introspect do
     expect(report(fresh)).to include("review open over survey planning/qa (corpus)")
   end
 
-  # The half of AC3 that motivated {Lain::Review::Submit::Outbox#annotation_count}:
+  # What motivated {Lain::Review::Submit::Outbox#annotation_count}:
   # "a review is open" is the cheap part, and "how many notes are in it" is the
   # number a human decides on.
   it "reports how many annotations the open round holds" do
@@ -235,7 +235,7 @@ RSpec.describe Lain::CLI::Command::Introspect do
     expect(report(fresh)).to include("annotations 0")
   end
 
-  # ---- PROBE 4 (B1): the outbox is not the only opener of a review -----------
+  # ---- PROBE 4: the outbox is not the only opener of a review ----------------
   #
   # {Lain::Tools::RequestReview} opens a {Lain::Review::Session} of its own and
   # binds it straight to the human's editor without ever touching the outbox, so
@@ -280,7 +280,7 @@ RSpec.describe Lain::CLI::Command::Introspect do
 
   # ---- Scenario: introspect renders on a fresh chat -------------------------
 
-  # N10, and the same defect as PROBE 1 in another row: {Lain::Usage#cache_hit_ratio}
+  # The same defect as PROBE 1 in another row: {Lain::Usage#cache_hit_ratio}
   # documents 0.0 as "nothing was read on the way in", which is ABSENCE -- and a
   # hard 0.0% on the bench's first-class cache metric, on a chat that has not
   # spoken, invites exactly the wrong conclusion.
@@ -299,7 +299,7 @@ RSpec.describe Lain::CLI::Command::Introspect do
     expect(report(fresh, chronicle:)).to include("journal /tmp/lain/session.ndjson")
   end
 
-  # N11. {Lain::CLI::Chronicle::Null} is what `--no-journal` wires AND what any
+  # {Lain::CLI::Chronicle::Null} is what `--no-journal` wires AND what any
   # directly-constructed {Lain::CLI::ChatLaunch} defaults to, so naming the flag
   # would tell a bench arm a flag was passed that never was. The absence is the
   # part that cannot be wrong.

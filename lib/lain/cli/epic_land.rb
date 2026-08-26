@@ -168,7 +168,7 @@ module Lain
       # `root:` defaults to the RESOLVED project's, not to `Dir.pwd`, for the
       # reason {CLI::Epic#initialize} states: this command ASKS that object
       # which epic a bare invocation means, so a root that travels differently
-      # would have it answering about a different home. See T5.
+      # would have it answering about a different home.
       #
       # @param root [String] the project root: the config, a repo-mode epic
       #   home, and the checkout holding the anchored commit all resolve under it

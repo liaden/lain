@@ -16,7 +16,7 @@ module Lain
           super(env_var: env_var.to_s.freeze, host: host.to_s.freeze, port:, max_databases:)
         end
 
-        # The journalable identity (B6 pairs this with the worker key).
+        # The journalable identity (paired with the worker key).
         def name = :redis
 
         # The REDIS_URL a lease injects, selecting logical DB `index`.

@@ -3,10 +3,11 @@
 module Lain
   module CLI
     class Resume
-      # THE CONTRACT T6 MUST MATCH. The `tool_result` block a cancelled tool
-      # call is answered with, and the only place this repo mints one: T6
-      # commits the SAME block at the tear, and two shapes for one fact is how
-      # two repairs of one defect come to disagree.
+      # THE CONTRACT THE TEAR-SIDE REPAIR MUST MATCH. The `tool_result` block
+      # a cancelled tool call is answered with, and the only place this repo
+      # mints one: {Agent::ToolRunner::Answers} commits the SAME block at the
+      # tear, and two shapes for one fact is how two repairs of one defect come
+      # to disagree.
       #
       # The shape, exactly, is {Tool::ResultBlock}'s -- the sole writer of a
       # tool_result block in `lib/`, so this reaches the wire through the same
@@ -20,13 +21,13 @@ module Lain
       # made the calls. `is_error` is true because the call produced nothing;
       # it is read off the {Tool::Result}, never inferred.
       #
-      # **The turn carries NO `meta`, and T6 must not add one.** Two reasons,
-      # and the first is the binding one: `meta` is inside the content address
-      # ({Event.turn}), so adding a key later moves every projected digest.
-      # The second is that a turn-level "this is a cancellation" flag cannot
-      # survive T6's own first case, where ONE turn carries a finished tool's
-      # real output beside two cancellations -- the fact is per-block, which is
-      # the granularity both repairs share.
+      # **The turn carries NO `meta`, and the tear-side repair must not add
+      # one.** Two reasons, and the first is the binding one: `meta` is inside
+      # the content address ({Event.turn}), so adding a key later moves every
+      # projected digest. The second is that a turn-level "this is a
+      # cancellation" flag cannot survive the tear side's own first case, where
+      # ONE turn carries a finished tool's real output beside two cancellations
+      # -- the fact is per-block, which is the granularity both repairs share.
       #
       # KNOWN HOLE, recorded rather than fixed here: a head carrying two
       # `tool_use` blocks with the SAME id yields two tool_results with the
@@ -58,21 +59,22 @@ module Lain
         # said about the continuation, which is a thing this side knows, never
         # about the original run, which it does not.
         #
-        # T6 SHARES this half verbatim: it is true at the tear too.
+        # The tear-side repair SHARES this half verbatim: it is true at the tear too.
         NO_RESULT = "The conversation being continued carries no result for this tool call, so it is " \
                     "cancelled: there is no output to read."
 
-        # The half T6 REPLACES, and the only one it may. At load there is no
-        # way to know whether the tool ran, so this claims nothing either way
-        # about effects. T6 is present at the tear and CAN distinguish "never
-        # dispatched" from "was running mid-call" -- it substitutes its own
-        # sentence here and keeps {NO_RESULT} untouched.
+        # The half the tear-side repair REPLACES, and the only one it may. At
+        # load there is no way to know whether the tool ran, so this claims
+        # nothing either way about effects. {Agent::ToolRunner::Answers} is
+        # present at the tear and CAN distinguish "never dispatched" from "was
+        # running mid-call" -- it substitutes its own sentence here and keeps
+        # {NO_RESULT} untouched.
         EFFECTS_UNKNOWN = "Whether the tool ran is not known from this conversation -- check before " \
                           "assuming its effects did or did not happen."
 
         # Composed, never re-typed: a shared prefix plus a replaceable clause is
-        # a seam T6 can hold, where "keep this string byte-identical" was only
-        # a request in prose.
+        # a seam the tear-side repair can hold, where "keep this string
+        # byte-identical" was only a request in prose.
         NOTICE = "#{NO_RESULT} #{EFFECTS_UNKNOWN}".freeze
 
         # Minted EAGERLY, so construction is the one place {Unpairable} can

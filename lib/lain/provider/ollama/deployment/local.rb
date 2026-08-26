@@ -39,8 +39,8 @@ module Lain
           CAPABILITIES = %i[streaming thinking structured_output].freeze
 
           # The vendored envelope, unchanged. 300s is not generosity: this is
-          # the one arm whose honest shape is a model thinking for six minutes
-          # (F7a), and the whole ollama suite is measured against it.
+          # the one arm whose honest shape is a model thinking for six minutes,
+          # and the whole ollama suite is measured against it.
           REQUEST_TIMEOUT = 300
           MAX_RETRIES = 3
 

@@ -81,7 +81,7 @@ module Lain
         # happened to REOPEN, so a retry that opened FEWER blocks left the
         # remainder in place: spliced prose at the end of the turn, or -- when the
         # abandoned attempt had reached a `tool_use` -- a phantom tool call in the
-        # assistant message, under a clean `stop_reason` and clean usage (F7c).
+        # assistant message, under a clean `stop_reason` and clean usage.
         #
         # ⚠️ **"Per attempt" is scoped to what {AnthropicWire#wire_payload} sends,
         # and it is not a property of the protocol.** Anthropic's server-side

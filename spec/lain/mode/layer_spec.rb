@@ -86,7 +86,7 @@ RSpec.describe Lain::Mode::LayerSet do
   # The Gherkin covers only disable's two edge cases -- the absent layer and
   # the undeclared name -- so without these two the happy path is proven by
   # nothing and a `#disable` that removes nothing ships green. It is the other
-  # half of the `/mode -goal` pair T3 and T4 build on.
+  # half of the `/mode -goal` pair everything downstream builds on.
   it "removes a layer the set actually holds" do
     expect(layer_set(:goal, :vi).disable(:goal)).to eq(layer_set(:vi))
   end
@@ -130,10 +130,10 @@ RSpec.describe Lain::Mode::LayerSet do
     end
 
     # A canary, not a requirement. Today's roster happens to be alphabetical,
-    # so nothing here can tell declaration order from a sort. T3 reads this
-    # order as PRECEDENCE, so the day a layer is declared out of alphabetical
-    # position this goes red and says that the example above stopped being a
-    # proof of anything.
+    # so nothing here can tell declaration order from a sort. The mode stack
+    # reads this order as PRECEDENCE, so the day a layer is declared out of
+    # alphabetical position this goes red and says that the example above
+    # stopped being a proof of anything.
     it "records that declaration order and alphabetical order still coincide" do
       expect(Lain::Mode::Layer::NAMES).to eq(Lain::Mode::Layer::NAMES.sort)
     end

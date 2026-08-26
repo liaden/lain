@@ -18,7 +18,7 @@ module Lain
       # than an empty child -- see {ChildBuilder#permitted}.
       class NoCapability < Error; end
 
-      # The lifecycle axis (OM-2 vs OM-3), closed and loud: a mode outside this
+      # The lifecycle axis, closed and loud: a mode outside this
       # set raises at construction rather than defaulting.
       MODES = %i[one_shot actor].freeze
 
@@ -28,14 +28,14 @@ module Lain
       # honest projection of what the call did. `nil` until a spawn happens (and
       # after a depth refusal, which emits nothing).
       #
-      # OM-2-ONLY statefulness (a review panel note): the seam's live parent handle and
-      # these `@last_*` ivars are safe here because a Subagent instance belongs
-      # to exactly one agent's toolset and a one-shot spawn runs synchronously
-      # inside a single tool dispatch -- no interleaving writer can exist.
-      # Returning the records along the call path instead is not cheap today:
-      # {Tool::Result} content is pinned to String/Array wire blocks. The actor
-      # mode (OM-3) does NOT inherit this shape -- concurrent children would
-      # race these ivars, so an actor's record rides its events (its mailbox
+      # ONE-SHOT-ONLY statefulness (a review panel note): the seam's live parent
+      # handle and these `@last_*` ivars are safe here because a Subagent instance
+      # belongs to exactly one agent's toolset and a one-shot spawn runs
+      # synchronously inside a single tool dispatch -- no interleaving writer can
+      # exist. Returning the records along the call path instead is not cheap
+      # today: {Tool::Result} content is pinned to String/Array wire blocks. The
+      # actor mode does NOT inherit this shape -- concurrent children would race
+      # these ivars, so an actor's record rides its events (its mailbox
       # projection and the journaled lifecycle), never tool state.
       attr_reader :name, :last_spawn, :last_message, :last_child
 
@@ -48,7 +48,7 @@ module Lain
 
       def attenuates_from = @builder.toolset
 
-      # Two lifecycle modes over the same spawn machinery (OM-2/OM-3): `:one_shot`
+      # Two lifecycle modes over the same spawn machinery: `:one_shot`
       # runs a child to a single result within one dispatch (the 5-1 model);
       # `:actor` launches a long-lived {Actor} fiber whose outputs reach the
       # parent as mailbox events instead. `log` is the append-only read-side that
@@ -111,7 +111,7 @@ module Lain
         spawn_one_shot(prompt)
       end
 
-      # Fan `prompts` out as sibling children, staggered (CE-5): sibling 1 is
+      # Fan `prompts` out as sibling children, staggered: sibling 1 is
       # dispatched alone and the rest release the instant its first token
       # arrives, so N cache-siblings pay one template WRITE and N-1 READs
       # instead of N cold prefills. Each dispatch unit is exactly the duck
@@ -130,7 +130,7 @@ module Lain
       #
       # ECONOMIC PRECONDITION: staggering only pays under a `SiblingTemplate`
       # prefix policy, where the siblings share a byte-identical cache prefix so
-      # sibling 1's write turns the rest into reads (CE-5). Under `:fresh` or
+      # sibling 1's write turns the rest into reads. Under `:fresh` or
       # `:inherit` the siblings share no writable prefix, so gating on sibling
       # 1's first token buys nothing and merely serializes that first token's
       # latency ahead of the rest -- a pure loss. The caller owns the policy, so
@@ -161,7 +161,7 @@ module Lain
       # orchestration Sync/Async above the Agent (programmatic use) or the
       # {Supervisor} task {#perform} adopts this launch onto.
       def launch_actor(prompt, parent: parent_timeline, worker_env: WorkerEnv.default)
-        # Per launch, mirroring #perform: AC4's floor note has no lifecycle
+        # Per launch, mirroring #perform: the floor note has no lifecycle
         # exemption, so an actor-mode sibling under the floor is reported too.
         policy.prefix.journal_floor(journal)
         # The actor holds its child's asker registration because it holds the
@@ -191,7 +191,7 @@ module Lain
       protected
 
       # A model-dispatched `:actor` is refused UNLESS a running {Supervisor} is
-      # wired (a review panel note, unrefused by OM-6): Agent#ask's per-call Sync owns
+      # wired (a review panel note): Agent#ask's per-call Sync owns
       # any fiber a tool dispatch spawns, so a bare perform-launched actor
       # would park as ask's own child and structured concurrency would never
       # let ask return -- the loop wedges, outer reactor or not. The
@@ -267,7 +267,7 @@ module Lain
       # frozen policy, so late construction changes nothing.
       def lineage = @lineage ||= Lineage.new(policy:, log: @log, observer: lineage_observer)
 
-      # An actor's lifecycle rides the journal (OM-6 AC): every event {Lineage}
+      # An actor's lifecycle rides the journal: every event {Lineage}
       # writes -- the :spawn at launch, the settle reply, tells, the farewell --
       # is promoted to a {Telemetry::Message}, the same flat record the session
       # scribe writes, whose kind/digest/to/causal_parents shape is exactly
@@ -321,11 +321,11 @@ module Lain
     # A subagent is a tool whose result is a compressed context. The child runs a
     # full, independent loop over the SHARED Store but a SEPARATE Timeline, so the
     # parent's prompt never inherits the child's turns and vice versa. Two events
-    # record the causal lineage the render chain deliberately omits (event-schema
-    # OM-2): a **:spawn** event names the parent head H it was spawned from, and a
-    # **:message** event carries the child's result back, naming both the :spawn
-    # and the child's final turn F among its causal parents. Neither is in either
-    # render chain, so `meet`, the first-parent walk, and gate 2 are untouched.
+    # record the causal lineage the render chain deliberately omits: a **:spawn**
+    # event names the parent head H it was spawned from, and a **:message** event
+    # carries the child's result back, naming both the :spawn and the child's
+    # final turn F among its causal parents. Neither is in either render chain,
+    # so `meet`, the first-parent walk, and gate 2 are untouched.
     #
     # == Injection (the pinned seam)
     #

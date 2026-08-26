@@ -16,13 +16,13 @@ module Lain
         # Nothing outside {InboxView} may hold one.
         class Renderings
           # One rendering, as a gesture has to read it back: the STAMP the
-          # editor's buffer carries for it (T16), and which set OWNS each of its
+          # editor's buffer carries for it, and which set OWNS each of its
           # lines. The stamp is what the editor sends back with the gesture,
           # and it is the whole of the identity -- the empty-state placeholder
           # and a one-item list are both ONE line high, so the height could
           # never separate them and the stamp always does.
           #
-          # ONE ENTRY PER LINE, NEVER ONE PER SET (T12), and that is what this
+          # ONE ENTRY PER LINE, NEVER ONE PER SET, and that is what this
           # object had wrong rather than incomplete: `digests` used to be the
           # listed sets in order, addressed as `digests[line - 1]`, which is the
           # same answer only while every item is exactly one line. The moment a
@@ -55,7 +55,7 @@ module Lain
           # refused BY NAME ({UNSHOWN}). So this number only says how far
           # behind the screen may be before a keypress must be pressed again,
           # and each rendering costs one frozen array of digests -- one entry
-          # per LINE since T12, which is a rendering's height rather than its
+          # per LINE, which is a rendering's height rather than its
           # item count and still nothing worth bounding more tightly.
           HELD = 16
 

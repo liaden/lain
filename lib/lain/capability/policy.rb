@@ -31,7 +31,7 @@ module Lain
         strategy = STRATEGIES[name]
         # Not `validates :strategy, presence: true`: this is a FACTORY mapping a
         # name to a strategy class, and Policy has no `strategy` attribute to
-        # validate. Validate-then-freeze (T6) governs a value object's OWN
+        # validate. Validate-then-freeze governs a value object's OWN
         # construction; a lookup that rejects an unknown key is a different shape.
         # The explicit raise also NAMES the valid options (NAMES), which a bare
         # presence error cannot -- so it is kept, more diagnostic, not less.

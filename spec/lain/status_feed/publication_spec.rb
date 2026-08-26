@@ -88,7 +88,7 @@ RSpec.describe Lain::StatusFeed::Publication do
     expect(published).to eq({ "n" => 1 })
   end
 
-  # F50 moved this file from `<project>/.lain/`, which is essentially always
+  # This file moved from `<project>/.lain/`, which is essentially always
   # writable because the user is working in it, to a state home that can be
   # read-only, owned by someone else, or have a plain file sitting where the
   # directory belongs. The raise is right -- a feed that cannot write must not

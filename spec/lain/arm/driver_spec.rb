@@ -95,16 +95,16 @@ RSpec.describe Lain::Arm::Driver do
     end
   end
 
-  # T12 / CE-6.2. The bench's headline metric, and until now the one metric the
-  # arm comparison did not carry -- `Arm::Run` folded usage and left cost to
+  # The bench's headline metric, and until now the one metric the arm
+  # comparison did not carry -- `Arm::Run` folded usage and left cost to
   # `#compare_run`, which the Driver never calls.
   describe "#report — the cost column" do
     # Scenario: the arm report carries a cost column.
     #
     # Asserted against the PriceBook rather than a literal: the claim is "the
     # number in the report is the number this run's own Ledger produced", not
-    # "sonnet costs $3/MTok" -- the table is meant to be edited (T1 edits it),
-    # and a literal here would fail on a correct price change.
+    # "sonnet costs $3/MTok" -- the table is meant to be edited, and a literal
+    # here would fail on a correct price change.
     it "reports a cost column carrying the runs' own ledger cost" do
       report = described_class.new(arms, tasks:, spawn_seam:, grader:).report
       priced = Lain::PriceBook.default.cost("claude-sonnet-4",
@@ -228,7 +228,7 @@ RSpec.describe Lain::Arm::Driver do
     end
   end
 
-  # T12. `chunk-bench-arms-subcommand.md` recorded that this header names none
+  # `chunk-bench-arms-subcommand.md` recorded that this header names none
   # of what produced the report, and a dollar figure on a report that names no
   # model is exactly the lie PriceBook refuses to tell -- so the column and the
   # attribution land together.

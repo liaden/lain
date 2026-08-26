@@ -34,7 +34,7 @@ RSpec.describe Lain::Workspace do
   end
 end
 
-# A pure ->(workspace) pipeline provider for T21's injection seam. Defined in a
+# A pure ->(workspace) pipeline provider for the injection seam. Defined in a
 # module body so its `self` is this (Ractor-shareable) module, which is what
 # lets the lambda -- and thus a Context that stores it -- stay shareable. It
 # reproduces the class default (Reminder >> CacheBreakpoints) so an injected
@@ -45,7 +45,7 @@ module T21PipelineProviders
   )
 end
 
-# A1's counter-example: the hand-rolled base a per-turn source composes around
+# The counter-example: the hand-rolled base a per-turn source composes around
 # when it does NOT read #pipeline_for. It marks cache breakpoints and omits
 # Reminder, which is the exact shape bench/plan_sweep/driver.rb's BASE_PIPELINE
 # has -- the one precedent a compaction source would copy.
@@ -53,7 +53,7 @@ module WithPipelineBases
   CACHE_ONLY = Ractor.make_shareable(->(_workspace) { Lain::Context::CacheBreakpoints.new })
 end
 
-# T17. The shape a compacting turn's pipeline has: a first stage that discards
+# The shape a compacting turn's pipeline has: a first stage that discards
 # whatever #render projected and substitutes a list of its own -- the derived
 # chain, in production ({Lain::Compaction::Source::Derived}'s Replay). It says so
 # through #reads_messages?, which is the only thing that lets #render skip a
@@ -81,7 +81,7 @@ end
 # {Lain::Compaction::Scheduler#pipeline} and {Lain::Plan::LinearRewrite} name as
 # "the same duck #render resolves", and what a bench user writing their own
 # strategy implements. It has never heard of `#reads_messages?` and must not have
-# to: T17 widened what #render asks a pipeline, and a bare send would have broken
+# to: #render's question to a pipeline widened, and a bare send would have broken
 # every such object with a NoMethodError from inside #render.
 class ContextSpecPipelineDuck
   def call(messages) = messages + [{ "role" => "user", "content" => [{ "type" => "text", "text" => "DUCKED" }] }]
@@ -186,7 +186,7 @@ RSpec.describe Lain::Context do
 
   # The combinator algebra names itself: the base of the endomorphism monoid is
   # Combinator, and Identity is its unit instance. The old `Base` alias is gone
-  # (T16 swept recall.rb/reminder.rb onto Combinator and dropped it).
+  # (recall.rb and reminder.rb were swept onto Combinator and it was dropped).
   describe "the combinator algebra" do
     it "names the base class Combinator" do
       expect(described_class::Combinator).to be_a(Class)
@@ -252,7 +252,7 @@ RSpec.describe Lain::Context do
     end
   end
 
-  # T21: the render pipeline is an INJECTED collaborator, not a fixed class
+  # The render pipeline is an INJECTED collaborator, not a fixed class
   # method. A default Context (no pipeline:) must render byte-identically to the
   # hardcoded Reminder >> CacheBreakpoints, so injection is a pure seam and not a
   # behavior change. An injected combinator or ->(workspace) provider routes both
@@ -355,7 +355,7 @@ RSpec.describe Lain::Context do
     end
   end
 
-  # A1's mirror of #with_model: the copy-with that lets a per-turn source swap
+  # The mirror of #with_model: the copy-with that lets a per-turn source swap
   # the render strategy without the Context's owner rebuilding it from parts.
   describe "#with_pipeline" do
     let(:built) do
@@ -399,7 +399,7 @@ RSpec.describe Lain::Context do
       expect(built.with_pipeline(Lain::Context::Prune.new(keep_last: 1))).to be_deeply_frozen
     end
 
-    # AC5, and the trap it exists for: `model:` in a copy-with must be the
+    # The trap this exists for: `model:` in a copy-with must be the
     # STORED slot, never the `#model` reader -- the reader unwraps to
     # `.current`, so writing it here would freeze a live ModelSwitch at the
     # value it happened to hold and silently break `/model` from the next turn
@@ -415,10 +415,10 @@ RSpec.describe Lain::Context do
       expect(copy.model).to eq("claude-haiku-4-5")
     end
 
-    # #with_pipeline is a write, and A6 needs the matching READ: to compose
-    # Compact AHEAD of whatever this Context would otherwise render through, it
-    # must be able to ask. #pipeline_for is that read, and it is public for
-    # exactly this round trip.
+    # #with_pipeline is a write, and a per-turn source needs the matching READ:
+    # to compose Compact AHEAD of whatever this Context would otherwise render
+    # through, it must be able to ask. #pipeline_for is that read, and it is
+    # public for exactly this round trip.
     describe "the read that closes the loop -- #pipeline_for" do
       it "round-trips: reading the effective pipeline and writing it back changes nothing" do
         same = built.with_pipeline(built.pipeline_for(Lain::Workspace.empty))
@@ -498,7 +498,7 @@ RSpec.describe Lain::Context do
     end
   end
 
-  # T17. A compacting turn renders through a pipeline whose first stage
+  # A compacting turn renders through a pipeline whose first stage
   # substitutes the derived chain, so #render's own projection of the timeline is
   # built, walked over the whole Store, and thrown away unread. It is skipped
   # now, and what must not move is the BYTES: skipping a projection nothing reads
@@ -534,7 +534,7 @@ RSpec.describe Lain::Context do
         .to eq(%w[user assistant user])
     end
 
-    # T17 review fix 1. The question #render asks a pipeline widened; the DUCK it
+    # The question #render asks a pipeline widened; the DUCK it
     # accepts did not. Silence means "reads its messages", so an object that
     # answers only the documented `#call`/`#requires` pair still renders, and a
     # stage opts out of the projection only by claiming the saving itself.

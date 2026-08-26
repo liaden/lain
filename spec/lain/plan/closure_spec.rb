@@ -3,7 +3,7 @@
 require "stringio"
 require "tmpdir"
 
-# PC-2: a step-closure record derived ENTIRELY from content-addressed sources --
+# A step-closure record derived ENTIRELY from content-addressed sources --
 # step id/title/status from the plan, criteria pass/fail from the Grade, files +
 # blob digests from the snapshot at the seam, and the chunk's turn digests as the
 # elided span (they stay in the Store, attested but un-rendered). No model is

@@ -2,20 +2,20 @@
 
 module Lain
   module CLI
-    # T18, the M4-2 headline: an edited lain://request actually REACHING the
+    # An edited lain://request actually REACHING the
     # provider. {Frontend::Neovim}'s resend worker -- after journaling the
     # {Telemetry::RequestResent} projection and pushing it to the views --
     # offers the rebuilt {Request} here, and this CLI-owned object is the only
     # thing that touches the Agent: the frontend stays subscribe-only, exactly
     # as its own header promises.
     #
-    # The dispatch is T4's sanctioned entry -- quiesce, {Agent#rewind} (drop
+    # The dispatch is the sanctioned entry -- quiesce, {Agent#rewind} (drop
     # the turn the baseline request produced; the old head stays reachable in
     # the Store, a speculative fork, never a rewrite), queue into the Agent's
     # {Agent::RequestOverride} slot via its public reader, {Agent#run} -- with
     # three deliberate refinements:
     #
-    # * The QUIESCENCE gate lives here, per the T4 panel: the override seam
+    # * The QUIESCENCE gate lives here by review decision: the override seam
     #   itself permits mid-turn interposition, so refusing a mid-flight resend
     #   is this bridge's mandate. The gate is re-checked UNDER the agent's
     #   dispatch lock ({Agent#dispatch_lock}), because the bridge runs on the
@@ -28,7 +28,7 @@ module Lain
     #   (the agent is quiescent under the lock, nothing consumes the slot in
     #   between), and a mis-wired agent -- {Agent::RequestOverride::None}
     #   refuses #queue loudly -- then fails before the Timeline moves.
-    # * The rewind is JOURNALED FIRST, through {Chronicle#rewound} (T15's
+    # * The rewind is JOURNALED FIRST, through {Chronicle#rewound} (the
     #   record-first rewind seam). The dispatch forks: it rewinds below the
     #   last exchange and commits the edit's response as a new turn, which the
     #   live session record's {SessionRecord::Scribe} would reject at write
@@ -48,11 +48,11 @@ module Lain
     # pre-wire failure (the queue, rewind, or record raised before the run --
     # nothing left the process) from a wire failure (the run raised -- the
     # send may have landed once): claiming provider ambiguity for a failure
-    # that provably never sent is the dishonesty S1 fixes.
+    # that provably never sent is the dishonesty this distinction fixes.
     class ResendBridge
       # The default upfront-attempt hook: an attempt that fires the moment the
       # gate passes and BEFORE the round trip, so a human is told an attempt is
-      # under way rather than watching an idle diff while the wire blocks (S2).
+      # under way rather than watching an idle diff while the wire blocks.
       # A no-op by default; the frontend wires a render.
       NO_ATTEMPT = -> {}
 
@@ -74,7 +74,7 @@ module Lain
       # all (see {Frontend::Neovim::Unbridged}).
       # @param on_attempt [#call] fired once, under the lock, when the gate
       #   passes and just before the round trip -- the "an attempt is being
-      #   made" upfront notice (S2). Never fired on a refusal.
+      #   made" upfront notice. Never fired on a refusal.
       # @yieldreturn [Lain::Request] the edited request, rebuilt
       # @return [String] a notice for the editor: dispatched, refused, or failed
       def offer(on_attempt: NO_ATTEMPT, &build)
@@ -137,7 +137,7 @@ module Lain
 
       # Stage the edit and retreat the record to the rewound head. Journaling
       # the rewind BEFORE the diverging commit is what keeps the live scribe
-      # from raising {SessionRecord::Scribe::Diverged} (B1): #rewound retreats
+      # from raising {SessionRecord::Scribe::Diverged}: #rewound retreats
       # the written chain to the post-rewind head, so the next catch_up
       # extends it. Read the head AFTER the rewind -- that digest is the turn
       # the record already wrote and now rewinds to.

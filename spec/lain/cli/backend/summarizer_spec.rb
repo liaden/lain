@@ -6,9 +6,9 @@
 #
 # The two `#tier` methods on this object and on {Lain::CLI::Backend::SpanSummarizer}
 # call the same `#summarizer_provider` with deliberately OPPOSITE `queue:`
-# answers, and collapsing that distinction is F26's own mechanism: the eager
-# oracle would start waiting on the turn that produced the tool result it is
-# summarizing. So both are pinned, each in its own file.
+# answers, and collapsing that distinction is the defect's own mechanism: the
+# eager oracle would start waiting on the turn that produced the tool result it
+# is summarizing. So both are pinned, each in its own file.
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module SummarizerSpecSupport
@@ -55,7 +55,7 @@ RSpec.describe Lain::CLI::Backend::Summarizer do
   def requests = journal.events.grep(Lain::Telemetry::RequestSent)
 
   describe "the record an eager summary leaves" do
-    # F28's own acceptance criterion: the round trip an oracle spends is
+    # The acceptance criterion: the round trip an oracle spends is
     # invisible in the Journal today, because Oracle::Model calls #complete
     # directly and no middleware stack sits anywhere near it.
     it "journals a request_sent whose digest is the request the tier actually sent" do
@@ -101,10 +101,10 @@ RSpec.describe Lain::CLI::Backend::Summarizer do
   # journal's observable shape, not a restatement of it.
   #
   # `oracle/eager.rb` said for a long time that a failed fire "journals nothing
-  # (a journaling tier never reached its write)". Recording the request (F28)
+  # (a journaling tier never reached its write)". Recording the request
   # made that false: {Lain::Provider::Journaled} cuts its record BEFORE dispatch,
   # while the capacity gate sits INSIDE `Ollama#complete` (`ollama.rb:188`). So a
-  # summary skipped for capacity -- F26's own case -- now leaves an attempt where
+  # summary skipped for capacity -- that very case -- now leaves an attempt where
   # it used to leave silence. Two doctrine comments were false with nothing red
   # to catch them, which is the exact shape this work exists to end; they are
   # corrected, and this is what would go red if they drifted back.

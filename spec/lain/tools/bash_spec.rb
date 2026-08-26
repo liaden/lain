@@ -163,7 +163,7 @@ RSpec.describe Lain::Tools::Bash do
       end
     end
 
-    # WorkerEnv is an OVERRIDE, not confinement (B3's foundation): mixlib applies
+    # WorkerEnv is an OVERRIDE, not confinement: mixlib applies
     # `environment:` per-key onto the child's already-inherited ENV and never
     # clears it, so a host var the injected env omits still reaches the command.
     # This pins that true behavior -- probe tmp/b1-probes/env_semantics.rb.
@@ -205,7 +205,7 @@ RSpec.describe Lain::Tools::Bash do
       end
     end
 
-    # F45, end to end through the tool the model actually calls. lain runs under
+    # End to end through the tool the model actually calls. lain runs under
     # `bundle exec`, so WorkerEnv.default carries BUNDLE_GEMFILE naming LAIN's
     # own Gemfile -- and a child that inherits it resolves lain's bundle instead
     # of the project it was pointed at. Lain::Exec is where that is taken away;
@@ -326,7 +326,7 @@ RSpec.describe Lain::Tools::Bash do
     end
   end
 
-  # T5: a command's output is a whole artifact -- its first N bytes read like
+  # A command's output is a whole artifact -- its first N bytes read like
   # the answer and are not -- so an oversized one is REFUSED, and the refusal
   # keeps the one fact truncation would have kept: the exit status.
   #
@@ -394,7 +394,7 @@ RSpec.describe Lain::Tools::Bash do
       expect(result.content).to include("exit status: 0", "x" * 1024)
     end
 
-    # AC4, and the reason the bound is in .render_output rather than in either
+    # The reason the bound is in .render_output rather than in either
     # arm: the same oversized command through the term arm and the string arm
     # must refuse with the same bytes, exactly as a permitted one returns the
     # same bytes (the byte-identity example above).

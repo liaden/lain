@@ -35,8 +35,8 @@ RSpec.describe Lain::CLI::ReplMiddleware do
     File.write(path, body)
   end
 
-  # The session's one library, which every caller now hands over: T40 took
-  # `root:` off this module entirely, because it was only ever here to feed the
+  # The session's one library, which every caller now hands over: `root:` came
+  # off this module entirely, because it was only ever here to feed the
   # from-disk defaults -- and a from-disk default is the second read the whole
   # threading exists to remove.
   def library_for(root) = Lain::Skill::Library.load(root:)
@@ -80,9 +80,9 @@ RSpec.describe Lain::CLI::ReplMiddleware do
       end
     end
 
-    # T15 injected the catalog and the slots separately; T40 makes them one
-    # library, so dispatch, /help, Backend#context and Tools::RunSkill read one
-    # object rather than four reads of the same tree.
+    # The catalog and the slots used to be injected separately; they are one
+    # library now, so dispatch, /help, Backend#context and Tools::RunSkill read
+    # one object rather than four reads of the same tree.
     it "dispatches and renders through the INJECTED library, reading no disk of its own" do
       with_project do |root|
         library = library_for(root)

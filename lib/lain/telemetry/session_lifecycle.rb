@@ -2,7 +2,7 @@
 
 module Lain
   module Telemetry
-    # The session-record FORMAT's lifecycle events (T13): how a session ended,
+    # The session-record FORMAT's lifecycle events: how a session ended,
     # how one run inside it ended, and the non-turn Events promoted into it.
 
     # A session's final anchor, written by {SessionRecord::Scribe} on a graceful
@@ -26,7 +26,7 @@ module Lain
       # enclosing MODULE (Telemetry), not the Data class (the pinned Ruby trap the
       # Request::SYSTEM_PREFIX comment records).
 
-      # `:salvaged` (T18) is additive: no reader branches on a
+      # `:salvaged` is additive: no reader branches on a
       # {SessionClosed} reason's VALUE, only on its presence (that is what
       # tells {Bench::Session::Anchor} a session closed at all) and, here, on
       # membership in this list -- verified before adding it. It names a
@@ -62,9 +62,9 @@ module Lain
     # `reason` says WHICH stop it was, because the gap alone cannot: a run the
     # human interrupted, a fleet the shutdown window closed on, and a stream the
     # model stopped feeding all leave the identical hole, and only the first two
-    # are anybody's decision. Round 6's F26 -- a hung ask nobody could attribute
-    # from the file afterwards -- is that ambiguity, and this field is what makes
-    # the triage a read rather than a guess.
+    # are anybody's decision. A hung ask nobody could attribute from the file
+    # afterwards is exactly that ambiguity, and this field is what makes the
+    # triage a read rather than a guess.
     RunInterrupted = Data.define(:head, :reason) do
       include Journalable
 
@@ -110,8 +110,8 @@ module Lain
     # :message can never survive {Timeline#commit}'s digest re-derivation, so it
     # must not wear the `turn` shape). Field-pinned to what a later re-put into a
     # Store needs -- `payload` is the addressed body, `causal_parents` the
-    # backward edges a provenance walk descends -- carried as data here; T14 owns
-    # reconstructing the Store from it.
+    # backward edges a provenance walk descends -- carried as data here, and
+    # reconstructing the Store from it is a separate job this type does not do.
     Message = Data.define(:digest, :kind, :from, :to, :payload, :causal_parents, :correlation) do
       include Journalable
 

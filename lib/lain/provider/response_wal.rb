@@ -38,8 +38,8 @@ module Lain
     #
     # == One file, many fibers: no interleaved records, ever
     #
-    # T17w lets the main Agent and every subagent share ONE spool, and parallel
-    # subagents fan out as sibling async fibers that all reach this ONE file.
+    # The main Agent and every subagent share ONE spool, and parallel subagents
+    # fan out as sibling async fibers that all reach this ONE file.
     # Async fibers yield to the scheduler on socket IO, so two frames' writes
     # could interleave AT RECORD GRANULARITY -- and an interleaved record is
     # exactly the corruption {Reader} refuses ("bytes trail a terminator

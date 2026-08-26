@@ -23,11 +23,11 @@ module Lain
     # single `lnum` are each one position), so an `end_line` would be dropped at
     # the first hop while reading, in the sidecar, as though it had been honoured.
     #
-    # T23 ships `start_line`/`start_side` and a range annotation whose ends fall
-    # in different hunks. The moment it lands, this is the one place in the
-    # pipeline that cannot express a range GitHub accepts, and THAT is where the
-    # decision gets revisited -- not by a later reader discovering the paragraph
-    # above went stale.
+    # A later card ships `start_line`/`start_side` and a range annotation whose
+    # ends fall in different hunks. The moment it lands, this is the one place in
+    # the pipeline that cannot express a range GitHub accepts, and THAT is where
+    # the decision gets revisited -- not by a later reader discovering the
+    # paragraph above went stale.
     #
     # == A finding renders in its OWN diagnostic namespace
     #
@@ -40,8 +40,8 @@ module Lain
     # draws the same sign for a finding, for a human's blocker and for an LSP's
     # error, and the anchors namespace is shared, so clearing THAT drops both
     # records' positions at once. Both belong to `49_diagnostics.lua`
-    # (per-namespace `vim.diagnostic.config` is the fix), are ticketed against
-    # T17, and are latent until something wires findings into a buffer.
+    # (per-namespace `vim.diagnostic.config` is the fix), and are latent until
+    # something wires findings into a buffer.
     #
     # == Promotion is per-finding, and the gesture is an EDIT
     #
@@ -57,7 +57,7 @@ module Lain
     # human's text, held under the finding's address, so there is no state field
     # free to disagree with the words. The one closed set here -- the critique's
     # BLOCKER/SHOULD-FIX/NIT ranks -- is not restated either; {KINDS} DERIVES it
-    # from the two maps T17 already ships. Neither belongs in
+    # from the two maps {Projection::Diagnostics} already ships. Neither belongs in
     # `review/vocabulary.rb`, for {Placement}'s reason and one of its own: no
     # record journals a rank or a promotion, and a set in that file would have to
     # be edited to delete this capability.
@@ -68,9 +68,9 @@ module Lain
     # unit-index line in `lib/lain/review.rb`,
     # `prompt/templates/skill/critique/sidecar.md`, and the two lines of that
     # skill's `skill.md` that declare and render the hole.
-    # Nothing outside those names {Prefill}. Deleting T17's
-    # {Projection::Diagnostics} forces deleting this too: {KINDS} derives from
-    # its maps while this class body runs.
+    # Nothing outside those names {Prefill}. Deleting {Projection::Diagnostics}
+    # forces deleting this too: {KINDS} derives from its maps while this class
+    # body runs.
     class Prefill
       include Enumerable
 
@@ -225,10 +225,10 @@ module Lain
       end
 
       # The rank a critique writes, to the annotation kind a human's note would
-      # carry -- DERIVED through the two maps T17 already ships rather than
-      # restated as a third. A rank keeps its tier: whatever severity
-      # {Projection::Diagnostics::RANKS} puts BLOCKER on, this hands back the
-      # kind {Projection::Diagnostics::SEVERITIES} puts there.
+      # carry -- DERIVED through the two maps {Projection::Diagnostics} already
+      # ships rather than restated as a third. A rank keeps its tier: whatever
+      # severity {Projection::Diagnostics::RANKS} puts BLOCKER on, this hands back
+      # the kind {Projection::Diagnostics::SEVERITIES} puts there.
       #
       # Restating it would be the trap `review/vocabulary.rb` documents: two
       # independent declarations of one correspondence are free to disagree, and

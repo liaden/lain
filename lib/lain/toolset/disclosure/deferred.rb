@@ -3,7 +3,7 @@
 module Lain
   class Toolset
     class Disclosure
-      # The on-demand arm (T13): renders a searchable CATALOG upfront --
+      # The on-demand arm: renders a searchable CATALOG upfront --
       # each tool's name and a one-line description, never its input_schema --
       # and leaves the full schema to be fetched later, one tool at a time,
       # via {Lain::Tools::ToolSearch}.

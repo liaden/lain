@@ -27,7 +27,7 @@ module Lain
     # is not optional on ours: a tool_result that reached a reader was built
     # here, with all four keys, so a missing one is a builder bug rather than a
     # shape to tolerate -- and readers may raise on it instead of reading a
-    # failure as a success. The pre-T8 builder wrote all four keys too, so
+    # failure as a success. The earlier builder wrote all four keys too, so
     # Stores, journals, and fixtures recorded before this class existed read
     # exactly the same way.
     class ResultBlock

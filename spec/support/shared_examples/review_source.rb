@@ -254,7 +254,7 @@ RSpec.shared_examples "a review changeset source" do |config|
     end
   end
 
-  # The port's whole point after B2: what reaches a {Lain::Review::Changeset} is
+  # The port's whole point: what reaches a {Lain::Review::Changeset} is
   # MODEL VALUES, so nothing downstream has to hold bytes and a parser at once.
   describe "#files" do
     it "answers the model values a changeset reads, so nothing downstream parses anything" do

@@ -13,7 +13,7 @@
 -- preservation the folds rely on the common case -- and skips redraw work
 -- for free.
 --
--- b:lain_view_generation is the RENDERING STAMP (T16), and it is optional: a
+-- b:lain_view_generation is the RENDERING STAMP, and it is optional: a
 -- view whose gesture resolves through a Ruby-side line -> digest index sends
 -- one, every other view sends nothing and the buffer never gains the variable.
 -- lain://inbox is the only such view today. It matters because this buffer's

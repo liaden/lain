@@ -44,7 +44,7 @@ RSpec.describe Lain::Session do
     end
   end
 
-  # T22: the read-set distinguishes a WHOLE read from a partial one. A model
+  # The read-set distinguishes a WHOLE read from a partial one. A model
   # that saw only `<redacted:1>` and then writes the file clobbers every secret
   # in it, so `read?` answers true only for a complete read and
   # `partially_read?` names the other case -- letting a refusal say WHY rather
@@ -135,7 +135,7 @@ RSpec.describe Lain::Session do
     end
   end
 
-  # T15: a masked read is the one partial read that arrives AFTER a complete
+  # A masked read is the one partial read that arrives AFTER a complete
   # one. {Lain::Tools::ReadFile} records inside `#perform`, below the middleware
   # that decides to mask, so by the time masking is known the whole read is
   # already in the set -- and the set has no retraction, deliberately. So
@@ -187,7 +187,7 @@ RSpec.describe Lain::Session do
       end
     end
 
-    # The set T22 owns must not learn about masking: a caller able to spell
+    # The completeness set must not learn about masking: a caller able to spell
     # `complete: false` over a masked path would be able to spell "this read hid
     # nothing" over a read that hid something.
     it "is not reachable through record_read's completeness argument" do
@@ -226,7 +226,7 @@ RSpec.describe Lain::Session do
     end
   end
 
-  # T22 drives the REAL tools here rather than restating their preconditions,
+  # These drive the REAL tools rather than restating their preconditions,
   # so the assertion is about the contract `edit_file`/`write_file` actually
   # declare. The file's bytes are asserted too: a refusal that did not in fact
   # protect the contents would otherwise pass on `is_error` alone.
@@ -260,7 +260,7 @@ RSpec.describe Lain::Session do
     # Only the exception CLASS is pinned, not its wording: the current message
     # still says "never read", which is the thing `partially_read?` exists to
     # let a refusal stop claiming. Sharpening it belongs with the middleware
-    # that knows the read was redacted (T15), not here.
+    # that knows the read was redacted, not here.
     it "fails edit_file's precondition after a partial read, leaving the file untouched" do
       edit_after(false) do |attempt, contents|
         expect { attempt.call }.to raise_error(Lain::Tool::ContractViolation)
@@ -317,7 +317,7 @@ RSpec.describe Lain::Session do
     end
   end
 
-  # T7: the base a relative path resolves against is the SESSION's worker cwd,
+  # The base a relative path resolves against is the SESSION's worker cwd,
   # not the process's. Under isolation the two differ, so a Dir.pwd-relative
   # record names a file the session never read.
   describe "path identity under a worker cwd that is not the process directory" do
@@ -381,7 +381,7 @@ RSpec.describe Lain::Session do
     end
   end
 
-  # T7: the edit-before-read contract resolves through the same worker cwd, so
+  # The edit-before-read contract resolves through the same worker cwd, so
   # the spelling the model happens to send cannot defeat it.
   describe "the edit contract across spellings", :seam do
     it "satisfies edit_file's precondition for a relative path read absolutely" do
@@ -493,7 +493,7 @@ RSpec.describe Lain::Session do
       expect(session.reminders).to eq([])
     end
 
-    # AC5: composition is deterministic -- two reads with no writes between
+    # Composition is deterministic -- two reads with no writes between
     # them are byte-identical, each block appears exactly once, and the todo
     # block precedes the manifest block.
     it "composes todos then manifest deterministically, each block exactly once" do
@@ -543,7 +543,7 @@ RSpec.describe Lain::Session do
       expect(null.reads).to eq([])
     end
 
-    # T22: the completeness duck too, so a tool holding a Null never has to
+    # The completeness duck too, so a tool holding a Null never has to
     # guard before asking. Records nothing, so it reports NEITHER read nor
     # partially read -- the "no read at all" answer, for every path.
     it "keeps the completeness duck a no-op: a partial read records nothing either" do
@@ -573,7 +573,7 @@ RSpec.describe Lain::Session do
       expect(described_class.instance).to be(null)
     end
 
-    # T7: one frozen instance cannot capture a directory that moves under it,
+    # One frozen instance cannot capture a directory that moves under it,
     # so its worker_env is recomputed per call and a bare tool still resolves
     # against the LIVE process directory.
     it "keeps tracking the process directory across a Dir.chdir" do
@@ -587,7 +587,7 @@ RSpec.describe Lain::Session do
     end
   end
 
-  # T16: the decorator that journals a real Session's reads/todos while
+  # The decorator that journals a real Session's reads/todos while
   # leaving Session itself with no journal in sight (every example above this
   # block constructs a plain Session and never mentions one).
   describe Lain::Session::Journaled do
@@ -638,7 +638,7 @@ RSpec.describe Lain::Session do
       end
     end
 
-    # T7: the decorator must journal the string the READ-SET holds. It has no
+    # The decorator must journal the string the READ-SET holds. It has no
     # cwd of its own, so it takes the wrapped session's -- otherwise the
     # Journal (the experiment record) names a different file than #read? does.
     context "when the wrapped session's worker cwd is not the process directory" do
@@ -648,8 +648,8 @@ RSpec.describe Lain::Session do
       # Asserted as BYTE-identity, not as `read?(recorded)`: `read?`
       # re-normalizes its argument, so it would answer true for any spelling
       # that merely resolves to the same file, and a decorator journaling a
-      # DIFFERENT string than the read-set holds would still pass. T22 gave the
-      # read-set its own `#reads` window, so this compares against the very set
+      # DIFFERENT string than the read-set holds would still pass. The read-set
+      # has its own `#reads` window, so this compares against the very set
       # under discussion rather than borrowing the write-set's mirror.
       it "journals the very string the read-set holds, not merely a spelling of it" do
         journaled.record_read("notes.md")
@@ -694,7 +694,7 @@ RSpec.describe Lain::Session do
       expect(Lain::Telemetry::SessionRead.new(path: "/tmp/a.rb", complete: false).complete).to be(false)
     end
 
-    # T22: the decorator journals a read-set STATE TRANSITION, not a call. The
+    # The decorator journals a read-set STATE TRANSITION, not a call. The
     # dedupe that keeps a read/edit loop from emitting one line per iteration
     # has to survive the completeness bit, and each surviving line has to say
     # WHICH thing the model saw.

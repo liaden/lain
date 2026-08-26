@@ -35,7 +35,7 @@ module Lain
       end
     end
 
-    # Every compaction's full accounting (CAC-6): WHY it fired (`trigger`,
+    # Every compaction's full accounting: WHY it fired (`trigger`,
     # the {Compaction::Need} signals that were live) and WHAT cache state the
     # scheduler read (`cache_state`), so {Compare} can attribute a cost delta
     # to the scheduling policy rather than to the summarizer itself.
@@ -44,7 +44,7 @@ module Lain
     # decision only ever reaches `:cold` or `:forced` here: an unforced warm
     # decision always DEFERS (see {Compaction::Scheduler#evaluate}) and never
     # reaches a journal at all. `:warm` completes the enum for a reader who
-    # expects the full CAC-6 vocabulary; it is not a value this scheduler
+    # expects the full vocabulary; it is not a value this scheduler
     # emits today.
     #
     # `bytes_before`/`bytes_after` are the SAME canonical-byte-length proxy
@@ -55,7 +55,7 @@ module Lain
     # for that unit because they were not before, and it cost a reader:
     # `tokens_before / window_tokens` read 80% occupancy against a session every
     # other reader put at 32%, because the numerator counted BYTES and the
-    # denominator provider-measured TOKENS (QA round 5, UX5). `head_bytes` on
+    # denominator provider-measured TOKENS (QA round 5). `head_bytes` on
     # {Compaction::Source}'s sibling record already named the unit honestly;
     # this record is the one that did not.
     #
@@ -94,8 +94,8 @@ module Lain
     # with, both figures zero, a legitimate configuration.
     #
     # After a `/model` switch the scheduler's construction-time price and the
-    # tier that actually ran come apart (C1 made the compaction WINDOW follow
-    # the live model per turn; the price lookup did not follow it). C2 settles
+    # tier that actually ran come apart: the compaction WINDOW follows the live
+    # model per turn, and the price lookup did not follow it. This record settles
     # that by REFUSING: both cost figures are then nil -- absent, not zero --
     # and `model` names the tier the compaction actually ran under, the only
     # fact left that a reader can use. `PriceBook`'s refusal to price an
@@ -119,9 +119,9 @@ module Lain
     # would have changed the bytes an unpriced run has always journaled --
     # `model` going from nil to a model id beside the same two zeros, for a
     # configuration where no quote was ever made or invalidated. Byte-identity
-    # for the untouched state won. The visible seam is that AC2's "still names
-    # the model it ran under" holds for a REFUSAL and not for an unpriced run,
-    # where `ran_under` is known and deliberately discarded.
+    # for the untouched state won. The visible seam is that the "still names the
+    # model it ran under" contract holds for a REFUSAL and not for an unpriced
+    # run, where `ran_under` is known and deliberately discarded.
     #
     # Held as fixed-point decimal STRINGS, not `BigDecimal`: `Canonical.normalize`
     # deliberately does not support `BigDecimal` (it has no canonical wire
@@ -139,7 +139,7 @@ module Lain
     # {Compaction::EAGER_CONTROL_ARM} for a run that never set the flag. It is
     # a SEPARATE axis from {ContextDerived#strategy}, which names the
     # DERIVATION CLASS that ran, not the collapse policy behind it -- the same
-    # UX5 hazard the byte/token rename above paid for once already, one field
+    # hazard the byte/token rename above paid for once already, one field
     # short of two units sharing one name. `collapse_strategy` is the name
     # this record owns; `strategy` stays the other record's.
     #
@@ -219,8 +219,8 @@ module Lain
       # What a caller passes for `collapse_strategy` when a run never set
       # `--compact-strategy` -- see the header for why that is a real policy
       # (the eager tool-result tier) and not an absence of one, and so
-      # deliberately not nil. T5/T6's wiring reads this; nothing in this file
-      # constructs a record against it.
+      # deliberately not nil. The compaction wiring reads this; nothing in this
+      # file constructs a record against it.
       EAGER_CONTROL_ARM = "eager"
     end
   end

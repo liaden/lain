@@ -38,7 +38,7 @@ module Lain
 
       # One provisioned service's outcome: the env var it injects, the URL that
       # var takes, and the release that reclaims it. `service_name` is the
-      # journalable identity (B6) -- paired with the worker key, NEVER the URL.
+      # journalable identity -- paired with the worker key, NEVER the URL.
       Provisioned = Data.define(:service_name, :env_var, :url, :release)
 
       # The lease-time imperative capabilities a service provisions against: run a

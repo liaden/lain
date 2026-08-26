@@ -2,20 +2,20 @@
 
 module Lain
   class Supervisor
-    # Replay-restart (W4, OM-6's flagship): a killed actor resumed from its own
-    # session record. Supervision-as-replay IS M2 session resume -- the record
-    # replays through {Bench::Session::Loader}'s verified re-commit (every turn
-    # re-derives its content address against the recorded one; never a second
-    # replay implementation), the workspace comes back through W2's
-    # {Workspace::Restore} from the LAST recorded :snapshot, and the revived
-    # actor is adopted under the {Supervisor}. Zero provider calls occur on
-    # this path: replay is re-commit, restore is blob fetch, and the revival
-    # block only SEEDS an agent at the replayed head -- {CLI::Resume}'s
-    # no-respend property, on the supervision axis.
+    # Replay-restart: a killed actor resumed from its own session record.
+    # Supervision-as-replay IS session resume -- the record replays through
+    # {Bench::Session::Loader}'s verified re-commit (every turn re-derives its
+    # content address against the recorded one; never a second replay
+    # implementation), the workspace comes back through {Workspace::Restore}
+    # from the LAST recorded :snapshot, and the revived actor is adopted under
+    # the {Supervisor}. Zero provider calls occur on this path: replay is
+    # re-commit, restore is blob fetch, and the revival block only SEEDS an
+    # agent at the replayed head -- {CLI::Resume}'s no-respend property, on
+    # the supervision axis.
     #
-    # == The workspace-blob sidecar (closing W1's stated persistence gap)
+    # == The workspace-blob sidecar (closing the persistence gap)
     #
-    # The Store is in-memory, so W1's snapshot BLOB bytes died with the killed
+    # The Store is in-memory, so the snapshot BLOB bytes died with the killed
     # process: the :snapshot EVENT journals (a {Telemetry::Message} through the
     # scribe observer chain) but its payload only NAMES each file's bytes by
     # content address. {JournalBlobs} closes that gap on the JOURNAL side --
@@ -65,7 +65,7 @@ module Lain
       #   adopted under; {Supervisor#adopt} refuses loudly when it is not
       # @param journal [#<<] where the "restarted" record lands
       # @param root [String] where the snapshot's root-relative keys restore --
-      #   the recorded root is provenance, never authority (W2's ruling)
+      #   the recorded root is provenance, never authority
       # @param force [Boolean] waive {Workspace::Restore}'s dirty check, so
       #   post-crash out-of-band bytes are clobbered instead of refused; never
       #   the confinement
@@ -122,9 +122,9 @@ module Lain
         @journal << Restarted.new(role:, head: recording.timeline.head_digest, snapshot: snapshot&.digest)
       end
 
-      # THE M2 code path: {Bench::Session::Loader}'s verified replay over the
-      # already-materialized records (its own entries duck) -- re-commit plus
-      # digest check, no provider anywhere.
+      # THE session-resume code path: {Bench::Session::Loader}'s verified
+      # replay over the already-materialized records (its own entries duck) --
+      # re-commit plus digest check, no provider anywhere.
       #
       # A journal that lost bytes is exactly the failure this class exists to
       # survive, so the refusal is ATTRIBUTED here rather than left as whatever
@@ -185,7 +185,7 @@ module Lain
         recording.messages.reverse.find { |event| event.kind == :snapshot }
       end
 
-      # W2's restore, driven at the log's last snapshot ({Workspace::
+      # The workspace restore, driven at the log's last snapshot ({Workspace::
       # Restore::ANY_TURN}); EscapesRoot/Dirty/PartialApply semantics are its,
       # untouched. Skipped -- loudly -- when the record cannot back the
       # snapshot with bytes (a pre-sidecar journal).
@@ -215,7 +215,7 @@ module Lain
       # registers nothing.
       # RETENTION: the fresh lease this revival acquires is reclaimed at the
       # supervisor's #stop. A restart is a NEW adoption under a NEW worker_id
-      # (the supervisor allocates one per adoption), so B2's same-id reap never
+      # (the supervisor allocates one per adoption), so the same-id reap never
       # fires across restarts; what keeps N crash-restarts from leaving N stale
       # worktrees standing is {Supervisor#reap_crashed}, which SURRENDERS the
       # dead worker's lease -- its commits anchored under refs/lain/worker/
@@ -257,7 +257,7 @@ module Lain
       # Stateful like {Workspace::Snapshot}'s last-files skip, and for the
       # mirrored reason: "which blobs did this writer already journal" is
       # writer state, not log content. The dedup set is also what keeps the
-      # W1 review caveat (the ChainWriter observer fires even when the Store
+      # review caveat (the ChainWriter observer fires even when the Store
       # dedups a re-put) from doubling blob records.
       #
       # == Journal growth, stated honestly (review probe c)
@@ -292,8 +292,8 @@ module Lain
 
         # The {Event::ChainWriter} observer duck. A raise here propagates like
         # the scribe's own (the seam's pinned contract): a blob that could not
-        # be journaled is silent checkpoint loss, the failure class W4 exists
-        # to close.
+        # be journaled is silent checkpoint loss, the failure class
+        # replay-restart exists to close.
         #
         # @param event [Event]
         # @return [self]

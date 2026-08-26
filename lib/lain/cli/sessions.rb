@@ -14,7 +14,7 @@ module Lain
       end
 
       # @param all [Boolean] include ephemeral (`.btw.ndjson`) sessions; the
-      #   default view is the durable record only (T3) -- promotion is a
+      #   default view is the durable record only -- promotion is a
       #   rename, so a kept session simply starts matching
       # @return [String] one line per session, newest first; or the honest
       #   empty state naming the directory searched
@@ -85,7 +85,7 @@ module Lain
         # zero-byte file silently mislabelled "unreadable" -- the exact
         # confusion this row was split to end. `skipped:` is required for the
         # same reason -- a default would let a caller forget it and reintroduce
-        # F6's silence.
+        # the silence about skipped lines.
         def initialize(name:, records:, empty:, skipped:)
           @name = name
           @records = records
@@ -110,7 +110,7 @@ module Lain
 
         private
 
-        # F6: Journal.records' skip-foreign-bytes contract (journal.rb:131-136)
+        # Journal.records' skip-foreign-bytes contract (journal.rb:131-136)
         # is sound -- the fd can be shared with Rust tracing spans -- but applied
         # to lain's OWN torn record it left a damaged session looking intact:
         # same header, same status, one turn short under an unmoved head digest.

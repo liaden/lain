@@ -2,7 +2,7 @@
 
 require "open3"
 
-# T20: FleetWindows -- a `#<<` tee sink (StatusFeed's observe pattern) that
+# FleetWindows -- a `#<<` tee sink (StatusFeed's observe pattern) that
 # turns :spawn records into tmux windows running `lain watch <digest>`, and
 # terminal Message records (an actor's "stopped" farewell, a one-shot's
 # result) into a done marker on the window title. The sink ONLY enqueues;
@@ -237,9 +237,10 @@ RSpec.describe Lain::CLI::FleetWindows do
 
     # The failure paths never journal a TurnUsage -- the panel's F-notice-loss
     # probe: a burst followed by Ctrl-C (RunInterrupted) or a close
-    # (SessionClosed) stranded the held WindowsCapped forever, AC3's own
-    # prohibition. Both closers are boundaries now, and the teardown drain is
-    # the last-resort release when NO boundary record ever reached this sink.
+    # (SessionClosed) stranded the held WindowsCapped forever, and a held
+    # notice must always be released. Both closers are boundaries now, and the
+    # teardown drain is the last-resort release when NO boundary record ever
+    # reached this sink.
     describe "boundaries on the failure paths" do
       it "releases the held notice at a RunInterrupted boundary, exactly once" do
         burst(6)

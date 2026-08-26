@@ -119,7 +119,7 @@ RSpec.describe Lain::Frontend::Neovim::Resender do
   describe "the upfront attempt notice" do
     let(:bridge) { ResenderSpecSupport::FakeBridge.new(announce: true) }
 
-    # S2: the human is told an attempt is under way rather than watching an idle
+    # The human is told an attempt is under way rather than watching an idle
     # diff while the wire blocks.
     it "renders the attempt line when the bridge fires its hook" do
       resender.deliver(resent)

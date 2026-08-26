@@ -3,7 +3,7 @@
 module Lain
   module CLI
     module Command
-      # `/rewind [N|digest]` (T15): move the live session backward with zero
+      # `/rewind [N|digest]`: move the live session backward with zero
       # model turns. The machine moves in place through the already-public
       # {Agent#rewind}; the move lands in the session record as an additive
       # `rewound` record ({Chronicle#rewound} -> {SessionRecord::Scribe#rewound}),
@@ -12,7 +12,7 @@ module Lain
       # changes nothing -- not the machine, not the file.
       #
       # The digest form resolves a prefix against THIS session's own render
-      # chain, under T3's ForkPoint rules: hex-only below a full "blake3:"
+      # chain, under the ForkPoint rules: hex-only below a full "blake3:"
       # scheme (a partial scheme spelling would match every digest through the
       # scheme string), unique or refuse. It cannot reuse {ForkPoint} itself,
       # which resolves against a FILE's recorded turns -- here the authority
@@ -108,7 +108,7 @@ module Lain
         # reason stands on its own and is why this guard is here.
         #
         # What it no longer shares is the REMEDY, and the difference is not
-        # drift. Since T3 a loaded session repairs this shape instead of
+        # drift. A loaded session now repairs this shape instead of
         # refusing it, so the older second reason given here -- that the
         # journaled file would refuse to resume through the very guard this
         # command skipped -- is no longer true; it would repair and resume.
@@ -139,7 +139,7 @@ module Lain
           [valid.reverse.find { |candidate| candidate < count }, valid.find { |candidate| candidate > count }].compact
         end
 
-        # T3's ForkPoint rule, restated over the live chain: hex-only below a
+        # The ForkPoint rule, restated over the live chain: hex-only below a
         # full "blake3:" prefix, so a partial scheme spelling ("b", "bla")
         # cannot match every digest through the scheme string.
         def match?(digest, prefix)

@@ -124,7 +124,7 @@ RSpec.describe Lain::Review::Partition do
     end
   end
 
-  # The registry, and the property A3 builds its scope resolution on: one
+  # The registry, and the property scope resolution is built on: one
   # instance per strategy, so a resolved scope can be compared or cached.
   describe "the registry of shipped strategies" do
     subject(:registry) { described_class::STRATEGIES }

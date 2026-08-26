@@ -3,7 +3,7 @@
 require "json"
 require "tmpdir"
 
-# T19: `lain sessions` -- an honest listing of this project's recorded
+# `lain sessions` -- an honest listing of this project's recorded
 # sessions, newest first. Derivation only reads the records (header, turn
 # count, closer, resumed_from); it never re-verifies the Merkle chain, which
 # is the Loader's job at resume time. Returns a String; only the frontend
@@ -89,7 +89,7 @@ RSpec.describe Lain::CLI::Sessions do
       end
     end
 
-    # T3: ephemerality lives in the FILENAME (<ts>-<pid>.btw.ndjson), so the
+    # Ephemerality lives in the FILENAME (<ts>-<pid>.btw.ndjson), so the
     # listing's default view is the durable record only; --all is the honest
     # escape hatch, and promotion (a rename) moves a file between the two
     # views with no record rewritten.
@@ -141,7 +141,7 @@ RSpec.describe Lain::CLI::Sessions do
       expect(sessions.listing).to include("20260101T000000-1.ndjson", "unreadable")
     end
 
-    # T3 fix round: both are headerless, but they have different causes and
+    # A fix round: both are headerless, but they have different causes and
     # different fixes -- a zero-byte file is Journal.open's artifact from a
     # chat that died before its header, while an unreadable one holds bytes
     # nobody can load. Calling the empty one "unreadable" sends a reader
@@ -168,14 +168,15 @@ RSpec.describe Lain::CLI::Sessions do
       expect(sessions.listing).not_to match(/20260103T000000-1\.ndjson.*unreadable/)
     end
 
-    # F6/T7: Journal.records' skip-foreign-bytes contract (journal.rb:131-136)
+    # Journal.records' skip-foreign-bytes contract (journal.rb:131-136)
     # is sound -- the fd can be shared with Rust tracing spans -- but applied to
     # lain's OWN torn record it left a damaged session looking intact: the same
     # header, the same "open"/"closed" status, just one turn short under an
-    # unmoved head digest. These three examples are T7's Gherkin ACs verbatim.
-    # "unparsed", not "torn": the row states exactly what was measured (a line
-    # that did not parse), not a cause it cannot know -- a single blank line
-    # in an otherwise-perfect session is unparsed, not corruption.
+    # unmoved head digest. These three examples are the acceptance criteria
+    # verbatim. "unparsed", not "torn": the row states exactly what was
+    # measured (a line that did not parse), not a cause it cannot know -- a
+    # single blank line in an otherwise-perfect session is unparsed, not
+    # corruption.
     it "reports how many lines a torn turn record cost, among otherwise-valid records" do
       turn_records = chain("one", "two").to_a.map { |turn| Lain::SessionRecord.turn(turn) }
       lines = [
@@ -234,7 +235,7 @@ RSpec.describe Lain::CLI::Sessions do
     end
   end
 
-  # F6/T7 review fix: LineCount is a public constant with a public
+  # A review fix: LineCount is a public constant with a public
   # attr_reader, and `include Enumerable` promises `#each` is safe to drive
   # more than once -- so `lines_read` must describe only the MOST RECENT walk,
   # never an accumulation across walks. Not reachable through `Row.for` today

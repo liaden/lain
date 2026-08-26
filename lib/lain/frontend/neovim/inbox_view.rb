@@ -11,7 +11,7 @@ require_relative "inbox_view/row"
 module Lain
   module Frontend
     class Neovim
-      # The human inbox as a projection (I6): lain://inbox IS
+      # The human inbox as a projection: lain://inbox IS
       # {Event::Projection#pending}("human") rendered -- {Buffers}' fourth
       # view, PULL-shaped like its siblings, fed the two record shapes the
       # telemetry tee actually carries:
@@ -252,7 +252,7 @@ module Lain
         # @return [Opened]
         def answering(line, generation:) = @slot.synchronize { @gestures.answering(line, generation) }
 
-        # The ADVANCE (T16): the human just submitted a document, so open the
+        # The ADVANCE: the human just submitted a document, so open the
         # next set they have to answer -- of those still pending, the one this
         # view lists FIRST, which is the one they would have pressed enter on.
         # No line and no rendering, because this gesture is not a cursor: it is
@@ -385,8 +385,8 @@ module Lain
 
         # The lines and the line -> digest index are ONE pass' two outputs, off
         # one walk of the ordered map: an index built by a SECOND walk would
-        # disagree with the rendering the first time either changed. What T12
-        # changed is the index's shape, not that rule -- {Renderings} holds one
+        # disagree with the rendering the first time either changed. Multi-line
+        # items changed the index's SHAPE, not that rule -- {Renderings} holds one
         # entry per LINE now, so an item may draw as many lines as its question
         # needs and every one of them names the set that drew it.
         def render
@@ -404,8 +404,8 @@ module Lain
         # THE TRAILER RULE, and it is structural rather than decoration:
         # `10_folds.lua` closes every fold at rest and then RE-OPENS the one
         # holding the buffer's LAST line, so a list whose last line belongs to
-        # the last item hands the human that item open, every time (T9 measured
-        # exactly this on lain://approval, which gets its trailer free from the
+        # the last item hands the human that item open, every time (this was
+        # measured on lain://approval, which gets its trailer free from the
         # keys it already drew). A line below the rows that starts a record of
         # its own is what absorbs that re-open -- and this one does start one,
         # on the pattern alone: the runtime's test is "not indented", and

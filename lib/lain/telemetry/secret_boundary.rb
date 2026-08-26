@@ -70,12 +70,12 @@ module Lain
       end
     end
 
-    # ANY tool call refused at the path boundary before the tool ran -- T12's
-    # denial path, and {WriteRefused}'s counterpart on the read side of the
+    # ANY tool call refused at the path boundary before the tool ran -- the path
+    # gate's denial path, and {WriteRefused}'s counterpart on the read side of the
     # house. `reason` names WHAT refused (a pattern name or a declined
     # judgment), never the file's bytes, matching {WriteRefused}'s discipline;
     # `path` is the deliberate widening documented on {Carriers::ReadRefused}.
-    # `path` is coerced with `to_s` because T12 plausibly hands this a
+    # `path` is coerced with `to_s` because the gate plausibly hands this a
     # `Pathname`, and an uncoerced one would leave the in-process field and the
     # journaled JSON string disagreeing.
     #
@@ -98,8 +98,8 @@ module Lain
       end
     end
 
-    # A `read` whose bytes were released with some regions masked -- T15's
-    # redaction path. `regions` and `released` are COUNTS, never the masked or
+    # A `read` whose bytes were released with some regions masked -- the
+    # read-masking path. `regions` and `released` are COUNTS, never the masked or
     # released bytes themselves: the same "name what matched, never the
     # matched bytes" discipline {WriteRefused} established for a full refusal,
     # extended here to a partial release. Coerced to `Integer` with `to_i`

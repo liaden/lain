@@ -16,7 +16,7 @@ module ConversationScopeSpecSupport
   end
 end
 
-# T33's answer to "which object owns the editor consumer's lifetime". Both the
+# The answer to "which object owns the editor consumer's lifetime". Both the
 # fleet's reactor and the editor's gesture rail outlive any one ask, and both
 # have to be stopped on EVERY exit from the conversation -- a parked fiber holds
 # the repl's Sync open forever, which is why every `.stop` in {Repl#respond}'s

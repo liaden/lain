@@ -59,8 +59,7 @@ module Lain
 
       # How long {.start} waits for the ping handshake before declaring the
       # daemon mute. Same spirit as {Child::CONNECT_BUDGET}: startup is always
-      # bounded; only settled, versioned {#call}s may wait indefinitely (the
-      # C1 carried seam).
+      # bounded; only settled, versioned {#call}s may wait indefinitely.
       HANDSHAKE_BUDGET = 2.0
 
       # Provision the wire through a {Transport}, then handshake. The transport

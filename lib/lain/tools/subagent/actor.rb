@@ -7,7 +7,7 @@ require "async/variable"
 module Lain
   module Tools
     class Subagent < Tool
-      # A long-lived actor subagent (OM-3): a supervised fiber over a child Agent
+      # A long-lived actor subagent: a supervised fiber over a child Agent
       # that persists across the parent's turns, exchanges attributed messages,
       # and ends under structured cancellation on {#stop}. Where the one-shot
       # {Subagent#perform} runs a child to a single result WITHIN one dispatch,
@@ -25,11 +25,11 @@ module Lain
       # `Sync` with no outer reactor, it would instead be bound to that one ask's
       # reactor -- so persistence across SEPARATE asks needs an orchestration
       # reactor above the Agent, which the Agent's per-call `Sync` does not
-      # provide. That wiring is the OM-6 supervisor's, not this card's.
+      # provide. That wiring is {Supervisor}'s, not this object's.
       #
       # == State rides on events, not on tool ivars
       #
-      # The T19 panel flagged that {Subagent}'s `@last_*` observability ivars are
+      # A review panel flagged that {Subagent}'s `@last_*` observability ivars are
       # a one-shot-only shape: concurrent actors would race them. So an actor
       # carries nothing on the tool -- each is its own object, and its record is
       # its mailbox {Event::Projection} over the shared {Log}. Its own fiber is
@@ -53,7 +53,7 @@ module Lain
         # the child's first commit gives its chain a correlation).
         attr_reader :address, :parent_correlation
 
-        # `registration` is the child's ask-the-human enrolment (T10), held
+        # `registration` is the child's ask-the-human enrolment, held
         # here because this object holds the child's LIFETIME: retention in
         # the {AskHuman::Directory} runs from `register` to `deregister` and
         # nothing else releases it, and {Supervisor#stop} reaches every row --
@@ -85,7 +85,7 @@ module Lain
         # already set `@failure` by the time launch returns.
         def launch(prompt)
           # "launched" marks the actor path only: a one-shot's :spawn keeps its
-          # pre-W3 bytes (Lineage#spawn's own comment), so ADDRESSES change
+          # original bytes (Lineage#spawn's own comment), so ADDRESSES change
           # only where the lifecycle marker exists to be read.
           @spawn = @lineage.spawn(@parent, lifecycle: "launched")
           @address = @spawn.digest

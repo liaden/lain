@@ -34,8 +34,8 @@ RSpec.describe "capability degradation on the chat path", :seam do
   def ndjson_stream = "#{stream_lines.map { |line| JSON.generate(line) }.join("\n")}\n"
 
   # The three questions a live chat asks its ollama transport. `process_status`
-  # is T10's: a wired chat asks `/api/ps` which window this server is SERVING
-  # before it builds the run's {Lain::ContextWindow} book, and a real ollama
+  # is the least obvious: a wired chat asks `/api/ps` which window this server
+  # is SERVING before it builds the run's {Lain::ContextWindow} book, and a real ollama
   # answers it -- so a canned transport standing in for one has to as well.
   # Nothing resident is what leaves {Lain::ContextWindow::CONSERVATIVE_FALLBACK}
   # in charge, which keeps every measurement in this file where it was.

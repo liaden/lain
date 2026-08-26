@@ -5,7 +5,7 @@ require "json"
 require "timeout"
 require "tmpdir"
 
-# I6: the human inbox. lain://inbox IS {Event::Projection#pending}("human")
+# The human inbox. lain://inbox IS {Event::Projection#pending}("human")
 # rendered -- a :message addressed to the human lists until a committed :turn
 # names its digest a causal parent (the delivery commit; see agent_spec's
 # "ask_human consumption" examples for the production emitter). A REPLY alone
@@ -181,11 +181,11 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
   end
 
-  # T15/ruling 12: `<CR>` (and `r`, repointed to it) opens the set the cursor
+  # Ruling 12: `<CR>` (and `r`, repointed to it) opens the set the cursor
   # sits on. The LINE is what rides back from the editor -- :LainPin's recorded
   # rule -- beside the one other thing that says WHICH rendering the human is
-  # looking at: the GENERATION this view stamped that rendering's buffer with
-  # (T16). Without it the view must guess between the rendering it just handed
+  # looking at: the GENERATION this view stamped that rendering's buffer with.
+  # Without it the view must guess between the rendering it just handed
   # out and the one still on screen, and guessing is how `<CR>` opens the
   # neighbour.
   describe "the line -> digest index" do
@@ -244,7 +244,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
   end
 
-  # T12's whole reason for existing: the index addresses by IDENTITY -- one
+  # The whole reason this exists: the index addresses by IDENTITY -- one
   # entry per LINE, built by the pass that drew the lines -- so a row may span
   # as many lines as its question needs and every one of them answers the set
   # it belongs to. Under position addressing this was the defect that kept the
@@ -306,7 +306,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       expect(editor.digests).to eq([questions[1].digest])
     end
 
-    # AC3, on the reading of "answered" this view is pinned to: a reply is a
+    # On the reading of "answered" this view is pinned to: a reply is a
     # :message and retires nothing, so the row stays and its NEIGHBOURS must
     # still open from every line they own.
     it "leaves every other item addressable when one has been answered" do
@@ -394,7 +394,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
   end
 
-  # The panel's index probe (.review-T15/index_probe.rb §3), ported. The render
+  # The panel's index probe, ported. The render
   # that removes a retired row is QUEUED, not landed -- `Neovim#post` hands it
   # to the render queue and the RPC thread writes it a tick later -- so between
   # the retire and the redraw the human is holding a rendering this view has
@@ -457,7 +457,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       expect(editor.opened).to be_empty
     end
 
-    # ⚠️ THE GATE (T15's panel probe, ported). The HEIGHT was a weak key and
+    # ⚠️ THE GATE (the panel probe, ported). The HEIGHT was a weak key and
     # this is the sequence that broke it: `[keep, drop]` -> retire keep ->
     # `[drop]` -> a third set arrives -> `[drop, third]`. The human is still
     # holding the FIRST rendering, which is two lines high -- and so is the
@@ -510,7 +510,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
   end
 
-  # T16: the advance, which is the submit's own continuation rather than a
+  # The advance, which is the submit's own continuation rather than a
   # cursor -- so it names no line and no rendering, and it must skip the set
   # just answered, because a reply retires nothing (the pinned consumption
   # rule) and that set is therefore still listed.
@@ -691,7 +691,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
   end
 
-  # The other half of a defect the TTY closed alone (T10): `event.from` is the
+  # The other half of a defect the TTY closed alone: `event.from` is the
   # asker chain's ROOT digest, and an `:inherit` child is `parent.fork`, so a
   # child and its parent share one PERMANENTLY. Two askers over ONE parent
   # chain is that situation exactly, and `:inherit` is the default posture for
@@ -725,7 +725,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
 
     # Ruling 3 stands where it was made -- the summary LINE still counts a
-    # set's further questions rather than growing a column for them. What T12
+    # set's further questions rather than growing a column for them. What
     # changed is what sits UNDER that line: the questions it counts, indented,
     # folded away at rest.
     it "names a set's further questions through the summary it already carried, not a new column" do
@@ -738,7 +738,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
   end
 
-  # T12. A question is PROSE, and this row folded it onto one line for a reason
+  # A question is PROSE, and this row folded it onto one line for a reason
   # that has since been removed: {Renderings} indexed digests by POSITION, so a
   # two-line row would have sent `<CR>` to a set the human did not choose. The
   # index is a line -> digest map now, one entry per LINE, so the row may grow
@@ -771,7 +771,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
 
     # THE FIXTURE GUARD, and it is not ceremony: every example below is about a
     # CUT, so a fixture that stopped eliding would leave them all passing over
-    # nothing. T9 shipped exactly that arrangement one review cycle ago.
+    # nothing. Exactly that arrangement shipped one review cycle ago.
     it "still reproduces the two cuts every example below depends on" do
       question = listing(long_question)
       lines = view.update(record(question))
@@ -885,7 +885,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
 
     # THE SENDER IS SCRUBBED TOO, and this is the field that had been the
-    # exception. A newline reaching a rendered line is the T17/F17 shape --
+    # exception. A newline reaching a rendered line is a known shape --
     # `nvim_buf_set_lines` refuses the write, the render rides as a notify, and
     # the buffer stops taking writes with nothing said. It also keeps the row
     # SHAPE trustworthy: both the runtime's record test and 70_inbox's row test
@@ -934,7 +934,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
   end
 
-  # THE TRAILER RULE (T9's, measured there rather than reasoned): `10_folds`
+  # THE TRAILER RULE (measured rather than reasoned): `10_folds`
   # closes every fold at rest and then RE-OPENS the one holding the buffer's
   # LAST line. A list whose last line belongs to the last item therefore hands
   # the human that item open, every time. lain://approval gets its trailer free
@@ -1008,12 +1008,12 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
 
     def inbox_count = JSON.parse(File.read(path)).fetch("inbox_count")
 
-    # HOW MANY QUESTIONS THE VIEW RENDERS -- the quantity AC2 names, and not the
-    # one `view_lines.size` answers. A question long enough to wrap draws five
-    # lines (and a folded list adds a two-line trailer), so the line count was a
-    # proxy that held only for short single-line items -- and it failed OPEN in
-    # F76's own direction: a feed over-counting to 5 against a view drawing one
-    # folded question compares 5 to 5 and passes.
+    # HOW MANY QUESTIONS THE VIEW RENDERS -- the quantity the parity claim is
+    # about, and not the one `view_lines.size` answers. A question long enough to
+    # wrap draws five lines (and a folded list adds a two-line trailer), so the
+    # line count was a proxy that held only for short single-line items -- and it
+    # failed OPEN in the miscount's own direction: a feed over-counting to 5
+    # against a view drawing one folded question compares 5 to 5 and passes.
     #
     # Counted off the view's OWN line -> digest index, which is the same index
     # the `<CR>` gesture resolves against, so this measures what the human can
@@ -1044,10 +1044,10 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       expect(questions_in(lines)).to eq(inbox_count).and eq(0)
     end
 
-    # F76 (measured live 2026-08-25: HUD 2, this buffer 1). The example above
-    # feeds each object the carrier its own diet names, and the :turn Event it
-    # hands the feed is the one carrier a live chat NEVER delivers --
-    # SessionRecord::Scribe#catch_up writes committed turns to the session
+    # The disagreement measured live on 2026-08-25 (HUD 2, this buffer 1). The
+    # example above feeds each object the carrier its own diet names, and the
+    # :turn Event it hands the feed is the one carrier a live chat NEVER delivers
+    # -- SessionRecord::Scribe#catch_up writes committed turns to the session
     # journal, not to the tee both of these ride. So this drives ONE stream, the
     # records the tee actually carries, through BOTH: agreeing here is the claim
     # the HUD makes to a human, and the example above cannot make it.
@@ -1105,7 +1105,7 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
   end
 end
 
-# The buffer end of I6, on the same real headless-nvim harness as
+# The buffer end of the human inbox, on the same real headless-nvim harness as
 # neovim_buffers_spec (see its header for the second-connection idiom): the
 # inbox primes at attach, lists arrivals, and drains through :LainReply.
 RSpec.describe Lain::Frontend::Neovim, :nvim do
@@ -1188,7 +1188,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # back out of a headless nvim. The command is run INSIDE the swap so the
   # notify cannot escape to the real one between the two statements.
   # A refusal reaches the human through one of two doors, and which one is a
-  # property of the site: `submit_reply`'s moved to the rail (C1/F72) because a
+  # property of the site: `submit_reply`'s moved to the rail because a
   # helper one call down from a `define`d callback raises the same hit-enter
   # prompt, while its siblings here still notify. Capturing both keeps a
   # reading honest whichever door a given refusal uses. The rail's argument
@@ -1251,7 +1251,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC2, end to end at the editor: :LainReply resolves the promise, the
+    # End to end at the editor: :LainReply resolves the promise, the
     # answer lands as the A :message, and the DELIVERY COMMIT (the spec plays
     # the Agent's part here; agent_spec pins the production emitter) is what
     # takes the item out of the pending view.
@@ -1302,11 +1302,11 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T15/ruling 12, at the editor. What rides back is the LINE (:LainPin's rule)
+  # Ruling 12, at the editor. What rides back is the LINE (:LainPin's rule)
   # -- the Ruby side's line -> digest index is the only thing that may name a
   # set -- and both keys invoke the COMMAND, so a human typing :LainOpen by
-  # hand takes provably the same path. Beside it rides the RENDERING STAMP
-  # (T16): the generation the view put on that buffer, read back off the view
+  # hand takes provably the same path. Beside it rides the RENDERING STAMP:
+  # the generation the view put on that buffer, read back off the view
   # itself here, because "the editor sends back what the render stamped" is the
   # property, not any particular number.
   describe "the open gesture on lain://inbox" do
@@ -1377,7 +1377,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T3/round 11 (F64's second-order half). An ANSWER names its own question the
+  # Round 11, the second-order half. An ANSWER names its own question the
   # same way an OPEN does -- the human's own line plus the rendering stamp that
   # buffer carries -- so the consumer never has to guess which set a reply is
   # for. It used to send the answer alone and the consumer guessed "the oldest
@@ -1464,7 +1464,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # SHOULD-FIX 1 (round-11 panel). THREE cases, not two. Inside the inbox a
+    # The round-11 panel's should-fix. THREE cases, not two. Inside the inbox a
     # line that names no row must send NOTHING: falling back to the oldest
     # listed item there answers against a DIFFERENT list from the one this
     # buffer renders, which is the wrong-question defect this card exists to
@@ -1509,10 +1509,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T12, at the editor, and THE FOLD HALF IS ONLY ASSERTABLE FROM HERE: T9
-  # shipped two fold acceptance criteria pinned by grepping the runtime source,
-  # and a one-word mutant making every line its own record -- nothing folds,
-  # the list becomes a wall of prose -- walked through the whole committed
+  # At the editor, and THE FOLD HALF IS ONLY ASSERTABLE FROM HERE: an earlier
+  # round shipped two fold acceptance criteria pinned by grepping the runtime
+  # source, and a one-word mutant making every line its own record -- nothing
+  # folds, the list becomes a wall of prose -- walked through the whole committed
   # suite. A fold is a property of a WINDOW in a running editor, and only a
   # running editor can be asked.
   #
@@ -1662,9 +1662,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     # An AGE CAN GO BACKWARDS -- `InboxView#age_of` subtracts an observation time
     # from a later clock read, and neither is monotonic, so an NTP step or a
-    # suspend draws `-5s`. Before T12 that row failed both of the editor's
-    # patterns, and the failure is the worst shape this surface has: the item
-    # folds like its neighbours, looks answerable, and silently sends nothing.
+    # suspend draws `-5s`. Until the editor's patterns admitted the minus sign,
+    # that row matched neither of them, and the failure is the worst shape this
+    # surface has: the item folds like its neighbours, looks answerable, and
+    # silently sends nothing.
     #
     # Driven by writing the rendering into the buffer rather than through the
     # view, because a negative age needs a clock the production frontend does not

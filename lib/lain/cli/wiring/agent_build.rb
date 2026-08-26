@@ -35,12 +35,12 @@ module Lain
         # silently mis-wire memory -- a caller passing a recorder-bearing toolset
         # but forgetting session: would get working memory tools with a permanently
         # blind manifest. Forgetting must be a loud ArgumentError, not a quiet
-        # degrade (T1 panel, Schneeman).
+        # degrade (panel review, Schneeman).
         # `timeline:` seeds a resumed chat's Agent with the chain-verified
-        # Timeline (nil = Agent's fresh default). `views:` is T1's: a streamed
-        # tool's bytes are a view, not a record, so the executor writes them to
-        # the TTY Channel AND the editor's -- never to the journal, which
-        # already holds them in the turn's tool_result.
+        # Timeline (nil = Agent's fresh default). `views:` exists because a
+        # streamed tool's bytes are a view, not a record, so the executor writes
+        # them to the TTY Channel AND the editor's -- never to the journal,
+        # which already holds them in the turn's tool_result.
         #
         # The `tap` gives the turn middleware's thunk a live agent binding. It
         # is ASSIGNED, not merely returned: the thunk is built before the Agent
@@ -52,12 +52,12 @@ module Lain
 
           agent = nil
           Lain::Agent.new(toolset: board.toolset, context: board.graft(backend.context), handler: gate, session:,
-                          timeline:, request_override: Lain::Agent::RequestOverride.new, # T18: ResendBridge's slot
+                          timeline:, request_override: Lain::Agent::RequestOverride.new, # ResendBridge's slot
                           **backing(backend, channel, -> { agent.timeline },
                                     chronicle:, board:)).tap { |built| agent = built }
         end
 
-        # A8: the provider, and the compaction wiring hung off it -- the per-turn
+        # The provider, and the compaction wiring hung off it -- the per-turn
         # Context source, the eager-summary observer, and the journal tee that
         # feeds the source the cache-read counts the render seam cannot see
         # ({CompactionMount}). One method, because the mount must reference THE
@@ -96,13 +96,13 @@ module Lain
           provider = spooled_provider(backend, chronicle:, channel:)
           journal_degradation(backend.context, provider, journal: chronicle.record_journal)
           mount = CompactionMount.new(backend:, provider:, chronicle:, channel:)
-          # T10: the run's ONE window book, the same instance the compaction
+          # The run's ONE window book, the same instance the compaction
           # source above and the StatusFeed below the launcher divide by. It is
           # what {Agent#occupancy} answers with no keyword, which is the `ctx`
           # segment of the REPL prompt -- so the prompt and the state feed
           # cannot report two occupancies for one turn.
           #
-          # T6 made the ANSWER inside it refreshable and put the trigger here,
+          # The ANSWER inside it is refreshable and the trigger lives here,
           # OUTSIDE the book: {Middleware::ResolveWindow} re-resolves once per
           # turn, ahead of the journal's own turn middleware, until the answer
           # is authoritative. This is the owner of that trigger -- the book has
@@ -127,7 +127,7 @@ module Lain
                                  *chronicle.turn_middleware(timeline).to_a])
         end
 
-        # T13: WRITE what this run's Context asks for that its Provider cannot
+        # WRITE what this run's Context asks for that its Provider cannot
         # give -- one `capability_degraded` record per missing capability, once
         # per session. {Capability::Policy} shipped with a record type, an
         # emitter and a reader and NO caller: twelve POC journals carried zero
@@ -185,7 +185,7 @@ module Lain
         # Both provider construction sites tee their round trips into the
         # chronicle's response spool (see Lain::CLI::Chronicle#spool) -- a real
         # ResponseWal when journaling, the Null spool under --no-journal. `channel:`
-        # is the live TTY Channel for the MAIN agent (CE-5 stream_started reaches
+        # is the live TTY Channel for the MAIN agent (stream_started reaches
         # the frontend); a subagent leaves the Null default -- its stream is not
         # rendered, only the spool tee matters there.
         def spooled_provider(backend, chronicle:, channel: Lain::Channel::Null.instance)

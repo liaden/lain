@@ -162,7 +162,7 @@ module CassetteHygiene
   private_class_method :walk
 
   # A key is tested as a credential HEADER only inside a `headers` hash. Testing
-  # every key everywhere would be the S2 mistake again from the other direction.
+  # every key everywhere would be the same over-breadth from the other direction.
   def self.hash_findings(cassette, hash, location)
     headers = location.end_with?("headers")
     hash.flat_map do |key, value|

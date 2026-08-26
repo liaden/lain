@@ -9,9 +9,9 @@ module Lain
       # files (explicit paths, no lib->spec fixture coupling -- the {ArmSweep}
       # discipline). One authored {Plan::Document} drives all three seam
       # densities: the file carries the "author-thinned" seams, and #document_for
-      # DERIVES `every` and `none` from it with P1's `insert_seam`/`remove_seam`,
-      # so a single plan spans the density axis and switching density changes zero
-      # plan CONTENT -- only where the seams sit.
+      # DERIVES `every` and `none` from it with the document's own `insert_seam`
+      # and `remove_seam`, so a single plan spans the density axis and switching
+      # density changes zero plan CONTENT -- only where the seams sit.
       class Fixture
         # A missing fixture file -- a checkout or packaging mistake, never user
         # input to refuse. Named and path-bearing like {ArmSweep::MissingFixture}.

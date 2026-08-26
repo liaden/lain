@@ -3,7 +3,7 @@
 require "shellwords"
 require "tmpdir"
 
-# T17: /btw (ephemeral side-question in a tmux popup) and /keep (promote the
+# /btw (ephemeral side-question in a tmux popup) and /keep (promote the
 # ephemeral session from inside). Keep's quiescence rule is pinned here too:
 # RelocatableSpool#relocate is unsynchronized with the ResponseWal monitor, so
 # promote! runs only from the Repl's quiescent point -- command dispatch is

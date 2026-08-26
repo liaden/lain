@@ -46,7 +46,7 @@ module Lain
         # Only ever asked about a line whose anchor still matches, so the end of
         # the document needs no bound here: a line past it holds nil, which
         # matches no anchor, and so is drift. Guessing the last heading for a
-        # note that fell off the end is what T22 forbids outright.
+        # note that fell off the end is exactly what that rule forbids.
         def issue_at(lines, line)
           lines.take(line).filter_map { |text| Document::HEADING.match(text)&.[](:id) }.last
         end

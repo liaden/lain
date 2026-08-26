@@ -44,7 +44,7 @@ RSpec.describe Lain::Provider::Ollama do
   describe "#capabilities" do
     # :streaming is honest now that the NDJSON path exists; :thinking is
     # honest now that `think` rides Request#extra onto the wire and the decode
-    # path (already built) turns message.thinking into a thinking block (R5).
+    # path (already built) turns message.thinking into a thinking block.
     # The remaining capabilities stay off deliberately -- declaring one the
     # native path cannot demonstrate would be a lying capability in the
     # subsystem built to catch them.
@@ -55,9 +55,9 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
-  # CAC-2: :prompt_caching is honestly absent from CAPABILITIES above, so
+  # :prompt_caching is honestly absent from CAPABILITIES above, so
   # #cache_profile reports a Null Object no-caching profile rather than nil --
-  # a CAC-3/CAC-4 caller reads `ttl`/`tiered_invalidation` the same way
+  # any caller reads `ttl`/`tiered_invalidation` the same way
   # regardless of which provider it holds, no `if provider.supports?(...)`
   # guard needed first.
   describe "#cache_profile" do
@@ -254,7 +254,7 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
-  # AC 1: a tool-call round trip normalizes to the Lain contract.
+  # A tool-call round trip normalizes to the Lain contract.
   describe "#complete on a tool-call turn" do
     it "yields a tool_use block with Hash input, a synthesized id, and :tool_use despite done_reason stop" do
       provider = described_class.new(transport: transport_sync(tool_call_body(["echo", { "text" => "hi" }])))
@@ -407,7 +407,7 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
-  # AC 2: cache markers never reach the wire, and encode is pure.
+  # Cache markers never reach the wire, and encode is pure.
   describe "#encode" do
     let(:cached_request) do
       Lain::Request.new(
@@ -619,7 +619,7 @@ RSpec.describe Lain::Provider::Ollama do
     end
   end
 
-  # Retry journaling (F7). Retries on this arm used to be invisible on purpose -- see the
+  # Retry journaling. Retries on this arm used to be invisible on purpose -- see the
   # reversed "deliberately absent" note in ollama.rb. The QA run priced that
   # silence: four attempts at the 300s `request_timeout` is a >400s hang that
   # prints NOTHING, indistinguishable from one slow local model.
@@ -709,8 +709,8 @@ RSpec.describe Lain::Provider::Ollama do
     # lib/ registers a rollback yet -- the retry rollback is what will -- so a
     # tracing tap registers one, and each of those three lines can be deleted
     # independently to see this go red.
-    # A dropped attempt is a reset that never runs, which is F7b returning
-    # spliced content under `done_reason: "stop"`.
+    # A dropped attempt is a reset that never runs, which brings the splice
+    # back: both attempts' text concatenated under `done_reason: "stop"`.
     %i[sync stream].each do |path|
       it "abandons the #{path} path's own attempt, threaded from the Provider onto the retried request" do
         stub_chat.to_raise(Faraday::ConnectionFailed).then.to_return(path == :sync ? ok_body : ok_ndjson)
@@ -980,7 +980,7 @@ RSpec.describe Lain::Provider::Ollama do
     end
 
     describe "over the real transport", :webmock do
-      # AC 1, and the discriminating form of it: BOTH endpoints answer, and the
+      # The discriminating form of the contract: BOTH endpoints answer, and the
       # trained number is the one sitting there waiting to be picked up by
       # mistake. An implementation reading model_info returns 262,144 here.
       it "answers the served cap while /api/show is loudly offering the trained one" do
@@ -1013,7 +1013,7 @@ RSpec.describe Lain::Provider::Ollama do
         expect(a_request(:post, "http://localhost:11434/api/show")).not_to have_been_made
       end
 
-      # AC 2. The trained length is discoverable; the CAP is not, because
+      # The trained length is discoverable; the CAP is not, because
       # nothing is loaded. nil, so ContextWindow's conservative fallback stands.
       it "answers nil when only the trained length is discoverable" do
         stub_request(:get, "http://localhost:11434/api/ps")
@@ -1026,7 +1026,7 @@ RSpec.describe Lain::Provider::Ollama do
         expect(described_class.new.context_window_tokens("qwen3-coder:30b")).to be_nil
       end
 
-      # AC 3, and note the config: the SHIPPED one, not zero_retry_config. A
+      # Note the config: the SHIPPED one, not zero_retry_config. A
       # failure path measured with the retries turned off is not the failure
       # path anyone runs, and this arm's ordinary state is "ollama is not
       # running" -- so the budget is part of the behaviour under test.

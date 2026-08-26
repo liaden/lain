@@ -10,10 +10,10 @@ module Lain
     #
     # The repl phase composes over the run's ONE {Skill::Library} -- the
     # project's skills and the prompt slots they render through, read once at
-    # {Backend#library}. T15 threaded the two halves separately and T40 named
-    # the pair, which is what took `root:` off this module: it was here only to
-    # feed the from-disk defaults, and a from-disk default is exactly the second
-    # read of one tree the threading exists to remove.
+    # {Backend#library}. Threading the two halves separately, then naming the
+    # pair, is what took `root:` off this module: it was here only to feed the
+    # from-disk defaults, and a from-disk default is exactly the second read of
+    # one tree the threading exists to remove.
     #
     # BOTH keywords are REQUIRED, for one reason. `library` is the run's
     # snapshot: defaulting it would let /help's listing, this stack's dispatch,
@@ -25,7 +25,7 @@ module Lain
     # forgotten keyword must be a loud ArgumentError here, not a quiet degrade
     # far from the bug.
     #
-    # `extras`, unlike the two keywords above, defaults to none: T23 opens the
+    # `extras`, unlike the two keywords above, defaults to none: it opens the
     # door {Middleware::Stack} already has -- `#use`/`#insert_before`/
     # `#insert_after` -- to this phase, it does not invent a new one. Extras
     # are placed AHEAD of the one fixed member, so they run outermost, in the

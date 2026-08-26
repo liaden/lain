@@ -7,7 +7,7 @@ module Lain
       # a refusal as plain text into an injected {Lain::Sink} -- never
       # `$stdout` (CLAUDE.md's Output discipline; `spec/output_discipline_spec.rb`
       # enforces it mechanically). This is what model specs drive so a review
-      # never spawns nvim; {Surface::Neovim} (T19) is the interactive twin.
+      # never spawns nvim; {Surface::Neovim} is the interactive twin.
       #
       # Tri-state markers, not a boolean: a hunk's own mark is binary
       # (`Review::MARK_STATES`), but the coarser indicator this renders is
@@ -21,7 +21,7 @@ module Lain
       # stores. `#row` accepts a Symbol as readily as a String (`.to_s` at the
       # lookup), matching `HunkMarked`'s own tolerance for the same pair.
       #
-      # `Lain::Review::Changeset` (T7) and `Lain::Review::Marks` (T8) are
+      # `Lain::Review::Changeset` and `Lain::Review::Marks` are
       # siblings that had not landed when this was written, so `#present`
       # states the narrowest duck it needs directly on itself -- see that
       # method's doc, and {Surface}'s own class doc for the single place that
@@ -80,8 +80,8 @@ module Lain
 
         # @param changeset [#files, #partitions] see {Surface}'s class doc
         #   ("What `present`'s `changeset` argument answers") for the one
-        #   place this duck is stated, and why neither `Changeset` (T7) nor
-        #   `Marks` (T8) alone can answer it.
+        #   place this duck is stated, and why neither `Changeset` nor
+        #   `Marks` alone can answer it.
         # @param scope [Symbol] the name of a {Review::Partition} strategy, as
         #   a Symbol (`:cumulative`/`:commits`/`:by_directory`); anything else
         #   raises via {SCOPE_RENDERER}'s `fetch`, naming what was asked for.
@@ -101,8 +101,8 @@ module Lain
         # call {Surface::Neovim#mark} makes, not a second copy of its
         # length -- so a mark names "the same unit and state" on both
         # surfaces rather than one staying long. This surface has no
-        # pane-width constraint of its own to force it, but T6 asks for
-        # the two to stay consistent, and a shared operation at the port
+        # pane-width constraint of its own to force it, but the two are
+        # required to stay consistent, and a shared operation at the port
         # is what makes disagreement unconstructible rather than merely
         # untested (see {Surface.preview}'s own doc).
         # @return [Integer] see {#present}
@@ -124,8 +124,8 @@ module Lain
         # QUERY synchronously. {Surface::Null#verdict}'s own comment records
         # the same tension -- a query returning `nil` reintroduces the very
         # `if surface` guard the Null Object exists to delete -- and this
-        # adapter makes it concrete rather than resolves it: T13 owns the
-        # verdict's real shape.
+        # adapter makes it concrete rather than resolves it -- the verdict's
+        # real shape is still to be settled.
         # @return [nil]
         def verdict = nil
 
@@ -153,8 +153,8 @@ module Lain
         private
 
         # Answers what `Sink#write` answers, which is the byte count `IO#write`
-        # would -- NOT nil, as the five commands above claimed until T19 measured
-        # it. Harmless and now stated: the port reserves String for a refusal
+        # would -- NOT nil, as the five commands above claimed until somebody
+        # measured it. Harmless and now stated: the port reserves String for a refusal
         # (see `spec/support/shared_examples/review_surface.rb`, law #5), and a
         # count is not one.
         def write(bytes) = @sink.write(bytes)

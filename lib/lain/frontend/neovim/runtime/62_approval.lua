@@ -1,4 +1,4 @@
--- lain://approval, the parked-approval list (T36): the buffer Ruby's
+-- lain://approval, the parked-approval list: the buffer Ruby's
 -- {Lain::Frontend::Neovim::ApprovalView} renders into, and the two keys that
 -- answer the call under the cursor.
 --
@@ -256,7 +256,7 @@ end)
 
 -- Bound from a BufEnter autocmd (in a cleared augroup, so re-attach redefines
 -- rather than stacks) rather than at load: the buffer is created by a render,
--- and since T7 the earliest of those is Surfaces#prime's zero-row placeholder
+-- and the earliest of those is now Surfaces#prime's zero-row placeholder
 -- at attach -- still later than this file runs, and still not something to
 -- assume, since a re-attach reuses whatever buffer is already there.
 -- <Cmd> rather than ":", the inbox and sidebar maps' reason: it

@@ -4,8 +4,8 @@ module Lain
   module CLI
     class Resume
       # Compares the CURRENT --model/--provider flags against what the header
-      # recorded, and builds the LOUD-and-continue notices (T19's ruling, RES2
-      # extends it to `provider`): name both, run with the flags, never a
+      # recorded, and builds the LOUD-and-continue notices (the model ruling,
+      # extended here to `provider`): name both, run with the flags, never a
       # silent override in either direction. Split out of {Resume} the same
       # way {Salvager} and {Selector} are (CLAUDE.md's rule: extract a real
       # collaborator, never loosen `Metrics/ClassLength`) -- the provider
@@ -40,8 +40,9 @@ module Lain
           "recorded with model #{recorded}; continuing with #{model} (the current flags win)"
         end
 
-        # A recorded-but-absent provider (every header before RES2) is its own
-        # named case: "unrecorded", not silently treated as a match.
+        # A recorded-but-absent provider (every header written before
+        # `provider` was recorded) is its own named case: "unrecorded", not
+        # silently treated as a match.
         def provider_notice(provider)
           return if provider.nil?
 

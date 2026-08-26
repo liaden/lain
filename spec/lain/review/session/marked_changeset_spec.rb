@@ -112,7 +112,7 @@ RSpec.describe Lain::Review::Session::MarkedChangeset do
   def unchunked_changeset(paths = %w[a.rb b.rb]) = corpus_changeset(paths.map { |path| unread_file(path) })
 
   # The table is derived from what has been READ, so it grows with the survey
-  # rather than being all of it or none of it. That is the whole of what B15's
+  # rather than being all of it or none of it. That is the whole of what the old
   # empty-table shortcut could not do: it skipped the derivation only while the
   # table named nothing at all.
   describe "the key table, which names only what has been read" do

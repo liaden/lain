@@ -10,7 +10,7 @@ module Lain
       #
       # A PASSWORD NEVER ENTERS THE URL. The optional `user` rides the URL
       # authority, but a password does not -- it belongs in PGPASSWORD/pgpass,
-      # never in a string that lands in a WorkerEnv and, later (B6), a journalled
+      # never in a string that lands in a WorkerEnv and, later, a journalled
       # lease event. The journalable identity of a provisioned service is its
       # {#name} plus the worker key, never this URL.
       Postgres = Data.define(:env_var, :prefix, :host, :port, :user) do
@@ -19,7 +19,7 @@ module Lain
                 host: host&.to_s&.freeze, port:, user: user&.to_s&.freeze)
         end
 
-        # The journalable identity (B6 pairs this with the worker key -- never
+        # The journalable identity (paired with the worker key -- never
         # the URL, which carries connection identity).
         def name = :postgres
 
@@ -72,7 +72,7 @@ module Lain
 
         # `-h/-p/-U` flags for each piece of connection identity that is set;
         # empty when none is (the bare `createdb <db>` the card specifies). No PG*
-        # env scrub (unlike B2's git-context scrub): these explicit flags already
+        # env scrub (unlike the git-context scrub): these explicit flags already
         # take precedence over any inherited PG* connection var, and PGPASSWORD is
         # deliberately left to reach libpq for auth.
         def connection_flags

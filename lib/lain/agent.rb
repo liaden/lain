@@ -58,8 +58,8 @@ module Lain
                         StopReason::UNKNOWN => "unrecognized stop_reason from provider" }.freeze
     private_constant :FAILURE_REASONS
 
-    # `request_override` is public on purpose: it is T18's access path -- the
-    # ResendBridge queues an edited Request through this reader rather than
+    # `request_override` is public on purpose: it is the ResendBridge's access
+    # path -- the ResendBridge queues an edited Request through this reader rather than
     # threading its own handle through construction.
     attr_reader :timeline, :toolset, :context, :workspace, :session,
                 :iterations, :failure_reason, :budget, :request_override, :dispatch_lock
@@ -95,7 +95,7 @@ module Lain
     # `tool_observer:`, `journal:`. Both are supported; mixing them for ONE
     # collaborator raises ({Collaborators} owns that rule).
     #
-    # `instrumentation:` (T22) is the same story for the seven keywords a run
+    # `instrumentation:` is the same story for the seven keywords a run
     # REPORTS through, which used to sit here as seven slots and cost this class
     # seven signature lines. They are still accepted, through `**instrumented`,
     # and {Instrumentation.resolve} builds the value from them -- so every
@@ -148,12 +148,11 @@ module Lain
     #   the todo list) -- deliberately off the Timeline, so forking or
     #   rewinding it can never resurrect or lose one.
     # @param mailbox [Context::Mailbox] pending actor messages folded into the
-    #   rendered tail (OM-3). Defaults to the Null combinator, which folds
-    #   nothing.
+    #   rendered tail. Defaults to the Null combinator, which folds nothing.
     # @param budget [Budget] the ceilings that bound this autonomous loop; a
     #   budget stop is the harness deciding to halt, not a model outcome.
     # @param request_override [RequestOverride] the one-shot slot a frontend
-    #   resend queues an edited Request into (T18); the next dispatch sends it
+    #   resend queues an edited Request into; the next dispatch sends it
     #   byte-identically and the slot empties itself.
     # @param context_window [#occupancy] the book {#occupancy} measures
     #   against. Constructor state rather than a per-call default because the
@@ -170,8 +169,8 @@ module Lain
     # @param instrumented [Hash{Symbol => Object}] the seven keywords a run
     #   REPORTS through (`turn_middleware:`, `transition_listener:`, etc.),
     #   accepted directly so every call site that predates `instrumentation:`
-    #   (T22) keeps its meaning; {Instrumentation.resolve} builds the value
-    #   from them, and writing both `instrumentation:` and one of these raises.
+    #   keeps its meaning; {Instrumentation.resolve} builds the value from
+    #   them, and writing both `instrumentation:` and one of these raises.
     def initialize(toolset:, context:, instrumentation: Collaborators::OMITTED,
                    model_caller: Collaborators::OMITTED, provider: Collaborators::OMITTED,
                    tool_runner: Collaborators::OMITTED, handler: Collaborators::OMITTED,
@@ -198,7 +197,7 @@ module Lain
     # `:failed`) continues the conversation rather than raising on `dispatch!`
     # from a terminal state. The guard keeps the very first `ask` transition-free.
     #
-    # `on_stream_started` is CE-5's first-token observer, forwarded verbatim to
+    # `on_stream_started` is the first-token observer, forwarded verbatim to
     # {#run}: a sibling fan-out ({Tools::Subagent::Stagger}) hands each child
     # Agent one so the child's first provider round trip signals the stagger
     # gate. It defaults to nil and is INERT then -- the whole plumb down to the
@@ -218,7 +217,7 @@ module Lain
     # The turn phase's env is deliberately minimal: `iteration` is the count of
     # turns already committed IN THIS RUN. It restarts at 0 on every #run,
     # because the counter it reads bounds ONE autonomous loop and not a
-    # conversation (F21; see #run_loop) -- so a middleware watching two asks of
+    # conversation (see #run_loop) -- so a middleware watching two asks of
     # two turns each sees 0, 1, 0, 1 and not 0, 1, 2, 3, and 0 means "the first
     # turn of this loop", never "the first turn of this session". Anything keyed
     # on it therefore fires per LOOP: a compaction or interrupt trigger wanting
@@ -239,7 +238,7 @@ module Lain
     # not -- which is why every non-reactor caller in the suite is unchanged.
     # `@dispatch_lock` makes a run EXCLUSIVE: at most one drives the loop at a
     # time. It is reentrant (a Monitor), so #ask -> #run and a bridged resend
-    # that re-enters #run each hold it once. The seam exists for T18: the
+    # that re-enters #run each hold it once. The seam exists for bridged resends: the
     # {CLI::ResendBridge} runs on the Neovim resend-worker thread while a user
     # prompt runs #ask on the conductor's reactor, both driving THIS agent's
     # bare-ivar state -- so the bridge's quiescence gate would be a
@@ -376,7 +375,7 @@ module Lain
     # is not seeded here.
     #
     # {Accounting} is the one that moved: it is run state too (a ledger a run
-    # mutates), but since T21 a caller may inject one, and resolving it beside
+    # mutates), but a caller may now inject one, and resolving it beside
     # the two collaborators it is chosen with keeps that decision in one place.
     #
     # The transition listener is read off {Instrumentation} rather than taken as
@@ -409,7 +408,7 @@ module Lain
       @iterations += 1
       # The turn's inbox is snapshotted HERE, before the render, and that one
       # frozen Snapshot is what both sides of the turn consume: the render-side
-      # Mailbox fold (the OM-6 pipeline wiring) and this turn's commit. The
+      # Mailbox fold (the pipeline wiring) and this turn's commit. The
       # shared log is mutable DURING the provider round trip -- an actor reply
       # can land mid-dispatch -- so neither side may read it live: a live read
       # at commit would claim that arrival as a causal parent of a turn that
@@ -474,7 +473,7 @@ module Lain
     # edited Request as an ordinary one, so ModelCaller stays untouched. The
     # render rides a callable, so an overridden dispatch never invokes
     # `Context#render` at all -- the edit bypasses the pure function instead of
-    # traveling through its inputs (T4's design constraint) -- and {RequestOverride#deliver}
+    # traveling through its inputs (a deliberate design constraint) -- and {RequestOverride#deliver}
     # owns the one-shot's fine print: consumed on success, restored on a raise
     # so a retry re-sends the edit.
     def call_model(on_stream_started)
@@ -508,7 +507,7 @@ module Lain
     # `tool_use` event has already fired (in #transition); this only commits.
     #
     # The commit itself, the workspace snapshot that rides after it, and the
-    # cancellation commit an interrupt mid-dispatch owes (F46) all belong to
+    # cancellation commit an interrupt mid-dispatch owes all belong to
     # {ToolDelivery}: this class decides WHEN tools run, and that one decides how
     # what they produced lands. The Timeline comes back through the block rather
     # than as a return value because the torn path commits AND re-raises, and a

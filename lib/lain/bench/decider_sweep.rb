@@ -2,14 +2,14 @@
 
 module Lain
   module Bench
-    # OR-4, the decider-locus sweep: for T4's prune-scoring decision point
+    # The decider-locus sweep: for the prune-scoring decision point
     # ("is this span stale?"), ranks the five loci oracles.md names -- heuristic,
     # ollama, haiku, inline, and model_self_directed (the DCP `compress`-tool
     # arm) -- over one committed fixture of decision-point cases.
     #
     # Unlike {Sweep} and {DisclosureSweep}, this sweep reuses {Compare} ITSELF,
-    # not just {Compare::Distribution}/{Compare::Table}: T5 added exactly the
-    # column (cache-write) this sweep exists to surface, and once each arm is
+    # not just {Compare::Distribution}/{Compare::Table}: {Compare} carries exactly
+    # the column (cache-write) this sweep exists to surface, and once each arm is
     # priced through its own {Ledger}-backed {Timeline}, {Compare::Run}'s
     # usage/cost/score shape is the right one -- {Sweep}'s own comment
     # documents why THAT sweep could not reuse it (no Ledger-priced Timeline);

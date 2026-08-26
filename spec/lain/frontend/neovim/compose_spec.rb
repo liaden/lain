@@ -2,7 +2,7 @@
 
 require "timeout"
 
-# T15: the C-g compose round trip, Ruby end. The whole point of this object is
+# The C-g compose round trip, Ruby end. The whole point of this object is
 # the SPLIT -- #open runs on Reline's input loop and must return instantly,
 # #settle runs in the caller's own loop and is where the waiting happens -- so
 # every example here is really an example about which half is which.
@@ -86,10 +86,10 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
       expect(attached.drafts).to eq([[""]])
     end
 
-    # The seam hands #open the RAW buffer, backslashes present; T14's #read
-    # strips them before #settle ever sees the text. Joining once at #open is
-    # what keeps the posted draft, the compared marker and the kept draft one
-    # string.
+    # The seam hands #open the RAW buffer, backslashes present; the line
+    # editor's #read strips them before #settle ever sees the text. Joining
+    # once at #open is what keeps the posted draft, the compared marker and
+    # the kept draft one string.
     it "joins continuation backslashes out of the draft before posting it" do
       subject = compose
       subject.open("first \\\nsecond")
@@ -239,7 +239,7 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
   # bound into ~forever, and without the wrapper these examples park instead of
   # failing: the whole file produced no report in 420 seconds. A deadline bug
   # must fail LOUDLY, which for a wait means the example carries its own
-  # ceiling (T33 review).
+  # ceiling.
   describe "a dead editor never wedges the prompt (panel PAC3b)" do
     it "answers the caller's re-prompt with a notice once the bound expires" do
       subject = compose(timeout: 0.05)
@@ -276,7 +276,7 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
     end
   end
 
-  # T33: the bound was measured by calling Process.clock_gettime directly,
+  # The bound was measured by calling Process.clock_gettime directly,
   # bypassing the `clock:` injection every sibling seam takes
   # ({Middleware::Timeout}, {CLI::Shutdown}, {CLI::Conductor}). These examples
   # are only possible once it is injected -- a 300s bound that expires
@@ -308,7 +308,7 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
     end
   end
 
-  # PANEL SHOULD-FIX 3 (Jeremy). #open armed the compose and only #await
+  # A panel should-fix (Jeremy). #open armed the compose and only #await
   # disarmed it, so a human who changed their mind and typed something else
   # left it armed forever -- and a marker pasted out of their own scrollback,
   # prompts later, blocked for the full bound and answered with a stale draft.
@@ -352,7 +352,7 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
     end
   end
 
-  # PANEL SHOULD-FIX 4 (Jeremy). Clearing the queue at #open was a cross-thread
+  # A panel should-fix (Jeremy). Clearing the queue at #open was a cross-thread
   # check-then-act: the clear runs on the prompt thread, #wrote pushes from the
   # RPC thread, so a write in flight when the human pressed C-g again landed
   # after the clear and the NEW compose settled on the OLD answer.
@@ -464,7 +464,7 @@ RSpec.describe Lain::Frontend::Neovim::Compose do
   end
 
   describe "the seam it is registered through" do
-    # The handler contract (T14): one String in, replacement text or nil out.
+    # The handler contract: one String in, replacement text or nil out.
     # Anything else is a TypeError inside Reline's dispatch.
     it "answers the key-action seam's return contract on both paths" do
       expect(compose.open("draft")).to be_a(String)

@@ -42,7 +42,7 @@ RSpec.describe "the repl phase's Middleware::Stack" do
     expect(trace).to eq([["one", :in], ["one", :out], ["two", :in], ["two", :out]])
   end
 
-  # T23: the factory used to hardcode a single-element Stack. These pin the
+  # The factory used to hardcode a single-element Stack. These pin the
   # door it now has -- extras layer around the one fixed member, in the order
   # given, and the two keywords that feed that member stay required.
   describe "Lain::CLI::ReplMiddleware.build" do

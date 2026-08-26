@@ -31,7 +31,7 @@ module Lain
       TEMPLATE_DIR = File.expand_path("templates", __dir__)
       private_constant :TEMPLATE_DIR
 
-      # The role slots (M5 role catalog, PS-3) live one level down, at
+      # The role slots, one per cataloged role, live one level down, at
       # `.lain/slots/role/<name>.md`, and each shipped built-in role ships a
       # default framing template here -- so the set of shipped basenames IS the
       # set of KNOWN role slots, the role-namespace analogue of {KNOWN}. A role
@@ -40,7 +40,7 @@ module Lain
       ROLE_TEMPLATE_DIR = File.join(TEMPLATE_DIR, "role")
       private_constant :ROLE_TEMPLATE_DIR
 
-      # The skill slots (A2) live TWO levels down -- unlike the flat one-per-role
+      # The skill slots live TWO levels down -- unlike the flat one-per-role
       # region, a skill has many holes, so a hole is
       # `.lain/slots/skill/<skill>/<hole>.md` over a shipped default at
       # `templates/skill/<skill>/<hole>.md`. The shipped tree is directory-
@@ -151,7 +151,7 @@ module Lain
         engine.render_template(@templates.fetch(slot.to_s), slot.to_s)
       end
 
-      # The rendered framing for a subagent role (PS-3): the project override at
+      # The rendered framing for a subagent role: the project override at
       # `.lain/slots/role/<name>.md` if present, else the shipped default. Pure
       # and session-fixed exactly like {#render}, so two spawns of one role in a
       # session render byte-identical -- the cache invariant the role catalog
@@ -167,7 +167,7 @@ module Lain
         LockedBinding.new(resolve: method(:resolve)).render_template(source, "role/#{slot}")
       end
 
-      # The rendered bytes of ONE skill hole (A2): the project override at
+      # The rendered bytes of ONE skill hole: the project override at
       # `.lain/slots/skill/<skill>/<hole>.md` if present, else the shipped
       # default. This is the pure LEAF render -- it renders a single hole and
       # knows nothing of scaffolds, includes, or the catalog; {Skill::Renderer}
@@ -182,10 +182,10 @@ module Lain
       end
 
       # The content address of each known slot's RENDERED bytes, keyed by slot
-      # name. Rendered, not the fill source: the rendered prompt is what PS-2
-      # journals and what same-role siblings must share byte-identically, and a
-      # source digest would let two differently-rendering fills (same fill under
-      # two template versions) collide under one address.
+      # name. Rendered, not the fill source: the rendered prompt is what
+      # {Telemetry::SlotFills} journals and what same-role siblings must share
+      # byte-identically, and a source digest would let two differently-rendering
+      # fills (same fill under two template versions) collide under one address.
       def digests
         KNOWN.to_h { |name| [name, Canonical.digest(render(name))] }
       end
@@ -195,7 +195,7 @@ module Lain
       # Empty string for a slot with no project override (its substance lives in
       # the base template around the hole). Pairs with {#digests}, which
       # content-addresses the RENDERED bytes: source and address are the two
-      # halves of the PS-2 slot attribution one {Telemetry::SlotFills} carries.
+      # halves of the slot attribution one {Telemetry::SlotFills} carries.
       def fills
         KNOWN.to_h { |name| [name, resolve(name)] }
       end

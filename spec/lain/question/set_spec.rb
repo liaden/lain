@@ -35,7 +35,7 @@ RSpec.describe Lain::Question::Set do
       expect { set.fetch("nobody") }.to raise_error(KeyError, /nobody/)
     end
 
-    # S6: `include Enumerable` on a Data puts Enumerable#to_h AHEAD of Data#to_h,
+    # `include Enumerable` on a Data puts Enumerable#to_h AHEAD of Data#to_h,
     # which would read the questions as [key, value] pairs. Nothing else pinned
     # this -- the shareability walk only calls #to_h on the FAILURE path, so
     # deleting the restored method left all the other examples green.
@@ -57,7 +57,7 @@ RSpec.describe Lain::Question::Set do
       expect { described_class.new(questions: single) }.to raise_error(ArgumentError, /Array/)
     end
 
-    # S3: the same member policy the question applies to its options -- a member
+    # The same member policy the question applies to its options -- a member
     # arrives built, and `from_body` is the way in from raw data.
     it "refuses a raw question Hash, naming the class and the way in" do
       expect { described_class.new(questions: [single.to_body]) }
@@ -65,7 +65,7 @@ RSpec.describe Lain::Question::Set do
     end
   end
 
-  # S1: nothing bounded the SET, so 40 max-size questions serialized to ~2.6MB.
+  # Nothing bounded the SET, so 40 max-size questions serialized to ~2.6MB.
   # Per-set is the quantity that reaches the request, so per-set is what is
   # bounded -- over the bytes Canonical will actually emit.
   describe "size bounds" do
@@ -110,7 +110,7 @@ RSpec.describe Lain::Question::Set do
       expect(described_class.from_body(set.to_body.merge("question" => "2 questions"))).to eq(set)
     end
 
-    # S4: every one of these used to be a bare NoMethodError or a KeyError that
+    # Every one of these used to be a bare NoMethodError or a KeyError that
     # named neither the object being built nor which question was malformed.
     it "names the missing key when the body carries no questions" do
       expect { described_class.from_body({}) }.to raise_error(ArgumentError, /a question set body.*"questions"/)

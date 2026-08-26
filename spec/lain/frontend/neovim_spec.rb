@@ -168,10 +168,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
           flooder.join
         end
       rescue IOError, SystemCallError, Lain::Error
-        # The editor died on purpose (raw on an attach race, wrapped once T9's
-        # SessionFailure records it); teardown promptness is the assertion, not
-        # the error. Deliberately NOT a blanket StandardError: an unrelated bug
-        # (a NoMethodError in the flooder, say) must still surface.
+        # The editor died on purpose (raw on an attach race, wrapped once the
+        # frontend's SessionFailure records it); teardown promptness is the
+        # assertion, not the error. Deliberately NOT a blanket StandardError: an
+        # unrelated bug (a NoMethodError in the flooder, say) must still surface.
       end
 
       expect(runner.join(20)).not_to be_nil
@@ -179,8 +179,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       runner&.kill
     end
 
-    # Panel fix #2, extended by T9's AC4 ("editor death ends as a notice, not
-    # a crash at exit"). The RPC thread's death must not be swallowed: the
+    # Panel fix #2, extended to "editor death ends as a notice, not a crash at
+    # exit". The RPC thread's death must not be swallowed: the
     # channel closes (so producers see the loss as ClosedQueueError) and run
     # re-raises the failure once teardown completes -- wrapped in Lain::Error
     # so a caller's `rescue Lain::Error` (the exe's own convention) presents
@@ -217,7 +217,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # without reaching through the frontend for a view to break.
     def malformed_output = Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: 42)
 
-    # AC1: an unexpected drain exception (a malformed event's render raising
+    # An unexpected drain exception (a malformed event's render raising
     # NoMethodError, say) is recorded and closes the channel like its two
     # siblings (the RPC thread, the resend worker) already do, instead of
     # dying silently and wedging a producer against a Channel nobody drains
@@ -266,7 +266,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(error.cause).to be_a(RuntimeError)
     end
 
-    # AC2: a drainer that died mid-session must never leak the RPC thread.
+    # A drainer that died mid-session must never leak the RPC thread.
     # Before the fix, `teardown`'s bare `drainer&.join` re-raised the dead
     # drainer's exception INSIDE `ensure`, so `@rpc.stop` on the next line
     # never ran. Asserted directly against the RPC thread's own liveness
@@ -291,7 +291,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(rpc_thread).not_to be_alive
     end
 
-    # AC3: the run block's OWN exception must never be swapped for a
+    # The run block's OWN exception must never be swapped for a
     # background thread's recorded failure -- the two are independent losses,
     # and the block's is the one the caller is actively unwinding from. The
     # recorded death is asserted through the ivar (like @rpc's thread above):
@@ -317,10 +317,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # A re-attach is SEQUENTIAL since T35 -- quit lain, start another one in the
-  # same nvim -- because two lains attached at once is refused by name (see
+  # A re-attach is SEQUENTIAL -- quit lain, start another one in the same nvim
+  # -- because two lains attached at once is refused by name (see
   # neovim_runtime_spec's "one lain per editor"). This group was written as one
-  # attach NESTED inside another, the shape ticket 31 measured as silent data
+  # attach NESTED inside another, the shape measured as silent data
   # destruction, so it certified the defect as a feature for as long as it
   # stood. What it pins is unchanged: a lain exiting tears nothing down, so the
   # second injection lands on top of a whole live runtime.
@@ -392,9 +392,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # B4's editor half. Only the keybinding ROUND TRIP needs a real nvim -- what
-  # the pin resolves to, and how it renders, is plain Ruby in {Buffers} and is
-  # pinned by the default-suite group at the bottom of this file.
+  # The pin feature's editor half. Only the keybinding ROUND TRIP needs a real
+  # nvim -- what the pin resolves to, and how it renders, is plain Ruby in
+  # {Buffers} and is pinned by the default-suite group at the bottom of this file.
   describe "the pin gesture on lain://timeline" do
     it "enqueues a pin command naming the cursor's line, buffer-locally" do
       frontend = described_class.new(channel:, socket_path: @socket)
@@ -414,7 +414,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # Fix round. Every :Lain* command is GLOBAL (see runtime.lua's `define`),
     # and :LainPin reads the CURRENT window's cursor -- so hand-typed from
     # lain://journal line 1 it would send ["pin", [1]] and pin TIMELINE turn 1,
-    # a turn the human never looked at, silently and (under B2) permanently.
+    # a turn the human never looked at, silently and permanently.
     # Hand-typing is an invited path here precisely because the `p` map invokes
     # the command rather than a private helper, so the command must refuse on
     # its own. Asserted without a sleep: the journal invocation is followed by a
@@ -435,7 +435,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # B16's editor half: the add-to-survey gesture used to only EMIT
+  # The add-to-survey gesture's editor half: it used to only EMIT
   # `survey_add`, on the theory that a route would arrive to give it a meaning.
   # None did, so the gesture now refuses honestly rather than acking a keypress
   # nothing drains -- see `46_sidebar.lua`'s `LainSurveyAdd`
@@ -565,11 +565,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 end
 
-# B4's plain-Ruby half: the line -> digest index, the pin marker, and the pin
-# gesture itself. {Buffers} never touches nvim -- it turns events into lines
-# and answers "which turn is on line N?" -- so this whole group runs in the
-# DEFAULT suite, with no editor and no :nvim tag. The one thing that genuinely
-# needs an editor (does `p` reach Ruby at all?) is the :nvim example above.
+# The pin feature's plain-Ruby half: the line -> digest index, the pin marker,
+# and the pin gesture itself. {Buffers} never touches nvim -- it turns events
+# into lines and answers "which turn is on line N?" -- so this whole group runs
+# in the DEFAULT suite, with no editor and no :nvim tag. The one thing that
+# genuinely needs an editor (does `p` reach Ruby at all?) is the :nvim example
+# above.
 RSpec.describe Lain::Frontend::Neovim::Buffers do
   let(:store) { Lain::Store.new }
   let(:session) { Lain::Session.new }
@@ -687,7 +688,7 @@ RSpec.describe Lain::Frontend::Neovim::Buffers do
   end
 end
 
-# T34 review fix (substantive #1): FrontendListener's four hand-offs, pinned
+# Review fix: FrontendListener's four hand-offs, pinned
 # directly and in plain Ruby -- no editor, no :nvim tag, no 300-second
 # Compose::GRACE wait. Before this group existed, a `compose_abandoned`
 # mutated to a no-op survived the whole default suite and only reddened the
@@ -735,8 +736,8 @@ RSpec.describe Lain::Frontend::Neovim do
     end
   end
 
-  # T31a: the review's OUTBOUND half, which this editor owns for the same reason
-  # it owns #buffers -- and which nothing could reach before, so no wiring ever
+  # The review's OUTBOUND half, which this editor owns for the same reason it
+  # owns #buffers -- and which nothing could reach before, so no wiring ever
   # drew a changeset in a real editor.
   describe "the changeset review's surface and view" do
     # A REAL marked changeset over {#round}, not a Struct: what the sidebar
@@ -782,12 +783,13 @@ RSpec.describe Lain::Frontend::Neovim do
       Lain::Review::Changeset.new(source: DiffSource.over(double))
     end
 
-    # T32a's acceptance test, from the one place that decides it. The pair is a
-    # TRIO now: the view is built with a {Lain::Frontend::Neovim::ChangesetDiff}
-    # over this editor's own inlet, so a `<CR>` on a row REACHES something.
-    # Before this, `changesets:` was {Lain::Frontend::Neovim::ReviewView::Unwired}
-    # in every real process, and that refusal was the whole of what a `<CR>` in
-    # the editor's review could do.
+    # The diff opener's acceptance test, from the one place that decides it.
+    # The pair is a TRIO now: the view is built with a
+    # {Lain::Frontend::Neovim::ChangesetDiff} over this editor's own inlet, so
+    # a `<CR>` on a row REACHES something. Before this, `changesets:` was
+    # {Lain::Frontend::Neovim::ReviewView::Unwired} in every real process, and
+    # that refusal was the whole of what a `<CR>` in the editor's review could
+    # do.
     #
     # Asserted through the gesture rather than by naming the collaborator's
     # class: what has to be true is that a wired review cannot produce that
@@ -804,7 +806,7 @@ RSpec.describe Lain::Frontend::Neovim do
     end
   end
 
-  # T28 review fix: the protocol contract, pinned WITHOUT an editor -- which is the
+  # Review fix: the protocol contract, pinned WITHOUT an editor -- which is the
   # point of the group, not an incidental economy. `LAIN_NVIM=0` is a supported mode
   # (spec/support/tags.rb), and in it every other pin on this contract is filtered
   # out: the panel reverted BOTH halves to "8", undoing the bump entirely, and the

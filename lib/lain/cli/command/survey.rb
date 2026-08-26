@@ -5,7 +5,7 @@ require "active_support/core_ext/string/inflections"
 module Lain
   module CLI
     module Command
-      # `/survey <path> [--scope <strategy>] [--unbounded]` at `you>` (B14):
+      # `/survey <path> [--scope <strategy>] [--unbounded]` at `you>`:
       # walk a directory, open a round over it AS IT STANDS in the editor this
       # chat is ALREADY attached to, and bind its gesture rails to the survey it
       # opened.

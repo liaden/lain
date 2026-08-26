@@ -104,9 +104,9 @@ module Lain
 
     # A digest CHAIN, one entry per neutral cache marker, in ascending
     # position order: `[[position, digest], ...]`. This mirrors the
-    # Timeline's Merkle structure over the breakpoint-partitioned prompt
-    # (CE-2), so a bench projection can find where a rewrite happened the
-    # same way `diverge_at` finds it in the Timeline.
+    # Timeline's Merkle structure over the breakpoint-partitioned prompt, so
+    # a bench projection can find where a rewrite happened the same way
+    # `diverge_at` finds it in the Timeline.
     #
     # The chain is a ROLLING hash (format {PREFIX_CHAIN_VERSION}): a seed
     # digest over the fixed prefix -- `model` and `tools`, which lead every

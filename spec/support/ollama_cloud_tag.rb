@@ -16,7 +16,7 @@
 # There is no reachability pre-check here, unlike :ollama's OllamaTestServer.
 # :ollama probes because a stopped LOCAL server is an everyday environment gap
 # worth a friendly skip; there is no equivalent "is ollama.com up" question --
-# the one live consumer (T12) makes real requests and asserts on what comes
+# the one live consumer makes real requests and asserts on what comes
 # back, so a synthetic probe here would just be a second billed request in
 # front of the first.
 module OllamaCloudTag

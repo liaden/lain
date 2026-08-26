@@ -165,7 +165,7 @@ RSpec.describe Lain::Journal do
     end
   end
 
-  # T3: .open creates the file, but the session header lands much later
+  # .open creates the file, but the session header lands much later
   # (SessionRecord::Scribe writes it), so a chat that died in the window
   # between left a zero-byte .ndjson on disk FOREVER -- and it sorts newest,
   # so every reader that picks "the newest session" trips over it. The writer
@@ -238,14 +238,14 @@ RSpec.describe Lain::Journal do
   # The unlink is the only destructive filesystem operation the harness
   # performs on the experiment record, so it is pinned to the INODE this
   # Journal created rather than to the name it used. These are the reviewer's
-  # `.review-T3/probe_unlink.rb` reproductions, ported: every one of them is a
-  # file the Journal must NOT remove.
+  # own unlink reproductions, ported: every one of them is a file the Journal
+  # must NOT remove.
   describe "the unlink is pinned to the inode it created, never to the path" do
     around { |example| Dir.mktmpdir { |dir| @dir = dir and example.run } }
 
     def path_for(name) = File.join(@dir, name)
 
-    # P2. Reachable today: Resume::Salvager reopens a crashed session's file,
+    # Reachable today: Resume::Salvager reopens a crashed session's file,
     # which it did not create. A zero-byte one is somebody else's empty file,
     # not ours to clean up.
     it "keeps a zero-byte file that already existed when it opened" do
@@ -269,7 +269,7 @@ RSpec.describe Lain::Journal do
       expect(File).to exist(path)
     end
 
-    # P3. #share_fd exists precisely so the Rust tracing subscriber can dup the
+    # #share_fd exists precisely so the Rust tracing subscriber can dup the
     # descriptor (ext/lain's dup_writer) and interleave its spans. Once the
     # number is handed out, another writer may land bytes after our close --
     # onto an unlinked inode, invisibly, if we still removed the file.
@@ -303,7 +303,7 @@ RSpec.describe Lain::Journal do
       expect(File).to exist(path)
     end
 
-    # P4. The comment this replaces reasoned only about a rename AWAY from the
+    # The comment this replaces reasoned only about a rename AWAY from the
     # path. A rename ONTO it substitutes a different inode under the same name.
     it "keeps a different file renamed onto the path between open and close" do
       path = path_for("p4.ndjson")
@@ -317,7 +317,7 @@ RSpec.describe Lain::Journal do
       expect(File).to exist(path)
     end
 
-    # P5. File.size? follows a symlink while unlink removes the link itself --
+    # File.size? follows a symlink while unlink removes the link itself --
     # testing one file and deleting another. O_EXCL refuses to create through a
     # symlink at all, so the split cannot arise.
     it "keeps both the link and its target when the path is a symlink" do
@@ -332,7 +332,7 @@ RSpec.describe Lain::Journal do
       expect(File).to be_symlink(link)
     end
 
-    # P6. THE one that decides it. Chronicle and ChatLaunch both document two
+    # THE one that decides it. Chronicle and ChatLaunch both document two
     # Journal.open calls straddling a clock tick as a bug that already had to
     # be closed once; when it cost a duplicate file that was untidy, and if the
     # empty one could unlink the live one's file it would cost a SESSION -- its

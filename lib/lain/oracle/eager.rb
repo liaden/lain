@@ -24,10 +24,11 @@ module Lain
     # falls back to the deterministic record alone, never a blocking summarize.
     #
     # It does NOT follow that a failed fire journals nothing, and this comment
-    # said so until F28. {Provider::Journaled} records the outbound request
-    # BEFORE dispatch, and the capacity gate sits INSIDE `Ollama#complete`
-    # (`ollama.rb:188`) -- so a summary the endpoint refuses leaves a
-    # {Telemetry::RequestSent} with no {Telemetry::OracleAnswer} following it.
+    # said so until the capacity gate's telemetry was traced end to end.
+    # {Provider::Journaled} records the outbound request BEFORE dispatch, and
+    # the capacity gate sits INSIDE `Ollama#complete` (`ollama.rb:188`) -- so a
+    # summary the endpoint refuses leaves a {Telemetry::RequestSent} with no
+    # {Telemetry::OracleAnswer} following it.
     # That pair IS the skip, and it is the shape to read the journal for: the
     # answer's absence is the signal, not the record's. Only a fire that dies
     # before the provider is reached -- a half-written `.lain/summarizers.rb`,

@@ -1,20 +1,20 @@
 # frozen_string_literal: true
 
 # Unlike repl_middleware_spec, which mirrors the SHAPE of the
-# stack, this drives the REAL Repl#dispatch/#respond/#deliver seam: B0 makes
-# `dispatch` OWN delivery so a short-circuiting repl-phase middleware (one that
+# stack, this drives the REAL Repl#dispatch/#respond/#deliver seam, where
+# `dispatch` OWNS delivery so a short-circuiting repl-phase middleware (one that
 # sets `env[:response]` without calling downstream) actually renders, and so a
 # Lain::Error raised in the middleware chain renders instead of crashing the
 # loop. The two async collaborators respond leans on -- the conductor's
 # supervise and the ask_human reply surfaces -- are the only doubles: the rest
-# is the shipped control flow. (T1 moved Repl out of exe/lain into
+# is the shipped control flow. (Repl moved out of exe/lain into
 # Lain::CLI::Repl, so this no longer `load`s the exe -- `require "lain"`
 # already defines the class under test.)
 
 RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary rescue" do
   # A repl-phase middleware that answers the command itself: it sets
-  # env[:response] and RETURNS WITHOUT calling downstream -- the B2/B3 short-
-  # circuit shape whose delivery this card exists to give a home. Anonymous,
+  # env[:response] and RETURNS WITHOUT calling downstream -- the short-circuit
+  # shape whose delivery this card exists to give a home. Anonymous,
   # the way repl_middleware_spec builds its probes.
   def short_circuit_with(response)
     Class.new(Lain::Middleware::Base) do
@@ -38,7 +38,7 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
   # A middleware that short-circuits but FORGETS the out-key: it returns the env
   # without setting `:response` and without calling downstream. `env.response`
   # (fetch(:response)) would then raise KeyError -- NOT a Lain::Error -- and
-  # escape dispatch's rescue, killing converse. B0 must survive this loudly.
+  # escape dispatch's rescue, killing converse. The seam must survive this loudly.
   def short_circuit_omitting_response
     Class.new(Lain::Middleware::Base) do
       define_method(:call) { |env, &_downstream| env }
@@ -71,8 +71,8 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
 
   # An EMPTY command registry (by default) bound over a doubles-only Env:
   # every line falls through to the middleware phase, which is the seam under
-  # test; the T9 panel-fix examples below hand in a registry of their own.
-  # T9 made `replies:` injectable, so the old @replies ivar-poke is gone.
+  # test; the panel-fix examples below hand in a registry of their own.
+  # `replies:` is injectable, so the old @replies ivar-poke is gone.
   def command_surface(registry)
     registry.bind(build_command_env(replies:, agent:))
   end
@@ -160,7 +160,7 @@ RSpec.describe "the repl phase's short-circuit delivery and dispatch-boundary re
     expect(agent).not_to have_received(:ask)
   end
 
-  # T17: /btw seeds its child chat's FIRST question through --prompt, so the
+  # /btw seeds its child chat's FIRST question through --prompt, so the
   # ephemeral popup asks straight away and then behaves like any chat. converse
   # reads the terminal through the conductor; a farewell on the very next read
   # ends the loop, so a seeded run dispatches the seed then quits -- proving the

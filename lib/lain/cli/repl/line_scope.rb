@@ -72,7 +72,7 @@ module Lain
         # not the property the codebase has. On an ORDINARY line both surfaces
         # spawn, so a question and a gated call arriving together put two reads
         # on one stdin with no `/inbox` anywhere near it -- the same keystroke
-        # misdirection, by the ask path. That is not a regression (pre-T1
+        # misdirection, by the ask path. That is not a regression (the earlier
         # {Repl#respond} spawned the identical pair on every ask) and closing it
         # is a card of its own: it needs the two surfaces to arbitrate for the
         # read, which is a design call, not a guard. Do not read the paragraph

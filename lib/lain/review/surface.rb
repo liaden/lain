@@ -3,8 +3,8 @@
 module Lain
   module Review
     # The seam between the review model and whatever renders a changeset for a
-    # human. A plain buffer today ({Surface::Neovim}, T19), a table of text
-    # ({Surface::Text}, T9), tomorrow something else -- the port is what lets
+    # human. A plain buffer today ({Surface::Neovim}), a table of text
+    # ({Surface::Text}), tomorrow something else -- the port is what lets
     # the UI be rebuilt without touching the model. {CLAUDE.md}'s Null Object
     # rule names {Sink::Null} as the exemplar; {Surface::Null} is this chunk's
     # instance of it, so every review-model spec below the surface runs
@@ -12,7 +12,7 @@ module Lain
     #
     # A surface holds NO review state of its own. {Surface::Neovim}'s own card
     # is where that is enforced, but it is a promise of the PORT, not one
-    # adapter's private discipline: the session (T13), not the surface, is the
+    # adapter's private discipline: the session, not the surface, is the
     # aggregate, which is what lets a surface be swapped or dropped mid-review
     # with nothing lost and no message depending on another having run first.
     # `spec/support/shared_examples/review_surface.rb` is where the SHAPE of
@@ -77,12 +77,12 @@ module Lain
     #
     # == What `present`'s `changeset` argument answers
     #
-    # `Lain::Review::Changeset` (T7) and `Lain::Review::Marks` (T8) had not
+    # `Lain::Review::Changeset` and `Lain::Review::Marks` had not
     # landed when {Surface::Text} was written, so the duck `present` actually
     # needs is stated ONCE here rather than in each adapter's own doc -- the
     # drift {MESSAGES} exists to prevent for a message's SHAPE applies just as
     # much to what one argument of one message answers, and a second adapter
-    # inventing its own reading (T19) is exactly that drift.
+    # inventing its own reading is exactly that drift.
     #
     # `changeset.files` answers an Enumerable of file entries (`#path`,
     # `#state` -- one of `Review::FILE_STATES`) for the FLAT scope,
@@ -116,14 +116,14 @@ module Lain
     # strategy, and a renderer re-partitioning what it was handed could draw
     # rows the session never marked.
     #
-    # Neither `Changeset` nor `Marks` alone answers this: a changeset (T7) is
+    # Neither `Changeset` nor `Marks` alone answers this: a changeset is
     # files/hunks/anchorable lines with no notion of review state, and marks
-    # (T8) derives that state from hunks with no notion of files-as-such. The
+    # derives that state from hunks with no notion of files-as-such. The
     # object that answers `#files`/`#partitions` above has to be built by
-    # JOINING the two -- T13's session is the one place both are held
-    # together, so it is T13's job to produce it (from a real `Changeset`'s
-    # structure and `Marks`' derived tri-state per file), not either T7 or T8
-    # alone, and not a surface reaching for both on its own.
+    # JOINING the two -- the session is the one place both are held
+    # together, so it is the session's job to produce it (from a real
+    # `Changeset`'s structure and `Marks`' derived tri-state per file), not
+    # either of them alone, and not a surface reaching for both on its own.
     #
     # == Why `check!` is a duck probe, not a base class
     #
@@ -164,7 +164,7 @@ module Lain
       # keyword, its NAME -- a keyword IS its name at every call site, while a
       # positional's is private to the method. Pinning positional names refused
       # `def thread(_anchor)` as "the wrong shape", which is a rename, not a
-      # defect; a T19 review panel hit it writing a probe. The names below stay
+      # defect; a review panel hit it writing a probe. The names below stay
       # because this Hash is also the port's documentation -- they say what each
       # argument MEANS -- and only the comparison relaxes.
       #
@@ -184,7 +184,7 @@ module Lain
       }.transform_values { |shape| shape.map(&:freeze).freeze }.freeze
 
       # How much of a `Hunk` key {Surface::Neovim#mark} and {Surface::Text#mark}
-      # show a human, and the one place that decision is made -- see F5's
+      # show a human, and the one place that decision is made -- see the
       # grounding in `planning/qa-findings-research-2026-08.md`. A hunk key is
       # a 64-hex-character content digest behind a SCHEME prefix
       # (`Hunk::CONTENT_SCHEME`/`Hunk::SPAN_SCHEME`, `review/hunk.rb`), and no
@@ -223,7 +223,7 @@ module Lain
       # prefix runs about 1.2%; on 12 digits it is about 2e-7. The four
       # extra digits cost four characters, and the longest rendered message
       # (`hunk-content-v1:` plus 12 hex digits plus `...` plus
-      # ` is now unreviewed`) is still 49, under AC1's 60-character bar.
+      # ` is now unreviewed`) is still 49, under the 60-character bar.
       #
       # SPLIT on the scheme boundary, never a flat slice off the front of
       # the whole key: a flat cut hands the CONSTANT scheme prefix
@@ -276,7 +276,7 @@ module Lain
       # answers all seven messages at the right arities, `check!` blesses it,
       # and this method then returns `nil` in silence.
       #
-      # SO THE RESIDUAL IS AN F4 REGRESSION THAT CANNOT ANNOUNCE ITSELF: the
+      # SO THE RESIDUAL IS A REGRESSION THAT CANNOT ANNOUNCE ITSELF: the
       # human makes the terminal gesture, the verdict lands, and nothing is
       # printed -- the precise defect the acknowledgement was added to remove.
       # It is accepted anyway, because the alternative is the strictly worse

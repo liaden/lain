@@ -11,7 +11,7 @@ RSpec.describe Lain::CacheProfile do
   end
 
   # Every provider Lain ships must answer with a real value, not a hash, and
-  # not nil -- a scheduler (CAC-3/4) reads real numbers off it.
+  # not nil -- a scheduler reads real numbers off it.
   describe "every shipped provider answers cache_profile" do
     {
       "AnthropicReference" => -> { Lain::Provider::AnthropicReference.new(client: Object.new) },

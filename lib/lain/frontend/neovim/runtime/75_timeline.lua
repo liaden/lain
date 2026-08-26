@@ -1,4 +1,4 @@
--- The cursor-on-a-turn pin gesture (B4): `p` in lain://timeline pins the turn
+-- The cursor-on-a-turn pin gesture: `p` in lain://timeline pins the turn
 -- the cursor sits on -- "compaction may not elide this one". Mirrors the inbox
 -- drain above in every respect that matters: the KEY invokes the COMMAND, so
 -- the mapping and a hand-typed :LainPin are provably one path; the command is

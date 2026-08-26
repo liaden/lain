@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# B1: `/pin [digest]` marks a turn so compaction may not elide it, and
+# `/pin [digest]` marks a turn so compaction may not elide it, and
 # `/unpin [digest]` takes the mark off. Both are zero-model-turn commands over
 # the SAME resolution `/rewind` uses -- hex-only below a full "blake3:" scheme,
 # unique or refuse -- resolved against THIS session's live render chain. A
@@ -33,7 +33,7 @@ RSpec.describe Lain::CLI::Command::Pin do
     expect(command.usage).to include("/pin")
   end
 
-  # AC7: /pin with no argument pins the last assistant turn.
+  # /pin with no argument pins the last assistant turn.
   describe "bare /pin" do
     it "pins the last assistant turn and names it in the reply" do
       target = assistant_heads.first.digest
@@ -54,7 +54,7 @@ RSpec.describe Lain::CLI::Command::Pin do
     end
   end
 
-  # AC8: /pin with a digest prefix pins that turn.
+  # /pin with a digest prefix pins that turn.
   describe "/pin <prefix>" do
     it "pins the turn matching a bare hex prefix" do
       target = agent.timeline.ancestor_digests.last
@@ -82,10 +82,10 @@ RSpec.describe Lain::CLI::Command::Pin do
 
   # Fix 1, the blocker. `/pin 3` reads as /rewind's "three turns back" to any
   # operator, and used to pin whatever turn's digest happened to start with "3"
-  # -- reporting SUCCESS. Under B2 that means the wrong turn survives
-  # compaction and the intended one is elided. Two halves: a minimum prefix
-  # length so no plausible count reaches the matcher, and a refusal that says
-  # outright that /pin takes no count.
+  # -- reporting SUCCESS, so the wrong turn survives compaction and the
+  # intended one is elided. Two halves: a minimum prefix length so no plausible
+  # count reaches the matcher, and a refusal that says outright that /pin takes
+  # no count.
   describe "a count-shaped argument" do
     # Exhaustive over the digits, on a chain whose four digests between them
     # start with several of them -- the probe found 40/40 such arguments
@@ -125,7 +125,7 @@ RSpec.describe Lain::CLI::Command::Pin do
     end
   end
 
-  # AC9: an unmatched prefix refuses loudly and pins nothing. The Repl's
+  # An unmatched prefix refuses loudly and pins nothing. The Repl's
   # boundary renderer turns the raised Lain::Error into the reply, exactly as
   # it does for /rewind's refusals.
   describe "an unmatched or ambiguous prefix" do

@@ -174,7 +174,7 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
-  # S1. A home-anchored table only ever saw ONE home, so an absolute path into
+  # A home-anchored table only ever saw ONE home, so an absolute path into
   # anybody else's -- `/root/.ssh/id_rsa`, `/home/other/.netrc` -- walked
   # straight through. The unambiguous names now match anywhere.
   describe "the unambiguous secrets match anywhere, not only under our home" do
@@ -204,8 +204,8 @@ RSpec.describe Lain::Sensitivity do
       expect(classify("#{home}/.ssh")).to be_ordinary
     end
 
-    # A whole-subtree rule has to cover the subtree's ROOT, or T19 lists the
-    # directory itself while withholding everything in it. Moving from a
+    # A whole-subtree rule has to cover the subtree's ROOT, or a listing shows
+    # the directory itself while withholding everything in it. Moving from a
     # home-anchored prefix to an ancestor-segment test lost this.
     it "denies the protected directory itself, not only what is under it" do
       expect(classify("#{home}/.gnupg")).to be_denied
@@ -353,7 +353,7 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
-  # S5. Precedence is expressed as ONE ordered list rather than a check, so the
+  # Precedence is expressed as ONE ordered list rather than a check, so the
   # order is the whole rule and every step of it needs its own example. Reordering
   # any adjacent pair must turn exactly one of these red.
   describe "precedence, step by step" do
@@ -392,7 +392,7 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
-  # S3. `exempt` is the one key that can subtract, so it is the one key where a
+  # `exempt` is the one key that can subtract, so it is the one key where a
   # wildcard is not a widening. `exempt = ["*"]` silently turned the whole gated
   # half off.
   describe "an exemption may not turn the gated half off wholesale" do
@@ -569,10 +569,10 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
-  # B1. `Pathname#cleanpath` raises ArgumentError on a NUL byte, and
+  # `Pathname#cleanpath` raises ArgumentError on a NUL byte, and
   # `File.fnmatch?` raises Encoding::CompatibilityError -- not an ArgumentError
-  # -- on a string in an encoding it cannot compare. T11 calls this synchronously
-  # inside a gate, so neither may escape.
+  # -- on a string in an encoding it cannot compare. The gate calls this
+  # synchronously, so neither may escape.
   describe "a path it cannot read lexically" do
     it "gates a path holding a NUL byte instead of raising" do
       expect { classify("a\0b") }.not_to raise_error
@@ -593,9 +593,9 @@ RSpec.describe Lain::Sensitivity do
 
     # The guard and the rescue behind it are two mechanisms for one input class,
     # so "delete the guard" survives mutation -- a known equivalent mutant, kept
-    # because T11 calls this inside a gate where an escaping exception is a fault
-    # rather than a verdict. This pins the relationship instead of leaving it to
-    # be rediscovered: `readable?` must refuse EXACTLY what `cleanpath` rejects.
+    # because the gate calls this where an escaping exception is a fault rather
+    # than a verdict. This pins the relationship instead of leaving it to be
+    # rediscovered: `readable?` must refuse EXACTLY what `cleanpath` rejects.
     it "guards exactly the input class the rescue behind it exists to catch" do
       [+"a\0b", (+"caf\xE9.txt").force_encoding("UTF-8"), (+"\xFF\xFE/x").force_encoding("UTF-16LE")].each do |bad|
         raised = begin
@@ -625,7 +625,7 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
-  # B2. A pattern that survives compilation and then raises inside
+  # A pattern that survives compilation and then raises inside
   # `File.fnmatch?` breaks every LATER call, not its own -- a config a project
   # committed once would crash the gate for good.
   describe "a config pattern it cannot read lexically" do
@@ -649,7 +649,7 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
-  # B3. `HOME=/` is Docker's default when the uid has no /etc/passwd entry, and
+  # `HOME=/` is Docker's default when the uid has no /etc/passwd entry, and
   # `ENV["HOME"].to_s` is "" when it is unset. Either one silently disabled every
   # home-anchored rule in the table.
   describe "the home it is given" do
@@ -680,8 +680,8 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
-  # S6. T20 classifies bash argv, where a relative path is the norm. Making each
-  # caller normalize first would be three copies of one rule.
+  # Bash argv gets classified here, where a relative path is the norm. Making
+  # each caller normalize first would be three copies of one rule.
   describe "a relative path is resolved against the injected cwd" do
     it "climbs out of a project back into home, lexically" do
       nested = described_class.new(home:, cwd: SensitivitySpecSupport::NESTED_CWD)
@@ -710,7 +710,7 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
-  # N6. `path.to_s` turned every wrong type into "" and answered :ordinary.
+  # `path.to_s` turned every wrong type into "" and answered :ordinary.
   describe "a subject that is not a path at all" do
     it "raises on nil rather than answering ordinary" do
       expect { classify(nil) }.to raise_error(ArgumentError, /nil/)

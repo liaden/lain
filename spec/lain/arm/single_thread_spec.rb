@@ -59,7 +59,7 @@ RSpec.describe Lain::Arm::SingleThread do
     end
   end
 
-  # T24: elapsed and cost come off ONE injected instrument, shared by every arm,
+  # Elapsed and cost come off ONE injected instrument, shared by every arm,
   # so the two headline bench metrics cannot drift apart per topology.
   describe "the injected instrument" do
     it "takes elapsed off the instrument's own clock" do

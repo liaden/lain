@@ -48,7 +48,7 @@ module Lain
         # `approval_view:` is REQUIRED where the other three are defaulted, and
         # the asymmetry is the point rather than an oversight. The object the
         # editor's `y` resolves through is the one {CLI::Repl} bound -- the
-        # frontend's own -- so the hand-over is the whole of UX4's fix, and a
+        # frontend's own -- so the hand-over is the whole of the fix, and a
         # DEFAULT here would make forgetting it silent: {#prime} would prime
         # some other view and every live attach assertion would still pass,
         # because priming and handing-over are different claims. A panel probe

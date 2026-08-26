@@ -52,7 +52,7 @@ module Lain
     #
     # This class widens nothing about matching. {Approval::Remembered} compares
     # a whole call shape by value, never a prefix, which is why consent can be
-    # a coarse per-root yes at all: `approval/rule.rb`'s MA-1 hazard (a
+    # a coarse per-root yes at all: `approval/rule.rb`'s hazard (a
     # `command.start_with?("git ")` rule allowing `git -c core.fsmonitor=id
     # status`) needs a partial match, and there is none to be had here.
     #
@@ -76,7 +76,7 @@ module Lain
       FLAG = :flag
 
       IGNORED = "this project's remembered approvals are not in force: %<reason>s"
-      # `--root` ALONE, and that is read off T6's own wiring rather than
+      # `--root` ALONE, and that is read off the binary's own wiring rather than
       # guessed: `exe/lain`'s `project_override` builds
       # `resolved_project(root:, cwd: cwd || root)`, so `--cwd` defaults to the
       # root and naming the project is one flag. A remedy that told the user to
@@ -136,7 +136,7 @@ module Lain
         # rather than re-establishing it: {Project#initialize} realpaths both of
         # its paths, so a `Project#root` cannot carry an unresolved spelling.
         # This class kept a private copy of {Paths#resolved}'s expand-then-
-        # realpath recipe until the T18 panel proved it dead -- replacing it
+        # realpath recipe until a review proved it dead -- replacing it
         # with a bare `File.expand_path` changed no behaviour anywhere -- so
         # what stands here is the precondition, stated, instead of a second
         # implementation of it that no caller can exercise.

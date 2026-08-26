@@ -7,7 +7,7 @@ module Lain
     # partial update the model never intended. The session renders the list as
     # ONE reminder string ({Session#write_todos}, the same render-to-one-string
     # shape as {Memory::Manifest#to_reminder}), and the Agent's existing
-    # per-render composition (`@workspace.with(*@session.reminders)`, T11)
+    # per-render composition (`@workspace.with(*@session.reminders)`)
     # carries it into the Request tail. The list never enters the Timeline: it
     # rides the Workspace the same way a file read never becomes a Turn, so it
     # can neither compound token cost turn over turn nor resurrect a completed
@@ -17,7 +17,6 @@ module Lain
     # honest shape for a todo: what it is, and where it stands. `status` is a
     # closed enum rather than free text so a rendered list is always one of
     # three unambiguous words, not a model-invented synonym.
-    #
     class TodoWrite < Tool
       STATUSES = %w[pending in_progress completed].freeze
 

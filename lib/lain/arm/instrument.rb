@@ -36,7 +36,7 @@ module Lain
     # Instrument.new` -- as Data equality promises for two built from the same
     # clock and book. Nothing here depends on that; it is only worth saying
     # because the default clock USED to be a fresh lambda per call, which made
-    # the same two Instruments unequal (T33).
+    # the same two Instruments unequal.
     Instrument = Data.define(:clock, :price_book) do
       # `clock` is {RunClock::MONOTONIC}, which never jumps backward on an NTP
       # step, so an elapsed measurement is never negative; injectable so a spec

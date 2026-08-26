@@ -2,7 +2,7 @@
 
 module Lain
   module Bench
-    # PC-6, the chunk's closing deliverable: the shape x density sweep that
+    # The chunk's closing deliverable: the shape x density sweep that
     # answers "which execution SHAPE, at which seam DENSITY, for this task class"
     # -- and does it against a first-class REACTIVE baseline, so plan-shaped
     # compaction has to BEAT something to claim anything.

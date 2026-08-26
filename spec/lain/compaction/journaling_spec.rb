@@ -39,7 +39,7 @@ RSpec.describe "Compaction journaling" do
 
   def need(*signals) = Lain::Compaction::Need::Result.new(signals:)
 
-  # T17. #pipeline is handed a MEASUREMENT rather than a message list -- the
+  # #pipeline is handed a MEASUREMENT rather than a message list -- the
   # floor deciding whether the rewrite is worth making took it already, and the
   # accounting reports that one measurement instead of retaking it -- so a spec
   # wanting a real before/after asks the SAME scheduler to measure the history
@@ -82,7 +82,7 @@ RSpec.describe "Compaction journaling" do
       expect(delta).to be_a(BigDecimal)
     end
 
-    # UX5. The record's figures are BYTES and the PriceBook quotes per TOKEN, so
+    # The record's figures are BYTES and the PriceBook quotes per TOKEN, so
     # the estimate crosses through {Lain::ProxyBytes#to_tokens}
     # before it is priced -- which is exactly what an auditor re-deriving the
     # dollars from the record alone has to do too.
@@ -98,7 +98,7 @@ RSpec.describe "Compaction journaling" do
       expect(BigDecimal(record["cost_spent"])).to eq(expected_spent)
     end
 
-    # The bug UX5 named, pinned: the dollars used to price the raw byte count at
+    # The bug, pinned: the dollars used to price the raw byte count at
     # a per-token rate and so overstated by the whole bytes-per-token ratio.
     it "prices the converted proxy, never the raw byte count" do
       scheduling(need: need(:token_threshold), cold: false, history_size: 100, hard_cap: 100,
@@ -140,7 +140,7 @@ RSpec.describe "Compaction journaling" do
       expect(records.first["trigger"]).to eq(["approaching_window"])
     end
 
-    # A8's review (Schneeman): without this, a compaction priced through a
+    # From review (Schneeman): without this, a compaction priced through a
     # ZERO fallback -- what an unpriced local model gets -- is byte-identical
     # on the record to a genuinely free one, and the only recovery is a join
     # against TurnUsage. That join is not merely inconvenient, it is WRONG
@@ -162,10 +162,10 @@ RSpec.describe "Compaction journaling" do
     end
   end
 
-  # C2. The scheduler's priced `model:` is fixed at construction; the model in
+  # The scheduler's priced `model:` is fixed at construction; the model in
   # force is not (`/model` writes into Context::ModelSwitch's slot mid-session).
-  # C1 made the compaction WINDOW follow the live model each turn and left the
-  # price lookup behind, so after a switch the two halves disagreed. A figure
+  # The compaction WINDOW follows the live model each turn while the price
+  # lookup was left behind, so after a switch the two halves disagreed. A figure
   # that cannot be stood behind is not emitted -- price_book.rb:112's doctrine,
   # one tier up.
   describe "a compaction priced against a model that is no longer in force" do
@@ -325,7 +325,7 @@ RSpec.describe "Compaction journaling" do
       expect(JSON.parse(JSON.generate(priced.to_journal))).to include("model" => "claude-opus-4-8")
     end
 
-    # C2. nil is REFUSAL -- "no figure we can stand behind" -- and the record
+    # nil is REFUSAL -- "no figure we can stand behind" -- and the record
     # keeps the keys so a reader sees the field exists and carries nothing,
     # which `"0.0"` could never say.
     describe "a record that quotes no figures" do

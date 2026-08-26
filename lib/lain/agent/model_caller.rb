@@ -20,7 +20,7 @@ module Lain
         @middleware = middleware
       end
 
-      # `on_stream_started` is CE-5's first-token observer (see
+      # `on_stream_started` is the first-token observer (see
       # {Provider::StreamStartedSignal}) -- an orchestration hook the stagger
       # scheduler awaits, NOT request data, so it rides the method arg and never
       # enters the middleware env. It defaults to nil and is INERT then: the

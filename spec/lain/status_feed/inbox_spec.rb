@@ -3,9 +3,9 @@
 # The human inbox as {Lain::StatusFeed} publishes it: Event::Projection#pending
 # folded incrementally, retired ONLY by a committed turn's causal edges -- and
 # reached through the two carriers that name those edges, a replayed `:turn`
-# Event and the {Lain::Telemetry::TurnUsage} head a live chat actually delivers
-# (F76). The parity that makes the number worth publishing is pinned next door,
-# in spec/lain/frontend/neovim/inbox_view_spec.rb.
+# Event and the {Lain::Telemetry::TurnUsage} head a live chat actually
+# delivers. The parity that makes the number worth publishing is pinned next
+# door, in spec/lain/frontend/neovim/inbox_view_spec.rb.
 RSpec.describe Lain::StatusFeed::Inbox do
   let(:store) { Lain::Store.new }
 

@@ -35,11 +35,10 @@ module Lain
       # assembler can re-sync on; NDJSON carries no equivalent marker, so a
       # retried stream is indistinguishable from a continuation of the attempt it
       # replaced -- which is how a severed attempt plus a clean retry returned
-      # both attempts' text concatenated under a done_reason of "stop" (F7b).
-      # Nothing in the protocol can fix that. {Ollama#stream_body} therefore
-      # registers #reset on the round trip's {RetryTap::Attempt}, and
-      # faraday-retry calls it before the replacing attempt's first chunk
-      # arrives.
+      # both attempts' text concatenated under a done_reason of "stop". Nothing
+      # in the protocol can fix that. {Ollama#stream_body} therefore registers
+      # #reset on the round trip's {RetryTap::Attempt}, and faraday-retry calls
+      # it before the replacing attempt's first chunk arrives.
       #
       # The alternative was to rebind the closure -- `open_attempt { assembler =
       # StreamAssembler.new }` -- which needs no #reset at all and passes the

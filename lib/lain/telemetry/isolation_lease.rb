@@ -18,7 +18,7 @@ module Lain
     # One transition in an isolation lease's lifecycle: `kind` names WHICH
     # transition (`:acquired`/`:released` today; `:service_provisioned`/
     # `:service_torn_down` complete the vocabulary for a richer backend --
-    # B3's Postgres/Redis DB-index, B4's compose stack -- to emit ALONGSIDE
+    # a Postgres/Redis DB-index, a compose stack -- to emit ALONGSIDE
     # these two, the same "closed enum, not every value reached yet" idiom
     # {Compaction#cache_state} documents for its own unreached `:warm`).
     # `worker_key` is the STRING form of whatever `worker_id` the caller

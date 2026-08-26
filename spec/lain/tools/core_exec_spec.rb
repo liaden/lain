@@ -64,7 +64,7 @@ module CoreExecSpecSupport
   end
 end
 
-# C3: the differential arm of the exec boundary. Tools::CoreExec runs the SAME
+# The differential arm of the exec boundary. Tools::CoreExec runs the SAME
 # `sh -c` command shape as Tools::Bash, but out of process through the
 # lain-core daemon -- and the card's whole point is that the two transports are
 # byte-for-byte indistinguishable in their Tool::Result content. The :core
@@ -192,7 +192,7 @@ RSpec.describe Lain::Tools::CoreExec do
     # The #stop here is UNBOUNDED, unlike the boundary-death example's wait, and
     # deliberately so: {Client#collapse} can park forever (a filed Client
     # defect), but only against a far end whose reader close_read does not EOF.
-    # Measured by the T6 panel across six hostile teardown states and 30+
+    # Measured by a review panel across six hostile teardown states and 30+
     # repetitions, every teardown from this fixture completed in 0.024-0.077s,
     # the frozen-handshake case landing exactly on HANDSHAKE_BUDGET. A bound
     # here would be guarding a state nothing can currently produce; the note is

@@ -2,7 +2,7 @@
 
 require "async"
 
-# A3: the free tier is consulted BEFORE the model tier. {Lain::Summarizer::Catalog}
+# The free tier is consulted BEFORE the model tier. {Lain::Summarizer::Catalog}
 # holds the project's declared summarizers; this tier asks it first and falls
 # through to the model-backed tier whenever the catalog cannot (or will not)
 # answer. It is the OUTERMOST wrap, above {Lain::Oracle::Recorded::Journaling},
@@ -62,8 +62,8 @@ module RoutedSummarizerSpecSupport
     # Unbounded recursion in a predicate. SystemStackError descends straight
     # from Exception -- it is neither a ScriptError nor a StandardError -- and a
     # half-written `suitable?` that calls itself is the same authoring state the
-    # NotImplementedError cases cover. Every tool result runs these predicates
-    # since T4, so the containment has to name it.
+    # NotImplementedError cases cover. Every tool result runs these predicates,
+    # so the containment has to name it.
     recursive_suitable: <<~RUBY,
       summarizer "recursive" do
         def suitable?(result) = suitable?(result)
@@ -188,8 +188,8 @@ RSpec.describe Lain::Oracle::RoutedSummarizer do
   end
 
   # SystemStackError is neither a ScriptError nor a StandardError, so the rescue
-  # that contains every other broken declaration misses it -- and T4 widened the
-  # exposure from "results over 4096 bytes" to every tool result.
+  # that contains every other broken declaration misses it -- and the exposure is
+  # now every tool result, not just results over 4096 bytes.
   it "falls through when a declaration recurses without bound" do
     oracle = described_class.new(inner: tier, catalog: catalog(:recursive_suitable))
 
@@ -244,7 +244,7 @@ RSpec.describe Lain::Oracle::RoutedSummarizer do
     expect(tier.questions).to eq([{ Lain::Oracle::Eager::DEFAULT_SLOT => "a bare tool result" }])
   end
 
-  # T4: the size gate is a COST policy, and this is the object that knows which
+  # The size gate is a COST policy, and this is the object that knows which
   # tier pays. The catalog above it is free -- no tokens, no latency, no
   # network -- so it is consulted for EVERY result; only the fallthrough to the
   # model tier has to clear the threshold. Gating both together is what made a
@@ -321,7 +321,7 @@ RSpec.describe Lain::Oracle::RoutedSummarizer do
     end
   end
 
-  # T13: the UPPER gate, beside the lower one and on the SAME tier -- the paid
+  # The UPPER gate, beside the lower one and on the SAME tier -- the paid
   # one. {described_class::MODEL_THRESHOLD_BYTES} asks "is this big enough to be
   # worth a model call"; {described_class::INPUT_BOUND} asks "is this small
   # enough for a model to serve at all". Together they make the model tier's
@@ -334,7 +334,7 @@ RSpec.describe Lain::Oracle::RoutedSummarizer do
   # and `subagent`, `request_review`, `ask_human` and `run_skill` sit outside
   # the bounded base floor entirely.
   #
-  # AC 1 CORRECTED at review: an earlier draft of this group asserted the
+  # CORRECTED at review: an earlier draft of this group asserted the
   # ceiling gated the CATALOG too. See the "not bounded by this ceiling"
   # example for why that was wrong and what it would have cost.
   describe "the input ceiling, which is the UPPER gate on the PAID tier" do
@@ -381,7 +381,7 @@ RSpec.describe Lain::Oracle::RoutedSummarizer do
       expect(tier).not_to be_called
     end
 
-    # AC 3, and the pin against the two gates becoming one: the SAME oracle
+    # The pin against the two gates becoming one: the SAME oracle
     # sends a tiny result to the free tier and keeps a huge one off the paid
     # one. A single knob could not produce both answers.
     it "keeps the two bounds independent" do
@@ -409,7 +409,7 @@ RSpec.describe Lain::Oracle::RoutedSummarizer do
       expect(ceiling * 20).to eq(Lain::Tools::WebFetch::DEFAULT_BYTE_CAP)
     end
 
-    # AC 5: between the gates nothing changed, down to the bytes of the
+    # Between the gates nothing changed, down to the bytes of the
     # question -- a journal replay keys on them.
     it "summarizes an input between the bounds exactly as before" do
       text = "x" * (ceiling - 1)
@@ -486,7 +486,7 @@ RSpec.describe Lain::Oracle::RoutedSummarizer do
     end
   end
 
-  # AC 4, and a study-bench rule rather than a defensive habit: an arm whose two
+  # A study-bench rule rather than a defensive habit: an arm whose two
   # gates cannot both be cleared is not a conservative arm, it is a meaningless
   # one -- and it fails SILENTLY. Every routed source declines, the model tier
   # is never asked, and the run reports 100% misses with no error anywhere.

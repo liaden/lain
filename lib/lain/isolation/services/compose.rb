@@ -26,7 +26,7 @@ module Lain
                 scheme: scheme.to_s.freeze, host: host.to_s.freeze)
         end
 
-        # The journalable identity (B6 pairs this with the worker key). Namespaced
+        # The journalable identity, paired with the worker key. Namespaced
         # per compose service so two declarations (`web`, `db`) are distinct
         # declarations rather than a {Builder::Duplicate} collision.
         def name = :"compose_#{service}"

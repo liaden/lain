@@ -2,7 +2,7 @@
 
 module Lain
   module Memory
-    # A Manifest::Hit-duck search index (T10) over an injected {Embedder}: an
+    # A Manifest::Hit-duck search index over an injected {Embedder}: an
     # exact (no ANN) cosine ranking over embeddings, the third boosting arm
     # alongside Bm25 (lexical) and Graph (wikilink) -- Manifest stays the
     # always-runs floor these only rank on top of
@@ -26,9 +26,9 @@ module Lain
       #   Injected, never constructed -- Embedder::Static is the deterministic
       #   bench arm this class is unit-tested against; Ollama is the same duck
       #   for a live sweep. #model_id is OPTIONAL on the duck: an Embedder
-      #   subclass states one (T10 follow-up), but Bench::Sweep's committed-
-      #   fixture stand-in (Sweep::Embeddings) is #embed-only and is named by
-      #   its class instead -- exactly the identification #why gave it before
+      #   subclass states one, but Bench::Sweep's committed-fixture stand-in
+      #   (Sweep::Embeddings) is #embed-only and is named by its class
+      #   instead -- exactly the identification #why gave it before
       #   #model_id existed, so the sweep's committed report stays byte-stable.
       def initialize(index:, embedder:)
         @embedder = embedder

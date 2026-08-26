@@ -102,10 +102,10 @@ module Lain
         #
         # It exists because a diff is not enough to DRAW one: an editor showing
         # the old side against the new needs the whole old file, and a unified
-        # diff carries only the hunks and three lines around them. T32a's diff
-        # opener is the caller, and reading the blob HERE rather than there is
-        # what keeps every git invocation in this repository behind one method
-        # -- the argv form, the config pins and the env scrub included.
+        # diff carries only the hunks and three lines around them. The editor's
+        # diff opener is the caller, and reading the blob HERE rather than there
+        # is what keeps every git invocation in this repository behind one
+        # method -- the argv form, the config pins and the env scrub included.
         #
         # A path the revision does not carry answers nil rather than raising:
         # "this file did not exist yet" is an ordinary fact about an added file,

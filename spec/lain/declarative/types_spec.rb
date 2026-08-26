@@ -3,9 +3,9 @@
 require "spec_helper"
 require "bigdecimal"
 
-# `Lain::Declarative`'s carrier and `settle!` (D1) are not yet landed in this tree. Wherever an
+# `Lain::Declarative`'s carrier and `settle!` are not yet landed in this tree. Wherever an
 # AC below stands in for `settle!`'s extraction, a comment says so and names what to re-point once
-# D1 lands. The types themselves are plain `ActiveModel::Type::Value` subclasses and are exercised
+# the carrier lands. The types themselves are plain `ActiveModel::Type::Value` subclasses and are exercised
 # directly, with no dependency on `Declarative`.
 RSpec.describe Lain::Declarative::Types::StrictInteger do
   # Stand-in for the carrier `Declarative` will build: enough `ActiveModel::Attributes` to
@@ -161,7 +161,7 @@ RSpec.describe Lain::Declarative::Types::StrictInteger do
     expect(Lain::Declarative::Types::CoercionError.ancestors).not_to include(ArgumentError)
   end
 
-  # Finding 4: NOT a claim that this is fixed here -- it is D1's `check!`/`settle!` design surface,
+  # Finding 4: NOT a claim that this is fixed here -- it is the `check!`/`settle!` design surface,
   # pinned so it is inherited as a known fact rather than rediscovered. A strict-typed attribute
   # makes `valid?` behave inconsistently depending on whether a validation happens to touch it.
   describe "interaction with ActiveModel validation (documented for D1, not fixed here)" do

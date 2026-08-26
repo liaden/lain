@@ -148,7 +148,7 @@ RSpec.describe Lain::Provider::Admitted do
       end
     end
 
-    # The join's share of the panel's FIX 1: a provider that declares nothing
+    # The join's share of the panel review: a provider that declares nothing
     # about the cloud endpoint -- which `--provider ollama --api-base
     # https://ollama.com` builds today -- pins {Admission::Null}, and a later
     # provider that DOES know its plan's capacity has to be able to take that

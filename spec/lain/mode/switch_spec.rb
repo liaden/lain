@@ -163,7 +163,7 @@ RSpec.describe Lain::Mode::Switch do
         .to raise_error(ArgumentError, /from_layers/)
     end
 
-    # The constant is public; T8 and T22 build one without going through
+    # The constant is public; other call sites build one without going through
     # Mode::Switch, so the list fields cannot rely on `#flip` filling them.
     it "refuses a layer list holding something that is not a name" do
       mode = Lain::Mode.new(posture: :manual)

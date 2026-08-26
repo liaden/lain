@@ -149,12 +149,12 @@ RSpec.describe Lain::CredentialPatterns do
     end
   end
 
-  # S1. `for(:content)` exists to be run over raw file bytes, and Ruby's
+  # `for(:content)` exists to be run over raw file bytes, and Ruby's
   # regexp engine cares about the String's ENCODING, not its contents. The
   # contract is: hand it binary. These examples are the verification that
   # `File.binread` satisfies it, and the demonstration of why the contract is
   # needed at all. Normalizing inside the table is deliberately NOT done here
-  # -- that is T10's decision to make.
+  # -- that is a calibration decision, not this table's.
   describe "the encoding contract for raw file bytes" do
     it "scans ASCII-8BIT bytes holding high bytes, and still finds the assignment" do
       bytes = (+"caf\xC3\xA9 notes\nSECRET_TOKEN=hunter2\n").force_encoding(Encoding::ASCII_8BIT)
@@ -171,8 +171,8 @@ RSpec.describe Lain::CredentialPatterns do
 
     # Known limitation, recorded rather than fixed: `^` anchors before the BOM,
     # and a BOM is not `[ \t]`, so a name the BOM sits directly in front of is
-    # invisible. Only line 1 of a BOM'd file is affected. T10 decides whether
-    # to strip it.
+    # invisible. Only line 1 of a BOM'd file is affected. Whether to strip it
+    # is a calibration decision.
     it "does NOT see an assignment a BOM sits directly in front of on line 1" do
       bytes = (+"\xEF\xBB\xBFAPI_TOKEN=hunter2\n").force_encoding(Encoding::ASCII_8BIT)
 
@@ -197,9 +197,10 @@ RSpec.describe Lain::CredentialPatterns do
     end
   end
 
-  # S2. The yaml shape needs only a colon and a space, so it matches ordinary
+  # The yaml shape needs only a colon and a space, so it matches ordinary
   # prose. Recorded, not fixed: it is honest about being a SYNTAX shape, it is
-  # kept off the write side, and T10 should calibrate rather than discover.
+  # kept off the write side, and a later calibration should tune it rather
+  # than discover it.
   describe "the yaml assignment shape is imprecise by construction" do
     let(:prose) { "TODO: fix this" }
 

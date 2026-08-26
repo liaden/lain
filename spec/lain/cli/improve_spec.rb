@@ -2,14 +2,14 @@
 
 require "tmpdir"
 
-# M6: the harness-improver pass. Offline, it renders a session's
+# The harness-improver pass. Offline, it renders a session's
 # {Lain::Friction::Report} plus a per-turn digest summary into the
 # `harness_improver` role scaffold and spawns the role ONCE (a one-shot). The
-# improver's notes land in M2's cross-project {Lain::Improvement::Sink}, guarded
+# improver's notes land in the cross-project {Lain::Improvement::Sink}, guarded
 # by a dispatch chain THIS class builds with {Middleware::RefuseSecretWrites}
-# mounted (the spawn seam supplies no tool middleware). Distinct from M1's
-# {CLI::Friction} by AUDIENCE: M1 tells the USER which knob to turn; M6 tells the
-# lain DEV what lain should grow.
+# mounted (the spawn seam supplies no tool middleware). Distinct from
+# {CLI::Friction} by AUDIENCE: that pass tells the USER which knob to turn;
+# this one tells the lain DEV what lain should grow.
 RSpec.describe Lain::CLI::Improve do
   # The committed friction fixture reused as the session under review: it
   # produces two real friction signals (rephrase_loop on bash, tool_steering on

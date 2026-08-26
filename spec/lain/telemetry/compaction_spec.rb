@@ -3,7 +3,7 @@
 require "bigdecimal"
 require "json"
 
-# UX5. Two different units were both spelled "tokens" in one NDJSON stream: this
+# Two different units were both spelled "tokens" in one NDJSON stream: this
 # record's before/after figures are a canonical-BYTE-length proxy
 # (`Canonical.dump(messages).bytesize`), while the sibling turn record's
 # `used_tokens`/`window_tokens` are provider-MEASURED. Dividing one by the other
@@ -34,7 +34,7 @@ RSpec.describe Lain::Telemetry::Compaction do
       expect(record.to_journal).to include("bytes_before" => 26_174, "bytes_after" => 21_867)
     end
 
-    # The whole of UX5, mechanically: a reader grepping this stream for a token
+    # The whole of that rename, mechanically: a reader grepping this stream for a token
     # count must not find the byte proxy wearing that name.
     it "carries no field called tokens at all" do
       expect(described_class.members.grep(/token/)).to be_empty
@@ -78,11 +78,11 @@ RSpec.describe Lain::Telemetry::Compaction do
     end
   end
 
-  # F51: the one axis `--compact-strategy` exists to vary was missing from
+  # The one axis `--compact-strategy` exists to vary was missing from
   # the record it is meant to explain. `collapse_strategy`, never `strategy`
   # -- {ContextDerived#strategy} already owns that name for the DERIVATION
   # CLASS, a different axis, and folding both under one name is the exact
-  # UX5 hazard the byte/token rename above paid for once already.
+  # hazard the byte/token rename above paid for once already.
   describe "the strategy that ran" do
     it "carries the operator's own words" do
       composed = record(collapse_strategy: "elide-tools+summarize-conversation")
@@ -93,7 +93,8 @@ RSpec.describe Lain::Telemetry::Compaction do
     # An unflagged run is not "no strategy" -- it is the eager tool-result
     # tier, the control arm every `--compact-strategy` run is measured
     # against (backend/span_summarizer.rb:19-36). A caller building this
-    # record for that run names it explicitly; T5/T6 are that caller.
+    # record for that run names it explicitly; {Compaction::Scheduler} is that
+    # caller.
     it "names the eager control arm for a run with no --compact-strategy" do
       control = record(collapse_strategy: described_class::EAGER_CONTROL_ARM)
 

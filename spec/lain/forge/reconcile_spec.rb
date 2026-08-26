@@ -20,7 +20,7 @@ module ForgeReconcileSpecSupport
 
   def self.world(refs: {}, states: {}, heads: {}) = World.new(refs:, states:, heads:)
 
-  # The same world, counting what it was asked. Against T24's real `gh` each of
+  # The same world, counting what it was asked. Against the real `gh` each of
   # these is a subprocess, so "how many times" is a question with a bill
   # attached -- and a repeated question against shared mutable remote state is
   # also how one report can contradict itself.
@@ -78,7 +78,6 @@ RSpec.describe Lain::Forge::Reconcile do
     described_class.new(entries: records.map(&:to_journal), world:)
   end
 
-  # AC1
   it "lists an intent with no outcome as unsettled" do
     fold = reconcile([promote])
 
@@ -95,7 +94,7 @@ RSpec.describe Lain::Forge::Reconcile do
     expect(fold.unsettled).to be_empty
   end
 
-  # AC2 -- the crashed push. Promotion IS the push; there is no push action.
+  # The crashed push. Promotion IS the push; there is no push action.
   it "marks an unsettled promote completed_externally when the ref stands at the pushed sha" do
     world = ForgeReconcileSpecSupport.world(refs: { ref => "cafe" })
 
@@ -105,7 +104,6 @@ RSpec.describe Lain::Forge::Reconcile do
     expect(verdict.verdict).to eq("completed_externally")
   end
 
-  # AC3
   it "marks an unsettled promote needs_retry when the ref is absent" do
     expect(reconcile([promote], world: nothing_happened).unsettled.first).to be_needs_retry
   end
@@ -116,7 +114,7 @@ RSpec.describe Lain::Forge::Reconcile do
     expect(reconcile([promote], world:).unsettled.first).to be_needs_retry
   end
 
-  # AC4 -- identical action plus params means an identical id, so the pairing
+  # Identical action plus params means an identical id, so the pairing
   # has to be positional or the second attempt would read as already answered.
   it "pairs repeated identical intents positionally" do
     first = promote
@@ -128,7 +126,6 @@ RSpec.describe Lain::Forge::Reconcile do
     expect(fold.unsettled.first.intent).to eq(second)
   end
 
-  # AC5
   it "names an outcome with no unmatched intent as an orphan, and never drops it" do
     intent = promote
     orphan = settled_by(intent, detail: { "note" => "second ack" })
@@ -145,7 +142,6 @@ RSpec.describe Lain::Forge::Reconcile do
     expect(reconcile([stray]).orphans).to eq([stray])
   end
 
-  # AC6
   it "is idempotent: the same entries and the same world yield equal reports" do
     world = ForgeReconcileSpecSupport.world(refs: { ref => "cafe" }, states: { 12 => "MERGED" })
     intent = promote
@@ -155,7 +151,7 @@ RSpec.describe Lain::Forge::Reconcile do
     expect(reconcile(records, world:).report).to eq(reconcile(records, world:).report)
   end
 
-  # AC7 -- a pr_create that crashed has no PR number to look up, so the head ref
+  # A pr_create that crashed has no PR number to look up, so the head ref
   # is the only address the world can be asked about.
   it "marks an unsettled pr_create completed_externally when the world reports a PR for its head" do
     world = ForgeReconcileSpecSupport.world(heads: { ref => { "number" => 12, "state" => "OPEN" } })
@@ -220,7 +216,7 @@ RSpec.describe Lain::Forge::Reconcile do
     end
   end
 
-  # P14, P15, P16, P21, P22, P24 -- the observation phase, after the fix round.
+  # The observation phase, after the fix round.
   describe "an intent whose params cannot address the effect" do
     def blind(action: "promote", params: { "ref" => ForgeReconcileSpecSupport::REF })
       Lain::Forge::Intent.new(action:, epic_slug: "demo", issue_id: "a1", params:)
@@ -234,7 +230,7 @@ RSpec.describe Lain::Forge::Reconcile do
       expect(fold.unsettled).to be_empty
     end
 
-    # P21/P22: the `&&` short-circuited past the second address, so the same
+    # The `&&` short-circuited past the second address, so the same
     # malformed record was a hard error or a quiet needs_retry according to what
     # GitHub happened to hold.
     it "reads the same whether or not the world would have answered" do
@@ -268,7 +264,7 @@ RSpec.describe Lain::Forge::Reconcile do
       expect(fold.unsettled).to be_empty
     end
 
-    # P24: `fetch` succeeds on a nil, and two `.to_s` calls then read two
+    # `fetch` succeeds on a nil, and two `.to_s` calls then read two
     # ABSENCES of knowledge as a confirmation that the push landed.
     it "refuses a blank address as hard as a missing one" do
       world = ForgeReconcileSpecSupport.world(refs: { ref => nil })
@@ -278,9 +274,10 @@ RSpec.describe Lain::Forge::Reconcile do
       expect(reconcile([nilled], world:).unsettled).to be_empty
     end
 
-    # P24 one type over. `false.to_s` is "false", a perfectly good String, so
-    # the blank rule alone let a boolean through -- and `Canonical.normalize`
-    # preserves booleans happily, so nothing upstream filters them.
+    # The same defect one type over. `false.to_s` is "false", a perfectly good
+    # String, so the blank rule alone let a boolean through -- and
+    # `Canonical.normalize` preserves booleans happily, so nothing upstream
+    # filters them.
     it "refuses a boolean address, which is not an address at all" do
       world = ForgeReconcileSpecSupport.world(refs: { ref => false })
 
@@ -295,7 +292,7 @@ RSpec.describe Lain::Forge::Reconcile do
       expect(reconcile([blind(action: "pr_merge", params: { "number" => 12 })], world:).unaddressable).to be_empty
     end
 
-    # P16: at 3am, one malformed line must not cost the operator sight of what
+    # At 3am, one malformed line must not cost the operator sight of what
     # actually landed.
     it "costs the report nothing else -- settled pairs and orphans survive it" do
       intent = promote
@@ -308,7 +305,7 @@ RSpec.describe Lain::Forge::Reconcile do
     end
   end
 
-  # P9, P10, P11 -- each world question is a subprocess against shared mutable
+  # Each world question is a subprocess against shared mutable
   # remote state, so asking one question twice is both a bill and a way for one
   # report to contradict itself.
   describe "asking the world" do
@@ -361,7 +358,7 @@ RSpec.describe Lain::Forge::Reconcile do
     end
   end
 
-  # P2: both halves of a settled pair present in the file, reported as two
+  # Both halves of a settled pair present in the file, reported as two
   # unrelated facts.
   describe "#misordered" do
     it "names an intent_id that is both unsettled and orphaned" do
@@ -410,7 +407,7 @@ RSpec.describe Lain::Forge::Reconcile do
     end
   end
 
-  # P23: the constants' own comment rejects StringInquirer because a typo must
+  # The constants' own comment rejects StringInquirer because a typo must
   # not answer false in silence -- the verdict side had exactly that hole.
   it "refuses a verdict outside the closed set" do
     expect { described_class::Unsettled.new(intent: promote, verdict: "banana") }

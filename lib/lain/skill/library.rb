@@ -9,14 +9,14 @@ module Lain
     # one, the other, or both: the system prompt from the slots, /help from the
     # catalog, a skill scaffold and a role's framing from the pair.
     #
-    # It exists because the pair had already stopped being two arguments. T15
-    # fixed the real bug (five reads of one tree per session, so a `.lain/` file
-    # changed mid-session could give four readers four different answers) by
-    # loading each once and threading them -- but they then travelled verbatim
-    # as `(catalog:, slots:)` through four signatures, and a parameter list
-    # passed identically at every call is the state of an object nobody has
-    # named. It is the same tell that named {CLI::Wiring::ToolsetBuild}, and the
-    # same answer.
+    # It exists because the pair had already stopped being two arguments. An
+    # earlier fix cured the real bug (five reads of one tree per session, so a
+    # `.lain/` file changed mid-session could give four readers four different
+    # answers) by loading each once and threading them -- but they then
+    # travelled verbatim as `(catalog:, slots:)` through four signatures, and a
+    # parameter list passed identically at every call is the state of an object
+    # nobody has named. It is the same tell that named
+    # {CLI::Wiring::ToolsetBuild}, and the same answer.
     #
     # {#renderer} is deliberately NOT memoized: a {Renderer} is a pure function
     # of this frozen pair, so building one per reader costs an allocation and

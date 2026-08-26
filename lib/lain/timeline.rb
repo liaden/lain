@@ -165,7 +165,7 @@ module Lain
       meet(other).head
     end
 
-    # TL-3 (pinned, 2026-07-17): the causal ancestry order -- reachability over
+    # Pinned 2026-07-17: the causal ancestry order -- reachability over
     # BOTH parent edges, render and causal, git's "all parents" -- has no unique
     # greatest lower bound: a criss-cross fan-in leaves incomparable maximal
     # common ancestors, and any singleton answer would be arbitrary. So this
@@ -188,7 +188,7 @@ module Lain
                                     "this answers with the SET of them (git merge-base's shape) and a " \
                                     "set-valued operator makes no semilattice claim"
 
-    # TL-3 (pinned, 2026-07-17): the checkpoint primitive. The deepest common
+    # Pinned 2026-07-17: the checkpoint primitive. The deepest common
     # dominator of the two heads over the UNION graph -- render and causal
     # edges together, under a virtual root spanning the closure's forest
     # roots: the latest event EVERY path from that root to both heads must
@@ -224,7 +224,7 @@ module Lain
     # rebuilds the whole union-graph dominator tree.
     meet_semilattice on: :dominator_meet, bottom: "the empty Timeline, per store (the virtual root, unnameable)"
 
-    # TL-2 (pinned): the chain's identity, by the same derivation
+    # Pinned: the chain's identity, by the same derivation
     # {Tools::Subagent::Lineage} and {Tools::AskHuman} address a chain with --
     # a chain is named by its root event's digest, no separate id machinery.
     # Public so any caller can address a Timeline by identity without reaching

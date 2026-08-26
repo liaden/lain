@@ -4,10 +4,10 @@ require "async/variable"
 
 module Lain
   # A single-assignment value that a fiber can await before it is set. The thin
-  # domain-named wrapper over `Async::Variable` that ask_human (OM-4) resolves:
+  # domain-named wrapper over `Async::Variable` that ask_human resolves:
   # naming it in our own vocabulary keeps callers depending on the message
   # (`resolve`/`await`/`resolved?`) rather than on the gem's type, so the awaited
-  # value is the seam the actor mailbox (OM-3) and speculative branching (3c-5.6)
+  # value is the seam the actor mailbox and speculative branching (3c-5.6)
   # can reuse without importing `async` at every call site.
   #
   # The one property everything rests on: `#await` parks the calling FIBER, not

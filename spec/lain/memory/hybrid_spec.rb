@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Memory::Hybrid is a Manifest::Hit-duck search index (T14) that fuses two
+# Memory::Hybrid is a Manifest::Hit-duck search index that fuses two
 # ALREADY-BUILT arms -- a Memory::Bm25 (lexical) and a Memory::Vector
 # (cosine) -- by Reciprocal Rank Fusion. It reads only each arm's RANK
 # ordering, never the arm's own score: Bm25's token-fraction-ish scale and
@@ -43,7 +43,7 @@ RSpec.describe Lain::Memory::Hybrid do
   end
 
   describe "#search" do
-    # Scenario: fusion beats a disagreement (T14 acceptance). bm25's top hit
+    # Scenario: fusion beats a disagreement. bm25's top hit
     # (decoy-a, rank 1) and vector's top hit (decoy-b, rank 1) differ; the
     # gold doc ranks second in BOTH. RRF must still put gold first: gold's
     # fused score (both terms near rank 2) beats either decoy's fused score

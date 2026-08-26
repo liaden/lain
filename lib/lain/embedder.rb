@@ -4,7 +4,7 @@ module Lain
   # The seam between Lain and an embedding model: many texts in, many vectors
   # out, in one batched round trip. It mirrors {Provider}'s posture -- a base
   # that declares the duck, one concrete subclass per backend -- because memory
-  # retrieval (M6) must be able to A/B a real embedding backend against a
+  # retrieval must be able to A/B a real embedding backend against a
   # deterministic, PHI-free one on the same seam, and swap either without a
   # caller noticing.
   #
@@ -28,7 +28,7 @@ module Lain
     # @return [String] the model identity a consumer's #why should name --
     # Ollama's pinned model id, Static's own honest "not a real model" label --
     # never just this Ruby class's name, which names the backend but not what
-    # it ran (T10 follow-up: Memory::Vector#why used to name only the class).
+    # it ran (Memory::Vector#why used to name only the class).
     # Abstract like {#embed}: every concrete backend states its own identity
     # rather than inheriting a guess.
     def model_id

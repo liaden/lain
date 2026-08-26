@@ -13,7 +13,7 @@ module Lain
     #
     # Because the same mainline positions now render to SUMMARIZED bytes, the
     # prompt-cache prefix is rewritten at the seam -- which is exactly the
-    # difference PC-3 makes visible: a linear-rewrite run shows one prefix
+    # difference this shape makes visible: a linear-rewrite run shows one prefix
     # rewrite per seam where a {ForkPerStep} run shows none.
     #
     # The plan-shaped working view a linear run carries is `plan + every closed

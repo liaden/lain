@@ -35,10 +35,10 @@ module Lain
       # -- has no use for.
       #
       # The seam's `observer` is forwarded verbatim into the spawned Subagent's
-      # Lineage (T13): the child's :spawn/:message events must reach the session
-      # scribe the exe wires, or -- once B3 drives `@role/skill` through this seam
-      # -- the child's lineage lands on the Null chain writer and vanishes from
-      # the record ("silent record loss one level up", per {Tools::Subagent}).
+      # Lineage: the child's :spawn/:message events must reach the session scribe
+      # the exe wires, or -- once `@role/skill` drives through this seam -- the
+      # child's lineage lands on the Null chain writer and vanishes from the
+      # record ("silent record loss one level up", per {Tools::Subagent}).
       # The Null defaults live on the Seam and MATCH Subagent's own, so a caller
       # that omits them is byte-identical to spawning the tool directly.
       #

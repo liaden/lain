@@ -4,8 +4,8 @@ require "json"
 require "time"
 
 module Lain
-  # M2's harness-improver sink: durable notes about lain ITSELF (a knob, a
-  # bug, a missing feature, a doc gap) noticed while dogfooding, for M6's
+  # The harness-improver sink: durable notes about lain ITSELF (a knob, a
+  # bug, a missing feature, a doc gap) noticed while dogfooding, for an
   # offline pass to fold later. Deliberately not a {Telemetry} event riding
   # the per-session {Lain::Journal}: a session's Journal is scoped to ONE
   # project's ONE run, but a note about lain belongs to every project lain

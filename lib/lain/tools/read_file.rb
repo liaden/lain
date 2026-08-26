@@ -485,8 +485,8 @@ module Lain
         # measured at 512 MB peak RSS on a 512 MiB file, and at real scale that
         # is a `NoMemoryError`, which is not a StandardError and so escapes
         # {Effect::Handler::Live}'s rescue and propagates past the loop. The
-        # same failure T3's `take` over `first` note describes, by a different
-        # route.
+        # same failure the `take` over `first` note above describes, by a
+        # different route.
         #
         # `+ 1` is what makes a split ALWAYS a refusal. `foreach` never returns
         # a chunk shorter than the limit except at EOF (it runs on to finish a

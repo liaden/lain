@@ -77,7 +77,7 @@ module Lain
           # The LAST match, not the first. Which record refuses does not matter
           # -- any terminal record refuses, and that holds under any order --
           # but which one the MESSAGE names does: two conflicting terminal
-          # records for one address are reachable (a pre-T9 journal permitted
+          # records for one address are reachable (an earlier journal permitted
           # them, and so does the concurrent window {AlreadyDecided} documents),
           # and journal order is time order, so the last one written is the one
           # that stands.

@@ -56,7 +56,7 @@ module Lain
           # why -- which is what this comment is for.
           ANSWERED = "#{NAME} line %d is answered -- it clears once the agent takes it".freeze
 
-          # The two the ADVANCE answers with (T16). No line number in either:
+          # The two the ADVANCE answers with. No line number in either:
           # that gesture is not a cursor, it is "the human just submitted a set,
           # show them the next one", so the sentences name the surface instead.
           NOTHING_NEXT = "nothing further is pending -- #{NAME} lists no more question sets".freeze
@@ -86,12 +86,12 @@ module Lain
           # passes, and whichever set took those lines opens. Everything is
           # behaving as specified, which is why no check in this method can see it.
           #
-          # T12 WIDENED IT AND DID NOT CREATE IT, exactly as multi-line items did
-          # on lain://approval: while every item was one line a shifted cursor often
-          # landed on a line the editor could tell was no row and swallowed; a
-          # four-line item makes the same shift land inside another ANSWERABLE one.
-          # Opening the wrong question set is cheaper than approving the wrong
-          # command and is still wrong.
+          # THE MULTI-LINE RENDERING WIDENED IT AND DID NOT CREATE IT, exactly as
+          # it did on lain://approval: while every item was one line a shifted
+          # cursor often landed on a line the editor could tell was no row and
+          # swallowed; a four-line item makes the same shift land inside another
+          # ANSWERABLE one. Opening the wrong question set is cheaper than
+          # approving the wrong command and is still wrong.
           #
           # {Frontend::Neovim::ApprovalView#decide} carries the full analysis --
           # every mitigation assessed, all blocked or contradicting a pinned

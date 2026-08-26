@@ -117,7 +117,7 @@ RSpec.describe Lain::Workspace::Snapshot do
     # The finding: Snapshot#write returned nil on ANY empty manifest -- the
     # early return that made "empty write-set lands nothing" true also made
     # "every write-set file was deleted" invisible, so the last snapshot kept
-    # claiming the file existed and W2's restore would have resurrected it.
+    # claiming the file existed and a restore would have resurrected it.
     # The fix distinguishes the two empties: empty with NO snapshot history is
     # nothing to say; empty AFTER a non-empty snapshot is a real record of
     # total deletion.
@@ -231,8 +231,8 @@ RSpec.describe Lain::Workspace::Snapshot do
     #   * even wired to the scribe, Telemetry::Message carries the ENVELOPE +
     #     payload body, but Blob bytes have no journal representation at all,
     #     so a replay could re-put the event yet never fetch its blobs.
-    # W2 (same-process restore) is unaffected; W4 (replay-restart) cannot
-    # restore files from the record as it stands.
+    # Same-process restore is unaffected; a replay-restart cannot restore files
+    # from the record as it stands.
     it "pins that record_write journals nothing" do
       journal = []
       journaled = Lain::Session::Journaled.new(session: Lain::Session.new, journal:)

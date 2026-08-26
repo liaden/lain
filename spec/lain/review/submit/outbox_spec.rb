@@ -236,7 +236,7 @@ RSpec.describe Lain::Review::Submit::Outbox do
     end
   end
 
-  # AC 4. Settling is not closing: `/review-submit` reads `#target` AFTER the
+  # Settling is not closing: `/review-submit` reads `#target` AFTER the
   # send, and the round a human just judged is exactly the one they then post.
   describe "a settled round, which is still the round this chat would post" do
     before { @session = round(policy: Lain::Review::Verdict::Policy.strict_unless(permissive: true)) }
@@ -295,7 +295,7 @@ RSpec.describe Lain::Review::Submit::Outbox do
     end
 
     # The whole sentence, not a fragment: `label` already carries "branch", so
-    # the refusal must not add a second noun that repeats it -- see F56.
+    # the refusal must not add a second noun that repeats it.
     it "names the branch once, not twice, and still points at the remedy" do
       held(number: nil, label: "branch feature/widget")
 

@@ -135,7 +135,7 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
     end
   end
 
-  # T5. THIS OBJECT WALKS FOR `.git` TOO, and it used to walk with no ceiling
+  # THIS OBJECT WALKS FOR `.git` TOO, and it used to walk with no ceiling
   # and no refusal set -- so on a box whose `$HOME` is a git work-tree (the
   # `~/.cfg` dotfiles convention this chunk exists for), `--isolation worktree`
   # anywhere under home resolved HOME as the repository and branched worker
@@ -193,7 +193,7 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
         .to raise_error(Lain::Error)
     end
 
-    # The SECOND divergence the T2 panel found, beyond the ceiling: this walk
+    # The SECOND divergence the review panel found, beyond the ceiling: this walk
     # expanded lexically where the resolver realpaths, so a symlink whose
     # LEXICAL parent is a repository its REAL parent is not made the two walks
     # answer different directories -- and this one answered the trap.

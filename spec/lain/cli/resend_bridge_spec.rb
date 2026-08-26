@@ -3,20 +3,20 @@
 require "json"
 require "stringio"
 
-# T18, the M4-2 headline: an edited lain://request actually reaching the
-# provider. The bridge is the CLI-owned object between the Neovim resend
-# worker (which offers the rebuilt Request as a block) and the Agent's T4
-# override slot. It owns the quiescence refusal -- the T4 seam itself PERMITS
-# mid-turn interposition, so refusing a mid-flight resend is this bridge's
-# mandate -- and the failure UX over RequestOverride#deliver's
-# at-least-once-send / exactly-once-commit contract.
+# The headline: an edited lain://request actually reaching the provider. The
+# bridge is the CLI-owned object between the Neovim resend worker (which offers
+# the rebuilt Request as a block) and the Agent's override slot. It owns the
+# quiescence refusal -- that seam itself PERMITS mid-turn interposition, so
+# refusing a mid-flight resend is this bridge's mandate -- and the failure UX
+# over RequestOverride#deliver's at-least-once-send / exactly-once-commit
+# contract.
 RSpec.describe Lain::CLI::ResendBridge do
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
   let(:override) { Lain::Agent::RequestOverride.new }
   let(:journal) { [] }
 
-  # Deliberately NOT what any render of the Timeline would produce (the T4
+  # Deliberately NOT what any render of the Timeline would produce (the override
   # spec's idiom), so the provider receiving it can only mean the override.
   # max_tokens 512 also lets a flaky provider single out the edited dispatch.
   let(:edited) do
@@ -154,12 +154,12 @@ RSpec.describe Lain::CLI::ResendBridge do
     end
   end
 
-  # B1 (BLOCKER): a bridged resend FORKS -- it rewinds below the last exchange
+  # A bridged resend FORKS -- it rewinds below the last exchange
   # and commits the edit's response as a new turn. Under the real chat wiring
   # (a Scribe-backed Chronicle whose turn middleware catches up after every
   # turn), that rewound timeline would raise SessionRecord::Scribe::Diverged at
   # write time -- AFTER the wire was billed -- wedging the chat. The bridge must
-  # journal the rewind first, through Chronicle#rewound (T15's record-first
+  # journal the rewind first, through Chronicle#rewound (the record-first
   # seam), so the written chain retreats and the fork commits like any turn.
   describe "a bridged rewind is journaled first, so the live session record never diverges" do
     let(:journal_io) { StringIO.new }
@@ -208,7 +208,7 @@ RSpec.describe Lain::CLI::ResendBridge do
     end
   end
 
-  # B2 (BLOCKER): the quiescence gate was check-then-act across two drivers --
+  # The quiescence gate was check-then-act across two drivers --
   # the resend worker thread and the conductor's ask reactor -- with nothing
   # holding the agent still between. The gate is now re-checked under
   # Agent#dispatch_lock, and a busy agent (the lock already held) is a refusal.
@@ -237,7 +237,7 @@ RSpec.describe Lain::CLI::ResendBridge do
     end
   end
 
-  # S1: the failure notice must state exactly what happened. A pre-wire failure
+  # The failure notice must state exactly what happened. A pre-wire failure
   # (the queue, rewind, or record raised before the run) never left the
   # process, so it must not claim wire ambiguity or a rewind that never
   # happened -- the dishonesty a single static notice produced for the unwired
@@ -283,7 +283,7 @@ RSpec.describe Lain::CLI::ResendBridge do
     end
   end
 
-  # S2: a queued resend re-checks the gate at fire time, and the human is told
+  # A queued resend re-checks the gate at fire time, and the human is told
   # up front an attempt is being made -- fired the instant the gate passes and
   # BEFORE the round trip, and only on a real attempt.
   describe "an upfront attempt notice, at fire time, only when dispatching" do

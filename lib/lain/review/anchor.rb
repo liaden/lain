@@ -28,10 +28,10 @@ module Lain
 
       # An anchor's own `side` domain stays Symbols (every other field here is
       # a plain Ruby value, not a wire type), but the MEMBERSHIP decision is
-      # made in exactly one place: Review::SIDES, which T5 owns and which is
-      # Strings because the journal is the durable artifact and every record
-      # stores Strings. Two independently-declared literals (`%i[old new]`
-      # here, `%w[old new]` there) is the trap this derivation closes --
+      # made in exactly one place: Review::SIDES, which is Strings because the
+      # journal is the durable artifact and every record stores Strings. Two
+      # independently-declared literals (`%i[old new]` here, `%w[old new]`
+      # there) is the trap this derivation closes --
       # `spec/lain/review/anchor_spec.rb`'s "SIDES" example pins the two
       # spellings equal so they cannot drift apart silently again.
       SIDES = Review::SIDES.map(&:to_sym).freeze
@@ -56,7 +56,7 @@ module Lain
       end
 
       # A position that cannot exist: 0, negative, or not an Integer at all.
-      # T2's hunk arithmetic (`start + offset - 1`) is exactly where a 0
+      # The hunk arithmetic (`start + offset - 1`) is exactly where a 0
       # would arrive -- without this, `line: 0` read `lines[-1]`, the LAST
       # line, and answered `drifted? == false` for a position that was never
       # named.

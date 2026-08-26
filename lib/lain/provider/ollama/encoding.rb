@@ -27,9 +27,9 @@ module Lain
         TOOL_RESULT = "tool_result"
 
         # The `Request#extra` keys the sampler honors, matching Ollama's
-        # `options` object. Requests normalize extra to String keys; T18 is what
-        # threads temperature/seed through here from the CLI, and T11 the two
-        # throughput knobs below.
+        # `options` object. Requests normalize extra to String keys; the CLI is
+        # what threads temperature/seed through here, and the two throughput
+        # knobs below.
         #
         # `num_batch` is the one with a measured cost behind it: ollama starts
         # llama-server with `-b 512`, overriding llama.cpp's own default of
@@ -51,7 +51,7 @@ module Lain
         # top-level sibling of `stream`/`tools`, not a member of `options`.
         THINK_KEY = "think"
 
-        # T1: the neutral key a Request uses to carry a forced typed-answer
+        # The neutral key a Request uses to carry a forced typed-answer
         # format on #extra -- the same escape hatch THINK_KEY/SAMPLER_KEYS
         # already ride, so a Request without it stays byte-identical to
         # before this feature existed. The value is
@@ -77,7 +77,8 @@ module Lain
         # carries them: an empty `tools`/`options` renders as an absent key
         # (matching what the non-cache-marker path already does), and `think`
         # is present only when Request#extra asked for it -- a Request with no
-        # think extra must produce byte-identical bytes to before R5.
+        # think extra must produce byte-identical bytes to before `think`
+        # support existed.
         def optional_fields(request)
           { tools: encode_tools(request.tools), options: encode_options(request.extra) }
             .reject { |_key, value| value.empty? }
@@ -87,7 +88,7 @@ module Lain
         # The optional fields that ride a single Request#extra flag rather
         # than a collection: absent unless the Request actually asked for
         # them, which is what keeps a plain Request byte-identical to before
-        # each of these existed (R5 for `think`, T1 for `format`).
+        # each of these existed.
         def extra_flag_fields(extra)
           fields = {}
           fields[:think] = extra[THINK_KEY] if extra.key?(THINK_KEY)

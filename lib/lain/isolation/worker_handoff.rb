@@ -18,10 +18,11 @@ module Lain
     #
     # THE PARENT CHECKOUT IS LEFT USABLE. A `:conflicted` handback leaves the
     # parent mid-merge ON PURPOSE (that is the only form in which a resolver can
-    # see both sides), and D4 declines every LATER handback into a parent that is
-    # already merging. So a merge this object started and did not finish is not
-    # untidiness -- it poisons the checkout for every worker after it, and it
-    # leaves `<<<<<<<` markers in a real person's working tree. {#restore}
+    # see both sides), and this class declines every LATER handback into a
+    # parent that is already merging. So a merge this object started and did
+    # not finish is not untidiness -- it poisons the checkout for every worker
+    # after it, and it leaves `<<<<<<<` markers in a real person's working
+    # tree. {#restore}
     # therefore abandons an unfinished merge from the same `ensure` that releases
     # the lease, so both obligations hold over exactly the same set of paths.
     #
@@ -35,7 +36,7 @@ module Lain
     #
     # NOTHING IS RELEASED WITHOUT FIRST TRYING TO ANCHOR. {Worktree} releases
     # with `--force` on a `--detach`ed checkout, so the instant a worktree is
-    # reclaimed an unanchored commit is unreachable and gc-able -- D4's whole
+    # reclaimed an unanchored commit is unreachable and gc-able -- the whole
     # "ref-first, because reclaim destroys" premise. {#surrender} is the
     # unwinding path's version: it hands back, releases, and spawns NOTHING. An
     # arm's `ensure` calls it, so no exception class can route around the
@@ -317,9 +318,9 @@ module Lain
       # `:untouched` when there was no merge of ours to unwind, `:restored` once
       # the parent is clean again, `:stranded` when it is not.
       #
-      # Only a merge THIS handback started is unwound -- `merge_in_progress?` is
-      # false when D4 declined because SOMEONE ELSE was already merging, and
-      # aborting a sibling worker's merge would be real damage.
+      # Only a merge THIS handback started is unwound -- `merge_in_progress?`
+      # is false when this class declined because SOMEONE ELSE was already
+      # merging, and aborting a sibling worker's merge would be real damage.
       #
       # TOTAL, and that is the whole point of the cop being off. This runs from
       # an `ensure`: an exception leaving here REPLACES the one already climbing
@@ -402,8 +403,8 @@ module Lain
       # ({Tools::ReadFile}), which is never the parent -- so a repo-relative path
       # reads some other file, or none.
       #
-      # QUOTED, because a filename may contain a newline and D4 went to the
-      # trouble of `-z` and an encoding re-tag precisely so those paths open: a
+      # QUOTED, because a filename may contain a newline and the listing goes to
+      # the trouble of `-z` and an encoding re-tag precisely so those paths open: a
       # bare `- #{path}` shears one across two bullets and names a file that does
       # not exist.
       def prompt_for(outcome)

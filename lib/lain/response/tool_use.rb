@@ -72,7 +72,7 @@ module Lain
       # The compatibility ramp for consumers not yet migrated to the named
       # readers -- `spec/support/ollama_wire.rb:57-58` is the one that survives
       # in tree. The named readers are the intended surface; migrating the
-      # remaining raw-key readers is T9's job, not this ramp's blessing.
+      # remaining raw-key readers is future work, not this ramp's blessing.
       def [](key) = @hash[key]
 
       def id = field("id")

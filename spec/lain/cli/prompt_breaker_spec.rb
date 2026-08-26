@@ -2,7 +2,7 @@
 
 require "timeout"
 
-# T22: the parked-prompt breakout. Reline owns the terminal in a blocking read
+# The parked-prompt breakout. Reline owns the terminal in a blocking read
 # while the human is at the `you>` prompt, so a signal there cannot render an
 # interactive countdown until the readline is broken out of first (the ruled UX,
 # probe-verified: Reline propagates an exception raised into its thread and runs

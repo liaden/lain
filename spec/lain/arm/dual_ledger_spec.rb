@@ -13,7 +13,7 @@ RSpec.describe Lain::Arm::DualLedger do
   # and `timeline:` are OPTIONAL with defaults and there is a `**` tail, so the
   # SAME seam drives DualLedger (which passes workspace:/timeline:) AND
   # SingleThread (which passes only journal:) -- the one-driver-over-both shape
-  # B12 needs.
+  # a cross-arm comparison needs.
   def spawn_seam(captured_workspaces = [])
     lambda do |journal:, workspace: Lain::Workspace.empty, timeline: nil, **|
       captured_workspaces << workspace
@@ -101,7 +101,7 @@ RSpec.describe Lain::Arm::DualLedger do
       expect(run.compare_run.cost).to be > 0
     end
 
-    # T24: the outer loop's whole drive is timed by the SAME injected instrument
+    # The outer loop's whole drive is timed by the SAME injected instrument
     # the other arms use -- and the block's value (the settled Loop) comes back
     # from it, so no mutable capture is needed to reach it.
     #
@@ -119,7 +119,7 @@ RSpec.describe Lain::Arm::DualLedger do
     end
   end
 
-  # T8: the outer loop reads the LEDGER, never the grader. Consulting the
+  # The outer loop reads the LEDGER, never the grader. Consulting the
   # scoring function as a control signal was oracle leakage the control arms do
   # not get -- it confounds a cross-arm score comparison with protocol rather
   # than strategy -- and it spent the ceiling in model calls on any task the
@@ -247,7 +247,7 @@ RSpec.describe Lain::Arm::DualLedger do
     end
   end
 
-  # AC1: The ledger rides the Workspace, sent-not-stored.
+  # The ledger rides the Workspace, sent-not-stored.
   describe "the Task/Progress ledger rides the Workspace, never the Timeline" do
     subject(:run) do
       described_class.new.run("summarize the paper", spawn_seam: spawn_seam(captured), grader: passing_grader)
@@ -281,7 +281,7 @@ RSpec.describe Lain::Arm::DualLedger do
     end
   end
 
-  # AC2: A stall fires a journaled replan transition.
+  # A stall fires a journaled replan transition.
   describe "a stall fires a journaled replan on the LoopMachine" do
     # A progress detector that hands the ledger straight back -- no signature
     # change, so every step reads as no-progress and the stall counter climbs.
@@ -332,8 +332,8 @@ RSpec.describe Lain::Arm::DualLedger do
     end
   end
 
-  # Fix 2 (panel): one base-duck seam drives BOTH arms -- B12 needs one driver
-  # over SingleThread and DualLedger.
+  # Fix 2 (panel): one base-duck seam drives BOTH arms -- the bench needs one
+  # driver over SingleThread and DualLedger.
   describe "the base-duck spawn seam drives both arms" do
     it "runs SingleThread and DualLedger from the same seam object" do
       seam = spawn_seam

@@ -36,7 +36,7 @@ module Lain
       #   wrapper records off {#model}
       # @param max_tokens [Integer] the reply ceiling on every Request built here
       # @param decoder [#call] `Response -> answer attributes Hash`; the default
-      #   parses the reply as JSON. A stronger structured-output decoder (T1)
+      #   parses the reply as JSON. A stronger structured-output decoder
       #   swaps in behind the same message without this tier changing shape.
       def initialize(definition:, provider:, model:, max_tokens: DEFAULT_MAX_TOKENS, decoder: JsonDecoder.new)
         @definition = definition

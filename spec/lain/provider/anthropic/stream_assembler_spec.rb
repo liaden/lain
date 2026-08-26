@@ -112,7 +112,7 @@ RSpec.describe Lain::Provider::Anthropic::StreamAssembler do
     expect(result.usage).to include("input_tokens" => 100, "cache_read_input_tokens" => 40, "output_tokens" => 25)
   end
 
-  # T11 / F7c. One assembler serves a whole round trip, not one attempt: the
+  # One assembler serves a whole round trip, not one attempt: the
   # Provider builds it once and faraday-retry replays through the same block, so
   # a retry's events land on top of whatever the abandoned attempt left behind.
   # `message_start` is the marker that says a new message began -- Anthropic

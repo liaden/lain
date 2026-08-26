@@ -56,8 +56,8 @@ RSpec.describe Lain::Provider::Ollama::Deployment::Cloud do
     # "is not set" is a claim about the environment, and it is FALSE for every
     # case below. The nbsp one is the sharp edge: the operator runs
     # `echo $OLLAMA_API_KEY`, sees a character sitting there, and is told the
-    # variable is unset -- the same misdirection SF1 removed from the header,
-    # arriving through the message instead.
+    # variable is unset -- the same misdirection already removed from the
+    # header, arriving through the message instead.
     it "does not claim the variable is unset when it holds only whitespace" do
       expect { described_class.new(api_key: "\u00A0") }
         .to raise_error(Lain::Provider::Ollama::Deployment::MissingAPIKey, /only whitespace/)

@@ -43,13 +43,13 @@ module Lain
     # ({Timeline#to_a}) and projects every message before it can find the span.
     # The win over the projection it replaces is a much smaller CONSTANT, not a
     # better complexity class -- this never `Canonical.dump`s the whole history,
-    # and that dump is most of what {Context::Compact} spends. T9 pays this walk
-    # on every compacting turn and should read the sentence that way.
+    # and that dump is most of what {Context::Compact} spends. Derivation pays
+    # this walk on every compacting turn and should read the sentence that way.
     #
     # That is also why there is no `#extend`: an incremental extension would
     # have to hold the last derived head -- the state the non-recursive ruling
     # exists to avoid -- and would buy nothing. Derivation is not a functor on
-    # the prefix order (`T1 <= T2` does not imply `derive(T1) <= derive(T2)`),
+    # the prefix order (`A <= B` does not imply `derive(A) <= derive(B)`),
     # and `spec/lain/compaction/derivation_spec.rb` pins that as a
     # characterization example rather than as a defect to be fixed.
     #

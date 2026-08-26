@@ -7,23 +7,23 @@ module Lain
       # live collaborators -- the human-facing half of the pair whose
       # model-facing half is {Lain::Tools::SessionUsage}.
       #
-      # It exists because of F77. Asked for its own session usage, the agent
-      # invented a metrics table -- a model name it was not running, plus
-      # fabricated memory, CPU, round-trip and network figures -- while eight
-      # `turn_usage` records carrying the true answer sat in the journal it had
-      # itself just written. The defect was REACHABILITY: nothing could answer
-      # the question, so it was answered from nowhere.
+      # It exists because of a real failure: asked for its own session usage,
+      # the agent invented a metrics table -- a model name it was not running,
+      # plus fabricated memory, CPU, round-trip and network figures -- while
+      # eight `turn_usage` records carrying the true answer sat in the journal
+      # it had itself just written. The defect was REACHABILITY: nothing could
+      # answer the question, so it was answered from nowhere.
       #
       # == The failure mode this file is written against
       #
-      # A CONFIDENT FALSE NEGATIVE is F77 wearing better manners. "review none
-      # open" told to a human who is annotating one, or a percentage over a
-      # denominator nobody vouched for, do the same damage as an invented table
-      # and are harder to catch, because a plausible number reads as a measured
-      # one. So every row here is written to be true of the run it describes,
-      # and everything this command cannot see is NAMED under `unreported`
-      # rather than left out -- an omission a reader can mistake for an absence
-      # is the same lie one step removed.
+      # A CONFIDENT FALSE NEGATIVE is that same fabrication wearing better
+      # manners. "review none open" told to a human who is annotating one, or a
+      # percentage over a denominator nobody vouched for, do the same damage as
+      # an invented table and are harder to catch, because a plausible number
+      # reads as a measured one. So every row here is written to be true of the
+      # run it describes, and everything this command cannot see is NAMED under
+      # `unreported` rather than left out -- an omission a reader can mistake
+      # for an absence is the same lie one step removed.
       #
       # == Tokens, never dollars
       #
@@ -127,7 +127,7 @@ module Lain
 
         def usage = "/introspect -- this run's model, occupancy, token spend, review and journal"
 
-        # T9: a {Lain::Renderable}, not a String -- every label names `:label` so
+        # A {Lain::Renderable}, not a String -- every label names `:label` so
         # the figures beside them read as content rather than as one flat colour.
         def call(_args, env)
           rows(env).inject(Lain::Renderable.new.with(:label, "introspect:")) do |rendered, (label, value)|

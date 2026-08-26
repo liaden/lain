@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# T8: parks several gated tool calls on one REAL Lain::Approval::Queue at
+# Parks several gated tool calls on one REAL Lain::Approval::Queue at
 # once, and hands the block a queue whose every pending has already been
 # admitted. spec/lain/frontend/neovim/approval_view_spec.rb's `gated` helper
-# (T36, see :311-322) proved this shape out for two pendings -- a real queue,
+# (see :311-322) proved this shape out for two pendings -- a real queue,
 # real async fibers each calling into it, `spun_until` rather than a sleep --
 # and this generalises it to N so a future round (this chunk's own
 # integration check 7 among them) can park a queue's worth of approvals in

@@ -20,8 +20,8 @@ module Lain
       # `Compaction::Boundary#initialize`'s (`compaction/boundary.rb:120`) same
       # tradeoff. A POSITIONAL's name is private to the method, and the three
       # methods below that take only positionals say so plainly rather than
-      # disabling a cop that was right. That distinction arrived with a T19
-      # review panel: pinning positional names refused `def thread(_anchor)` as
+      # disabling a cop that was right. That distinction arrived with a review
+      # panel: pinning positional names refused `def thread(_anchor)` as
       # "the wrong shape", and five disables on one small class were the smell
       # pointing at it.
       class Null
@@ -42,18 +42,17 @@ module Lain
 
         # @return [nil]
         #
-        # OPEN TENSION, recorded for T13 rather than resolved here: this
-        # card's own AC requires every message to return `nil`, but
-        # `#verdict` (like `#thread`) is a QUERY, not a command, and
-        # {Sink::Null#write} deliberately does NOT return `nil` -- it
-        # returns the byte count `IO#write` would, precisely so no caller
-        # ever has to `nil`-check it. The same argument applies here: a
-        # caller of a real surface's `#verdict` needs an actual answer, and
-        # `nil` is indistinguishable from "no verdict yet" and "this surface
-        # cannot tell you." Left as `nil` because deciding the query's real
-        # shape (a verdict value? a null verdict object?) is T13's call, as
-        # the object that actually consumes one -- not a decision to
-        # preempt from the Null adapter alone.
+        # OPEN TENSION, recorded rather than resolved here: this card's own
+        # AC requires every message to return `nil`, but `#verdict` (like
+        # `#thread`) is a QUERY, not a command, and {Sink::Null#write}
+        # deliberately does NOT return `nil` -- it returns the byte count
+        # `IO#write` would, precisely so no caller ever has to `nil`-check
+        # it. The same argument applies here: a caller of a real surface's
+        # `#verdict` needs an actual answer, and `nil` is indistinguishable
+        # from "no verdict yet" and "this surface cannot tell you." Left as
+        # `nil` because deciding the query's real shape (a verdict value? a
+        # null verdict object?) belongs to the object that actually consumes
+        # one -- not a decision to preempt from the Null adapter alone.
         def verdict = nil
 
         # @return [nil]

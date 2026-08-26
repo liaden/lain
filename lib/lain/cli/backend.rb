@@ -102,8 +102,8 @@ module Lain
       # fallback it is rather than as a free compaction.
       #
       # Read that record's `model` through its `#priced?`, though, and not as
-      # "the tier these dollars are quoted in" -- since C2 it means one of
-      # three things (see {Telemetry::Compaction}'s header). It is the quoted
+      # "the tier these dollars are quoted in" -- it now means one of three
+      # things (see {Telemetry::Compaction}'s header). It is the quoted
       # tier only when `priced?`; on a refused quote it names the tier that
       # RAN, with no figures beside it. This fallback's own zero is the case
       # neither covers: `priced?` is true and the figure was never measured.
@@ -189,12 +189,12 @@ module Lain
       # the `#encode` differential ORACLES and live in spec/support, so no run
       # constructs one and the `anthropic` gem is not a runtime dependency.
       #
-      # @param channel [Lain::Channel] where a raw provider's retry and CE-5
+      # @param channel [Lain::Channel] where a raw provider's retry and
       #   stream_started events land -- chat's live TTY Channel, so a stream
       #   start actually reaches the frontend. Like spool it defaults to the
       #   Null instance (headless/bench pass nothing, so their events land
-      #   nowhere). Every arm gets it now: Bedrock and -- since F7 -- Ollama
-      #   too, whose retries used to reach no Journal at all. That also makes a
+      #   nowhere). Every arm gets it now: Bedrock and Ollama too, whose
+      #   retries used to reach no Journal at all. That also makes a
       #   retry storm VISIBLE LIVE as well as readable afterwards:
       #   {Frontend::Decorators::ProviderRetry} paints each
       #   {Telemetry::ProviderRetry} as it lands, so a long stall shows the
@@ -433,7 +433,7 @@ module Lain
       # prompt cannot be reading two snapshots of one tree.
       def slots = library.slots
 
-      # RES4: the {Tool::SpawnPolicy} for a cataloged {Role}, resolved through
+      # The {Tool::SpawnPolicy} for a cataloged {Role}, resolved through
       # {Role::Catalog} rather than hand-assembled at the call site -- the same
       # "one seam decides" shape #provider gives `--provider` and #context
       # gives `--model`. A spawn seam names the ROLE it wants (`:researcher`);

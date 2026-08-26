@@ -2,13 +2,13 @@
 
 module Lain
   module Bench
-    # One run persisted as NDJSON in the Journal's OWN format (design decision
-    # D3): the live run's journal already carries request_sent / turn_usage /
-    # capability_degraded lines, and {Session.write} appends what those cannot
-    # express -- one "session" header (the Context, tool schema, and reminders
-    # in effect) and one "turn" record per committed turn. {Session.load} then
-    # rebuilds a {Recording} from the bytes alone, re-deriving each turn's
-    # content address so the file's own digests are its integrity check.
+    # One run persisted as NDJSON in the Journal's OWN format: the live run's
+    # journal already carries request_sent / turn_usage / capability_degraded
+    # lines, and {Session.write} appends what those cannot express -- one
+    # "session" header (the Context, tool schema, and reminders in effect) and
+    # one "turn" record per committed turn. {Session.load} then rebuilds a
+    # {Recording} from the bytes alone, re-deriving each turn's content address
+    # so the file's own digests are its integrity check.
     #
     # The header captures exactly {Lain::Context}'s constructor inputs, so a
     # loaded Recording rebuilds the DEFAULT-pipeline Context. A run recorded
@@ -39,15 +39,15 @@ module Lain
       # under it, a turn chain whose rebuilt head misses the header's anchor,
       # or a journal with no session header to rebuild a Context from (or with
       # more than one). Extended for the live session format's open sessions
-      # and resume chains (T14): a `resumed_from` head that does not match the
+      # and resume chains: a `resumed_from` head that does not match the
       # prior file's own rebuilt head, a `message` record whose envelope no
       # longer re-derives to its recorded digest, or more than one
       # `session_closed` closer in one file.
       class Corrupt < Error; end
 
-      # == Open sessions and resume chains (T14)
+      # == Open sessions and resume chains
       #
-      # {SessionRecord}'s live format (T13) can leave a header's `head` nil --
+      # {SessionRecord}'s live format can leave a header's `head` nil --
       # an OPEN session still running, or one a SIGKILL just stopped -- rather
       # than this class's own header, which is always anchored because it is
       # written AFTER the run. A nil header `head` verifies against a
@@ -69,7 +69,6 @@ module Lain
       # `message` events merge this way; `baseline`, `degraded`, `memory`, and
       # `ledger_index` stay scoped to the file actually loaded, stated
       # honestly as this format's current limit rather than silently partial.
-
       HEADER_TYPE = "session"
       TURN_TYPE = "turn"
 
@@ -123,12 +122,12 @@ module Lain
       # recording (which legitimately will not replay to byte identity) from a
       # genuine harness leak.
       #
-      # `open` and `messages` are T14's additions, both additive: `open` names
-      # whether {Loader} verified a full anchor or only the documented
-      # unverified-prefix shape (see the class note above); `messages` is the
-      # session's re-put :message/:spawn events, root-first like `baseline`,
-      # holding the SAME Store {timeline} does (fetchable by digest from
-      # either).
+      # `open` and `messages` are the live-format additions, both additive:
+      # `open` names whether {Loader} verified a full anchor or only the
+      # documented unverified-prefix shape (see the class note above);
+      # `messages` is the session's re-put :message/:spawn events, root-first
+      # like `baseline`, holding the SAME Store {timeline} does (fetchable by
+      # digest from either).
       Recording = Data.define(:context, :context_class, :toolset, :workspace,
                               :timeline, :baseline, :ledger_index, :degraded, :memory,
                               :open, :messages) do
@@ -167,7 +166,7 @@ module Lain
         #   pure data beside the model -- never constantized, the same idiom
         #   `context_class` already sets. Optional (default nil) so an EXISTING
         #   caller that has not threaded a provider name through yet still
-        #   writes a valid header (RES2's additive-field constraint).
+        #   writes a valid header (the additive-field constraint).
         # @return [#<<] the journal
         def write(journal, timeline:, context:, toolset:, workspace: Workspace.empty, provider: nil)
           journal << header_record(timeline, context, toolset, workspace, provider)

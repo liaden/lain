@@ -8,15 +8,16 @@ require "tmpdir"
 # {Lain::Agent}, which asks a question, dispatches a real tool, and answers --
 # with nothing between it and ollama but VCR.
 #
-# It is the layer T13 cannot reach. `spec/lain/provider/ollama_recorded_spec.rb`
-# records the PROVIDER, so it proves decode; this records the RUN, so it proves
-# that the loop, tool dispatch, the session record and compaction's accounting
-# still agree with each other. Nothing below is doubled. The only stand-ins are a
-# throwaway project directory and a throwaway XDG_STATE_HOME, so the run's reads
-# and its session record land somewhere the example owns.
+# It is the layer the provider cassette cannot reach.
+# `spec/lain/provider/ollama_recorded_spec.rb` records the PROVIDER, so it proves
+# decode; this records the RUN, so it proves that the loop, tool dispatch, the
+# session record and compaction's accounting still agree with each other.
+# Nothing below is doubled. The only stand-ins are a throwaway project directory
+# and a throwaway XDG_STATE_HOME, so the run's reads and its session record land
+# somewhere the example owns.
 #
 # Recorded 2026-08-17 against ollama on this box, qwen3:4b (the arm's
-# DEFAULT_MODEL, and the model T13 recorded against).
+# DEFAULT_MODEL, and the model the provider cassette recorded against).
 #
 # == What reds this file, what merely ROTS it, and why re-recording is the repair
 #
@@ -43,13 +44,14 @@ require "tmpdir"
 # orchestration and started pinning prose, and it should be narrowed or deleted
 # rather than refreshed again.
 #
-# The ritual, which is T13's and is fiddlier than one line suggests:
+# The ritual, shared with the provider cassette and fiddlier than one line
+# suggests:
 #
 #   1. WARM THE RUNNER FIRST, or the whole cassette is worthless -- see the
 #      `/api/ps` section below. Against a cold server the probe records
 #      `{"models":[]}`, which is the empty default the global stub already gives:
-#      the run then replays denominated by CONSERVATIVE_FALLBACK, which is F3
-#      itself, greenly.
+#      the run then replays denominated by CONSERVATIVE_FALLBACK, which is the
+#      very defect this cassette exists to catch, greenly.
 #
 #        curl -s http://localhost:11434/api/chat \
 #          -d '{"model":"qwen3:4b","messages":[{"role":"user","content":"hi"}],"stream":false}'
@@ -84,18 +86,19 @@ require "tmpdir"
 #
 # == WHY EXACTLY ONE `/api/ps`, for a run of two turns
 #
-# `Provider::Ollama#context_window_tokens` is deliberately un-memoised and T13's
-# header says an N-turn cassette wants N probes. That is true of a cassette
-# driven at the PROVIDER. It is not true here, and the difference is the wiring:
-# there is one caller of that method in lib/ ({Backend::WindowBook#book}),
-# reached through {Backend#context_window}, which memoizes the BOOK -- and
-# {Backend::WindowBook::Live} stops re-resolving the moment its answer is
-# authoritative. This cassette's `/api/ps` names a resident runner, so the very
+# `Provider::Ollama#context_window_tokens` is deliberately un-memoised and the
+# provider cassette's header says an N-turn cassette wants N probes. That is
+# true of a cassette driven at the PROVIDER. It is not true here, and the
+# difference is the wiring: there is one caller of that method in lib/
+# ({Backend::WindowBook#book}), reached through {Backend#context_window}, which
+# memoizes the BOOK -- and {Backend::WindowBook::Live} stops re-resolving the
+# moment its answer is authoritative. This cassette's `/api/ps` names a resident runner, so the very
 # first resolution is PROBED and settles; the turn stack's
 # {Middleware::ResolveWindow} then asks nothing on either turn.
 #
-# T6 made that a live guard rather than a property of a memo. A book that kept
-# re-resolving after it had a measured answer would probe once per turn, and
+# The book makes that a live guard rather than a property of a memo. A book
+# that kept re-resolving after it had a measured answer would probe once per
+# turn, and
 # THIS FILE is where that fails loudly: the second probe finds the cassette
 # already consumed and raises mid-run. Take a sudden `VCR::Errors::
 # UnhandledHTTPRequestError` on `/api/ps` here as "something started asking
@@ -145,8 +148,8 @@ require "tmpdir"
 # (spec/lain/provider/ollama/streamed_failure_spec.rb:5-9; lain.gemspec:77-80
 # makes the same point about VCR storing a body as one blob). So a regression
 # that split an NDJSON line across two TCP reads, or spliced a retried attempt's
-# bytes onto an abandoned one's, replays green here forever. F7b and F7c need a
-# real severable socket and belong to T10 and T12. An example here implying
+# bytes onto an abandoned one's, replays green here forever. Both need a real
+# severable socket and belong to the specs that own one. An example here implying
 # otherwise would be worse than no example.
 #
 # == Hygiene
@@ -169,9 +172,10 @@ module T14RecordedRun
   MODEL = Lain::Provider::Ollama::DEFAULT_MODEL
 
   # What `/api/ps` said the resident runner was being served with at recording
-  # time -- the same figure T13 recorded, from the same box and the same runner.
-  # It is asserted below as the DENOMINATOR the run's compaction accounting used,
-  # which is the whole of why this cassette records a probe at all.
+  # time -- the same figure the provider cassette recorded, from the same box
+  # and the same runner. It is asserted below as the DENOMINATOR the run's
+  # compaction accounting used, which is the whole of why this cassette records a
+  # probe at all.
   SERVED_CONTEXT_TOKENS = 32_768
 
   # The one file the run's tool reads. Written into a throwaway project per
@@ -211,10 +215,10 @@ module T14RecordedRun
   # tell that the tool's result really did reach the second turn: the model was
   # never sent that text in a prompt, it was handed it as a tool_result.
   #
-  # An equality, never a pattern, for T13's reason: an ollama server is listening
-  # on this port throughout, and a 4B model reproducing a paragraph
-  # token-for-token is not a thing that happens. Equality is what proves the bytes
-  # came off the file.
+  # An equality, never a pattern, for the provider cassette's reason: an ollama
+  # server is listening on this port throughout, and a 4B model reproducing a
+  # paragraph token-for-token is not a thing that happens. Equality is what proves
+  # the bytes came off the file.
   REPLY = <<~TEXT.chomp
     The content of `NOTES.md` is:
 
@@ -269,7 +273,7 @@ module T14RecordedRun
   # production wiring over a production {CLI::Backend}, so the provider, the
   # window book, the compaction mount and the toolset are the ones a real
   # `lain chat` builds. A hand-built Agent would cover the loop and skip all
-  # four -- and the wiring is exactly where F3 lived.
+  # four -- and the wiring is exactly where the defect lived.
   def ask(chronicle, state, project)
     wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:,
                                    status_feed: Lain::StatusFeed.new(path: File.join(state, "state.json")),
@@ -340,7 +344,7 @@ RSpec.describe "a whole recorded run", :seam, records: :ollama,
     expect([run.answer.usage.input_tokens, run.answer.usage.output_tokens]).to eq([3_446, 367])
   end
 
-  # AC2, and the first assertion the cassette cannot fake: a tool_result is
+  # The first assertion the cassette cannot fake: a tool_result is
   # written by the RUN, from bytes the run read off the disk, and the id
   # correlating it is the one the recorded turn asked with. A loop that dispatched
   # nothing, or dispatched and dropped the answer, records neither -- and one that
@@ -406,7 +410,7 @@ RSpec.describe "a whole recorded run", :seam, records: :ollama,
     expect(reads.map { |record| File.basename(record["path"]) }).to eq(["NOTES.md"])
   end
 
-  # AC3. `line_count` against the parsed count is the non-vacuous half: the
+  # `line_count` against the parsed count is the non-vacuous half: the
   # Journal is NDJSON and one stray byte of interleaved output makes exactly one
   # line unparseable, which is the failure output discipline exists to prevent.
   it "leaves a session record whose every line parses and which closes" do
@@ -427,9 +431,9 @@ RSpec.describe "a whole recorded run", :seam, records: :ollama,
     expect(closed["head"]).to eq(turns.last["digest"])
   end
 
-  # F3, over the path QA broke, with the denominator coming off the wire. The
-  # cassette's `/api/ps` is what makes this assertable: with no recorded probe the
-  # global empty-models stub answers, the book falls to
+  # The accounting defect, over the path QA broke, with the denominator coming
+  # off the wire. The cassette's `/api/ps` is what makes this assertable: with no
+  # recorded probe the global empty-models stub answers, the book falls to
   # {ContextWindow::CONSERVATIVE_FALLBACK}, and the run is accounted at 8,192 --
   # the exact defect this chunk exists to fix, replaying green forever. So this
   # example is also what proves the recorded probe was made and won.
@@ -450,10 +454,11 @@ RSpec.describe "a whole recorded run", :seam, records: :ollama,
     expect(decisions.map { |record| record["used_tokens"] }).to eq([nil, 3_401])
   end
 
-  # The other half of "the cassette is the boundary", copied from T13 because the
-  # claim is the same one and it is worth making per cassette: an ollama server is
-  # listening on exactly this host and port throughout, and a request this file
-  # does not hold still cannot leave the machine.
+  # The other half of "the cassette is the boundary", copied from the provider
+  # cassette because the claim is the same one and it is worth making per
+  # cassette: an ollama server is listening on exactly this host and port
+  # throughout, and a request this file does not hold still cannot leave the
+  # machine.
   it "refuses a request the cassette does not hold, rather than reaching the live server" do
     expect(VCR.current_cassette.recording?).to be(false)
 

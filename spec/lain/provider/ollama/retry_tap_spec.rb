@@ -58,8 +58,8 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
     # one Provider serves the chat and the summarizer tier for a whole session,
     # so two round trips can be in flight through this ONE tap. A retry firing
     # for round trip A must abandon A and only A -- instance-held live state
-    # would abandon whichever sibling opened last, which for T10 means throwing
-    # away the WRONG stream's bytes.
+    # would abandon whichever sibling opened last, which for the assembler reset
+    # means throwing away the WRONG stream's bytes.
     it "abandons only the attempt on the retried env when two round trips share the instance" do
       abandoned = []
       attempt_a = tap.open_attempt { abandoned << :a }
@@ -72,7 +72,8 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
 
     # Null Object, not a nil guard: a round trip with nothing to discard is
     # abandoned exactly like one that has something, so #retry_block carries no
-    # `if rollback` and T10 changes only what it registers, not this path.
+    # `if rollback` and the assembler reset changes only what it registers, not
+    # this path.
     it "journals a retry for a round trip that registered nothing to discard" do
       fire_retry(env_for(tap.open_attempt))
 
@@ -132,8 +133,8 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
       expect(frames).to eq(%w[req-a req-b req-a])
     end
 
-    # RULING 3 / F7b: the assembler reset and the frame rotation are registered
-    # on two DIFFERENT context keys, so neither registration can displace the
+    # RULING 3: the assembler reset and the frame rotation are registered on
+    # two DIFFERENT context keys, so neither registration can displace the
     # other. Asserting both fire from one retry is what pins that -- a design
     # that folded the rotation into the attempt's rollback would still pass the
     # two examples above, and fail this one the moment either was replaced.
@@ -171,7 +172,7 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
 
       event = channel.events.grep(Lain::Telemetry::ProviderRetry).fetch(0)
       # max retries means max+1 real attempts (the original try plus each
-      # retry) -- F16: a counting TCP listener saw 4 real attempts rendered
+      # retry) -- measured: a counting TCP listener saw 4 real attempts rendered
       # as "1, 2, 3, 3" because this used to push the retry COUNT.
       expect(event.attempt).to eq(4)
       expect(event.will_retry_in).to be_nil
@@ -195,7 +196,7 @@ RSpec.describe Lain::Provider::Ollama::RetryTap do
 
   # The half a Hash env double cannot prove: that a REAL faraday-retry reaches
   # this request's attempt, which depends on {Transport} threading it onto the
-  # Faraday request context. T10's assembler reset rides exactly this path, so
+  # Faraday request context. The assembler reset rides exactly this path, so
   # it is pinned end to end rather than at the tap's own doorstep.
   describe "over the real transport", :webmock do
     it "abandons the attempt the transport threaded onto the retried request" do

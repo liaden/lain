@@ -52,7 +52,7 @@ RSpec.describe Lain::Workspace::Snapshot do
     end
   end
 
-  # T12's byte-identity proof. Every literal below was captured by running a
+  # The byte-identity proof. Every literal below was captured by running a
   # scripted session against the tree as it stood BEFORE the scope object
   # existed (`git show main:lib/lain/workspace/snapshot.rb`), so it is evidence
   # that the default arm is a refactor, not a transcription of this card's own
@@ -165,7 +165,7 @@ RSpec.describe Lain::Workspace::Snapshot do
   end
 
   describe "an injected scope" do
-    # T13's shape in miniature: a scope that widens the set beyond the
+    # A real scope's shape in miniature: a scope that widens the set beyond the
     # write-set, records the root it was handed, and names its own policy.
     let(:scope_class) do
       Class.new do
@@ -272,10 +272,10 @@ RSpec.describe Lain::Workspace::Snapshot do
       end
     end
 
-    # Fix round (FIX 2): keys are WORKSPACE-ROOT-RELATIVE, with the root
-    # recorded once as payload data. Absolute keys baked tmpdirs/$HOME into the
+    # Fix round: keys are WORKSPACE-ROOT-RELATIVE, with the root recorded once
+    # as payload data. Absolute keys baked tmpdirs/$HOME into the
     # content-addressed file map, breaking cross-machine replay and
-    # relocated-workspace restore -- and W2 freezes this format.
+    # relocated-workspace restore -- and this format is frozen.
     it "keys the file map root-relative, recording the root once as payload data" do
       path = write_file(dir, "a.txt", "alpha")
       timeline = committed_timeline
@@ -301,7 +301,7 @@ RSpec.describe Lain::Workspace::Snapshot do
 
     # A write-set path outside the root cannot be hidden and cannot be invented
     # a home: it keys by its honest lexical ../ path. (Restore-side policy for
-    # such keys is W2's decision; the payload just tells the truth.)
+    # such keys is the restorer's; the payload just tells the truth.)
     it "keys a write-set file outside the root by its lexical ../ path" do
       outside = write_file(dir, "outside.txt", "escapee")
       root = File.join(dir, "project").tap { |path| Dir.mkdir(path) }
@@ -414,9 +414,9 @@ RSpec.describe Lain::Workspace::Snapshot do
       expect(event.body.fetch("files").keys).to eq(["a.txt"])
     end
 
-    # Fix round (FIX 1): deleting the ENTIRE write-set must enter the record.
+    # Fix round: deleting the ENTIRE write-set must enter the record.
     # The empty-manifest early return silently kept the stale last snapshot
-    # asserting the files existed -- W2's restore would have resurrected them.
+    # asserting the files existed -- restore would have resurrected them.
     # Empty AFTER non-empty is a real snapshot recording total deletion; empty
     # with no history is still nothing to say.
     it "records total write-set deletion as an EMPTY snapshot, never silence" do
@@ -458,7 +458,7 @@ RSpec.describe Lain::Workspace::Snapshot do
       expect(events.size).to eq(2)
     end
 
-    # Fix round (FIX 3): File.file? then File.binread races an external delete.
+    # Fix round: File.file? then File.binread races an external delete.
     # The race must collapse into the omission semantics it raced -- omission
     # already means deletion -- never an exception out of the loop.
     it "omits a file deleted between the existence check and the read (TOCTOU)" do

@@ -55,7 +55,7 @@ RSpec.describe Lain::Timeline do
       expect(three.ancestors.map { |t| t.content.first["text"] }).to eq(%w[c b a])
     end
 
-    # T4: the envelope's payload_digest is an edge the Store enforces, so
+    # The envelope's payload_digest is an edge the Store enforces, so
     # #commit puts the body BEFORE the envelope -- a committed turn's payload
     # is retrievable, and the carried body still answers fetch_body without a
     # round trip.
@@ -67,7 +67,7 @@ RSpec.describe Lain::Timeline do
       expect(head.content).to eq(text("a"))
     end
 
-    # Review fix (T4): commit is the hottest per-turn path, and its digest work
+    # Review fix: commit is the hottest per-turn path, and its digest work
     # is exactly two Canonical.digest passes -- the payload once (inside
     # Event.turn) and the envelope once. A third call means the payload was
     # rebuilt from turn.body instead of reusing the object Event.turn built.
@@ -78,7 +78,7 @@ RSpec.describe Lain::Timeline do
     end
   end
 
-  # T6/decision 2: the assistant commit records the messages a render folded as
+  # Decision 2: the assistant commit records the messages a render folded as
   # the turn's causal_parents -- the first production writer of causal edges on
   # turns. The default (no mailbox) path passes none, and its digest must stay
   # byte-identical to a pre-mailbox turn.
@@ -204,9 +204,9 @@ RSpec.describe Lain::Timeline do
       include_examples "a meet semilattice under ancestry", population: -> { population }
     end
 
-    # T20: #meet builds `mine` (self's ancestry, a Hash) eagerly -- that side
+    # #meet builds `mine` (self's ancestry, a Hash) eagerly -- that side
     # has to see everything to answer "is this digest in my history" at all,
-    # so it is not this card's target. The OTHER side is a #find over
+    # so it is not what this optimisation targets. The OTHER side is a #find over
     # `other`'s ancestors, and #find can stop the moment it lands on a digest
     # already in `mine` -- it should never keep walking toward other's own
     # root once the shared history is reached.
@@ -228,7 +228,7 @@ RSpec.describe Lain::Timeline do
     end
   end
 
-  # TL-3 ruling (Joel, 2026-07-17): three operators, each honest about its
+  # A pinned ruling (Joel, 2026-07-17): three operators, each honest about its
   # question. #meet/#diverge_at stay render-edge and byte-unchanged (cache-break
   # localization); #causal_meets is the SET of maximal lower bounds of the
   # causal ancestry order -- reachability over BOTH parent edges, git's "all
@@ -300,7 +300,7 @@ RSpec.describe Lain::Timeline do
     end
   end
 
-  # TL-3 ruling (Joel, 2026-07-17), third operator: #dominator_meet is the
+  # The same ruling (Joel, 2026-07-17), third operator: #dominator_meet is the
   # deepest common dominator over the UNION graph -- render and causal edges
   # together, virtual root over the closure's forest roots -- the
   # checkpoint/safe-compaction primitive. Unlike #causal_meets it IS a true
@@ -412,7 +412,7 @@ RSpec.describe Lain::Timeline do
       end
     end
 
-    # T20: Kahn's algorithm processes its frontier as a FIFO queue. Array#shift
+    # Kahn's algorithm processes its frontier as a FIFO queue. Array#shift
     # is O(n) per call -- it has to shift every remaining element down -- so
     # popping the frontier that way turns one sweep over the union graph into
     # O(n^2). An index cursor over the same Array (append at the tail, advance
@@ -519,7 +519,7 @@ RSpec.describe Lain::Timeline do
     end
   end
 
-  # The TL-3 ruling above, said in `lib/` per operation rather than only in
+  # The ruling above, said in `lib/` per operation rather than only in
   # the shapes of the groups that run. Three meet-ish operators and only two
   # semilattices is exactly why the claim is per-operation: `include
   # MeetSemilattice` on the class, naming nothing, would be a lie about
@@ -584,7 +584,7 @@ RSpec.describe Lain::Timeline do
     end
   end
 
-  # T20: #include? and #ancestor_of? (which delegates to it) used to
+  # #include? and #ancestor_of? (which delegates to it) used to
   # materialize the whole ancestor chain before asking whether the digest was
   # among it -- correct, but paid for the far side of the chain even when the
   # answer sat one hop from head. `store_fetch_count` is what tells the two
@@ -655,7 +655,7 @@ RSpec.describe Lain::Timeline do
     end
   end
 
-  # TL-2 (pinned): correlation is DERIVED by chain construction, not new id
+  # A pinned ruling: correlation is DERIVED by chain construction, not new id
   # machinery -- a chain is named by its root event's digest. The root itself
   # carries nil (its digest IS the identity, and a content address cannot
   # contain itself); every descendant carries the root digest.

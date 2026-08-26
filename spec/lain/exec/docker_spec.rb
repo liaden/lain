@@ -59,11 +59,11 @@ module DockerBackendAvailability
   end
 end
 
-# AC2 (chunk-qa-round9, T3): the SKIP REASON's own quality, exercised without
-# touching a real client. `.unavailability` takes an injected `prober:` for
-# exactly this -- a unit example hands it a canned true/false/nil answer per
-# probe, the same vocabulary `system` itself returns, and reads the sentence
-# that comes back. No `:seam` tag: nothing here spawns a subprocess.
+# The SKIP REASON's own quality, exercised without touching a real client.
+# `.unavailability` takes an injected `prober:` for exactly this -- a unit
+# example hands it a canned true/false/nil answer per probe, the same
+# vocabulary `system` itself returns, and reads the sentence that comes back.
+# No `:seam` tag: nothing here spawns a subprocess.
 RSpec.describe DockerBackendAvailability do
   # @return [Array(#call, Array<Array<String>>)] a prober that answers each
   #   call from `results`, in order, and a log of the argv it was asked --
@@ -187,7 +187,7 @@ RSpec.describe Lain::Exec::Docker do
       expect(argv.last(4)).to eq(["img:1", "sh", "-c", "echo hi"])
     end
 
-    # F55: with the image absent, the client narrates its own pull progress
+    # With the image absent, the client narrates its own pull progress
     # into the same stderr the command's own output rides, so a tool result
     # carries transfer noise the model then reads as if it were the command's
     # own. `--quiet` asks the client not to.
@@ -271,7 +271,7 @@ RSpec.describe Lain::Exec::Docker do
     end
   end
 
-  # F57, and the reason this backend only ever worked on one client. `--user`
+  # The reason this backend only ever worked on one client: `--user`
   # is not the same INSTRUCTION to every client. Measured on one bind mount:
   #
   #   docker run --rm --user 1000 ... alpine sh -c 'cat seed.txt; touch made'
@@ -459,7 +459,7 @@ RSpec.describe Lain::Exec::Docker do
     end
   end
 
-  # F45's third arm, and the SHOULD-FIX that closed with it. The container
+  # The environment arm, and the SHOULD-FIX that closed with it. The container
   # starts from the image's environment, so a variable crosses only by being
   # named -- which makes the question "what crosses?" an allowlist, not a
   # denylist over an unbounded set.
@@ -604,7 +604,7 @@ RSpec.describe Lain::Exec::Docker do
       expect(capture.stdout.strip).not_to eq(Socket.gethostname)
     end
 
-    # AC1 (chunk-qa-round9, T3), and the round's own reproduction of F57 run as
+    # The QA round's own reproduction of the `--user` defect, run as
     # ONE container so a client that still passed a wrong `--user` fails BOTH
     # halves at once rather than just one of them:
     #

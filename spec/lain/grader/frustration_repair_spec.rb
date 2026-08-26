@@ -2,7 +2,7 @@
 
 require "json"
 
-# GR-3 (T11): built on T8's shared substrate (Grader::ToolCallIndex). The
+# Built on the shared {Grader::ToolCallIndex} substrate. The
 # `spec/fixtures/grader/frustration/*.ndjson` fixtures are REAL `turn`
 # records -- genuine content-addressed digests, generated once through a
 # live Timeline (the same recipe spec/fixtures/sessions/*_v1 used) rather
@@ -176,7 +176,7 @@ RSpec.describe Lain::Grader::FrustrationRepair do
     end
   end
 
-  # T18: a caller folding several graders over ONE record array
+  # A caller folding several graders over ONE record array
   # (Friction::Report) already holds the projection they share, so it can hand
   # it in rather than pay for a second parse of the same in-memory records.
   describe "an injected ToolCallIndex" do
@@ -206,11 +206,11 @@ RSpec.describe Lain::Grader::FrustrationRepair do
     end
   end
 
-  # Mutation hazard, the same one T8's own spec guards: entries loaded from a
-  # real journal file arrive via plain JSON.parse, which freezes NOTHING --
-  # only a String used as a Hash KEY is auto-frozen by Ruby, and a lineage
-  # digest is a VALUE. A Signal built from unfrozen input must still come out
-  # deeply frozen, or `Ractor.shareable?` (this project's mechanical
+  # Mutation hazard, the same one the ToolCallIndex spec guards: entries
+  # loaded from a real journal file arrive via plain JSON.parse, which freezes
+  # NOTHING -- only a String used as a Hash KEY is auto-frozen by Ruby, and a
+  # lineage digest is a VALUE. A Signal built from unfrozen input must still
+  # come out deeply frozen, or `Ractor.shareable?` (this project's mechanical
   # statement of "no reachable mutable state") silently breaks.
   describe "Signal is deeply frozen regardless of source (mutation hazard)" do
     it "is Ractor.shareable? even when built from unfrozen, JSON-sourced entries" do

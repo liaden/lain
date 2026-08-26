@@ -2,7 +2,7 @@
 
 module Lain
   module Oracle
-    # T4 (OR-3), second oracle arm: "worth remembering?" -- plugs into
+    # The second oracle arm: "worth remembering?" -- plugs into
     # {Middleware::RefuseSecretWrites}'s existing `oracle:` seam via {Gate}.
     #
     # UNLIKE {PruneScoring}, this arm sits ON the live tool-dispatch path:
@@ -13,7 +13,7 @@ module Lain
     # live gate may only ever be backed by {.heuristic} (or a {Recorded}
     # replay of one): no model round trip may sit on this hot path. A
     # model-tier arm answering this SAME {.definition} is real and useful,
-    # but confined to bench/replay comparison (OR-4) -- never constructed as
+    # but confined to bench/replay comparison -- never constructed as
     # the live gate.
     module MemorySave
       SCHEMA = Class.new(Tool::Input) do
@@ -78,7 +78,7 @@ module Lain
       # has nothing to retry differently), so the only thing it is willing to
       # be sure about is that a body with no {CONTENT} at all has nothing to
       # save. Anything more opinionated reinvents the over-refusal this rule
-      # was written to undo. As an OR-4 comparison baseline it is near-useless
+      # was written to undo. As a comparison baseline it is near-useless
       # -- almost nothing can lose to it on recall -- and that is the trade
       # accepted here, not an oversight.
       #

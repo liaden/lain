@@ -7,7 +7,7 @@ require "securerandom"
 
 module Lain
   # A desktop-notification surface over `dunstify`. Joins the SAME seam
-  # {Frontend::ApprovalPolicy} (I4) joins Gate through: {Approval::Queue}
+  # {Frontend::ApprovalPolicy} joins Gate through: {Approval::Queue}
   # neither knows nor cares which surface answers a {Approval::Queue::Pending}
   # -- {#watch} sweeps the parked set, {#decide} answers one pending, and two
   # surfaces racing over the same pending is normal (first answer wins, the
@@ -42,18 +42,18 @@ module Lain
   # {#sweep} DISPATCHES a notification per parked pending and drains the
   # finished ones on a later pass, so a call that parks while an earlier
   # notification is still on screen gets its own popup at once instead of in
-  # five minutes' time (QA round 5, F24: `dunstify -A` blocks for the queue's
+  # five minutes' time (QA round 5: `dunstify -A` blocks for the queue's
   # whole 300s window, so waiting inline meant one approval per window however
   # many a turn gated).
   #
-  # F24's other half is that a popup went on naming a call somebody had already
-  # answered. Each notification therefore carries an id this surface CHOOSES
-  # (`-r`, see {HANDLE_ID_FLOOR}) rather than one read back off stdout, and
-  # {#withdraw_settled} closes the popup of any pending a sibling surface
-  # settled while dunstify was still blocked on it. That withdrawal is ordered
-  # from the sweep fiber and is best-effort throughout: a desktop that cannot
-  # close a notification degrades to leaving it up, never to a surface that
-  # raises.
+  # The other half of that finding is that a popup went on naming a call
+  # somebody had already answered. Each notification therefore carries an id
+  # this surface CHOOSES (`-r`, see {HANDLE_ID_FLOOR}) rather than one read back
+  # off stdout, and {#withdraw_settled} closes the popup of any pending a
+  # sibling surface settled while dunstify was still blocked on it. That
+  # withdrawal is ordered from the sweep fiber and is best-effort throughout: a
+  # desktop that cannot close a notification degrades to leaving it up, never to
+  # a surface that raises.
   #
   # Applying the verdict stays on the sweep fiber, and that is a constraint
   # rather than a taste. {Approval::Queue::Pending#decide}'s lock-free
@@ -246,7 +246,7 @@ module Lain
     # beside every other surface watching the same queue (the exe hosts and
     # stops it).
     #
-    # OBSERVE, NEVER CONSUME, and the distinction is the whole of T15.
+    # OBSERVE, NEVER CONSUME, and the distinction is everything here.
     # {Approval::Queue}'s arrival queue delivers each pending to exactly ONE
     # `#dequeue` caller ({Async::Queue} delegates to a `Thread::Queue`), and
     # that caller is the human's terminal surface -- the rule
@@ -267,7 +267,7 @@ module Lain
     # surface that captures the queue. Measured against a live `lain chat` on
     # 2026-08-18: call two was taken here and held, so the chat pane -- the only
     # surface a `--no-nvim` session has -- rendered nothing and read nothing,
-    # and the session sat until the queue's clock denied it (round 4, F18).
+    # and the session sat until the queue's clock denied it (round 4).
     #
     # Not a {QueueSurface} subclass, though this is exactly its shape, and the
     # reason is TAXONOMY rather than any runtime effect: that subclass list is
@@ -293,12 +293,12 @@ module Lain
     # raise a notification for each parked pending this surface has neither
     # asked about nor seen settled.
     #
-    # NONE OF THE FOUR BLOCKS, and that is still the whole of what T4 changed.
-    # The enumeration is materialized and consumed with no yield point anywhere
-    # in it, so it cannot go stale under a concurrent park or settle the way it
-    # could when each element waited for a human -- and the pending that parks
-    # last is asked about in the same pass as the one that parked first. T4b's
-    # withdrawal keeps that property rather than spending it: it DISPATCHES
+    # NONE OF THE FOUR BLOCKS, and that is still the whole of the non-blocking
+    # sweep. The enumeration is materialized and consumed with no yield point
+    # anywhere in it, so it cannot go stale under a concurrent park or settle the
+    # way it could when each element waited for a human -- and the pending that
+    # parks last is asked about in the same pass as the one that parked first.
+    # The withdrawal keeps that property rather than spending it: it DISPATCHES
     # `dunstify -C` the same way a notification is dispatched, so ordering one
     # costs this fiber a `Thread.new` and nothing else.
     #
@@ -326,7 +326,7 @@ module Lain
     # reports. Fails closed on anything that isn't literally {APPROVE} -- a Deny
     # click, a dismissal, an expiry, or the shellout itself raising all deny.
     #
-    # The surface loop no longer comes through here, and that is F24's fix:
+    # The surface loop no longer comes through here, and that is the fix:
     # waiting inline is exactly what let one unanswered popup hold every later
     # approval for the queue's whole window. This stays as the ONE-pending form
     # -- {Null#decide}'s mirror, and what a caller answering a single approval
@@ -357,15 +357,16 @@ module Lain
 
     private
 
-    # {QueueSurface#swept} verbatim, and it stopped being optional here with
-    # T15. A raise inside the sweep kills this FIBER, and a dead surface fiber
-    # is silent -- async logs "Task may have ended with unhandled exception" to
-    # a stderr nobody in a full-screen chat is reading, and every later approval
-    # simply never reaches the desktop. Pre-T15 that cost the notifications for
-    # arrivals this surface happened to win; post-T15 it raises the notification
-    # for EVERY approval, so its silent death now deletes desktop notification
-    # outright. `Async::Stop` descends from Exception, so stopping the task
-    # still unwinds the loop.
+    # {QueueSurface#swept} verbatim, and it stopped being optional here once
+    # this surface began sweeping the parked set. A raise inside the sweep kills
+    # this FIBER, and a dead surface fiber is silent -- async logs "Task may have
+    # ended with unhandled exception" to a stderr nobody in a full-screen chat is
+    # reading, and every later approval simply never reaches the desktop. Back
+    # when this surface consumed arrivals, that cost the notifications for the
+    # arrivals it happened to win; now that it raises the notification for EVERY
+    # approval, its silent death deletes desktop notification outright.
+    # `Async::Stop` descends from Exception, so stopping the task still unwinds
+    # the loop.
     def swept(queue)
       sweep(queue)
     rescue StandardError => e
@@ -413,8 +414,8 @@ module Lain
     # element of the snapshot waited for a human before the next was reached, so
     # every element after the first was stale by the time this got to it.
     #
-    # T4b was expected to put a yield point back here when it added the
-    # withdrawal, and DID NOT -- said plainly because the previous edition of
+    # The withdrawal was expected to put a yield point back here when it was
+    # added, and DID NOT -- said plainly because the previous edition of
     # this comment promised it would. Withdrawal dispatches rather than waits
     # ({#withdraw}), so {#sweep} still runs start to finish without yielding and
     # this guard is still reachable only from an Enumerable that settles a
@@ -426,9 +427,9 @@ module Lain
     # surface that settles a pending a moment after this fires leaves a popup
     # naming a call somebody has already answered. That popup is no longer
     # permanent -- {#withdraw_settled} closes it on the next sweep, 50ms later,
-    # which together with T4 is the whole of F24. `-u critical` is exempt from
-    # auto-expiry (see {SHELLOUT_GRACE_MS}), so before T4b landed only the 305s
-    # backstop ended it.
+    # which together with the non-blocking sweep closes that finding. `-u critical`
+    # is exempt from auto-expiry (see {SHELLOUT_GRACE_MS}), so before withdrawal
+    # landed only the 305s backstop ended it.
     def notify_about(pending)
       @raised[pending] = true
       return if pending.decided?
@@ -439,8 +440,8 @@ module Lain
     # Close the popups whose pending somebody else answered while dunstify was
     # still blocked on it, and leave every other one alone.
     #
-    # ORDERED FROM THIS FIBER, NEVER FROM A SHELLOUT THREAD, which is T4's
-    # constraint widened to {Onscreen}'s new job: it is the handle map as well
+    # ORDERED FROM THIS FIBER, NEVER FROM A SHELLOUT THREAD, which is the sweep's
+    # single-fiber constraint widened to {Onscreen}'s new job: it is the handle map as well
     # as the answer map now, and a Thread reading it to decide what to close
     # would be the data race `@raised`'s own comment rules out. The Threads are
     # handed an argv and a queue and are given nothing else to touch.
@@ -512,13 +513,13 @@ module Lain
     # its FAILURE is, so the result goes to {Withdrawals} for the sweep to
     # journal rather than being dropped on the floor.
     #
-    # Every way this can fail degrades to exactly what T4 shipped: the rescue in
-    # {Dispatch} turns an absent or broken binary into a reported fault rather
-    # than a raise, and a `-C` naming an id dunst no longer holds is a no-op
-    # that exits 0 (measured). The popup stays up, which is the worse UX this
-    # card exists to improve -- and never the failure that matters, which would
-    # be raising out of the sweep and leaving the session with no desktop
-    # approvals at all.
+    # Every way this can fail degrades to exactly the behaviour from before
+    # withdrawal existed: the rescue in {Dispatch} turns an absent or broken binary
+    # into a reported fault rather than a raise, and a `-C` naming an id dunst no
+    # longer holds is a no-op that exits 0 (measured). The popup stays up, which is
+    # the worse UX this card exists to improve -- and never the failure that
+    # matters, which would be raising out of the sweep and leaving the session with
+    # no desktop approvals at all.
     def withdraw(id) = @withdrawals.add(@dispatch.attempted(["-C", id.to_s]))
 
     # The verdicts that arrived since the last pass, applied HERE -- on the
@@ -572,7 +573,7 @@ module Lain
     # {Approval::Queue::Outstanding#preamble}, the terminal's and the editor's
     # own, which is the whole reason it lives on the value rather than in a
     # frontend.
-    # `-r` is the whole of T4b's correlation: dunst honours an id the CALLER
+    # `-r` is the whole of the correlation: dunst honours an id the CALLER
     # picks for a notification it has never seen (measured -- two popups raised
     # at 900001 and 900002 displayed side by side and closed independently), so
     # the handle needs nothing read back off stdout. The inline {#decide} passes
@@ -710,7 +711,7 @@ module Lain
     # different events that can happen in either order to the same handle.
     #
     # Identity-keyed for {QueueSurface}'s reason -- a Pending is a plain object
-    # -- and single-fiber-owned for T4's: every method here is called from the
+    # -- and single-fiber-owned deliberately: every method here is called from the
     # sweep and from nowhere else, so none of it is reachable from the N
     # shellout Threads that hold references to the same Pendings. Those Threads
     # are handed an argv and a queue and are given nothing else to touch.

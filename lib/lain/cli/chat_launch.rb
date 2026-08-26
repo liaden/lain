@@ -199,7 +199,7 @@ module Lain
       # which must already have run for `wrap_tee` to have a sink list. So
       # Wiring hands it over ({Lain::StatusFeed#bind_store}) rather than this
       # method waiting for something it is deliberately ahead of; until then an
-      # empty Store resolves nothing and the count only climbs (F76).
+      # empty Store resolves nothing and the count only climbs.
       def status_feed = @status_feed ||= @status_feed_factory.call(run_clock:, context_window: backend.context_window)
 
       # The ONE {Backend} for the run, resolved on first read and shared

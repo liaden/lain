@@ -16,7 +16,7 @@ module Lain
   # half that is XDG: the state feed it resolves is rewritten every turn, which
   # makes it machine state rather than a project artifact, so it is composed
   # from {#state_home} and {#project_hash} here rather than written into the
-  # user's source tree (F50).
+  # user's source tree.
   #
   # `env:` is injected (defaulting to the real `ENV`) rather than read globally,
   # so a spec builds an isolated Hash instead of mutating process-wide state --
@@ -33,7 +33,7 @@ module Lain
     # Every XDG accessor falls back to `$HOME`, so a `$HOME` that is not an
     # absolute path makes all of them relative -- and a relative state path
     # resolves against the process's cwd, which puts machine state back inside
-    # the user's repository (F50). Named after the value rather than after the
+    # the user's repository. Named after the value rather than after the
     # accessor because the operator fixes it in one place, their environment.
     #
     # **Not {Project::Resolver::UnusableHome}, and the two are not
@@ -67,7 +67,7 @@ module Lain
       File.join(File.dirname(ndjson_path), "#{stem}.wal")
     end
 
-    # The ephemeral (--btw) session convention, T3. The session header is
+    # The ephemeral (--btw) session convention. The session header is
     # write-once, so ephemerality cannot be a header field -- it lives in the
     # FILENAME instead: `<ts>-<pid>.btw.ndjson`. {wal_for} strips only the
     # final extension, so the derived wal (`<ts>-<pid>.btw.wal`) carries the
@@ -187,19 +187,19 @@ module Lain
 
     # The user's home directory, from the INJECTED env -- the base every XDG
     # accessor below falls back to, and the anchor {Sensitivity} classifies
-    # against. Public since T23: the path classifier needs a home that a spec
+    # against. Public because the path classifier needs a home that a spec
     # can pin, and this class is already the one place that resolves it from a
     # substitutable environment. It reads no filesystem and creates nothing, so
     # exposing it hands out a naming and no authority.
     #
-    # `Dir.home` goes through {#present} TOO, and that second guard is the
-    # whole of F50's return leg. Ruby's `Dir.home` hands back `$HOME` verbatim
-    # with no absoluteness check of its own, and this class defaults
+    # `Dir.home` goes through {#present} TOO, and that second guard closes the
+    # return leg of the same defect. Ruby's `Dir.home` hands back `$HOME`
+    # verbatim with no absoluteness check of its own, and this class defaults
     # `env: ENV` -- so a relative `$HOME` was read twice, passed the first
     # guard by failing it, and came back through the fallback unexamined. The
     # answer then made every XDG accessor relative, and a relative
     # {ProjectDir#state_path} resolves against the project's cwd, which is the
-    # repository this card exists to keep clean.
+    # repository this class exists to keep clean.
     #
     # Refusing beats degrading here: there is no home to invent, an unusable
     # one poisons the session store and {Sensitivity}'s `~` anchor alike, and a
@@ -228,7 +228,7 @@ module Lain
     # Kernel-resolved, not merely expanded: nvim's getcwd() and Ruby's Dir.pwd
     # BOTH resolve symlinks, so a symlinked path ARGUMENT (--project <symlink>)
     # hashed lexically would name a different socket/session id than the editor
-    # serves (T10's hash_agreement probe). Isolation keys WORKER IDS through
+    # serves (the spec's hash-agreement probe). Isolation keys WORKER IDS through
     # here too -- strings naming no real path -- so an unresolvable argument
     # falls back to the lexical expansion instead of raising. That fallback is
     # hash-UNSTABLE by construction: `link/app` hashes lexically while `app`
@@ -248,7 +248,7 @@ module Lain
       ensure_dir(File.join(state_home, "sessions", project))
     end
 
-    # M6's cross-project harness-improver sink (M2): ONE file, not
+    # The cross-project harness-improver sink: ONE file, not
     # partitioned by project_hash the way {#sessions_dir} is -- a dogfood
     # note about lain ITSELF is worth keeping across every project lain has
     # ever run in, unlike a session's own turn history. Same

@@ -1,25 +1,23 @@
--- The human inbox drain (I6): lain://inbox's two gestures, an OPEN and an
--- ANSWER. Both are enqueue-and-ack commands -- the agent-side consumer
--- resolves the pending ask_human promise off its own queue, so the editor
--- never blocks on one -- and since T3 both name the row they are about the
--- same way: the human's own LINE plus the RENDERING STAMP that buffer carries.
--- :LainOpen's comment below is where that convention is argued; :LainReply,
--- defined after it, follows it because an answer and an open are the same
--- question asked about the same row.
+-- The human inbox drain: lain://inbox's two gestures, an OPEN and an ANSWER.
+-- Both are enqueue-and-ack commands -- the agent-side consumer resolves the
+-- pending ask_human promise off its own queue, so the editor never blocks on
+-- one -- and both name the row they are about the same way: the human's own
+-- LINE plus the RENDERING STAMP that buffer carries. :LainOpen's comment below
+-- is where that convention is argued; :LainReply, defined after it, follows it
+-- because an answer and an open are the same question asked about the same row.
 
--- The cursor-on-an-item OPEN gesture (T15, ruling 12): <CR> -- and `r`,
--- repointed from the one-line answer prompt it used to raise -- opens the
--- question SET the cursor sits on in lain://question. One verb, one vocabulary:
--- a set of N questions has no single-line answer, so the prompt does not
--- survive as a fast path. :LainReply stays for the answer it can still carry,
--- hand-typed.
+-- The cursor-on-an-item OPEN gesture: <CR> -- and `r`, repointed from the
+-- one-line answer prompt it used to raise -- opens the question SET the cursor
+-- sits on in lain://question. One verb, one vocabulary: a set of N questions
+-- has no single-line answer, so the prompt does not survive as a fast path.
+-- :LainReply stays for the answer it can still carry, hand-typed.
 --
 -- :LainPin's shape in every respect that matters, and its comment states the
 -- rule this one follows too: the LINE rides as the argument, never a digest.
 -- lain://inbox renders no digest on any of its lines (InboxView#line_for), so
 -- the Ruby side's own line -> digest index is the only thing that can name the
 -- set -- and that index is built by the same pass that produced the lines, one
--- entry per LINE since T12, which is what lets a set's question fold under its
+-- entry per LINE, which is what lets a set's question fold under its
 -- summary without a cursor in that fold answering the neighbouring set.
 --
 -- WHAT THIS SENDS THAT :LainPin DOES NOT, and it is not decoration: the
@@ -32,16 +30,16 @@
 -- human is not looking at, and resolving their cursor against it opens the
 -- NEIGHBOURING question set.
 --
--- T15 sent the LINE COUNT for this, which was the only fact the editor had
--- before the stamp existed -- and a weak one: the queue drains once per RPC
--- tick, so the screen can be several renderings behind, and two renderings of
--- equal height are indistinguishable by count. Ruby then resolved the gesture
--- against the WRONG rendering and reported success. The stamp is exact, and it
--- is still not a digest: it says what the human is looking at, and Ruby remains
--- the only side that can name a set. What it does NOT protect is a cursor that
--- did not move while the list did -- it says which rendering a line belongs to,
--- never whether that is still the set the human aimed at; InboxView::Gestures
--- #open is where that analysis lives.
+-- An earlier version sent the LINE COUNT for this, which was the only fact
+-- the editor had before the stamp existed -- and a weak one: the queue drains
+-- once per RPC tick, so the screen can be several renderings behind, and two
+-- renderings of equal height are indistinguishable by count. Ruby then
+-- resolved the gesture against the WRONG rendering and reported success. The
+-- stamp is exact, and it is still not a digest: it says what the human is
+-- looking at, and Ruby remains the only side that can name a set. What it does
+-- NOT protect is a cursor that did not move while the list did -- it says
+-- which rendering a line belongs to, never whether that is still the set the
+-- human aimed at; InboxView::Gestures #open is where that analysis lives.
 --
 -- The buffer check is NOT redundant with the buffer-local maps below. `define`
 -- makes every :Lain* command GLOBAL, and this one reads the CURRENT window's
@@ -50,7 +48,7 @@
 -- is an INVITED path here precisely because the maps invoke the command.
 --
 -- Which ROW a line belongs to, or nothing at all -- and this is a different
--- question from RECORD_START[INBOX], which since T12 is `spanning_record`.
+-- question from RECORD_START[INBOX], which is `spanning_record`.
 -- "Does a record start here" is true of the blank and the keys under the list
 -- and of the empty-state placeholder, none of which names a set: <CR> on one
 -- is a keystroke about nothing, and an rpcrequest whose only possible answer

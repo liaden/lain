@@ -21,8 +21,8 @@ module Lain
       # have to agree. {DEFAULT_WIDTH}'s justification is that every loopback
       # spelling is one server -- and if {.canonical} did not fold exactly what
       # {.local?} folds, the keying would defeat that argument by handing each
-      # spelling its own slot. It did, once: F26 reproduced through the real
-      # construction sites after admission had supposedly fixed it.
+      # spelling its own slot. It did, once: the overlap reproduced through the
+      # real construction sites after admission had supposedly fixed it.
       module Endpoint
         # Loopback by NAME rather than by address. RFC 6761 reserves `localhost`
         # and every name under it for loopback, so `foo.localhost` is as local as
@@ -74,9 +74,9 @@ module Lain
         # in flight and SERIALISES concurrent subagents, the throughput
         # regression the locality rule exists to prevent. A FALSE NEGATIVE --
         # calling a local endpoint hosted -- hands it {Admission::Null} and
-        # leaves F26 live, SILENTLY: nothing errors, two round trips simply
-        # overlap on a one-slot server again. Neither direction is the safe
-        # default, so neither may be relaxed to fix the other.
+        # leaves that overlap live, SILENTLY: nothing errors, two round trips
+        # simply overlap on a one-slot server again. Neither direction is the
+        # safe default, so neither may be relaxed to fix the other.
         #
         # == What counts as local
         #

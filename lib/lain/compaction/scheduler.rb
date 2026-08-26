@@ -19,7 +19,7 @@ module Lain
     # decision depends on RUNTIME state (cache warmth, current usage) that a pure
     # `#render` must not see, so it is made HERE, in the loop, and its only
     # output into rendering is WHICH pipeline this turn uses -- Compact swapped
-    # in via T21's injected-pipeline seam, or the base strategy untouched.
+    # in via the injected-pipeline seam, or the base strategy untouched.
     class Scheduler
       Decision = Data.define(:action, :tier)
 
@@ -38,7 +38,7 @@ module Lain
         #   would -- the pass-through a non-compacting turn depends on.
         def compact? = action != :defer
 
-        # T20/CAC-6's cache-state enum (`:warm`/`:cold`/`:forced`) as read off
+        # The cache-state enum (`:warm`/`:cold`/`:forced`) as read off
         # THIS decision. Only called behind {#compact?} (see every call
         # site), so only the two outcomes below need a mapping -- `:warm`
         # lives in {Telemetry::Compaction}'s validated enum for schema
@@ -134,7 +134,7 @@ module Lain
       # @param journal [#<<] where a compacting decision lands; the Null channel
       #   by default, so no caller guards `if journal`.
       # @param model [String, Symbol, nil] the tier this scheduler is PRICED
-      #   for, through `price_book`, for T20/CAC-6's `cost_saved`/`cost_spent`.
+      #   for, through `price_book`, for `cost_saved`/`cost_spent`.
       #   Fixed here at construction, which is why `#pipeline` takes the model
       #   actually in force separately (see its `ran_under:` and {Quote}). nil
       #   is a legitimate configuration -- see {Telemetry::Compaction}'s header
@@ -156,8 +156,8 @@ module Lain
       # compaction {Need} never warranted always defers, so a non-compacting
       # turn is untouched.
       #
-      # @param need [Need::Result] the fired need-signals (T16)
-      # @param cold [Boolean] the cache is confirmed cold (T17)
+      # @param need [Need::Result] the fired need-signals
+      # @param cold [Boolean] the cache is confirmed cold
       # @param history_size [Integer] measured in {#initialize}'s hard_cap unit
       # @return [Decision]
       def evaluate(need:, cold:, history_size:)
@@ -169,7 +169,7 @@ module Lain
       end
 
       # The render pipeline for THIS turn, journaling a compacting decision's
-      # FULL accounting (T20/CAC-6: trigger, cache-state, tokens before/after,
+      # FULL accounting (trigger, cache-state, tokens before/after,
       # cost saved vs. spent) as it commits to it. The choice is made HERE --
       # off runtime signals a pure `#render` must never see -- which is
       # exactly what keeps `#render` the pure function prompt-cache stability
@@ -177,17 +177,17 @@ module Lain
       # object), so a non-compacting turn renders byte-identically to a
       # scheduler-free run and journals nothing.
       #
-      # @param need [Need::Result] the fired need-signals (T16), forwarded
+      # @param need [Need::Result] the fired need-signals, forwarded
       #   straight into {#evaluate} to decide whether THIS turn compacts
-      # @param cold [Boolean] the cache is confirmed cold (T17), forwarded
+      # @param cold [Boolean] the cache is confirmed cold, forwarded
       #   straight into {#evaluate}
       # @param history_size [Integer] measured in {#initialize}'s hard_cap unit,
       #   forwarded straight into {#evaluate}
       # @param base [#call, #requires] the strategy `#render` would use
-      #   otherwise -- a Combinator, or a `->(workspace)` provider (T21's
+      #   otherwise -- a Combinator, or a `->(workspace)` provider (the
       #   injected-pipeline shape)
       # @param rewrite [Rewrite, nil] what this turn's rewrite costs, from
-      #   {#measure} -- T20/CAC-6's before/after accounting, measured by
+      #   {#measure} -- the before/after accounting, measured by
       #   whoever needed the numbers first rather than a second time here. nil
       #   is "the caller measured nothing", and it is measured for them INSIDE
       #   the compacting branch (see {#record}). Never captured into the
@@ -198,11 +198,11 @@ module Lain
       #   mid-session while this object is frozen, and the model in force is a
       #   fact about the turn rather than about the scheduler's configuration.
       #   It reaches only {#accounting} -- never {COMPOSE} -- so nothing the
-      #   composed pipeline closes over changes and the T21/T19 shareability
+      #   composed pipeline closes over changes and the shareability
       #   contract is untouched. nil means "the caller did not say", which
       #   journals exactly as it did before {Quote} existed.
       # @param collapse_strategy [String] the name of the arm that collapses a
-      #   span this run -- F51's grouping key, read off {Compaction::Source
+      #   span this run -- the bench's grouping key, read off {Compaction::Source
       #   #collapse_strategy}. Per-call for `ran_under:`'s reason and reaching
       #   only {#accounting}, never {COMPOSE}, so the composed pipeline closes
       #   over nothing new; what travels is the frozen String and never the
@@ -298,7 +298,7 @@ module Lain
       # `collapse_strategy:` is named EXPLICITLY and never left to the member's
       # own default: that default is nil, which {Telemetry::Compaction} reserves
       # for a record written before the field existed, so relying on it here
-      # would make "this journal predates F51" and "the caller forgot"
+      # would make "this journal predates the field" and "the caller forgot"
       # indistinguishable in the one stream a bench groups by arm.
       def accounting(decision, need, rewrite, quote, collapse_strategy)
         Telemetry::Compaction.new(

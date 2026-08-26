@@ -302,10 +302,10 @@ end
 -- the ABSOLUTE path the editor resolved, while everything Ruby-side keys on the
 -- repository-relative path it sent. One variable, both sides, no string surgery.
 --
--- THE ROUND'S MEMORY IS DROPPED HERE, which is the other half of `withdraw`'s
--- (F73). The triple is in exactly one of two places at any moment: HELD, as the
--- three stamps below, or PUT DOWN, as `lain_review_round` -- never both, so
--- there is no second copy free to disagree with the live one.
+-- THE ROUND'S MEMORY IS DROPPED HERE, which is the other half of what
+-- `withdraw` does. The triple is in exactly one of two places at any moment:
+-- HELD, as the three stamps below, or PUT DOWN, as `lain_review_round` --
+-- never both, so there is no second copy free to disagree with the live one.
 --
 -- Not tidiness. A file reviewed in one round and reviewed AGAIN in a later one
 -- is the same buffer, and it reaches here carrying the FIRST round's record:
@@ -330,7 +330,7 @@ end
 --
 -- IT IS NO LONGER TRUE THAT ONLY TWO BUFFERS EVER CLAIM THE REVIEW, and this
 -- comment used to say so. A row the human goes back to inside the review's
--- tabpage takes its stamp back (`reacquire`, F73), so a third and a fourth claim
+-- tabpage takes its stamp back (`reacquire`), so a third and a fourth claim
 -- are ordinary. What this function guarantees is the part that matters and is
 -- unchanged: the moment the next row opens, every buffer but the pair being
 -- drawn stops claiming, and nothing re-claims except through `reacquire`, which
@@ -350,7 +350,7 @@ end
 -- without its revision is a note anchored to no diff -- the same reason
 -- `open_changeset` refuses a missing revision before it builds anything.
 --
--- THE STAMP IS PUT DOWN, NOT THROWN AWAY (F73). What was withdrawn is copied
+-- THE STAMP IS PUT DOWN, NOT THROWN AWAY. What was withdrawn is copied
 -- into `lain_review_round` first, in one variable, and `reacquire` below is the
 -- only thing that ever reads it: a buffer this round opened and moved on from is
 -- a buffer the human can come BACK to, and inside the review's tabpage coming
@@ -401,7 +401,7 @@ end
 -- A buffer THIS round already opened, re-entered inside the review's tabpage,
 -- takes its stamp back.
 --
--- F73: the new side is a real, editable, file-backed buffer -- deliberately, so
+-- The new side is a real, editable, file-backed buffer -- deliberately, so
 -- the language server and treesitter attach -- which invites the `gf`, the `:b#`
 -- and the quickfix jump that lead straight out of it. `unstamp` had withdrawn
 -- the stamp when the next row opened, so coming back left the human inside the
@@ -592,10 +592,11 @@ end
 
 -- Whether a window is somewhere a stray keystroke cannot reach a file on disk.
 --
--- TWO values, not one. `buftype = ""` is the file-backed case F34 was measured
--- on, and `acwrite` is the same defect one door along: it is modifiable, and its
--- `:w` runs a BufWriteCmd that performs real file operations. It is what
--- oil.nvim, fugitive and netrw leave in a window, so it is not a hypothetical.
+-- TWO values, not one. `buftype = ""` is the file-backed case the stray-`x`
+-- edit was measured on, and `acwrite` is the same defect one door along: it is
+-- modifiable, and its `:w` runs a BufWriteCmd that performs real file
+-- operations. It is what oil.nvim, fugitive and netrw leave in a window, so it
+-- is not a hypothetical.
 -- Every OTHER value (`nofile`, `nowrite`, `quickfix`, `help`, `terminal`,
 -- `prompt`) refuses to write the path it names, which makes `x` there a no-op at
 -- worst -- so this is a deny-list of the two that write, not an allow-list that
@@ -608,13 +609,14 @@ end
 -- Where the human lands: the review's navigator, or the old side if the
 -- navigator is not currently safe to land in.
 --
--- THE SLOT MARKER ALONE IS NOT ENOUGH, and that is F34 returning by a side door.
--- `vim.w[win].lain_review_slot` lives on the WINDOW, and the buffer inside it is
--- the human's to change: a `gf` on a row, a `:b#`, a quickfix jump or a plain
--- `:edit` all leave the window still marked `sidebar` while it displays a real,
--- writable file. Focusing it by its marker would then land the cursor in exactly
--- the kind of buffer this whole focus decision exists to keep it out of, wearing
--- the sidebar's name. So the BUFFER is what is checked.
+-- THE SLOT MARKER ALONE IS NOT ENOUGH, and that is the stray-`x` edit returning
+-- by a side door. `vim.w[win].lain_review_slot` lives on the WINDOW, and the
+-- buffer inside it is the human's to change: a `gf` on a row, a `:b#`, a
+-- quickfix jump or a plain `:edit` all leave the window still marked `sidebar`
+-- while it displays a real, writable file. Focusing it by its marker would then
+-- land the cursor in exactly the kind of buffer this whole focus decision exists
+-- to keep it out of, wearing the sidebar's name. So the BUFFER is what is
+-- checked.
 --
 -- Identity against `review_sidebar.buf()` would be the tighter test and is the
 -- wrong one, twice over. It is a CONSTRUCTOR (`named_buf`), so asking the
@@ -634,10 +636,10 @@ end
 -- UNLESS THE ROUND HAS NO OLD SIDE, and then the chain ends on the file. A
 -- survey builds no such window, so `old_win` is nil and the fallback would be
 -- `nvim_set_current_win(nil)` -- a raise, taking down a render that had already
--- drawn correctly. Landing on the file is the F34 risk this decision exists to
--- avoid, and it is reached only when the navigator is BOTH present and unsafe,
--- which is the human having wandered off in a layout that has nowhere else to
--- go. Somewhere real beats a traceback.
+-- drawn correctly. Landing on the file is the stray-`x` risk this decision
+-- exists to avoid, and it is reached only when the navigator is BOTH present and
+-- unsafe, which is the human having wandered off in a layout that has nowhere
+-- else to go. Somewhere real beats a traceback.
 --
 -- FIRST match rather than last, which is where this differs from
 -- `review_panes.map`'s reading of the same marker: that one answers "which
@@ -669,7 +671,7 @@ end
 -- `filereadable` cannot find -- and the next gesture the sidebar's banner
 -- teaches is `x`, which in a real file is delete-character. A human who pressed
 -- `<CR>` and then `x` silently edited the source they came to read (measured: QA
--- round 7, F34). The alternative fixes are worse: making the new side inert
+-- round 7). The alternative fixes are worse: making the new side inert
 -- trades the language server and treesitter for a focus decision, and
 -- documenting the trap leaves it armed. Landing in the navigator is not "leaving
 -- you in the navigator" -- the review's own keys are bound there, and the pair
@@ -758,14 +760,15 @@ end
 --
 -- THREE HALVES, and none of them is tidying. Clearing the revisions stops
 -- anything re-acquiring; withdrawing stops what is STILL stamped, which is the
--- last row's pair -- a claim that outlived its review even before F73 widened
--- what could re-claim; and FORGETTING is what keeps the withdrawal from arming
--- what it just took. `withdraw` is the writer of the round record, so a sweep
--- that only withdrew would leave every buffer of the settled round remembering
--- it -- a teardown whose own mechanism re-arms every claim it retires. Harmless
--- while the revisions are gone, and exactly the state `forget_round` exists to
--- refuse to leave lying around: settling is as permanent for a round as
--- `:saveas` is for one buffer, so it ends the same way, with both.
+-- last row's pair -- a claim that outlived its review even before `reacquire`
+-- widened what could re-claim; and FORGETTING is what keeps the withdrawal from
+-- arming what it just took. `withdraw` is the writer of the round record, so a
+-- sweep that only withdrew would leave every buffer of the settled round
+-- remembering it -- a teardown whose own mechanism re-arms every claim it
+-- retires. Harmless while the revisions are gone, and exactly the state
+-- `forget_round` exists to refuse to leave lying around: settling is as
+-- permanent for a round as `:saveas` is for one buffer, so it ends the same way,
+-- with both.
 --
 -- Written out here rather than through `unstamp(nil, nil)`: that function's
 -- subject is the two buffers still under review, and it has no third argument

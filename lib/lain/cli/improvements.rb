@@ -5,7 +5,7 @@ module Lain
     # `lain improvements [--project <hash-or-path>] [--kind knob|bug|missing-feature|doc]`:
     # reads {Paths#improvements_path} -- the ONE cross-project file every
     # dogfood session's {Improvement::Sink} appends to -- and renders the
-    # accumulated notes grouped by project then kind, so M6's offline pass
+    # accumulated notes grouped by project then kind, so a later offline pass
     # (and Joel, today) has a dogfood queue readable from any repo. Returns a
     # String; only the frontend prints (output discipline, {Bench::CLI}'s
     # precedent, {CLI::Friction}'s template).

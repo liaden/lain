@@ -607,7 +607,7 @@ RSpec.describe Lain::Epic::Review do
   # UNCOMPARED structurally, which is a third report and not either of the two
   # that already exist: it is not "the sides agreed" (Baseline) and it is not
   # "nothing could be compared because something failed" (Recalled).
-  # T23's F1. A hand-over that never happened is not a settle, and leaving it
+  # A hand-over that never happened is not a settle, and leaving it
   # open is not survivable: the claim is journaled before the token comes back,
   # so a restarted lain rebuilds it and refuses every write to the epic with no
   # user-reachable escape. #abandon is the named way back, and it is journaled
@@ -772,7 +772,7 @@ RSpec.describe Lain::Epic::Review do
     # is pinned at the top of this file), so `#open` refuses a prose baseline
     # before it ever builds one. The record's sibling `DocWritten` already
     # models the fix exactly -- `graph_digest: nil` by default, interned with
-    # `&&=` so an absent graph stays absent -- and `.handback-T26.md` names the
+    # `&&=` so an absent graph stays absent -- and the hand-back note names the
     # three lines. Un-pend both examples below with that change, and flip the
     # `opened(graph_digest: nil)` refusal at the top of this file.
     it "journals the byte digest and no graph digest for a prose claim" do

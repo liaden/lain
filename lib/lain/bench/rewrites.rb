@@ -2,7 +2,7 @@
 
 module Lain
   module Bench
-    # An OFFLINE projection over a Journal's `request_sent` records (CE-2):
+    # An OFFLINE projection over a Journal's `request_sent` records:
     # `diverge_at` recreated at the request level, over the digest chain
     # `Request#prefix_digests` already computes and `Telemetry::RequestSent`
     # already journals. No Timeline access -- journal bytes only.

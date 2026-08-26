@@ -499,7 +499,7 @@ RSpec.describe Lain::Review::Session do
       expect { session.present(scope: :cumulatve) }.to raise_error(described_class::UnknownScope, /cumulatve/)
     end
 
-    # The whole of A3 in one example: a strategy that ships is a scope that
+    # The whole claim in one example: a strategy that ships is a scope that
     # resolves, with nothing to edit in between. `by_directory` was registered
     # by the card before this one and was NOT reachable, because the vocabulary
     # was a second list of two literals.

@@ -10,7 +10,7 @@ module Lain
     # They arrive by different routes because they exist at different moments:
     # the idle gap is measured at render time from the injected clock, while the
     # cache-read count only exists on a model RESPONSE, which the render seam
-    # never sees -- `context_for`'s `usage:` is A2's last-turn INPUT token count,
+    # never sees -- `context_for`'s `usage:` is the last-turn INPUT token count,
     # an Integer, not the usage Hash `Cold#observe` reads. So this object is also
     # a `#<<` sink (see {#<<}), the same duck {StatusFeed} answers, and rides the
     # same journal fan-out.
@@ -69,15 +69,15 @@ module Lain
       # on every turn was indistinguishable from a genuinely full context and a
       # window resolved through {ContextWindow::CONSERVATIVE_FALLBACK} instead
       # of through the window the server was serving. That is precisely the
-      # defect T10 fixed, and it was invisible in the record.
+      # defect these two fields close, and it was invisible in the record.
       #
       # `used_tokens` is nil before any turn carries usage, which is absence and
       # not zero -- {ContextWindow::Occupancy::None}'s reading, since that is
       # the value both fields are lifted off.
       #
       # `provenance` is the same defect a third time, and the reason it is a
-      # FIELD rather than an inference a reader makes. T9 lets a GUESSED window
-      # withdraw `:approaching_window` before this record is written
+      # FIELD rather than an inference a reader makes. A GUESSED window
+      # withdraws `:approaching_window` before this record is written
       # ({Source#need_for}), so the signal list alone cannot tell a
       # DENIED trigger from one that never fired -- and the two mean opposite
       # things. Measured: `qwen3:4b` at 7,500 used against a guessed 8,192
@@ -338,7 +338,7 @@ module Lain
       #
       # @param base [Context] the Agent's own Context
       # @param timeline [Timeline] the history as of this render
-      # @param usage [Integer, nil] A2's LAST-TURN input tokens -- nil before any
+      # @param usage [Integer, nil] the LAST-TURN input tokens -- nil before any
       #   turn, which {Need::ApproachingWindow} distinguishes from zero. Passed
       #   through untouched: a cumulative total here would latch the signal on
       #   permanently, and a zero would read as an empty context on a resumed
@@ -416,13 +416,13 @@ module Lain
       # decisions and tripped Metrics/AbcSize, which was naming this method
       # rather than asking for a raised limit.
       #
-      # F3, and the reason this card exists. `:approaching_window` is the one
-      # signal whose whole content is a comparison against a number the bench
-      # may have INVENTED, and what it buys is an irreversible lossy rewrite of
-      # the run's own history. A guessed denominator therefore does not get to
-      # fire it: QA watched a real 32,768-token qwen3 runner read as ~300% full
-      # against {ContextWindow::CONSERVATIVE_FALLBACK}'s 8,192 and lain rewrite
-      # its history three times, at 75-78% of the window it actually had.
+      # `:approaching_window` is the one signal whose whole content is a
+      # comparison against a number the bench may have INVENTED, and what it
+      # buys is an irreversible lossy rewrite of the run's own history. A
+      # guessed denominator therefore does not get to fire it: QA watched a
+      # real 32,768-token qwen3 runner read as ~300% full against
+      # {ContextWindow::CONSERVATIVE_FALLBACK}'s 8,192 and lain rewrite its
+      # history three times, at 75-78% of the window it actually had.
       #
       # ONLY the guess. A shipped-table hit is a real published number, and it
       # is what a hosted run is measured against
@@ -543,12 +543,12 @@ module Lain
       # agree, but the flag is journaled and a record claiming a rewrite that
       # did not ship would be a corrupted measurement, not a stale comment.
       # `ran_under:` is `base.model` off the LIVE Context -- the same read
-      # {#window_for} makes, and the other half of the pair C1 opened. The
+      # {#window_for} makes: the price must follow the live model, as the
       # scheduler is priced at CONSTRUCTION for the model {Scheduling} was
       # built with -- this class holds no `@model` of its own -- so naming what
       # is actually answering is what lets it refuse a stale quote after a
       # `/model` switch rather than journal opus dollars for a sonnet turn.
-      # `collapse_strategy:` rides beside it for the mirror-image reason (F51):
+      # `collapse_strategy:` rides beside it for the mirror-image reason:
       # the scheduler is handed a PIPELINE and can name no policy behind it,
       # while this object was told the arm's word at construction -- so the
       # accounting can be grouped by arm with no launch command to hand.
@@ -567,7 +567,7 @@ module Lain
       # mutable by design and says so (model_switch.rb:20-22). A provider
       # closing over THAT therefore fails {Scheduler::COMPOSE}'s
       # `make_shareable` on the first compacting turn of every real `lain chat`
-      # -- found by wiring this live (A8), invisible to a spec that builds a
+      # -- found by wiring this live, invisible to a spec that builds a
       # plain Context.
       #
       # The render pipeline does not depend on the model: `#pipeline_for` never

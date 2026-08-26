@@ -44,7 +44,7 @@ module Lain
       # its file is finally chunked -- and a third time per {#file_at} an editor
       # asks for. {Reading#content} is deliberately not memoized: a memo would
       # hold the whole corpus resident for the life of the session, which is the
-      # cost the accrete model (B12) exists to avoid, and a re-read is cheap
+      # cost the accrete model exists to avoid, and a re-read is cheap
       # beside the parse it feeds.
       #
       # The file ceiling is checked in {#initialize}, from the walk alone: an

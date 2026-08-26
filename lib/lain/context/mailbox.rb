@@ -3,7 +3,7 @@
 module Lain
   class Context
     # Folds a recipient's pending actor messages into the message tail: the
-    # parent's read-side of the orchestration message-DAG (OM-3). Like {Recall},
+    # parent's read-side of the orchestration message-DAG. Like {Recall},
     # it is NOT part of the default pipeline but an opt-in stage a custom
     # pipeline composes AFTER CacheBreakpoints -- so the folded messages ride the
     # same UNCACHED SUFFIX Reminder's and Recall's tails do, landing strictly
@@ -13,7 +13,7 @@ module Lain
     # breaking the turn-boundary cache invariant.
     #
     # The messages are a pure PROJECTION over the shared event log, never a
-    # mutable queue: "pending" is DERIVED, not marked (decision 2 / panel B2) --
+    # mutable queue: "pending" is DERIVED, not marked (the panel's decision 2) --
     # a :message is pending until a committed :turn names it a causal parent, so
     # this combinator holds NO fold-state of its own, two renders over the same
     # snapshot fold byte-identically, and a dispatch that never commits re-folds
@@ -23,8 +23,9 @@ module Lain
     # THE PRECONDITION THAT MAKES RENDER AND COMMIT AGREE: both fold the SAME
     # frozen per-turn {Snapshot}, captured once by the Agent at turn start
     # ({Source#capture}). The shared log is MUTABLE between the two reads -- an
-    # actor replies during the provider round trip, the OM-3 point -- so purity
-    # of the derivation alone does NOT make the two sides agree; reading the log
+    # actor replies during the provider round trip, which is the whole point of
+    # projecting a shared log -- so purity of the derivation alone does NOT make
+    # the two sides agree; reading the log
     # live at commit claimed a mid-dispatch arrival as a causal parent of a turn
     # that never rendered it, marking it consumed and losing it from every
     # future fold (panel probe #2). Neither side may read the log live;

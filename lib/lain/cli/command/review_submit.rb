@@ -6,7 +6,7 @@ require "mixlib/shellout"
 module Lain
   module CLI
     module Command
-      # `/review-submit [summary]` at `you>` (T34): post the changeset review
+      # `/review-submit [summary]` at `you>`: post the changeset review
       # this chat has open to its pull request, as ONE batched review.
       #
       # == The gap this closes, stated plainly

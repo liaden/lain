@@ -2,7 +2,7 @@
 
 module Lain
   module Telemetry
-    # CE-5's transient scheduling signal and its failure record -- the provider
+    # The transient scheduling signal and its failure record -- the provider
     # round-trip's transient signals, not the durable stream they ride beside.
 
     module Carriers
@@ -40,7 +40,7 @@ module Lain
       def initialize(digest:) = super(**Carriers::StreamStarted.settle!(digest:))
     end
 
-    # An injected observer callback -- so far, only CE-5's `on_stream_started`
+    # An injected observer callback -- so far, only `on_stream_started`
     # -- raised instead of running cleanly. A caller-supplied orchestration
     # hook is not allowed to cost a round trip its Response just because the
     # hook itself is buggy (see {StreamStarted}'s doc: the Channel push and

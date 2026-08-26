@@ -24,7 +24,7 @@ RSpec.describe Lain::Frontend::TTY do
   # pushed by one example leaks into the next.
   #
   # Reline.core.config is process-global too, and the interactive prompt now
-  # reads the human's inputrc to resolve the editing mode (T14). Without the
+  # reads the human's inputrc to resolve the editing mode. Without the
   # INPUTRC override these examples run against whatever dotfile the developer
   # happens to own -- an inputrc saying `set editing-mode vi` puts Reline in a
   # different keymap for every example that follows, and reset_variables also
@@ -50,7 +50,7 @@ RSpec.describe Lain::Frontend::TTY do
     instance_double(IO, tty?: true)
   end
 
-  # T14: what production actually announces and lists -- a whole Question::Set
+  # What production actually announces and lists -- a whole Question::Set
   # wearing the one clamped line the inbox rows show
   # (Tools::AskHuman::Announcement). A bare String is still legal on both
   # seams, and the examples that pass one cover that arm.
@@ -149,7 +149,7 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string).to include(">")
     end
 
-    # T14: the interactive read goes through {Frontend::LineEditor}, which is
+    # The interactive read goes through {Frontend::LineEditor}, which is
     # what makes a backslash-continued message arrive as ONE line here rather
     # than as two prompts.
     it "delivers a backslash-continued message as one line" do
@@ -169,7 +169,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
-  # I3: the prompt reads {Lain::StatusFeed}'s published `.lain/state.json` and
+  # The prompt reads {Lain::StatusFeed}'s published `.lain/state.json` and
   # shows a warmth glyph -- a snapshot taken once, right before Reline waits
   # (interface-integration.md's fixed-prompt limitation), never mid-wait.
   describe "prompt warmth" do
@@ -212,7 +212,7 @@ RSpec.describe Lain::Frontend::TTY do
         .with(a_string_including(described_class::Warmth::COLD), true)
     end
 
-    # T29: the same file {Lain::StatusFeed} and `lain up` default to, ASKED of
+    # The same file {Lain::StatusFeed} and `lain up` default to, ASKED of
     # the one locator rather than composed a third time. The locator is stubbed
     # to answer a path it would never derive, and only that path holds a warm
     # deadline, so a default composed here reads nothing and renders the bare
@@ -492,7 +492,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
-  # T9: a command's structured answer. Each segment is painted under the token
+  # A command's structured answer. Each segment is painted under the token
   # IT named, so the frontend never has to know what a command's parts mean.
   describe "#render_renderable" do
     let(:colored) { Pastel.new(enabled: true) }
@@ -533,7 +533,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
-  # OM-4: a pending ask_human question is surfaced synchronously so the human
+  # A pending ask_human question is surfaced synchronously so the human
   # sees what they are answering before #prompt reads the reply -- like
   # #render_response, it bypasses the Channel (a finished exchange, not a
   # concurrently-arriving stream).
@@ -545,7 +545,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
-  # I6: a question ARRIVES as a one-line note -- never the modal inline block
+  # A question ARRIVES as a one-line note -- never the modal inline block
   # render_question prints -- so the human keeps their prompt and drains at
   # their own pace (/inbox, or the nvim buffer).
   describe "#render_arrival" do
@@ -557,7 +557,7 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string.chomp).not_to include("\n")
     end
 
-    # T14: production announces a whole Question::Set wearing a one-line
+    # Production announces a whole Question::Set wearing a one-line
     # summary (Tools::AskHuman::Announcement), and the note now names who is
     # stuck as well as both surfaces that can answer it.
     it "names the asker and points at the editor's inbox as well as /inbox" do
@@ -597,7 +597,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
-  # I6: the TTY-only drain surface. Lists what is pending (sender and age) and
+  # The TTY-only drain surface. Lists what is pending (sender and age) and
   # reads ONE answer; the resolution itself stays with the caller's block --
   # AskHuman#reply is the Repl's seam, never the TTY's.
   describe "#drain_inbox" do
@@ -686,7 +686,7 @@ RSpec.describe Lain::Frontend::TTY do
       expect(prompts).to eq(["human> "])
     end
 
-    # T14: a set carries more than a line, so the drain prints the same
+    # A set carries more than a line, so the drain prints the same
     # markdown document the editor opens -- for the item a typed answer will
     # actually answer, which is the oldest one listed.
     it "prints the markdown of the set a typed answer will answer" do
@@ -770,7 +770,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
-  # T21: the countdown status line, ticked externally (a real caller is a
+  # The countdown status line, ticked externally (a real caller is a
   # timer thread; these specs drive it directly with an injected clock so no
   # example needs a real sleep).
   describe "#render_countdown" do
@@ -858,12 +858,12 @@ RSpec.describe Lain::Frontend::TTY do
       expect(full.index("closing in", event_index)).not_to be_nil, "expected the countdown to redraw after the event"
     end
 
-    # F58's fix touches ONLY the inactive branch, so these two hold the active
+    # The line-ending fix touches ONLY the inactive branch, so these two hold the active
     # branch still for BOTH decorators: the status line steps aside, the event
     # prints, and the status line redraws on a row of its own -- true of a
     # mid-line tool chunk too, because the fresh row is the STATUS LINE's need,
     # not the content's. (The byte-identity half of the claim is demonstrated
-    # outside RSpec; see the T6 hand-back's before/after capture.)
+    # outside RSpec, in a manual before/after capture.)
     it "prints a provider-retry event above the status line and redraws the line beneath it" do
       tty = interactive_tty
       tty.render_countdown(deadline: 103, options: { coordinator: })
@@ -916,8 +916,8 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
-  # The window-scoped lifecycle (T21 fix round): a countdown that has ended
-  # must leave no trace -- later channel events take the plain pre-T21 path,
+  # The window-scoped lifecycle: a countdown that has ended must leave no
+  # trace -- later channel events take the plain no-countdown path,
   # and the terminal mode entered at window start is restored exactly once.
   describe "#stop_countdown" do
     let(:coordinator) { instance_double(Lain::CLI::Shutdown, signal: nil) }
@@ -1031,7 +1031,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
-  # F58: with no countdown running there is no status line to protect, and the
+  # With no countdown running there is no status line to protect, and the
   # plain path printed every decorator's bytes bare. A line-shaped decorator's
   # output then ran together -- four retry lines plus the error that followed
   # them arrived as one screen row. Here the line ending is the DECORATOR's

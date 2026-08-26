@@ -34,7 +34,7 @@ module Lain
         def self.context = Context.new(model: "claude-opus-4-8", max_tokens: 256)
 
         # @param path [String] the committed recordings YAML
-        # @param tasks [Bench::ArmTasks] the B0 suite the ids join against
+        # @param tasks [Bench::ArmTasks] the task suite the ids join against
         def initialize(path:, tasks:)
           @path = path
           @by_id = tasks.to_h { |task| [task.id, task] }

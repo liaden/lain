@@ -109,7 +109,7 @@ RSpec.describe Lain::Approval::RuleChain do
   # A tool with no {Tool::Input} declaration -- the precondition these examples
   # actually assert. It is declared HERE rather than borrowed from
   # `Lain::Tools::*` because a shipped tool is a moving target for this: this
-  # spec used `TodoWrite` until T3 migrated it onto the field DSL, at which
+  # spec used `TodoWrite` until it migrated onto the field DSL, at which
   # point both examples failed over a fact about TodoWrite they never meant to
   # depend on. No shipped tool lacks an `input_model` any more (all 24 declare
   # one), so a local stand-in is the only honest subject as well as a stable one.

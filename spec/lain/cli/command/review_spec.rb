@@ -286,7 +286,7 @@ RSpec.describe Lain::CLI::Command::Review do
       expect(answer).to include("branch feature").and include("cumulative")
     end
 
-    # F4: the banner used to name `:LainReviewDone`, a PROTOCOL-5 EPIC command
+    # The banner used to name `:LainReviewDone`, a PROTOCOL-5 EPIC command
     # whose guard (`runtime/65_review.lua:93-98`) requires
     # `b:lain_review_epic_slug` -- a variable a changeset review never stamps
     # either, so the guard could never pass here any more than it can from a
@@ -440,7 +440,7 @@ RSpec.describe Lain::CLI::Command::Review do
       expect(command.usage).to include("--permissive")
     end
 
-    # AC 2 ON THIS COMMAND, end to end and against the real repository this
+    # Driven ON THIS COMMAND, end to end and against the real repository this
     # group already builds -- not the policy object, the VERDICT. An earlier
     # draft of this card claimed the round could not be driven this far here.
     # It can: the `around` hook above is a real git tree.
@@ -496,7 +496,7 @@ RSpec.describe Lain::CLI::Command::Review do
       instance_double(Lain::Review::Session, source: Lain::CLI::Command::Survey.source_name, verdict:)
     end
 
-    # AC 3 from this side, and the refusal is the one that shipped: asserted on
+    # The refusal from this side, and it is the one that shipped: asserted on
     # the guard's own sentence, since a `Lain::Error` alone is satisfied by half
     # the refusals this command can raise.
     it "refuses a changeset review over a LIVE survey, in the guard's own words" do
@@ -510,7 +510,7 @@ RSpec.describe Lain::CLI::Command::Review do
       expect(editor.bound).to be_nil
     end
 
-    # AC 1, end to end against the real repository this file already builds: the
+    # End to end against the real repository this file already builds: the
     # review OPENS, and the round it opened is the one the chat now holds.
     it "opens a changeset review over a survey that has been settled by a verdict" do
       attached
@@ -522,7 +522,7 @@ RSpec.describe Lain::CLI::Command::Review do
       expect(editor.bound).to be_a(Lain::Review::Handover)
     end
 
-    # AC 4's note, pinned where it bites: `hold` REPLACES, so the settled survey
+    # A note pinned where it bites: `hold` REPLACES, so the settled survey
     # is gone the moment the branch round opens and `/review-submit` names the
     # branch. That is the correct answer, and it is worth an example because the
     # alternative reading -- the settled round lingering behind the live one --
@@ -702,11 +702,11 @@ RSpec.describe Lain::CLI::Command::Review do
 
     # RE-AIMED, and deliberately rather than deleted. It used to read "no docent
     # is wired to this review yet", which was true of every review in the tree
-    # and is the defect F32 filed; the command wires one off the editor's surface
-    # now. What this pins is the case that KEEPS the refusal: the editor here
-    # draws on {Lain::Review::Surface::Text}, which has no thread pane, and a
-    # docent that spent a provider call and drew nowhere is worse than one that
-    # refuses. The sentence is unchanged because the human's situation is.
+    # and is the defect that was filed; the command wires one off the editor's
+    # surface now. What this pins is the case that KEEPS the refusal: the editor
+    # here draws on {Lain::Review::Surface::Text}, which has no thread pane, and
+    # a docent that spent a provider call and drew nowhere is worse than one
+    # that refuses. The sentence is unchanged because the human's situation is.
     it "refuses an ask gesture in words where the surface has no thread pane to draw an answer in" do
       attached
       command.call("feature", env)

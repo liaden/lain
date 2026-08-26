@@ -2,7 +2,7 @@
 
 require "stringio"
 
-# PC-3: two execution SHAPES behind one continuation contract. A seam policy
+# Two execution SHAPES behind one continuation contract. A seam policy
 # answers `at_seam(state:, closure:) -> Continuation`, where a Continuation names
 # the mainline to continue on (as a head digest, so the value stays
 # Ractor-shareable) AND the render pipeline for subsequent turns. ForkPerStep

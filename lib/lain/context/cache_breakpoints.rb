@@ -12,7 +12,7 @@ module Lain
     # / #mark_last_block -- moved here rather than duplicated, since the
     # combinator IS the formalization of that behavior (3c-2.4).
     #
-    # == The cap (CE-1)
+    # == The cap
     #
     # Anthropic rejects a request carrying more than 4 `cache_control` blocks
     # total. This combinator used to place one every `every` blocks with no

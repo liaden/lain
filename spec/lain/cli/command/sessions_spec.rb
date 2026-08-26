@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T13: /sessions renders Command::Env's `sessions` reader ({Lain::CLI::Sessions}'s
+# /sessions renders Command::Env's `sessions` reader ({Lain::CLI::Sessions}'s
 # own #listing) verbatim -- no re-derivation here, matching /status's "one
 # definition, read twice" shape.
 RSpec.describe Lain::CLI::Command::Sessions do

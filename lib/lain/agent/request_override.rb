@@ -16,15 +16,15 @@ module Lain
     # it), and everything downstream -- middleware, provider, commit -- sees an
     # ordinary Request.
     #
-    # Caller contract (T18's ResendBridge is the intended queuer, via
+    # Caller contract (the {CLI::ResendBridge} is the intended queuer, via
     # `Agent#request_override`): the slot is thread-safe, so a #queue may race
     # the loop without losing an edit -- but WHICH dispatch it lands on is the
     # queuer's responsibility. This seam permits mid-turn interposition: an
     # edit queued during tool execution applies to the next dispatch of the
     # same run, so the pending tool_results commit but never reach the
-    # provider (pinned in the spec). Refusing a mid-flight resend is T18's
-    # job, at its bridge. The sanctioned resend entry is: quiesce, `Agent#rewind`,
-    # #queue, `Agent#run`.
+    # provider (pinned in the spec). Refusing a mid-flight resend is the
+    # bridge's job, not the slot's. The sanctioned resend entry is: quiesce,
+    # `Agent#rewind`, #queue, `Agent#run`.
     class RequestOverride
       def initialize
         @lock = Mutex.new
@@ -53,7 +53,7 @@ module Lain
       # return (a provider raise, a budget stop), put an unsent edit back so a
       # retry sends R again. This contract is at-least-once-SEND, exactly-once-
       # COMMIT: a post-provider middleware raise after a successful wire send
-      # still restores R, so a retry re-sends it -- T18's bridge builds its
+      # still restores R, so a retry re-sends it -- the bridge builds its
       # refusal/no-auto-retry UX on exactly that (see {CLI::ResendBridge}).
       # The tap clears the restore obligation only once
       # the response is in hand; `ensure` catches every non-local exit without

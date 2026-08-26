@@ -125,7 +125,7 @@ module Lain
       # `provider:`, `backend:` or `router:` keyword appearing here is the whole
       # failure this arm exists to prevent, arriving as an innocuous seam.
       #
-      # Recording the round trip (F28) gave the journal that was already here a
+      # Recording the round trip gave the journal that was already here a
       # second use: the question is recorded as well as the verdict, by wrapping
       # the provider in {Provider::Journaled}. The wrap is built HERE, around the
       # bare local provider constructed one line away, and takes no keyword of

@@ -91,7 +91,7 @@ module Lain
         # class body runs. That inversion -- the loop reading a constant out of
         # the CLI -- is a LAYERING DEBT named here rather than hidden: the
         # shared half belongs in a neutral home (`lib/lain/tool/cancellation.rb`,
-        # indexed from `lib/lain/tool.rb`), which is T3's own recommendation and
+        # indexed from `lib/lain/tool.rb`), which is the recommendation on record and
         # sits outside both cards' file scope.
         def self.no_result = CLI::Resume::Cancellation::NO_RESULT
 
@@ -245,7 +245,7 @@ module Lain
         answers.blocks.tap { |blocks| observe_all(names, blocks) }
       end
 
-      # One user-turn delivery (I6, ruled): the tool_result blocks PLUS the
+      # One user-turn delivery: the tool_result blocks PLUS the
       # causal edges the Agent's commit cites -- the consumption edge that
       # retires an answered question from {Event::Projection#pending}("human")
       # (the full rule lives on {Tools::AskHuman#take_answered_questions}).
@@ -263,7 +263,7 @@ module Lain
 
       # {#delivery}'s value for a turn the run was INTERRUPTED in the middle of:
       # the same two keys, over the answers the unwind left behind. No `meta:`,
-      # for the reason T3's projection carries none -- one turn mixes a real
+      # for the reason the load-side repair carries none -- one turn mixes a real
       # result with cancelled ones, so the fact lives per block, and a meta
       # added later moves the digest.
       #
@@ -307,8 +307,8 @@ module Lain
       # where the caller has none it degrades to the clean no-op #fire performs
       # before it consumes anything.
       #
-      # **An interrupt still never reaches here, and since T6 that is the point
-      # rather than a happy accident.** A stopped turn no longer commits nothing
+      # **An interrupt still never reaches here, and since the cancellation
+      # commit landed that is the point rather than a happy accident.** A stopped turn no longer commits nothing
       # -- {Agent#perform_tools} now commits the results already earned plus a
       # cancellation for each call that has none -- so the second half of the old
       # claim is what carries the weight: those committed digests were never
@@ -416,8 +416,8 @@ module Lain
       # the schedule the model asked for by walking `uses`, so out-of-order
       # completion still lands in ONE user turn ordered by tool_use however the
       # tasks actually finished. A stop of the hosting task cancels the siblings
-      # as one tree (structured cancellation); since T6 that no longer means an
-      # interrupt mid-fan-out has nothing to commit -- whichever siblings had
+      # as one tree (structured cancellation); since the cancellation commit
+      # landed that no longer means an interrupt mid-fan-out has nothing to commit -- whichever siblings had
       # already recorded their answer keep it, and the rest are answered as
       # cancelled. `Sync` joins the Agent's reactor when there is one and spins
       # one up otherwise, so a direct caller outside a reactor works too.

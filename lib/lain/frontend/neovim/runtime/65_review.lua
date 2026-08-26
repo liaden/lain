@@ -202,7 +202,7 @@ end
 -- AREA and never reads a window (`Review::Surface::Neovim::MARKED` carries that
 -- measurement), and a message the area cannot hold blocks the RPC rather than
 -- merely the keyboard -- so `:messages` and `:LainApprove` are both unreachable
--- exactly while a refusal is on screen (F25 measured a full two-minute hang over
+-- exactly while a refusal is on screen (measured: a full two-minute hang over
 -- `--server`). A sentence can fail to fit in three separate ways, each with its
 -- own prompt and its own option, and all three had to be closed before the rail
 -- could survive ANY sentence handed to it rather than only the short ones its

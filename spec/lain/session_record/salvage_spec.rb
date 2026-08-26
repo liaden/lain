@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T18: recovering a paid-for-but-uncommitted response from the response WAL
+# Recovering a paid-for-but-uncommitted response from the response WAL
 # when a session resumes open. `frames` are built through the REAL
 # Provider::ResponseWal / Provider::Anthropic pair wherever fidelity to
 # production bytes matters (response_wal_spec's own precedent), rather than
@@ -227,7 +227,7 @@ RSpec.describe Lain::SessionRecord::Salvage do
     end
   end
 
-  # T15 fix round (panel: Aaron): an unanswered request_sent followed by a
+  # Fix round (panel: Aaron): an unanswered request_sent followed by a
   # `rewound` record is a response the user EXPLICITLY abandoned -- salvage
   # committing it onto the post-rewind head would silently reverse the
   # rewind, with a session_closed anchor on top.

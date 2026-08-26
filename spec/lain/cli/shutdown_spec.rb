@@ -1,14 +1,15 @@
 # frozen_string_literal: true
 
-# T20: the shutdown coordinator. A fiber that parks on a self-pipe's read end
-# (the async-signal-safe ingress a real Signal.trap writes one byte into -- T22
-# installs those traps; this card owns the pipe + the parked reader), runs the
-# policy `running -> grace(deadline) -> draining -> closed`, and interrupts the
-# run through `Budget#interrupt` exactly as docs/concurrency.md's worked
-# supervisor sketched. Cancellation is driven the same deterministic way
-# spec/lain/agent_cancellation_spec.rb pins it: a provider that PARKS inside a
-# model call on an internal queue, so the reactor is provably inside a model
-# call -- no `sleep`, no timing race -- when the coordinator acts.
+# The shutdown coordinator. A fiber that parks on a self-pipe's read end (the
+# async-signal-safe ingress a real Signal.trap writes one byte into -- the trap
+# installation lives elsewhere; the coordinator owns the pipe + the parked
+# reader), runs the policy `running -> grace(deadline) -> draining -> closed`,
+# and interrupts the run through `Budget#interrupt` exactly as
+# docs/concurrency.md's worked supervisor sketched. Cancellation is driven the
+# same deterministic way spec/lain/agent_cancellation_spec.rb pins it: a
+# provider that PARKS inside a model call on an internal queue, so the reactor
+# is provably inside a model call -- no `sleep`, no timing race -- when the
+# coordinator acts.
 RSpec.describe Lain::CLI::Shutdown do
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
@@ -28,7 +29,7 @@ RSpec.describe Lain::CLI::Shutdown do
     end.new
   end
 
-  # The coordinator announces each transition here (the seam T21's countdown UI
+  # The coordinator announces each transition here (the seam a countdown UI
   # renders on). A buffered Async::Queue makes it the tests' synchronization
   # point: `transitions.dequeue` parks until the coordinator has actually
   # reached the next state, so no example polls or sleeps.
@@ -354,7 +355,7 @@ RSpec.describe Lain::CLI::Shutdown do
     end
   end
 
-  # A T21 renderer sees state and deadline through the same notification; a
+  # A renderer sees state and deadline through the same notification; a
   # :draining carrying the by-then-dead grace deadline would render a countdown
   # for a window that no longer exists.
   describe "the draining notification's deadline" do

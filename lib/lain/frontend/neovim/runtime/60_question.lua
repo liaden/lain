@@ -1,4 +1,4 @@
--- lain://question (T12): compose_buf's shape exactly -- `acwrite` so `:w` can
+-- lain://question: compose_buf's shape exactly -- `acwrite` so `:w` can
 -- be intercepted at all, a name so `:write` does not answer E32, "hide" so
 -- BufUnload means the human closed it rather than merely looked away, markdown
 -- because the document IS markdown -- plus the two indent options, which are
@@ -56,7 +56,7 @@ local function question_buf(name)
   return buf
 end
 
--- Open lain://question on a pending set's rendered document (T12), taking the
+-- Open lain://question on a pending set's rendered document, taking the
 -- cursor for set_compose's reason: lain is handing the human something and
 -- asking them to answer it.
 --
@@ -98,7 +98,7 @@ function _G.__lain.set_question(name, lines, digest)
   announce_render(name, buf)
 end
 
--- The question round trip's return leg (T12). Same gesture as compose -- `:w`
+-- The question round trip's return leg. Same gesture as compose -- `:w`
 -- is "I am done with this text" -- and the same order, rpcrequest FIRST and
 -- 'modified' cleared only once it returns.
 --
@@ -167,7 +167,7 @@ vim.api.nvim_create_autocmd("BufUnload", {
   end,
 })
 
--- Ticking a box (T13), and it sends NOTHING: the human ticks, writes, and `:w`
+-- Ticking a box, and it sends NOTHING: the human ticks, writes, and `:w`
 -- once. What makes a local keymap possible at all is that the ARITY RIDES IN
 -- THE HEADING, so a question's boundary and whether it takes one tick or many
 -- are recoverable from buffer TEXT -- no rpcrequest, no state kept beside the

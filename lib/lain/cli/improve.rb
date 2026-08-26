@@ -2,14 +2,14 @@
 
 module Lain
   module CLI
-    # `lain improve <session> [--dry-run]`: the harness-improver pass (M6).
+    # `lain improve <session> [--dry-run]`: the harness-improver pass.
     # Offline, it resolves a session file through {CLI::SessionFile} -- the one
     # resolver {CLI::Friction} and {CLI::Consolidate} also read through, so all
     # three accept the same shorthands and raise the same refusal -- renders
     # that session's {Friction::Report} plus a
     # per-turn digest summary into the `harness_improver` role scaffold, and
     # spawns the role ONCE (a one-shot, not one-per-lineage like the court
-    # clerk). The improver's notes land in M2's cross-project {Improvement::Sink},
+    # clerk). The improver's notes land in the cross-project {Improvement::Sink},
     # NOT in user-facing memory. Returns a String; only the frontend prints
     # (output discipline, {CLI::Friction}'s precedent).
     #
@@ -113,6 +113,10 @@ module Lain
       # reach a model -- which is what lets every collaborator below be required.
       # Mirrors {CLI::Consolidate.from_options}; the assembly lives here (not in
       # the exe) so it carries specs.
+      #
+      # @param options [Hash] the invoked command's parsed flags
+      # @option options [Boolean] :dry_run swaps the provider for an unreachable one
+      # @return [Improve]
       def self.from_options(options)
         backend = Backend.new(options)
         new(provider: options[:dry_run] ? Provider::Unreachable.new : backend.provider,

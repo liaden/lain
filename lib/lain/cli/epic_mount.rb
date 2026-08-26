@@ -250,11 +250,11 @@ module Lain
       # INJECTING one, not by editing this file" -- and then nothing ever
       # injected, so every `implementation` call in every real process refused
       # with {Tools::RequestReview::Refusals::NO_CHANGESET} and no test among
-      # 10865 examples could see it. T31a made the frontend reachable
-      # ({HumanReplies#bind_review_editor}) and {Wiring#review_seams} now
-      # injects all three. This class is unchanged in the way that matters: it
-      # still supplies none of them itself, and a caller that passes none still
-      # gets a tool that refuses the stage in one sentence naming the wiring.
+      # 10865 examples could see it. The frontend is now reachable
+      # ({HumanReplies#bind_review_editor}) and {Wiring#review_seams} injects
+      # all three. This class is unchanged in the way that matters: it still
+      # supplies none of them itself, and a caller that passes none still gets a
+      # tool that refuses the stage in one sentence naming the wiring.
       def request_review
         Lain::Tools::RequestReview.new(home:, review:, notes:, bindings: @bindings, notify: @notify,
                                        **@review_seams)

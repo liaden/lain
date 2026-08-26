@@ -12,7 +12,7 @@ module Lain
     #
     # Every :message/:spawn event a caller writes passes through {#put}, which
     # makes it the one funnel {#observer} sees -- the seam a future session
-    # scribe (T13) folds, since causal edges point BACKWARD (a message names
+    # scribe folds, since causal edges point BACKWARD (a message names
     # what it answers, never the reverse) and the shared Store has no
     # enumerator of its own to walk forward from.
     class ChainWriter
@@ -26,7 +26,7 @@ module Lain
         end
       end
 
-      # TL-2 (pinned): a chain is named by its root event's digest, no
+      # A pinned ruling: a chain is named by its root event's digest, no
       # separate id machinery. The root cannot contain its own address, so it
       # carries no correlation and falls back to its own digest; every
       # descendant already carries the root digest, inherited unchanged. The

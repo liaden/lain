@@ -353,7 +353,7 @@ module Lain
       # A Region is shareable, but it can only be CONSTRUCTED on the main Ractor,
       # because `Ext.blake3_hex` is not ractor-safe -- the same recorded gap Hunk,
       # Fuzzy and Bm25 carry. Digesting eagerly moves that constraint from every
-      # read of the digest to the one construction, which is what lets T14 cache
+      # read of the digest to the one construction, which is what lets a caller cache
       # by digest in a loop; `Snapshot::Blob` makes the same trade.
       class Region
         SCHEME = "sensitive-region-v1"

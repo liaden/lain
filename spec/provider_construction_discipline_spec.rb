@@ -8,10 +8,10 @@ require "pathname"
 # built somewhere its round trips reach no journal.
 #
 # The defect this exists to end is not a bug, it is a SHAPE: a capability built,
-# spec'd, and then never constructed on the production path. F28 measured a whole
-# QA round whose journals held zero records for oracle traffic the run really
-# paid for, because {Lain::Oracle::Model} calls `#complete` directly and no
-# middleware sits anywhere near it. Fixing the three instances is one thing;
+# spec'd, and then never constructed on the production path. A whole QA round
+# was measured whose journals held zero records for oracle traffic the run
+# really paid for, because {Lain::Oracle::Model} calls `#complete` directly and
+# no middleware sits anywhere near it. Fixing the three instances is one thing;
 # this file is what makes the FOURTH one fail the build instead of shipping
 # green. A grep for a constant cannot do it -- `provider/admission.rb` mentions
 # `Provider::Ollama.new` in a comment, and a comment is not a construction.

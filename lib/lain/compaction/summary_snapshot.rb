@@ -122,7 +122,7 @@ module Lain
       # given, since the snapshot is frozen and cannot tally during `#call`.
       # `hits.zero?` with `misses` high is the signature of a key regression,
       # which this card's escalation trigger names as the failure that would
-      # otherwise be invisible in the experiment record. A6/A8 journal these;
+      # otherwise be invisible in the experiment record. {Source} journals these;
       # nothing here touches the Journal.
       attr_reader :hits, :misses
 

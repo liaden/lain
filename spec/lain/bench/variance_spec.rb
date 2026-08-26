@@ -2,13 +2,13 @@
 
 require "stringio"
 
-# Variance is the experiment engine (design decision D3): n mock- or
-# live-recorded runs of ONE task, reported along three axes. Determinism --
-# each recording must dry-replay to byte identity under its own Context, the
-# harness-determinism claim. Divergence -- where the recordings' actually-sent
-# bytes first part ways from the reference, named to the model call and the
-# cache_payload field. Distribution -- Compare's token/cost table, because a
-# single pair of runs is noise. The report is a returned String, never stdout.
+# Variance is the experiment engine: n mock- or live-recorded runs of ONE
+# task, reported along three axes. Determinism -- each recording must
+# dry-replay to byte identity under its own Context, the harness-determinism
+# claim. Divergence -- where the recordings' actually-sent bytes first part
+# ways from the reference, named to the model call and the cache_payload
+# field. Distribution -- Compare's token/cost table, because a single pair of
+# runs is noise. The report is a returned String, never stdout.
 RSpec.describe Lain::Bench::Variance do
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   # The mock responses carry a priceable model ("sonnet" family) so the
@@ -37,7 +37,7 @@ RSpec.describe Lain::Bench::Variance do
   end
 
   # One mock-recorded run of the task, round-tripped through Session so the
-  # Recording under test is exactly what B4's driver will hold.
+  # Recording under test is exactly what the driver will hold.
   def record(responses, degrade: nil)
     Lain::Bench::Session.load(session_bytes(responses, degrade:).each_line)
   end

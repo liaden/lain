@@ -9,9 +9,9 @@ require "tmpdir"
 # example can assert the file was actually handed over stamped with the
 # generation the editor must send back.
 #
-# `raises:` is how the F1 examples reach the four routes to a wedged baton; the
-# shared `log:` is how the bind-before-editor ORDERING is observable at all,
-# since neither recorder alone can see the other.
+# `raises:` is how the wedge examples below reach the four routes to a wedged
+# baton; the shared `log:` is how the bind-before-editor ORDERING is observable
+# at all, since neither recorder alone can see the other.
 class RecordingReviewEditor
   def initialize(notice: nil, raises: nil, log: [])
     @notice = notice
@@ -103,7 +103,7 @@ class RecordingBindings
     nil
   end
 
-  # {Lain::CLI::HumanReplies#bind_changeset_review}'s duck (T21), recorded and
+  # {Lain::CLI::HumanReplies#bind_changeset_review}'s duck, recorded and
   # kept APART from `bound`: the two rails carry different objects for
   # different notions of review, and one recorder for both would let a
   # changeset review pass an assertion written about a document one.
@@ -192,7 +192,7 @@ class RecordingChangesets
   end
 end
 
-# T23: the agent's end of the review baton. The tool resolves a stage artifact
+# The agent's end of the review baton. The tool resolves a stage artifact
 # through the journaled home, opens a Review on it, hands the file to an editor,
 # tells the human, parks on the review's promise, and renders the delta plus the
 # annotations the human left -- the first reader those `annotation` records have
@@ -296,7 +296,7 @@ RSpec.describe Lain::Tools::RequestReview do
     end
   end
 
-  # ---- The changeset half (T21) ----------------------------------------------
+  # ---- The changeset half ----------------------------------------------------
 
   # session_spec's fixture, and deliberately the same one: two files, three
   # hunks, so a report can name one file and not the other and so an
@@ -551,7 +551,7 @@ RSpec.describe Lain::Tools::RequestReview do
     end
   end
 
-  # ---- F1: the wedge, and exactly where the line is --------------------------
+  # ---- The wedge, and exactly where the line is ------------------------------
 
   # `Review#open` journals `review_opened` BEFORE it hands back the token, so a
   # claim is durable the instant it exists. A raise between that and the human
@@ -713,7 +713,7 @@ RSpec.describe Lain::Tools::RequestReview do
 
   # ---- Scenario: the implementation stage is reviewable ----------------------
 
-  # T21. The refusal this describe block used to assert -- `implementation`
+  # The refusal this describe block used to assert -- `implementation`
   # cannot be reviewed because doing so "would mean reviewing a diff, a surface
   # lain does not have" -- named a MISSING surface, and the surface now exists
   # (a `Review::Session` over a `Review::Changeset`, drawn on a
@@ -779,7 +779,7 @@ RSpec.describe Lain::Tools::RequestReview do
         .to eq([Lain::Review::Partition::DEFAULT_SCOPE.to_sym])
     end
 
-    # T32a: the epic rail's half of the diff wiring. The view resolves a row to a
+    # The epic rail's half of the diff wiring. The view resolves a row to a
     # path, and the diff surface behind it needs the CHANGESET to read that
     # file's old side off -- so a `<CR>` on a row of an epic's implementation
     # review opens nothing at all unless this crosses.
@@ -870,11 +870,11 @@ RSpec.describe Lain::Tools::RequestReview do
       expect(review.open_generations).to be_empty
     end
 
-    # T31a: a THUNKED surface cannot be checked at construction -- there is
-    # nothing behind it yet, and a Proc answers none of the seven messages. So the
-    # check moves to the moment it resolves, which is still before anything
-    # durable: `hold` answers the refusal as a wiring refusal and the epic is
-    # untouched. What is lost is only WHEN a bad wiring is found.
+    # A THUNKED surface cannot be checked at construction -- there is nothing
+    # behind it yet, and a Proc answers none of the seven messages. So the check
+    # moves to the moment it resolves, which is still before anything durable:
+    # `hold` answers the refusal as a wiring refusal and the epic is untouched.
+    # What is lost is only WHEN a bad wiring is found.
     it "refuses a thunk resolving to a surface that does not answer the port, opening nothing" do
       half = Class.new { def present(changeset, scope:) = [changeset, scope] }.new
       late = changeset_tool(surface: -> { half })
@@ -889,10 +889,10 @@ RSpec.describe Lain::Tools::RequestReview do
 
   # ---- Scenario: the seams a frontend supplies arrive late -------------------
 
-  # T31a. The frontend that owns a review surface is built by {CLI::Repl#run},
-  # strictly after the toolset -- the same lateness `bindings:` has, and the
-  # reason both are read at CALL time. Before this card neither seam was passed
-  # by any production wiring at all.
+  # The frontend that owns a review surface is built by {CLI::Repl#run}, strictly
+  # after the toolset -- the same lateness `bindings:` has, and the reason both
+  # are read at CALL time. Before this change neither seam was passed by any
+  # production wiring at all.
   describe "a surface and a view that arrive after the tool was built" do
     before { home.write_epic(three_issue_graph) }
 
@@ -1141,11 +1141,11 @@ RSpec.describe Lain::Tools::RequestReview do
     end
   end
 
-  # T31c. {Lain::Review::Session#present} bounds every presentation now, and
-  # this tool is the third caller of it -- so an implementation stage over a
-  # changeset past a ceiling has to come back as this tool's own refusal. Left
-  # unrescued, a ceiling would raise out of a TOOL CALL and the model would meet
-  # a stack instead of a sentence naming the ceiling and the walk to take.
+  # {Lain::Review::Session#present} bounds every presentation now, and this tool
+  # is the third caller of it -- so an implementation stage over a changeset past
+  # a ceiling has to come back as this tool's own refusal. Left unrescued, a
+  # ceiling would raise out of a TOOL CALL and the model would meet a stack
+  # instead of a sentence naming the ceiling and the walk to take.
   #
   # 301 files against {Lain::Review::Bounds::DEFAULT_MAX_FILES}: nothing is
   # injected, because an epic meets the DEFAULT ceilings and a bound reachable
@@ -1320,7 +1320,7 @@ RSpec.describe Lain::Tools::RequestReview do
     end
   end
 
-  # ---- F3: the render is a REPORT, and every branch of it is a claim ---------
+  # ---- The render is a REPORT, and every branch of it is a claim -------------
 
   # These pin the sentences rather than the plumbing. A renderer that collapses
   # a branch does not crash -- it makes a confident false statement about
@@ -1374,7 +1374,7 @@ RSpec.describe Lain::Tools::RequestReview do
       expect(result.content).to include("structure: unchanged")
     end
 
-    # T22's rule at the surface: a note whose anchor slid points at a line the
+    # The rule at the surface: a note whose anchor slid points at a line the
     # human never pointed at, so the number is no longer evidence of which issue
     # was meant. Rendering an id there would be a guess dressed as a finding.
     it "renders a drifted note as drifted rather than attributing it to a line's issue" do
@@ -1388,7 +1388,7 @@ RSpec.describe Lain::Tools::RequestReview do
     end
   end
 
-  # ---- F3: the orderings and refusals the comments justify -------------------
+  # ---- The orderings and refusals the comments justify -----------------------
 
   describe "the order the collaborators are told in" do
     before { home.write_epic(three_issue_graph) }

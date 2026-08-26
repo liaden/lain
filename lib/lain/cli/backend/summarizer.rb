@@ -50,7 +50,7 @@ module Lain
         # and deliberately does NOT pass this: it answers on the render path,
         # where the summary is worth waiting for.
         #
-        # The provider is {Provider::Journaled}-wrapped (F28) so the round
+        # The provider is {Provider::Journaled}-wrapped so the round
         # trip this tier spends reaches the Journal at all. {Oracle::Recorded
         # ::Journaling} above records the ANSWER; nothing recorded the question,
         # because {Oracle::Model} calls `#complete` directly and no middleware

@@ -12,14 +12,14 @@ module Lain
     #   `fresh` (a new root over the shared Store -- `meet(child, parent)` empty),
     #   `inherit` (`parent.fork`, O(1), the child's head IS the parent's), or
     #   `sibling_template` (fresh isolation, but siblings share a byte-identical
-    #   template prefix WITH EACH OTHER -- CE-4's 1-write-N-1-reads arm).
+    #   template prefix WITH EACH OTHER -- the 1-write-N-1-reads arm).
     # * **Attenuation posture** decides how a smaller capability set is enforced:
     #   `schema` (the model sees only the allowed tools -- the default) or
     #   `handler_union` (the model sees the full union schema so sibling spawns
     #   share a cache prefix, and the Handler refuses a disallowed call).
     #
     # Two axes, not one enum, because they carry independent money: prefix is a
-    # cache-prefix decision (`cache-economics.md` CE-4) and posture is a
+    # cache-prefix decision (`cache-economics.md`) and posture is a
     # schema-vs-enforcement decision. A {SpawnPolicy} value groups them with the
     # `only`-set the child is attenuated to.
     #
@@ -120,7 +120,7 @@ module Lain
           def label = "inherit"
         end
 
-        # CE-4's third arm: children are isolated like `fresh` -- a new root
+        # The third prefix arm: children are isolated like `fresh` -- a new root
         # over the shared Store -- but share a byte-identical system prefix
         # WITH EACH OTHER, so a fan-out pays one cache write and N-1 reads
         # instead of N cold bootstraps. The template is the shared bulk (a
@@ -128,7 +128,7 @@ module Lain
         # everything per-child (the task, a role fill) belongs in messages,
         # AFTER the template's breakpoint, never in system.
         class SiblingTemplate
-          # Relocated to {Lain::CacheProfile} (CAC-2/F1): the neutral home
+          # Relocated to {Lain::CacheProfile}: the neutral home
           # shared by every provider's `#cache_profile`, re-exported here so
           # this class's own #below_floor?/#journal_floor and existing specs
           # keep resolving unchanged. Anthropic's minimum cacheable prefix
@@ -181,7 +181,7 @@ module Lain
           # would put a second marker in system, and {Context::CacheBreakpoints}
           # budgets its message markers assuming system spends exactly one
           # slot -- the extra mark can reach 5 on the wire, which Anthropic
-          # 400s (the recorded T24 risk). Corollary: the factory context's own
+          # 400s (a recorded risk). Corollary: the factory context's own
           # system joins the shared prefix AHEAD of the template, so it must
           # be sibling-invariant too -- which it is, riding one injected
           # factory per spawn seam.
@@ -281,7 +281,7 @@ module Lain
         # The model sees the SHARED UNION's schema -- the union handed to the
         # spawn seam, which need not equal the spawning parent's own toolset --
         # so heterogeneous sibling spawns render byte-identical tools blocks
-        # and share one cached prefix (CE-4: sibling-equality is the win). The
+        # and share one cached prefix (sibling-equality is the win). The
         # Handler enforces the attenuation instead: a disallowed call is
         # refused as an is_error tool_result and journaled -- enforcement was
         # always the Handler's, since tools are capabilities, not schema

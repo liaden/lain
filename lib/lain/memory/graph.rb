@@ -2,7 +2,7 @@
 
 module Lain
   module Memory
-    # A Manifest::Hit-duck search index (T5) that layers an N-hop
+    # A Manifest::Hit-duck search index that layers an N-hop
     # `[[wikilink]]` walk over Manifest, the always-runs lexical floor
     # (references/memory-and-retrieval.md #2: "signal, never a gate"). The
     # seed pass IS Manifest#search, unchanged -- Graph never re-implements

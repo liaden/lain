@@ -194,7 +194,7 @@ RSpec.describe Lain::Frontend::Completion do
       expect { described_class.install(installable) }.not_to raise_error
     end
 
-    # T14's third KeyTaken case: `bind` consults the LIVE config, so a human
+    # The third KeyTaken case: `bind` consults the LIVE config, so a human
     # whose inputrc claims C-x gets a refusal. Completion is a convenience and
     # the prompt is not -- a refused key may cost the feature and never the TTY.
     it "stays off and says so when the key is already claimed, rather than raising" do
@@ -207,7 +207,7 @@ RSpec.describe Lain::Frontend::Completion do
       expect(warnings.first).to include("completion is off").and include("inputrc")
     end
 
-    # T14's self-verification: a bind that writes the keymaps but does not
+    # The bind's self-verification: a bind that writes the keymaps but does not
     # actually route now raises rather than reporting a success that can never
     # fire. NOTHING claimed the key in this case, so it is a genuinely separate
     # cause that happens to share KeyTaken's class -- which is exactly why the
@@ -232,7 +232,7 @@ RSpec.describe Lain::Frontend::Completion do
   end
 end
 
-# The TTY half of T16: when the key is claimed, where the completion gets its
+# The TTY half: when the key is claimed, where the completion gets its
 # screen, and when the menu is torn down. Here rather than in tty_spec.rb so the
 # whole of one card's behaviour reads in one place.
 RSpec.describe Lain::Frontend::TTY do
@@ -310,7 +310,7 @@ RSpec.describe Lain::Frontend::TTY do
     end
 
     # The third way a prompt ends, and the one an `ensure` is needed for:
-    # CLI::PromptBreaker raises Interrupt into the prompt thread, and T14's
+    # CLI::PromptBreaker raises Interrupt into the prompt thread, and completion's
     # dispatch deliberately lets Interrupt through.
     it "erases the menu when the prompt is interrupted rather than answered" do
       allow(Reline).to receive(:readmultiline).and_raise(Interrupt)

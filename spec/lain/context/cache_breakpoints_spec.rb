@@ -66,7 +66,7 @@ RSpec.describe Lain::Context::CacheBreakpoints do
     expect(composed.call(messages).last["content"].last["cache"]).to be(true)
   end
 
-  # CE-1: Anthropic rejects a request carrying more than 4 cache_control
+  # Anthropic rejects a request carrying more than 4 cache_control
   # blocks. Two layers used to place them independently (this combinator
   # AND AnthropicEncoding#with_stride_breakpoint) with no shared budget, so a
   # long-enough session 400s. This combinator now owns the whole budget.

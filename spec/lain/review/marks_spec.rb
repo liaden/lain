@@ -8,8 +8,8 @@ RSpec.describe Lain::Review::Marks do
     Lain::Review::Hunk.new(path:, old_start:, old_count:, new_start:, new_count:, heading:, lines:)
   end
 
-  # The narrowest duck this card assumes of T7's not-yet-built Changeset:
-  # `#base_ref` (the resolved base revision, matching T3/T5's own naming) and
+  # The narrowest duck this assumes of the not-yet-built Changeset: `#base_ref`
+  # (the resolved base revision, matching the review units' own naming) and
   # `#hunks` (every Hunk in the WHOLE, unfiltered changeset -- across every
   # commit, not collapsed into one base..head diff, which is what makes "4
   # hunks total across 2 commits" a countable thing at all).
@@ -258,7 +258,7 @@ RSpec.describe Lain::Review::Marks do
     # and a key is a digest that no path can be read back out of -- so a mark
     # set cannot name the paths it belongs to, and a mark is proved stale only
     # by being absent from every path. A non-empty set therefore reads the
-    # changeset, and this is the cost B15 could not remove.
+    # changeset, and this is the cost that could not be removed.
     it "reads the changeset when there IS a mark to prune, because absence is what proves one stale" do
       marks = marked("base1", [["hunk-content-v1:abc", "reviewed"]])
 
@@ -289,7 +289,7 @@ RSpec.describe Lain::Review::Marks do
         .to raise_error(described_class::BaseMismatch)
     end
 
-    # The hazard T2's key alone cannot close: a BASE-side edit slides duplicate
+    # The hazard the hunk key alone cannot close: a BASE-side edit slides duplicate
     # #2 onto duplicate #1's former old-side span. Old and new side shift
     # together under a base move, so the span stays self-consistent while
     # naming the wrong hunk -- proved here as a literal string collision, not

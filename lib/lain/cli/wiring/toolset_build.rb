@@ -252,7 +252,7 @@ module Lain
         # @param options [Hash] the parsed CLI options; `:auto_approve` gates whether
         #   {#auto_surface} is built at all (nil without the flag, so the Repl wires
         #   nothing extra by default)
-        # @param supervisor [Supervisor] the OM-6 supervisor a spawned actor adopts
+        # @param supervisor [Supervisor] the supervisor a spawned actor adopts
         #   its isolation lease from and runs under ({Tools::Subagent#supervisor});
         #   read once, alongside `parent:` and `journal:`, into the one spawn seam
         # @param parent [#call] a thunk reading the live parent Timeline --

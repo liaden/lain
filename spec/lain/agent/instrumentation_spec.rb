@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T22: the seven keywords a run REPORTS through, as one value. They were seven
+# The seven keywords a run REPORTS through, as one value. They were seven
 # separate slots on Agent#initialize and three Hash reifications in the CLI
 # (CompactionMount#agent_kwargs, Chronicle#telemetry_kwargs, ToolGuard#kwargs),
 # each poking at the Hash with `.fetch`/`.slice`/`.merge` -- the tell of a value

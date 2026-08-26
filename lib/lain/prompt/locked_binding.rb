@@ -81,7 +81,7 @@ module Lain
     # default-reject, not a blocklist: `self`, globals ($$/$0), ivars, receiver'd
     # calls, and the send/eval family all fall out rejected without being
     # individually named -- a novel escape hatch is impure until proven pure,
-    # never pure until noticed. (The review probes for T2 are the evidence a
+    # never pure until noticed. (The review probes are the evidence a
     # blocklist loses that race: `0.send(:rand)` and `"".object_id` both walked
     # straight past one.)
     module Purity

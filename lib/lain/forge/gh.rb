@@ -55,7 +55,7 @@ module Lain
       # has to be pinned.
       #
       # A merge commit rather than a squash or a rebase, and the reason is
-      # ARCHAEOLOGY, not a mechanism anything reads today: promotion (T18) pushes
+      # ARCHAEOLOGY, not a mechanism anything reads today: promotion pushes
       # an ANCHORED sha, the journal names that sha, and `--merge` is the only
       # one of gh's three methods that leaves it reachable in the repository
       # afterwards. Squash and rebase-merge both rewrite it, so a journal line

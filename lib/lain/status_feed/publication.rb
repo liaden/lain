@@ -73,15 +73,15 @@ module Lain
 
       private
 
-      # Every kernel refusal on this path becomes ONE named error, because F50
-      # changed which refusals are reachable. Under `<project>/.lain/` the
-      # destination was essentially always writable -- the user is working in
-      # it -- so a bare `Errno` escaping here was a disk-full curiosity. Under
-      # `$XDG_STATE_HOME` it can be read-only, owned by someone else, or have a
-      # plain file where the per-project directory belongs, and the raw errno
-      # names a path the operator never typed, in a directory named by twelve
-      # hex characters, with no mention of lain. That reads as a crash; it is a
-      # misconfiguration, and it has a lever.
+      # Every kernel refusal on this path becomes ONE named error, because the
+      # move to `$XDG_STATE_HOME` changed which refusals are reachable. Under
+      # `<project>/.lain/` the destination was essentially always writable --
+      # the user is working in it -- so a bare `Errno` escaping here was a
+      # disk-full curiosity. Under `$XDG_STATE_HOME` it can be read-only, owned
+      # by someone else, or have a plain file where the per-project directory
+      # belongs, and the raw errno names a path the operator never typed, in a
+      # directory named by twelve hex characters, with no mention of lain. That
+      # reads as a crash; it is a misconfiguration, and it has a lever.
       def write(struct)
         FileUtils.mkdir_p(File.dirname(@path))
         tmp = "#{@path}.tmp-#{Process.pid}-#{object_id}"

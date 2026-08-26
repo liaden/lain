@@ -17,7 +17,7 @@ module Lain
     # The Neovim frontend: a second surface on the same {Lain::Channel} the {TTY}
     # drains. The agent knows about neither frontend -- it only pushes attributed
     # {Lain::Telemetry} onto the Channel, and nothing here ever reaches back into
-    # the agent. (T18's resend dispatch does not breach that: the frontend offers
+    # the agent. (The resend dispatch does not breach that: the frontend offers
     # a rebuilt Request to an INJECTED bridge duck, and only that CLI-owned
     # object -- {CLI::ResendBridge} -- touches the Agent it was built over.)
     #
@@ -38,7 +38,7 @@ module Lain
       # The history below says WHAT CHANGED and names no card. It is read to
       # date a change and to tell whether a running runtime has some feature,
       # and a card id answers neither: the ids are chunk-local and repeat, so
-      # this list once carried two T15s and two T16s from different chunks.
+      # this list once carried two ids that each named two different chunks.
       # "2": :LainReply and the inbox drain autocmd.
       # "3": the User LainAttach/LainRender events, b:lain_view on every
       #   lain:// buffer, lain://workspace in the runtime's buffer set, and the
@@ -137,10 +137,10 @@ module Lain
       #   `old` slot the round had no reason to build in advance.
       PROTOCOL = "13"
 
-      # Seconds teardown waits on the resend worker before giving up the join
-      # (S3). Since T18 a bridged offer holds that worker for a whole model
-      # round trip, so a bare `join` at teardown is UNBOUNDED -- a wedged or
-      # slow provider would strand the editor's exit. The inbox is already
+      # Seconds teardown waits on the resend worker before giving up the join.
+      # A bridged offer holds that worker for a whole model round trip, so a
+      # bare `join` at teardown is UNBOUNDED -- a wedged or slow provider
+      # would strand the editor's exit. The inbox is already
       # closed by the time the join runs, so the worker exits the instant its
       # in-flight offer returns; this bound only caps how long teardown blocks
       # for that return, and a timed-out worker exits on its own once the round
@@ -154,14 +154,14 @@ module Lain
       # teardown finished. Wraps whatever StandardError killed the thread so a
       # caller's `rescue Lain::Error` (the exe's own convention -- see
       # exe/lain) presents editor-session loss as a clean notice, not a raw
-      # IOError/NoMethodError with a backtrace at exit (T9). The message NAMES
+      # IOError/NoMethodError with a backtrace at exit. The message NAMES
       # the dead thread -- exe/lain forwards it verbatim, and a bare "Broken
       # pipe" with no source is not a notice a human can act on. The original
       # rides `cause`, so nothing about the underlying failure is actually
       # lost -- only what reaches the human by default is tamed.
       class SessionFailure < Lain::Error; end
 
-      # No changeset review is open in THIS editor (T11) -- the answer both
+      # No changeset review is open in THIS editor -- the answer both
       # review WRITES get until one is bound. A Null rather than a nil check for
       # {CLI::HumanReplies::NoReview}'s reason, and it answers a SENTENCE rather
       # than nil for {RpcThread::Listener::Null::UNANSWERABLE}'s: nil means
@@ -195,18 +195,18 @@ module Lain
       # @param journal [#<<] where a resent request is recorded (4-2.3), the same
       #   duck the Agent's accounting/journal middleware write to; the Null
       #   channel by default, so an un-wired frontend records resends nowhere.
-      # @param resend_bridge [#offer] T18's dispatch seam: the resend worker
+      # @param resend_bridge [#offer] the dispatch seam: the resend worker
       #   offers each rebuilt Request here after journaling the projection.
       #   {Unbridged} by default, so plain --nvim keeps the pure
       #   projection-only resend.
-      # @param compose_notify [#call] where {Compose}'s notices go (T15). The
+      # @param compose_notify [#call] where {Compose}'s notices go. The
       #   TERMINAL's warning renderer, not the editor's journal: every notice
       #   it can produce -- a timed-out round trip, an editor that stopped
       #   taking the draft -- is news for the human sitting at the prompt, and
       #   the editor is by definition the thing that just failed to answer.
       #   Silent by default, so an un-wired frontend reports nowhere.
       # @param question_notify [#call] where {QuestionView}'s one notice goes
-      #   (T12) -- an abandoned question buffer, which has no caller to return
+      #   -- an abandoned question buffer, which has no caller to return
       #   to. The terminal's warning renderer for `compose_notify`'s reason, and
       #   a SEPARATE seam because the two say different things about different
       #   surfaces; a caller wiring both hands over the same renderer.
@@ -236,7 +236,7 @@ module Lain
         # set opens in, and it is built above (it takes the RPC thread).
         #
         # `approval_view:` hands over the SAME object {#approval_view} exposes,
-        # and that hand-over IS UX4's fix -- priming a lain://approval buffer is
+        # and that hand-over IS the fix -- priming a lain://approval buffer is
         # only half of it. {Surfaces#prime} draws the buffer; the `y` on one of
         # its rows resolves through whichever view {CLI::Repl} bound, which is
         # this one. Two views would not draw an unanswerable list (an unwatched
@@ -254,19 +254,19 @@ module Lain
                                  request_buffer: @surfaces.request_buffer)
       end
 
-      # The C-g compose round trip's Ruby end (T15), for the terminal prompt to
+      # The C-g compose round trip's Ruby end, for the terminal prompt to
       # register a key action against and to settle in its own loop. Exposed
       # like {#command_inbox}: a collaborator, never the session.
       # @return [Compose]
       attr_reader :compose
 
-      # The question round trip's Ruby end (T12), for whoever holds a pending
+      # The question round trip's Ruby end, for whoever holds a pending
       # {Question::Set} to open and for the editor's write to answer. A
       # collaborator, never the session.
       # @return [QuestionView]
       attr_reader :question_view
 
-      # The editor's surface on the approval queue (T36), for the repl to hand
+      # The editor's surface on the approval queue, for the repl to hand
       # a queue to watch and for the editor's gesture to answer through. A
       # collaborator, never the session -- and built HERE, so it exists exactly
       # when an editor does: a headless chat constructs no frontend, so there
@@ -290,7 +290,7 @@ module Lain
       def buffers = @surfaces.buffers
 
       # Hand a file on disk to the human, in a focused split, stamped with the
-      # review it belongs to (T16). The editor answers on {#command_inbox} with
+      # review it belongs to. The editor answers on {#command_inbox} with
       # `["review_done", [generation, epic_slug, annotations]]`.
       #
       # @return [String, nil] nil when the open landed, else the notice saying
@@ -320,11 +320,11 @@ module Lain
       # `review_mark` resolves against, and -- through {ChangesetDiff} -- where a
       # `<CR>` on a row actually lands.
       #
-      # The diff surface is wired HERE and only here (T32a), which is what makes
-      # {ReviewView::Unwired}'s refusal unreachable from a review drawn in a real
-      # editor: it is built with the inlet this frontend already owns, so no
-      # caller has to assemble one, and a caller that did would get a second view
-      # whose stamps this one's gestures could never resolve (see
+      # The diff surface is wired HERE and only here, which is what makes
+      # {ReviewView::Unwired}'s refusal unreachable from a review drawn in a
+      # real editor: it is built with the inlet this frontend already owns, so
+      # no caller has to assemble one, and a caller that did would get a second
+      # view whose stamps this one's gestures could never resolve (see
       # {#review_surface} for the whole of that argument). What the caller
       # supplies instead is the CHANGESET, through {ReviewView#reviewing}, once
       # per round.
@@ -332,7 +332,7 @@ module Lain
       # @return [ReviewView]
       def review_view = @review_view ||= ReviewView.new(changesets: ChangesetDiff.new(rpc: @rpc))
 
-      # The changeset review this editor WRITES to (T11): the object whose
+      # The changeset review this editor WRITES to: the object whose
       # answer is what a `review_annotate` or `review_verdict` `:w` succeeds or
       # fails with. Bound after construction, and it has to be -- the session
       # that owns a changeset is built by whoever opened the review, long after
@@ -373,13 +373,13 @@ module Lain
 
       private
 
-      # {RpcThread::Listener}'s concrete implementation for this frontend
-      # (T34): every hand-off the RPC thread makes back into {Neovim}, in one
+      # {RpcThread::Listener}'s concrete implementation for this frontend:
+      # every hand-off the RPC thread makes back into {Neovim}, in one
       # object instead of four hand-defaulted lambdas. {#died} makes
       # RPC-thread death observable: the channel closes, so the drainer exits
       # and producers meet ClosedQueueError instead of feeding a zombie;
       # {Neovim#run} then re-raises the recorded failure. The compose pair is
-      # T15's round trip -- the editor writing or abandoning lain://compose --
+      # the C-g round trip -- the editor writing or abandoning lain://compose --
       # and every method here only ever enqueues or forwards, because a
       # listener method that blocked would block the editor's whole session
       # (see {RpcThread::Listener}'s own must-not-block note).
@@ -421,14 +421,14 @@ module Lain
         def compose_written(lines, generation) = @compose.call.wrote(lines, generation)
         def compose_abandoned(generation) = @compose.call.abandoned(generation)
 
-        # The one hand-off that ANSWERS (T12): its return value is what the
+        # The one hand-off that ANSWERS: its return value is what the
         # editor's `:w` succeeds or fails with, and {QuestionView#wrote}
         # produces exactly that -- nil once the answer is handed on, else the
         # failure naming the line the human has to go fix.
         def question_written(lines, digest) = @question.call.wrote(lines, digest)
         def question_abandoned(digest) = @question.call.abandoned(digest)
 
-        # The changeset review's two writes (T11), {#question_written}'s shape
+        # The changeset review's two writes, {#question_written}'s shape
         # for {#question_written}'s reason: the return value is what the human's
         # `:w` succeeds or fails with, so the review answers its own refusal
         # rather than raising one -- a raise here reaches {RpcThread#answer},
@@ -481,7 +481,7 @@ module Lain
       # would clobber the block's own exception), surfaced only after teardown
       # completes -- wrapped in {SessionFailure}, labeled with WHICH thread
       # died, so this is a clean, actionable notice rather than a raw re-raise
-      # with a backtrace (T9's AC4).
+      # with a backtrace.
       def reraise_recorded_failure
         label, failure = recorded_failures.first
         raise SessionFailure, "#{label}: #{failure.message}", cause: failure if failure
@@ -506,14 +506,14 @@ module Lain
       # raising here should never actually happen -- but if it ever did, a bare
       # `drainer&.join` would raise INSIDE this `ensure`-called method and skip
       # `@rpc.stop` below, leaking the RPC thread AND clobbering {#run}'s
-      # block's own exception (the T9 bug this replaces). Deferring instead
+      # block's own exception (the bug this replaces). Deferring instead
       # keeps `@rpc.stop` unconditional and lets {#reraise_recorded_failure}
       # surface the failure afterward, same as every other recorded death.
       def teardown(drainer, resender)
         @channel.close unless @channel.closed?
         @resend_inbox.close
         join_deferring_failure(drainer) { |e| @drain_failure ||= e }
-        # Bounded (S3): the resend worker may be inside a bridged round trip,
+        # Bounded: the resend worker may be inside a bridged round trip,
         # so its join is capped -- teardown returns even if the wire is slow,
         # and the worker exits itself once the offer settles.
         join_deferring_failure(resender, timeout: TEARDOWN_GRACE) { |e| @resend_failure ||= e }
@@ -538,7 +538,7 @@ module Lain
         @drain_failure = record_worker_death(e)
       end
 
-      # The resend worker (4-2.3, dispatch since T18): a synthetic PRODUCER, not
+      # The resend worker (4-2.3) and its dispatch: a synthetic PRODUCER, not
       # a renderer. It turns each edited-buffer hand-off into a fresh
       # RequestResent -- journaled by {RequestBuffer#resend} and pushed onto the
       # SAME Channel an agent request rides, so the drainer diffs and re-renders
@@ -547,9 +547,9 @@ module Lain
       # a projection and reaches the provider. It must be a thread of its own,
       # and NOT the RPC thread: the RPC thread drains the render queue, so if it
       # blocked pushing onto a full Channel the drainer (blocked posting to a
-      # full render queue) would deadlock it -- and since T18 a bridged offer
-      # can hold this thread for a whole model round trip, which the RPC thread
-      # could never afford. This worker blocks on neither the render queue nor
+      # full render queue) would deadlock it -- and a bridged offer can hold
+      # this thread for a whole model round trip, which the RPC thread could
+      # never afford. This worker blocks on neither the render queue nor
       # the RPC thread, so its Channel push always drains.
       def resend_loop
         while (lines = @resend_inbox.pop)
@@ -566,7 +566,7 @@ module Lain
       end
 
       # The ONE record-and-die shape the two Neovim-owned worker threads share
-      # (T9's card: the third copy becoming a shared shape): hand back the
+      # (the third copy is what made it a shared shape): hand back the
       # failure for the caller to record in its own slot -- where
       # {#reraise_recorded_failure} picks it up AFTER teardown, never masking
       # the block's own exception the way an ensure re-raise would -- close the

@@ -41,7 +41,7 @@ module Lain
     # `SessionRecord::Scribe#catch_up` appends committed turns straight to the
     # session JOURNAL, never to the tee {StatusFeed} rides ("turn records never
     # route -- they are record data, not live-view telemetry"), so a count that
-    # waited for the Event only ever climbed (F76: 2 published against a
+    # waited for the Event only ever climbed (2 published against a
     # `lain://inbox` drawing one, measured live 2026-08-25). The usage record
     # names the committed head, so the cited digests are read off that head's
     # chain in the run's {Store} -- {Frontend::Neovim::InboxView#consume}'s

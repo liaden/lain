@@ -109,8 +109,8 @@ RSpec.describe Lain::Prompt::Slots do
   end
 
   # The loaded snapshot is what every render reads, and it was session-fixed by
-  # CLAIM only -- the trailing `freeze` in #initialize is shallow, so before
-  # T15 the template hashes themselves stayed writable and a later writer could
+  # CLAIM only -- the trailing `freeze` in #initialize is shallow, so the
+  # template hashes themselves used to stay writable and a later writer could
   # grow or replace a slot under an already-constructed Slots. Copied and
   # frozen at construction, that ONE property is mechanical. It is not
   # immutability: the template Strings are still the caller's, and mutating one
@@ -211,7 +211,7 @@ RSpec.describe Lain::Prompt::Slots do
 
   describe "legitimate fills still render, digests unchanged from HEAD" do
     # Recorded from `Slots.load(root: <empty dir>).digests` / `#render_role`
-    # against shipped templates only (no project overrides), before T2's fix.
+    # against shipped templates only (no project overrides), before the fix.
     # The escalation bar: if fixing the binding moves any of these, stop.
     let(:shipped_system_digest) { "blake3:b8f7c81556a743daf8049a1a5290bc50c485f2f04edac5a8e810a3b0b5c9d41f" }
     let(:shipped_role_digests) do
@@ -264,7 +264,7 @@ RSpec.describe Lain::Prompt::Slots do
   # The role namespace is a second, independent filename check (slots.rb:114) --
   # a typo here must be as loud as a top-level one, naming the file and the
   # full shipped roster rather than being silently dropped as an unreadable
-  # override. Moved here from role_spec.rb (T-C6): this is Prompt::Slots'
+  # override. Moved here from role_spec.rb: this is Prompt::Slots'
   # OWN behavior, so it belongs in Prompt::Slots' own spec, not borrowed
   # locality in the Role class's.
   describe "an unknown role slot file is loud (the role namespace, like top-level)" do

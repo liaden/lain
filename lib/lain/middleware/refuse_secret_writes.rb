@@ -17,7 +17,7 @@ module Lain
     # obvious credential assignments. PHI heuristics are explicitly out of
     # scope here -- "this reads like a medical record" is a judgment call, not
     # a regex, which is exactly what `oracle:` is for: a Null Object today, a
-    # future ollama classifier (OR-1) tomorrow, without this class changing
+    # future ollama classifier tomorrow, without this class changing
     # shape.
     #
     # Only the tools named in {GUARDED_TOOLS} are guarded. A `bash` or
@@ -28,9 +28,9 @@ module Lain
     # membership in that Set: a tool that persists content under any other
     # name is unguarded by design, until it earns a place in the Set.
     #
-    # {GUARDED_TOOLS} started as a single hardcoded name (`memory_write`);
-    # M2 generalized it to a Set when `improvement_write` became a second
-    # writer with the same secret-leak exposure. The refusal MESSAGE names
+    # {GUARDED_TOOLS} started as a single hardcoded name (`memory_write`) and
+    # generalized to a Set when `improvement_write` became a second writer
+    # with the same secret-leak exposure. The refusal MESSAGE names
     # whichever tool was actually refused (`effect.name`, not a hardcoded
     # string), but the journaled {Telemetry::WriteRefused} shape -- what a
     # replay reader keys on -- is untouched: still just `tool_use_id` and
@@ -81,11 +81,11 @@ module Lain
 
       # Null Object for the injectable predicate seam: never flags anything,
       # so bare construction needs no guard and today's default cannot be
-      # confused with a real opinion. {Oracle::MemorySave::Gate} (T4/OR-3) is
-      # the real arm this seam exists for -- a heuristic-tier oracle judging
-      # "worth remembering?", collapsed to this seam's one bit -- and a
-      # future ollama-backed classifier (OR-1) drops in the same way, all
-      # without this middleware changing shape.
+      # confused with a real opinion. {Oracle::MemorySave::Gate} is the real
+      # arm this seam exists for -- a heuristic-tier oracle judging "worth
+      # remembering?", collapsed to this seam's one bit -- and a future
+      # ollama-backed classifier drops in the same way, all without this
+      # middleware changing shape.
       class NullOracle
         def secret?(_input) = false
 

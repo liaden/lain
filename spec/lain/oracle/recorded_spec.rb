@@ -2,7 +2,7 @@
 
 require "stringio"
 
-# T3: an oracle call is journaled as a {Telemetry::OracleAnswer} record, and
+# An oracle call is journaled as a {Telemetry::OracleAnswer} record, and
 # {Oracle::Recorded.from_journal} substitutes the recorded answer on replay --
 # keyed by `(oracle_digest, question)`, with a MISS raising rather than silently
 # re-asking the model. The same "recorded is a replay of a real interpretation"

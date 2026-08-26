@@ -4,9 +4,9 @@ require "yaml"
 
 module Lain
   module Bench
-    # T14: a Compare-style report comparing the {Toolset::Disclosure} arms --
-    # {Toolset::Disclosure::Upfront} (T12) and {Toolset::Disclosure::Deferred}
-    # (T13) -- on two axes over a committed fixture of tool-selection tasks:
+    # A Compare-style report comparing the {Toolset::Disclosure} arms --
+    # {Toolset::Disclosure::Upfront} and {Toolset::Disclosure::Deferred} -- on
+    # two axes over a committed fixture of tool-selection tasks:
     # upfront-disclosure cost in tokens, and correct-call rate (does the arm's
     # RECORDED pick match the task's gold tool).
     #
@@ -29,7 +29,7 @@ module Lain
     #
     # A third disclosure arm -- code-API, where the model writes code against
     # tool bindings instead of emitting tool_use blocks -- needs the code-mode
-    # exec boundary (M6), which does not exist yet. Leaving it out of the
+    # exec boundary, which does not exist yet. Leaving it out of the
     # table with no comment would read as "these two arms are the whole
     # axis"; {NOTE} says otherwise on every report.
     #

@@ -33,7 +33,7 @@ module NetworkAccess
   # Matching is on the SPELLING, which is exact for the two literals and taken on
   # the resolver's word for `localhost`. RFC 6761 reserves that name for loopback
   # and every resolver here honours it, so the residual is a machine whose own
-  # resolver already lies -- and dropping the name would break T3's default
+  # resolver already lies -- and dropping the name would break the default
   # `OLLAMA_API_BASE`. Recorded rather than defended against. Nothing wider gets
   # in: `localhost.evil.example.com` and `user:pw@evil.example.com` are both
   # ordinary non-matches, which the posture spec's sibling probe checked.

@@ -9,7 +9,7 @@ module Lain
       # dir: nil/"" picks the newest, an exact filename or unique prefix picks
       # that session. Split out of {Resume} (a pre-existing, self-contained
       # responsibility -- "which file does --resume mean") the same way
-      # {Salvager} is: {Resume} grew past `Metrics/ClassLength` once T18's
+      # {Salvager} is: {Resume} grew past `Metrics/ClassLength` once the
       # salvage wiring landed, and CLAUDE.md's rule is to extract a real
       # collaborator, never loosen the limit.
       class Selector
@@ -57,7 +57,7 @@ module Lain
         end
 
         # The bare pick and prefix matching see only the durable record --
-        # the same default view `lain sessions` lists (T3 fix round), so
+        # the same default view `lain sessions` lists, so
         # resume/fork never silently land on a scratch file the listing
         # hides, nor record a `resumed_from` naming a `.btw` file promotion
         # later renames. The EXACT filename stays selectable above: salvaging

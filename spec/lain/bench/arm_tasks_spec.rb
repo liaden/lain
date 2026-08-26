@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-# B0 (chunk-orchestration-arms-isolation): a small suite of graded coding
-# tasks spanning the pre-registered "procedural vs genuinely-parallel"
-# boundary, feeding the arm sweep (B12) later. Every task grades
-# deterministically with a Grader::Fixture -- no model in the loop -- against
-# a Trajectory (the files an arm's run produced or touched).
+# A small suite of graded coding tasks spanning the pre-registered
+# "procedural vs genuinely-parallel" boundary, feeding the arm sweep later.
+# Every task grades deterministically with a Grader::Fixture -- no model in
+# the loop -- against a Trajectory (the files an arm's run produced or
+# touched).
 RSpec.describe Lain::Bench::ArmTasks do
   def fixture_path(name) = File.join(__dir__, "..", "..", "fixtures", "arms", "#{name}.yml")
 

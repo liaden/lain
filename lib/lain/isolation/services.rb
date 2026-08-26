@@ -16,7 +16,7 @@ module Lain
     # {Tool::Input} reads). Its surface is deliberate and stable -- `postgres` and
     # `redis`, each taking the same keywords the value object does -- and each call
     # returns its frozen declaration, so a future provisioning/port-discovery hook
-    # (B4's compose port discovery) can chain off the returned service without
+    # (compose port discovery) can chain off the returned service without
     # reshaping the loader.
     class Services < DslCatalog
       # The project-scoped DSL file, on the `.lain/` convention (like `.git/`).

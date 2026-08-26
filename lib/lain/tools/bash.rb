@@ -42,7 +42,7 @@ module Lain
     # so a timeout kills the whole process group, not just the shell). Real
     # safety is {#requires_approval?} plus a human (or policy) on the other
     # end of Effect::Handler::Gate, and eventually OS confinement in the
-    # out-of-process Rust exec boundary (M5/M6) -- never this tool's input
+    # out-of-process Rust exec boundary -- never this tool's input
     # validation, which checks only that `timeout` is a sane number.
     class Bash < Tool
       DEFAULT_TIMEOUT = 120
@@ -83,7 +83,7 @@ module Lain
       # The one place BOTH exec arms turn captures into a {Tool::Result} --
       # {Bash} from mixlib's, {CoreExec} from the daemon reply's bin fields --
       # shared so the differential's byte-identity cannot drift out from
-      # under its specs (C3 panel fix 3).
+      # under its specs.
       #
       # {OUTPUT_BOUND} is applied HERE, and the sharing is the reason: a
       # ceiling checked in `#run_string` and `#run_term` separately would be

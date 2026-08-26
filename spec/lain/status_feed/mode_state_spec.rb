@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T8: the mode as the HUD publishes it. StatusFeed's own spec covers what
+# The mode as the HUD publishes it. StatusFeed's own spec covers what
 # reaches `.lain/state.json` and when a flip earns a write; this one covers the
 # composition itself -- which is where the "one rule, one home" argument for
 # publishing a composed lighter instead of the raw names actually has to hold.

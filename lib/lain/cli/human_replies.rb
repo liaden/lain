@@ -4,7 +4,7 @@ require "active_support/core_ext/module/delegation"
 
 module Lain
   module CLI
-    # The human-reply surfaces (I6), lifted out of Repl the way Wiring lifted
+    # The human-reply surfaces, lifted out of Repl the way Wiring lifted
     # chat assembly: answering ask_human is its own responsibility -- the
     # arrival note, the `/inbox` drain, and the editor's :LainReply leg -- and
     # the Metrics trip said so.
@@ -17,7 +17,7 @@ module Lain
     # nothing pending. The digest is also what RETIRES the item -- the item an
     # answer belongs to need not be the one at the head of the list.
     class HumanReplies
-      # I6: one pending human question as the drain surface lists it -- who is
+      # One pending human question as the drain surface lists it -- who is
       # stuck (the asker's chain correlation), since when, the question, and
       # the name an answer must cite to reach it.
       InboxItem = Struct.new(:question, :from, :digest, :asked_at, keyword_init: true) do
@@ -248,7 +248,7 @@ module Lain
       # `@questions` since the last time a fiber was actually watching it.
       # #answer_loop's fiber only lives for one DISPATCHED LINE
       # ({Repl::LineScope} starts it before the line is routed, per
-      # {#surfaces}); the OM-6 supervisor's fleet outlives every one of them, so
+      # {#surfaces}); the supervisor's fleet outlives every one of them, so
       # a subagent's `announce` can enqueue a question while the human sits idle
       # at `you>` with nothing draining it. This is that second watcher, run on
       # demand instead of a second background fiber.
@@ -423,7 +423,7 @@ module Lain
         @inbox.retire(digest)
       end
 
-      # The editor reply leg (I6): the :LainReply command lands on the frontend's
+      # The editor reply leg: the :LainReply command lands on the frontend's
       # rail and this fiber resolves the pending ask from it. Spawned only for
       # an editor that exists -- {NoEditor} answers everything else, so nothing
       # downstream branches on whether one is attached.
@@ -509,11 +509,11 @@ module Lain
       # resolved through the very same index, so "which set is this an answer
       # to" and "which set is this an open of" cannot disagree.
       #
-      # It sent the answer ALONE until T3, and the consumer then guessed: the
-      # oldest item listed. That guess is a set only while one is pending AND
-      # it reached {Pending} at all -- and a question raised from the editor
-      # while the human sits at `you>` never does, so the guess was nil and
-      # the human was told the row in front of them was stale.
+      # It sent the answer ALONE until the row rode beside it, and the consumer
+      # then guessed: the oldest item listed. That guess is a set only while one
+      # is pending AND it reached {Pending} at all -- and a question raised from
+      # the editor while the human sits at `you>` never does, so the guess was
+      # nil and the human was told the row in front of them was stale.
       #
       # A reply that named NO row keeps the oldest-listed reading, and that is
       # not a leftover: :Lain* commands are GLOBAL, so :LainReply is typable
@@ -881,7 +881,7 @@ module Lain
           gestured(@views.call.open(line, generation:), &:opened?)
         end
 
-        # :LainPin's `["pin", [line]]` (B4), which has been sent and dropped for
+        # :LainPin's `["pin", [line]]`, which has been sent and dropped for
         # as long as `open` was: the timeline only ever grows, so a line names one
         # turn forever and no stamp is needed.
         def pin_turn(args) = gestured(@views.call.pin(args.first), &:pinned?)

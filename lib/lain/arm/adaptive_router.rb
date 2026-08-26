@@ -2,7 +2,7 @@
 
 module Lain
   class Arm
-    # OR-5: an adaptive-router topology. One agent, like {SingleThread}, but
+    # An adaptive-router topology. One agent, like {SingleThread}, but
     # WHICH model (and shared sibling template) it runs under is chosen by an
     # oracle from the task's own text, BEFORE the child exists --
     # {Oracle::Router}. The router is asked exactly ONCE per `#run`, and its
@@ -12,7 +12,7 @@ module Lain
     # oracle-backed decision instead of a hardcoded model.
     #
     # STRUCTURALLY, re-routing mid-session is impossible, not merely
-    # discouraged (AC2): `@router`/`@definition` are read ONLY inside
+    # discouraged: `@router`/`@definition` are read ONLY inside
     # `#route`, which runs strictly BEFORE `spawn_seam.call` -- so the running
     # child (the `Agent` `spawn_seam` hands back) is constructed with no
     # reference to either, no method on `Agent` reaches them, and `Run` (the
@@ -26,7 +26,7 @@ module Lain
     # (a cheap model for an easy task, a strong one for a hard task), but it
     # must be visible, never hidden. It is visible on two independent paths: 1)
     # the routing decision itself journals as a {Telemetry::OracleAnswer}
-    # naming the chosen `model`/`template` (AC1), and 2) each child's own
+    # naming the chosen `model`/`template`, and 2) each child's own
     # {Telemetry::TurnUsage} records the model IT actually ran under, so
     # {Ledger}/{Compare} price every run through the real per-model rate --
     # nothing here averages or masks a cross-model run into one blended number.
@@ -76,7 +76,7 @@ module Lain
 
       private
 
-      # The ONE call site that reaches `@router` (AC2's structural claim, made
+      # The ONE call site that reaches `@router` (the structural claim above, made
       # mechanical): ask it, journal the answer via the same
       # {Oracle::Recorded::Journaling} decorator {Oracle::Recorded} itself
       # documents, and return the typed answer -- `model`/`template` cross

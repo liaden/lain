@@ -25,7 +25,7 @@ RSpec.describe Lain::CLI::Command::Surface do
   # with no turn honestly has.
   let(:agent) { instance_spy(Lain::Agent, usage: Lain::Usage.zero, occupancy: nil) }
 
-  # `library:` is required (T15's posture, T40's one keyword): the run loads ONE
+  # `library:` is required, and arrives as ONE keyword: the run loads ONE
   # library and hands it over, so a surface that read its own would be a second
   # read of the same tree -- the drift this class's one-snapshot promise exists
   # to deny.
@@ -49,7 +49,7 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
-  # The pair travelled as two keywords until T40, and a caller could pass one
+  # The pair travelled as two keywords once, and a caller could pass one
   # and forget the other. One keyword makes that impossible; these pin that the
   # OLD pair is no longer accepted, so no caller is quietly half-wired.
   it "takes the pair as one keyword, not two" do
@@ -121,7 +121,7 @@ RSpec.describe Lain::CLI::Command::Surface do
     with_project do |root|
       surface = build_surface(root)
 
-      # T9: /help answers a Renderable now -- the WORDS are what this asserts.
+      # /help answers a Renderable now -- the WORDS are what this asserts.
       listing = surface.commands.dispatch("/help") { raise "fallthrough must not run" }
       expect(listing.text).to include("/help", "/quit", "/rewind", "/greet")
       expect(surface.commands.dispatch("/quit") { raise "fallthrough must not run" }).to eq(:quit)
@@ -147,9 +147,9 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
-  # C12/F77, and the failure the LITERAL set above exists to catch, driven end
-  # to end: a command file can load, pass its own spec, and still be untypeable
-  # because nothing constructed it here. This dispatches the real thing through
+  # The failure the LITERAL set above exists to catch, driven end to end: a
+  # command file can load, pass its own spec, and still be untypeable because
+  # nothing constructed it here. This dispatches the real thing through
   # the registry this class assembles -- and asserts /help lists it, since a
   # capability a human cannot discover is one step from not shipping at all.
   #
@@ -194,7 +194,7 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
-  # T34, and the same failure one layer in. `/review` and `/review-submit` share
+  # The same failure one layer in. `/review` and `/review-submit` share
   # ONE outbox: the first puts a round in and the second takes it out, so two
   # outboxes would be a review that is open in one command and absent from the
   # other -- every object present, nothing to see, and the human told there is

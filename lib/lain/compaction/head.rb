@@ -17,7 +17,7 @@ module Lain
     # verbatim -- the head must be the bytes that will actually be rendered,
     # not a parallel rendering of the same turns.
     #
-    # RULING 2026-07-25, RE-RULED the same day (B2): this head is the candidate
+    # RULING 2026-07-25, RE-RULED the same day: this head is the candidate
     # span MINUS whatever the protection policy exempts, and the Compact it is
     # paired with must be handed the SAME `pins` value. The first ruling made it
     # protection-agnostic and forbade a real policy, because `compact.rb`
@@ -45,10 +45,10 @@ module Lain
       attr_reader :messages
 
       # Canonical bytes of {#messages} -- the same proxy Compact thresholds
-      # against, and, since T17, the very number {Need::TokenThreshold} fires
-      # ON: it reads this measurement instead of dumping the same list a second
-      # time, so "what Need fired over" and "what a compaction would drop" are
-      # one measurement rather than two that have to agree. (See
+      # against, and the very number {Need::TokenThreshold} fires ON: it reads
+      # this measurement instead of dumping the same list a second time, so
+      # "what Need fired over" and "what a compaction would drop" are one
+      # measurement rather than two that have to agree. (See
       # {Context::Compact}'s header for why a proxy and not a tokenizer.)
       #
       # Unconditional, so an EMPTY head measures 2, the bytes of `"[]"`, rather
@@ -86,12 +86,12 @@ module Lain
         # whose elements a caller can still mutate is one whose @bytesize goes
         # stale, and being the single answer is this object's whole job; it also
         # satisfies `Ractor.shareable?`, which CLAUDE.md requires of value
-        # objects and which A6 needs when it hands one to shareable code.
+        # objects and which matters the moment one is handed to shareable code.
         # By COPY, because freezing in place reaches back into an array the
         # caller still owns and -- since only the slice is frozen -- leaves it
         # half-frozen, with a mutable tail and nothing frozen at all when the
         # slice is empty. Two Heads over one list at different `keep_last` is a
-        # thing A6 may well do. The copy is affordable: it measures as noise
+        # thing a caller may well do. The copy is affordable: it measures as noise
         # beside the `Canonical.dump` on the next line.
         @messages = Ractor.make_shareable(droppable(messages, pins), copy: true)
         @bytesize = Canonical.dump(@messages).bytesize
@@ -114,7 +114,7 @@ module Lain
       # landing: one assistant at index 1 followed by thirty user messages
       # reported `moved` 28 and a head of ONE message where three were asked,
       # with {Need} then never crossing threshold and compaction silently
-      # ceasing while every predicate read normally. The relaxed rule (T4) took
+      # ceasing while every predicate read normally. The relaxed rule took
       # the cut where it was asked for and that failure mode no longer exists,
       # so `#moved` now means one thing: a tool pair was in the way, and the cut
       # moved the single position that clears it.

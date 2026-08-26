@@ -21,7 +21,7 @@ module Lain
     # against a copy that can disagree with what the human is looking at.
     #
     # That placement is also what satisfies the extmark contract rather than
-    # merely coexisting with it. T15's panel measured that a mark inside a
+    # merely coexisting with it. A panel measured that a mark inside a
     # rewritten span MOVES rather than invalidates -- `get_extmark_by_id` still
     # answers a position and never reports invalid -- so drift can only ever be
     # a comparison of CONTENT against CONTENT, taken at settle. The editor does

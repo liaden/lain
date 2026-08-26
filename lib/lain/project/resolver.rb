@@ -64,7 +64,7 @@ module Lain
       # `.git` is a DIRECTORY in a primary checkout and a one-line `gitdir:`
       # pointer FILE in a linked worktree, so this is only ever tested with
       # `exist?`. {CLI::IsolationBackend#repo_root} reads THIS constant rather
-      # than spelling `".git"` again (T5), so the two walks cannot come to
+      # than spelling `".git"` again, so the two walks cannot come to
       # disagree about what a repository looks like -- and they now share the
       # ceiling as well: that walk builds a {Refusals} and a {Walk} of its own
       # from the same inputs.
@@ -274,12 +274,12 @@ module Lain
         # @param refusals [Refusals]
         def initialize(cwd:, refusals:)
           # `Pathname#ascend` is lexical, so what is handed in decides the
-          # ancestry: this class is always given a `realpath`. T5 reconciled
-          # {CLI::IsolationBackend#repo_root} to the same rule -- it expanded
-          # lexically until then, so a symlink whose LEXICAL parent held a
-          # `.git` its real parent does not made that walk find a repository
-          # this one cannot see. It resolves its root before ascending now, and
-          # drives this same class to do the ascending.
+          # ancestry: this class is always given a `realpath`, and
+          # {CLI::IsolationBackend#repo_root} was later reconciled to the same
+          # rule -- it expanded lexically until then, so a symlink whose LEXICAL
+          # parent held a `.git` its real parent does not made that walk find a
+          # repository this one cannot see. It resolves its root before
+          # ascending now, and drives this same class to do the ascending.
           ascent = Pathname.new(cwd).ascend.map(&:to_s)
           @candidates = ascent.take_while { |dir| !refusals.refuse?(dir) }
           # Never nil: `/` terminates every absolute ascent and is always in
@@ -382,8 +382,8 @@ module Lain
       # which is what keeps a chat and the subcommands looking at one set of
       # epics from anywhere in the tree.
       #
-      # It lived on {CLI::Wiring} until the T5 re-review, which is the wrong
-      # arrow twice over: three subcommands depended on the CHAT ASSEMBLER for a
+      # It lived on {CLI::Wiring} until a re-review, which is the wrong arrow
+      # twice over: three subcommands depended on the CHAT ASSEMBLER for a
       # question with nothing to do with chat wiring, and a method whose own
       # docstring claims to be the single authority on projects does not belong
       # on the object that merely happens to have needed it first.

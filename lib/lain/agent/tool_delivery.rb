@@ -14,7 +14,7 @@ module Lain
     # uninterruptible commit, a journal record and a re-raise, over answers that
     # have to outlive the unwind.
     #
-    # F46, the half an in-process handler can see. The window that strands a
+    # This is the half an in-process handler can see. The window that strands a
     # `tool_use` is exactly the gap this object spans -- the assistant turn is
     # committed ({Agent#commit_and_account}) and its results are not -- and
     # before this, an interrupt in that gap unwound {ToolRunner#run}'s
@@ -118,11 +118,12 @@ module Lain
         # a Ctrl-C is strictly worse than losing a repair, and a bare
         # ArgumentError out of a repair leaves its caller holding neither the
         # repair nor the failure it was handling. Nothing is committed and
-        # nothing is journalled: that is exactly the pre-T6 behaviour for this
-        # one shape, and the honest torn head it leaves is what
-        # {CLI::Resume::Cancellation} still refuses namedly at load, through the
-        # same translation ({Cancellation::Unpairable}) for the same reason. A
-        # record here would only name the ids just declared unusable.
+        # nothing is journalled: that is exactly the behaviour from before the
+        # cancellation commit, for this one shape, and the honest torn head it
+        # leaves is what {CLI::Resume::Cancellation} still refuses namedly at
+        # load, through the same translation ({Cancellation::Unpairable}) for the
+        # same reason. A record here would only name the ids just declared
+        # unusable.
         nil
       end
 

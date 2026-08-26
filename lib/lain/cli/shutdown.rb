@@ -21,8 +21,8 @@ module Lain
     # Both seams are fully built and spec'd, but {CLI::Conductor#build_shutdown}
     # -- the only production caller -- passes neither. Today `#drain`
     # (`wait_responses`) settles ZERO actors (only the run task's own `#wait`),
-    # and `#enter` notifies nobody on a state change (T21/T22 chose poll-driven
-    # rendering over transition-driven). See each param doc below for who is
+    # and `#enter` notifies nobody on a state change (the countdown was built
+    # poll-driven, not transition-driven). See each param doc below for who is
     # expected to wire it.
     #
     # == Interrupting through Budget
@@ -73,14 +73,15 @@ module Lain
       #   {Middleware::Timeout} seam)
       # @param grace [Numeric] seconds the countdown runs before expiry
       # @param actors [Enumerable<#settle>] long-lived children to settle on a
-      #   graceful drain (T3 makes `settle` safe); none by default. UNWIRED in
-      #   production -- {CLI::Conductor#build_shutdown} passes no actors, so
-      #   `#drain` settles nothing beyond the run task itself today. OM-6 is
-      #   expected to wire the actor registry here.
+      #   graceful drain (the supervisor's drain view absorbs a failing actor,
+      #   so `settle` is safe); none by default. UNWIRED in production --
+      #   {CLI::Conductor#build_shutdown} passes no actors, so `#drain` settles
+      #   nothing beyond the run task itself today. The supervisor's bounded
+      #   drain view is expected to wire the actor registry here.
       # @param on_transition [#call] notified `(state, deadline)` after each
-      #   transition -- the seam T21's countdown UI renders on. UNWIRED in
+      #   transition -- the seam a countdown UI renders on. UNWIRED in
       #   production -- {CLI::Conductor#build_shutdown} passes the default
-      #   no-op, because T21/T22 built the countdown as poll-driven
+      #   no-op, because the countdown was built poll-driven
       #   ({CLI::Conductor::CountdownTicker}) instead. A future event-driven UI
       #   is the expected caller.
       def initialize(run_task:, closer:, budget: Agent::Budget.new,
@@ -103,8 +104,8 @@ module Lain
       # closes -- or until the ingress itself closes ({#dispose}, in ANY order
       # relative to this fiber), which is clean retirement, never a crash: the
       # owner tearing the pipe down is a statement that no input will ever
-      # arrive, not an event to journal. Blocks the calling fiber -- T22 spawns
-      # it as `task.async`.
+      # arrive, not an event to journal. Blocks the calling fiber --
+      # {CLI::Conductor} spawns it as `task.async`.
       def coordinate
         handle(await_input) until finished?
         self
@@ -178,10 +179,10 @@ module Lain
       # Stop the run through Budget, let the cancellation settle, then close. The
       # Agent's `defer_stop` holds the stop off its commit+journal atom, so the
       # wait returns on a whole Timeline, never a torn one. The deadline dies
-      # BEFORE :draining is announced: a T21 renderer sees state and deadline
-      # through the same notification, and a draining that still carried the
-      # grace deadline would render a countdown for a window that no longer
-      # exists.
+      # BEFORE :draining is announced: a countdown renderer sees state and
+      # deadline through the same notification, and a draining that still
+      # carried the grace deadline would render a countdown for a window that
+      # no longer exists.
       def force_stop(reason)
         @deadline = nil
         enter(:draining)
@@ -228,7 +229,7 @@ module Lain
       # that touches fiber machinery: a Mutex another fiber on this same thread
       # holds is a self-deadlock (the holder cannot run until the trap
       # returns), a `Thread::Queue` unblocked from trap context on the reactor
-      # thread is version-sensitive (panel S5), and no fiber may be resumed or
+      # thread is version-sensitive, and no fiber may be resumed or
       # yielded from a trap. The invariant {#signal} keeps is therefore: no
       # locks, no Thread::Queue, no fiber operations -- one nonblocking
       # `write(2)` of a byte to a pipe. The coordinator's fiber parks on the
@@ -259,9 +260,9 @@ module Lain
         # Safe to call from a real Signal.trap, with one ordering asterisk:
         # after {#dispose} the pipe is closed and the write raises IOError
         # instead of returning -- rescued here to a plain nil, so a trap that
-        # fires in the teardown race window still never raises. T22 removes
-        # traps BEFORE disposing; this rescue is the belt under that ordering,
-        # not a license to skip it.
+        # fires in the teardown race window still never raises. The conductor
+        # removes traps BEFORE disposing; this rescue is the belt under that
+        # ordering, not a license to skip it.
         def signal(name)
           @write.write_nonblock(BYTES.fetch(name), exception: false)
         rescue IOError
@@ -290,8 +291,8 @@ module Lain
         # Close the pipe fds. Explicit, not folded into the coordinator's exit,
         # so the teardown order is the OWNER's choice: disposing under a parked
         # coordinator wakes its read with IOError, which {#read} folds into
-        # retirement. T22 still removes the traps first -- see {#signal}'s
-        # ordering asterisk.
+        # retirement. The conductor still removes the traps first -- see
+        # {#signal}'s ordering asterisk.
         def dispose
           [@read, @write].each { |io| io.close unless io.closed? }
           self

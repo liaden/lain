@@ -40,7 +40,7 @@ RSpec.describe Lain::StatusFeed do
   end
 
   # The two records Approval::Queue writes around one gated call: the park
-  # (T4's Telemetry::ApprovalPending) and the decision (the Pending itself,
+  # (the Telemetry::ApprovalPending) and the decision (the Pending itself,
   # whose #to_journal is the id-less "approval_decision" record).
   def approval_park(tool: "bash", tool_use_id: "tu_1")
     Lain::Telemetry::ApprovalPending.new(requester: "agent", tool:, tool_use_id:)
@@ -133,7 +133,7 @@ RSpec.describe Lain::StatusFeed do
       expect(published["cache_deadline"]).to eq((t2 + described_class::DEFAULT_CACHE_PROFILE[:ttl]).iso8601)
     end
 
-    # CAC-2: the scheduler must read a provider's actual cache mechanics, not
+    # The scheduler must read a provider's actual cache mechanics, not
     # a fixed guess -- Anthropic's TTL differs from a future OpenAI-compatible
     # arm's, so pinning the ttl at 60 (not the 300s default) is what proves
     # the injected profile is actually consulted rather than the constant.
@@ -187,7 +187,7 @@ RSpec.describe Lain::StatusFeed do
       expect(published["fleet"]).to eq([])
     end
 
-    # FIX 3 (review round): a review probe redelivered the identical :spawn
+    # A review probe redelivered the identical :spawn
     # event twice (a plausible journal replay / resume-after-crash salvage)
     # and asked whether the fleet grows a phantom duplicate for one real
     # spawn. It must not -- fleet is keyed by digest, so a redelivery is a
@@ -232,7 +232,7 @@ RSpec.describe Lain::StatusFeed do
       expect(published["inbox_count"]).to eq(0)
     end
 
-    # FIX 2 (review round): the shipped example above used a synthetic :turn
+    # The shipped example above used a synthetic :turn
     # built straight from the question's digest. The REAL Tools::AskHuman#reply
     # shape is an A :message (from: "human", causal_parents: [Q.digest]) --
     # and Event::Projection#pending's own doc is explicit that a :message's
@@ -244,7 +244,7 @@ RSpec.describe Lain::StatusFeed do
     # refusal still stands: {Frontend::Neovim::InboxView}'s parity spec pins
     # this class and the nvim inbox view to agreeing at every step on exactly
     # this rule, and retiring on a reply would break it. The live over-count
-    # that made the question worth asking (F76) was a different defect with a
+    # that made the question worth asking was a different defect with a
     # different fix -- the committed turn reaches this sink as a
     # {Lain::Telemetry::TurnUsage}, not as a :turn Event -- and it is fixed, in
     # the "retiring off the record the tee actually carries" group below.
@@ -267,7 +267,7 @@ RSpec.describe Lain::StatusFeed do
       expect(published["inbox_count"]).to eq(0)
     end
 
-    # F76, measured live 2026-08-25: the HUD said 2 while `lain://inbox` drew
+    # Measured live 2026-08-25: the HUD said 2 while `lain://inbox` drew
     # one. The :turn Event every example above hands this feed NEVER REACHES IT
     # in a live chat -- SessionRecord::Scribe#catch_up appends committed turns
     # to the session journal, not to the tee -- so the count only ever climbed.
@@ -397,10 +397,10 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
-  # T7: the one state a human is actually asked to ACT on. The park record
-  # (T4) and the decision record are written by Approval::Queue around the
-  # same gated call and both ride the tee this sink sits in -- but the
-  # decision carries NO tool_use_id, so the pair is counted, never keyed.
+  # The one state a human is actually asked to ACT on. The park record and
+  # the decision record are written by Approval::Queue around the same gated
+  # call and both ride the tee this sink sits in -- but the decision carries
+  # NO tool_use_id, so the pair is counted, never keyed.
   describe "approvals_pending" do
     it "reports one pending approval once a tool call parks awaiting a verdict" do
       feed = described_class.new(path:)
@@ -485,7 +485,7 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
-  # T7/T5: the run's own measures, published as PLAIN DURATIONS beside the one
+  # The run's own measures, published as PLAIN DURATIONS beside the one
   # absolute deadline (cache_deadline) -- a renderer ticks the deadline
   # locally, but elapsed/idle/since_compaction are monotonic readings, never
   # wall-clock instants.
@@ -542,9 +542,9 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
-  # T10/F47. `Compaction::Source::Derived` counts consecutive derivation
-  # refusals and journals the streak, and until this card nothing in `lib/`
-  # read it. Both ends of the streak ride ONE channel -- the journal the
+  # `Compaction::Source::Derived` counts consecutive derivation refusals and
+  # journals the streak, and until recently nothing in `lib/` read it. Both
+  # ends of the streak ride ONE channel -- the journal the
   # Backend hands the Source is the tee this feed sits in -- so a refusal
   # raises the streak here and the `context_derived` of a successful
   # derivation clears it.
@@ -594,7 +594,7 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
-  # T7/T6: how full the live model's window the last turn left it, derived
+  # How full the live model's window the last turn left it, derived
   # from the SAME TurnUsage record the cache deadline slides on -- the record
   # names both the tokens and the model, so no live Agent is consulted.
   describe "occupancy" do
@@ -682,7 +682,7 @@ RSpec.describe Lain::StatusFeed do
       expect(published["occupancy"]).to eq(0.5)
     end
 
-    # T10's half-fix guard. Two surfaces read this number -- `.lain/state.json`
+    # The half-fix guard. Two surfaces read this number -- `.lain/state.json`
     # (this sink) and the `ctx` segment of the REPL prompt line
     # ({Frontend::PromptComposer::RunState}, which asks the live {Agent}) -- and
     # they divide by whatever book each was handed. Wiring one and not the other
@@ -762,7 +762,7 @@ RSpec.describe Lain::StatusFeed do
     # spec/lain/status_feed/journaled_usage_spec.rb.
   end
 
-  # E7: what this session has spent, summed off the same per-payment records
+  # What this session has spent, summed off the same per-payment records
   # the Journal keeps. Every example here is about the number being a RUNNING
   # TOTAL over events -- which is what puts it in #observed rather than the
   # measures, and what the seam spec pins against Agent::Accounting.
@@ -864,7 +864,7 @@ RSpec.describe Lain::StatusFeed do
     # records, publishes the running total, and does so in #observed.
   end
 
-  # T8: the mode, published for the tmux HUD. Two keys, because they answer
+  # The mode, published for the tmux HUD. Two keys, because they answer
   # different questions: `posture` is the exclusive slot as DATA (a bench, an
   # nvim view, a journal reader), `mode_lighter` is the already-composed
   # rendering, so none of the three renderers reading `.lain/state.json` needs
@@ -937,7 +937,7 @@ RSpec.describe Lain::StatusFeed do
       expect(File).to have_received(:write).once
     end
 
-    # The carry-forward T4 left this card: `/mode +auto_approve` journals
+    # The carry-forward from the approval work: `/mode +auto_approve` journals
     # `manual -> manual`, and auto_approve is the one layer that alters an
     # outcome. A guard comparing the posture ALONE would suppress the publish
     # and leave the HUD saying "MAN" while the approval gate had been turned
@@ -1036,7 +1036,7 @@ RSpec.describe Lain::StatusFeed do
       expect(published["since_compaction"]).to eq(0)
     end
 
-    # T10: ARRIVAL, not derivation. `Backend#compaction_source` hands the
+    # ARRIVAL, not derivation. `Backend#compaction_source` hands the
     # Source the very journal `CompactionMount#destination` reads off this
     # chronicle's instrumentation, and that is the tee this feed rides -- so a
     # refusal written by `Compaction::Source::Derived` lands here. Driven down
@@ -1052,10 +1052,10 @@ RSpec.describe Lain::StatusFeed do
       expect(published["derivation_refusal_streak"]).to eq(2)
     end
 
-    # T8: the same wiring question for the mode. Every other mode example hands
+    # The same wiring question for the mode. Every other mode example hands
     # a Telemetry::ModeSwitch straight to `feed <<`, which proves the
     # derivation and proves nothing about ARRIVAL -- and arrival is exactly
-    # what T13's known gap got wrong one field over. So this drives a real
+    # what a known gap one field over got wrong. So this drives a real
     # Mode::Switch over the chronicle's own record journal, the leg
     # Approval::PolicySwitch and Context::ModelSwitch already use.
     it "publishes a flip made by a real Mode::Switch over the chronicle's record journal" do
@@ -1088,7 +1088,7 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
-  # T7's two NON-GOALS, pinned so a later change cannot make either worse
+  # The two NON-GOALS, pinned so a later change cannot make either worse
   # without a spec saying so: the live inbox over-count (the :turn that would
   # retire a question never reaches this sink -- see the class doc) and the
   # fleet undercount (identical spawns share one content address, by design).
@@ -1189,7 +1189,7 @@ RSpec.describe Lain::StatusFeed do
       expect(File.read(nested)).not_to be_empty
     end
 
-    # T29: this feed, `lain up`'s HUD and the TTY prompt all default to the same
+    # This feed, `lain up`'s HUD and the TTY prompt all default to the same
     # file and now ASK one locator for it. The locator is stubbed to answer a
     # path it would never derive on its own, so the example fails if the default
     # is composed here instead of delegated -- a literal cannot honour an answer
@@ -1220,7 +1220,7 @@ RSpec.describe Lain::StatusFeed do
 
       now = t2
       allow(File).to receive(:write).and_raise(Errno::ENOSPC)
-      # The refusal is NAMED since F50: the destination moved from the
+      # The refusal is NAMED because the destination moved from the
       # project's own `.lain/`, which the user is by definition working in, to
       # a state home that can be read-only or occupied, so a bare errno now
       # reaches a human as a crash about a path they never typed. The kernel's
@@ -1239,7 +1239,7 @@ RSpec.describe Lain::StatusFeed do
       expect(Dir.children(@dir)).to eq(["state.json"])
     end
 
-    # FIX 3 (review round): publishing unconditionally was part of the O(n^2)
+    # Publishing unconditionally was part of the O(n^2)
     # shape -- a duplicate delivery or an unrecognized event still paid a
     # write+rename. Derived state is now compared before writing.
     it "skips the write+rename entirely when the derived state did not change" do
@@ -1287,7 +1287,7 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
-  # FIX 3 (review round): the O(n) Event::Projection fold that used to run on
+  # The O(n) Event::Projection fold that used to run on
   # EVERY `<<` made a session's total cost O(n^2) -- a reviewer measured 1k
   # events at 0.245s and 8k events at 8.554s. Pinned here as a cost-SHAPE
   # invariant rather than a wall-clock budget (flaky on shared/loaded CI
@@ -1324,7 +1324,7 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
-  # FIX 3 side effect, not itself a fix: the reviewer's torn-read probe
+  # A review side effect, not itself a fix: the reviewer's torn-read probe
   # confirmed the atomic-rename mechanism holds under a tight concurrent
   # write/read loop (it did not find a defect, unlike the other probes), kept
   # here as a permanent regression guard since it is cheap insurance on the

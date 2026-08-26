@@ -10,7 +10,7 @@ module Lain
       end
     end
 
-    # A hand-edited resend was handed to the loop for dispatch: T18's
+    # A hand-edited resend was handed to the loop for dispatch: the resend
     # provenance stamp, in the record TYPE like {RequestResent}'s own (never in
     # `extra`, which rides onto the wire on any rebuild-and-dispatch). Written
     # by {CLI::ResendBridge}, never by the frontend (the projection half of a

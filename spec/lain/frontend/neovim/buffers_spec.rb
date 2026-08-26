@@ -5,7 +5,7 @@ require "neovim"
 require "tmpdir"
 require "timeout"
 
-# I7: lain:// buffer ERGONOMICS -- filetypes, syntax, motions -- on the same
+# The lain:// buffer ERGONOMICS -- filetypes, syntax, motions -- on the same
 # real headless-nvim harness as neovim_spec/neovim_buffers_spec/inbox_view_spec
 # (a SECOND, independent connection, {#inspector}, observes what the editor
 # actually did). Content is injected straight through the runtime's own
@@ -59,7 +59,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # directly from the inspector connection -- `_G.__lain` is nvim-process-wide
   # Lua state, reachable from any RPC connection, not just the one that
   # injected it (the same fact {RpcThread}'s own render queue relies on).
-  # `generation` is the OPTIONAL rendering stamp (T16), sent exactly as
+  # `generation` is the OPTIONAL rendering stamp, sent exactly as
   # {Lain::Frontend::Neovim::RenderQueue#post_view} sends it: present for the
   # one view whose gesture resolves through a rendering index (lain://inbox),
   # ABSENT -- not nil -- for every other, because a nil crosses msgpack as
@@ -219,7 +219,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T17/F17: the ONE thing a spec injecting rendered lines through `set_view`
+  # The ONE thing a spec injecting rendered lines through `set_view`
   # cannot see -- what happens when a view's own rendering reaches
   # `nvim_buf_set_lines`. Driven through real {Lain::Telemetry} events and a
   # real {Lain::Store} for that reason, and over TWO asks, because the freeze
@@ -267,7 +267,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # FIX 2. The two examples around this one drive the whole path, so they pass
+    # The two examples around this one drive the whole path, so they pass
     # whichever half of the repair is present -- and the contract they are named
     # for belongs to the VIEW: {TimelineView#render_chain} indexes digests by
     # POSITION, so a turn that renders as two lines desynchronizes the pin index
@@ -362,7 +362,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # T15/ruling 12 repointed this key: <CR> used to raise a one-line answer
+    # Question SETS repointed this key: <CR> used to raise a one-line answer
     # prompt and invoke :LainReply with it, and a set of N questions has no
     # single-line answer. What survives is the PROPERTY the old example pinned
     # -- the key invokes a COMMAND a human could type by hand, never a private
@@ -380,7 +380,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # T16: the stamp, not the line count. Two renderings are routinely the same
+    # The stamp, not the line count. Two renderings are routinely the same
     # height -- the retire-then-arrive sequence produces exactly that -- so a
     # count cannot say which one the human is holding, and Ruby resolved the
     # gesture against the wrong one. What the editor sends back is what the
@@ -432,13 +432,14 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # SEQUENTIAL since T35, and it has to be: two lains attached to one editor
-    # at once is refused by name now, so the only re-attach there is is the one
-    # a human performs -- quit lain, start another in the same nvim. What it
-    # pins is unchanged, because nothing is torn down when a lain exits: the
-    # second arrives to buffers, commands and maps its predecessor left
-    # standing, and the runtime's `define` deleting before it creates (with
-    # every augroup `{ clear = true }`) is what keeps one of each.
+    # SEQUENTIAL since the second-attach refusal landed, and it has to be: two
+    # lains attached to one editor at once is refused by name now, so the only
+    # re-attach there is is the one a human performs -- quit lain, start
+    # another in the same nvim. What it pins is unchanged, because nothing is
+    # torn down when a lain exits: the second arrives to buffers, commands and
+    # maps its predecessor left standing, and the runtime's `define` deleting
+    # before it creates (with every augroup `{ clear = true }`) is what keeps
+    # one of each.
     #
     # It was written as one attach NESTED inside another, which is the shape
     # ticket 31 measured as silent data destruction. The spec certified the
@@ -487,7 +488,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T13: `x` in lain://question. Same harness and the same idiom as everything
+  # `x` in lain://question. Same harness and the same idiom as everything
   # above -- the document is injected straight through the runtime's own
   # `set_question` entry point, because the keymap is a fact about what
   # runtime.lua does with rendered lines, and the claim it has to earn is that
@@ -532,9 +533,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     def row_of(lines, text) = lines.index(text) + 1
 
     # The document straight into the buffer, then zR. The at-rest fold state
-    # (T12) leaves every question but the first CLOSED, and these examples are
-    # about the keymap rather than the fold surface -- neovim_runtime_spec pins
-    # that -- so opening them keeps a cursor seated inside a fold out of it.
+    # leaves every question but the first CLOSED, and these examples are about
+    # the keymap rather than the fold surface -- neovim_runtime_spec pins that
+    # -- so opening them keeps a cursor seated inside a fold out of it.
     #
     # The priming wait is this file's own idiom and not decoration: {#run}
     # returns once the runtime is injected, but the drain thread is still
@@ -630,7 +631,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # a line", and the tick is the one line this card made special. A bare
     # buffer write leaves NO redo entry, so `.` silently replayed the previous
     # real change -- the raw `x` from the line before -- and ate the option's
-    # "- ". The panel's P1 sequence exactly, and the resulting document is still
+    # "- ". The panel's sequence exactly, and the resulting document is still
     # one the grammar renders: a repeated toggle is an untick.
     it "repeats the tick with `.`, never a stale `x`, on the line the tick made special" do
       frontend.run do
@@ -758,7 +759,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # A tick is a real edit, so the untouched-write refusal (T12) is done with
+    # A tick is a real edit, so the untouched-write refusal is done with
     # and a PLAIN `:w` submits -- which is the path a human actually takes.
     # The real QuestionView here rather than the injected document: the write's
     # verdict is Ruby's, and it is the half a bare set_question cannot exercise.
@@ -815,7 +816,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # T5's caveat: a question BODY is rendered verbatim and may legally hold a
+    # The caveat: a question BODY is rendered verbatim and may legally hold a
     # line matching OPTION -- a fenced diff showing `- [x] `no` No` is the
     # documented case, and here it is byte-identical to a real option line.
     # DECIDED: `x` falls through to vim's own there. The keymap takes only the

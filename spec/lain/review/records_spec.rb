@@ -20,7 +20,7 @@ RSpec.shared_examples "a review journal record" do |discriminator|
     expect(described_class::JOURNAL_TYPE).to eq(discriminator)
   end
 
-  # AC1, in its strong form: not `include`, but the whole record back. The
+  # The strong form: not `include`, but the whole record back. The
   # reconstruction is the half that catches a member the wire cannot carry -- a
   # Symbol side journals as a String, and a record that cannot be rebuilt from
   # its own line is one no session can replay.
@@ -70,9 +70,9 @@ RSpec.describe Lain::Review::ChangesetOpened do
       .to raise_error(ArgumentError, 'source must name what produced the changeset, got ""')
   end
 
-  # The source registry is the port's (T3) and one of its entries is deletable
-  # (T10). A second copy of the set here would have to be edited to delete a
-  # capability, which is exactly the drift a shared vocabulary avoids.
+  # The source registry is the port's, and one of its entries is deletable. A
+  # second copy of the set here would have to be edited to delete a capability,
+  # which is exactly the drift a shared vocabulary avoids.
   it "accepts any named source rather than restating the source registry" do
     expect(opened(source: "github_pr").source).to eq("github_pr")
   end
@@ -133,7 +133,7 @@ RSpec.describe Lain::Review::CorpusExtended do
 end
 
 # One hunk's reviewed mark. The tri-state a file or a commit shows is DERIVED
-# from these (T8), so the vocabulary stored here is binary and closed.
+# from these, so the vocabulary stored here is binary and closed.
 RSpec.describe Lain::Review::HunkMarked do
   def marked(**overrides)
     described_class.new(hunk_key: "hunk-content-v1:beef", state: "reviewed", **overrides)
@@ -153,7 +153,7 @@ RSpec.describe Lain::Review::HunkMarked do
     expect { marked(hunk_key: nil) }.to raise_error(ArgumentError, /hunk_key/)
   end
 
-  # The key's scheme prefix belongs to Review::Hunk (T2), which is the object
+  # The key's scheme prefix belongs to Review::Hunk, which is the object
   # that can change it. Restating the prefixes here would be a second copy of
   # that scheme waiting to disagree with the first.
   it "does not restate the key scheme it stores" do
@@ -227,7 +227,7 @@ RSpec.describe Lain::Review::AnnotationPlaced do
 
   it_behaves_like "a review journal record", "annotation_placed"
 
-  # AC3. The line is a position, read exactly as strictly as the epic sibling's:
+  # The line is a position, read exactly as strictly as the epic sibling's:
   # a truncated "42abc" would anchor the note to a line nobody named, and a
   # negative one to a line that cannot exist.
   it "refuses a line that is not the positive canonical integer the editor sent" do
@@ -239,7 +239,7 @@ RSpec.describe Lain::Review::AnnotationPlaced do
     expect(placed(line: "42").line).to eq(42)
   end
 
-  # AC3's other half: refused at CONSTRUCTION, so nothing malformed ever reaches
+  # The other half: refused at CONSTRUCTION, so nothing malformed ever reaches
   # the fd. A record refused on the way back out would already be on disk.
   it "refuses before the journal is ever written to" do
     io = StringIO.new
@@ -315,9 +315,10 @@ RSpec.describe Lain::Review::AnnotationPlaced do
   end
 
   # The guard is reachable WITHOUT the constructor, which is what makes the
-  # numericality clause above WireInteger real rather than dead: T13 folds these
-  # records back in from the journal, where a line is already an Integer and
-  # WireInteger is never called. Without this example the clause deletes clean.
+  # numericality clause above WireInteger real rather than dead: the session
+  # fold reads these records back in from the journal, where a line is already
+  # an Integer and WireInteger is never called. Without this example the clause
+  # deletes clean.
   it "re-refuses a line through its guard alone, where WireInteger cannot reach" do
     carrier = described_class.declared_carrier.build(line: -1)
     carrier.valid?
@@ -327,7 +328,7 @@ RSpec.describe Lain::Review::AnnotationPlaced do
   end
 end
 
-# AC4, asked here as well as globally because the global sweep cannot ask it of
+# Asked here as well as globally because the global sweep cannot ask it of
 # these records. spec/journalable_surface_spec.rb groups by journal_type over the
 # records GenericBuild could BUILD, and `hunk_marked`, `review_verdict` and
 # `annotation_placed` refuse every uniform dummy -- so a collision on any of the

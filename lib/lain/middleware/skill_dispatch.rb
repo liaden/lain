@@ -17,12 +17,12 @@ module Lain
     #                                         naming the known set, NO model turn
     #   role-bound (`@role/skill`)          -> fold a persona'd one-shot subagent's
     #                                         final answer into env[:response] via
-    #                                         the {Skill::RoleSpawn} seam (T-B3)
+    #                                         the {Skill::RoleSpawn} seam
     #   malformed (parse raises Malformed)  -> propagate; the dispatch boundary
     #                                         rescues Lain::Error and renders it
     #
     # A short-circuit answers by setting env[:response] and NEVER calling
-    # downstream -- the B0 dispatch-boundary seam renders env[:response] with
+    # downstream -- the dispatch-boundary seam renders env[:response] with
     # zero model turn. The response is a real {Response} whose text is the loud
     # message, so the one boundary renderer (`render_response`) handles it exactly
     # as it handles a model turn; this middleware never touches the terminal.
@@ -66,14 +66,14 @@ module Lain
                       "unknown skill #{invocation.skill.inspect}, expected one of #{@catalog.names.inspect}")
       end
 
-      # T-B3. A role-bound line folds a persona'd one-shot subagent's final
+      # A role-bound line folds a persona'd one-shot subagent's final
       # answer into env[:response]: the {Skill::RoleSpawn} seam fetches the role,
       # spawns it under its policy/persona in the parsed context mode
       # (`:inherit` for `@role/skill`, `:fresh` for `@role[/skill]`), and runs
       # the rendered scaffold + args to a single result. Setting env[:response]
-      # short-circuits, so the B0 boundary renders the child's answer with ZERO
+      # short-circuits, so the boundary renders the child's answer with ZERO
       # parent turn -- the subagent's turns live attributed in the shared Store,
-      # never in the parent's rendered conversation (OM-2 out-of-band). An
+      # never in the parent's rendered conversation (out-of-band). An
       # unknown role raises {Role::Catalog::Unknown} BEFORE any spawn (no
       # tokens); it is a {Lain::Error}, so -- exactly like {Malformed} -- it
       # propagates to the dispatch boundary, which renders it and loops.

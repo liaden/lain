@@ -4,7 +4,7 @@ require "json"
 require "stringio"
 
 # LiveReplay re-runs a recorded task against a real provider, SEQUENTIALLY (n:
-# sweeps are deferred to the M5 concurrency choice), and records fresh
+# sweeps are deferred to a later concurrency choice), and records fresh
 # Usage/Journal. The network path is exercised only under :live; the mechanics
 # below drive it with Provider::Mock, which never touches the network, so they
 # are safe untagged.

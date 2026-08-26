@@ -78,7 +78,7 @@ module Lain
         # and then calls this, and the two questions can straddle a board
         # change: {CLI::Wiring::ToolsetBuild::LiveSensitivity} -- what both
         # production chains are wired with -- re-reads `board.call` on EVERY
-        # call, which is the liveness property T11's spec asserts by moving the
+        # call, which is the liveness property its spec asserts by moving the
         # board slot between two calls. So a fixed Policy answers the same
         # thing twice and the delegator need not, and `nil.path` here would be
         # a NoMethodError on the synchronous dispatch path -- the shape

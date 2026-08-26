@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-# B11 adds a `:stalled` state and a `stall! -> replan!` pair to the shared
-# {Lain::Agent::LoopMachine} for the dual-ledger arm's outer loop. These specs
+# The `:stalled` state and the `stall! -> replan!` pair on the shared
+# {Lain::Agent::LoopMachine} serve the dual-ledger arm's outer loop. These specs
 # pin the two things the card's escalation trigger cares about: the addition is
 # purely ADDITIVE (no move that was legal before becomes illegal, and the
 # FAILURE_REASONS/StopReason totality is untouched), and firing `replan!`

@@ -44,7 +44,7 @@ require "prism"
 # fix below follows from taking it that way round.
 #
 # Cassettes here are written into a TEMP library, never spec/fixtures: a
-# cassette is committed forever, and T13 owns the ones that are.
+# cassette is committed forever, and the ollama-owned examples own those.
 #
 # Every example below pins `record: :none` rather than inheriting the suite
 # default, because what it tests is REPLAY posture and the suite default is the
@@ -222,9 +222,10 @@ RSpec.describe "the VCR harness's ollama posture" do
     # does. VCR DELETES an interaction when it plays it, so a predicate that
     # reads only the unplayed ones says "the cassette cannot answer" on the
     # second probe and hands the request back to the fallback stub -- turning
-    # VCR's `already been played back` into a silent `nil`. That is F3's shape,
-    # and `context_window_tokens` is probed once per TURN: a three-turn cassette
-    # would replay three good answers and then feed compaction a quiet nil.
+    # VCR's `already been played back` into a silent `nil`. That is the
+    # silent-failure shape, and `context_window_tokens` is probed once per
+    # TURN: a three-turn cassette would replay three good answers and then
+    # feed compaction a quiet nil.
     it "raises on a SECOND /api/ps rather than reverting to the empty-models stub",
        vcr: { cassette_name: "t3_ollama_process_status", record: :none } do
       expect(provider.context_window_tokens("qwen3:4b")).to eq(8192)
@@ -290,7 +291,7 @@ RSpec.describe VcrCassetteStack do
     end
   end
 
-  # The S4 case. VCR deletes an interaction when it plays it, so "still holds
+  # VCR deletes an interaction when it plays it, so "still holds
   # one" is false immediately after the only /api/ps has been served -- and the
   # fallback stub coming back at that moment is what turns a loud exhaustion
   # into a silent nil. Ownership has to survive playback.
@@ -302,7 +303,7 @@ RSpec.describe VcrCassetteStack do
     end
   end
 
-  # The S6 case: `VCR.current_cassette` is the INNERMOST only.
+  # `VCR.current_cassette` is the INNERMOST only.
   it "reads the whole stack, so an outer cassette's path still counts" do
     VCR.use_cassette("t3_ollama_process_status", record: :none) do
       VCR.use_cassette("t3_ollama_chat", record: :none) do
@@ -363,7 +364,7 @@ RSpec.describe ExampleNetwork do
     end
   end
 
-  # S5: `vcr: false` is how someone says "no cassette here", and both RSpec's
+  # `vcr: false` is how someone says "no cassette here", and both RSpec's
   # filter and VCR's own `when_tagged_with_vcr` test truthiness, not presence.
   # Reading presence gave such an example no permission and no reachability
   # probe, so it died on a closed network instead of skipping.
@@ -437,7 +438,7 @@ RSpec.describe VcrRecording do
     end
   end
 
-  # BLOCKER B1. Naming a provider must decide WHICH CASSETTES RECORD, not merely
+  # Naming a provider must decide WHICH CASSETTES RECORD, not merely
   # which credential to demand. `record:` is a global cassette option, so the
   # first version of this card left `LAIN_RECORD=ollama` arming :new_episodes on
   # the committed, secret-filtered Anthropic cassette with no key in the process
@@ -480,8 +481,8 @@ RSpec.describe VcrRecording do
   end
 
   # How a cassette declares its owner: `records: :ollama` beside the `:vcr` tag.
-  # T13 and T14 need this to record at all, and every other `:vcr` example in the
-  # tree needs to stay untouched while they do.
+  # The ollama-owned examples need this to record at all, and every other
+  # `:vcr` example in the tree needs to stay untouched while they do.
   describe ".cassette_options" do
     it "hands an ollama-owned example the mode an ollama pass earns" do
       expect(described_class.cassette_options({ vcr: {}, records: :ollama }, "ollama"))
@@ -574,9 +575,9 @@ RSpec.describe OllamaTagPosture do
     expect(described_class.unreachable_reason({ ollama: true })).to eq("no server")
   end
 
-  # S5 again, on the arm where getting it wrong costs a confusing failure rather
-  # than a silent one: `vcr: false` means no cassette, so this example DOES want
-  # the reachability probe it would otherwise be denied.
+  # The same rule again, on the arm where getting it wrong costs a confusing
+  # failure rather than a silent one: `vcr: false` means no cassette, so this
+  # example DOES want the reachability probe it would otherwise be denied.
   it "probes for one when the example says `vcr: false`" do
     allow(OllamaTestServer).to receive(:unreachable_reason).and_return("no server")
 

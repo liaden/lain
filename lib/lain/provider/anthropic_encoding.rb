@@ -53,7 +53,7 @@ module Lain
       # wire field, so it must be stripped from every emitted payload.
       CACHE_MARKER = "cache"
 
-      # T1: the neutral key a Request uses to carry a forced typed-answer
+      # The neutral key a Request uses to carry a forced typed-answer
       # format on #extra (see Ollama::Encoding::STRUCTURED_OUTPUT_KEY, the
       # same string, defined separately -- these are two leaf files that
       # carry no internal requires of each other). The value is
@@ -183,7 +183,7 @@ module Lain
       # Pure translation: every block's neutral marker, wherever
       # Context::CacheBreakpoints placed it, becomes cache_control. This
       # module adds no placement of its own -- the budget and the tail-
-      # clustering are entirely the Context layer's policy (CE-1).
+      # clustering are entirely the Context layer's policy.
       def encode_messages(messages)
         messages.map do |message|
           { "role" => message["role"], "content" => encode_content(message["content"]) }

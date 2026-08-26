@@ -2,7 +2,7 @@
 
 require "pathname"
 
-# T4 review, fix 3: "nothing else in lib may construct these records" is
+# Review fix 3: "nothing else in lib may construct these records" is
 # stated three times across scribe.rb and records.rb, and it is true today --
 # but nothing kept it true. Mechanical enforcement, in the shape
 # spec/output_discipline_spec.rb and spec/lain/event_spec.rb's "no Turn
@@ -14,7 +14,7 @@ require "pathname"
 # Refold::SLUG_TYPES names its record types by their JOURNAL_TYPE strings
 # rather than by structural shape.
 #
-# T21 review, fix 4: the reachability half is read PER NAME. One alternation
+# Review fix 4: the reachability half is read PER NAME. One alternation
 # over every record type was satisfied by any single name still being present,
 # so renaming `GraphRevision.new` in scribe.rb left both examples green and the
 # placement guard for that record evaporated in silence -- which is the exact

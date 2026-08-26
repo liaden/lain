@@ -29,7 +29,7 @@ RSpec.describe Lain::Provider::Anthropic::RetryTap do
 
     event = channel.events.grep(Lain::Telemetry::ProviderRetry).fetch(0)
     # max retries means max+1 real attempts -- see the Ollama tap's spec for
-    # F16's full reproduction. Both taps must move together or the two
+    # the full reproduction. Both taps must move together or the two
     # providers disagree about what "attempt" means.
     expect(event.attempt).to eq(4)
     expect(event.will_retry_in).to be_nil

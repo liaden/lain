@@ -2,13 +2,13 @@
 
 require "json"
 
-# Rewrites is an OFFLINE projection over a Journal's `request_sent` records
-# (CE-2): it recreates `diverge_at` at the request level, over the
+# Rewrites is an OFFLINE projection over a Journal's `request_sent` records:
+# it recreates `diverge_at` at the request level, over the
 # breakpoint-partitioned chain `Request#prefix_digests` already computes and
 # `Telemetry::RequestSent` already journals -- no Timeline access, journal bytes
 # only.
 #
-# Rewrite semantics (binding, from the T4 card): a REWRITE is a position
+# Rewrite semantics (binding): a REWRITE is a position
 # present in BOTH of two consecutive chains but carrying a DIFFERENT digest;
 # its DEPTH is the smallest such position. A position present in only one
 # chain -- a marker slid, or a message got appended -- is NOT a rewrite.
@@ -105,13 +105,14 @@ RSpec.describe Lain::Bench::Rewrites do
     end
 
     # PINNED CONFLATION, not an aspiration: `Request#prefix_digests` folds
-    # `model` into every entry (CE-2's chains are per-model by design), so a
+    # `model` into every entry (the chains are per-model by design), so a
     # model switch between consecutive calls disagrees at EVERY shared
     # position and this projection reports it as one Rewrite at the earliest
     # one -- indistinguishable, from the chains alone, from a real prefix
     # edit. Chains are built through the real Request here so the pin breaks
-    # if T2 ever changes what the digests cover. Callers comparing across
-    # models must segment the journal per arm first (see the class comment).
+    # if `Request#prefix_digests` ever changes what the digests cover. Callers
+    # comparing across models must segment the journal per arm first (see the
+    # class comment).
     it "reports a plain model switch as one Rewrite at the earliest shared position (per-model chains)" do
       chains = %w[claude-opus-4-8 claude-haiku-4-8].map do |model|
         Lain::Request.new(

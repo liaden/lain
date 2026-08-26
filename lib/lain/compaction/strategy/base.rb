@@ -65,8 +65,8 @@ module Lain
       #
       # {#collapse} answers a {Replacement}, which is not a monoid element, so it
       # is not the operation the algebra declares. {#blocks} is: content blocks
-      # in the free monoid, whose unit is DROP, which is what F8 means by
-      # "#collapse maps into the free monoid".
+      # in the free monoid, whose unit is DROP -- which is what "#collapse maps
+      # into the free monoid" means.
       #
       # An unconditionally elementwise strategy therefore writes only its
       # per-message map, and {Algebra::Elementwise} generates the span map over

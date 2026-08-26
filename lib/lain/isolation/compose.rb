@@ -54,7 +54,7 @@ module Lain
       end
 
       # One discovered service's injection: the env var it names and the URL that
-      # var takes. `service_name` is the journalable identity (B6) -- paired with
+      # var takes. `service_name` is the journalable identity -- paired with
       # the worker key, NEVER the URL. No per-service release: the stack teardown
       # (`down -v`) reclaims every service at once, so this carries no `release`.
       Published = Data.define(:service_name, :env_var, :url)

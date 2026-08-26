@@ -152,7 +152,7 @@ RSpec.describe Lain::Middleware::SkillDispatch do
     end
   end
 
-  # The real seam, wired end-to-end against a Provider::Mock: proves the OM-2
+  # The real seam, wired end-to-end against a Provider::Mock: proves the
   # out-of-band invariant -- the folded child answer renders, but the PARENT
   # session Timeline head does NOT move (the subagent's turns live in the shared
   # Store, never in the parent's rendered conversation).
@@ -198,7 +198,7 @@ RSpec.describe Lain::Middleware::SkillDispatch do
 
         expect(seen).to be_nil # short-circuit: no parent model turn
         expect(result.fetch(:response).text).to eq("the plan")
-        expect(parent.head_digest).to eq(head_before) # OM-2: parent head unchanged
+        expect(parent.head_digest).to eq(head_before) # parent head unchanged
       end
     end
   end

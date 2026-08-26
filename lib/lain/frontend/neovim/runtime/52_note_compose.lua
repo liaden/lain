@@ -176,11 +176,11 @@ end
 -- human's own spacing survives (`:LainNote`'s rule, for its reason).
 --
 -- EVERY REFUSAL RIDES `__lain.review_refused` AND RETURNS, `:LainNote`'s rail
--- and F72's fix: an `error()` escaping a `define`d callback wears nvim's own
--- `stack traceback:` however it was raised, and with a UI attached raises a
--- hit-enter prompt behind which every non-fast RPC request queues -- including
--- the `:messages` the refusal tells them to read. NONE of them spells `lain: `,
--- because the rail prepends exactly one.
+-- and the fix for a wedged UI: an `error()` escaping a `define`d callback wears
+-- nvim's own `stack traceback:` however it was raised, and with a UI attached
+-- raises a hit-enter prompt behind which every non-fast RPC request queues --
+-- including the `:messages` the refusal tells them to read. NONE of them spells
+-- `lain: `, because the rail prepends exactly one.
 --
 -- NOTHING IS RESERVED UNTIL EVERY REFUSAL IS PAST, `open_changeset`'s rule: a
 -- gesture that half happened is worse than one that did not.

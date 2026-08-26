@@ -5,7 +5,7 @@ require "stringio"
 require "timeout"
 require "tmpdir"
 
-# T1. A human question -- an `ask_human` or a parked approval -- can now be
+# A human question -- an `ask_human` or a parked approval -- can now be
 # raised from a frame {Repl#respond} never enters. A role-bound line
 # (`@role[/skill]`) is answered by {Middleware::SkillDispatch}, which SHORT-
 # CIRCUITS: it spawns a persona'd subagent, runs it to a final result, and sets

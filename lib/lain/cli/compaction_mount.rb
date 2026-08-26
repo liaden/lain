@@ -10,7 +10,7 @@ module Lain
     # three plug in, which is three different seams on the same `Agent.new`.
     #
     # The third one is the reason this is an object rather than three keywords.
-    # `Compaction::Source#context_for` is handed A2's LAST-TURN input tokens, an
+    # `Compaction::Source#context_for` is handed the LAST-TURN input tokens, an
     # Integer, but {Compaction::Cold} reads a {Telemetry::TurnUsage}'s
     # `cache_read_input_tokens`, and the render seam has no route to it -- the
     # count exists only on a model RESPONSE. So the Source is ALSO a `#<<` sink

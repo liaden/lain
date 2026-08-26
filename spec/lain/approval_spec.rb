@@ -26,7 +26,7 @@ module ApprovalSpecSupport
   end
 end
 
-# The approval queue behind Handler::Gate (I4): a gated tool call enqueues a
+# The approval queue behind Handler::Gate: a gated tool call enqueues a
 # Pending approval and parks its fiber on Gate's synchronous policy seam; a
 # surface fiber answers, first answer wins, every decision journals, and an
 # unanswered window denies (the fail-closed doctrine gate.rb pins).
@@ -179,7 +179,7 @@ RSpec.describe Lain::Approval::Queue do
     end
   end
 
-  # T4: parking is itself evidence. Before this, the only observable moment in
+  # Parking is itself evidence. Before this, the only observable moment in
   # an approval's life was the post-hoc decision, so nothing could render "a
   # call is waiting on you" -- the state a human is actually asked to act on.
   describe "parking announces itself" do
@@ -253,12 +253,12 @@ RSpec.describe Lain::Approval::Queue do
     end
   end
 
-  # T9: who is asking is a property of the CALL, not of the queue. ONE queue
+  # Who is asking is a property of the CALL, not of the queue. ONE queue
   # serves the whole fleet -- the parent and every child park in it -- so a
   # queue-level constant journals and renders every pending identically, and in
   # QA a researcher subagent's `bash` approval was indistinguishable from the
   # human's own agent's until the spawn's `only`-set was read out of the
-  # journal. `ask_human` has named its actor since T10; this is the same
+  # journal. `ask_human` has long named its actor; this is the same
   # identity one rail over.
   #
   # It rides the `context` the policy seam already threads untouched
@@ -521,7 +521,7 @@ RSpec.describe Lain::Approval::Queue do
     end
   end
 
-  # T16: a pending can CARRY the sensitive regions approving it would release,
+  # A pending can CARRY the sensitive regions approving it would release,
   # so a surface can say what is at stake. A capability, not a flow -- the queue
   # sits below the read and has only a path, so the arm holding the file's bytes
   # is what builds one. Nothing here detects, and nothing here releases.
@@ -647,7 +647,7 @@ RSpec.describe Lain::Approval::Queue do
     end
   end
 
-  # T16, and a NIT the panel raised: a blank path renders a warning that says
+  # A NIT the panel raised: a blank path renders a warning that says
   # secrets are at stake and names no file, which is a question no human can
   # answer. The ledger's absolute-path check is a different rule and lives one
   # object over; it is not an argument for coercing nil to "" here.

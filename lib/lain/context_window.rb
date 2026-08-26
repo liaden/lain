@@ -12,7 +12,7 @@ module Lain
   # conservative fallback. `Backend::PROVIDERS` includes `ollama` and
   # `bedrock` (`cli/backend.rb:27`), whose model ids will never appear in an
   # Anthropic-shaped table, and this book backs compaction's
-  # `Need::ApproachingWindow`, which is on by default (A8). A raise here would
+  # `Need::ApproachingWindow`, which is on by default. A raise here would
   # turn a supported provider into a startup crash; the explicit constructor
   # (no `fallback:`) still raises, for a bench arm that wants that loudly.
   class ContextWindow
@@ -204,7 +204,7 @@ module Lain
     # smallest real entry -- so guessing wrong makes compaction fire EARLY.
     # An over-estimated fallback would instead mean compaction never fires
     # for the provider it exists to protect, which is worse than the crash
-    # it replaces (see A3's escalation trigger).
+    # it replaces.
     #
     # Sized against the live chat path, not picked arbitrarily: the review
     # panel measured the base toolset (`CLI::Wiring::BaseTools`, schemas
@@ -214,10 +214,10 @@ module Lain
     # ~7,372 -- comfortably above that baseline, so a fresh session under the
     # fallback does not compact on turn one.
     #
-    # AMENDED (T9). This paragraph used to end "this is self-correcting, not a
+    # AMENDED. This paragraph used to end "this is self-correcting, not a
     # one-shot latch", and that argument is still TRUE and still insufficient.
     # It is about FREQUENCY: `ApproachingWindow#fired?` is stateless and is fed
-    # A2's LAST-TURN usage rather than the cumulative run total, so once a
+    # the LAST-TURN usage rather than the cumulative run total, so once a
     # compaction drops the head the next turn's occupancy falls back under the
     # line and the signal clears on its own. What it never covered is DAMAGE.
     # Each firing is an irreversible lossy rewrite of the run's own history, so

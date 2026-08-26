@@ -18,7 +18,7 @@ module Lain
     #
     # The fuzzy tier behind {Grader::FrustrationRepair}'s injected `oracle:`
     # stays Null here on purpose (interview decision, 2026-07-21 -- plan
-    # chunk-gherkin-meta-agents-plan-compaction.md, M1's escalation trigger):
+    # chunk-gherkin-meta-agents-plan-compaction.md):
     # this report is the MECHANICAL floor only, never a model call.
     #
     #   Friction::Report.new(Journal.records(File.foreach(path))).render
@@ -224,7 +224,7 @@ module Lain
           ["cache_waste: #{([rebilled] + context).join("; ")}: #{@knob}"]
         end
 
-        # AC 3's "explicitly": a session whose cache held says so, rather than
+        # Explicit, not implied: a session whose cache held says so, rather than
         # having the section quietly omitted -- an absent section and a clean
         # session are indistinguishable to a reader. A journal with no priced
         # call at all says nothing, because there was nothing to judge.
@@ -238,7 +238,7 @@ module Lain
         private
 
         # A cacheless provider's "none" is not the same finding as a cache that
-        # HELD, and the two rendered identically. AC 5's other half lives in the
+        # HELD, and the two rendered identically. The other half lives in the
         # `false` branch: the journal that recorded no capability keeps the
         # measured wording, because it is still what was measured.
         def headline
@@ -278,7 +278,7 @@ module Lain
         # fire over calls that did use a cache.
         #
         # The second needs no capability record at all, which is what closes
-        # F49's own sentence for the journals that carry none -- a recorded bench
+        # the gap for the journals that carry none -- a recorded bench
         # session, a strict-policy run. A dollar figure with nothing MEASURED
         # behind it is the same shape as one with nothing PRICEABLE behind it,
         # which {#figure_phrase} already withholds: zero tokens at any rate is

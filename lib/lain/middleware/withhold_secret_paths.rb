@@ -64,8 +64,8 @@ module Lain
       #
       # == `no_rows?` is identity, not vocabulary
       #
-      # T7 gave `list_files`, `glob` and `grep` a named sentence for "found
-      # nothing" instead of `content == ""`. That sentence is exactly one row,
+      # `list_files`, `glob` and `grep` were each given a named sentence for
+      # "found nothing" instead of `content == ""`. That sentence is exactly one row,
       # and this class used to read it as one -- so an EMPTY, ORDINARY
       # subdirectory of `~/Downloads` came back "1 path withheld
       # (out_of_scope)", which asserts hidden content exists where there is

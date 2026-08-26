@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-# A fake isolation backend for AC2: it leases a distinct WorkerEnv (its own cwd)
-# per worker and records every acquire/release, standing in for the real
-# Isolation unit (a sibling card) over B1's WorkerEnv.
+# A fake isolation backend: it leases a distinct WorkerEnv (its own cwd) per
+# worker and records every acquire/release, standing in for the real Isolation
+# unit (a sibling card) over the same WorkerEnv contract.
 class FakeWorkerIsolation
   attr_reader :acquired, :released
 
@@ -63,7 +63,7 @@ RSpec.describe Lain::Arm::OrchestratorWorker do
   # `base_timeline` the arm roots in the SHARED Store and journaling into the
   # recording channel the arm injects so each worker's spend can be priced. It
   # accepts the widened spawn_seam tail (`base_timeline:`, `worker_env:`,
-  # `spawned_from:`) the arm passes, per the B7 duck `call(journal:, **opts)`.
+  # `spawned_from:`) the arm passes, per the spawn-seam duck `call(journal:, **opts)`.
   def worker_seam(tokens: 40, on_call: ->(*) {})
     lambda do |journal:, base_timeline:, worker_env: nil, spawned_from: nil, **|
       agent = worker_agent(base_timeline:, journal:, tokens:, worker_env:)
@@ -122,7 +122,7 @@ RSpec.describe Lain::Arm::OrchestratorWorker do
     # monotonic clock, so `Float` and `>= 0` are both true by construction. The
     # injected-clock example below pins the number instead.
     #
-    # T24: the fan-out is timed by the SAME injected instrument every other arm
+    # The fan-out is timed by the SAME injected instrument every other arm
     # measures with, and its return pair carries the workers' results back --
     # so the fan-out's value needs no mutable capture to escape the clock.
     it "takes elapsed off the injected instrument's clock, over the fan-out" do
@@ -156,7 +156,7 @@ RSpec.describe Lain::Arm::OrchestratorWorker do
     end
   end
 
-  # AC2: each worker's tools operate under its OWN leased WorkerEnv. The arm
+  # Each worker's tools operate under its OWN leased WorkerEnv. The arm
   # leases per worker, threads `lease.worker_env` through the spawn_seam tail, and
   # the seam wires it onto the worker's Session -- so worker tools resolve paths
   # and shell out under the lease, not the shared process environment.
@@ -181,7 +181,7 @@ RSpec.describe Lain::Arm::OrchestratorWorker do
     end
   end
 
-  # D5: the worker-completion point. The arm hands each finished worker back
+  # The worker-completion point: the arm hands each finished worker back
   # while its lease is still live, and folds what that did into the worker's own
   # result -- the resolver's conflict transcript stays in the child's fresh root.
   describe "a finished worker is handed back before its lease is released" do

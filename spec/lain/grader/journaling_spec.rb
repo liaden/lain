@@ -4,7 +4,7 @@ require "stringio"
 
 # Grader::Journaling decorates ANY #grade duck with a durable attestation: the
 # Grade passes through unchanged, and a Telemetry::GradeRecord journals
-# alongside it -- the GG-5 gap the plan names, since Telemetry::Verdict is
+# alongside it -- the gap the plan names, since Telemetry::Verdict is
 # Verified's own second-pass record and a PLAIN Grade was never journaled
 # before this.
 #

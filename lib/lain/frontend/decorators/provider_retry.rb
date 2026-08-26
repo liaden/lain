@@ -3,7 +3,7 @@
 module Lain
   module Frontend
     module Decorators
-      # Presents a transport-level retry live (F15): a human watching a stalled
+      # Presents a transport-level retry live: a human watching a stalled
       # provider round trip used to watch a blank screen while every
       # {Telemetry::ProviderRetry} landed only in the Journal. Same shape as
       # {ToolOutput} -- a dim attribution label followed by a styled detail --
@@ -21,7 +21,7 @@ module Lain
 
         # A retry notice is composed whole and rendered once, which is what
         # {#render} has always claimed. Saying so out loud is what lets the
-        # frontend terminate it (F58): four of these in a row must reach the
+        # frontend terminate it: four of these in a row must reach the
         # screen as four rows, not as one run-together string.
         def line_shaped? = true
 

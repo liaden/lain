@@ -89,7 +89,7 @@ local function named_buf(name)
   return buf
 end
 
--- I7/T5: the record-shaped buffers' one small syntax -- no treesitter grammar
+-- The record-shaped buffers' one small syntax -- no treesitter grammar
 -- shipped, and every group is lain-prefixed so a human's own syntax plugins
 -- never collide (the same idea every :Lain* command and augroup already
 -- follows). The six documented groups, each anchored to a view's own
@@ -159,7 +159,7 @@ end
 -- left MODIFIABLE at rest, because a human edits the pending request here before
 -- :LainResend. Idempotent by name on re-attach, like every other lain:// buffer.
 --
--- I7: reuses nvim's built-in "markdown" filetype (READONLY_FILETYPES' comment
+-- Reuses nvim's built-in "markdown" filetype (READONLY_FILETYPES' comment
 -- explains the "just works, no grammar shipped" reasoning; markdown was the
 -- deliberate pick here too, not "json"). The payload is pretty-printed JSON,
 -- not prose -- worth naming why that is not a format-on-save hazard: `buftype

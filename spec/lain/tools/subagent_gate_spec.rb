@@ -74,7 +74,7 @@ module SubagentGateSupport
   end
 end
 
-# T11: a child spawned by the subagent tool runs behind the SAME approval gate
+# A child spawned by the subagent tool runs behind the SAME approval gate
 # its parent does. Until this landed, `bash` was gated for the parent and
 # ungated for every child holding it -- and four shipped roles hold it.
 #
@@ -327,7 +327,7 @@ RSpec.describe "Subagent gating" do
 
       expect(tools[:bash].runs.size).to eq(1)
       # "Unchanged" is about GATING and ATTENUATION, which is what this seam
-      # wires nothing for. The `ask_human` beside them is T10's grant, which
+      # wires nothing for. The `ask_human` beside them is a standing grant, which
       # every child holds and {Subagent::NoAskers} is the wired-to-nothing
       # answer for -- an asker whose question reaches no queue.
       expect(rendered(provider)).to eq((union.names + %w[ask_human]).sort)

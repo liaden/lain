@@ -116,7 +116,7 @@ RSpec.describe Lain::Core::Transport do
   end
 
   # A transport that raises from #stop must not strand the reader fiber on a
-  # live socket: Sync would never return, and the whole reactor hangs. T5's
+  # live socket: Sync would never return, and the whole reactor hangs. The
   # attaching transport closes a socket in there, which is one IOError away.
   it "completes teardown even when the transport's own stop raises, and re-raises after" do
     Sync do |task|

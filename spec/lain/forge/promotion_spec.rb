@@ -34,7 +34,7 @@ RSpec.describe Lain::Forge::Promotion, :seam do
                         journaled: journaling(records), shell_out_factory: factory)
   end
 
-  # The seam T17's {Forge::Journaled#attempt} exposes, stood up here as a double:
+  # The seam {Forge::Journaled#attempt} exposes, stood up here as a double:
   # it takes the effect's ADDRESS, brackets the block with an intent and an
   # outcome, and hands the block's answer back unchanged. Promotion depends on
   # that message, never on the wrapper's type.

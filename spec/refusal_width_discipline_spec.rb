@@ -17,19 +17,19 @@ require "tmpdir"
 # which the lua half catches as `pcall`'s second value and hands straight to
 # `review_refused` (`46_sidebar.lua:216`, `48_annotate.lua:419`,
 # `65_review.lua:117`). A sentence longer than the message area raises a
-# hit-enter prompt over the human's editor; T5 stops that being modal, and this
-# stops the sentences being long in the first place.
+# hit-enter prompt over the human's editor; the shortened echo stops that being
+# modal, and this stops the sentences being long in the first place.
 #
 # THE BAR IS 80 COLUMNS INCLUDING THE `"lain: "` PREFIX, and it is a budget
 # rather than a measured ceiling. Two numbers were derived independently during
 # this chunk, and both are recorded here because inheriting one silently is how
 # a bar rots:
 #
-# - T5 measured the HARD ceiling as `v:echospace`, which is `&columns - 12`
-#   ('showcmd' reserves twelve cells) -- 98 in the cockpit's 110-column nvim
-#   pane. That is where the rail actually pages.
-# - T7 chose 80 including the prefix, and brought `ApprovalView`'s own refusals
-#   under it.
+# - One derivation measured the HARD ceiling as `v:echospace`, which is
+#   `&columns - 12` ('showcmd' reserves twelve cells) -- 98 in the cockpit's
+#   110-column nvim pane. That is where the rail actually pages.
+# - The other chose 80 including the prefix, and brought `ApprovalView`'s own
+#   refusals under it.
 #
 # 80 is the stricter of the two, it is the one that already ships, and it leaves
 # eighteen cells of headroom against the pane the cockpit actually builds -- so
@@ -53,7 +53,7 @@ require "tmpdir"
 # `%<refusal>s` is never empty in service -- it is a `Lain::Error#message` from
 # the mark that stopped, and it is the reason the sentence exists. So that row
 # pages, every time, and no shortening of lain's own words can prevent it. The
-# reorder is the whole mitigation available: after it, T5's shortened echo
+# reorder is the whole mitigation available: after it, the shortened echo
 # shows `marked 3 of 7 hunks on that row; the rest were refused` and truncates
 # the quotation, where before the truncation ate the counts and left the human
 # with somebody else's sentence and no idea what had landed. Every other

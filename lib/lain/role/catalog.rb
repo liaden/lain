@@ -2,11 +2,11 @@
 
 module Lain
   class Role
-    # The shipped built-in roles (OM-5). Each names the tools it attenuates to;
+    # The shipped built-in roles. Each names the tools it attenuates to;
     # its framing ships as a default slot at `prompt/templates/role/<name>.md`
     # and is user-overridable at `.lain/slots/role/<name>.md`. The reviewers hold
     # read-and-inspect capabilities but never {Tools::EditFile} -- a review does
-    # not touch the tree. `court_clerk` is the memory writer OM-5 names; the
+    # not touch the tree. `court_clerk` is the shipped memory writer; the
     # `friction_observer` role is parked by the plan and not shipped here.
     #
     # Attenuation is expressed against tool NAMES, resolved at spawn time against
@@ -52,7 +52,7 @@ module Lain
         # mid-merge still holding the lease: the STRANDED state, the one a
         # person has to fix by hand.
         Role.new(name: :merge_resolver, only: %i[read_file edit_file write_file grep], unattended: true),
-        # {Review::Docent}'s answerer (T24): spawned per question on a review
+        # {Review::Docent}'s answerer: spawned per question on a review
         # thread, to explain ONE hunk to the human standing on it. Read-only for
         # the reviewers' reason -- explaining a change does not touch the tree --
         # and without `bash` for `merge_resolver`'s: it answers while a human is

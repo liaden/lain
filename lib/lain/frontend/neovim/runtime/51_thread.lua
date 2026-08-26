@@ -196,7 +196,7 @@ end
 -- buffers is the thing that goes stale.
 --
 -- MORE THAN ONE BUFFER CAN CLAIM THE REVIEW, and this comment used to rest on
--- the opposite. 47_diff's `reacquire` (F73) hands a stamp back to a row the
+-- the opposite. 47_diff's `reacquire` hands a stamp back to a row the
 -- human returns to inside the review's tabpage, so the pair being drawn is not
 -- the whole census. This function is unaffected, and for a reason worth stating
 -- rather than inheriting: it matches on PATH AND SIDE, and one path names one
@@ -672,13 +672,13 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
     local ok, err = pcall(vim.rpcrequest, chan, "lain_command", "review_ask",
       { vim.b[ev.buf].lain_thread_anchor, question })
     if not ok then
-      -- ON THE RAIL AND NOT AS A RAISE, WHICH CLOSES F30 IN THIS PANE. The
-      -- argument that kept this one a raise is answered rather than dropped:
-      -- here a question really was typed and really did not reach anyone, and
-      -- `:w` reporting success over that IS the one outcome worse than a
-      -- traceback -- still true, and it turned out not to need a raise. Leaving
-      -- 'modified' set is already the write not succeeding (the order note
-      -- above). A panel measured this leg at `{mode = "r", blocking = true}`
+      -- ON THE RAIL AND NOT AS A RAISE, WHICH CLOSES THE RAISING-REFUSAL HOLE IN
+      -- THIS PANE. The argument that kept this one a raise is answered rather
+      -- than dropped: here a question really was typed and really did not reach
+      -- anyone, and `:w` reporting success over that IS the one outcome worse
+      -- than a traceback -- still true, and it turned out not to need a raise.
+      -- Leaving 'modified' set is already the write not succeeding (the order
+      -- note above). A panel measured this leg at `{mode = "r", blocking = true}`
       -- with the next round trip TIMING OUT; that cost was accepted only while
       -- a raise was the sole way to fail a write.
       --
@@ -723,7 +723,7 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
 -- lain://journal as readily as from the diff, and "no thread on this line" told
 -- to somebody who is not even in a review is the wrong sentence.
 --
--- The third branch is round 11's F66, and it is a sentence rather than a change
+-- The third branch is a round-11 finding, and it is a sentence rather than a change
 -- of timing. A `● note` marker is visible on the line while "no thread on this
 -- line" is also true, and the human can only see one of the two: the anchor id
 -- is minted at HAND-BACK ({Lain::Review::Handover}), so until the note goes back
@@ -736,7 +736,7 @@ vim.api.nvim_create_autocmd("BufWriteCmd", {
 -- ALL THREE GO OUT ON `__lain.review_refused`, NOT ON `vim.notify`, and that is
 -- the difference between a refusal and a modal. `nvim_echo` writes the message
 -- AREA, so a sentence too wide for it raises the hit-enter prompt that queues
--- every non-fast RPC request -- round 7's F31 shape, reached here by WIDTH
+-- every non-fast RPC request -- the round-7 hit-enter shape, reached here by WIDTH
 -- rather than by a raise. Measured by a panel: a plain `vim.notify` blocks at
 -- roughly `#sentence + 12 > columns`, so the 95-character refusal this branch
 -- used to send blocked at every width up to 105 and a 106-character one for the

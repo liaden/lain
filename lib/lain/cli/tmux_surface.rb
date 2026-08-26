@@ -8,7 +8,7 @@ module Lain
     # (a new tab in an existing session), a `popup` (a transient floating
     # pane -- `display-popup`), and a detached `session` (a wholly separate
     # tmux session, e.g. forking the whole lain session rather than adding a
-    # window to one). Callers (T16 /fork, T17 /btw, T20 fleet windows) never
+    # window to one). Callers (/fork, /btw, fleet windows) never
     # shell out to tmux directly; they ask this object for a Placement.
     #
     # `display-popup` does not render everywhere: under `tmux -CC` (iTerm2's
@@ -108,7 +108,7 @@ module Lain
         Placement.new(kind: :popup, target: title, degraded: false, reason: nil)
       end
 
-      # Retitle an existing window -- T20's done marker on a fleet window.
+      # Retitle an existing window -- the done marker on a fleet window.
       # Not a Placement: nothing opens, an existing surface is renamed in
       # place. Same {#act} discipline, so a target that no longer exists (the
       # human already closed the window) raises {TmuxUnavailable} and the

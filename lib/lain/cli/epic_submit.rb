@@ -265,7 +265,7 @@ module Lain
       # epic status|land` moved first, which left this the only one of the four
       # still keyed on the working directory -- the worst of the states to be
       # in, since three commands agreeing with the chat and one not is harder to
-      # diagnose than four disagreeing together. See T5.
+      # diagnose than four disagreeing together.
       def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
                      input: nil, output: nil, epics: Epic.new(root:, paths:, config:))
         @root = root

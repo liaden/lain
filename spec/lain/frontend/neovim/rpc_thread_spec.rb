@@ -250,8 +250,8 @@ end
 #
 # WHICH IS A SILENT REGRESSION AND NOT A LOUD ONE, and that is why this is a law
 # rather than a convention. {Review::Surface.acknowledge} rescues `StandardError`
-# and answers nil -- deliberately, and its own comment names the residual as "an
-# F4 regression that cannot announce itself". Measured, once, on this card: the
+# and answers nil -- deliberately, and its own comment names the residual as a
+# regression that cannot announce itself. Measured, once, on this card: the
 # teardown rail was added to the inlet and left off the delegators, and the whole
 # visible failure was one end-to-end example TIMING OUT with no error anywhere,
 # while the round it was supposed to end went on handing stamps back. A missing
@@ -278,7 +278,7 @@ RSpec.describe Lain::Frontend::Neovim::RpcThread, "the rails it hands on" do
 end
 
 RSpec.describe Lain::Frontend::Neovim::RenderQueue do
-  # F17, and the lua-side `checked_lines` (47_diff, 51_thread) is the
+  # The lua-side `checked_lines` (47_diff, 51_thread) is the
   # convention this matches: `nvim_buf_set_lines` refuses an item containing a
   # newline, and every render here rides `nvim_exec_lua` as a NOTIFY, so the
   # refusal reaches nobody -- the buffer simply stops. A view that breaks the

@@ -9,7 +9,7 @@ module Lain
     # model responds to it.
     #
     # SEQUENTIAL by construction: prompts are replayed one after another. A
-    # concurrent `n:` sweep is deliberately deferred to the M5 concurrency
+    # concurrent `n:` sweep is deliberately deferred to the concurrency
     # decision (fibers vs. threads) rather than guessed at here.
     #
     # Provider-agnostic: it drives whatever {Provider} it is handed, so the same
@@ -72,10 +72,11 @@ module Lain
 
       # The Agent shares this replay's journal, so its per-model-call turn_usage
       # records interleave with the live_replay_turn records -- one stream, one
-      # session record (B2 depends on exactly this wiring). The memory stack the
-      # chunk built rides along: JournalMemoryRoot pairs each turn's digest with
-      # the recorder's live root, and RefuseSecretWrites guards a memory_write
-      # in the replayed toolset before it reaches the recorder.
+      # session record (the bench arms depend on exactly this wiring). The
+      # memory stack the chunk built rides along: JournalMemoryRoot pairs each
+      # turn's digest with the recorder's live root, and RefuseSecretWrites
+      # guards a memory_write in the replayed toolset before it reaches the
+      # recorder.
       def build_agent
         recorder = Memory::Recorder.new
         Agent.new(provider: @provider, toolset: @toolset, context: @context,

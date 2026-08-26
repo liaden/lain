@@ -91,7 +91,7 @@ module Lain
         # in), the real status is sitting right there and is authoritative --
         # yet the guess still won every time, so a genuine 400 got relabeled
         # ServerError (500), which IS in the retry allowlist, and faraday-retry
-        # retried a request the sync path never would (RES1). `env&.status` is
+        # retried a request the sync path never would. `env&.status` is
         # 200 for exactly the SSE-event case the guess is for, so overriding
         # `status` only when a real non-2xx status is already known leaves that
         # case untouched and forwards the rest to the shared implementation.

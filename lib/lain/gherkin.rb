@@ -2,7 +2,7 @@
 
 module Lain
   # A typed, content-addressed IR for the Gherkin acceptance criteria that plan
-  # docs and skill scaffolds already carry as fenced ```gherkin blocks. Parsing
+  # docs and skill scaffolds already carry as fenced gherkin code blocks. Parsing
   # the house format into deeply frozen values gives the grader a stable digest
   # to attest against (`Oracle::Definition#digest` is the content-addressing
   # precedent): two criteria that mean the same thing hash the same, and any
@@ -134,7 +134,8 @@ module Lain
         end
 
         # A gherkin fence is recognized by its FIRST info-string token, so a
-        # decorated opener (```gherkin title=x) is never silently dropped. But the
+        # decorated opener (a gherkin fence with `title=x` after it) is never
+        # silently dropped. But the
         # house grammar is bare-only, so anything after the tag is a loud error --
         # loud beats both silent-parse and silent-drop.
         def open_gherkin(line_number, text)
@@ -290,7 +291,7 @@ module Lain
   end
 end
 
-# G3: TestGeneration reopens nothing (it is a plain sibling class, not a Gherkin
+# TestGeneration reopens nothing (it is a plain sibling class, not a Gherkin
 # reopen), but it depends on Criteria/Scenario existing first, so it loads after
 # the module body above -- gherkin.rb becomes this subtree's index the same way
 # skill.rb is skill/catalog.rb's.

@@ -2,23 +2,23 @@
 
 module Lain
   module Gherkin
-    # GG-2: the glue between an APPROVED {Criteria} (G2 owns the gate; this class
-    # trusts what it is handed) and the `test_engineer` role. Renders the
-    # `gherkin-tests` skill scaffold -- shipped, static, states the red-first
-    # contract -- inlines the MECHANICAL scenarios and the caller-named
-    # framework, and dispatches the whole prompt through {Skill::RoleSpawn} to
-    # `test_engineer` in fresh-context mode: a fresh child sees exactly this
-    # scaffold, never the parent's conversation.
+    # The glue between an APPROVED {Criteria} (the approval gate lives
+    # elsewhere; this class trusts what it is handed) and the `test_engineer`
+    # role. Renders the `gherkin-tests` skill scaffold -- shipped, static,
+    # states the red-first contract -- inlines the MECHANICAL scenarios and the
+    # caller-named framework, and dispatches the whole prompt through
+    # {Skill::RoleSpawn} to `test_engineer` in fresh-context mode: a fresh child
+    # sees exactly this scaffold, never the parent's conversation.
     #
-    # Scenarios flagged `mechanical: false` (the `# rubric` marker, G1) are
+    # Scenarios flagged `mechanical: false` (the `# rubric` marker) are
     # excluded from the prompt entirely and handed back as `rubric_scenarios` --
-    # they are human-judged, not testable, and G2's routing decides what happens
-    # to them next. This class only carries the split forward, verbatim (GG-4's
-    # split, recorded here, not improvised downstream).
+    # they are human-judged, not testable, and the approval routing decides what
+    # happens to them next. This class only carries the split forward, verbatim
+    # (that split is recorded here, not improvised downstream).
     #
     # No framework detection lives here on purpose: `framework:` is the
-    # caller's job (G4's TestHarness owns detection); this class only NAMES it
-    # in the prompt.
+    # caller's job ({Grader::TestHarness} owns detection); this class only
+    # NAMES it in the prompt.
     class TestGeneration
       # Raised by {#call} when EVERY scenario in the Criteria is rubric-flagged
       # (`mechanical: false`): there is nothing left to hand `test_engineer`, and

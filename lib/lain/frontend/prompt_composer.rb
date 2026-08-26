@@ -165,7 +165,7 @@ module Lain
     class PromptComposer
       # Reopened rather than grown inside the body above -- tty.rb's idiom: each
       # collaborator is its own responsibility, and the split keeps each body
-      # inside Metrics/ClassLength instead of loosening it. This half (T13) is
+      # inside Metrics/ClassLength instead of loosening it. This half is
       # what fills the renderer seam: a prompt composed from the run's own state
       # through {Lain::Ext::Prompt}, the format language the extension compiles.
 
@@ -188,7 +188,7 @@ module Lain
       # machine's, then what we ship. Narrowest scope that answered wins, and
       # `.lain/` is the project-scoped convention `services.rb` and
       # `summarizers.rb` already follow. NOT the state feed, which left this
-      # tree for `$XDG_STATE_HOME/lain` (F50, {ProjectDir}): a prompt format is
+      # tree for `$XDG_STATE_HOME/lain` ({ProjectDir}): a prompt format is
       # something a user writes and may commit, and machine state is not.
       def self.config_path(paths: Paths.new, project: Dir.pwd)
         [File.join(project, ".lain", "prompt.toml"), File.join(paths.config_home, "prompt.toml")]
@@ -351,7 +351,7 @@ module Lain
         HOUR = 3600
 
         # Past this a reading says nothing a human wants at a prompt. A ratio
-        # over 1.0 is rarer since T10 -- a live chat's Agent carries the book
+        # over 1.0 is rarer now that a live chat's Agent carries the book
         # {CLI::Backend#context_window} built from the window the provider says
         # it is serving -- but it is still ORDINARY rather than a bug: a model
         # no book carries and no server reports on still divides by
@@ -370,7 +370,7 @@ module Lain
         #   from it
         # @param mode [#posture, #layers, nil] the session's live mode -- a
         #   {Lain::Mode} value or a {Mode::Switch} both answer this duck.
-        #   `nil` until the mode ladder is wired into a live chat (T5/T10),
+        #   `nil` until the mode ladder is wired into a live chat,
         #   which is why it defaults to nil rather than being required: this
         #   card owns no line in `cli/wiring.rb`, so today's caller keeps
         #   constructing a {RunState} exactly as it always has, and `#to_h`
@@ -413,7 +413,7 @@ module Lain
           size.positive? ? size.to_s : nil
         end
 
-        # F47: {Compaction::Source::Derived} has been counting consecutive
+        # {Compaction::Source::Derived} has been counting consecutive
         # refused derivations and journaling the streak, and nothing read it.
         # This is the reading, and it is ABSENT for a healthy session --
         # {#fleet}'s convention, so the `( ... )` group elides rather than
@@ -421,16 +421,16 @@ module Lain
         #
         # {Compaction::Source::Derived.stalled?} decides WHETHER a streak is a
         # stall -- asked, never re-implemented here. The threshold is private
-        # over there for the reason F47 exists: a number exported across two
-        # namespaces grows a second `>=` in the next reader (`cli/up/hud.rb`,
-        # the day it projects this field) and the two drift.
+        # over there for the reason this reading exists: a number exported
+        # across two namespaces grows a second `>=` in the next reader
+        # (`cli/up/hud.rb`, the day it projects this field) and the two drift.
         #
         # `to_i` rather than a nil guard: a feed that has published no streak
         # reads as zero, which is healthy, and absence must never render as a
         # stall. That covers a state struct written before the field existed
         # AND a `--no-journal --no-nvim` run, where no tee is built, the feed
         # observes nothing at all, and this reads absent for the life of the
-        # session -- F47's silence, unchanged, exactly as `#fleet` behaves on
+        # session -- the absent reading, unchanged, exactly as `#fleet` behaves on
         # the same run. The card's promise holds for a journaling run.
         #
         # == THE READING LATCHES, deliberately

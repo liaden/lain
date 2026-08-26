@@ -2,10 +2,10 @@
 
 module Lain
   module CLI
-    # The read-mostly view of a live conversation that `/ruby` (T22) inspects
-    # through. It exposes exactly the collaborators the card names -- the
-    # timeline, the session, the fleet supervisor, and the status feed -- as
-    # reader messages, and hands out a Ruby {Binding} whose `self` is this
+    # The read-mostly view of a live conversation that `/ruby` inspects
+    # through. It exposes exactly four collaborators -- the timeline, the
+    # session, the fleet supervisor, and the status feed -- as reader
+    # messages, and hands out a Ruby {Binding} whose `self` is this
     # object, so an inspected expression resolves `timeline`/`session`/
     # `supervisor`/`status` and nothing wider (an unqualified `agent` is a
     # NameError, by design -- the binding is a window, not the whole run).

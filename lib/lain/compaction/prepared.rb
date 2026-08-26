@@ -2,7 +2,7 @@
 
 module Lain
   module Compaction
-    # CAC-5: prepare-once-apply-on-resume. Kept apart from {Scheduler}
+    # Prepare-once-apply-on-resume. Kept apart from {Scheduler}
     # (WHETHER/WHEN a compaction runs against LIVE traffic) and
     # {Context::Compact} (which performs one) -- this is the third policy:
     # WHAT HAPPENS ACROSS REPEATED IDLE TICKS. Idle time is not one event,
@@ -78,7 +78,7 @@ module Lain
       # repeated calls at the SAME head digest -- a call at the same head as
       # the held result is a cache hit on `@held` and never reaches
       # `@compact` again, which is what keeps repeated idle ticks from
-      # re-paying the summarizer's cost (CAC-5's whole point -- see the
+      # re-paying the summarizer's cost (this object's whole point -- see the
       # class comment). That is NOT the same claim as "safe to call on every
       # idle tick": the FIRST call at a given head always pays one full
       # summarizer round-trip, so gating WHEN idle ticks fire at all --
@@ -102,7 +102,7 @@ module Lain
 
         # Deep-frozen at the moment it is held, not merely "computed once":
         # {#pipeline} later closes over this exact array inside a lambda it
-        # hands to `Ractor.make_shareable` (the T21 pipeline contract), and
+        # hands to `Ractor.make_shareable` (the pipeline contract), and
         # a Proc can only be made shareable when everything it closes over
         # already is. Plain Hash/Array/String output has nothing that
         # objects to being frozen, so this is free correctness, not a cast.
@@ -113,7 +113,7 @@ module Lain
       end
 
       # The render pipeline for the next real turn at `head_digest` --
-      # CAC-5's "apply on resume." A match hands back a pipeline that
+      # the "apply on resume" half. A match hands back a pipeline that
       # REPLAYS the held compaction instead of recomputing it, riding ahead
       # of `base` the same way {Scheduler} rides Compact ahead of its base.
       # No match (nothing was ever held, or the head moved on without an
@@ -125,7 +125,7 @@ module Lain
       #   checked against whatever {#idle} last held, to decide REPLAY vs
       #   UNTOUCHED
       # @param base [#call, #requires] the strategy `#render` would use
-      #   otherwise (a Combinator, or T21's `->(workspace)` provider shape)
+      #   otherwise (a Combinator, or the `->(workspace)` provider shape)
       # @return the base itself, or a provider replaying the held
       #   compaction ahead of it
       def pipeline(head_digest:, base:)
@@ -164,8 +164,8 @@ module Lain
       # in an instance method here would carry this Prepared instance --
       # and its live, IO-backed Journal -- into the returned pipeline,
       # failing `Ractor.shareable?` the moment a caller stores it in a
-      # Context (`Context.new(pipeline: prepared.pipeline(...))`, T21's
-      # seam). Here `self` is the Prepared CLASS -- shareable -- and the
+      # Context (`Context.new(pipeline: prepared.pipeline(...))`, the
+      # pipeline seam). Here `self` is the Prepared CLASS -- shareable -- and the
       # shareable `messages`/`base` arrive as explicit arguments, so the
       # composed pipeline stays shareable exactly when they are.
       COMPOSE = lambda do |messages, base|

@@ -28,13 +28,13 @@ module Lain
       # == Pins are CUT POINTS, not shields
       #
       # {Derivation} takes no pin policy, by design: a pin splits one span into
-      # several ranges rather than being lifted out of one (F8 -- `#ranges` is
-      # an interval partition, and a pin is a cut point in it). {PinCuts} is
+      # several ranges rather than being lifted out of one (`#ranges` is an
+      # interval partition, and a pin is a cut point in it). {PinCuts} is
       # where that happens, and it is what keeps a pinned turn RETAINED, in
       # position, between the two replacements either side of it. The
-      # partition-hoisting F3 measured is structurally unreachable from here:
-      # the derivation writes retained turns in source order and can do nothing
-      # else.
+      # partition-hoisting a pin could otherwise cause is structurally
+      # unreachable from here: the derivation writes retained turns in source
+      # order and can do nothing else.
       #
       # A pinned turn whose tool counterpart is inside a collapsed range is a
       # different matter, and it is follow-up 14's hole. On this path it does
@@ -54,11 +54,11 @@ module Lain
         # was committed in between and the chain still will not derive. One
         # refusal is genuinely the awkward turn the class doc above describes.
         #
-        # PRIVATE, and reached only through {.stalled?}. F47 was a number
-        # nothing read, and the way that recurs is a second reader growing its
-        # own copy of the comparison: exporting the integer would put a `>=`
-        # in {Frontend::PromptComposer::RunState} today and another in
-        # `cli/up/hud.rb` the day it projects the field.
+        # PRIVATE, and reached only through {.stalled?}. The defect this avoids
+        # was a number nothing read, and the way that recurs is a second reader
+        # growing its own copy of the comparison: exporting the integer would
+        # put a `>=` in {Frontend::PromptComposer::RunState} today and another
+        # in `cli/up/hud.rb` the day it projects the field.
         STALLED_STREAK = 2
         private_constant :STALLED_STREAK
 
@@ -208,8 +208,8 @@ module Lain
         # deep-freeze what the Proc refers to -- it RAISES on anything not
         # already shareable, so a frozen combinator holding an ordinary Array
         # fails with `Ractor::IsolationError` on the first compacting turn of
-        # every real chat. (Measured: the A8 regression at
-        # `wiring_spec.rb:397-403` is exactly this, one object further in.)
+        # every real chat. (Measured: the regression at `wiring_spec.rb:397-403`
+        # is exactly this, one object further in.)
         # Deep-freezing here is safe because the array is ours -- built by
         # {Derivation.projected} out of already-frozen event bodies -- and it is
         # what makes "substituted as messages" a shareability argument rather

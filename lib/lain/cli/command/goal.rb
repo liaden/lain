@@ -4,17 +4,17 @@ module Lain
   module CLI
     module Command
       # `/goal <objective>` sets a standing goal the Repl drives the agent
-      # toward after each settled turn (T21); `/goal off` clears it; bare
+      # toward after each settled turn; `/goal off` clears it; bare
       # `/goal` reports what is in force. The driving, the done marker, the
       # iteration cap and the journaling all live in {GoalDriver} -- this command
       # is only the write surface over it, injected the SAME way {Help} takes its
       # registry and {Approve} its prompt -- the Repl and this command share the
       # one driver Wiring built.
       #
-      # The one {Env} reader is B3's: the driver auto-pins the objective's turn
-      # against the run's pin-set, and it must be given that session. Wiring
-      # memoizes the driver before it can name one, so the session rides in on
-      # the WRITE instead, from the only caller holding both.
+      # The one {Env} reader is there for the auto-pin: the driver pins the
+      # objective's turn against the run's pin-set, and it must be given that
+      # session. Wiring memoizes the driver before it can name one, so the
+      # session rides in on the WRITE instead, from the only caller holding both.
       #
       # No LLM judge decides termination in this version -- the driver stops on
       # the agent's explicit marker, the cap, or `/goal off`.

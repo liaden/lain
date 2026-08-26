@@ -62,7 +62,7 @@ module Lain
         def spool = Provider::Spool::Null.new
       end
 
-      # The chronicle-owned spool indirection (T3). Providers are constructed
+      # The chronicle-owned spool indirection. Providers are constructed
       # with the spool ONCE, before any promotion can happen, so the object
       # they hold must survive a mid-session rename. Two cases, split by
       # whether the wal file exists when {Chronicle#promote!} relocates:
@@ -105,7 +105,7 @@ module Lain
         # seam exists to close: two `Journal.open` calls landing on
         # different filenames when they straddle a clock tick).
         #
-        # `btw:` (T3) marks the session ephemeral: the SAME default path
+        # `btw:` marks the session ephemeral: the SAME default path
         # wearing the `.btw` mark ({Paths.ephemeral_for}), so the wal
         # derivation and the whole record format are untouched -- ephemerality
         # is the filename, reaped by {#close} on a clean exit unless
@@ -150,7 +150,7 @@ module Lain
         @recorder = nil
       end
 
-      # The session's on-disk identity, read by /fork (T16) to compose the
+      # The session's on-disk identity, read by /fork to compose the
       # child's `--fork <session>@<head>` selector. Nil for an injected-io
       # chronicle (no file), exactly as {#promote!} already refuses.
       attr_reader :journal_path
@@ -179,23 +179,23 @@ module Lain
       # writer). Memoized so every provider construction this run makes --
       # the main Agent's and each subagent's -- spools into the SAME file.
       #
-      # For T18 (salvage-on-resume): a subagent's round trips land frames here
+      # For salvage-on-resume: a subagent's round trips land frames here
       # too, but {Middleware::JournalRequests} -- the thing that journals
       # `request_sent` -- is wired only into the main Agent's `model_middleware`
       # (see {.telemetry_kwargs}), so a subagent's frames have no matching
       # `request_sent` digest in the session record. That is BY DESIGN, not a
       # gap this card owes: salvage keys off `request_sent`, so subagent frames
-      # simply cannot be salvage targets today, and T18 should not assume every
-      # frame in the file is matchable.
+      # simply cannot be salvage targets today, and salvage must not assume
+      # every frame in the file is matchable.
       #
-      # Answers a {RelocatableSpool} (T3): providers hold this ONE object for
+      # Answers a {RelocatableSpool}: providers hold this ONE object for
       # the whole run, so {#promote!} can retarget a not-yet-created wal
       # without changing the duck they were constructed with.
       def spool
         @spool ||= RelocatableSpool.new(wal_path)
       end
 
-      # T3: promote this session's ephemeral record in place -- the
+      # Promote this session's ephemeral record in place -- the
       # {Paths::Ephemeral} renames (WAL first), then the chronicle's OWN paths
       # retarget, because it is the live holder of both: the journal fd
       # survives the rename untouched (append mode, same inode), and the
@@ -212,7 +212,7 @@ module Lain
       end
 
       # Write the OPEN header, pinning exactly what the Agent renders with.
-      # A resumed chat (T19) passes `resumed_from:` (the chained-header shape)
+      # A resumed chat passes `resumed_from:` (the chained-header shape)
       # and `written:` (the resumed chain's turn digests) straight through to
       # the scribe -- see {SessionRecord::Scribe#initialize} for why both.
       # `message_journal` is the tee when --nvim wrapped one (the exe's
@@ -283,7 +283,7 @@ module Lain
         self
       end
 
-      # T15: announce a rewind to the scribe -- see {SessionRecord::Scribe#rewound}.
+      # Announce a rewind to the scribe -- see {SessionRecord::Scribe#rewound}.
       def rewound(to:)
         scribe.rewound(to:)
         self
@@ -322,7 +322,7 @@ module Lain
 
       private
 
-      # T3: an UNPROMOTED ephemeral reaps on the one clean close (`:exit`) --
+      # An UNPROMOTED ephemeral reaps on the one clean close (`:exit`) --
       # a promoted session's path no longer wears the mark, so it survives by
       # the same test. Every other reason (`:interrupted`, `:grace_expired`,
       # `:salvaged`) leaves the pair on disk for salvage, as does a hard kill,

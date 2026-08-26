@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# A1's per-turn Context sources. Defined in a module body so each pipeline is
+# The per-turn Context sources. Defined in a module body so each pipeline is
 # built where `self` is Ractor-shareable -- the same reason
 # T21PipelineProviders exists (see context_spec) -- and so the doubles read as
 # the production duck they stand in for: `context_for(base:, timeline:, usage:,
@@ -45,7 +45,7 @@ module A1PipelineSources
   end
 end
 
-# T22: one recorder per {Lain::Agent::Instrumentation} member, so "the value
+# One recorder per {Lain::Agent::Instrumentation} member, so "the value
 # reached its consumer" is asserted from an observable effect rather than from
 # the Agent's own ivars. In a module body for the same reason A1PipelineSources
 # is: the doubles read as the production ducks they stand in for.
@@ -96,7 +96,7 @@ module T22Instrumentation
   end
 end
 
-# T6: the post-dispatch observation seam is the LAST thing
+# The post-dispatch observation seam is the LAST thing
 # {Lain::Agent::ToolRunner#run} does, so an observer that cancels its own task
 # tears the run at the one point where every tool has already answered -- the
 # case a cancellation must not claim, reached deterministically and with no
@@ -163,7 +163,7 @@ RSpec.describe Lain::Agent do
     end
   end
 
-  # I6 (ruled): the tool_result commit is what DELIVERS an ask_human answer
+  # The tool_result commit is what DELIVERS an ask_human answer
   # back into the conversation, so that commit is the consumption edge -- the
   # :turn whose causal_parents cite Q, which is the ONLY thing that retires Q
   # from Projection#pending("human") (a reply :message alone never does; the
@@ -237,7 +237,7 @@ RSpec.describe Lain::Agent do
     end
   end
 
-  # T6/F46. The window a tear strands a tool_use in is #perform_tools: the
+  # The window a tear strands a tool_use in is #perform_tools: the
   # assistant turn is committed and its results are not. What the Agent owns
   # here is WHEN the cancellation is committed, not what it says -- the block
   # shape belongs to ToolRunner::Answers, and the end-to-end tear (a real cancel
@@ -366,7 +366,7 @@ RSpec.describe Lain::Agent do
       expect(a).to be_failed
     end
 
-    # F21 (manual-QA round 4). The counter was seeded once per Agent and never
+    # From manual-QA round 4. The counter was seeded once per Agent and never
     # reset, so the ceiling that names itself "loop ran N iterations" was in
     # fact a whole-session budget: 25 model calls spread over nine prompts
     # exhausted it, and every prompt after that was committed as a user turn and
@@ -546,7 +546,7 @@ RSpec.describe Lain::Agent do
       # An Agent built with no book of its own. `ContextWindow.default`'s
       # conservative fallback is the honest answer for a caller that named no
       # window -- a wired chat is handed the provider-derived book instead
-      # (T10, {CLI::Backend#context_window}), which is the example below.
+      # ({CLI::Backend#context_window}), which is the example below.
       it "measures against the conservative fallback window" do
         a = agent(spent(4096))
         a.ask("hi")
@@ -554,7 +554,7 @@ RSpec.describe Lain::Agent do
         expect(a.occupancy).to eq(0.5)
       end
 
-      # T10: the book is CONSTRUCTOR state, not a per-call default, because the
+      # The book is CONSTRUCTOR state, not a per-call default, because the
       # one caller that renders this figure to a human --
       # {Frontend::PromptComposer::RunState#occupancy} -- calls it with no
       # keyword at all. Left as a per-call default, the REPL prompt divided by
@@ -578,9 +578,9 @@ RSpec.describe Lain::Agent do
     end
 
     # The reader is as loud as the book it asks, and this is PART of its
-    # published contract: T13 renders it per prompt, so a caller that cannot
-    # afford a raise on a blank model slot has to know it can happen rather
-    # than discovering it as a REPL crash.
+    # published contract: the prompt composer renders it per prompt, so a
+    # caller that cannot afford a raise on a blank model slot has to know it
+    # can happen rather than discovering it as a REPL crash.
     context "with a blank model slot" do
       let(:context) { Lain::Context.new(model: "  ", max_tokens: 1024) }
 
@@ -597,7 +597,7 @@ RSpec.describe Lain::Agent do
     end
 
     it "exposes every declared state" do
-      # :stalled is B11's additive dual-ledger state (see LoopMachine); the
+      # :stalled is the additive dual-ledger state (see LoopMachine); the
       # transition-legality gates (agent_state_machine_spec's StopReason
       # totality + FAILURE_REASONS) are untouched -- this is a state-set snapshot
       # that grows with an authorized addition, like the generated diagram.
@@ -671,11 +671,11 @@ RSpec.describe Lain::Agent do
     end
   end
 
-  # T15: pin the Agent's existing Timeline injection seam (agent.rb:71,84) --
+  # Pin the Agent's existing Timeline injection seam (agent.rb:71,84) --
   # `timeline: nil` already defaults to a fresh Timeline, so passing one in is
   # already "resume from here". Subagent#spawn_agent is the production caller
   # (lib/lain/tools/subagent.rb:222); these examples pin the behavior it
-  # depends on before T19 builds further on it. Spec-only: no lib change.
+  # depends on before anything builds further on it. Spec-only: no lib change.
   describe "an injected Timeline" do
     let(:seeded_store) { Lain::Store.new }
 
@@ -740,7 +740,7 @@ RSpec.describe Lain::Agent do
 
     attr_reader :tmpdir
 
-    # AC4: the Agent threads ONE session end to end. A read on the first turn is
+    # The Agent threads ONE session end to end. A read on the first turn is
     # visible to a probe tool that runs on a later turn, through its invocation
     # context -- and that context IS the Agent's own session, not a copy.
     it "hands every tool the same session, with earlier reads already recorded" do
@@ -765,7 +765,7 @@ RSpec.describe Lain::Agent do
       expect(a.session.read?(path)).to be(true)
     end
 
-    # AC5: a reminder rides the Workspace tail into the Request, and NEVER lands
+    # A reminder rides the Workspace tail into the Request, and NEVER lands
     # in the Timeline (Workspace is sent, not stored). The Session stays ignorant
     # of Workspace; the Agent composes them per render.
     it "carries a session reminder into the request tail without appending it to the Timeline" do
@@ -785,13 +785,14 @@ RSpec.describe Lain::Agent do
     end
   end
 
-  # A1: @context is construction-fixed and #render_request always rendered from
-  # it, so a strategy that must re-decide EVERY turn (compaction) had nowhere to
-  # live. The source is that seam: one message, asked once per render.
+  # The base `@context` is construction-fixed and #render_request always
+  # rendered from it, so a strategy that must re-decide EVERY turn (compaction)
+  # had nowhere to live. The source is that seam: one message, asked once per
+  # render.
   describe "the per-turn Context source" do
     def texts(request) = request.messages.flat_map { |m| m["content"].map { |b| b["text"] } }.compact
 
-    # AC1. The default is a real Null Object, so an Agent built without a source
+    # The default is a real Null Object, so an Agent built without a source
     # sends the bytes its base Context renders -- not "equivalent" bytes.
     it "sends a Request byte-identical to the base Context's own render, with no source wired" do
       provider = Lain::Provider::Mock.new(responses: [text_response])
@@ -806,7 +807,6 @@ RSpec.describe Lain::Agent do
       expect(provider.last_request).to eq(direct)
     end
 
-    # AC2.
     it "renders through the Context the source returns, so its pipeline decides what is sent" do
       provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
                                                       text_response])
@@ -818,7 +818,7 @@ RSpec.describe Lain::Agent do
       expect(texts(provider.requests.last)).not_to include("hi")
     end
 
-    # AC3. A source consulted once per RUN would answer [1, 1, 1] here; one
+    # A source consulted once per RUN would answer [1, 1, 1] here; one
     # consulted per RENDER widens with the turn.
     it "is consulted once per render, not once per run" do
       provider = Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "x" }]),
@@ -830,7 +830,7 @@ RSpec.describe Lain::Agent do
       expect(provider.requests.map { |request| request.messages.size }).to eq([1, 2, 3])
     end
 
-    # AC4. `session:` is the parameter this card exists to place: the Session is
+    # `session:` is the parameter this seam exists to place: the Session is
     # built in Wiring and handed to Agent.new separately, so the Agent is the
     # only place it and the base Context both exist. `usage:` is the LAST turn's
     # billed input, not the run's cumulative sum -- nil before any turn, which
@@ -852,7 +852,7 @@ RSpec.describe Lain::Agent do
       expect(recorder.calls.last[:timeline].head_digest).to eq(a.timeline.rewind(1).head_digest)
     end
 
-    # AC6. `Scheduler::COMPOSE` calls `Ractor.make_shareable` on a lambda closing
+    # `Scheduler::COMPOSE` calls `Ractor.make_shareable` on a lambda closing
     # over the pipeline, so a per-turn Context that is not shareable is not a
     # style failure -- it is an IsolationError on the compacting turn.
     it "keeps every per-turn Context Ractor-shareable" do
@@ -888,9 +888,9 @@ RSpec.describe Lain::Agent do
     end
   end
 
-  # A7's owed diff: the post-dispatch tool-result observer is threaded from the
-  # constructor into ToolRunner, and defaults to the Null so an Agent built
-  # without one behaves byte-identically.
+  # The post-dispatch tool-result observer is threaded from the constructor
+  # into ToolRunner, and defaults to the Null so an Agent built without one
+  # behaves byte-identically.
   describe "the tool-result observer" do
     it "hands each completed tool_result block to an injected observer" do
       seen = []
@@ -917,7 +917,7 @@ RSpec.describe Lain::Agent do
     end
   end
 
-  # T21: the Agent accepts the three objects it drives -- ModelCaller,
+  # The Agent accepts the three objects it drives -- ModelCaller,
   # ToolRunner, Accounting -- instead of only the ingredients it builds them
   # from. Additive: the legacy keywords stay, and every existing call site
   # keeps its meaning. Mixing the two styles for ONE collaborator is the loud
@@ -1027,7 +1027,7 @@ RSpec.describe Lain::Agent do
     end
   end
 
-  # T21's correctness gate, and the one place the two construction styles could
+  # The correctness gate, and the one place the two construction styles could
   # diverge in BYTES. A {Agent::ToolRunner} harvests answered questions from ITS
   # OWN toolset and the Agent commits them as the turn's `causal_parents:`, which
   # are Merkle digest input -- so a runner looking at a different capability set
@@ -1101,7 +1101,7 @@ RSpec.describe Lain::Agent do
     end
   end
 
-  # T22: the seven keywords a run REPORTS through -- the journal, the three
+  # The seven keywords a run REPORTS through -- the journal, the three
   # middleware phases, the tool observer, the transition listener and the
   # per-turn Context source -- travel as ONE {Lain::Agent::Instrumentation}
   # value. They were seven slots on this constructor and three Hash reifications
@@ -1226,7 +1226,7 @@ RSpec.describe Lain::Agent do
     end
   end
 
-  # C4: wire_callers collapses its three mirror assignments
+  # wire_callers collapses its three mirror assignments
   # (@model_caller/@tool_runner/@accounting from `resolved`) into delegation to
   # the retained Collaborators object, the same idiom `delegate :usage, to:
   # :@accounting` already used for the fourth. Kept private (see

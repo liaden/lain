@@ -8,7 +8,7 @@ require "socket"
 require "timeout"
 require "tmpdir"
 
-# T10: the in-repo nvim plugin (plugin/nvim) -- thin, public API only. It owns
+# The in-repo nvim plugin (plugin/nvim) -- thin, public API only. It owns
 # the CONVENTIONS around the editor frontend (the deterministic server socket,
 # :LainStart's layout, socket_path()/status()) and none of the protocol: the
 # lain:// buffers, the :Lain* agent commands, and all RPC stay injected by the
@@ -18,9 +18,10 @@ require "tmpdir"
 RSpec.describe "lain nvim plugin", :nvim do
   # Four fixture directories, and the last two are not decoration. The state
   # feed's path is computed from `$XDG_STATE_HOME` (falling back to `$HOME`)
-  # since F50, so an editor booted with the operator's own environment resolves
-  # into the operator's own home -- and this file WRITES at that path. Both
-  # variables are fixture-owned for every boot, on both sides of the cross-pin.
+  # since it moved out of the project tree, so an editor booted with the
+  # operator's own environment resolves into the operator's own home -- and
+  # this file WRITES at that path. Both variables are fixture-owned for every
+  # boot, on both sides of the cross-pin.
   around do |example|
     @project = socket_tmpdir("lain-plugin-project")
     @runtime_dir = socket_tmpdir("lain-plugin-runtime")
@@ -45,7 +46,7 @@ RSpec.describe "lain nvim plugin", :nvim do
   def documents?(doc, name) = doc.match?(/:#{name}\b/)
 
   # The prose that hangs off one `*tag*` line, up to whichever comes first:
-  # the next tag-only line, or the end of the file. C10's own reason to need
+  # the next tag-only line, or the end of the file. The reason to need
   # this rather than the buffers sweep's whole-SECTION split
   # (`doc.split(/^-{78}$/)`): several commands share one `-{78}`-delimited
   # section in 6.4 RUNTIME COMMANDS, so that split cannot tell
@@ -260,7 +261,7 @@ RSpec.describe "lain nvim plugin", :nvim do
       expect(sock).to eq("/tmp/lain/nvim-#{Digest::SHA256.hexdigest(nvim_cwd)[0, 12]}.sock")
     end
 
-    # T19 relocated the state feed out of the project tree; this pins the
+    # The state feed moved out of the project tree; this pins the
     # renderer against the file's actual (new) home rather than the retired
     # in-tree spelling.
     it "status() reads the relocated XDG state file, nil when absent" do
@@ -324,8 +325,9 @@ RSpec.describe "lain nvim plugin", :nvim do
     # The trap {Lain::Paths::NonAbsoluteHome} closes on the Ruby side, closed
     # here too: libuv's os_homedir() reads $HOME first and hands a relative one
     # straight back, exactly as ruby's `Dir.home` does. A relative base
-    # resolves against the editor's cwd, which is the project -- F50 wearing an
-    # XDG-shaped hat -- so there is NO path rather than a relative one.
+    # resolves against the editor's cwd, which is the project -- that same
+    # relocation wearing an XDG-shaped hat -- so there is NO path rather than a
+    # relative one.
     it "refuses a non-absolute HOME rather than naming a path inside the project" do
       boot_nvim(state: nil, home: "not/absolute")
       expect(lua("return require('lain').state_path()")).to be_nil
@@ -411,7 +413,7 @@ RSpec.describe "lain nvim plugin", :nvim do
       end
     end
 
-    # T5's panel doc obligations: trust LainAttach data.protocol over
+    # The panel's doc obligations: trust LainAttach data.protocol over
     # g:lain_rpc_version, name the priming burst, and table the User events
     # and lain* highlight groups (source of truth: runtime.lua's comments).
     it "documents the injected contract and generates helptags" do
@@ -425,7 +427,7 @@ RSpec.describe "lain nvim plugin", :nvim do
 
       # Read from the constant, never as a literal: this file's LAST example
       # already learned that a hardcoded token turns every bump into a false
-      # green -- and this line then certified "protocol 5" through T12's bump to
+      # green -- and this line then certified "protocol 5" through a bump to
       # "6", which is exactly the drift the assertion exists to catch.
       expect(doc).to include("LainReviewDone").and include("LainAnnotate")
       # `include` is case-sensitive and satisfied by ONE marker, so it pinned
@@ -466,7 +468,7 @@ RSpec.describe "lain nvim plugin", :nvim do
       end
     end
 
-    # T35. A refused attach is the one contract change a human meets as a
+    # A refused attach is the one contract change a human meets as a
     # REFUSAL rather than as a capability, so the doc owes them the whole of it:
     # what happened, that the editor is untouched, what to do instead, and --
     # the part a "just say it refuses" paragraph drops -- that a lain which
@@ -479,7 +481,7 @@ RSpec.describe "lain nvim plugin", :nvim do
       expect(doc).to match(/refused/i).and match(/crashed/i).and match(/live/i)
     end
 
-    # C10. `:LainSurveyAdd` sends nothing today -- `Gestures#routes`
+    # `:LainSurveyAdd` sends nothing today -- `Gestures#routes`
     # (`human_replies.rb:843-852`) has no `survey_add` entry -- so the manual
     # must say so rather than describing a working gesture. Scoped to the
     # `*:LainSurveyAdd*` paragraph itself, {#tag_section}'s own reason: a
@@ -502,7 +504,7 @@ RSpec.describe "lain nvim plugin", :nvim do
     # a new command now fails this example BY NAME until doc/lain.txt names it.
     #
     # Read through {RuntimeLoader} rather than off runtime.lua, which is now only
-    # the chunk's HEAD: T6 moved every `define` site into runtime/*.lua, so a
+    # the chunk's HEAD: every `define` site moved into runtime/*.lua, so a
     # single-file read scanned the one file that defines no commands and answered
     # a confident []. The loader is what nvim is actually sent, which makes this
     # the one scan that cannot go stale as modules are added -- and adding them is
@@ -537,7 +539,7 @@ RSpec.describe "lain nvim plugin", :nvim do
     end
 
     # The same sweep from the other side, and only this direction catches the defect
-    # T28 was handed: the plan for this chunk assumed a `:LainDiffOpen`, and nothing
+    # that prompted it: the plan for this chunk assumed a `:LainDiffOpen`, and nothing
     # ever defined one. A doc naming a command that does not exist passes `helptags`,
     # passes the sweep above (which only walks runtime -> doc), and answers E492 to
     # the first human who types it. `:LainStart` is the exception BY SOURCE, not by
@@ -564,7 +566,7 @@ RSpec.describe "lain nvim plugin", :nvim do
       expect(undefined).to be_empty, "doc/lain.txt names commands nothing defines: #{undefined.inspect}"
     end
 
-    # T28's first documentation correction, and the half nothing read: deleting the
+    # The first documentation correction, and the half nothing read: deleting the
     # whole `Since protocol 9, b:lain_view no longer always names a VIEW` paragraph
     # left the suite green at 0 failures. The history entry's copy is doubly pinned;
     # the help file's -- the one a human writing a config actually reads, which is
@@ -616,7 +618,7 @@ RSpec.describe "lain nvim plugin", :nvim do
     # (`ReviewView::WALK_LEGEND`, 38 columns of a 40-column sidebar). Written
     # against a tag that was never defined, such a pointer generates tags
     # happily, passes every example here, and answers E149 to the first human
-    # who follows it. That is exactly what happened while T14 was in review.
+    # who follows it. That is exactly what happened once, and review missed it.
     it "resolves every :h tag the gem's own source points at" do
       doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
       defined_tags = doc.scan(/\*(lain[^\s*]*|:Lain\w+|b:lain\w+|User-Lain\w+)\*/).flatten
@@ -637,7 +639,7 @@ RSpec.describe "lain nvim plugin", :nvim do
       frontend.run do
         # The CONSTANT, not a literal: this example is about a bare nvim
         # attaching at all, and a hardcoded token turns every protocol bump
-        # into a false failure here (T15's did).
+        # into a false failure here (an earlier bump did).
         wait_until { lua("return vim.g.lain_rpc_version") == Lain::Frontend::Neovim::PROTOCOL }
         expect(lua("return vim.fn.exists(':LainSend')")).to eq(2)
         expect(lua("return vim.fn.exists(':LainStart')")).to eq(0)

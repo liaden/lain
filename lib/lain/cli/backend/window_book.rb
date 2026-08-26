@@ -115,11 +115,11 @@ module Lain
           # delegated answer comes back {ContextWindow::PUBLISHED} or
           # {ContextWindow::GUESSED} by whatever the shipped book knows, never
           # probed. Tagging the delegated case probed would be the same defect
-          # T9 fixes, pointed the other way: a rewrite authorised by a runner
-          # nobody asked about that model. The `#window_tokens` half of this
-          # already delegates for exactly the reason spelled out above -- the
-          # server answered about ONE runner -- and the authority has to travel
-          # with the number or the two halves of one answer disagree.
+          # this book exists to fix, pointed the other way: a rewrite authorised
+          # by a runner nobody asked about that model. The `#window_tokens` half
+          # of this already delegates for exactly the reason spelled out above --
+          # the server answered about ONE runner -- and the authority has to
+          # travel with the number or the two halves of one answer disagree.
           #
           # @return [ContextWindow::WindowResolution]
           # @raise [ContextWindow::UnknownModel] for a blank name, or an
@@ -269,8 +269,8 @@ module Lain
         # wiring -- both are DEFERRED here, not swallowed, and each has an
         # example saying so.
         #
-        # `--api-base` used to be a THIRD deferral, and is not one anymore: T5
-        # moved it to {Backend::Endpoint}, refused at CONSTRUCTION -- before a
+        # `--api-base` used to be a THIRD deferral, and is not one anymore: it
+        # moved to {Backend::Endpoint}, refused at CONSTRUCTION -- before a
         # WindowBook can even exist, since {Backend#context_window} only runs
         # on an already-constructed backend. `URI::Error` stays in the rescue
         # set below purely as a backstop; nothing on this path is expected to

@@ -2,7 +2,7 @@
 
 require "tmpdir"
 
-# The call-time role-selecting spawn seam (T-D2): (role_name, context_mode,
+# The call-time role-selecting spawn seam: (role_name, context_mode,
 # prompt) -> subagent result. It fetches the role (loud on unknown, BEFORE any
 # spawn), builds a one-shot Subagent under that role's policy and persona with
 # the chosen prefix, and runs the prompt to a single final result synchronously.
@@ -45,7 +45,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     )
   end
 
-  # ---- AC1: a chosen role at call time, inherit prefix, persona in system ----
+  # ---- A chosen role at call time, inherit prefix, persona in system ---------
 
   it "spawns the chosen role's only-set with an inherit prefix and the role persona in system" do
     provider = mock(text_response("done"))
@@ -54,7 +54,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     request = provider.last_request
 
     # The dev only-set, rendered under the default schema posture -- plus the
-    # `ask_human` T10 grants every child on top of its role's set, which no
+    # `ask_human` granted to every child on top of its role's set, which no
     # role in the catalog names and every posture permits.
     expect(request.tools.map { |t| t["name"] })
       .to match_array(%w[read_file list_files glob grep edit_file write_file todo_write bash ask_human])
@@ -69,7 +69,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     expect(request.system.last["text"]).to eq(slots.render_role(:dev))
   end
 
-  # ---- AC2: the fresh context mode -- no inherited parent conversation -------
+  # ---- The fresh context mode -- no inherited parent conversation ------------
 
   it "honors the fresh context mode: the child inherits none of the parent's conversation" do
     provider = mock(text_response("done"))
@@ -81,7 +81,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     expect(request.messages.first["content"].first["text"]).to eq("go")
   end
 
-  # ---- AC3: run the prompt to a single final result, synchronously -----------
+  # ---- Run the prompt to a single final result, synchronously ----------------
 
   it "runs the prompt to a single final result, returned synchronously" do
     provider = mock(text_response("the final answer"))
@@ -94,24 +94,24 @@ RSpec.describe Lain::Skill::RoleSpawn do
   # ---- SHOULD-FIX: the injected observer reaches the spawned child's Lineage -
   #
   # exe/lain wires the real Subagent with `observer: chronicle.observer` so the
-  # child's :spawn/:message lineage reaches the session scribe. Once B3 drives
-  # `@role/skill` spawns through this seam, an unforwarded observer would land
-  # the child's lineage on the Null chain writer -- "silent record loss one
-  # level up" (subagent.rb's own words). The seam must forward it.
+  # child's :spawn/:message lineage reaches the session scribe. Once
+  # `@role/skill` spawns are driven through this seam, an unforwarded observer
+  # would land the child's lineage on the Null chain writer -- "silent record
+  # loss one level up" (subagent.rb's own words). The seam must forward it.
 
   it "forwards an injected observer so the spawned child's spawn/message lineage reaches it" do
     seen = []
     provider = mock(text_response("done"))
     seam(provider:, observer: seen.method(:push)).call(:dev, :fresh, "go")
 
-    # T2 widened the funnel: the child's OWN turns ride it between the two
+    # The funnel was widened: the child's OWN turns ride it between the two
     # lineage events, because the session record cannot reach them any other
     # way (a Timeline walk sees one chain, and the scribe's is the parent's).
     # Here that is the seeded user turn and the child's single reply.
     expect(seen.map(&:kind)).to eq(%i[spawn turn turn message])
   end
 
-  # ---- AC4: an unknown role fails loudly, before any spawn -------------------
+  # ---- An unknown role fails loudly, before any spawn ------------------------
 
   it "raises Role::Catalog::Unknown for an unknown role, spending no tokens" do
     provider = mock(text_response("unused"))
@@ -122,7 +122,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
     expect(provider.call_count).to eq(0)
   end
 
-  # ---- T23: one Seam held, and per-call work that is role selection only -----
+  # ---- One Seam held, and per-call work that is role selection only ----------
   #
   # This class's own doc already says it "holds the same collaborator set the
   # exe's research_subagent assembles" -- the same six, written out twice. Held

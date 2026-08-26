@@ -4,7 +4,7 @@ require "async"
 require "fileutils"
 require "tmpdir"
 
-# T4: the project's own `.lain/summarizers.rb` reaches the rendered prompt.
+# The project's own `.lain/summarizers.rb` reaches the rendered prompt.
 #
 # The chain nothing tested end to end: {Lain::CLI::Backend#tool_observer} ->
 # {Lain::Oracle::Eager#fire} -> {Lain::Oracle::RoutedSummarizer} -> the loaded
@@ -62,7 +62,7 @@ RSpec.describe "Free summarizer tier seam", :seam do
     Lain::Provider::Mock.new(responses: [reply])
   end
 
-  # T10: the CHAT provider here is `ollama`, and a run now asks its server which
+  # The CHAT provider here is `ollama`, and a run now asks its server which
   # window it is serving before the compaction source is built
   # ({Lain::CLI::Backend#context_window}). Only `summarizer_provider` is swapped
   # below, so that probe reaches a real transport -- stubbed rather than let

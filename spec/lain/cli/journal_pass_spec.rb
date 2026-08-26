@@ -5,7 +5,7 @@
 # seam).
 load File.expand_path("../../../exe/lain", __dir__)
 
-# T25 review probe, kept as a spec. `--dry-run` no longer travels into the pass
+# A review probe, kept as a spec. `--dry-run` no longer travels into the pass
 # as a boolean; it picks a METHOD at the boundary, in exe/lain's private
 # `journal_pass`. That is the right shape -- but it moved the ONE decision that
 # separates "spend money on a model" from "print a plan" out of a spec'd lib

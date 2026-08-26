@@ -46,8 +46,8 @@ module Lain
   # {Lain::Usage} and every {Lain::PriceBook} rate, meanwhile, is per TOKEN. The
   # two were both spelled "tokens" and both bare Integers, so pricing the proxy
   # at a per-token rate looked exactly like pricing real usage and overstated
-  # every compaction's dollars by the whole bytes-per-token ratio (QA round 5,
-  # UX5). Wrapping the count is what makes that a raise: `Usage`'s `Integer()`
+  # every compaction's dollars by the whole bytes-per-token ratio (found in QA
+  # round 5). Wrapping the count is what makes that a raise: `Usage`'s `Integer()`
   # refuses this object, so {#to_tokens} is the ONE crossing between the units.
   #
   # It lives at the top level, beside {Usage}, because TWO pricing sites consume

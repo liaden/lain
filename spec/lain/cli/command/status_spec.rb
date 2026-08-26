@@ -2,14 +2,14 @@
 
 require "pastel"
 
-# T13: /status reads Command::Env's `status` reader DIRECTLY (the live
+# /status reads Command::Env's `status` reader DIRECTLY (the live
 # StatusFeed instance ChatLaunch threads through Wiring), never
 # `.lain/state.json` -- so this spec never touches a file, which is also
 # the AC's --no-journal proof: a StatusFeed with nothing published still
 # answers #state honestly (zeros/empty), and this command renders that
 # without erroring.
 #
-# T9: it answers a {Lain::Renderable} now, not a String -- the WORDS are
+# It answers a {Lain::Renderable} now, not a String -- the WORDS are
 # unchanged (asserted through #text), and the warm/cold marker names a token
 # instead of being swallowed by the one colour render_response used to paint
 # every command's answer.
@@ -91,7 +91,7 @@ RSpec.describe Lain::CLI::Command::Status do
 
   describe "the renderable it answers" do
     # A hand-rolled stand-in rather than a real StatusFeed: this asserts the
-    # command reads only the three keys it NAMES, so T7 widening the published
+    # command reads only the three keys it NAMES, so widening the published
     # state with new keys cannot break it.
     def feed_publishing(state) = Struct.new(:state).new(state)
 

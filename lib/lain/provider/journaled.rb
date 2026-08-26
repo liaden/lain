@@ -8,9 +8,8 @@ module Lain
     # It exists for the ORACLE tiers. An agent turn's round trip is already
     # recorded, by {Middleware::JournalRequests} in the model phase; an oracle's
     # is not, because {Oracle::Model} calls `#complete` directly and no
-    # middleware stack sits anywhere near it. F28 measured that as a whole QA
-    # round of journals holding zero records for traffic the run really paid
-    # for.
+    # middleware stack sits anywhere near it. A manual QA round measured that
+    # as journals holding zero records for traffic the run really paid for.
     #
     # == Why a decorator above the wire, and not a Faraday middleware
     #
@@ -30,7 +29,7 @@ module Lain
     # opts in by putting that middleware in `model_middleware`, and the arms
     # that do put it INNERMOST on purpose. Wrapping the chat provider here as
     # well would hand every other arm records it never asked for and give those
-    # two a duplicate per turn. The gap F28 measured is the oracle, so this
+    # two a duplicate per turn. The measured gap is the oracle, so this
     # wraps the three oracle tiers and nothing else.
     #
     # The forwarding is explicit rather than a `SimpleDelegator`, for the reason

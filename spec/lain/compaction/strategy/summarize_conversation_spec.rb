@@ -129,8 +129,8 @@ module SummarizeConversationFixtures
   # THE REAL COMPLEMENT, not a stand-in. An earlier draft built an anonymous
   # `Elide` subclass over {Lain::Compaction::ToolMessages.tool_runs} here, which
   # made the composition below a claim about a local fixture -- and left the
-  # actual shipped pair asserted by neither card, which is the one crash T7, T8
-  # and T9 exist between them to prevent.
+  # actual shipped pair asserted by neither card, which is the one crash these
+  # strategies exist between them to prevent.
   def eliding_tools = Lain::Compaction::Strategy::ElideToolObservations.new
 
   # A tier that is down. `Unrecorded` is the real one a replay hits, and it is a
@@ -163,7 +163,7 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
       expect(claimed & carrying).to be_empty
     end
 
-    # The filter is T7's and it is load-bearing here rather than incidental: an
+    # The filter is deliberate and load-bearing here rather than incidental: an
     # unfiltered complement would pay a model call to summarize one message.
     # Asserted against the INTERIOR case, with a tool round on both sides,
     # because {#mixed}'s opening turn is lone only because the span ends there.
@@ -276,8 +276,8 @@ RSpec.describe Lain::Compaction::Strategy::SummarizeConversation do
     end
   end
 
-  # Not this card's acceptance criterion -- T10 owns the spelling -- but it is
-  # the reason T7, T8 and T9 exist at all, and the failure it guards against is
+  # Not this card's acceptance criterion -- another card owns the spelling --
+  # but it is the reason these strategies exist, and what it guards against is
   # the expensive one: {Composed} refuses an overlap at PROPOSAL time, mid-turn,
   # in a live chat. Asserted here against the shared predicate so that this
   # class is known to compose before the card that composes it lands.

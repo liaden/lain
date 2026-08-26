@@ -11,7 +11,7 @@ require "pathname"
 # fourth spelling is trivial to write by hand and invisible in review -- so it is
 # forbidden here rather than in a paragraph nobody re-reads.
 #
-# The path the scan guards MOVED (F50): the feed is rewritten every turn, so it
+# The path the scan guards MOVED: the feed is rewritten every turn, so it
 # is machine state and now lives under `$XDG_STATE_HOME/lain`, not in the
 # project's `.lain/` tree. The scan moved with it. The old spelling is still
 # forbidden -- an expression naming `state.json` beside `Dir.pwd` or `.lain` is
@@ -337,7 +337,7 @@ RSpec.describe Lain::ProjectDir do
     end
   end
 
-  # F50: the feed is rewritten every turn -- `elapsed`, `idle` and `occupancy`
+  # The feed is rewritten every turn -- `elapsed`, `idle` and `occupancy`
   # all move -- and nothing in `lib/` writes a `.gitignore`, so every session
   # left permanent `git status` noise in the user's repository and a `git add -A`
   # committed it. Machine state that changes every turn is durable per-project
@@ -378,10 +378,11 @@ RSpec.describe Lain::ProjectDir do
 
     # The card's whole point, stated as the invariant rather than as a path: a
     # RELATIVE state path resolves against the process cwd, which is the
-    # project, which is F50 again wearing an XDG-shaped hat. Round 9's worked
-    # example missed this because it injected a hostile `HOME` into a fixture
-    # while the process `HOME` stayed healthy, so `Paths#home`'s `Dir.home`
-    # fallback quietly supplied a good answer that production never gets.
+    # project, which is that same finding again wearing an XDG-shaped hat.
+    # Round 9's worked example missed this because it injected a hostile `HOME`
+    # into a fixture while the process `HOME` stayed healthy, so `Paths#home`'s
+    # `Dir.home` fallback quietly supplied a good answer that production never
+    # gets.
     it "never yields a non-absolute state path, whatever HOME says" do
       ["rel", ".", "", "../up"].each do |hostile|
         with_env("HOME" => hostile) do
@@ -456,7 +457,7 @@ RSpec.describe Lain::ProjectDir do
     end
   end
 
-  # T29's acceptance criterion, re-aimed at the relocated file. Every fixture
+  # The acceptance criterion, re-aimed at the relocated file. Every fixture
   # below is a real way to rebuild the state path by hand -- the retired
   # `.lain/` location included, because rebuilding THAT is how the finding comes
   # back -- and each must redden the scan, otherwise the scan is theatre.

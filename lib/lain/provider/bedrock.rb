@@ -17,12 +17,12 @@ module Lain
     # {Anthropic::RetryTap} by explicit reference rather than promoting them to a
     # shared namespace. The threshold that line named -- "a third such arm is
     # what would earn that move, not the second" -- HAS NOW BEEN CROSSED:
-    # {Provider::Ollama::RetryTap} (T2/F7) is a third retry tap and is largely
+    # {Provider::Ollama::RetryTap} is a third retry tap and is largely
     # this one's shape, differing only in having no spool to rotate. The
     # extraction is therefore OWED, and is deliberately deferred rather than
-    # forgotten: T10 and T11 both build on retry and assembler behaviour, and
-    # relocating the class while they are in flight buys a merge conflict on the
-    # critical path for no behaviour change. What it does NOT share is
+    # forgotten: other work in flight builds on retry and assembler behaviour,
+    # and relocating the class while that is in flight buys a merge conflict on
+    # the critical path for no behaviour change. What it does NOT share is
     # {Anthropic::Transport}, which is bound by inheritance to the
     # direct-Anthropic backend; see {Transport}.
     #
@@ -34,7 +34,7 @@ module Lain
     # missing frame, so adopting the tap costs nothing and means the day a spool
     # lands the attempt-boundary rule arrives with it.
     #
-    # deliberately absent: `on_stream_started` (CE-5). {StreamStartedSignal} is
+    # deliberately absent: `on_stream_started`. {StreamStartedSignal} is
     # not included, so a stagger scheduler cannot pace this arm; #complete takes
     # no such keyword rather than accepting and ignoring one.
     #

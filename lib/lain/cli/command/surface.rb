@@ -20,7 +20,7 @@ module Lain
       # {Backend#library} and injected by Wiring, so this surface,
       # {Tools::RunSkill} and {Backend#context}'s system prompt are readers of
       # one `.lain/` read rather than separate reads of the same tree. It
-      # arrived as a `(catalog:, slots:)` pair until T40 named it.
+      # arrived as a `(catalog:, slots:)` pair before the Library named it.
       #
       # A later command card lands as one require in cli/command.rb, one
       # register line in {#registry}, and -- when it needs a new Env reader --
@@ -37,7 +37,7 @@ module Lain
         # ArgumentError at construction, not a quiet degrade far from the bug.
         # That applies to the library exactly as it does to the rest: a from-disk
         # default here would silently be a SECOND read of the same tree, which is
-        # the bug T15 removed.
+        # exactly the bug that injection removed.
         #
         # `root:` survives the library, on its own business: {Meta} reads the
         # project's `.lain/` config from it. It no longer feeds a snapshot load.
@@ -65,7 +65,7 @@ module Lain
           @cwd = cwd
           @library = library
           @ledger = ledger
-          # T14's inline drain shares Frontend::ApprovalPolicy's prompt loop;
+          # The inline drain shares Frontend::ApprovalPolicy's prompt loop;
           # Wiring hands in one whose reader routes through the conductor.
           @approval_prompt = approval_prompt || Frontend::ApprovalPolicy.new
           @env = assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
@@ -85,7 +85,7 @@ module Lain
         # `/review-submit` reads THIS one rather than an outbox of its own.
         def outbox = @outbox ||= Lain::Review::Submit::Outbox.new
 
-        # The T9 command surface the Repl consults ahead of SkillDispatch
+        # The command surface the Repl consults ahead of SkillDispatch
         # (precedence is command-first by design): the registry curried over
         # the one Env, so the Repl dispatches with text alone. Memoized, like
         # every reader here: two calls MUST answer the same bound registry, or
@@ -136,9 +136,9 @@ module Lain
         # actually separates this from #registry is that #registry builds
         # arguments (a live registry, a catalog, a prompt) and this does not.
         #
-        # Split out so #registry's ABC stays honest as the set grows (T17 added
-        # /btw and /keep): each `.new` is an ABC method call, and this list is
-        # data, not the registration behavior #registry owns.
+        # Split out so #registry's ABC stays honest as the set grows (/btw and
+        # /keep were later additions): each `.new` is an ABC method call, and
+        # this list is data, not the registration behavior #registry owns.
         #
         # ⚠️ THAT SPLIT HAS NOW RUN OUT ITSELF: with `/introspect` this method
         # measures 17.0 against Metrics/AbcSize's limit of 17, so the NEXT

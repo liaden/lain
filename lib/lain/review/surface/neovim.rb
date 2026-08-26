@@ -194,9 +194,9 @@ module Lain
         # `65_review.lua:37`'s `"lain: "` prefix is added) fits one message
         # line only at 120; this surface's own truncated message fits at
         # 80 and 120, not 40. A message that does not fit one line is what
-        # F5 traces the `Press ENTER or type command to continue` prompt
-        # to -- and that prompt blocks RPC on every mark -- so shorter is
-        # what keeps the ordinary case out of it, at ordinary terminal
+        # the `Press ENTER or type command to continue` prompt was traced
+        # back to -- and that prompt blocks RPC on every mark -- so shorter
+        # is what keeps the ordinary case out of it, at ordinary terminal
         # widths. No file name reaches this surface (`Session#mark` sends
         # only the key and the state -- see `review/session.rb`), so a
         # prefix of the key is the only identifying substance a human can

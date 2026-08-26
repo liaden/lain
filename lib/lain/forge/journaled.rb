@@ -54,7 +54,7 @@ module Lain
       #
       # {Reconcile::Observer} asks `pr_for(head:)`, which is COARSER than this
       # address -- it cannot name a base. That is fine while base is main and is
-      # T24's `world` duck to sharpen if a repo ever targets two.
+      # the `world` duck to sharpen if a repo ever targets two.
       def pr_create(base:, head:, title:, body:)
         attempt(action: PR_CREATE, params: { "head" => head, "base" => base }) do
           @executor.pr_create(base:, head:, title:, body:)
@@ -121,7 +121,7 @@ module Lain
       # placement is the whole point of the method.
       #
       # {#attempt} is public so a producer that is not a gh verb can reuse the
-      # bracket -- T18's promote is the intended caller -- and nothing can make
+      # bracket -- the promote path is the intended caller -- and nothing can make
       # such a block answer a {Gh::Answer}. Read one line further out, a block
       # answering anything else raises AFTER the intent is journaled and BEFORE
       # any outcome, which is the exact shape {Reconcile} reads as "we may have

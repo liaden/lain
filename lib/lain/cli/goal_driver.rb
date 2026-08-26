@@ -2,7 +2,7 @@
 
 module Lain
   module CLI
-    # The standing-goal driver (T21): a live, mutable seam the Repl polls
+    # The standing-goal driver: a live, mutable seam the Repl polls
     # between asks and `/goal` writes. It re-prompts the agent toward one
     # objective after each settled turn -- goal plus a continue/done
     # instruction -- and halts on the agent's own done marker, an iteration
@@ -61,7 +61,7 @@ module Lain
         # live driver is wired (a headless assembly): starting a goal is a
         # no-op that honestly stays idle, never a NoMethodError and never a lie
         # (the command reads `active?` back before it confirms). The `session:`
-        # a live driver would auto-pin the objective on (B3) is accepted and
+        # a live driver would auto-pin the objective on is accepted and
         # dropped -- an idle driver drives nothing, so it has nothing to pin.
         def self.start(_goal, **) = self
 
@@ -69,7 +69,7 @@ module Lain
 
         def self.goal = nil
 
-        # The B3 pin duck: an idle delegate has driven nothing, so it has no
+        # The pin duck: an idle delegate has driven nothing, so it has no
         # objective to protect and nothing to report about failing to.
         def self.settle_pin(_timeline) = self
 
@@ -128,7 +128,7 @@ module Lain
       # stopped, or deferring while the fleet is unquiet). A finished Run retires
       # to Null so the next idle poll stays cheap.
       #
-      # The B3 pin settles FIRST, ahead of both the quiescence gate and the
+      # The objective pin settles FIRST, ahead of both the quiescence gate and the
       # delegate's own poll, and that placement is load-bearing twice over. A
       # DEFERRED poll is exactly when the Repl hands the human back `you>`
       # (repl.rb:106), so `/goal off` can land on one -- gate the pin and an
@@ -255,7 +255,7 @@ module Lain
         end
       end
 
-      # B3: keeps ONE objective's turn out of compaction, and says so on the
+      # Keeps ONE objective's turn out of compaction, and says so on the
       # bench. Its own object because "is the objective safe" is a different
       # question from "should we keep driving" -- the {Run} decides the second,
       # this decides the first, and only this one touches the pin-set.

@@ -50,7 +50,7 @@ RSpec.describe Lain::Tools::MemoryRead do
     it_behaves_like "a tier-1 read that never raises"
   end
 
-  # T5: a memory body is a whole artifact like a file's contents, so an
+  # A memory body is a whole artifact like a file's contents, so an
   # oversized one is refused rather than truncated. It is the THIN case of the
   # three -- there is no window on memory and no structural query over it -- so
   # what the refusal names is the manifest line every item already has and the
@@ -75,7 +75,7 @@ RSpec.describe Lain::Tools::MemoryRead do
       expect(tool.call(id: "dump").content).not_to include("SENTINEL")
     end
 
-    # Fix round, S1: neither of the first draft's two narrower actions survived
+    # Fix round: neither of the first draft's two narrower actions survived
     # being followed. There is no manifest TOOL -- the manifest rides every
     # Request through Workspace -- so "read the manifest" named a call the
     # model cannot make; and "supersede it with a smaller memory_write" is

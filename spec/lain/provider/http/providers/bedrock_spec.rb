@@ -10,7 +10,7 @@ RSpec.describe Lain::Provider::HTTP::Providers::Bedrock do
   end
 
   # The backend registers itself on load, exactly as the vendored Anthropic
-  # backend does; resolution through the shared registry is the seam AC1 names.
+  # backend does; resolution through the shared registry is the seam under test.
   describe "registration" do
     it "registers under the :bedrock slug" do
       expect(Lain::Provider::HTTP::Provider.resolve(:bedrock)).to eq(described_class)

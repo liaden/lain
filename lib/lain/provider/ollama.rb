@@ -50,8 +50,8 @@ module Lain
     # here said free/local spend made that tolerable and that comparing latency
     # across arms would not let it stay so. What ended it was neither: the
     # 2026-08-17 QA run hit a stalled server and waited **over 400 seconds
-    # printing nothing at all** (F7a), which on the one arm whose honest shape
-    # is a model thinking for six minutes is unreadable. {RetryTap} now journals
+    # printing nothing at all**, which on the one arm whose honest shape is a
+    # model thinking for six minutes is unreadable. {RetryTap} now journals
     # every attempt boundary, and -- the part the retried-stream discard needs
     # -- gives a retry somewhere to DISCARD what the attempt it replaced put
     # together.
@@ -72,8 +72,8 @@ module Lain
     # no longer absent: a timeout/retry envelope of its own. It is not restated
     # here either -- {Deployment#request_timeout} and {Deployment#max_retries}
     # answer it, and the two arms disagree. 300s/3 is a local model thinking
-    # for six minutes (F7a); 120s/5 is a metered host whose ordinary failure is
-    # a 429, trading patience for attempts.
+    # for six minutes; 120s/5 is a metered host whose ordinary failure is a 429,
+    # trading patience for attempts.
     #
     # no longer absent: authentication. A loopback server asks for no
     # credential and {Deployment::Local#apply} actively CLEARS one, because the
@@ -92,9 +92,9 @@ module Lain
     # The bytes land the same way Anthropic's do -- the shared
     # {Anthropic::WalResponseTee} on the sync path, an explicit tee on the
     # streaming one -- and a retry ROTATES the frame, so a severed attempt and
-    # its replacement are two frames rather than one that lies. That is F7b
-    # again, in the spool instead of the assembler, and the two discards are
-    # registered independently so neither can displace the other.
+    # its replacement are two frames rather than one that lies. That is the
+    # splice defect again, in the spool instead of the assembler, and the two
+    # discards are registered independently so neither can displace the other.
     #
     # STILL ABSENT, and now recorded rather than argued from free-ness:
     # rate-limit backoff, because the header vocabulary the native cloud path
@@ -592,10 +592,10 @@ module Lain
       # `@transport.stream`, so a retried attempt feeds the SAME assembler the
       # attempt it replaced was feeding. Left alone, that is a splice: a severed
       # attempt followed by a clean retry returned `ok`, done_reason "stop",
-      # carrying both attempts' text (F7b). Hoisting the assembler inside the
-      # block is not available -- the block is the chunk callback, called once
-      # per chunk -- and NDJSON has no marker to re-sync on, so the discard has
-      # to come from the retry itself. Registering #reset on this round trip's
+      # carrying both attempts' text. Hoisting the assembler inside the block is
+      # not available -- the block is the chunk callback, called once per chunk
+      # -- and NDJSON has no marker to re-sync on, so the discard has to come
+      # from the retry itself. Registering #reset on this round trip's
       # {RetryTap::Attempt} is that: faraday-retry abandons the attempt, which
       # runs the reset, before the replacement's first chunk is fed.
       #
@@ -664,9 +664,9 @@ module Lain
       # replaced -- and a correctness invariant must not hang on a seam a caller
       # can displace. It did, briefly, and it was measurable: a config carrying
       # its own `retry_block` (which `ollama_spec.rb` ships) brought the whole
-      # F7b splice back, returned as `:end_turn`. `||=` was the right wiring
-      # while this block was only telemetry; it stopped being right the moment
-      # the retried-stream discard was hung on it.
+      # splice back, returned as `:end_turn`. `||=` was the right wiring while
+      # this block was only telemetry; it stopped being right the moment the
+      # retried-stream discard was hung on it.
       #
       # `exhausted_retries_block` keeps `||=`, because nothing but telemetry
       # hangs on it: exhaustion does not abandon -- the round trip raises and

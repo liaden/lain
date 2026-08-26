@@ -28,8 +28,8 @@ module Lain
   # ({ProjectDir#state_path}) and every renderer reads the FILE, so it is never
   # read cross-thread in-process. `RunClock` is the first of this family actually
   # meant to be read directly from another thread/fiber than the one writing
-  # it (T7's status line reading `#elapsed`/`#idle` while `#<<` and
-  # `#record_input` are written from elsewhere; T13's channel wiring). That is
+  # it (the status line reading `#elapsed`/`#idle` while `#<<` and
+  # `#record_input` are written from elsewhere; the channel wiring). That is
   # safe under CRuby's GVL for exactly this shape: every write is one ivar
   # reassignment to an immutable `Float` or `nil` (never an in-place mutation
   # spanning bytecode boundaries), and the GVL makes a single ivar swap

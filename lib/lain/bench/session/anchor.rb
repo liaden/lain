@@ -3,7 +3,7 @@
 module Lain
   module Bench
     class Session
-      # Classifies and verifies a file's own anchor (T14): OPEN, CLOSED, or
+      # Classifies and verifies a file's own anchor: OPEN, CLOSED, or
       # this class's own always-anchored (offline recorder) shape. A separate
       # responsibility from {Loader}'s chain-following and turn-rebuilding --
       # this only ever looks at the header and the `session_closed` records,

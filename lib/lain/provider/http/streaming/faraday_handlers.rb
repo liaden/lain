@@ -17,7 +17,6 @@
 # only line where each half is knowable: the middleware
 # ({Connection::MiddlewareStack::StallProtection}) owns the request's SCOPE,
 # and the `on_data` proc below owns the TICKS.
-
 module Lain
   class Provider
     module HTTP
@@ -28,9 +27,9 @@ module Lain
         # An {HTTP::Error}, and deliberately NOT `Faraday::TimeoutError`,
         # `Timeout::Error` or `Faraday::ConnectionFailed`: all three sit in
         # {Connection::MiddlewareStack#retry_exceptions} and `retry_options`
-        # retries `:post`, so a stall raised as one of them would answer F7a's
-        # 300s hang with four of them instead of bounding it. `HTTP::Error` is
-        # the vendored slice's transport-failure root, is not itself in that
+        # retries `:post`, so a stall raised as one of them would answer a 300s
+        # hang with four of them instead of bounding it. `HTTP::Error` is the
+        # vendored slice's transport-failure root, is not itself in that
         # allowlist, and is what every arm's `wrapping_errors` already turns
         # into its own `APIError` -- so a stalled summarizer degrades exactly
         # the way an unreachable one does, rather than escaping every `rescue`
@@ -45,7 +44,7 @@ module Lain
         # It ARMS ON THE FIRST TICK and not before, which is the whole of the
         # first-byte/inter-chunk split: until a byte has arrived the only bound
         # is `request_timeout`, so prompt evaluation keeps the budget it has
-        # always had, and only the mid-stream case F7a actually hit is bounded.
+        # always had, and only the mid-stream case is bounded.
         #
         # The clock reaches a handler through the REQUEST the bytes belong to.
         # `Faraday::Env#stream_response` calls `request.on_data.call(chunk, size,
@@ -212,9 +211,10 @@ module Lain
             # mutex acquisition is one.
             #
             # This is also the deliberate answer for a scheduler that lacks the
-            # hooks. It lands badly on a reactor -- that is F10 -- but it still
-            # BOUNDS the stall, and an unbounded stall with a green suite is the
-            # worse of the two failures by this class's own standard.
+            # hooks. It lands badly on a reactor -- the raise reaches the whole
+            # reactor thread rather than the one fiber -- but it still BOUNDS
+            # the stall, and an unbounded stall with a green suite is the worse
+            # of the two failures by this class's own standard.
             ToThread = Data.define(:thread) do
               def interrupt(error) = thread.raise(error)
 

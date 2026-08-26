@@ -2,7 +2,7 @@
 
 require "tmpdir"
 
-# The seam F62 shipped through. `read_file` was specced by itself, the Timeline
+# The seam a defect shipped through. `read_file` was specced by itself, the Timeline
 # was specced by itself, and the raise lives in neither: `Canonical.normalize`
 # inside {Lain::Event::Payload} on {Lain::Timeline#commit}. The nearest existing
 # example -- the `unreadable` one in `redact_secret_reads_spec.rb` -- INJECTS

@@ -3,7 +3,7 @@
 require "ripper"
 require "pathname"
 
-# Mechanical enforcement of T33's rule: the monotonic clock primitive is named
+# Mechanical enforcement of the rule: the monotonic clock primitive is named
 # ONCE in lib/, in run_clock.rb, as {Lain::RunClock::MONOTONIC}'s body. Every
 # other timing seam takes that constant as its `clock:` default.
 #
@@ -18,8 +18,7 @@ require "pathname"
 # an alias (`X = RunClock::MONOTONIC`, which is a second NAME but not a second
 # reading). And it says nothing about a seam whose default is a *wall* clock:
 # `clock: -> { Time.now.to_f }` names no primitive and passes. That last gap is
-# the real one -- see the "no seam has a private clock" ticket in
-# `.handback-T33.md`, which needs a positive census of the seams rather than
+# the real one -- closing it needs a positive census of the seams rather than
 # this negative scan.
 module MonotonicDiscipline
   # The primitive whose every reference is being centralized, matched as a
@@ -152,7 +151,7 @@ RSpec.describe Lain::RunClock do
     end
   end
 
-  # T33: this class was already the repo's clock object, so the shared default
+  # This class was already the repo's clock object, so the shared default
   # lives here rather than in a new `Lain::Clock` unit -- a second clock name
   # would reproduce the very duplication this collects.
   describe "MONOTONIC" do

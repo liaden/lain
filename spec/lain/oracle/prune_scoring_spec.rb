@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-# T4 (OR-3), first oracle arm: "which spans are stale?" -- feeds
-# cache-aware-compaction's cold-window work (T18, not yet built). Pins the
-# heuristic baseline every richer arm (OR-4) must beat: no model call,
+# The first oracle arm: "which spans are stale?" -- feeds
+# cache-aware-compaction's cold-window work (not yet built). Pins the
+# heuristic baseline every richer arm must beat: no model call,
 # decided purely from `age_turns` crossing a threshold.
 RSpec.describe Lain::Oracle::PruneScoring do
   describe ".heuristic (the baseline arm)" do

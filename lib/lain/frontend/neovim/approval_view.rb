@@ -5,7 +5,7 @@ require "async"
 module Lain
   module Frontend
     class Neovim
-      # The editor's surface on {Lain::Approval::Queue} (T36): lain://approval
+      # The editor's surface on {Lain::Approval::Queue}: lain://approval
       # lists what is parked, and `y`/`n` on a row answers it.
       # {Frontend::ApprovalPolicy}'s own class comment named this consumer --
       # "which is what lets a second surface (a Neovim view) coexist, first
@@ -19,9 +19,10 @@ module Lain
       # ONE `dequeue` caller, and that caller is {Frontend::ApprovalPolicy} --
       # the surface that can ask a person. A second one here would STEAL
       # pendings the terminal then never asks about. That is not hypothetical:
-      # {Lain::Notify} drained it too until T15, and from the second gated call
-      # of a turn onward the terminal got nothing, which on `--no-nvim` is a
-      # session with no approval surface at all (manual-QA round 4, F18).
+      # {Lain::Notify} drained it too until it was made an observer, and from
+      # the second gated call of a turn onward the terminal got nothing, which
+      # on `--no-nvim` is a session with no approval surface at all (manual-QA
+      # round 4).
       # {#sweep} walks the PARKED set ({Queue#each}) and renders it;
       # {Pending#decide}'s first-answer-wins is what makes the race safe, and
       # the loser's answer is a quiet no-op by construction rather than by a
@@ -288,7 +289,7 @@ module Lain
           sweep(queue)
         end
 
-        # The at-rest projection, posted at attach by {Surfaces#prime} (UX4).
+        # The at-rest projection, posted at attach by {Surfaces#prime}.
         # {EMPTY} was always this view's rendering of nothing; it was simply
         # unreachable until a call was gated, so a human looking for the
         # approval surface on an idle cockpit found no buffer at all and

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-# T22: the read-mostly binding /ruby inspects the live conversation through.
-# It exposes exactly the four collaborators the card names -- timeline,
+# The read-mostly binding /ruby inspects the live conversation through.
+# It exposes exactly four collaborators -- timeline,
 # session, supervisor, status -- as reader messages, and hands out a Ruby
 # Binding whose `self` is this object so an inspected expression resolves
 # those names and nothing wider. The object is frozen, so the console cannot

@@ -42,9 +42,9 @@ RSpec.describe Lain::Sensitivity::Regions do
       end
 
       # Both readings of the AC at once. The region sits inside the assignment,
-      # and it excludes the NAME -- T15 renders an unreleased region as
+      # and it excludes the NAME -- masking renders an unreleased region as
       # `<redacted:N>`, and a region covering `API_KEY=...` would erase the key
-      # name that T15's "the structure survives" contract promises to keep.
+      # name that the "structure survives" contract promises to keep.
       it "covers the assignment's value and not its name" do
         region = detect(content).first
 
@@ -230,7 +230,7 @@ RSpec.describe Lain::Sensitivity::Regions do
     end
 
     # Every line here is real, taken from this repository, and every one produced
-    # a region before the substance floor. In T15 each is a prompt reading
+    # a region before the substance floor. Each becomes a prompt reading
     # "release the value `)`?" -- which is what makes a name hint over a trivial
     # value worse than useless: it spends the human's attention budget on syntax.
     context "when a name hint sits over a value with no substance" do
@@ -254,8 +254,8 @@ RSpec.describe Lain::Sensitivity::Regions do
     end
 
     # Quotes belong to the file's syntax, not to the secret. Including them would
-    # split one secret across two digests -- quoted and unquoted differ, so T14's
-    # cache misses -- and, decisively, masking a span that carries its own
+    # split one secret across two digests -- quoted and unquoted differ, so the
+    # digest cache misses -- and, decisively, masking a span that carries its own
     # delimiters destroys the quoting that made the file parse.
     context "when a value is quoted" do
       let(:double) { %(API_KEY="#{secret}"\n) }
@@ -305,10 +305,10 @@ RSpec.describe Lain::Sensitivity::Regions do
     end
 
     # Measured, not asserted from taste. `for(:content)` alone matches 95 of this
-    # repo's 134 markdown files -- the number T9's own docstring records -- and
-    # 86.0% of `lib/` and 95.4% of `spec/`, which would make every file the agent
-    # reads park a pending. These examples exist so a future widening trips a spec
-    # rather than waiting to be re-measured.
+    # repo's 134 markdown files -- the number the classifier's own docstring
+    # records -- and 86.0% of `lib/` and 95.4% of `spec/`, which would make every
+    # file the agent reads park a pending. These examples exist so a future
+    # widening trips a spec rather than waiting to be re-measured.
     context "with real files from this repository" do
       def repo_path(name) = File.expand_path("../../../#{name}", __dir__)
 
@@ -346,10 +346,10 @@ RSpec.describe Lain::Sensitivity::Regions do
     end
 
     context "when a UTF-8 BOM precedes a key on line 1" do
-      # T9 pinned that `^` anchors BEFORE a BOM and a BOM is not `[ \t]`, so the
+      # Regexes anchor `^` BEFORE a BOM and a BOM is not `[ \t]`, so the
       # patterns cannot see line 1 at all. A dotenv file written by a Windows
       # editor is exactly where that matters, so the BOM is skipped here -- and
-      # the offsets must still index the ORIGINAL bytes, or T15 masks the wrong
+      # the offsets must still index the ORIGINAL bytes, or masking hits the wrong
       # span.
       # `SESSION=hunter2pass` is reachable ONLY by the line-anchored dotenv shape:
       # the value is too short and too dull for entropy, and `session` is not in
@@ -471,8 +471,8 @@ RSpec.describe Lain::Sensitivity::Regions do
         end
       end
 
-      # Offsets are what T15 masks by, so the fold's geometry needs pinning at the
-      # byte, not merely "one region came out".
+      # Offsets are what masking works by, so the fold's geometry needs pinning
+      # at the byte, not merely "one region came out".
       # `$` and `!` are both outside the entropy scanner's charset, so the
       # pattern's value span begins one byte EARLIER and ends one byte LATER than
       # the entropy run inside it. That makes the two ends independently
@@ -562,7 +562,7 @@ RSpec.describe Lain::Sensitivity::Regions do
     # once: scheme word, separating space, decimal length, NUL, then the bytes.
     # Every structural mutation is invisible to a start/length assertion --
     # dropping the NUL alone changes 668 digests across this repo and no
-    # behavioural example notices. T14 is about to persist these, so the framing
+    # behavioural example notices. These digests are persisted, so the framing
     # is a wire contract from here on and a change to it is a migration, not a
     # refactor. Recompute deliberately if you ever mean to break it.
     it "addresses known bytes to a known digest" do
@@ -570,7 +570,7 @@ RSpec.describe Lain::Sensitivity::Regions do
         .to eq("blake3:f1010ca332b93af2b0570d5715aca66d73c63a9ba10207b42641d7e8c9192aa3")
     end
 
-    # T14 caches BY digest and will ask for it in a loop, so it is computed once
+    # The cache keys BY digest and asks for it in a loop, so it is computed once
     # at construction the way `Snapshot::Blob` does it. Counting the hash calls is
     # the only honest check: `-str` interns, so comparing object identity would
     # pass whether or not anything was memoized.

@@ -3,7 +3,8 @@
 require "json"
 require "pathname"
 
-# T13: what T12's read-time denials and T15's masking leave in the Journal.
+# What the path gate's read-time denials and the read-masking leave in the
+# Journal.
 # Mirrors turn_stream_spec's per-record describe-block style (the sibling
 # records live in one telemetry_spec.rb; these two are new enough, and
 # specific enough to the secret boundary, to get their own file).

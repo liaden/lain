@@ -3,7 +3,7 @@
 module Lain
   module Bench
     class Session
-      # Follows a header's `resumed_from` (T14) to the prior file's own
+      # Follows a header's `resumed_from` to the prior file's own
       # {Loader}, and shares ONE Store across the whole chain -- a later
       # file's turns and `message` records must land in the SAME store an
       # earlier file's did, since a render `parent` or a causal_parent can
@@ -16,8 +16,8 @@ module Lain
       # reads a path itself, only what {Loader} was handed (the escalation
       # trigger this card was built around).
       #
-      # The seam's integrity property is fold MEMBERSHIP, not head equality
-      # (T3): `resumed_from.head` may be ANY digest the prior file's own fold
+      # The seam's integrity property is fold MEMBERSHIP, not head equality:
+      # `resumed_from.head` may be ANY digest the prior file's own fold
       # verified -- a turn recorded in that file at any fold position, or an
       # ancestor the file itself chained from -- because a fork legitimately
       # chains to a head the parent recorded but did not end on, and a parent

@@ -310,7 +310,7 @@ module Lain
         # return 200 -- but here the true status arrived in the headers before
         # any body byte, and a guessed 500 is in the retry allowlist
         # ({Connection::MiddlewareStack#retry_exceptions}), so a 404 was retried
-        # and then answered with the wrong status. That is RES1, which
+        # and then answered with the wrong status. That is the defect, which
         # {Provider::Anthropic::Transport} fixes by overriding the guess; on a
         # response already known to have FAILED there is nothing to raise from
         # in here at all, so this arm only accumulates and the one raise happens

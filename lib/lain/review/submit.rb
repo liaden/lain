@@ -7,7 +7,7 @@ module Lain
     #
     # == The anchor IS GitHub's model, so nothing is translated
     #
-    # `(path, side, line)` -- what {Anchor} has held since T1 -- is exactly the
+    # `(path, side, line)` -- what {Anchor} has always held -- is exactly the
     # modern review-comment model, plus `start_line`/`start_side` for a range and
     # one top-level `commit_id`. Both surveyed projects converged on it
     # independently (research §4.6). The only translation is the SPELLING of the
@@ -141,7 +141,7 @@ module Lain
       # `revision` rides along because it is what makes §4.6's live tuicr defect
       # detectable: there, comments are validated against the full-range diff and
       # submitted against a narrowed `commit_id`, so the anchors were checked
-      # against one diff and posted against another. T13 put the revision on the
+      # against one diff and posted against another. The revision sits on the
       # record precisely so "which diff did the human annotate" is a fact rather
       # than an implication of whatever is on screen.
       #

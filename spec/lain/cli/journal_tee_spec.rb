@@ -148,10 +148,10 @@ RSpec.describe Lain::CLI::JournalTee do
     end
   end
 
-  # FIX 1 (review round): the first N-sink cut's `@sinks.each { tell }` let a
+  # The first N-sink cut's `@sinks.each { tell }` let a
   # non-ClosedQueueError raise from an EARLY sink abort the `each`, so every
   # sink positioned AFTER the raiser silently never saw the event -- even a
-  # Channel, the exact leg AC4's own wording names as one that "still
+  # Channel, the exact leg the acceptance criterion names as one that "still
   # completes". Two review probes (journal_tee_raise_ordering_probe_spec.rb,
   # journal_tee_channel_after_raise_probe_spec.rb) demonstrated it; converted
   # here into permanent specs pinning the FIXED behavior: every sink is
@@ -180,11 +180,11 @@ RSpec.describe Lain::CLI::JournalTee do
       expect { tee << { "type" => "turn_usage" } }.to raise_error(Errno::ENOSPC)
 
       expect(journal_lines.size).to eq(1)
-      expect(channel.size).to eq(1) # FIXED: AC4 says "journal and channel legs still complete"
+      expect(channel.size).to eq(1) # FIXED: journal and channel legs still complete
     end
   end
 
-  # FIX 1: more than one sink can fail on the same event now that every sink
+  # More than one sink can fail on the same event now that every sink
   # is attempted unconditionally; the tee must not silently keep only the
   # first failure.
   describe "multiple sinks raising on the same event" do

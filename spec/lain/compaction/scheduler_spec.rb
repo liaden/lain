@@ -26,7 +26,7 @@ RSpec.describe Lain::Compaction::Scheduler do
     Lain::Context::Compact.new(threshold: 5, keep_last: 2, summarizer: SchedulerShareableFixtures::SUMMARIZER)
   end
   # The strategy #render would use without the scheduler: a shareable
-  # `->(workspace)` provider (T21's injected shape) resolving to the identity
+  # `->(workspace)` provider (the injected shape) resolving to the identity
   # combinator, so applying it leaves the message list untouched. A compacting
   # decision rides Compact ahead of THIS; a deferring decision hands it back.
   let(:base) { SchedulerShareableFixtures::BASE }
@@ -89,7 +89,7 @@ RSpec.describe Lain::Compaction::Scheduler do
     end
   end
 
-  # T17. What a scheduled rewrite would cost, as a value: the bytes the messages
+  # What a scheduled rewrite would cost, as a value: the bytes the messages
   # dump to now and the bytes they dump to once this scheduler's Compact has had
   # them. It is the ONE object holding the Compact, so it is the only one that
   # can measure -- and taking the measurement once is what lets the caller's
@@ -115,7 +115,7 @@ RSpec.describe Lain::Compaction::Scheduler do
       expect(neutral.measure(history).shrinks?).to be(false)
     end
 
-    # UX5. The two operands the pricing boundary consumes leave the measurement
+    # The two operands the pricing boundary consumes leave the measurement
     # as VALUES that know their unit, not as bare Integers -- which is what
     # makes "priced the byte proxy at a per-token rate" a loud failure rather
     # than a plausible-looking dollar figure.
@@ -178,7 +178,7 @@ RSpec.describe Lain::Compaction::Scheduler do
       expect(records.map { |r| r["cache_state"] }).to eq(["cold"])
     end
 
-    # C2's seam. The model in force is a fact about the TURN, not about the
+    # The model in force is a fact about the TURN, not about the
     # scheduler's configuration, so it arrives per call rather than being
     # captured at construction -- which is also what keeps the Scheduler frozen
     # and everything it hands back shareable.
@@ -195,7 +195,7 @@ RSpec.describe Lain::Compaction::Scheduler do
       expect(records.map { |r| r["cache_state"] }).to eq(["forced"])
     end
 
-    # T17. The accounting used to run the compact and dump both sides ITSELF,
+    # The accounting used to run the compact and dump both sides ITSELF,
     # and its caller had already done exactly that to decide whether the rewrite
     # was worth making at all -- two Canonical passes over the whole history,
     # per compacting turn, for two numbers that were already known. The
@@ -212,11 +212,12 @@ RSpec.describe Lain::Compaction::Scheduler do
         .to include("bytes_before" => measured.before, "bytes_after" => measured.after)
     end
 
-    # T17 review fix 3, and the card's own sin caught: the measurement must not
-    # be a DEFAULT ARGUMENT. A default is evaluated on every call, so measuring
-    # there runs the Compact and both dumps on the deferring turns -- the steady
-    # state -- which `if decision.compact?` had always kept free. New
-    # unconditional work, on a card whose whole point is deleting it.
+    # A review fix, and the same sin caught in the change that removed it: the
+    # measurement must not be a DEFAULT ARGUMENT. A default is evaluated on
+    # every call, so measuring there runs the Compact and both dumps on the
+    # deferring turns -- the steady state -- which `if decision.compact?` had
+    # always kept free. New unconditional work, in a change whose whole point
+    # was deleting it.
     #
     # Counted through `Canonical.dump` rather than by proxying the Compact: a
     # Compact is a frozen value and rspec-mocks cannot proxy one, which is
@@ -250,7 +251,7 @@ RSpec.describe Lain::Compaction::Scheduler do
     end
   end
 
-  # F51. The Scheduler is handed a PIPELINE and can name no policy behind it, so
+  # The Scheduler is handed a PIPELINE and can name no policy behind it, so
   # what collapsed the span arrives PER CALL -- `ran_under:`'s precedent, and for
   # its reason: nothing here reaches COMPOSE, so the composed pipeline closes
   # over nothing new and the shareability contract is untouched. What travels is
@@ -283,7 +284,7 @@ RSpec.describe Lain::Compaction::Scheduler do
         .to eq([Lain::Telemetry::Compaction::EAGER_CONTROL_ARM])
     end
 
-    # F51's success criterion, stated as the query a bench actually runs.
+    # The success criterion, stated as the query a bench actually runs.
     it "attributes every record's bytes to one named arm, with no launch command to hand" do
       compacting(collapse_strategy: "elide-tools+summarize-conversation")
       compacting(collapse_strategy: "elide-tools+summarize-conversation")
@@ -297,8 +298,8 @@ RSpec.describe Lain::Compaction::Scheduler do
     end
   end
 
-  # The contract T19 builds on: a compacting pipeline must be Ractor-shareable,
-  # so `Context.new(pipeline: scheduler.pipeline(...))` (T21's seam) holds a
+  # The contract everything downstream builds on: a compacting pipeline must be
+  # Ractor-shareable, so `Context.new(pipeline: scheduler.pipeline(...))` holds a
   # value with no reachable mutable state -- crucially not the scheduler's own
   # live IO-backed Journal. A provider built inside an instance method captures
   # that `self` in its binding and fails this; the module-scope COMPOSE lambda

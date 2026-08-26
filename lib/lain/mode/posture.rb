@@ -148,7 +148,7 @@ module Lain
       # changes nothing, and plan mode -- deciding whether a piece of work is
       # worth doing -- is exactly when a human asks what the session has cost so
       # far. Left out, the tool would vanish silently under `/mode plan` and the
-      # model would be back to inventing the figure (F77). It rides the same
+      # model would be back to inventing the figure. It rides the same
       # `ToolsetBuild#build` append as `ask_human`, so the same live-chat-set
       # caveat applies.
       READ_ONLY = %i[

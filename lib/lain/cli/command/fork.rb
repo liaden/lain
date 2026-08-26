@@ -5,7 +5,7 @@ require "shellwords"
 module Lain
   module CLI
     module Command
-      # `/fork` (T16): a persistent fork of THIS session at its head -- a
+      # `/fork`: a persistent fork of THIS session at its head -- a
       # sibling `lain chat --fork <session>@<head>` opened in a new tmux
       # window, inheriting exactly the head's lineage and nothing after it.
       #
@@ -75,11 +75,11 @@ module Lain
         # Durability first, even ahead of the refusal: catch_up re-journals
         # through the scribe's idempotent braces (fsync'd), so the head is on
         # disk before anything reads for it. THEN the mid-tool gate, which used
-        # to be `Resume.refuse_mid_tool!` (since deleted) run parent-side (F1) -- the child's
-        # own words against the same now-durable record, beating a window that
-        # flashes and dies.
+        # to be `Resume.refuse_mid_tool!` (since deleted) run parent-side -- the
+        # child's own words against the same now-durable record, beating a
+        # window that flashes and dies.
         #
-        # T5 kept a gate here and narrowed it TWICE. T3 made the child repair a
+        # This gate has been kept here and narrowed TWICE. The child repairs a
         # torn head, so refusing every torn head would refuse forks the child
         # would open happily. But a live head is not a recorded one: on disk an
         # unanswered `tool_use` is stranded -- nothing will ever answer it, so
@@ -137,7 +137,7 @@ module Lain
         # and stays bare. `cwd:` pins the parent's project root so the
         # child's session dir resolves the SAME project regardless of the
         # session's pane-cwd conventions. The rescue is scoped to this
-        # method (F5) so it can never read a local the raise skipped.
+        # method so it can never read a local the raise skipped.
         def place_window(env, selector, printable)
           placement = env.tmux_surface.window(command: Up.pane_command("chat", "--fork", selector),
                                               name: window_name(selector), cwd: Dir.pwd)

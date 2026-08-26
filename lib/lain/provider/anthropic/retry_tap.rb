@@ -13,17 +13,18 @@ module Lain
       # has to live on this side of the transport. One frame is live at a time
       # because a Provider is one round trip, never a loop.
       #
-      # T17w now lets the main Agent's Provider and each subagent's share ONE
-      # {Chronicle}-owned spool, so more than one round trip -- each with its own
-      # live frame -- can be in flight through this SAME {RetryTap} instance from
-      # different fibers at once (a {Provider} is constructed once and reused).
-      # The live frame therefore CANNOT live in instance state: a retry firing
-      # for one request would rotate whichever sibling last opened, re-enabling
-      # the very "complete frame that lies about concatenated attempts" the
-      # rotation exists to prevent. Instead the frame is threaded onto the
-      # request's Faraday context at open (see {Transport}), and {#retry_block}
-      # reaches ITS request's frame off the retried env -- reentrant, per-request,
-      # no shared mutable state. ({ResponseWal} itself serializes the bytes.)
+      # The main Agent's Provider and each subagent's now share ONE
+      # {Chronicle}-owned spool, so more than one round trip -- each with its
+      # own live frame -- can be in flight through this SAME {RetryTap} instance
+      # from different fibers at once (a {Provider} is constructed once and
+      # reused). The live frame therefore CANNOT live in instance state: a retry
+      # firing for one request would rotate whichever sibling last opened,
+      # re-enabling the very "complete frame that lies about concatenated
+      # attempts" the rotation exists to prevent. Instead the frame is threaded
+      # onto the request's Faraday context at open (see {Transport}), and
+      # {#retry_block} reaches ITS request's frame off the retried env --
+      # reentrant, per-request, no shared mutable state. ({ResponseWal} itself
+      # serializes the bytes.)
       class RetryTap
         def initialize(spool:, channel:)
           @spool = spool
@@ -45,7 +46,7 @@ module Lain
         end
 
         # `options.max` is the RETRY count, not the ordinal of the attempt
-        # that just failed -- see the Ollama tap's F16 for the reproduction.
+        # that just failed -- see the Ollama tap for the reproduction.
         # Both taps must move together or the two providers disagree about
         # what "attempt" means.
         def exhausted_block

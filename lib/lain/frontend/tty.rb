@@ -31,11 +31,11 @@ module Lain
     #
     # On scope -- why this is a small hand-rolled surface and not irb/debug or a
     # richer TTY gem: the design plan settles it (see the "Interface" section,
-    # "TTY first, Neovim next (M4)"). The TTY is deliberately minimal -- an
-    # alternate-screen chat surface (M1b) over `tty-screen`/`tty-cursor`/`pastel`,
+    # "TTY first, Neovim next"). The TTY is deliberately minimal -- an
+    # alternate-screen chat surface over `tty-screen`/`tty-cursor`/`pastel`,
     # with `reline` (stdlib) already doing line editing and history in {#prompt}.
     # The richer interactive interface is not a bigger TTY or an embedded Ruby
-    # console; it is the Neovim frontend (M4), which subscribes to the same
+    # console; it is the Neovim frontend, which subscribes to the same
     # Journal over msgpack-RPC and gets the editable `lain://request` buffer. So
     # this class stays small on purpose; growth goes to Neovim, not here.
     class TTY
@@ -53,7 +53,7 @@ module Lain
       # @param theme [Frontend::Theme] the named style vocabulary this class
       #   renders through -- derived from `pastel:` so an injected disabled
       #   palette stays disabled, and injectable on its own so a caller can
-      #   restyle without restating the palette (T8)
+      #   restyle without restating the palette
       # @param prompt_renderer [#call] composes the prompt string from run
       #   state -- `call(text:, theme:) -> String`, newlines allowed. The
       #   default composes nothing, which is what keeps the bytes the line
@@ -62,28 +62,28 @@ module Lain
       #   to hand over, and a second one passed in could disagree with it
       # @param history_path [String] durable reline history file, under
       #   {Paths#state_home} by default -- injectable so specs use a tmpdir
-      #   instead of touching real XDG state (T12)
+      #   instead of touching real XDG state
       # @param clock [#call] monotonic time source for {#render_countdown},
       #   injectable for tests -- the same seam {Middleware::Timeout} and
       #   {CLI::Shutdown} use, so a countdown's remaining seconds are testable
-      #   without a real clock tick (T21)
+      #   without a real clock tick
       # @param state_path [String] {StatusFeed}'s published state, under
       #   `$XDG_STATE_HOME/lain` by default -- resolved through {ProjectDir}, the
       #   one locator {StatusFeed} and {CLI::Up} default through too, so the
       #   three renderers of one feed cannot name three different files (see
       #   {ProjectDir} on why the feed is XDG state and the rest of `.lain/` is
-      #   not). Injectable so specs use a tmpdir (I3)
+      #   not). Injectable so specs use a tmpdir
       # @param wall_clock [#call] absolute time source for {#prompt}'s warmth
       #   snapshot, separate from `clock:` above -- {StatusFeed} publishes an
       #   absolute deadline (wall time), while `clock:` is {RunClock::MONOTONIC}
-      #   and answers a different question (I3). There is deliberately no shared
+      #   and answers a different question. There is deliberately no shared
       #   WALL constant to pair with it -- see {RunClock::MONOTONIC}
       # @param vi_mode [Boolean] ask the line editor for vi mode; off unless
-      #   asked, in which case {LineEditor} leaves Reline as it found it (T14)
+      #   asked, in which case {LineEditor} leaves Reline as it found it
       # @param completion_sources [Completion::Sources] where a `/command` or
       #   `@path` candidate comes from -- injectable so a caller that HAS the
       #   command registry and the skill catalog can hand them over, and so a
-      #   spec completes against a fixture tree rather than the real cwd (T16).
+      #   spec completes against a fixture tree rather than the real cwd.
       #   Only the sources are injectable, not the {Completion} around them:
       #   the theme and the screen are this class's to hand over
       def initialize(channel:, output: $stdout, input: $stdin, pastel: Pastel.new(enabled: output.tty?),
@@ -103,7 +103,7 @@ module Lain
         @inbox = Inbox.new(output:, pastel:, clock: wall_clock)
         # Built here, CLAIMED in #run: constructing a TTY must not rebind the
         # human's keys. Draws through {Countdown#draw}, the existing owner of
-        # writing to the screen while the prompt is live (T16).
+        # writing to the screen while the prompt is live.
         @completion = Completion.new(sources: completion_sources, theme:, screen: @countdown.method(:draw))
       end
 
@@ -129,7 +129,7 @@ module Lain
       # than leak past `run`'s return.
       # Claiming the completion key happens HERE and not in #initialize because
       # it mutates process-global Reline state, and this is the moment lain is
-      # entitled to -- the terminal is ours from here (T16). Nothing is read
+      # entitled to -- the terminal is ours from here. Nothing is read
       # back off {History}: see its comment for why recall is this session's.
       def run
         enter_alternate_screen
@@ -154,7 +154,7 @@ module Lain
       #
       # The read goes through {Frontend::LineEditor}, so a line ending in a
       # backslash continues and the human's next line joins it: what arrives
-      # here is one message, however many lines they typed (T14). vi COMMAND
+      # here is one message, however many lines they typed. vi COMMAND
       # mode is the one exception -- Enter submits there regardless; see
       # {Frontend::LineEditor}'s comment for why that is not worked around.
       #
@@ -197,7 +197,7 @@ module Lain
 
       def render_error(message) = render_line(:error, "error: #{message}")
 
-      # Surface a question the agent has put to the human (ask_human, OM-4).
+      # Surface a question the agent has put to the human (ask_human).
       # Synchronous and Channel-bypassing for the same reason {#render_response}
       # is: the reply-path shows the question and reads the answer inline, a
       # finished exchange rather than a concurrently-arriving stream.
@@ -207,20 +207,20 @@ module Lain
         @output.flush
       end
 
-      # I6: a question ARRIVES as one line, not as {#render_question}'s modal
+      # A question ARRIVES as one line, not as {#render_question}'s modal
       # block -- the human keeps whatever they were doing and drains at their
       # own pace (/inbox here, or the nvim lain://inbox buffer).
       #
       # @param question [Tools::AskHuman::Announcement, String] a whole set
       #   wearing its one-line summary, or one question's bytes
-      # @param from [#to_s, nil] who is stuck -- the item's own attribution
-      #   (T14). Absent, the note is today's unattributed line rather than a
+      # @param from [#to_s, nil] who is stuck -- the item's own attribution.
+      #   Absent, the note is today's unattributed line rather than a
       #   placeholder standing in for a name nobody supplied.
       def render_arrival(question, from: nil)
         @inbox.arrival(question, from:)
       end
 
-      # I6: the TTY-only drain. Lists every pending item (sender, age,
+      # The TTY-only drain. Lists every pending item (sender, age,
       # question), reads ONE answer, and yields it to the block when the human
       # actually typed one -- resolution stays the caller's (AskHuman#reply is
       # the Repl's seam, never this class's). `reader:` is injectable for the
@@ -229,7 +229,7 @@ module Lain
       # prompt read would race it for stdin (see exe/lain's approval_surface
       # comment); specs and direct callers get the plain prompt.
       #
-      # The item that answer belongs to is yielded BESIDE it (T14), and that
+      # The item that answer belongs to is yielded BESIDE it, and that
       # is the fix for a defect this card would otherwise have made dangerous:
       # the caller used to work out which set an answer resolved on its own,
       # and the two answers disagreed the moment the human drained from a
@@ -249,7 +249,7 @@ module Lain
         @inbox.drain(items, reader:, answering:, &on_answer)
       end
 
-      # One countdown tick (T21): render remaining time + offered keys on the
+      # One countdown tick: render remaining time + offered keys on the
       # bottom status line, then make one non-blocking attempt to read a key
       # and forward it to the shutdown coordinator. Called once per tick by
       # the caller's own timer -- this method does no sleeping itself, so an
@@ -274,8 +274,8 @@ module Lain
 
       # End the countdown window: erase the status line from the bottom of
       # the screen, restore the terminal mode saved when the window opened,
-      # and return {#render}'s channel events to the plain pre-T21 path.
-      # Idempotent -- the seam T22 calls when {CLI::Shutdown}'s on_transition
+      # and return {#render}'s channel events to the plain no-window path.
+      # Idempotent -- the seam shutdown calls when {CLI::Shutdown}'s on_transition
       # reports :running (a cancel) or the window otherwise ends, and {#run}'s
       # ensure calls defensively.
       def stop_countdown
@@ -286,7 +286,7 @@ module Lain
 
       # `reline(…, true)` already feeds an accepted line into the in-memory
       # `Reline::HISTORY`; {History#append} durably appends it too, before the
-      # next prompt is drawn (T12 -- see History's comment).
+      # next prompt is drawn (see History's comment).
       #
       # The bare prompt this class builds -- warmth glyph plus painted text --
       # is what {PromptComposer} is asked to compose, and is also what it falls back to
@@ -297,9 +297,9 @@ module Lain
       # The completion menu is torn down HERE rather than by the key action
       # that drew it: a menu belongs to the prompt it was drawn under. In an
       # `ensure` because a prompt has THREE exits, not two -- a submitted line,
-      # EOF, and the {CLI::PromptBreaker} Interrupt that T14's dispatch
+      # EOF, and the {CLI::PromptBreaker} Interrupt that {LineEditor}'s dispatch
       # deliberately lets through, which unwinds straight past a trailing
-      # statement (T16).
+      # statement.
       def read_line_with_history(text)
         composed = @composer.compose("#{warmth_prefix}#{@theme.paint(:prompt, text)}")
         line = @line_editor.read(composed.editor_line(@output))
@@ -311,9 +311,9 @@ module Lain
 
       # Empty string (never nil) when `output` is not a real terminal or
       # {StatusFeed} has published nothing yet -- concatenation with "" is a
-      # no-op, so the prompt text this produces is byte-identical to the
-      # pre-I3 prompt in both cases (AC: non-tty output untouched, no feed
-      # renders today's bare prompt).
+      # no-op, so the prompt text this produces is byte-identical to the prompt
+      # as it was before the warmth glyph, in both cases (AC: non-tty output
+      # untouched, no feed renders today's bare prompt).
       def warmth_prefix
         return "" unless @output.tty?
 
@@ -350,11 +350,11 @@ module Lain
       # {Frontend::Decorators} for why presentation is frontend-owned and never a
       # `Renderable` mixed into the lib value object.
       # The print routes through {Countdown#print_above} because the countdown
-      # owns the bottom line while it is active (T21): the status line steps
+      # owns the bottom line while it is active: the status line steps
       # out of the way, the event prints above, the status line redraws --
       # never a torn splice. With no countdown active there is no status line to
       # protect, and the only line-ending question left is the decorator's own
-      # -- so its answer travels with its bytes (F58).
+      # -- so its answer travels with its bytes.
       # The guard covers BOTH ways an event can decline to print: no decorator at
       # all, and a decorator that rendered nothing.
       def render(event)
@@ -415,7 +415,7 @@ module Lain
         @history = History.new(path: history_path, notify: method(:render_warning))
       end
 
-      # Durable reline history (T12): write-through on each accepted line rather
+      # Durable reline history: write-through on each accepted line rather
       # than dump-at-exit, so a SIGKILL between prompts loses at most nothing.
       # Durable means close()-durable (the process dying), not fsync-durable --
       # shell history does not warrant an fsync per line.
@@ -476,14 +476,14 @@ module Lain
         end
       end
 
-      # I3's warmth collaborator: reads {StatusFeed}'s published state file
+      # The warmth collaborator: reads {StatusFeed}'s published state file
       # directly ({ProjectDir#state_path}) -- the same "one state feed, three
-      # renderers" split I1 established for tmux's status-right (never an
+      # renderers" split established for tmux's status-right (never an
       # in-process registry; StatusFeed and TTY may even be different
       # processes). Split out of TTY proper for the same reason
       # {Countdown}/{History} are: a separate responsibility, one collaborator
       # each (`Agent::Budget`/`Agent::ToolRunner` precedent). Nested, not a
-      # new file: the card scopes I3 to `tty.rb` alone.
+      # new file: the change was scoped to `tty.rb` alone.
       class Warmth
         WARM = "●" # filled circle -- the cache was read or written within its sliding TTL
         COLD = "○" # hollow circle -- the deadline StatusFeed last published has already passed
@@ -538,10 +538,10 @@ module Lain
         def warm?(deadline) = deadline > @clock.call
       end
 
-      # I6's inbox collaborator: the arrival note and the /inbox drain
+      # The inbox collaborator: the arrival note and the /inbox drain
       # listing. Split out of TTY proper for the same reason {Warmth} and
       # {Countdown} are -- a separate responsibility, one collaborator each --
-      # and nested, not a new file, because the card scopes I6's TTY half to
+      # and nested, not a new file, because the change was scoped to
       # `tty.rb` alone. Presentation only: the reply RESOLUTION stays with the
       # caller's block (AskHuman#reply is the Repl's seam).
       class Inbox
@@ -732,12 +732,12 @@ module Lain
         end
       end
 
-      # T21's countdown collaborator: renders the status line, owns the
+      # The countdown collaborator: renders the status line, owns the
       # bottom of the screen while active, and forwards offered keys to the
       # shutdown coordinator. Split out of TTY proper because the countdown
       # is a separate responsibility (the `Agent::Budget`/`Agent::ToolRunner`
-      # precedent CLAUDE.md names). Nested, not a new file: the card scopes
-      # T21 to `tty.rb` alone, and this collaborator has no life outside a
+      # precedent CLAUDE.md names). Nested, not a new file: the change was
+      # scoped to `tty.rb` alone, and this collaborator has no life outside a
       # TTY.
       class Countdown
         DEFAULT_BINDINGS = { "c" => :cancel, "w" => :extend, "r" => :wait_responses }.freeze
@@ -789,7 +789,7 @@ module Lain
         # @param rendered [String] the decorator's bytes
         # @param line_shaped [Boolean] the decorator's answer to whether those
         #   bytes are a whole line. Required rather than defaulted: a caller
-        #   that has not asked is exactly the caller F58 was filed against.
+        #   that has not asked is exactly the caller this guard was filed against.
         def print_above(rendered, line_shaped:)
           @lock.synchronize do
             active? ? above(rendered) : plain(rendered, line_shaped)
@@ -798,7 +798,7 @@ module Lain
         end
 
         # Bytes straight to the screen, under the SAME lock {#print_above}
-        # holds. The completion menu (T16) draws through here rather than
+        # holds. The completion menu draws through here rather than
         # inventing a lock of its own: a menu, a countdown tick and a channel
         # event all write to one terminal while the prompt is live, and two
         # locks over one stream is two locks that can interleave a torn write.

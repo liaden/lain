@@ -137,7 +137,7 @@ RSpec.describe Lain::Approval::Gate::Policies do
 
     # The Gherkin's literal case (`role_spawn`), exercised through the same
     # Recipe every catalog entry is -- the mechanism, not a stubbed factory.
-    # T14's Adjudicated is one more Recipe with these seams declared.
+    # Adjudicated is one more Recipe with these seams declared.
     it "names role_spawn for a recipe that declares it" do
       recipe = described_class::Recipe.new(seams: %i[queue role_spawn brief],
                                            builder: ->(_deps) { raise "must not be built" })
@@ -189,7 +189,7 @@ RSpec.describe Lain::Approval::Gate::Policies do
 
   # Panel Fix 1: a seam name Deps has no reader for made the refusal path itself
   # die unnamed (`NoMethodError: undefined method 'askr'`) inside the one method
-  # whose whole job is to refuse BY NAME. T14 adds a fourth catalog row by hand,
+  # whose whole job is to refuse BY NAME. A fourth catalog row is added by hand,
   # so the guard belongs in the constructor rather than in a spec over the three
   # rows that ship today.
   describe "a recipe declaring a seam the dependencies value does not carry" do

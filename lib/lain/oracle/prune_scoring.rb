@@ -2,8 +2,8 @@
 
 module Lain
   module Oracle
-    # T4 (OR-3), first oracle arm: "which spans are stale?" -- the judgment
-    # `cache-aware-compaction.md`'s cold-window work (T18, not yet built) will
+    # The first oracle arm: "which spans are stale?" -- the judgment
+    # `cache-aware-compaction.md`'s cold-window work (not yet built) will
     # eventually gate a real prune on. This module answers the question only;
     # it does not touch {Context::Prune} or walk a Timeline itself.
     #
@@ -26,8 +26,8 @@ module Lain
 
       # `age_turns` and `content` are the only slots either tier needs: how
       # long has this span sat unreferenced, and what is it. Kept independent
-      # of any real Span/Timeline projection type -- T18 is not built yet, so
-      # this oracle must not couple to a shape that does not exist.
+      # of any real Span/Timeline projection type -- the cold-window work is not
+      # built yet, so this oracle must not couple to a shape that does not exist.
       TEMPLATE = <<~ERB
         A span from the conversation, last referenced <%= render("age_turns") %> turns ago:
 
@@ -44,7 +44,7 @@ module Lain
         Definition.new(template: TEMPLATE, schema: SCHEMA, tier:)
       end
 
-      # The heuristic baseline every richer arm (OR-4) must beat: a span is
+      # The heuristic baseline every richer arm must beat: a span is
       # stale once it has gone unreferenced for `stale_after_turns` -- the
       # same "age crosses a threshold" shape
       # {Context::PurgeFailedInputs} already uses for a different signal.

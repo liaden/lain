@@ -191,7 +191,6 @@ RSpec.describe Lain::Approval::SignoffQueue do
     end
   end
 
-  # AC5
   describe "the queue is a fold, not a file" do
     it "is drained when a deferral is followed by an approval for the same digest and stage" do
       queue = described_class.from_journal(journaled(deferral, approval))

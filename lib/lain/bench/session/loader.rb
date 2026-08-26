@@ -90,7 +90,7 @@ module Lain
           )
         end
 
-        # The session's recorded slot attribution (PS-2): the one slot_fills
+        # The session's recorded slot attribution: the one slot_fills
         # record folded back into a {Telemetry::SlotFills} value, or an empty
         # one for a journal written before the record existed (nothing recorded
         # is the empty attribution, a value here, not an absence). Loads
@@ -123,7 +123,7 @@ module Lain
         # door does.
         def timeline = @timeline ||= anchor.verify(chain_fold.timeline)
 
-        # T3: fold membership -- true for any digest VERIFIED while rebuilding
+        # Fold membership -- true for any digest VERIFIED while rebuilding
         # this file's chain: the resumed base's own ancestors plus every turn
         # record folded here, at its fold position. This set (not ancestry of
         # the final head, and not head equality) is what a chained

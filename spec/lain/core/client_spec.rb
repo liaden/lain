@@ -65,7 +65,7 @@ RSpec.describe Lain::Core::Client, :core do
       end
       expect(slow.wait.fetch("stdout")).to eq("slow\n")
       expect(fast.wait.fetch("stdout")).to eq("fast\n")
-      # The daemon answers the fast call FIRST (C1's out-of-order contract), so
+      # The daemon answers the fast call FIRST (the protocol answers out of order), so
       # only msgid demux can hand each fiber its own result. A client that
       # serialized calls would hold the fast answer hostage behind the slow one.
       expect(fast_elapsed).to be < 0.2

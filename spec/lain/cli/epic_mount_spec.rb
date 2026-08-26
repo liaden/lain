@@ -35,7 +35,7 @@ RSpec.describe Lain::CLI::EpicMount do
 
   # `sessions_dir`'s OWN default -- the working directory -- because that is
   # where {EpicMount#prior_claims} folds and where a chat's Chronicle writes.
-  # It said `project_hash(@dir)` until T5, matching what `prior_claims` said,
+  # It said `project_hash(@dir)` at one point, matching what `prior_claims` said,
   # and the two agreed only because BOTH halves were written here. See
   # spec/lain/seams/epic_project_keying_seam_spec.rb; `paths` is injected on a
   # throwaway XDG state home, so this stays inside the fixture's tmpdir.
@@ -150,7 +150,7 @@ RSpec.describe Lain::CLI::EpicMount do
       expect(said.join).to include("ghost")
     end
 
-    # The T27 review's blocking find, pinned. `Config.load` sat in a DEFAULT
+    # The review's blocking find, pinned. `Config.load` sat in a DEFAULT
     # ARGUMENT, and Ruby evaluates those before the body's rescue is armed --
     # so every refusal below escaped the guard that names its class and stopped
     # the chat outright.
@@ -308,7 +308,7 @@ RSpec.describe Lain::CLI::EpicMount do
         .not_to raise_error
     end
 
-    # T21. `changesets:` is nil BY DEFAULT and deliberately -- a verdict has no
+    # `changesets:` is nil BY DEFAULT and deliberately -- a verdict has no
     # rail to arrive on yet, so a default source would ship a park nobody could
     # end -- and these two are one claim in two halves: the seam is THREADED, so
     # a caller that can answer turns the half on by injecting one rather than by

@@ -31,7 +31,7 @@ module Lain
         validates :k, numericality: { greater_than: 0, message: "must be positive, got %<value>s" }
       end
 
-      # `k:` is the pinned constructor shape from the plan card (T10) --
+      # `k:` is the pinned constructor shape from the plan card --
       # top-k retrieval is exactly what it is elsewhere in the literature,
       # and a longer name would only paraphrase that.
       # rubocop:disable Naming/MethodParameterName

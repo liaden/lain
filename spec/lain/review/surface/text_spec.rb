@@ -2,7 +2,7 @@
 
 require "stringio"
 
-# Lain::Review::Changeset (T7) and Lain::Review::Marks (T8) are siblings that
+# Lain::Review::Changeset and Lain::Review::Marks are siblings that
 # have not landed -- see Surface's own port doc ("What present's changeset
 # argument answers") for the exact duck assumed here: `#files` (Enumerable of
 # `#path`/`#state`) for the flat view, `#partitions` (Enumerable of
@@ -259,7 +259,7 @@ RSpec.describe Lain::Review::Surface::Text do
       expect(sink.string).to include("reviewed")
     end
 
-    # AC3: T6's Grounding reads this as "names the same unit and state" as
+    # The Grounding reads this as "names the same unit and state" as
     # the neovim surface, not the same file (no path reaches either
     # surface's #mark) -- so a real 64-hex-character digest key is shown
     # the same way here: a truncated, ellipsis-marked prefix of the
@@ -274,7 +274,7 @@ RSpec.describe Lain::Review::Surface::Text do
       expect(sink.string).to include("reviewed")
     end
 
-    # AC3's actual claim, made an example rather than left to a shared
+    # The actual claim, made an example rather than left to a shared
     # constant: a review-panel mutation probe on an earlier draft found
     # that the two surfaces could silently disagree on how much of a key
     # they show (one truncating at a different length than the other) with

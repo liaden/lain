@@ -9,21 +9,22 @@ module Lain
   # slots, skills and repo-mode epics are things a user WRITES, reads back and
   # may well commit, so they belong beside the code and are not an XDG concern.
   #
-  # **The state feed is the opposite, and that is F50.** {StatusFeed} rewrites
-  # it on every turn -- `elapsed`, `idle` and `occupancy` all move -- nothing in
-  # `lib/` writes a `.gitignore` (`Epic::GitIgnores` only READS one), and lain's
-  # own repository gitignores this file. So the people who hit it fixed it for
-  # themselves and not for the projects lain is pointed at: every session left
-  # permanent `git status` noise in a user's repository, and a `git add -A`
-  # committed the file. Machine state that changes every turn is durable
-  # per-project state, which is what `$XDG_STATE_HOME` is for, so {#state_path}
-  # resolves there -- the same `<state_home>/<kind>/<project_hash>` shape
-  # {Epic::Home.container} and {Paths#sessions_dir} already use.
+  # **The state feed is the opposite, and that is the defect this closed.**
+  # {StatusFeed} rewrites it on every turn -- `elapsed`, `idle` and `occupancy`
+  # all move -- nothing in `lib/` writes a `.gitignore` (`Epic::GitIgnores` only
+  # READS one), and lain's own repository gitignores this file. So the people
+  # who hit it fixed it for themselves and not for the projects lain is pointed
+  # at: every session left permanent `git status` noise in a user's repository,
+  # and a `git add -A` committed the file. Machine state that changes every turn
+  # is durable per-project state, which is what `$XDG_STATE_HOME` is for, so
+  # {#state_path} resolves there -- the same
+  # `<state_home>/<kind>/<project_hash>` shape {Epic::Home.container} and
+  # {Paths#sessions_dir} already use.
   #
   # **The answer is always ABSOLUTE, or there is no answer.** That is the whole
   # of the fix, not a detail of it: a relative state path resolves against the
-  # process's cwd, which is the project, so a relative one is F50 wearing an
-  # XDG-shaped hat. {Paths#home} refuses a `$HOME` that is not absolute rather
+  # process's cwd, which is the project, so a relative one is that same defect
+  # wearing an XDG-shaped hat. {Paths#home} refuses a `$HOME` that is not absolute rather
   # than degrading to it ({Paths::NonAbsoluteHome}), which is what closes the last
   # door back into the repository.
   #

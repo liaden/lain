@@ -37,7 +37,7 @@ module Lain
     MARK_STATES = %w[reviewed unreviewed].freeze
 
     # The derivation MARK_STATES' own doc anticipates: what a FILE (or a commit)
-    # shows once T8 folds its hunks' marks together. `reviewed`/`unreviewed`
+    # shows once `Marks` folds its hunks' marks together. `reviewed`/`unreviewed`
     # are MARK_STATES' own two spellings restated (not computed with `+`,
     # because the order a legend reads best-to-worst in is not the order
     # MARK_STATES declares its binary pair in); `partial` is this set's own new

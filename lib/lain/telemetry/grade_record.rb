@@ -19,7 +19,7 @@ module Lain
       end
     end
 
-    # GG-5's attestation: a plain {Grader::Grade} was never journaled before
+    # The grader's attestation: a plain {Grader::Grade} was never journaled before
     # this record existed -- {Verdict} above is {Grader::Verified}'s own
     # second-pass verdict, not a record of the ORDINARY `#grade` every grader
     # (`Fixture`/`Recall`/`Rubric`/`TestHarness`) answers with. {Grader::Journaling}

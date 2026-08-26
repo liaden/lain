@@ -4,7 +4,7 @@ module Lain
   module Tools
     # Puts a question to the human and returns their answer -- the human as a
     # capability-gated, high-latency agent whose replies are just events in the
-    # log (OM-4). The exchange is two :message events in the shared Store: an
+    # log. The exchange is two :message events in the shared Store: an
     # outbound **Q** to the human's inbox (`to: "human"`) and, when the human
     # answers, an inbound **A** back to the asker. Both are replayable and
     # neither renders into any prompt chain (`render_parent` nil, the Lineage
@@ -54,7 +54,7 @@ module Lain
     # chain's correlation, exactly as Subagent's Lineage derives it. An instance
     # belongs to one agent's toolset, and a synchronous tool dispatch has no
     # interleaving writer, so at most one set awaits a reply at a time (the
-    # OM-2-only statefulness Subagent documents) -- and {Outstanding} now
+    # sync-dispatch-only statefulness Subagent documents) -- and {Outstanding} now
     # ENFORCES that rather than assuming it: a second ask over an unanswered set
     # is refused. An actor mode that asks concurrently must carry its promises
     # on events, not here.
@@ -563,7 +563,7 @@ module Lain
       # polls to decide it must prompt the human.
       def pending? = @outstanding.pending?
 
-      # The delivery-commit consumption seam (I6, ruled): the digests of every
+      # The delivery-commit consumption seam: the digests of every
       # question whose answer has passed the sync gate since the last
       # hand-over, then cleared. The Agent's tool_result commit cites these as
       # causal parents -- the :turn edge that is the ONLY consumption

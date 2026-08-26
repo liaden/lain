@@ -2,7 +2,7 @@
 
 module Lain
   module Tools
-    # The on-demand half of the {Toolset::Disclosure::Deferred} arm (T13):
+    # The on-demand half of the {Toolset::Disclosure::Deferred} arm:
     # given a query, either returns one tool's full input schema (an exact
     # name match) or a list of matching catalog entries (name + one-line
     # description) -- the same shape {Toolset::Disclosure::Deferred} renders

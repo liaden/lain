@@ -29,10 +29,10 @@ module Lain
       # It binds HARDER here than it does for Anthropic. SSE carries a
       # `message_start` the assembler can re-sync on; Ollama's NDJSON carries no
       # equivalent marker, so a retried stream can only be told from the attempt
-      # it replaced by this hook (F7b -- a severed attempt plus a clean retry
-      # returned both attempts' text concatenated, under a `done_reason` of
-      # "stop"). Abandoning the wrong round trip's attempt would therefore throw
-      # away a live stream's bytes and splice the broken one anyway.
+      # it replaced by this hook (a severed attempt plus a clean retry returned
+      # both attempts' text concatenated, under a `done_reason` of "stop").
+      # Abandoning the wrong round trip's attempt would therefore throw away a
+      # live stream's bytes and splice the broken one anyway.
       #
       # So: the Provider opens one {Attempt} per round trip, {Transport} threads
       # it onto that request's Faraday context, and {#retry_block} reaches ITS
@@ -53,13 +53,13 @@ module Lain
         # it journals, so an exception here both loses the
         # {Telemetry::ProviderRetry} for that attempt and replaces the transport
         # error faraday-retry was carrying -- the retry would surface as
-        # whatever the rollback threw. T10's assembler reset is bound by this:
-        # discarding a buffer cannot be allowed to fail.
+        # whatever the rollback threw. The streaming assembler's reset is bound
+        # by this: discarding a buffer cannot be allowed to fail.
         #
         # Nothing registers one on the ordinary paths yet: the sync body is a
         # single parsed Hash, so an abandoned attempt leaves nothing behind.
-        # T10 registers the streaming assembler's reset here, which is the whole
-        # reason this is a per-round-trip object rather than a counter.
+        # The streaming path registers the assembler's reset here, which is the
+        # whole reason this is a per-round-trip object rather than a counter.
         class Attempt
           # Null Object: a round trip with nothing to discard is abandoned
           # exactly like one that has something, so no caller writes
@@ -89,18 +89,18 @@ module Lain
         # request's frame off the retried env.
         #
         # A frame and an attempt are DELIBERATELY two objects on two context
-        # keys, not one. The attempt's rollback is F7b's retried-stream discard
-        # -- a correctness invariant with its own registration -- and folding
-        # the rotation into `on_abandon` would put the two on one seam where
-        # either could displace the other. They are independent lookups so that
-        # neither can.
+        # keys, not one. The attempt's rollback is the retried-stream discard --
+        # a correctness invariant with its own registration -- and folding the
+        # rotation into `on_abandon` would put the two on one seam where either
+        # could displace the other. They are independent lookups so that neither
+        # can.
         def open_frame(request_digest:)
           Spool::RotatingFrame.new(spool: @spool, request_digest:)
         end
 
         # The block faraday-retry calls on every retry. It does three things
         # that are NOT of equal rank, and the ordering says so: it ABANDONS the
-        # attempt (a correctness invariant -- T10, the discard that stops two
+        # attempt (a correctness invariant -- the discard that stops two
         # attempts sharing an assembler), it ROTATES this request's WAL frame
         # (the same invariant one layer out -- a retried attempt's bytes must
         # not concatenate onto the abandoned attempt's in one complete-marked
@@ -116,12 +116,13 @@ module Lain
         # {Ollama#journaled_retries} used to wire this with `||=`, which was
         # right while the block carried only telemetry: a caller who wanted the
         # callback could have it, and the cost was a missing Journal row. Since
-        # T10 the cost is silent corruption. Measured on a real socket: a config
-        # carrying its own `retry_block` returned a severed attempt's text
-        # concatenated with its replacement's, under a `stop_reason` of
-        # `:end_turn`, with nothing above the Provider able to tell -- the whole
-        # F7b defect, reinstated by a seam documented as merely lowering
-        # telemetry. `ollama_spec.rb` already ships such a config.
+        # the streaming assembler arrived the cost is silent corruption.
+        # Measured on a real socket: a config carrying its own `retry_block`
+        # returned a severed attempt's text concatenated with its replacement's,
+        # under a `stop_reason` of `:end_turn`, with nothing above the Provider
+        # able to tell -- the whole splice defect, reinstated by a seam
+        # documented as merely lowering telemetry. `ollama_spec.rb` already
+        # ships such a config.
         #
         # So the discard is not offerable. A caller's callback is threaded
         # through `then_call:` and runs in addition, never instead.
@@ -148,8 +149,8 @@ module Lain
 
         # `options.max` is the RETRY count, not the ordinal of the attempt
         # that just failed -- an original try plus `max` retries is `max + 1`
-        # attempts. F16: a counting TCP listener saw 4 real attempts rendered
-        # as "1, 2, 3, 3" because this pushed the retry count unchanged.
+        # attempts. Measured: a counting TCP listener saw 4 real attempts
+        # rendered as "1, 2, 3, 3" because this pushed the retry count unchanged.
         def exhausted_block
           lambda do |env:, exception:, options:|
             @channel.push(Telemetry::ProviderRetry.new(attempt: options.max + 1, will_retry_in: nil,

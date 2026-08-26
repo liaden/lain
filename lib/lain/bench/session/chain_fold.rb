@@ -5,7 +5,7 @@ module Lain
     class Session
       # The file-order chain fold, {Loader}'s collaborator: re-commit every
       # turn record over the accumulated chain and follow every `rewound`
-      # record's checkout (T15), in the ONE order that makes them verifiable
+      # record's checkout, in the ONE order that makes them verifiable
       # -- file order. An of_type(turn)-only fold discards the ordering of
       # turns against rewound records, and a rewound session's post-rewind
       # turns verify only relative to the checkout that precedes them.
@@ -169,7 +169,7 @@ module Lain
           chain
         end
 
-        # T15: a rewound record moves the fold position without weakening
+        # A rewound record moves the fold position without weakening
         # verification -- `from` must BE the fold's current head, and `to`
         # may name only a digest this fold already verified (or nil, the
         # empty session), so the checkout never vouches for unproven bytes.
@@ -184,7 +184,7 @@ module Lain
         end
 
         # Deliberate asymmetry with {SessionRecord::Scribe#rewound}, recorded
-        # by the T15 panel: this READ side accepts `to` as ANY digest the
+        # by review: this READ side accepts `to` as ANY digest the
         # fold ever verified -- including one ABOVE the current position (a
         # redo onto an abandoned branch) -- while the Scribe refuses to WRITE
         # that move, its skip-set having pruned the target. Verification

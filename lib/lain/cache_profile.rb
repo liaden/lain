@@ -2,8 +2,8 @@
 
 module Lain
   # A provider's prompt-cache economics, promoted to a first-class value so a
-  # cache-aware compaction scheduler (planning/specs/cache-aware-compaction.md,
-  # CAC-3/CAC-4) can read real numbers instead of a hardcoded constant.
+  # cache-aware compaction scheduler (planning/specs/cache-aware-compaction.md)
+  # can read real numbers instead of a hardcoded constant.
   #
   # * `ttl` -- sliding-window seconds; any cache hit resets the clock, and no
   #   activity for this long means the prefix is cold. 0 for a provider with no

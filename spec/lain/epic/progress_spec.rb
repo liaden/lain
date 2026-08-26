@@ -47,7 +47,6 @@ RSpec.describe Lain::Epic::Progress do
   let(:chain) { graph_of(issue("a", blocks: ["b"]), issue("b")) }
 
   describe "the overlay" do
-    # AC1
     it "lets a journal transition override the document's status, and ready with it" do
       progress = fold(journaled(transition(issue_id: "a")), graph: chain)
 
@@ -82,7 +81,6 @@ RSpec.describe Lain::Epic::Progress do
   # `discovered_from` a LIVE issue declares. A transition is inert history while
   # some live issue's link still names its id, and loud once none does.
   describe "unknown ids" do
-    # AC2
     it "refuses a transition naming an issue no live link reaches" do
       entries = journaled(transition(issue_id: "ghost"))
 
@@ -90,7 +88,6 @@ RSpec.describe Lain::Epic::Progress do
         .to raise_error(Lain::Epic::UnknownIssue, /"ghost".*"alpha"/m)
     end
 
-    # AC3
     it "folds a split issue's own history as inert, leaving its parts untouched" do
       graph = graph_of(issue("x"), issue("y")).split("y", into: [issue("y1"), issue("y2")])
       entries = journaled(transition(issue_id: "y", to_status: "done"))
@@ -159,7 +156,7 @@ RSpec.describe Lain::Epic::Progress do
       expect { fold(entries, graph: chain) }.to raise_error(ArgumentError, /event/)
     end
 
-    # T6's rule, one tier up: a failed queue rebuild NEVER degrades to an empty
+    # The abort rule, one tier up: a failed queue rebuild NEVER degrades to an empty
     # queue, because an empty queue reads as drained and drained opens the next
     # stage over work nobody signed off. Policy::Drained is not a fallback here.
     it "aborts on a gate_decision the sign-off fold cannot read, never reading it as drained" do

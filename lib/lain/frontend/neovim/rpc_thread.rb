@@ -310,8 +310,8 @@ module Lain
         # intermittent: it writes from the first differing line, so the offending
         # line can never enter the buffer, `shared` can never advance past it,
         # and the only line that could unblock the prefix is the one that fails.
-        # That is F17: lain://timeline frozen at the first multi-line model reply
-        # while every sibling view stayed live.
+        # That is the failure seen in practice: lain://timeline frozen at the
+        # first multi-line model reply while every sibling view stayed live.
         #
         # REFUSED BY NAME, in place, rather than repaired: a rendering that
         # breaks the one-line-per-record contract is a defect in the VIEW, and

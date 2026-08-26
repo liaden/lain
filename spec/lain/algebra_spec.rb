@@ -791,8 +791,9 @@ RSpec.describe Lain::Algebra do
     end
 
     describe "an operation the class already defines itself" do
-      # A4's exact path: DedupeToolCalls has its own #call, and generating over
-      # it would delete a working implementation with no warning.
+      # The exact path this guards: DedupeToolCalls has its own #call, and
+      # generating over it would delete a working implementation with no
+      # warning.
       it "is refused rather than silently replaced" do
         scratch = registry
         expect do
@@ -838,7 +839,7 @@ RSpec.describe Lain::Algebra do
     end
 
     describe "the generated method" do
-      # Pinned so A4 meets this here rather than inside a combinator: the
+      # Pinned so a caller meets this here rather than inside a combinator: the
       # generated method takes exactly one positional argument and no block.
       it "takes one argument and no keywords" do
         scratch = registry

@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-# Memory::Bm25 builds a Lain::Ext::Bm25 (T8, the `bm25` crate, in-process) once
+# Memory::Bm25 builds a Lain::Ext::Bm25 (the `bm25` crate, in-process) once
 # from a snapshot's items and returns Manifest::Hit-duck hits, so it slots into
-# Context::Recall (T10) and any other Manifest consumer without a type check.
+# Context::Recall and any other Manifest consumer without a type check.
 RSpec.describe Lain::Memory::Bm25 do
   def item(id, description, body: "body of #{id}")
     Lain::Memory::Item.new(id:, description:, body:)
@@ -65,7 +65,7 @@ RSpec.describe Lain::Memory::Bm25 do
       expect(index.search("zzznonexistent qqquux")).to eq([])
     end
 
-    # Williams (T8 panel): a query with no alphanumeric characters tokenizes
+    # From a review panel: a query with no alphanumeric characters tokenizes
     # to nothing on both sides of the FFI boundary and returns [], not an
     # error.
     it "returns [] for a query that tokenizes to nothing (non-alphanumeric only)" do
@@ -89,7 +89,7 @@ RSpec.describe Lain::Memory::Bm25 do
       expect(hits.size).to eq(30)
     end
 
-    # Gallant (T8 panel): a u32 token-hash collision inside the crate can
+    # From a review panel: a u32 token-hash collision inside the crate can
     # score a document above zero with an EMPTY surface intersection. Hit#why
     # raises on blank, so an empty matched-tokens hit must fall back to a
     # named explanation, never a blank string or an exception. Constructed via

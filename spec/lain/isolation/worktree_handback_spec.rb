@@ -411,8 +411,8 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
     end
   end
 
-  # FIX 1. The card's load-bearing invariant, defended against the one caller
-  # that can reach past every git guard: this object's OWN journalling. D5 runs
+  # The load-bearing invariant, defended against the one caller that can reach
+  # past every git guard: this object's OWN journalling. {WorkerHandoff} runs
   # `#call` inside a gathered fiber, where a raise takes out the worker's result.
   describe "journalling can never overturn an outcome" do
     it "answers with an outcome for a worker_id the telemetry guard rejects" do
@@ -455,7 +455,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
     end
   end
 
-  # FIX 2. Leaving the markers is only right if this object also owns the way
+  # Leaving the markers is only right if this object also owns the way
   # out: the resolver has no `bash`, so `git add` + `merge --continue` has to
   # live here or nowhere.
   describe "#continue" do
@@ -884,7 +884,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
     # requiring `#released?` would couple it to {Lease}'s lifecycle over a
     # condition only the lifecycle owner can act on. So a released lease is not
     # REFUSED, it is reported -- which is what a caller reads, and what the
-    # Journal keeps. T13/T18/T20 all call this; the contract is here, not in a
+    # Journal keeps. Every caller reaches this; the contract is here, not in a
     # hand-back note.
     it "answers a released lease with a failed outcome and a journal line, not a refusal" do
       lease = backend.acquire("worker-1")
@@ -982,7 +982,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
     end
   end
 
-  # FIX 3/4. update-ref overwrites unconditionally, so on a declined or
+  # update-ref overwrites unconditionally, so on a declined or
   # conflicted handback -- where the ref is the ONLY anchor -- two ids that slug
   # alike would orphan one worker's commits.
   describe "the ref is one per worker, not one per slug" do
@@ -1054,7 +1054,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
     end
   end
 
-  # FIX 6. "uncommitted changes" names the wrong fix for a mid-merge parent: a
+  # "uncommitted changes" names the wrong fix for a mid-merge parent: a
   # caller retries and a human hunts for edits that are not there.
   describe "a parent already mid-merge" do
     it "is reported as mid-merge, naming the way out, not as a dirty checkout" do
@@ -1077,7 +1077,7 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
     end
   end
 
-  # FIX 7. The only case reachable today (an untracked file the merge would
+  # The only case reachable today (an untracked file the merge would
   # clobber, where no merge ever started) really is untouched -- but the claim
   # has to be measured, not assumed.
   describe "a merge that fails without conflicting" do

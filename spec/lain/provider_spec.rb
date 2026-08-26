@@ -45,7 +45,7 @@ RSpec.describe Lain::Provider do
     end
   end
 
-  # T9 AC 4: a provider with no window knowledge answers nil. Deliberately NOT
+  # A provider with no window knowledge answers nil. Deliberately NOT
   # a NotImplementedError like #capabilities/#cache_profile: those two are
   # facts every arm KNOWS and must state, while "how many tokens can this model
   # take here" is a question most providers genuinely cannot answer -- the

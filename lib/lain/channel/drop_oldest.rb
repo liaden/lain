@@ -35,14 +35,14 @@ module Lain
     # Why not a library instead of hand-rolling this? The design plan's
     # Concurrency section already ruled `concurrent-ruby-edge` out entirely --
     # its `Channel`/`Actor`/`Cancellation` sit behind an explicitly unstable API,
-    # and M1 has no chosen concurrency model to build a dependency against yet.
+    # and lain has no chosen concurrency model to build a dependency against yet.
     # Stable `concurrent-ruby` has no evict-oldest queue either; its bounded
     # queues share `SizedQueue`'s blocking-push limitation. So there was no
     # off-the-shelf structure that already expressed "evict, then enqueue,
     # atomically" -- the Mutex/ConditionVariable is the smallest thing that
-    # does, not a shortcut around a library. Revisit once M5 picks fibers via
-    # `async` (the plan's likely answer): `Async::LimitedQueue` is a
-    # scheduler-aware bounded queue and could replace this Thread-based
+    # does, not a shortcut around a library. Revisit once the concurrency model
+    # picks fibers via `async` (the plan's likely answer): `Async::LimitedQueue`
+    # is a scheduler-aware bounded queue and could replace this Thread-based
     # implementation outright, at the same point the rest of the concurrency
     # model gets chosen with the bench in hand.
     class DropOldest

@@ -165,7 +165,7 @@ end
 # #drain_at_prompt is the `/inbox`-at-`you>` half of this class -- the
 # SAME TTY drain UX #answer_loop's read_drained_answer calls at `human>`
 # (`@tty.drain_inbox`), reused rather than a second presentation, and the
-# SAME reply seam rather than a second answer path. It exists because the OM-6
+# SAME reply seam rather than a second answer path. It exists because the
 # supervisor's fleet outlives a single ask: a subagent can post a question
 # through `announce` ({Lain::CLI::Wiring::Askers}) at ANY time, but only
 # #answer_loop's fiber -- alive only DURING an ask -- drains `@questions`
@@ -520,7 +520,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # QA round 6, F27. `human> ` used to be prose or the ONE string literal
+  # QA round 6. `human> ` used to be prose or the ONE string literal
   # `/inbox`, so every other registered `/word` was recorded as an answer -- a
   # human who typed `/status` while a set was parked sent the model the text
   # "/status" and got no status. The registry already parameterises exactly this
@@ -666,7 +666,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # QA round 7, F29. The sibling describe above pins the INLINE `human> `
+  # QA round 7. The sibling describe above pins the INLINE `human> `
   # read; this one pins the read one layer in, and they were not the same code.
   # `Reply#drained` handed {Lain::Frontend::TTY::Inbox} a bare reader lambda
   # that consulted no registry at all, so `/inbox` followed by any `/word`
@@ -909,7 +909,7 @@ RSpec.describe Lain::CLI::HumanReplies do
   # A reply surface no longer lives for one ASK -- it lives
   # for one dispatched LINE ({Lain::CLI::Repl::LineScope}), so it is started and
   # stopped around `/help`, `/status`, and every other command a human types in
-  # a second. The fleet outlives all of them (OM-6), so a subagent can enqueue
+  # a second. The fleet outlives all of them, so a subagent can enqueue
   # while one is running: the loop dequeues, renders the note, and parks on a
   # read the human is not looking at, and the line then ends UNDER it.
   #
@@ -1193,8 +1193,8 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # T9. `read_reply` answers nil when the stream it reads is closed, and until
-  # this card that nil was `.to_s`ed into "" -- the SAME value a human who
+  # `read_reply` answers nil when the stream it reads is closed, and until this
+  # was fixed that nil was `.to_s`ed into "" -- the SAME value a human who
   # presses Enter types, and a value this surface delivers as their answer
   # because a parked run has to be told something. So a session whose stdin
   # went away wrote a `message` record `from: "human"` carrying
@@ -1272,7 +1272,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(ask_human.last_unanswered).to be_nil
     end
 
-    # Review FIX 1. Ctrl-D on an empty line at a live Reline prompt returns the
+    # Ctrl-D on an empty line at a live Reline prompt returns the
     # SAME nil a vanished stdin does, and the human is still sitting there --
     # so a refusal claiming the session is unattended is false in its commonest
     # trigger, and that false clause lands in the journal under
@@ -1290,7 +1290,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(answered.content).to eq("postgres")
     end
 
-    # Review FIX 3. A dying PTY does not politely return nil mid-read: it
+    # A dying PTY does not politely return nil mid-read: it
     # raises. Both raises are StandardErrors, so they climbed to
     # {AnswerLoop#exchange}, which rendered them and settled the line -- the
     # inbox row deleted while the asker stayed parked forever, which is the
@@ -1307,9 +1307,9 @@ RSpec.describe Lain::CLI::HumanReplies do
       end
     end
 
-    # The other half of FIX 3, and the reason the rescue names two classes
-    # rather than IOError: a read that failed for a reason which is NOT the end
-    # of the stream keeps the surface's own error path -- rendered where the
+    # The other half of the dying-PTY case, and the reason the rescue names two
+    # classes rather than IOError: a read that failed for a reason which is NOT
+    # the end of the stream keeps the surface's own error path -- rendered where the
     # human typed, and left to {AnswerLoop#exchange}'s documented rescue -- and
     # is never turned into "nobody will ever answer this". Widening the rescue
     # to IOError would make every transient terminal fault a question the model
@@ -1356,7 +1356,7 @@ RSpec.describe Lain::CLI::HumanReplies do
     end
   end
 
-  # Review FIX 2. `/inbox` at `you>` is the prompt where NOTHING is parked on
+  # `/inbox` at `you>` is the prompt where NOTHING is parked on
   # the read -- the whole reason it exists is that the fleet outlives an ask --
   # so "the run is parked on this set, and declining still has to reach the
   # model" is the inline prompt's reason and is false here. A read that ends
@@ -1956,7 +1956,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(editor.refusals).to be_empty
     end
 
-    # T3/round 11. An ANSWER names its row exactly as an OPEN does, and it is
+    # Round 11. An ANSWER names its row exactly as an OPEN does, and it is
     # resolved through the same index off the same rendering -- which is what
     # stops :LainReply guessing "the oldest item listed".
     it "answers the set the reply's row names, not whichever the inbox lists first" do
@@ -1973,7 +1973,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(editor.refusals).to be_empty
     end
 
-    # THE DEFECT ITSELF (F64's reply half). A question raised while the human
+    # THE DEFECT ITSELF, on the reply half. A question raised while the human
     # sits at `you>` reaches the inbox VIEW through the record stream, and
     # nothing ever gathers it into {HumanReplies::Pending} -- so the answer's
     # old fallback was `Unlisted.digest`, i.e. nil, and the human was told the
@@ -1991,7 +1991,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(editor.refusals).to be_empty
     end
 
-    # SHOULD-FIX 2 (round-11 panel). A stamp this view no longer holds is the
+    # From the round-11 panel. A stamp this view no longer holds is the
     # one refusal that must NOT read as staleness: the asker is still parked and
     # the row is still live, and "nothing you type here is recorded" is the
     # exact sentence this card exists to stop a human being shown. `open`
@@ -2067,7 +2067,7 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(nvim.opened).to be_empty
     end
 
-    # `pin` has sat in the same state as `open` since B4: the editor sends it,
+    # `pin` sits in the same state as `open`: the editor sends it,
     # the view can honour it, and nothing popped it.
     it "pins the turn a :LainPin gesture names" do
       timeline = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])

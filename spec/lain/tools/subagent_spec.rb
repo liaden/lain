@@ -39,7 +39,7 @@ RSpec.describe Lain::Tools::Subagent do
     Lain::Provider::Mock.new(responses:)
   end
 
-  # Every child now holds an `ask_human` of its OWN (T10), granted at the spawn
+  # Every child now holds an `ask_human` of its OWN, granted at the spawn
   # rather than inherited from the union it attenuates from -- so a rendered
   # tools block is the set under test PLUS that one, in {Toolset}'s sorted
   # order. Said once here, because the alternative is nine call sites each
@@ -144,12 +144,12 @@ RSpec.describe Lain::Tools::Subagent do
   # ---- Provenance at correlation grain (panel ruling) -------------------------
 
   describe "provenance at correlation grain" do
-    # Ruling (T19 panel): the parent's rendered tool_result turn keeps
+    # Ruling (review panel): the parent's rendered tool_result turn keeps
     # causal_parents [] -- ToolRunner and Timeline#commit stay out of this card.
     # The child is reachable at CORRELATION grain instead: message.to names the
     # parent chain's correlation (its root event digest), and the causal walk
     # descends from there to the :spawn and the child's final turn F. The
-    # edge-grain gap is recorded in the plan for the M5 tail.
+    # edge-grain gap is recorded in the plan for a later tail.
     it "finds :spawn, :message, and F from the parent's settled state by correlation" do
       tool, parent_agent = loop_driven(child_provider: mock(text_response("child answer")))
 
@@ -183,7 +183,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
 
     # handler_union: the child's rendered tools block equals the SHARED UNION --
-    # sibling-equality is the CE-4 win (two siblings spawned from this union
+    # sibling-equality is the win (two siblings spawned from this union
     # render byte-identical tools blocks) -- NOT "the parent's own toolset",
     # which may differ (in exe the parent holds base + subagent; the union
     # handed to the tool is base).
@@ -220,7 +220,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
-  # ---- Scenario: the sibling-template prefix (CE-4 arm) ----------------------
+  # ---- Scenario: the sibling-template prefix ---------------------------------
 
   describe "sibling-template prefix" do
     let(:template) { "You are one of a set of sibling workers over one shared brief. " * 20 }
@@ -264,7 +264,7 @@ RSpec.describe Lain::Tools::Subagent do
       expect(requests.map { |r| r.prefix_digests.last }.uniq.size).to eq(3)
     end
 
-    # The T24 5-mark-400 pin: count ALL marks that reach the wire, across
+    # The 5-mark-400 pin: count ALL marks that reach the wire, across
     # system AND messages. Exactly one system mark -- Context#cache_marked's,
     # landing ON the template because the strategy leaves it as the last,
     # unmarked block -- plus CacheBreakpoints' marks on messages. A second
@@ -370,8 +370,8 @@ RSpec.describe Lain::Tools::Subagent do
       expect(journal.drain.map { |event| event.to_journal["type"] }).not_to include("template_below_floor")
     end
 
-    # AC4 has no lifecycle exemption: an actor-mode sibling below the floor
-    # must be reported through #launch_actor's path exactly as a one-shot's is
+    # The floor note has no lifecycle exemption: an actor-mode sibling below the
+    # floor must be reported through #launch_actor's path exactly as a one-shot's is
     # through #perform's -- silence here is the un-cacheable fan-out the note
     # exists to expose.
     it "journals the floor note on an actor-mode launch too" do
@@ -391,7 +391,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
-  # ---- T-D1: the injected role persona reshapes the child system (PS-3) ------
+  # ---- The injected role persona reshapes the child system -------------------
   #
   # The persona is a NEW injected collaborator ({Role::Persona}); its Null
   # default keeps every existing spawn path byte-identical. The full persona
@@ -430,7 +430,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
-  # ---- T-D2: the public synchronous run-one-prompt -> result entry ----------
+  # ---- The public synchronous run-one-prompt -> result entry ----------------
   #
   # A role-selecting seam ({Skill::RoleSpawn}) builds a one-shot Subagent per
   # call and drives it DIRECTLY -- no model-facing {#call}/effect-handler
@@ -476,7 +476,7 @@ RSpec.describe Lain::Tools::Subagent do
       expect(tool.last_spawn).to be_nil
     end
 
-    # The ceiling must be TRANSITIVE (T19 panel, substantive): a Subagent
+    # The ceiling must be TRANSITIVE (review panel, substantive): a Subagent
     # reachable in the child's union must not keep its constructing ceiling,
     # or recursion never terminates via the cap. Each spawn hands descendants
     # a decremented copy: depth 2 -> the child may spawn (copies at 1) -> the
@@ -544,7 +544,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
-  # ---- T7: children get a real Session --------------------------------------
+  # ---- Children get a real Session ------------------------------------------
   #
   # Before this card, every spawned child ran under Session::Null
   # (spawn_agent's `session: Session::Null.instance`), so EditFile's
@@ -635,7 +635,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
-  # ---- T11: the PATH boundary reaches a child, or it is a privilege inversion -
+  # ---- The PATH boundary reaches a child, or it is a privilege inversion ------
   #
   # A child's gate is built HERE ({ChildBuilder#gated}), from the seam. So a
   # sensitivity policy that reached the parent's gate and not the seam would
@@ -755,18 +755,18 @@ RSpec.describe Lain::Tools::Subagent do
       expect(leaked["content"]).to include("TOKEN=shhh")
     end
 
-    # ---- T12: a DENIED path, which no approval lifts at any depth -----------
+    # ---- A DENIED path, which no approval lifts at any depth ----------------
     #
-    # The T11 examples above prove a child's gate ASKS. This proves the child's
+    # The examples above prove a child's gate ASKS. This proves the child's
     # chain also REFUSES outright, which is a different handler
     # ({Effect::Handler::Sensitivity}) composed by the same {ChildBuilder#gated}
     # from the same seam. Wired into `Switchboard#gate` alone it would reach
     # every parent and no child, so a subagent could read what its parent may
-    # not -- the same inversion T11 closed, one axis over.
+    # not -- the same inversion closed above, one axis over.
     #
     # `secret` is overridden rather than added beside: `child_reads`,
     # `nesting_provider`, `two_deep` and `grandchild_result` all read it, so
-    # pointing it at a DENIED name reuses T11's whole apparatus unchanged and
+    # pointing it at a DENIED name reuses that whole apparatus unchanged and
     # the two blocks stay comparable line for line. `.netrc` is a name rule, so
     # it denies wherever it sits.
     describe "and a DENIED path, which no approval can lift" do
@@ -895,14 +895,14 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
-  # ---- T13 scope expansion: the observer reaches Lineage from the outside ----
+  # ---- Scope expansion: the observer reaches Lineage from the outside --------
 
   # The live session scribe attaches at the TOOL's constructor (the only seam
   # the exe wires), so Subagent must forward an `observer:` to the Lineage it
   # builds -- an observer nobody can wire from the exe is silent record loss
   # one level up.
   describe "the injectable observer" do
-    # T2 widened what this seam carries: the child's own turns ride it too,
+    # This seam carries more than it once did: the child's own turns ride it too,
     # between the :spawn and the :message, because the session record cannot
     # reach them any other way -- a Timeline walk sees ONE chain, and the
     # scribe's is the parent's. `@log` is unmoved: it is {Lineage}'s
@@ -929,7 +929,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
-  # ---- T10: a child of its own may ask the human ----------------------------
+  # ---- A child of its own may ask the human ---------------------------------
   #
   # The capability policy this chunk reverses. A subagent used to be denied
   # `ask_human` deliberately ({CLI::Wiring::ToolsetBuild}'s layering comment);
@@ -1038,7 +1038,7 @@ RSpec.describe Lain::Tools::Subagent do
       [dispatched, item]
     end
 
-    # T2: the session such a run RECORDS. A child's question cites the head the
+    # The session such a run RECORDS. A child's question cites the head the
     # CHILD stood at when it asked, and the lineage `"final"` edge cites the
     # child's last turn -- neither of which any `turn` record carried, because
     # the scribe walks one chain and it is the parent's. Rebuilding such a file
@@ -1190,7 +1190,7 @@ RSpec.describe Lain::Tools::Subagent do
         expect(nvim_senders(pending_pair(:fresh)).uniq.size).to eq(2)
       end
 
-      # Was PINNED PENDING until T15, and it is the half the arrival fix did
+      # Was PINNED PENDING, and it is the half the arrival fix did
       # NOT reach: `HumanReplies::InboxItem.asked` prefers the asker's name,
       # which closes the TTY, but the nvim view never sees an InboxItem -- it
       # folds the record stream, so it rendered the shared root digest and the
@@ -1423,7 +1423,7 @@ RSpec.describe Lain::Tools::Subagent do
       expect(notified).to eq([["subagent", "which db?"]])
     end
 
-    # ---- The `ensure` on Actor#stop, pinned (S2) ---------------------------
+    # ---- The `ensure` on Actor#stop, pinned --------------------------------
     #
     # That `ensure` is the entire reason this card touched `actor.rb`, and a
     # release written among the method's own lines would be skipped by BOTH of
@@ -1472,7 +1472,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
-  # ---- B9: the staggered sibling fan-out (CE-5) -----------------------------
+  # ---- The staggered sibling fan-out ----------------------------------------
   #
   # The plumb this card adds: a REAL fan-out of sibling-template children
   # through {Stagger}, each child's {Agent} forwarding `on_stream_started` down
@@ -1511,7 +1511,7 @@ RSpec.describe Lain::Tools::Subagent do
       expect(store.size).to eq(before)
     end
 
-    # AC1 (Gherkin): sibling 1 begins streaming -> the rest release, journaled.
+    # Sibling 1 begins streaming -> the rest release, journaled.
     it "releases the rest on sibling 1's stream-start, journaling the stagger with reason :stream_started" do
       journal = Lain::Channel.new
       provider = mock(text_response("a"), text_response("b"), text_response("c"))
@@ -1526,7 +1526,7 @@ RSpec.describe Lain::Tools::Subagent do
       expect(released.map(&:reason)).to eq([:stream_started])
     end
 
-    # AC2 (Gherkin): the first never streams -> the rest release on the degrade
+    # The first never streams -> the rest release on the degrade
     # path, journaled. A non-streaming child context is the honest analogue of a
     # provider that never signals: Mock gates its signal on `request.stream`, so
     # the whole fan-out falls through to Stagger's :degraded release rather than
@@ -1548,9 +1548,9 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
-  # ---- W3: the OM-6 Supervisor unrefuses the model-dispatched :actor ---------
+  # ---- The Supervisor unrefuses the model-dispatched :actor ------------------
   #
-  # The T23 refusal reasoning stands for a BARE dispatch: Agent#ask's per-call
+  # The refusal reasoning stands for a BARE dispatch: Agent#ask's per-call
   # Sync owns any fiber a tool dispatch spawns, so a perform-launched actor
   # would park as ask's own child and wedge the loop. A running Supervisor is
   # the missing reactor above the Agent -- perform adopts the launch onto ITS
@@ -1614,7 +1614,7 @@ RSpec.describe Lain::Tools::Subagent do
 
     # AC: no supervisor still refuses loudly -- today's message, no event, no
     # Store touch. The default is Supervisor::Null, so an unwired tool behaves
-    # byte-identically to the pre-W3 refusal.
+    # byte-identically to the refusal that stood before.
     it "still refuses with today's message when no supervisor is wired" do
       tool = described_class.new(
         provider: mock(text_response("unused")), context_factory: -> { child_context },
@@ -1641,7 +1641,7 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
-  # ---- T23: the child-spawn collaborators travel as ONE Seam value -----------
+  # ---- The child-spawn collaborators travel as ONE Seam value ----------------
   #
   # The six a child spawn is always built over -- provider, child-Context
   # factory, live parent handle, journal, supervisor, lineage observer -- were
@@ -1678,8 +1678,8 @@ RSpec.describe Lain::Tools::Subagent do
       expect(Lain::Tools::Subagent::NO_OBSERVER).to be_frozen
     end
 
-    # T10's member. Its Null is a module rather than an instance for the same
-    # reason the three above are singletons: a fresh object per default would
+    # The ask-the-human member. Its Null is a module rather than an instance for
+    # the same reason the three above are singletons: a fresh object per default would
     # make two otherwise identical seams compare unequal.
     it "defaults the ask-the-human seam to the one wired to nothing" do
       expect(seam.askers).to be(Lain::Tools::Subagent::NoAskers)

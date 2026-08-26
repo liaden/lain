@@ -2,7 +2,7 @@
 
 module Lain
   module Telemetry
-    # T16's run-state records, all emitted by {Session::Journaled} -- the
+    # The run-state records, all emitted by {Session::Journaled} -- the
     # decorator that keeps {Session} itself journal-ignorant, so neither the
     # Agent nor any tool ever constructs one directly.
 

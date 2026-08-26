@@ -3,7 +3,7 @@
 module Lain
   module Memory
     # A Manifest::Hit-duck search index backed by Lain::Ext::Bm25 (the `bm25`
-    # crate, in-process -- see T8 and ext/lain/src/bm25.rs). Where Manifest is
+    # crate, in-process -- see ext/lain/src/bm25.rs). Where Manifest is
     # the always-runs lexical floor, Bm25 is a boosting arm over the SAME
     # corpus: it never replaces Manifest as the pointer layer, it only ranks
     # (references/memory-and-retrieval.md #2).
@@ -24,7 +24,7 @@ module Lain
       # A u32 token-hash collision inside the crate can score a document above
       # zero with an EMPTY surface intersection (no shared tokens to name).
       # Hit#why raises on blank, so that case gets this named fallback rather
-      # than a blank string or an exception -- see T8's review panel (Gallant).
+      # than a blank string or an exception -- a review panel's ruling (Gallant).
       FALLBACK_WHY = "bm25 score match (token-level explanation unavailable)"
 
       # @param index [#map, #to_h] a Memory::Index snapshot (or any duck that
@@ -53,7 +53,7 @@ module Lain
       #   by build-batch insertion order (pinned in ext/lain/src/bm25.rs); []
       #   on no match.
       # rubocop:disable Naming/MethodParameterName -- `k` is the pinned name
-      # from the plan card (T9/T10), matching Context::Recall's own `k:`.
+      # from the plan card, matching Context::Recall's own `k:`.
       def search(query, k: nil)
         bound = k.nil? ? @size : Integer(k)
         return [] if @engine.nil? || bound <= 0

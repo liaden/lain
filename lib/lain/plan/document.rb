@@ -3,8 +3,8 @@
 module Lain
   # A plan as a deeply frozen value: an ordered list of {Step}s with author-
   # placed SEAMS between adjacent steps. A seam is a chunk boundary -- the steps
-  # between two seams are one chunk of work, closed and summarized together
-  # (PC-2). Removing a seam merges the two chunks it separated; that is the whole
+  # between two seams are one chunk of work, closed and summarized together.
+  # Removing a seam merges the two chunks it separated; that is the whole
   # point of seams being author-editable.
   #
   # Sent-not-stored through the {Workspace} like {Arm::LedgerState}: #to_reminder

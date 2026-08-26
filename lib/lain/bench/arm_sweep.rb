@@ -2,10 +2,10 @@
 
 module Lain
   module Bench
-    # B12, the arms bench sweep and the chunk's headline deliverable: the
+    # The arms bench sweep and the chunk's headline deliverable: the
     # comparison the orchestration papers assert but rarely produce. Runs the
     # three arms -- {Arm::SingleThread} (the CONTROL every arm is measured
-    # against), {Arm::OrchestratorWorker}, and {Arm::DualLedger} -- over B0's
+    # against), {Arm::OrchestratorWorker}, and {Arm::DualLedger} -- over the
     # {ArmTasks} suite, driven by committed recorded trajectories through
     # Provider::Mock (deterministic, offline, zero network), and reports grader
     # score, tokens, wall-time, context-loss, and replans/stalls as
@@ -149,7 +149,7 @@ module Lain
 
       # Grades a Timeline by parsing its produced files into the Trajectory
       # ArmTasks' gold {Grader::Fixture} scores -- the bridge from the Arm seam's
-      # `grade(timeline)` duck to B0's file-shaped grader.
+      # `grade(timeline)` duck to {ArmTasks}' file-shaped grader.
       class GraderAdapter
         def initialize(task) = (@task = task)
 

@@ -1,11 +1,11 @@
--- lain://review, the changeset review's navigator (T14): the buffer Ruby's
+-- lain://review, the changeset review's navigator: the buffer Ruby's
 -- {Lain::Frontend::Neovim::ReviewView} renders into, and the `<CR>` that opens
 -- the row under the cursor.
 --
 -- 46, above 41: this renders THROUGH the layout's `review_place`, and a module
 -- sees only what concatenates before it.
 --
--- THE FIRST CALLER OF T26's LAYOUT, and that is the whole of why this file
+-- THE FIRST CALLER OF THE REVIEW LAYOUT, and that is the whole of why this file
 -- exists rather than another `belowright split`. `review_place` re-ensures the
 -- tabpage and its three slots before every render and answers a freshly
 -- resolved window id, so a render arriving after the human closed the sidebar
@@ -72,7 +72,7 @@ function review_sidebar.buf()
   return buf
 end
 
--- Whole-buffer replace, stamped (T14/T11's SET_REVIEW). The stamp is REQUIRED
+-- Whole-buffer replace, stamped (SET_REVIEW). The stamp is REQUIRED
 -- here where set_view's is optional: a sidebar row moves the moment the scope
 -- toggles or a mark redraws a row, and two renderings are routinely the same
 -- height -- which is exactly the aliasing protocol 8 replaced the line COUNT to
@@ -288,11 +288,11 @@ vim.api.nvim_create_autocmd("BufEnter", {
   end,
 })
 
--- The add-to-survey gesture (B16), the wire half of accretion (B12). It lives
+-- The add-to-survey gesture, the wire half of accretion. It lives
 -- here rather than getting its own file because this module already carries
 -- two of the four gestures reaching `Gestures#routes`
 -- (`human_replies.rb:843-852`) -- `review_open`/`review_mark` above -- and
--- `survey_add` would be the third once B12 gives it a route;
+-- `survey_add` would be the third once accretion gives it a route;
 -- `51_thread.lua`'s `review_ask` is the fourth. What differs from every
 -- keymap above is the BUFFER: a sidebar row is a NAME this runtime knows
 -- ahead of time to scope a `BufEnter` to, but a survey grows from WHATEVER
@@ -306,19 +306,19 @@ vim.api.nvim_create_autocmd("BufEnter", {
 -- bare `a` would cost them vim's own append. Every global lain key shares one
 -- movable prefix for that reason; see `lain_key`.
 --
--- REFUSES (C10), where the comment here used to say ACKED. `Gestures#routes`
+-- REFUSES, where the comment here used to say ACKED. `Gestures#routes`
 -- (`human_replies.rb:843-852`) has no `survey_add` entry, and `Router#call`'s
 -- `@routes[verb]&.call(...)` (`rpc_thread.rb:831`) is a silent no-op for a
 -- verb its table does not carry -- the ack (`respond(request.id, true)`,
 -- `rpc_thread.rb:1221`) had already returned by the time that ran. So the key
 -- told the human it worked while it had done nothing: no route drains
--- `survey_add`, and nothing was ever added to a survey. Accretion (B12) is
+-- `survey_add`, and nothing was ever added to a survey. Accretion is
 -- what would give this a route; until it lands, honesty is the only correct
 -- behaviour, and `_G.__lain.review_refused` (`65_review.lua`) is the same
 -- rail the wrong-buffer refusal below already answers on. No payload is
 -- built for a route that does not exist -- the `:p`-forced absolute path and
--- the generation stamp B12 will need (nil for an ordinary file, same as
--- everywhere else `b:lain_view_generation` goes unstamped) are that card's to
+-- the generation stamp accretion will need (nil for an ordinary file, same as
+-- everywhere else `b:lain_view_generation` goes unstamped) are accretion's to
 -- add back, alongside the route itself.
 --
 -- Every OTHER buffer-guard in this module (see `LainReviewOpen`/

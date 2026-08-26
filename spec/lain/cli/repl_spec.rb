@@ -139,7 +139,7 @@ RSpec.describe Lain::CLI::Repl do
   # machine at the other end: it runs the seeded question and stops, it never
   # reads a line nobody is there to type, and what it could not finish comes
   # back as an exit status instead of as a clean 0 over a rendered refusal
-  # (round 7's FG1). `--prompt` is untouched by it -- that flag still seeds and
+  # (round 7). `--prompt` is untouched by it -- that flag still seeds and
   # still continues, which is what the `/btw` child chat depends on.
   #
   # Driven through the real Wiring#run, like the round trip below it: the whole
@@ -685,7 +685,7 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
-  # Manual-QA round 4's F22. A budget ceiling is the HARNESS deciding to
+  # Manual-QA round 4. A budget ceiling is the HARNESS deciding to
   # halt ({Agent::Budget}'s class doc), and {Repl#respond} already renders it as
   # the one line a human needs: `error: loop ran 2 iterations, ceiling is 2`.
   # What the human actually met was that line preceded by
@@ -979,7 +979,7 @@ RSpec.describe Lain::CLI::Repl do
       expect(output.string).not_to include("human> ")
     end
 
-    # Review BLOCKER 2 (probe 1). The fleet outlives any one ask (OM-6), so a
+    # Review BLOCKER 2 (probe 1). The fleet outlives any one ask, so a
     # background subagent can enqueue while the human runs a SHORT command line
     # -- `/help`, `/status`, `/models`. The reply loop is live for that line: it
     # dequeues, renders the note, and parks on a read nobody is looking at. The

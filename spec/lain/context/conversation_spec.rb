@@ -85,7 +85,7 @@ RSpec.describe Lain::Context::Conversation do
     end
   end
 
-  # Invariant 5, added by T5's panel round. The producer it exists for is a
+  # Invariant 5, added by a panel round. The producer it exists for is a
   # derivation whose strategy echoes the blocks of the span it collapsed: the
   # replacement's role is fixed at `user` (the Messages API requires
   # `messages[0]` to be one), so an echoed `tool_use` lands in a user message.
@@ -228,7 +228,7 @@ RSpec.describe Lain::Context::Conversation do
 
     # Finding 8, first half: a pair in ONE message is not "answered in
     # messages[1], not the message after it", and its positions are [1], not
-    # [1, 1]. NIT 3: nor is it "at [1] and at [1], not consecutive" -- the same
+    # [1, 1]. Nor is it "at [1] and at [1], not consecutive" -- the same
     # self-contradiction in Array clothing. It never spans two messages at all.
     it "names a tool_use and tool_result sharing one message without repeating the position" do
       found = violation([user(text("go")), assistant(tool_use("a"), tool_result("a"))], :split_tool_pair)
@@ -255,7 +255,7 @@ RSpec.describe Lain::Context::Conversation do
       expect(violation(messages, :unanswered_tool_use).positions).to eq([3])
     end
 
-    # NIT 5: the id is load-bearing data for anything that groups or dedupes
+    # The id is load-bearing data for anything that groups or dedupes
     # violations -- a derivation audit does exactly that -- so it must not live
     # only in the prose. Two splits for different ids are otherwise identical
     # in every machine-readable member.
@@ -453,7 +453,7 @@ RSpec.describe Lain::Context::Conversation do
       expect(found.map(&:subject)).to eq(%w[tool_use tool_result])
     end
 
-    # The guarantee Conversation makes to T5, made here too: one `#violations`
+    # The guarantee Conversation makes to its callers, made here too: one `#violations`
     # must mean one thing, or a caller memoizing one and re-reading the other
     # holds two different promises under one name.
     it "answers a verdict that is stable by identity and shareable, exactly as a Conversation does" do

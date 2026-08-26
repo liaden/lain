@@ -9,7 +9,7 @@ module Lain
     # {Event::Projection#workspace_at}, as {Snapshot} is the write side of the
     # record itself. Restoring is STATE, not overlay: the write-set becomes
     # exactly the target map, so files the target does not hold are deleted
-    # (an empty map -- W1's total-deletion snapshot -- restores to nothing).
+    # (an empty map -- a total-deletion snapshot -- restores to nothing).
     #
     # The conversation axis is untouched by construction: Restore never sees a
     # Timeline, so "restore files, keep conversation" is not a behavior to get
@@ -23,7 +23,7 @@ module Lain
     # the same trust domain as {Timeline#rewind}'s pointer movement, and
     # follows Snapshot's bare-class precedent on the other side of the record.
     #
-    # Keys are workspace-root-relative (W1 froze that format), so the INJECTED
+    # Keys are workspace-root-relative (the recorded format), so the INJECTED
     # root decides where they land; the payload's recorded "root" is
     # provenance, never authority -- that is what lets a relocated checkout
     # restore where it lives now.
@@ -62,7 +62,7 @@ module Lain
 
       # The record one #apply keeps as it goes: the in-force map advanced per
       # SUCCESSFUL operation, and which keys have landed. Exists so a mid-apply
-      # failure leaves @in_force truthful (FIX 2, panel probe 6) -- assigning
+      # failure leaves @in_force truthful (panel probe 6) -- assigning
       # the target map only after a completed loop left a franken-disk behind
       # a ledger still claiming the pre-restore state.
       class Ledger
@@ -167,7 +167,7 @@ module Lain
         path == @root.to_s || path.start_with?("#{@root}#{File::SEPARATOR}")
       end
 
-      # FIX 1 (panel probe 8): the lexical key check cannot see a symlink AT
+      # Panel probe 8: the lexical key check cannot see a symlink AT
       # the path, and File.binwrite follows links -- a link planted at a
       # managed path would carry recorded bytes wherever it points, including
       # outside the root. So a symlink refuses exactly like an escaping key

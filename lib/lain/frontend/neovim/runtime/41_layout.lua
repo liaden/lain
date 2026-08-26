@@ -1,5 +1,5 @@
 -- The review's own TABPAGE, and the two entry points every review capability
--- renders through (T26). An epic already in flight has the journal, timeline,
+-- renders through. An epic already in flight has the journal, timeline,
 -- inbox and request buffers laid out; a review needs room and must not fight
 -- that, so it opens beside the session layout rather than over it -- `tabnew`
 -- inside the same nvim, sidebar plus the diff pair, `gt` back to the session.
@@ -12,14 +12,14 @@
 -- row (22 -> 21). Ids, buffers, window-local options, cursor position, alternate
 -- file and 'laststatus' are all measured identical either side.
 --
--- THE RULE FOR CALLERS, and it is the one T14/T15/T18 need: a window id from
--- {_G.__lain.review_layout} is a SNAPSHOT, correct when handed over and stale
--- after the human's next gesture. Do not cache one across renders. Ids do not
--- recycle in this editor and a stale one raises `Invalid window id` rather than
--- quietly hitting some other window, so the failure is loud rather than a render
--- landing in the wrong place -- but loud is not free, and the fix is to render
--- through {_G.__lain.review_place}, which re-ensures the layout and answers a
--- freshly resolved id every time.
+-- THE RULE FOR CALLERS, and it is the one every review module needs: a window
+-- id from {_G.__lain.review_layout} is a SNAPSHOT, correct when handed over and
+-- stale after the human's next gesture. Do not cache one across renders. Ids do
+-- not recycle in this editor and a stale one raises `Invalid window id` rather
+-- than quietly hitting some other window, so the failure is loud rather than a
+-- render landing in the wrong place -- but loud is not free, and the fix is to
+-- render through {_G.__lain.review_place}, which re-ensures the layout and
+-- answers a freshly resolved id every time.
 --
 -- 41, the lowest free number in the capability band: this is a FOUNDATION the
 -- later review modules (sidebar, diff, annotate, diagnostics, thread) render

@@ -55,11 +55,11 @@ RSpec.describe Lain::CLI::Epic do
   end
 
   # `sessions_dir`'s OWN default -- the working directory -- because that is what
-  # {Lain::CLI::Epic::Journals} folds. This helper said `project_hash(root)`
-  # until T5, matching what that method said, and the pair agreed only because
-  # BOTH halves were written here: the code keyed on `@root` and the fixture
-  # wrote to `@root`. When `@root` stopped meaning the working directory the two
-  # came apart and no example could see it, which is the whole argument in
+  # {Lain::CLI::Epic::Journals} folds. This helper said `project_hash(root)` until
+  # the journal keying moved, matching what that method said, and the pair agreed
+  # only because BOTH halves were written here: the code keyed on `@root` and the
+  # fixture wrote to `@root`. When `@root` stopped meaning the working directory
+  # the two came apart and no example could see it, which is the whole argument in
   # spec/lain/seams/epic_project_keying_seam_spec.rb. `paths` is injected on a
   # throwaway XDG state home, so the cwd-keyed directory is still inside the
   # fixture's tmpdir.
@@ -89,7 +89,6 @@ RSpec.describe Lain::CLI::Epic do
   def chain = graph_of(issue("a", blocks: ["b"]), issue("b", blocks: ["c"]), issue("c"))
 
   describe "the projection" do
-    # AC1
     it "renders the ready set before the waves, and renders it identically twice" do
       write_epic("alpha", chain)
       session("one.ndjson", transition("a"), transition("b"))
@@ -384,7 +383,7 @@ RSpec.describe Lain::CLI::Epic do
   # file and the three verb specs, the CLI's own arity in epic_land_spec.rb's
   # "refuses a second selector on the resume command" -- so they can drift apart
   # with every example still green. Give `--resume` a sha positional again and
-  # `lain epic land --resume ISSUE_ID SLUG` goes stale in silence: the F60
+  # `lain epic land --resume ISSUE_ID SLUG` goes stale in silence: the very
   # defect this whole card exists to close, recurring one level up, in the file
   # a future author is most likely to touch.
   #
@@ -433,7 +432,6 @@ RSpec.describe Lain::CLI::Epic do
   end
 
   describe "an empty home" do
-    # AC2
     it "names the resolved home and how to start, without raising" do
       message = command.status
 
@@ -489,7 +487,7 @@ RSpec.describe Lain::CLI::Epic do
     end
   end
 
-  # T5, F1. The two keyings this tier now has -- container by resolved project
+  # The two keyings this tier now has -- container by resolved project
   # root, journals by working directory -- have a cost the report must not hide.
   # From the project root and from a subdirectory, `lain epic status` names the
   # SAME epic at the SAME home and folds DIFFERENT session directories, so it
@@ -520,7 +518,7 @@ RSpec.describe Lain::CLI::Epic do
     end
   end
 
-  # T5. `lain chat` mounts its epic under the resolved PROJECT ROOT, so this
+  # `lain chat` mounts its epic under the resolved PROJECT ROOT, so this
   # command has to resolve the same root or the two go blind to each other's
   # epics -- and no flag is needed to reach it, because the resolver WALKS: a
   # chat or a subcommand run anywhere under a `.lain/` or a `.git` already has

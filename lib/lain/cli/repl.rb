@@ -20,10 +20,10 @@ module Lain
       # silently lose the session record with no error anywhere. `middleware:`
       # is the repl phase: a Middleware::Stack wrapping EACH command typed at
       # the prompt, the seam a future history/logging/confirmation phase lands
-      # on; an honest pass-through by default. `notifier:` is the I5 desktop
+      # on; an honest pass-through by default. `notifier:` is the desktop
       # surface watching the SAME approval queue the TTY prompt does (first
       # answer wins); Null when no dunstify, so the second watch fiber is inert.
-      # `supervisor:` is the OM-6 fleet reactor #run hosts across asks.
+      # `supervisor:` is the fleet reactor #run hosts across asks.
       # `commands:` is the command surface -- a {Command::Registry::Bound},
       # the registry curried over the one frozen {Command::Env} Wiring
       # assembled -- consulted BEFORE the middleware phase, so a registered
@@ -81,7 +81,7 @@ module Lain
       # Neovim frontend when one is attached (`nvim:` carries its wiring bits, or nil).
       # Both frontends' ensures -- nvim's RPC stop+join (in that order) and tty#run's screen
       # restore -- run when converse returns, including a signal-ended session.
-      # OM-6: the supervisor's reactor must OUTLIVE each per-ask Sync (an actor
+      # The supervisor's reactor must OUTLIVE each per-ask Sync (an actor
       # launched inside an ask's Sync would be that ask's captive child), so one
       # chat-level Sync here gives every inner ask the shared reactor and the
       # fleet a home across asks. supervisor.stop farewells the fleet before the
@@ -331,10 +331,10 @@ module Lain
       # here, so a short-circuiting middleware's response and this one share the
       # single boundary renderer. The concurrent surfaces an ask needs (`ask`
       # parks inside ask_human#perform awaiting the reply, and the reply comes
-      # from this same terminal -- a single-fiber ask-then-prompt deadlocks, OM-4
-      # depends on OM-0) are already live: {LineScope} starts them for the whole
-      # dispatched line, and this Sync nests inside that one rather than opening
-      # a second set.
+      # from this same terminal -- a single-fiber ask-then-prompt deadlocks, so
+      # the ask surface rests on the concurrent runtime) are already live:
+      # {LineScope} starts them for the whole dispatched line, and this Sync
+      # nests inside that one rather than opening a second set.
       #
       # A TORN ASK IS {Ask}'S, not this method's -- it owns the interrupted
       # record and the one line the human reads, and it returns nil so dispatch

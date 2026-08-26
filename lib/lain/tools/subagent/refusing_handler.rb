@@ -12,7 +12,7 @@ module Lain
 
       # The Handler arm of the `handler_union` posture: the child renders the
       # SHARED UNION (sibling spawns render byte-identical tools blocks -- the
-      # CE-4 win; the union need not equal the spawning parent's own toolset),
+      # cache win; the union need not equal the spawning parent's own toolset),
       # but this decorator refuses -- as an is_error {Tool::Result}, and
       # journaled -- any tool_call the child was not attenuated to, delegating
       # every permitted call inward to the real executor. Enforcement was always

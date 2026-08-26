@@ -2,7 +2,7 @@
 
 module Lain
   module Plan
-    # PC-3: what the mainline continues AS once a chunk closes. The two execution
+    # What the mainline continues AS once a chunk closes. The two execution
     # shapes ({ForkPerStep}, {LinearRewrite}) have DIFFERENT state effects, and
     # this value says so out loud instead of hiding it -- a continuation has
     # exactly two halves, one per effect a shape is allowed to have:
@@ -19,13 +19,13 @@ module Lain
     #   shareable" convention. +nil+ is the empty timeline.
     # * +pipeline+ -- the render strategy every SUBSEQUENT turn builds its
     #   {Context} around ({Context.new}(pipeline:)); a shareable {Context::Combinator}
-    #   or a +->(workspace)+ provider (the T21 injected-pipeline shape).
+    #   or a +->(workspace)+ provider (the injected-pipeline shape).
     #
     # {ForkPerStep} acts on the timeline half (advances +head_digest+, leaves
     # +pipeline+); {LinearRewrite} acts on the pipeline half (swaps +pipeline+,
     # leaves +head_digest+). Neither ever touches both -- if a future hybrid
     # shape needs a third effect, this value WIDENS deliberately (a named member),
-    # never grows an options Hash (PC-3 escalation trigger).
+    # never grows an options Hash (an escalation trigger).
     Continuation = Data.define(:head_digest, :pipeline) do
       def initialize(head_digest:, pipeline:)
         # The digest is frozen so the whole value is deeply immutable; the
@@ -64,7 +64,7 @@ module Lain
     module SeamPolicy
     end
 
-    # PC-3's reopen reference, defined at THIS layer on purpose: P2's {Closure}
+    # The reopen reference, defined at THIS layer on purpose: the {Closure}
     # deliberately carries no +supersedes:+ member (a closed record is content-
     # addressed and immutable; superseding it must never rewrite it). When a step
     # REOPENS -- a fresh fork closing a step that already closed -- the new

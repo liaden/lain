@@ -49,7 +49,7 @@ module Lain
       # gate, so a run would enumerate paths its own gate refuses to read.
       #
       # It stops being a Null the moment a session resolves a project, because
-      # {CLI::Wiring::BoardBuild} builds the classifier the policy wraps (T23).
+      # {CLI::Wiring::BoardBuild} builds the classifier the policy wraps.
       # A board that resolved none carries {Sensitivity::Policy::Null}, whose
       # filter is {Sensitivity::Filter::Null} -- so listings are byte-identical
       # to what that run produced before this boundary existed, and no line

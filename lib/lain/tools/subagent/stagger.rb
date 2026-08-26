@@ -5,18 +5,18 @@ require "async"
 module Lain
   module Tools
     class Subagent < Tool
-      # CE-5's stagger scheduling policy: release sibling 1 alone, await its
+      # The stagger scheduling policy: release sibling 1 alone, await its
       # `stream_started` signal (the earliest point its cache WRITE becomes
       # probe-able -- {Provider::StreamStartedSignal}), then release siblings
       # 2..N together. Lain owns the loop (CLAUDE.md), so this scheduling is
       # ours to make: fan N cache-sibling children out simultaneously and all
       # N pay full prefill, because none of their writes is probe-able yet;
       # staggering by one first-token wait is what turns N-1 of them into
-      # reads instead of cold prefills (`cache-economics.md` CE-5).
+      # reads instead of cold prefills (`cache-economics.md`).
       #
       # `tasks` are dispatch units, not {Tools::Subagent} instances -- the
       # policy is deliberately generic over anything answering
-      # `#call(on_stream_started:)`, the same duck CE-5 already gave
+      # `#call(on_stream_started:)`, the same duck already given to
       # `Provider#complete` (see {Provider::StreamStartedSignal}). Threading
       # an actual sibling-template fan-out through it is the spawn seam's
       # job, not this policy's: {Subagent}/{Agent} do not plumb
@@ -69,7 +69,7 @@ module Lain
         RELEASE_REASONS = %i[stream_started degraded].freeze
 
         # The moment siblings 2..N are released, and why: `:stream_started`
-        # is CE-5's natural release; `:degraded` is the safety valve for a
+        # is the natural release; `:degraded` is the safety valve for a
         # task that never signals (see {#call}) -- journaled so a fan-out
         # that quietly never staggered is visible in the record rather than
         # reading identically to a real cache win.

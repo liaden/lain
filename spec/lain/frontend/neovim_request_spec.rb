@@ -88,7 +88,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # blocking pop wakes the instant it lands (the same shape neovim_spec.rb uses
   # for command_inbox), where a non-blocking drain in a busy poll loop can race
   # the push. In the unbridged describes only resends are journaled, so one pop
-  # is the resent request; the T18 describes pop the full record sequence.
+  # is the resent request; the bridged describes pop the full record sequence.
   def next_journaled
     Timeout.timeout(8) { journal.pop }
   end
@@ -233,7 +233,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
 
       expect(death_closed_channel).to be(true)
-      # T9: the recorded failure re-raises WRAPPED -- a SessionFailure naming
+      # The recorded failure re-raises WRAPPED -- a SessionFailure naming
       # the dead thread, the raw error riding cause -- so exe/lain's
       # `rescue Lain::Error` presents the loss as an actionable notice.
       expect(error).to be_a(Lain::Frontend::Neovim::SessionFailure)
@@ -243,10 +243,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T18 (M4-2): the bridged path. Everything ABOVE this describe runs
-  # unbridged and unchanged -- that IS the card's third scenario, "the
-  # projection path without the bridge is unchanged": no ResendBridge wired,
-  # :LainResend journals + diffs exactly as before, and the default
+  # The bridged path. Everything ABOVE this describe runs unbridged and
+  # unchanged -- that IS the card's third scenario, "the projection path
+  # without the bridge is unchanged": no ResendBridge wired, :LainResend
+  # journals + diffs exactly as before, and the default
   # {Lain::Frontend::Neovim::Unbridged} never rebuilds or dispatches (its
   # never-forced rebuild is pinned in resend_bridge_spec.rb, default suite).
   describe "edit, resend, DISPATCH -- the edited request reaches the provider" do
@@ -298,12 +298,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         dispatched = next_journaled
         expect(dispatched).to be_an_instance_of(Lain::Telemetry::RequestSent)
         expect([marker.digest, dispatched.digest]).to all(eq(resent.digest))
-        # Byte-identical (T4): the wire request's content address IS the
+        # Byte-identical: the wire request's content address IS the
         # projection's recomputed digest.
         expect(provider.last_request.digest).to eq(marker.digest)
 
         # lain://diff shows edited-vs-rendered, and the editor is told the
-        # dispatch happened -- both through the existing render paths. S2: the
+        # dispatch happened -- both through the existing render paths, and the
         # human is told UP FRONT an attempt is being made, before the outcome.
         wait_until { buffer_lines("lain://diff").any? { |line| line.start_with?("+") && line.include?("48") } }
         wait_until { buffer_lines("lain://journal").any? { |line| line.include?("resend: dispatching") } }
@@ -354,9 +354,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # S3: since T18 a bridged offer holds the resend worker for a whole model
-  # round trip, so a bare `join` at teardown is UNBOUNDED -- a wedged provider
-  # would strand the editor's exit forever. The join is now capped
+  # A bridged offer holds the resend worker for a whole model round trip, so
+  # a bare `join` at teardown is UNBOUNDED -- a wedged provider would strand
+  # the editor's exit forever. The join is now capped
   # (Neovim::TEARDOWN_GRACE); the worker exits itself once the offer settles.
   describe "teardown stays bounded when a bridged offer holds the worker" do
     it "returns from run within the teardown grace instead of blocking on the in-flight round trip" do

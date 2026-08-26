@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-# Both siblings are real, landed, in-tree constants -- T6
-# (`Compaction::Strategy::Summarizing`) and T7 (`Compaction::Strategy::Elide`)
+# Both siblings are real, landed, in-tree constants --
+# `Compaction::Strategy::Summarizing` and `Compaction::Strategy::Elide`
 # -- so this spec runs against them directly, no `stub_const`. A stub that
 # shadows a real constant would keep standing in forever and report green
 # about a class it never touches, which is exactly the failure mode a prior
@@ -13,9 +13,9 @@
 
 # The mixed transcript both narrowed strategies were proved out against --
 # `spec/lain/compaction/strategy/composed_spec.rb:40` builds it as a Timeline
-# and T9's fixtures as an Array; this is the Array form, because a resolver test
-# needs only what `#ranges` indexes. A top-level module for the reason
-# `ComposedFixtures` and `SummarizeConversationFixtures` are: a constant
+# and the sibling fixtures as an Array; this is the Array form, because a
+# resolver test needs only what `#ranges` indexes. A top-level module for the
+# reason `ComposedFixtures` and `SummarizeConversationFixtures` are: a constant
 # declared inside the group is a `Lint/ConstantDefinitionInBlock` leak.
 #
 #   0 lone | 1-2 tool | 3-4 conv | 5-6 tool | 7-10 conv
@@ -45,7 +45,7 @@ RSpec.describe Lain::CLI::CompactionStrategy do
   # through whatever definition it is HANDED, exactly as the real
   # {Lain::Oracle::Model} would, so a spec that captures the definition it was
   # called with can assert it is the SAME one {Compaction::Strategy::
-  # Summarizing.definition} answers (B1: the bug this fixture exists to catch
+  # Summarizing.definition} answers (the bug this fixture exists to catch
   # was two DIFFERENT definitions -- one built here, one the tier actually
   # answered through -- landing under two different oracle_digests).
   def tier_factory(summary: "a span, summarized", calls: nil)
@@ -81,7 +81,7 @@ RSpec.describe Lain::CLI::CompactionStrategy do
   end
 
   describe "an unrecognized strategy option" do
-    # AC 3: the WHOLE advertised set, read off the constant rather than
+    # The WHOLE advertised set, read off the constant rather than
     # transcribed, so growing STRATEGIES cannot leave a refusal advertising a
     # subset of what ships. `--compact-strategy` and `--provider` are different
     # mistakes to make, so the flag is named too.
@@ -162,7 +162,7 @@ RSpec.describe Lain::CLI::CompactionStrategy do
                         /CompactionStrategy\.resolve needs tier: to build "summarizing"/)
     end
 
-    # B3: `resolve(tier: ->(definition) { Oracle::Recorded.from_journal(entries, definition:) })`
+    # `resolve(tier: ->(definition) { Oracle::Recorded.from_journal(entries, definition:) })`
     # used to resolve cleanly and then die on the RENDER path -- at the first
     # span, inside Oracle::Recorded::Journaling#ask reading `inner.model` --
     # with an uncontained NoMethodError, since Summarizing#asked only rescues
@@ -280,7 +280,7 @@ RSpec.describe Lain::CLI::CompactionStrategy do
         .to raise_error(Lain::CLI::CompactionStrategy::Unknown, /unknown part "" in --compact-strategy ""/)
     end
 
-    # AC 4, and it is deliberately weaker than "refused before any run begins":
+    # Deliberately weaker than "refused before any run begins":
     # `Base#|` only CONSTRUCTS, and Overlap is raised inside
     # {Lain::Compaction::Strategy::Composed#propose_ranges}, which needs the
     # messages and the span this resolver does not have. A static "claims the

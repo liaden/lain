@@ -45,7 +45,7 @@ module Lain
 
       # GIT's C-quoting, undone -- and the emphasis is a contract, not colour.
       # This decodes exactly one wire format, and a source that does not speak it
-      # must NOT route paths through here: a GitHub PR source (T10) receives
+      # must NOT route paths through here: a GitHub PR source receives
       # paths as JSON strings that arrive already decoded, and passing one
       # through this would silently rewrite any name containing a quote. Should a
       # second source ever need a different decoding it gets its own function,

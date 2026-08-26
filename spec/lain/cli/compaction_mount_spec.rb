@@ -26,17 +26,17 @@ module CompactionMountSpec
 end
 
 # The mount had no spec of its own: it was three keywords over a Backend, and
-# `wiring_spec` covered it end to end. T9 gave it a fourth responsibility with
-# a failure mode of its own -- routing a down summarizer's report somewhere an
-# operator can see it -- and "the sink is threaded" is exactly the kind of claim
-# that passes an end-to-end spec while being wired to the Null.
+# `wiring_spec` covered it end to end. Then it gained a fourth responsibility
+# with a failure mode of its own -- routing a down summarizer's report somewhere
+# an operator can see it -- and "the sink is threaded" is exactly the kind of
+# claim that passes an end-to-end spec while being wired to the Null.
 RSpec.describe Lain::CLI::CompactionMount do
   let(:channel) { RecordingChannel.new }
   let(:journal) { RecordingChannel.new }
   let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "mount-spec-fake-session.ndjson") }
   let(:provider) { Lain::Provider::Mock.new }
 
-  # T10: the Backend's own `--provider ollama` asks its server which window it
+  # The Backend's own `--provider ollama` asks its server which window it
   # is serving before the Source is built ({Backend#context_window}) -- the
   # mount's `provider:` above is the CHAT's, and a metadata probe is not a
   # completion. "Nothing resident" leaves the conservative fallback in charge,
@@ -115,7 +115,7 @@ RSpec.describe Lain::CLI::CompactionMount do
     #
     # The `channel` is deliberately NOT passed to the mount here, so the second
     # assertion says what it has to say: a report written through the DEFAULT
-    # sink reaches no channel the caller holds. Before T22's review it read
+    # sink reaches no channel the caller holds. Before review it read
     # `expect(channel.events).to be_empty` against a `channel` that had never
     # been wired to anything -- an assertion that could not fail. The
     # `sink_handed_to(recording_backend, channel:)` sibling above is what proves

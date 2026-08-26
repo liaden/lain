@@ -6,7 +6,7 @@ require "stringio"
 require "timeout"
 require "tmpdir"
 
-# `/survey <path>` (B14): the repl command that puts a human in front of a
+# `/survey <path>`: the repl command that puts a human in front of a
 # CORPUS inside the cockpit they already have open.
 #
 # This is the surface a survey is actually read and marked in, so it is not a
@@ -315,7 +315,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       expect(command.call(@root, env)).to include("lain://review")
     end
 
-    # F4: the banner used to name `:LainReviewDone`, a PROTOCOL-5 EPIC command
+    # The banner used to name `:LainReviewDone`, a PROTOCOL-5 EPIC command
     # whose guard (`runtime/65_review.lua:93-98`) requires
     # `b:lain_review_epic_slug` -- a variable a survey never stamps, so the
     # guard could never pass. This is the command a survey's own hand-back
@@ -476,7 +476,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     end
 
     # The whole sentence, not a fragment: a survey is not a branch, and the
-    # refusal must not call it one -- see F56. The label already names the
+    # refusal must not call it one. The label already names the
     # survey and its path, so the sentence adds no second noun.
     it "names the survey and its path, never calls it a branch, and still points at the remedy" do
       attached
@@ -546,7 +546,7 @@ RSpec.describe Lain::CLI::Command::Survey do
 
     # THE AC, proved by construction rather than merely observed. A restated
     # literal that happens to agree today passes any assertion about the VALUE --
-    # B11's panel killed a `:by_directory` canary with exactly such an assertion
+    # a review panel killed a `:by_directory` canary with exactly such an assertion
     # and learned nothing. MOVING the constant is the only question that
     # separates a command reading the registry from one reading a literal.
     it "follows the registry's default WHEREVER it moves, so the word is never restated here" do
@@ -627,7 +627,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       expect(sink.string).to include("notes.md", "guide.md")
     end
 
-    # B11's panel finding, checked where it can actually be wrong: `/critique`
+    # A review panel finding, checked where it can actually be wrong: `/critique`
     # packs against a context WINDOW, so a human saying they will scroll anything
     # has said nothing about how large a prompt may be. Read off the Bounds that
     # REACH `Session.open` rather than off the source, because nothing on the
@@ -875,7 +875,7 @@ RSpec.describe Lain::CLI::Command::Survey do
         .to raise_error(Lain::Review::Source::UnknownRef)
     end
 
-    # AC 4 where a chat can see it: settling is not closing. Between the verdict
+    # Where a chat can see it: settling is not closing. Between the verdict
     # and whatever round replaces it the survey is still held, so
     # `/review-submit` names it rather than answering "no changeset review is
     # open" about the round the human has only just judged.
@@ -915,7 +915,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     end
   end
 
-  # F32: the thread pane's model half, which no shipped path constructed. The
+  # The thread pane's model half, which no shipped path constructed. The
   # examples here are deliberately NOT "a docent was built" -- `Docent.new` with
   # only a changeset and a view is a fully constructed docent whose answerer is
   # `Unanswerable` and whose journal is `Channel::Null`, and it refuses every
@@ -1191,7 +1191,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       @nvim.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
     end
 
-    # AC4 and AC5 in one example: opening a survey row is what puts the human
+    # Two criteria in one example: opening a survey row is what puts the human
     # in the buffer the banner's two commands are about, so both are checked
     # against the ONE buffer a real `<CR>` would have opened.
     it "reaches :LainNote from a row it opened, and refuses :LainReviewDone with a named surface, not a traceback" do
@@ -1226,7 +1226,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       # The stamp is returned and CHECKED, because both commands below read
       # `nvim_get_current_buf`: arriving in the wrong window would test them
       # against a buffer this example never opened, and `:LainNote`'s refusal
-      # there reads exactly like the one AC4 exists to rule out.
+      # there reads exactly like the one this example exists to rule out.
       opened = @nvim.exec_lua(<<~LUA, [])
         for _, win in ipairs(vim.api.nvim_list_wins()) do
           local buf = vim.api.nvim_win_get_buf(win)

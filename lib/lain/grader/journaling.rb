@@ -5,7 +5,7 @@ module Lain
     # Decorates ANY `#grade` duck -- {Fixture}, {Recall}, {Rubric},
     # {TestHarness}, ... -- with a durable attestation: the returned {Grade}
     # passes through UNCHANGED, and a {Telemetry::GradeRecord} journals
-    # alongside it. This closes the GG-5 gap the plan names: {Telemetry::Verdict}
+    # alongside it. This closes the gap the plan names: {Telemetry::Verdict}
     # is {Verified}'s own second-pass record, but a PLAIN Grade -- the shape
     # every OTHER grader answers with -- was never journaled at all.
     #

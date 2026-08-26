@@ -4,7 +4,7 @@ require "async"
 require "async/notification"
 
 module Lain
-  # The orchestration reactor ABOVE the Agent (OM-6). {Tools::Subagent::Actor}
+  # The orchestration reactor ABOVE the Agent. {Tools::Subagent::Actor}
   # pins the constraint this class exists to satisfy: an actor's fiber spawns on
   # `Async::Task.current`, so launched inside Agent#ask's per-call `Sync` it
   # would park as that ask's own child and structured concurrency would never
@@ -398,14 +398,14 @@ module Lain
     # {Tools::Subagent::Log::Null}: there is no per-instance state.
     #
     # "The whole duck" IS THE CONTRACT, and it was untrue for two of the six
-    # messages until T35. {CLI::Repl} defaults `supervisor:` to this module and
-    # {Repl::ConversationScope} opens with `@supervisor.run(task)`, so every
-    # Repl built without an explicit supervisor died on NoMethodError at the
-    # first line of the conversation -- inert only because {CLI::Wiring} always
-    # passes a real one, and one wiring away from being a session lost at the
-    # prompt. A Null that answers most of a duck is worse than no default: the
-    # gap is invisible at the call site, which is the whole thing a Null Object
-    # is for.
+    # messages until the defect below was found. {CLI::Repl} defaults
+    # `supervisor:` to this module and {Repl::ConversationScope} opens with
+    # `@supervisor.run(task)`, so every Repl built without an explicit
+    # supervisor died on NoMethodError at the first line of the conversation --
+    # inert only because {CLI::Wiring} always passes a real one, and one wiring
+    # away from being a session lost at the prompt. A Null that answers most of
+    # a duck is worse than no default: the gap is invisible at the call site,
+    # which is the whole thing a Null Object is for.
     module Null
       extend Enumerable
 
@@ -518,7 +518,7 @@ module Lain
   end
 
   class Supervisor
-    # The OM-6 render seam (the chunk-fixes T6 residual): {Context::Mailbox}
+    # The render seam: {Context::Mailbox}
     # binds its frozen {Context::Mailbox::Snapshot} at construction, but a
     # pipeline is built ONCE while the snapshot must be per-turn -- an Agent
     # whose pipeline held a constructed Mailbox would fold the same stale

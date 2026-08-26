@@ -2,26 +2,26 @@
 
 module Lain
   module Plan
-    # PC-2: the deterministic step-closure record. When a chunk of the plan is
+    # The deterministic step-closure record. When a chunk of the plan is
     # done, this is what SURVIVES it -- a frozen value derived entirely from
     # content-addressed sources, so nothing in it is a fresh claim a replay
     # could not reproduce:
     #
     # * step id/title/status/size/criteria_digest come from the {Plan::Step}
-    #   (the S/M/L `size` class is P5's calibration key -- no journaled record
+    #   (the S/M/L `size` class is the calibration key -- no journaled record
     #   carried it before this, so "calibrate from the Journal alone" needs it);
     # * pass/score/why come from the chunk's {Grader::Grade};
     # * files + blob digests come from the {Workspace::Snapshot} event in force
     #   at the seam ({Event::Projection#workspace_at}) -- carried with the
     #   snapshot's OWN write-set-only scope note, so the record names its own
     #   blind spot rather than implying full coverage (bash writes outside the
-    #   write-set are an honest gap, W4's persistence follow-up, not this card's);
+    #   write-set are an honest gap, a persistence follow-up, not this card's);
     # * `elided_digests` are the chunk's turn digests -- the span compaction
     #   drops from the render, kept HERE as attestation. They stay in the Store
     #   un-rendered ({Context::Compact} elides bytes, not objects), so the
     #   closure names them rather than copying them;
     # * `notes_for_future_steps` is empty at the deterministic tier -- the
-    #   heuristic floor. A model-tier variant (Oracle-generated, F2-stringified)
+    #   heuristic floor. A model-tier variant (Oracle-generated, stringified)
     #   fills it later; the floor is what keeps `.build` a zero-model-call fold.
     #
     # A failed step closes RICHER, not poorer: `error_digests` name the erroring
@@ -32,7 +32,7 @@ module Lain
     # Store-borne by #digest (ContentAddressed), so a fork/replay finds it by
     # address. But the Store is in-memory per process, so #record ALSO journals a
     # {Telemetry::ClosureRecord} pointer -- the same Store-pointer-in-the-Journal
-    # move {Telemetry::MemoryRoot} makes -- so P5's calibration and any later
+    # move {Telemetry::MemoryRoot} makes -- so calibration and any later
     # session recover the closure from the Journal alone.
     # Raised when a `chunk_range` does not land fully within the timeline's
     # turns. An out-of-bounds range would otherwise fold into an attested EMPTY

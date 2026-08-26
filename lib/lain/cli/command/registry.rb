@@ -3,7 +3,7 @@
 module Lain
   module CLI
     module Command
-      # The `you>` command registry (T9): named lib-side commands the Repl
+      # The `you>` command registry: named lib-side commands the Repl
       # consults BEFORE the skill middleware, so a registered `/word` runs with
       # zero model turns while every other line -- prose, a path, `@role/skill`,
       # an UNREGISTERED `/word` -- falls through to {Middleware::SkillDispatch}

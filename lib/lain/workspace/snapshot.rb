@@ -11,13 +11,13 @@ module Lain
     # Writes the workspace's file state into the event log: one :snapshot event
     # whose payload maps each write-set path to the content address of its
     # current bytes, with the bytes themselves stored out of line as {Blob}s in
-    # the same Store. {Event::Projection#workspace_at} is the read side; W2's
+    # the same Store. {Event::Projection#workspace_at} is the read side; a
     # restore fetches the blobs back by digest.
     #
     # NOTE the record's lifetime: the Store is an in-memory Hash, so a snapshot
     # (event and blobs both) lives exactly as long as the process. Nothing here
-    # journals -- W4 owes the scribe wiring and a journal representation for
-    # blob bytes before replay-restart can restore files from the record.
+    # journals -- the scribe wiring and a journal representation for blob bytes
+    # are still owed before replay-restart can restore files from the record.
     #
     # == The snapshot policy (whatever the {Scope} says, and it says so)
     #
@@ -34,8 +34,8 @@ module Lain
     # payload ONCE, as data. Absolute keys would bake tmpdirs and $HOME into
     # the content-addressed file map, so the same workspace content at two
     # roots (two machines, a relocated checkout) would hash differently --
-    # breaking exactly the cross-machine replay and relocated restore W2
-    # freezes this format for. Relativization is LEXICAL (Pathname, no symlink
+    # breaking exactly the cross-machine replay and relocated restore this
+    # format is frozen for. Relativization is LEXICAL (Pathname, no symlink
     # resolution), matching the expand_path identity the write-set itself uses;
     # a path outside the root keys by its honest ../ form rather than being
     # hidden or invented a home.
@@ -105,7 +105,7 @@ module Lain
       # Snapshot the paths the {Scope} selects, given `paths`, as they stand on
       # disk, into `timeline`'s Store, causally parented to `timeline`'s head
       # turn. Blobs land first (the
-      # payload's file digests must not dangle for W2's restore), then the
+      # payload's file digests must not dangle for a restore), then the
       # payload-then-envelope write rides {Event::ChainWriter#put}.
       #
       # Nothing NEW to say lands nothing: bytes identical to the last snapshot

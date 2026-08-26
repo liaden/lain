@@ -782,7 +782,7 @@ RSpec.describe Lain::Review::Changeset do
     end
   end
 
-  # The distinction T8's reconciler depends on is made STRUCTURAL here rather
+  # The distinction the marks reconciler depends on is made STRUCTURAL here rather
   # than by naming convention: a commit scope is a different class that does not
   # answer the two messages the reconciler reads.
   describe "a partition cannot be mistaken for the whole changeset" do
@@ -806,7 +806,7 @@ RSpec.describe Lain::Review::Changeset do
   describe "the ducks two sibling cards already assume" do
     subject(:changeset) { changeset_over(one_file_diff) }
 
-    # T8's Marks#reconcile / #states read exactly these two.
+    # Marks#reconcile / #states read exactly these two.
     it "answers #base_ref as a String and #hunks as a flat Enumerable of Hunk" do
       expect(changeset.base_ref).to be_a(String)
       expect(changeset.hunks).to all(be_a(Lain::Review::Hunk))
@@ -834,15 +834,16 @@ RSpec.describe Lain::Review::Changeset do
       expect(batched.uniq.size).to eq(2)
     end
 
-    # T9's Surface::Text reads #files and #partitions.
+    # Surface::Text reads #files and #partitions.
     it "answers #files and #partitions with entries carrying the messages the text surface reads" do
       expect(changeset.files.first).to respond_to(:path)
       expect(changeset.partitions(walk).first).to respond_to(:label, :files)
     end
 
-    # Deliberately ABSENT. `state` is the marks-derived tri-state in T9's table,
-    # and a changeset cannot know it; answering the diff's own status under that
-    # name would put two meanings on one message and render the wrong glyph.
+    # Deliberately ABSENT. `state` is the marks-derived tri-state in the text
+    # surface's table, and a changeset cannot know it; answering the diff's own
+    # status under that name would put two meanings on one message and render
+    # the wrong glyph.
     it "does not answer #state on a file, which is the marks-derived tri-state" do
       expect(changeset.files.first).not_to respond_to(:state)
       expect(changeset.files.first.status).to eq(:modified)
@@ -854,7 +855,7 @@ RSpec.describe Lain::Review::Changeset do
     end
   end
 
-  # What a changeset does with what its source handed it -- which, since B2, is
+  # What a changeset does with what its source handed it -- which is now
   # nothing at all. The files' own shareability and instance stability are the
   # SOURCE's laws now (see the diff-bearing half of the port contract): a
   # changeset can only be as immutable as the values it was given, so pinning
@@ -973,7 +974,6 @@ RSpec.describe Lain::Review::Changeset do
       expect(long.hunks.map(&:old_start)).to eq([2, 32])
     end
 
-    # AC 1.
     it "resolves every new-side anchor against the file on disk" do
       mismatched = changeset.each_anchor.reject do |anchor|
         disk_lines(anchor.path)[anchor.line - 1] == anchor.anchor_text
@@ -982,7 +982,7 @@ RSpec.describe Lain::Review::Changeset do
       expect(mismatched.map(&:to_s)).to be_empty
     end
 
-    # AC 2, and the escalation trigger: if this fails the counter is wrong, not
+    # The escalation trigger: if this fails the counter is wrong, not
     # the fixture.
     it "resolves every old-side anchor against the merge base" do
       mismatched = changeset.each_anchor(side: :old).reject do |anchor|
@@ -997,7 +997,7 @@ RSpec.describe Lain::Review::Changeset do
       expect(deleted.map(&:line)).to eq([7])
     end
 
-    # AC 1 and AC 2 again, asked of the object that CONSUMES an anchor rather
+    # Both claims again, asked of the object that CONSUMES an anchor rather
     # than of a helper written beside it. A helper can be wrong the same way the
     # subject is; `drifted?` is what the editor and the session actually call.
     it "reports no drift for any new-side anchor against the working tree" do
@@ -1037,7 +1037,6 @@ RSpec.describe Lain::Review::Changeset do
       expect(changeset.old_side(changeset.file("crlf.txt"))).to eq(["x\r", "y\r", "z\r"])
     end
 
-    # AC 4.
     it "yields one group per commit whose hunks sum to the cumulative hunk count" do
       expect(changeset.partitions(walk).map { |group| group.detail.sha }).to eq([@first, @second, @third])
       expect(changeset.partitions(walk).sum { |group| group.files.sum { |file| file.hunks.size } })
@@ -1147,7 +1146,7 @@ RSpec.describe Lain::Review::Changeset do
     # working on a name neither side can spell.
     #
     # The cost is real, and is PINNED below rather than left to be discovered:
-    # the scrubbed name is not a name that opens, so `drifted?` and T15's
+    # the scrubbed name is not a name that opens, so `drifted?` and the editor's
     # file-opening cannot reach this one file. See `Parser#path_text` for why the
     # journal wins that fork.
     describe "a filename whose bytes are not valid UTF-8" do

@@ -78,7 +78,7 @@ module Lain
     # tool_use, which the API rejects.
     #
     # "It must never become a rewind TARGET" is the one claim here still
-    # absolute. It is NOT true of the session-loading doors any more: since T3
+    # absolute. It is NOT true of the session-loading doors any more: today
     # they repair rather than refuse -- CLI::Resume#settled answers every
     # stranded call with a projected cancellation turn committed above the torn
     # head, so a resumed or forked chain legitimately starts from a head that

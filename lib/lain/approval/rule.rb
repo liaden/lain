@@ -32,10 +32,10 @@ module Lain
     # this file stops a rule from prefix-matching it. That is the comforting lie
     # `lib/lain/tool/input.rb:15-40` names, one layer up. The doctrine is that a
     # shell command reaches policy as a parsed term (`Shell::Parse` /
-    # `Shell::Verdict`, T15/T16) or not at all.
+    # `Shell::Verdict`) or not at all.
     #
-    # T21 named itself the place to mechanize that and DID NOT. It built the
-    # ladder ({Approval::Escalation}) and its `rules` rung still calls
+    # The escalation ladder was meant to mechanize that and DID NOT. It built
+    # the ladder ({Approval::Escalation}) and its `rules` rung still calls
     # `Call.for(tool:, input: effect.input)` with the model's raw input, because
     # discharging it needs a decision this Call cannot express today: a term is
     # `[["git", "-c", "...", "status"]]`, no {Tool::Input} declares a field
@@ -52,10 +52,10 @@ module Lain
     # executes `id`. `Remembered` is not that rule (it matches an exact call
     # shape, not a prefix), so nothing shipped is exploitable today.
     #
-    # It is carried as **MA-1** (`planning/specs/chunk-modes-approval-undo.md`):
-    # give {Call} a term-carrying door and build a command tool's Call from the
-    # parsed term. Grep the ID rather than looking for a role to blame -- "the
-    # next person to write a rule" is not a trigger anything fires on.
+    # It is carried in `planning/specs/chunk-modes-approval-undo.md`: give
+    # {Call} a term-carrying door and build a command tool's Call from the
+    # parsed term. That document is the trigger, rather than a role to blame --
+    # "the next person to write a rule" is not something anything fires on.
     #
     # == Identity travels with the decision
     #

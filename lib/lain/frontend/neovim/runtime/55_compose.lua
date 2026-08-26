@@ -1,4 +1,4 @@
--- lain://compose (T15): the ONE lain:// buffer nvim must be able to `:write`,
+-- lain://compose: the ONE lain:// buffer nvim must be able to `:write`,
 -- because `:w` IS the return leg of the compose round trip. Two option
 -- choices here are not preferences, they are the only settings that work, and
 -- both were found the hard way:
@@ -42,7 +42,7 @@ local function compose_buf(name)
   return buf
 end
 
--- Open lain://compose on the human's draft (T15). The ONE render entry point
+-- Open lain://compose on the human's draft. The ONE render entry point
 -- that deliberately takes the cursor: every other buffer here is a live
 -- projection that must never steal focus mid-thought, whereas this one exists
 -- because the human just pressed C-g and asked to be put in it. It is shown
@@ -68,7 +68,7 @@ function _G.__lain.set_compose(name, lines, generation)
   announce_render(name, buf)
 end
 
--- The compose round trip's return leg (T15). No :Lain* command here on
+-- The compose round trip's return leg. No :Lain* command here on
 -- purpose: the human's gesture is `:w`, the one thing every vim user already
 -- knows means "I am done with this text", and lain://compose is `acwrite`
 -- exactly so that gesture can be intercepted. Both callbacks are ordinary

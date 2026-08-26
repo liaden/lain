@@ -33,7 +33,7 @@ module Lain
                     "\n" => "the one-line issue heading" }.freeze
     # Message-and-predicate pairs, in the order a reader wants to hear them: the
     # emptiest diagnosis first, so "  " is reported as whitespace rather than as
-    # a trimming problem. An id is the graph's join key and T9's filename, so an
+    # a trimming problem. An id is the graph's join key and the issue's filename, so an
     # empty one is a duplicate-key collision and an unnamed file, not a cosmetic
     # defect.
     ID_RULES = [

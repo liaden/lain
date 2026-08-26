@@ -9,7 +9,7 @@ module Lain
       #
       # == It fires when this run MOVED something, and not otherwise
       #
-      # B4: the old code wrote it unconditionally after the merge step, so every
+      # The old code wrote it unconditionally after the merge step, so every
       # resume appended another transition claiming a move from a status the
       # issue no longer held -- three resumes, three moves. The rule here is a
       # law about the run rather than a check somebody has to remember: a run

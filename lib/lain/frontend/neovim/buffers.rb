@@ -222,14 +222,14 @@ module Lain
         #   into, so its ancestors are actually reachable here. Defaults to
         #   {DetachedStore}, which renders every timeline as unavailable.
         # @param session [Lain::Session] the run's live reminders source
-        # @param inbox [InboxView, nil] the fourth view (I6); built over the
+        # @param inbox [InboxView, nil] the fourth view; built over the
         #   same store by default, injectable so a spec pins its clock
         # @param timeline [TimelineView, nil] the chain view and its line ->
-        #   digest index (B4); built over the same store by default, injectable
+        #   digest index; built over the same store by default, injectable
         #   for the same reason `inbox` is
         # @param questions [#open] where a set the human chose in the inbox is
         #   opened for answering ({QuestionView}), threaded through to the view
-        #   that resolves the gesture. It was NOT threaded before T16, so
+        #   that resolves the gesture. It was NOT threaded at first, so
         #   production built its inbox over {InboxView::Unwired} and every
         #   `<CR>` would have been refused however well the consumer was wired
         #   -- invisible to a spec that injects `inbox:` ready-made, which is
@@ -278,7 +278,7 @@ module Lain
         # committed turn that clears it.
         def answered(digest) = @inbox.answered(digest)
 
-        # The stamp a view's post carries into the editor (T16), and only ONE
+        # The stamp a view's post carries into the editor, and only ONE
         # view has one: lain://inbox is the only projection whose gesture
         # resolves through a rendering index, so it is the only one that has to
         # be able to say WHICH rendering a buffer is holding. Every other view

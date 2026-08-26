@@ -42,7 +42,7 @@ module Lain
       # (here), resolved ({CompactionStrategy}), injected ({Backend
       # #compaction_source}) and exercised end to end -- `spec/lain/cli/
       # backend_spec.rb`'s `--compact-strategy` group walks all five. The five
-      # genuinely unwired objects this chunk's F7 catalogued have NO caller at
+      # genuinely unwired objects a dead-code audit catalogued have NO caller at
       # all; this one has a caller and a default that is a considered choice.
       # The difference matters because the two look identical from a grep for
       # `CompactionStrategy::DEFAULT`, which nothing in `lib/` reads.
@@ -70,8 +70,8 @@ module Lain
         #
         # @param backend [Backend] the run's flag resolution
         # @param options [Hash] the invoked command's parsed flags
-        # @option options [String, nil] :compact_strategy the flag itself
         # @param sink [Lain::Sink] where a resolved policy reports a DOWN tier
+        # @option options [String, nil] :compact_strategy the flag itself
         # @return [Compaction::Source::Collapse] the resolved policy and the
         #   word for the arm it makes; the eager control arm when no flag was
         #   given, never nil
@@ -113,7 +113,7 @@ module Lain
         # policy could not answer for itself anyway: {Compaction::Strategy::Base
         # #name} is a CLASS name and a composition's is two of them joined by
         # ` | `, neither of which is what an operator typed or what a bench
-        # groups its arms by (F51).
+        # groups its arms by.
         #
         # `@name` VERBATIM. {CompactionStrategy} has already refused anything
         # outside its own set by the time `#strategy` answers, so what is left
@@ -136,10 +136,11 @@ module Lain
         # distinction from {Backend::Summarizer#tier} and not an omission: this
         # tier answers on the render path, where a summary is worth waiting for,
         # while the eager one must never make a turn wait on its own summary.
-        # Passing `queue: false` here would be F26's mechanism.
+        # Passing `queue: false` here is how two round trips end up overlapping
+        # on a one-slot local server.
         #
         # The provider is {Provider::Journaled}-wrapped for the reason that
-        # sibling records at length (F28): the tier's ANSWER is journaled and
+        # sibling records at length: the tier's ANSWER is journaled and
         # its QUESTION was not.
         #
         # `@backend.journal` is read here rather than captured at construction,

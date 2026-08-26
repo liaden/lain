@@ -3,7 +3,7 @@
 module Lain
   module CLI
     module Command
-      # `/pin [digest]` (B1): mark a committed turn as one compaction may not
+      # `/pin [digest]`: mark a committed turn as one compaction may not
       # elide. Zero model turns -- the mark lands on the run's {Session}
       # pin-set, and (through {Session::Journaled}) in the session record, so a
       # `--resume` rebuilds it. Making the mark actually protect anything is a

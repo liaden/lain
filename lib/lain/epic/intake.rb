@@ -62,8 +62,8 @@ module Lain
       class << self
         def diff(written:, disk:)
           # Everything measured over the BYTES is settled before the parse can
-          # refuse, so both branches carry the same three values: T15 journals
-          # the digests either way, and the suspicion cannot come out different
+          # refuse, so both branches carry the same three values: the digests are
+          # journalled either way, and the suspicion cannot come out different
           # for the same bytes depending on whether they happened to parse.
           measured = { written_digest: byte_digest(written.bytes), disk_digest: byte_digest(disk),
                        lossy: lossy?(written.bytes, disk) }

@@ -165,8 +165,8 @@ module Lain
       # A whole SEGMENT of the path, so `.gnupg-backup` is not `.gnupg`, and any
       # segment rather than the immediate parent, so `~/.ssh/keys/id_rsa` is as
       # much a private key as `~/.ssh/id_rsa`. The last segment counts too: a
-      # subtree rule that missed the subtree's own root would let T19 list the
-      # directory while withholding everything inside it.
+      # subtree rule that missed the subtree's own root would let a listing show
+      # the directory while withholding everything inside it.
       def inside?(path) = inside.nil? || path.split(File::SEPARATOR).include?(inside)
 
       def named?(base) = called?(base) && !excepted?(base)
@@ -494,9 +494,10 @@ module Lain
 
     # Two rewrites, both pure string work: a leading tilde becomes the injected
     # home ({TILDE_SEGMENT}), and anything still relative resolves against the
-    # injected cwd. T20 classifies bash argv, where relative is the norm, and
-    # leaving each caller to normalize first would be three copies of one rule --
-    # the drift this chunk exists to prevent. Nothing is expanded, nothing stat'ed.
+    # injected cwd. {Approval::Escalation::Triage} classifies bash argv, where
+    # relative is the norm, and leaving each caller to normalize first would be
+    # three copies of one rule -- the drift this chunk exists to prevent. Nothing
+    # is expanded, nothing stat'ed.
     def rooted(path)
       return path.sub(TILDE_SEGMENT) { @home } if path.start_with?(TILDE)
       return path if path.start_with?(ROOT)

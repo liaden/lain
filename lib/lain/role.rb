@@ -38,7 +38,7 @@ module Lain
     # This -- not the joined String below -- is the cache-bearing surface: the
     # spawn seam renders each segment as its own system block and marks the
     # BULK, so the breakpoint sits between them and heterogeneous siblings
-    # share the cached tools-plus-bulk prefix (CE-4). A fused String cannot
+    # share the cached tools-plus-bulk prefix. A fused String cannot
     # deliver that: one block gets one mark, after the role tail. Pure over
     # the session-fixed `slots`, so repeated spawns render byte-identically.
     def prelude_segments(slots:)
@@ -55,7 +55,7 @@ module Lain
     # The factory Context reshaped into this role's persona, ready to be the
     # spawned child's Context. Its system BECOMES the prelude segments as two
     # blocks -- segment 0 (the shared bulk) cache-marked so heterogeneous
-    # siblings share the warm tools-plus-bulk prefix (CE-4), segment 1 (the
+    # siblings share the warm tools-plus-bulk prefix, segment 1 (the
     # role tail) unmarked after the breakpoint -- REPLACING the factory's own
     # system, never appending: the bulk already IS `slots.render("system")`
     # (prelude_segments position 0), so appending to a factory whose system is
@@ -72,8 +72,8 @@ module Lain
   end
 
   # A subagent role: a named capability attenuation plus a role-specific prompt
-  # slot. A role is the three-way join OM-5 describes -- {Toolset#only}
-  # attenuation, a role slot (`.lain/slots/role/<name>.md`, PS-3), and a spawn
+  # slot. A role is a three-way join -- {Toolset#only} attenuation, a role slot
+  # (`.lain/slots/role/<name>.md`), and a spawn
   # {Tool::SpawnPolicy::AttenuationPosture} -- packaged as a value a spawn seam
   # reads. Possessing a Role is a recipe, not a running child: it yields the
   # policy the {Tools::Subagent} tool takes and the system prelude the child
@@ -84,7 +84,7 @@ module Lain
   # A role's rendered prelude is the role-invariant preamble FIRST -- the base
   # system prompt every sibling role shares -- then the role-specific slot. The
   # order is load-bearing money, not taste: the shared bulk sits above the cache
-  # line so heterogeneous sibling spawns share one warm prefix (CE-4), and only
+  # line so heterogeneous sibling spawns share one warm prefix, and only
   # the short role tail differs. Two spawns of one role in a session render
   # byte-identical (slots are session-fixed); two different roles share every
   # byte up to their role slot.

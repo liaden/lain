@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T13 fix round (Patterson): per-ITERATION durability. The exe's per-ask
+# Fix round (Patterson): per-ITERATION durability. The exe's per-ask
 # catch_up loses a SIGKILL'd multi-tool loop's committed turns; this middleware
 # tees scribe.catch_up after each turn-phase iteration, so every committed turn
 # is on disk before the next model call. The live head is read through a THUNK

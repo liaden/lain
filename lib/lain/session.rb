@@ -22,7 +22,7 @@ module Lain
   #     mutating tools wrote this session, which is exactly the scope of a
   #     workspace snapshot ({Workspace::Snapshot} -- write-set only, the
   #     documented gap for free-form bash);
-  #   * a pin-set, the turn digests compaction may not elide (B1) -- modelled
+  #   * a pin-set, the turn digests compaction may not elide -- modelled
   #     on the READ-set, not the write-set: only the read-set is journaled and
   #     replayed, and a pin that vanished on `--resume` would be worse than no
   #     pin at all;
@@ -240,7 +240,7 @@ module Lain
     #
     # The one-string render happens HERE, once per write, rather than inside
     # {#reminders} -- which the Agent calls every single render via
-    # `@workspace.with(*@session.reminders)` (T11 review, Patterson). A run
+    # `@workspace.with(*@session.reminders)`. A run
     # that writes its list once and takes fifty more turns should not re-join
     # the same strings fifty times.
     #
@@ -295,7 +295,7 @@ module Lain
       @todo_reminder ? [@todo_reminder] : []
     end
 
-    # The same once-per-write rule as {#write_todos} (T11 review, Patterson),
+    # The same once-per-write rule as {#write_todos},
     # applied to a source THIS object does not write through: the manifest is
     # re-rendered only when the index's root moves. The root is a content
     # address, so it is the free invalidation key -- equal roots mean an
@@ -575,7 +575,7 @@ module Lain
     end
 
     # A Journal-duck decorator over a real Session -- {Memory::JournalMemoryRoot}'s
-    # shape, applied here (T16): every call forwards to the wrapped Session
+    # shape, applied here: every call forwards to the wrapped Session
     # untouched, and two of them are ALSO journaled, so
     # {SessionRecord::Replay} can fold a fresh Session back to the same
     # run-state. This is the seam that keeps {Session} itself
@@ -667,9 +667,9 @@ module Lain
       # The write-set forwards without journaling. The write's record is the
       # :snapshot event {Workspace::Snapshot} lands in the Store -- which is
       # IN-MEMORY, so that record lives only as long as the process, and a
-      # replayed session rebuilds with an empty write-set. Deliberate for W1:
+      # replayed session rebuilds with an empty write-set. Deliberate:
       # persistence (scribe wiring plus a journal shape for blob bytes) is
-      # W4's ticket, and a journal line here alone would be a half-copy that
+      # still to come, and a journal line here alone would be a half-copy that
       # could name blobs no replay can fetch.
       #
       # @return [self]

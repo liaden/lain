@@ -32,7 +32,7 @@ module Lain
       end
     end
 
-    # Every seam's full EV accounting (PC-4): the size class weighed (`size`),
+    # Every seam's full EV accounting: the size class weighed (`size`),
     # the turns-remaining estimate it priced payback over (`estimated_turns`)
     # and whether that estimate came from Journal calibration (`calibrated`,
     # false when the annotation default stood in), the span a rewrite would
@@ -53,9 +53,9 @@ module Lain
     # Both figures are the compaction subsystem's canonical-BYTE-length proxy,
     # and they say so because they did not before: the pair was named for tokens
     # beside provider-measured token counts in the same NDJSON stream, which is
-    # the confusion UX5 named. Renaming only the {Compaction} half would have
-    # relocated it, since this record's own header declares the two a matched
-    # pair. WIRE COMPATIBILITY, as for the sibling: old journals are NOT
+    # the confusion this rename ends. Renaming only the {Compaction} half would
+    # have relocated it, since this record's own header declares the two a
+    # matched pair. WIRE COMPATIBILITY, as for the sibling: old journals are NOT
     # migrated and no shim reads them -- a record written before this rename
     # carries `tokens_removed`/`tokens_after` holding exactly these byte figures
     # under that misleading name.

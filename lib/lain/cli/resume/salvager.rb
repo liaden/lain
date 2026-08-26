@@ -3,7 +3,7 @@
 module Lain
   module CLI
     class Resume
-      # T18: computes and, on recovery, WRITES the salvage outcome for one
+      # Computes and, on recovery, WRITES the salvage outcome for one
       # OPEN file -- a real, separate responsibility from the rest of Resume
       # (selecting a file, refusing a mid-tool head, building notices), split
       # into its own file per CLAUDE.md's Metrics/ClassLength guidance ("extract
@@ -11,7 +11,7 @@ module Lain
       # file would still count toward Resume's own line total, since the cop
       # measures the class NODE, not the file.
       #
-      # T3's fork-mode invariant: a fork NEVER constructs a Salvager. Only
+      # The fork-mode invariant: a fork NEVER constructs a Salvager. Only
       # {Resume#salvage}, on the resume path proper, builds one; {Resume#fork}
       # holds nothing but read-only `File.foreach` enumerators, because the
       # close anchor {#close!} appends would corrupt a LIVE parent's chain for
@@ -85,7 +85,7 @@ module Lain
 
         # {Paths.wal_for} is the one naming authority; {CLI::Chronicle#spool}
         # writes to the same derivation on the session's own path. One
-        # fallback (T3 fix round): a crash BETWEEN promotion's two renames
+        # fallback: a crash BETWEEN promotion's two renames
         # (WAL first) leaves a still-marked `.btw.ndjson` whose wal already
         # wears the promoted name -- the derived path is then absent and the
         # paid-for frames would sit unreachable, with nothing ever triggering

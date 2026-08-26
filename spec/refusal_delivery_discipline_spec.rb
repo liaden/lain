@@ -25,9 +25,9 @@ require "strscan"
 # UI attached, raises a hit-enter prompt. A hit-enter prompt answers no RPC
 # request that is not `fast`, so the editor stops serving lain exactly while a
 # refusal naming the recovery is on screen, and the recovery it names cannot be
-# taken. That was F30 on the annotate rail and F25 on the sidebar's; F31 fixed
-# one site and F72 found the same defect at a second. This spec is what stops a
-# third.
+# taken. That defect was filed on the annotate rail and again on the sidebar's;
+# the first fix covered one site and the same defect turned up at a second.
+# This spec is what stops a third.
 #
 # THE FIX AT EVERY SITE IS THE SAME: hand the sentence to
 # `_G.__lain.review_refused` (`runtime/65_review.lua:236`) and RETURN. The rail

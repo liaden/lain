@@ -4,7 +4,7 @@ module Lain
   class Agent
     # The seam observability hangs from. Every state change the Agent makes is
     # announced here as `(from:, to:, event:)` before it takes effect, so the
-    # Journal (M2) can subscribe without the Agent knowing anything listens.
+    # Journal can subscribe without the Agent knowing anything listens.
     #
     # This is the reason `state_machines` was chosen over a hand-rolled `@state`:
     # a declared machine gives the transition a single, interceptable moment. A

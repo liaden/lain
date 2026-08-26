@@ -12,13 +12,13 @@ module Lain
     # It acts on the {Continuation}'s TIMELINE half and leaves the pipeline
     # untouched: subsequent turns render exactly as before, which is what makes a
     # fork-per-step run show ZERO prefix rewrites against a {LinearRewrite} run's
-    # one-per-seam (PC-3's visible-difference AC).
+    # one-per-seam (the visible difference between the two shapes).
     #
     # Unlike {Compaction::Scheduler} (a frozen, stateless policy) this one is
     # STATEFUL by necessity: the mainline is exactly the thing continuations
     # chain on, and +state.head_digest+ at a seam names the FORK's tail, not the
     # mainline -- so the policy must carry the mainline head across seams itself.
-    # That is why it "takes the store-backed timeline" (PC-3): +mainline+ is the
+    # That is why it "takes the store-backed timeline": +mainline+ is the
     # Timeline it advances, and the {Runner} adopts the head it returns, so the
     # two never drift.
     class ForkPerStep

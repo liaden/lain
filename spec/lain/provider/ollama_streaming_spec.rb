@@ -3,7 +3,7 @@
 require "json"
 require "webmock/rspec"
 
-# T17: the NDJSON streaming path. Two empirical oracles:
+# The NDJSON streaming path. Two empirical oracles:
 #
 #   1. Chunk boundaries cannot corrupt a line -- a canned NDJSON stream split at
 #      deliberately awkward byte offsets (mid-line, mid-UTF-8-codepoint)
@@ -62,12 +62,12 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
   # `attempt:` is DECLARED so a Provider that stopped threading it -- or threaded
   # it under a mistyped name -- fails loudly here. Ruby 3 hands a keyword to a
   # method accepting none back as a positional Hash, so an undeclared double
-  # silently takes T2's `attempt:` as its HEADERS. See `ollama_spec.rb`'s
+  # silently takes the `attempt:` keyword as its HEADERS. See `ollama_spec.rb`'s
   # #transport_sync for the full note, including why the cop's suggested
   # `_attempt:` correction is the one thing that must not be applied.
   # rubocop:disable Lint/UnusedBlockArgument
   # `abandon_after:` makes this double do the one thing faraday-retry does that
-  # matters to T10: abandon the round trip's attempt BETWEEN two chunks. Without
+  # matters here: abandon the round trip's attempt BETWEEN two chunks. Without
   # it the wiring that discards an abandoned attempt was pinned only by the
   # :seam examples at the bottom of this file -- and CLAUDE.md names
   # `--tag '~seam'` as the inner loop, so deleting the discard from
@@ -154,7 +154,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       expect { assemble([corrupt]) }.to raise_error(JSON::ParserError)
     end
 
-    # T10. #reset is called once per RETRY, not once per round trip, so a
+    # #reset is called once per RETRY, not once per round trip, so a
     # three-retry round trip calls it three times -- and it has to leave the
     # assembler USABLE each time, not merely emptied once. The seam examples at
     # the bottom of this file prove that indirectly (a four-connection round
@@ -234,7 +234,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       expect(provider.capabilities - Lain::Provider::CAPABILITIES).to be_empty
     end
 
-    # AC 2: path parity -- the acceptance oracle.
+    # Path parity -- the acceptance oracle.
     it "yields a Response equal to the non-streaming path for the same exchange" do
       streamed = described_class.new(transport: stream_transport(byte_chunks(ndjson(stream_lines), 4)))
                                 .complete(request(stream: true))
@@ -246,7 +246,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       expect(streamed.usage).to eq(synchronous.usage)
     end
 
-    # AC 1, at the provider seam: an awkward split cannot corrupt the Response.
+    # At the provider seam: an awkward split cannot corrupt the Response.
     it "produces the same Response no matter how the stream is chunked" do
       one_shot = described_class.new(transport: stream_transport([ndjson(stream_lines)]))
                                 .complete(request(stream: true))
@@ -344,7 +344,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
     end
   end
 
-  # T38. What a human types wrong, and what they are told about it. Chat streams
+  # What a human types wrong, and what they are told about it. Chat streams
   # by default, so these are THE error messages for this arm -- and asserting the
   # class alone (as the example above does) passed while every one of them read
   # "An unknown error occurred".
@@ -406,8 +406,9 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
     end
 
     # A 404 is not retryable and the sync path never retries one; relabeling it
-    # 500 to carry a nicer message would be RES1 again (anthropic/transport.rb),
-    # and it costs four round trips to a server that already said no.
+    # 500 to carry a nicer message would be the status-relabelling defect again
+    # (anthropic/transport.rb), and it costs four round trips to a server that
+    # already said no.
     it "does not retry a 404, exactly as the non-streaming path does not" do
       stub = stub_chat(404, "model 'no-such-model-xyz' not found")
 
@@ -444,7 +445,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
     end
   end
 
-  # T10/F7b -- measured silent corruption of a content-addressed record, not an
+  # Measured silent corruption of a content-addressed record, not an
   # inferred one. #stream_body built its assembler OUTSIDE @transport.stream
   # while faraday-retry lives INSIDE it, so a severed attempt's bytes stayed in
   # the assembler and the retry appended to them: a completion came back `ok`,
@@ -457,8 +458,8 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
   # spec/lain/provider/ollama/streamed_failure_spec.rb:5-9 named years before
   # anyone chased it, listing "the same handler being replayed by faraday-retry"
   # as one of two shapes it cannot express. So these drive a real socket through
-  # T1's StreamingUpstream. An assertion here that passed under WebMock would
-  # not be testing this defect.
+  # the StreamingUpstream helper. An assertion here that passed under WebMock
+  # would not be testing this defect.
   #
   # NOT tagged :vcr, and never inside VCR.use_cassette: a replaying cassette
   # makes NetworkAccess.permit_loopback inert and the refusal names neither the
@@ -483,7 +484,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       described_class.new(config: zero_retry_config.tap { |config| config.ollama_api_base = upstream.url })
     end
 
-    # AC 1. The defect itself: attempt one lands two content fragments and dies
+    # The defect itself: attempt one lands two content fragments and dies
     # on a hard RST (a RST does not destroy what is already in the client's
     # receive queue -- measured 60/60 in the harness -- so those fragments
     # really do reach the assembler), then the retry serves a complete stream.
@@ -512,8 +513,8 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
     # and `ollama_spec.rb` already ships a config with its own `retry_block`, so
     # the bypass was not hypothetical. Measured on this exact script before the
     # composition fix: text came back "PARTIAL-alphaPARTIAL-betaRETRY-one" under
-    # `:end_turn` -- the entire F7b defect, reinstated by a documented seam. The
-    # caller's callback must still fire, or the fix is just a removal.
+    # `:end_turn` -- the entire splice defect, reinstated by a documented seam.
+    # The caller's callback must still fire, or the fix is just a removal.
     it "still discards the abandoned attempt when the config brings its own retry_block" do
       response = nil
       counted = []
@@ -532,7 +533,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       expect(counted).to eq([0])
     end
 
-    # AC 2. The control. A reset driven by the retry hook must be dead weight on
+    # The control. A reset driven by the retry hook must be dead weight on
     # the path that never retries -- if this went red, the fix would be
     # discarding live bytes rather than abandoned ones.
     it "leaves a stream that is never retried exactly as it was served" do
@@ -552,7 +553,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       expect(response).to stop_with(:end_turn)
     end
 
-    # AC 3, and it asserts on the RAISE rather than on a reset, deliberately.
+    # This asserts on the RAISE rather than on a reset, deliberately.
     # `exhausted_retries_block` journals and does NOT abandon, so the last
     # attempt's bytes are still in the assembler when the budget runs out; what
     # makes them unreturnable is that #stream_body never reaches `result`. One
@@ -575,7 +576,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
     end
   end
 
-  # T6. The arm's absence of a response WAL was argued from "free and local";
+  # The arm's absence of a response WAL was argued from "free and local";
   # on a metered arm a lost round trip is SPENT. These read the WAL back through
   # a FRESH ResponseWal, never the writer, which is the only way the terminator
   # and the record framing are actually exercised.
@@ -659,8 +660,8 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
     end
 
     # AC: a retried stream does not splice two attempts into ONE frame. This is
-    # F7b one layer out -- the terminator's byte count cannot detect two
-    # attempts concatenated, so a complete-marked frame would simply lie.
+    # the same defect one layer out -- the terminator's byte count cannot detect
+    # two attempts concatenated, so a complete-marked frame would simply lie.
     describe "a severed and retried stream", :seam do
       let(:script) { StreamingUpstream.script }
       let(:wire) { StreamingUpstream::Wire }
@@ -696,7 +697,7 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
 
       # The two discards are registered on two different context keys, so a
       # caller's own retry_block cannot displace either. `ollama_spec.rb` ships
-      # exactly such a config; it brought the whole F7b splice back once.
+      # exactly such a config; it brought the whole splice back once.
       it "keeps both the assembler discard and the frame rotation when the caller owns retry_block" do
         req = request(stream: true)
         counted = []

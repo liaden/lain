@@ -14,7 +14,7 @@ module Lain
     # fails inside its forked child and formats its own exception, the daemon
     # fails at spawn or kills server-side and says so in the reply.
     #
-    # Two more inherent asymmetries, accepted for C3: {Bash} forks from
+    # Two more inherent asymmetries, accepted deliberately: {Bash} forks from
     # call-time ENV while the daemon merges the override map over its
     # BOOT-TIME snapshot, so a harness ENV mutation after daemon boot reaches
     # Bash's child only; and {Bash} attributes live output bytes at source

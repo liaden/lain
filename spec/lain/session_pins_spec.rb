@@ -3,7 +3,7 @@
 require "json"
 require "stringio"
 
-# B1: the pin-set -- turn digests an operator (or a later auto-pin) marked as
+# The pin-set -- turn digests an operator (or a later auto-pin) marked as
 # "compaction must not elide this". It mirrors the READ-set end to end, not the
 # write-set: only the read-set is journaled and replayed, so a pin that mirrored
 # the write-set would silently vanish on --resume.
@@ -14,7 +14,7 @@ RSpec.describe Lain::Session do
   let(:other) { "blake3:bbbb2222" }
 
   describe "the pin-set" do
-    # AC1: a pinned digest is remembered and reported.
+    # A pinned digest is remembered and reported.
     it "records a pin and answers pinned? true for it, false for digests never pinned" do
       session.record_pin(digest)
 
@@ -23,7 +23,7 @@ RSpec.describe Lain::Session do
       expect(session.pins).to include(digest)
     end
 
-    # AC2: unpinning removes it.
+    # Unpinning removes it.
     it "forgets a digest that is unpinned" do
       session.record_pin(digest)
       session.record_unpin(digest)
@@ -82,7 +82,7 @@ RSpec.describe Lain::Session do
     end
   end
 
-  # AC3: the Null session answers honestly rather than raising -- the same duck,
+  # The Null session answers honestly rather than raising -- the same duck,
   # so no caller writes `if session`.
   describe Lain::Session::Null do
     subject(:null) { described_class.instance }
@@ -97,7 +97,7 @@ RSpec.describe Lain::Session do
   end
 end
 
-# AC4: a pin is journaled with the digest it names -- the Session::Journaled
+# A pin is journaled with the digest it names -- the Session::Journaled
 # decorator's job, so Session itself stays journal-ignorant.
 RSpec.describe Lain::Session::Journaled do
   subject(:journaled) { described_class.new(session:, journal:) }
@@ -135,7 +135,7 @@ RSpec.describe Lain::Session::Journaled do
   end
 end
 
-# AC5/AC6: pins survive a resume, and a session that never pinned replays clean.
+# Pins survive a resume, and a session that never pinned replays clean.
 RSpec.describe Lain::SessionRecord::Replay do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  # The court-clerk consolidation pass (M5): offline, it walks a session
+  # The court-clerk consolidation pass: offline, it walks a session
   # Journal's COMPLETED SUBAGENT lineages -- turns whose chain root carries
   # `spawned_from` meta, grouped by that root -- and spawns the shipped
   # {Role::Catalog} `court_clerk` role once per lineage to distill it into

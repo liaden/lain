@@ -82,7 +82,7 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(session.read?(missing)).to be(false)
     end
 
-    # AC3: a Session::Null context keeps the tool working with nothing recorded.
+    # A Session::Null context keeps the tool working with nothing recorded.
     it "records into a Session::Null context without raising" do
       path = write("read.txt", "contents")
       invocation = invocation_with(Lain::Session::Null.instance)
@@ -125,7 +125,7 @@ RSpec.describe Lain::Tools::ReadFile do
     end
   end
 
-  # T3: a window is what makes a file too large to read whole still reachable.
+  # A window is what makes a file too large to read whole still reachable.
   # The three facts that matter are the BYTES returned, the COMPLETENESS the
   # read-set records, and that neither moves when no window is asked for.
   describe "reading a window of a file" do
@@ -175,9 +175,9 @@ RSpec.describe Lain::Tools::ReadFile do
     end
 
     # A COMPLETE window withholds nothing, so a notice on it would be noise --
-    # and it must stay byte-identical to the unwindowed read, because AC 3 and
-    # the Whole-routing of `offset: 1` both rest on the full-cover case being
-    # indistinguishable from a whole read.
+    # and it must stay byte-identical to the unwindowed read, because the
+    # COMPLETE read-set recording and the Whole-routing of `offset: 1` both rest
+    # on the full-cover case being indistinguishable from a whole read.
     it "adds no notice when the window reaches both ends of the file" do
       path = write("small.txt", numbered(100))
 
@@ -217,7 +217,7 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(session.partially_read?(path)).to be(true)
     end
 
-    # AC3, and the deadlock this card exists to prevent: without it, a file too
+    # The deadlock this card exists to prevent: without it, a file too
     # big to read unwindowed would be permanently uneditable.
     it "records a COMPLETE read when the window covers the whole file" do
       path = write("small.txt", numbered(100))
@@ -274,7 +274,7 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(session.read?(path)).to be(true)
     end
 
-    # T8: the same repudiated claim as the example far below, restated for the
+    # The same repudiated claim as the example far below, restated for the
     # empty file, and the only one of the four a UTF-8 locale hides -- `capped`
     # returns `+""` tagged UTF-8 by name where `File.read` returns `""` tagged
     # with whatever the locale guessed, so under `LC_ALL=C` this asserted the
@@ -290,7 +290,7 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(result.content.encoding).to eq(Encoding::UTF_8)
     end
 
-    # AC4: the unwindowed path is the one every other caller in the repo takes,
+    # The unwindowed path is the one every other caller in the repo takes,
     # and its bytes are pinned above ("reads a file's full contents").
     it "leaves the unwindowed read complete and byte-identical" do
       path = write("small.txt", numbered(100))
@@ -379,9 +379,9 @@ RSpec.describe Lain::Tools::ReadFile do
     # Fix 2: `offset: 1` with no limit IS the whole file, so it must take the
     # whole-file path rather than materialise every line as its own String.
     # Left routed to Window it was strictly worse than the File.read it is
-    # equivalent to -- and, once T5 bounds the unwindowed read, it would have
-    # been a one-keyword bypass of the artifact bound at the highest memory
-    # cost of the three spellings.
+    # equivalent to -- and, once the whole-artifact bound covers the unwindowed
+    # read, it would have been a one-keyword bypass of that bound at the highest
+    # memory cost of the three spellings.
     describe "an offset of one with no limit" do
       let(:many) { numbered(20_000) }
 
@@ -413,7 +413,7 @@ RSpec.describe Lain::Tools::ReadFile do
 
   def vm_size_kb = File.read("/proc/self/status")[/VmSize:\s+(\d+)/, 1].to_i
 
-  # T5 fix round B2. The contract this file's own subject states -- "never a
+  # The contract this file's own subject states -- "never a
   # raise" -- run as a table over the shapes that break readers. Once PER
   # READER, because the empty-file defect lived exactly in the gap between
   # them: there was an empty-file example, it passed offset/limit, and the
@@ -447,7 +447,7 @@ RSpec.describe Lain::Tools::ReadFile do
     end
   end
 
-  # T8 (QA round 10, F62). A file whose bytes are not valid UTF-8 used to come
+  # From QA round 10: a file whose bytes are not valid UTF-8 used to come
   # back as a SUCCESS, and the ask then died several objects later inside
   # {Lain::Timeline#commit}: `Event::Payload#initialize` calls
   # `Canonical.normalize`, which refuses a String it cannot pin to UTF-8. The
@@ -644,11 +644,11 @@ RSpec.describe Lain::Tools::ReadFile do
     GC.stat(:total_allocated_objects) - before
   end
 
-  # T5: the whole-artifact bound. A file's contents have no partial form, so an
+  # The whole-artifact bound. A file's contents have no partial form, so an
   # oversized read is REFUSED and told where to go instead (Tool::Bounds'
   # stated boundary) rather than truncated into an answer that reads complete.
   # The three facts that matter are that the bytes are never read, that the
-  # refusal carries none of them, and that the door T3 opened stays open.
+  # refusal carries none of them, and that the window's door stays open.
   describe "refusing a read that is too large to hand back" do
     def invocation_with(session)
       Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session)
@@ -706,13 +706,13 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(result.content).to include(path, (whole_ceiling + 1).to_s, whole_ceiling.to_s)
     end
 
-    # AC1's mechanism, restated for T11 rather than relaxed. The DECISION is
-    # still reached from File.size -- what changed is that composing the ADVICE
-    # for a file over the WINDOW ceiling now costs a separator probe, so "it is
-    # never read" is no longer the true statement and asserting it would be
-    # asserting the wrong thing. The bound is what carries the memory claim
-    # now: every block the probe asks for is one block, and the whole probe is
-    # at most the window ceiling, against a 2 MiB file.
+    # The same mechanism, restated for the one-line case rather than relaxed.
+    # The DECISION is still reached from File.size -- what changed is that
+    # composing the ADVICE for a file over the WINDOW ceiling now costs a
+    # separator probe, so "it is never read" is no longer the true statement and
+    # asserting it would be asserting the wrong thing. The bound is what carries
+    # the memory claim now: every block the probe asks for is one block, and the
+    # whole probe is at most the window ceiling, against a 2 MiB file.
     #
     # `not_to be_empty` FIRST, and it is not a formality -- it is what stops
     # the two bounds below being vacuous. `all` and `sum` are both true of an
@@ -760,7 +760,7 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(content).to match(/code_outline|file_symbols|ast_search/)
     end
 
-    # T11. `offset` and `limit` count LINES, so advising them for a file that
+    # `offset` and `limit` count LINES, so advising them for a file that
     # is ONE line is advice the model cannot act on -- QA spent a round trip on
     # a 1,200,003-byte one-line JSON being told to window a file that refuses
     # every window in turn. The branch is exactly the one where the advice is
@@ -954,7 +954,7 @@ RSpec.describe Lain::Tools::ReadFile do
     # hands a line over entire -- so without a byte limit on the read itself a
     # single-line file is materialised before any byte counter can see it, and
     # the failure at scale is a `NoMemoryError`, which is not a StandardError
-    # and so escapes Effect::Handler::Live's rescue exactly as T3's own
+    # and so escapes Effect::Handler::Live's rescue exactly as the window's own
     # `first(n)` note describes. Measured on a 512 MiB sparse file: 0 kB peak
     # RSS on the whole-read arm, 512 MB on the window arm.
     #
@@ -1002,7 +1002,7 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(content).not_to include("smaller limit")
     end
 
-    # B1. The byte limit that keeps a long line weighable SPLITS it, and
+    # The byte limit that keeps a long line weighable SPLITS it, and
     # `offset`/`limit` count LINES -- so a walk that counts chunks steps over a
     # split boundary and renumbers every line after it. Measured before the
     # fix: `offset: 2, limit: 3` on this file returned is_error=false with
@@ -1102,7 +1102,7 @@ RSpec.describe Lain::Tools::ReadFile do
       end
     end
 
-    # S3. `whole_lines?` answered "was the last chunk split", which is one byte
+    # `whole_lines?` answered "was the last chunk split", which is one byte
     # away from "is one line over the ceiling": a line of exactly the chunk
     # limit INCLUDING its newline arrives whole, so the model was told to
     # narrow a window that had nothing to narrow -- offset 1/limit 2 and
@@ -1119,7 +1119,7 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(two.content).to eq(one.content)
     end
 
-    # S2. `File.size` is 0 for a character device and for a fifo, so the stat
+    # `File.size` is 0 for a character device and for a fifo, so the stat
     # that makes the whole-read refusal free waves both through. Measured
     # under `ulimit -v`: `read_file /dev/zero` died with NoMemoryError, which
     # is not a StandardError and so escapes both #perform's rescue and
@@ -1172,7 +1172,7 @@ RSpec.describe Lain::Tools::ReadFile do
       expect(content).not_to include(Lain::Tools::ReadFile::FULL_COVER)
     end
 
-    # T8: the read NAMES its encoding rather than inheriting the locale's
+    # The read NAMES its encoding rather than inheriting the locale's
     # guess, which is why this compares against the file's BYTES and against
     # UTF-8 by name. It used to compare against a bare `File.read`'s encoding,
     # i.e. against `Encoding.default_external` -- a claim that is true under a

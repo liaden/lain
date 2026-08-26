@@ -6,12 +6,12 @@ module Lain
   # command runs under. Two fields, `cwd` and `env`, and nothing else -- this is
   # the surface a strategy OVERRIDES a run's env and cwd through.
   #
-  # `env` is an OVERRIDE, not confinement -- and B3 must build on that reading.
+  # `env` is an OVERRIDE, not confinement, and callers must build on that reading.
   # Mixlib-shellout applies `environment:` per-key in the forked child
   # (`ENV[k] = v`) onto the ENV it already inherited, and never clears ENV first.
   # So a host var this `env` OMITS still reaches the command; overriding is
-  # additive, and true confinement belongs to the out-of-process exec boundary
-  # (M5/M6), never to this hash. There is ONE removal lever that does work
+  # additive, and true confinement belongs to the out-of-process exec boundary,
+  # never to this hash. There is ONE removal lever that does work
   # in-band: an explicit `nil` VALUE. Ruby's `ENV[k] = nil` deletes, so mapping a
   # key to `nil` here scrubs that var from the child (and the value object keeps
   # the nil marker -- it is frozen, so shareability holds). Absent key: leaks;

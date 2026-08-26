@@ -6,7 +6,7 @@ require "shellwords"
 module Lain
   module CLI
     class Up
-      # T19's planning half of `lain up --nvim`: the shared socket and the
+      # The planning half of `lain up --nvim`: the shared socket and the
       # nvim pane's command. The socket is computed ONCE, here, and handed to
       # both panes explicitly ({Up#create_cockpit_session} threads
       # {#chat_flags} into the chat pane) -- agreement is by construction,
@@ -58,7 +58,7 @@ module Lain
         # The one Ex command the cockpit's nvim runs at startup, and the whole
         # of the layout wiring: `:LainStart` lays out now if lain has attached,
         # else arms a one-shot so the views open when the sibling pane's
-        # `chat --nvim` lands. T2's rtp injection (`--cmd`, evaluated before
+        # `chat --nvim` lands. The rtp injection (`--cmd`, evaluated before
         # nvim sources rtp `plugin/` files -- the same seam
         # `spec/plugin/nvim_plugin_spec.rb`'s `boot_nvim` uses) is what makes
         # `:LainStart` exist with zero user config.
@@ -126,7 +126,7 @@ module Lain
           end
         end
 
-        # T2 degrade AC: the shipped plugin cannot be located. {Up} probes
+        # The degrade case: the shipped plugin cannot be located. {Up} probes
         # this once, on the create path only, to report the named warning --
         # the cockpit still opens either way (see {#rtp_flag}).
         def plugin_missing? = !Dir.exist?(@paths.nvim_plugin_root)

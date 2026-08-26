@@ -72,9 +72,9 @@ module Lain
     # RE-ATTRIBUTION: a paid turn that is NOT render-reachable (a fan-out worker's
     # fresh-root turns) has its usage re-keyed onto a reachable digest, each moved
     # record marked `reattributed: true` and `attributed_from: <the worker head>`
-    # so the record stays honest and per-worker spend is recoverable. B8's
-    # synthesis is (b): the multi-parent {Event} it commits NAMES every worker
-    # head causally (`commit(causal_parents:)`), while the workers' tokens
+    # so the record stays honest and per-worker spend is recoverable. The
+    # fan-out synthesis is (b): the multi-parent {Event} it commits NAMES every
+    # worker head causally (`commit(causal_parents:)`), while the workers' tokens
     # re-attribute onto the reachable synthesis turn. Returning a Run whose totals
     # silently omit a paid worker -- neither reachable nor re-attributed -- prices
     # that worker at zero. `arm_spec` pins that unreachable turns are not priced.
@@ -153,10 +153,10 @@ module Lain
     # `journal:` is the recording channel the arm injects so it can price exactly
     # the turns this run produced. The `**spawn_opts` tail is the widening a
     # spawn-time router needs: {SingleThread} calls only `call(journal:)`, but
-    # B10's adaptive router passes `model:`/sibling-template at the spawn boundary
-    # and B11 parametrizes the child workspace -- a fixed-arity `->(journal:) {}`
-    # would reject those, so the documented duck accepts the tail and a seam
-    # closes over what it does not use.
+    # an adaptive router passes `model:`/sibling-template at the spawn boundary,
+    # and a parametrized child workspace needs its own keys -- a fixed-arity
+    # `->(journal:) {}` would reject those, so the documented duck accepts the
+    # tail and a seam closes over what it does not use.
     #
     # @return [Run]
     def run(*, **)

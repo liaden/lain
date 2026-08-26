@@ -153,7 +153,7 @@ module Lain
       # BOTH deterministic rungs are inert as this repo wires them TODAY, and
       # that is a fact about the wiring rather than about the mechanism:
       #
-      # * `rules:` is empty, because T20's remembered answers need a project root
+      # * `rules:` is empty, because remembered answers need a project root
       #   the switchboard does not hold. An empty rung abstains on everything,
       #   which by this class's own composability property changes no outcome.
       # * `triage:` defaults to a {Shell::Verdict} over
@@ -343,7 +343,7 @@ module Lain
           # input the tool itself will refuse, a name this session does not hold.
           Ruling.abstain(rung: NAME, because: "#{NO_SUBJECT}: #{e.class}: #{e.message}")
         rescue StandardError => e
-          # MEASURED (T19's panel): `Rule::Call.for` is not total. Invalid UTF-8
+          # MEASURED in review: `Rule::Call.for` is not total. Invalid UTF-8
           # in a required String raises ArgumentError from ActiveSupport's
           # `String#blank?`, NOT Tool::InvalidInput. And a rescue list is not a
           # substitute for a total classifier -- a NUL byte and a UTF-16LE value
@@ -619,8 +619,8 @@ module Lain
         # `Pending#decide(verdict, surface:, authority:)` with NO default, so a
         # surface that forgot to declare is a loud ArgumentError at one of five
         # call sites rather than a silent reclassification here. Ticketed.
-        # T17 is what the paragraph above predicted, and it took one card to
-        # arrive: `secret_oracle` is a 4B LOCAL MODEL releasing files the
+        # The `secret_oracle` surface is what the paragraph above predicted, and
+        # it took one card to arrive: it is a 4B LOCAL MODEL releasing files the
         # detector flagged as holding credentials, and an unlisted surface
         # counts as human -- so the one surface built to release secrets was the
         # one this ladder trusted most, its allow surviving a fault that

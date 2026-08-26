@@ -112,7 +112,7 @@ RSpec.describe Lain::Effect::Handler::Gate do
     end
   end
 
-  # ---- T11: the path boundary, decided at the gate rather than in a tool -----
+  # ---- the path boundary, decided at the gate rather than in a tool ----------
   #
   # The whole point of putting it HERE is that no tool changes: `read_file`
   # still declares itself tier 1, and what makes one call reach a human is the

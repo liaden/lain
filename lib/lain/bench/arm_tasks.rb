@@ -5,16 +5,16 @@ require "yaml"
 module Lain
   module Bench
     # A small suite of graded CODING tasks used to compare orchestration arms
-    # (the chunk-orchestration-arms-isolation plan's B12 sweep) against the
+    # (the chunk-orchestration-arms-isolation plan's sweep) against the
     # pre-registered boundary orchestration-experiments.md draws: tasks that
     # are procedural and single-thread-friendly (a later edit depends on an
     # earlier one, so there is nothing to hand a second worker) versus tasks
     # that are genuinely independent and parallel (each subtask needs zero
     # shared context, so N workers could do them concurrently). Every task
     # grades with a {Grader::Fixture} -- no model in the loop -- against a
-    # {Trajectory}: the files an arm's run produced, `path => content`. B0
-    # only builds and grades the suite; B12 wires a real arm's produced files
-    # into this same shape.
+    # {Trajectory}: the files an arm's run produced, `path => content`. This
+    # suite only builds and grades tasks; wiring a real arm's produced files
+    # into this same shape comes later.
     #
     # WRITING YOUR OWN SUITE: `bench arms` takes any fixture path, and the
     # default arms system prompt ({ArmSweep::FileBlocks::CONTRACT}) teaches the
@@ -67,9 +67,10 @@ module Lain
 
       # What a coding task's {Grader::Fixture} scores against: the files an
       # arm's run produced or touched, `path => content`. Deliberately NOT a
-      # real Workspace or git worktree -- B0 grades the SHAPE of a recorded
-      # outcome, so a spec (or later, B12's sweep) can build one from a real
-      # run's files without this suite depending on an isolation backend.
+      # real Workspace or git worktree -- this suite grades the SHAPE of a
+      # recorded outcome, so a spec (or later, a live arm sweep) can build one
+      # from a real run's files without this suite depending on an isolation
+      # backend.
       Trajectory = Data.define(:files) do
         def content_at(path) = files.fetch(path, "")
       end
@@ -128,7 +129,7 @@ module Lain
       end
 
       # A fixture task's `id`s are used as lookup keys everywhere downstream
-      # (this spec's own `.find { |t| t.id == ... }`, and B12 later) -- a
+      # (this spec's own `.find { |t| t.id == ... }`, and a live sweep later) -- a
       # silent duplicate would mean `.find` always resolves to the first and
       # the second is unreachable dead weight, never a loud error.
       def unique!(built)

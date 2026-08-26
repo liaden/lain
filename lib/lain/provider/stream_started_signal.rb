@@ -2,7 +2,7 @@
 
 module Lain
   class Provider
-    # CE-5's first-token signal, shared by both Anthropic backends so they
+    # The first-token signal, shared by both Anthropic backends so they
     # cannot drift on when it fires or how an observer's own failure is
     # isolated -- the same one-implementation-in-both shape
     # {AnthropicEncoding} already uses for #encode. Included by a class that
@@ -12,7 +12,7 @@ module Lain
 
       # @param request [Request] supplies the digest that identifies which round trip just
       #   started streaming, threaded to both the Channel push and the caller's observer
-      # @param on_stream_started [#call, nil] CE-5: called with the request's
+      # @param on_stream_started [#call, nil] called with the request's
       #   digest the instant the response begins streaming, IN ADDITION TO the
       #   {Telemetry::StreamStarted} pushed onto `@channel`. A second,
       #   Channel-free path so a per-request orchestration policy (the

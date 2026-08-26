@@ -12,7 +12,7 @@ module Lain
     # A provider's CAPACITY, as one object: at most `width` callers inside one
     # RESOLVED ENDPOINT at a time.
     #
-    # F26 is the absent concept this fills. Nothing owned capacity, so the
+    # The absent concept this fills: nothing owned capacity, so the
     # harness put two requests on a one-slot local server and then read the
     # silence it had caused itself as a dead stream. Admission wraps
     # {Provider#complete} and nothing below it: `#complete` encloses the whole
@@ -93,9 +93,9 @@ module Lain
       # synchronous, and 1 is correct for every local server this bench runs.
       #
       # Read the qualifier as load-bearing. The justification has always been a
-      # LOCAL-SERVER one, and F26 is a one-slot local server being handed two
-      # requests; applying the same 1 to a hosted endpoint would serialise
-      # concurrent SUBAGENTS, which run at once over the ONE shared
+      # LOCAL-SERVER one, and the defect behind it is a one-slot local server
+      # being handed two requests; applying the same 1 to a hosted endpoint
+      # would serialise concurrent SUBAGENTS, which run at once over the ONE shared
       # `Subagent::Seam` provider `cli/wiring.rb:475` -> `toolset_build.rb:316`
       # builds for every child. (One provider, N concurrent callers, one endpoint
       # key -- the sharing does not soften the argument, since the gate keys on
@@ -119,9 +119,9 @@ module Lain
       # {Oracle::Eager} contains anything a fire raises inside its task boundary.
       # A SUBAGENT'S OWN TURN IS NEITHER. It has no such rescue, so the refusal
       # surfaces as that child's failure. That is the honest trade -- the
-      # alternative is the overlap F26 is about -- but it is why the deadline is
-      # 300s rather than something a busy fan-out would trip casually, and why
-      # {ENV_KEY} exists.
+      # alternative is the overlap this gate exists to prevent -- but it is why
+      # the deadline is 300s rather than something a busy fan-out would trip
+      # casually, and why {ENV_KEY} exists.
       DEFAULT_WIDTH = 1
 
       # Between polls for a free slot. {Approval::QueueSurface::DEFAULT_POLL_INTERVAL}'s
@@ -142,17 +142,17 @@ module Lain
 
       # What a caller that never queued reports. Exactly zero rather than a
       # measured epsilon: the wait IS the time spent polling, so a caller
-      # admitted on its first attempt waited none, and T3's journal can tell
-      # "did not queue" from "queued briefly" without picking a threshold.
+      # admitted on its first attempt waited none, and the admission journal can
+      # tell "did not queue" from "queued briefly" without picking a threshold.
       #
       # THE DISTINCTION IS EXACT; THE MAGNITUDE IS NOT. A reported wait is
       # quantised to {POLL_INTERVAL}, because a waiter only learns the slot is
       # free when it next wakes -- measured 0.0501s reported against a ~0.040s
       # true queue. So a non-zero reading is never below one interval and
-      # over-reports by up to one, and anything consuming it (T3's journal) must
-      # present it as "queued, at ~50ms resolution" rather than as a measurement.
-      # Shortening the interval would trade that error against poll churn; it is
-      # not a bug to fix here.
+      # over-reports by up to one, and anything consuming it (the admission
+      # journal) must present it as "queued, at ~50ms resolution" rather than as
+      # a measurement. Shortening the interval would trade that error against
+      # poll churn; it is not a bug to fix here.
       NO_WAIT = 0.0
 
       # `0` selects the Null arm; a positive `N` sets the width. Either way it
@@ -213,8 +213,8 @@ module Lain
       # `--api-base http://127.0.0.1:11434` and the BARE `Provider::Ollama.new`
       # that {Oracle::SecretRead.tier} constructs (the one site that can never
       # take an injected gate, and the reason admission lives in the provider at
-      # all) overlapped two round trips on one ollama. F26, still live, through
-      # the exact construction sites this card exists to cover.
+      # all) overlapped two round trips on one ollama -- the same overlap, still
+      # live, through the exact construction sites this gate exists to cover.
       #
       # == FIRST DECLARATION WINS -- among DECLARATIONS. SILENCE IS NOT ONE.
       #
@@ -376,11 +376,11 @@ module Lain
       # both lets {.local?} decide.
       #
       # A LOCAL ENDPOINT IGNORES `declared`, DELIBERATELY. {DEFAULT_WIDTH} is
-      # F26 -- a one-slot local server handed two requests -- and a caller that
-      # could declare its way past it would re-open exactly that, from inside
-      # the process rather than from the environment. So a declaration only ever
-      # reaches the arm locality has no answer for: hosted, where the alternative
-      # is the unbounded {Null}. It can therefore only ever TIGHTEN.
+      # the answer to a one-slot local server handed two requests, and a caller
+      # that could declare its way past it would re-open exactly that, from
+      # inside the process rather than from the environment. So a declaration
+      # only ever reaches the arm locality has no answer for: hosted, where the
+      # alternative is the unbounded {Null}. It can therefore only ever TIGHTEN.
       #
       # `declared` arrives ALREADY CHECKED -- {.declared_width} refuses a
       # non-Integer or non-positive one up in {.for}, above the locality branch
@@ -557,13 +557,13 @@ module Lain
       #
       # {Sink::Null}'s shape -- it satisfies the same duck and gates nothing, so
       # no caller writes `if admission`. Selected by `LAIN_PROVIDER_CONCURRENCY=0`
-      # at process start, it restores exactly the pre-F26 behaviour: every caller
-      # straight through, no queue, no deadline.
+      # at process start, it restores exactly the pre-admission behaviour: every
+      # caller straight through, no queue, no deadline.
       #
       # It still COUNTS, though, and that is the difference between doing nothing
       # and lying. {Sink::Null} returns a real byte count for bytes it discards;
-      # this returns the callers really inside it, because T3's journal reads
-      # {#in_flight} and a flat zero would report an idle endpoint under load.
+      # this returns the callers really inside it, because the admission journal
+      # reads {#in_flight} and a flat zero would report an idle endpoint under load.
       # Gating is what it declines to do -- not bookkeeping.
       class Null
         # @return [String] the endpoint it declines to gate

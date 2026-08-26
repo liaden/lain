@@ -121,7 +121,7 @@ RSpec.describe Lain::Review::Session, "widening a round already open" do
   end
 
   describe "the widening itself" do
-    # Counted through B8's injected `chunker:` seam, at the chunker's own `#call`,
+    # Counted through the injected `chunker:` seam, at the chunker's own `#call`,
     # because every claim here is about work: that building the wider corpus
     # chunks NOTHING (the laziness survives the widening path), that the widening
     # then walks it whole (the reconcile, and the eagerness that is ticketed

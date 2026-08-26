@@ -16,21 +16,20 @@ module Lain
     # touching a terminal palette is legal.
     #
     # Two decorators now -- {Telemetry::ToolOutput} (a live tool's stdout/stderr)
-    # and, since T4/F15, {Telemetry::ProviderRetry} (a provider round trip
-    # backing off or giving up). ProviderRetry was originally deliberately
-    # unrendered here -- Journal material, not something the human needs
-    # painted mid-stream -- but a human watching a stalled endpoint seeing
-    # only a blank screen is what F15's QA finding named, and that is the
-    # evidence that reversed the decision. {Telemetry::Dropped} still flows through
-    # channels and stays deliberately unrendered: that half of the original
-    # call stands, because a drop count is still Journal material with no live
-    # urgency. {.for} is the named seam -- when a THIRD event type earns
+    # and {Telemetry::ProviderRetry} (a provider round trip backing off or
+    # giving up). ProviderRetry was originally deliberately unrendered here --
+    # Journal material, not something the human needs painted mid-stream -- but
+    # a human watching a stalled endpoint seeing only a blank screen is what a
+    # QA finding named, and that is the evidence that reversed the decision.
+    # {Telemetry::Dropped} still flows through channels and stays deliberately
+    # unrendered: that half of the original call stands, because a drop count is
+    # still Journal material with no live urgency. {.for} is the named seam -- when a THIRD event type earns
     # rendering, it gets its own decorator here and one more clause below, and
     # TTY does not change.
     module Decorators
       # Every decorator answers two messages: `render(theme)` for the bytes, and
       # `line_shaped?` for whether those bytes are a whole line the frontend may
-      # terminate (F58). The second is a message rather than a type check
+      # terminate. The second is a message rather than a type check
       # upstream so that adding a decorator never means editing a list of
       # classes somewhere else.
       #

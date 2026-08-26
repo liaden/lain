@@ -264,7 +264,7 @@ module Lain
         # Journalled into the Null it would still be silent -- so the one thing
         # a bench needs from a guard, evidence that it fired, would be missing.
         @notifier = Lain::Notify.for(desktop: options[:desktop], journal: channel)
-        # OM-6: the reactor above the Agent that un-refuses model-dispatched
+        # The reactor above the Agent that un-refuses model-dispatched
         # actors. Journals a bounded drain's timeout to the live Channel; the exe
         # #run_chat below runs it under a chat-level reactor that outlives asks.
         @supervisor = Lain::Supervisor.new(journal: channel, isolation: fleet_isolation(channel))
@@ -320,7 +320,7 @@ module Lain
       # #run's Repl needs the same object. The feed is built a layer above this
       # class -- {ChatLaunch}, which must have it in the live-view tee's sink
       # list before Wiring exists at all -- so it holds none at construction,
-      # and until it does its inbox_count retires nothing and only climbs (F76).
+      # and until it does its inbox_count retires nothing and only climbs.
       # This is the first line at which the run HAS a Store.
       #
       # Named for the BINDING rather than for the value, and private, because it
@@ -328,7 +328,7 @@ module Lain
       # would hide the write from every caller who read it.
       def bind_hud_store(agent) = agent.timeline.store.tap { |store| @status_feed.bind_store(store) }
 
-      # D2: `--isolation`, read at its construction site (the --auto-approve
+      # `--isolation`, read at its construction site (the --auto-approve
       # pattern) and resolved into the backend each ADOPTION leases a WorkerEnv
       # from. Only actor-mode subagents lease: #run_state builds the main chat's
       # Session on {WorkerEnv.default} deliberately, because the user's own edits
@@ -423,8 +423,8 @@ module Lain
       # the asker and the registration that releases it -- so nothing else
       # about this seam crosses into the child path.
       #
-      # `root:` is T2's, and it is the PROJECT's -- {#epic_mount}'s rule one line
-      # down, for a sharper reason. {ToolsetBuild} resolves `--exec` from it, and
+      # The `root:` here is the PROJECT's -- {#epic_mount}'s rule one line down,
+      # for a sharper reason. {ToolsetBuild} resolves `--exec` from it, and
       # a container MOUNTS what that resolves: `Dir.pwd` would mount whichever
       # subdirectory the shell happened to be in, leaving every path above it
       # missing INSIDE the container while it still resolves outside one. So a
@@ -473,7 +473,7 @@ module Lain
       # could see it.
       def replies = -> { @replies }
 
-      # I4: the {Switchboard} owns Gate's policy now -- the posture's resolved
+      # The {Switchboard} owns Gate's policy now -- the posture's resolved
       # gate policy (the {Approval::Escalation} ladder for an asking posture)
       # behind the ONE PolicySwitch, which the board WRITES itself as the
       # derived consequence of a `/mode` flip; Gate itself stays

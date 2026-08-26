@@ -49,7 +49,7 @@ module Lain
   # headline metric is cost, a silently-free model is a lie. A deployment that
   # wants graceful degradation passes an explicit `fallback` Price.
   #
-  # Ruling (chunk-ollama-cloud-arm.md T15): Ollama Cloud is billed by
+  # Ruling (chunk-ollama-cloud-arm.md): Ollama Cloud is billed by
   # subscription quota, not per token, so DEFAULT deliberately carries no
   # ollama row and no fallback -- #price raises {UnknownModel} for one, same
   # as any other unpriced model (spec/lain/ledger_spec.rb). A row or a

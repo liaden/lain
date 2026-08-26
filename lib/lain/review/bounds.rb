@@ -10,9 +10,9 @@ module Lain
     # rather than returning a value a caller can read past. The difference is
     # what it is protecting. A budget bounds a loop pointed at a shell; this
     # bounds a VIEW, and the thing it is defending against is not a crash but a
-    # success that isn't one -- octo's fix for its own large-PR bug (research
-    # S4.2, octo#302) turned a crash into a quietly truncated file list, and a
-    # truncated list reads exactly like a short one.
+    # success that isn't one -- octo's fix for its own large-PR bug (octo#302)
+    # turned a crash into a quietly truncated file list, and a truncated list
+    # reads exactly like a short one.
     #
     # So: this object never truncates, never samples, and never elides. Either
     # the whole changeset is handled or {TooLarge} names the measurement, the
@@ -20,7 +20,7 @@ module Lain
     #
     # == Where the bound is NOT
     #
-    # Not on diff size. Research S3.7 measured the parser at 80,800 rendered
+    # Not on diff size. Research measured the parser at 80,800 rendered
     # lines in 0.26s and 39MB, so nothing here is defending the parse. The
     # constraints are downstream of it: a human reading a cumulative view, and
     # a `/critique` prompt against a context window.
@@ -64,22 +64,22 @@ module Lain
       # reader to guess which of three bounds fired.
       class TooLarge < Error; end
 
-      # GitHub stops serving a combined diff past 300 files (research S3.7),
-      # and tuicr#475 independently settled on the same hard ceiling, reporting
-      # that "patches large enough to hit the limit also made file and commit
-      # navigation slow" (S4.2). Two unrelated projects, one number -- and for
-      # {Source::GithubPr} it is an API fact rather than a preference.
+      # GitHub stops serving a combined diff past 300 files, and tuicr#475
+      # independently settled on the same hard ceiling, reporting that "patches
+      # large enough to hit the limit also made file and commit navigation
+      # slow". Two unrelated projects, one number -- and for {Source::GithubPr}
+      # it is an API fact rather than a preference.
       DEFAULT_MAX_FILES = 300
 
-      # DERIVED from {DEFAULT_MAX_FILES} rather than chosen beside it: S3.7's
-      # work-scale changeset is 80,800 rendered lines over 800 files, so 101
+      # DERIVED from {DEFAULT_MAX_FILES} rather than chosen beside it: the
+      # measured work-scale changeset is 80,800 rendered lines over 800 files, so 101
       # lines per file, so 300 files is ~30,000 lines. Setting the two ceilings
       # to fire at the same changeset SIZE is what keeps both alive -- a line
       # ceiling far above the implied one would be dead code, and one far below
       # would make the file ceiling unreachable. What it catches that the file
       # count cannot is the other shape: 40 files of 1,000 lines each.
       #
-      # For scale, it is 11x the 2,727-line single-commit view S3.7 measured,
+      # For scale, it is 11x the measured 2,727-line single-commit view,
       # so an ordinary review is nowhere near it.
       DEFAULT_MAX_LINES = 30_000
 
@@ -98,13 +98,14 @@ module Lain
       #
       # The half is a POLICY -- a judgement about how much of a window the diff
       # should occupy -- while the window and the bytes/line are measured. That
-      # distinction is the correction: the first cut set 4,000 from S3.7's 2,727
-      # rendered lines per commit, which is the mean of a SYNTHETIC UNIFORM
-      # generator (`bigdiff_stacked` emits 30 identical commits) and therefore a
-      # distribution with no tail. A ceiling at mean + 47% refuses the tail of
-      # every real changeset -- concretely, it refused a 5,001-line single-file
-      # commit that is ~71k tokens, 7% of a 1M window, while the doc justified
-      # itself by that same window. The two could not both be true.
+      # distinction is the correction: the first cut set 4,000 from the
+      # measured 2,727 rendered lines per commit, which is the mean of a
+      # SYNTHETIC UNIFORM generator (`bigdiff_stacked` emits 30 identical
+      # commits) and therefore a distribution with no tail. A ceiling at mean +
+      # 47% refuses the tail of every real changeset -- concretely, it refused a
+      # 5,001-line single-file commit that is ~71k tokens, 7% of a 1M window,
+      # while the doc justified itself by that same window. The two could not
+      # both be true.
       #
       # The measured per-commit view now sits at 39% of the ceiling rather than
       # 68% of it. The same arithmetic is what makes the card's premise true
@@ -203,13 +204,13 @@ module Lain
       # calls straight through to `strategy.partition(view)`, so a source
       # {ByCommit} cannot walk (no `#commits`) raises `NoMethodError` here
       # rather than falling through to {ByDirectory}, which would have
-      # accepted it. NOT a regression -- the pre-A4 code only ever consulted
+      # accepted it. NOT a regression -- the previous code only ever consulted
       # {ByCommit} and failed the same way -- but it means this registry is
       # only as safe as its FIRST candidate, not as safe as its safest one.
-      # Filtering by source belongs to {Session#present} (A3's Open decision:
+      # Filtering by source belongs to {Session#present} (the standing ruling:
       # "`#supports?` is consulted where the source is in hand"), not here --
       # adding it in `Bounds` would be the object taking on a resolution
-      # decision the escalation triggers reserve for that card.
+      # decision that belongs to {Session#present}.
       NARROWING_CANDIDATES = Partition::STRATEGIES.except(:cumulative).values.freeze
 
       # What a group's own refusal says: below a {Partition}'s files there is
@@ -264,7 +265,7 @@ module Lain
       #
       # ONE line unit, deliberately. `lines` is RENDERED lines -- what a reader
       # scrolls and what a prompt carries -- and never numstat's changed-line
-      # count, which is ~9% lower at work scale (S3.7: 74,400 changed against
+      # count, which is ~9% lower at work scale (74,400 changed against
       # 80,800 rendered). Two constructors measuring "lines" off two different
       # tapes is the same trap {Review::SIDES} records, one level down.
       #
@@ -355,7 +356,7 @@ module Lain
       # per-chunk numbers git never reported. `files` is the only member that
       # differs.
       #
-      # The cost lands on a renderer: T14's sidebar renders `numstat`, so a
+      # The cost lands on a renderer: the sidebar renders `numstat`, so a
       # commit split into three chunks renders that one figure three times, and
       # the three do not sum to it. A consumer that shows per-chunk totals must
       # derive them from `files` (what {Size.of} answers) rather than read the

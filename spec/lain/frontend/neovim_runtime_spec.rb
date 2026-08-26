@@ -15,7 +15,7 @@ module ApprovalSeamSupport
   Effect = Struct.new(:name, :input, :tool_use_id)
 end
 
-# The runtime.lua contract, protocol 3 (T5): User autocmds, b:lain_view on
+# The runtime.lua contract, protocol 3: User autocmds, b:lain_view on
 # every lain:// buffer, the richer shared syntax, and lain://workspace's
 # lua-side home. Same headless-nvim harness as neovim_spec.rb: a real editor
 # on a unix socket, observed through a SECOND independent connection so every
@@ -54,7 +54,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # It carries zero rows, so it takes no window.
   def primed_views = all_views + [Lain::Frontend::Neovim::ApprovalView::BUFFER]
 
-  # The six documented lain* groups (T5's AC): tool attribution, digests,
+  # The six documented lain* groups: tool attribution, digests,
   # roles, event kinds, ages, sender attribution.
   def syntax_groups
     %w[lainToolName lainDigest lainRole lainEventKind lainAge lainSender]
@@ -261,7 +261,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T16, and the reason the card exists: `<CR>` on an inbox row must put that
+  # The reason this coverage exists: `<CR>` on an inbox row must put that
   # set's document in lain://question. Every piece of that path shipped before
   # this -- the keys, the :LainOpen command, the view that resolves the line,
   # the surface that renders the set -- with NOTHING popping the verb in
@@ -298,7 +298,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T36, and the reason THAT card exists: the whole approval seam was built for
+  # The reason this block exists: the whole approval seam was built for
   # a Neovim surface -- {Lain::Frontend::ApprovalPolicy}'s own class comment
   # names it -- and nothing had ever written one, so a gated call parked the
   # agent with the question visible in the chat pane alone.
@@ -391,8 +391,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # THE REACHABILITY HALF, and the one this chunk keeps failing: every example
   # above binds the approval view the way {Lain::CLI::Repl} binds it, which
   # proves the round trip and NOT that anything in production performs that
-  # bind. T35 and T28 both found capabilities whose every collaborator had a
-  # green spec and which no code path ever constructed.
+  # bind. Two earlier rounds both found capabilities whose every collaborator
+  # had a green spec and which no code path ever constructed.
   #
   # So this one drives the REAL {Lain::CLI::Repl} -- it builds the frontend, it
   # binds the view to both halves, and its own #respond spawns the watch fiber
@@ -404,8 +404,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false) }
     let(:agent) { instance_double(Lain::Agent, timeline: nil) }
     # `dispatch` YIELDS: a registry that swallowed the line would skip the model
-    # turn. `serves_replies?` is the second half of the command surface's duck
-    # (T1): the Repl asks whether the LINE is itself a reply surface before it
+    # turn. `serves_replies?` is the second half of the command surface's duck:
+    # the Repl asks whether the LINE is itself a reply surface before it
     # brackets it in the human's answer and approval surfaces.
     let(:commands) do
       Struct.new(:none) do
@@ -440,7 +440,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
                                         "verdict" => "approve")
     end
 
-    # T7 / QA round 8 (F40), and the REACHABILITY half of it: the surface that
+    # QA round 8's finding, and the REACHABILITY half of it: the surface that
     # has to let go of its read is the one {Repl::ApprovalSurfaces} builds for
     # itself, reading through `conductor.read_reply` -- not one an example wired.
     #
@@ -631,7 +631,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
                                             ask_human: Lain::Tools::AskHuman::Directory.new,
                                             questions: Async::Queue.new)
       replies.bind_editor(frontend.command_inbox, views: frontend.buffers)
-      # session_surfaces: the editor rail is the conversation's since T33.
+      # session_surfaces: the editor rail is the conversation's.
       surfaces = replies.session_surfaces(task)
       pumped_until(task, reason: "the stop channel closing") { stop.closed? }
       surfaces.each(&:stop)
@@ -644,7 +644,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   # The chunk nvim is actually sent. Read through the loader, never off runtime.lua,
-  # which since T6 is only the chunk's HEAD and defines nothing.
+  # which is only the chunk's HEAD and defines nothing.
   def runtime_source
     Lain::Frontend::Neovim::RuntimeLoader.new.source
   end
@@ -712,7 +712,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     # The number advertises a contract, so the entry that dates it may not name a thing
     # that does not exist -- an entry claiming a capability the runtime has not got is
-    # worse than no entry, which is the failure this bump was split out of T11 to avoid.
+    # worse than no entry, which is the failure this bump was split out to avoid.
     #
     # Read off the LIVE runtime, never off the lua source: a `function _G.__lain.x` that
     # a load-order mistake never installs greps identically to one that works. Two
@@ -797,13 +797,13 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       %w[set_review open_changeset set_thread].each do |point|
         expect(entry).to include("__lain.#{point}")
       end
-      # T15's two documentation corrections, which are the reason this card owed more
+      # Two documentation corrections, which are the reason this bump owed more
       # than a number: b:lain_view stopped naming a view, and the review pair's stamps
       # are what a gesture reads instead of parsing a buffer name apart.
       expect(entry).to include("b:lain_view").and include("b:lain_review_side")
     end
 
-    # The example above's shape, for the bump T32b owed. Written down for its
+    # The example above's shape, for the protocol 10 bump. Written down for its
     # reason -- "what protocol 10 added" is a fact about HISTORY, which the
     # running runtime does not know -- and kept honest by the same two sweeps: a
     # command named here that the runtime does not define fails the doc sweep in
@@ -823,7 +823,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(entry).to include(*Lain::Review::MARK_STATES).and include("Lain::Review::VERDICTS")
     end
 
-    # T35's bump, in the shape the two above use. What it has to record is a
+    # The protocol 11 bump, in the shape the two above use. What it has to record is a
     # DISTINCTION and not a feature: an entry saying only "a second attach is
     # refused" is satisfied by the implementation that refuses on presence, and
     # that one costs a human their editor for as long as one lain has ever
@@ -835,7 +835,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(entry).to match(/LIVENESS, never presence/i)
     end
 
-    # T36's bump, in the shape the three above use. What it has to record is
+    # The protocol 12 bump, in the shape the three above use. What it has to record is
     # again a DISTINCTION rather than a feature, and there are two.
     #
     # A key PER VERDICT: an entry saying only "the editor can answer approvals"
@@ -872,7 +872,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # a second collision, inside the example testing the first.
   def second_frontend = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
 
-  # ONE LAIN PER EDITOR (T35). The runtime is injected into a process-wide
+  # ONE LAIN PER EDITOR. The runtime is injected into a process-wide
   # `_G.__lain`, and every :Lain* command closes over `chan`, the chunk-local at
   # the head of runtime.lua -- so a second attach re-injects the whole chunk and
   # repoints every verb at the newcomer's channel. Measured twice before this
@@ -1079,7 +1079,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # F4/AC5: a buffer this command was never opened on refuses cleanly -- the
+    # A buffer this command was never opened on refuses cleanly -- the
     # guard's own sentence, naming the command a changeset review or a survey
     # actually reaches, never an escaped Lua error.
     #
@@ -1145,7 +1145,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # THE SAME RULE, ON THE COMMAND THAT DID NOT GET IT (T16). The two examples
+    # THE SAME RULE, ON THE COMMAND THAT DID NOT GET IT. The two examples
     # above cover refusals this runtime raises LOCALLY; this one covers a
     # refusal that crossed the WIRE -- `review_verdict` is an ANSWERED verb, so
     # lain's sentence comes back as the rpcrequest's error and `46_sidebar.lua`
@@ -1186,7 +1186,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # F25, and the reason it is worth its own block: a refusal wider than the
+  # The reason this is worth its own block: a refusal wider than the
   # message area raises nvim's hit-enter prompt, and that prompt blocks the
   # RPC. Round 5 measured `nvim --server ... --remote-expr "execute('messages')"`
   # hanging for its full two-minute timeout, so the documented recovery paths --
@@ -1259,7 +1259,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
     end
 
-    # AC1. `mode` is checked alongside `blocking` because nvim spells the
+    # `mode` is checked alongside `blocking` because nvim spells the
     # hit-enter family with a leading "r" -- "r" for the prompt itself, "rm" for
     # `-- More --`, "r?" for a confirm query -- and only one of those three is
     # the one this fixture happens to raise today.
@@ -1276,7 +1276,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC2. The whole point of shortening the echoed line is that nothing is
+    # The whole point of shortening the echoed line is that nothing is
     # lost by it: `:messages` is where a human goes for the sentence they could
     # not read on one line, so the sentence has to actually be there, whole.
     it "keeps the whole sentence in :messages even when the echoed line is shortened" do
@@ -1291,7 +1291,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC3. A refusal that fits is untouched -- prefix, sentence, nothing else --
+    # A refusal that fits is untouched -- prefix, sentence, nothing else --
     # on BOTH halves of the rail, which is why `:messages` is pinned here beside
     # the answer. `review_refused` answers with the line it put on SCREEN, and
     # that is not a test-only accessor: the fitted line is echoed with
@@ -1385,9 +1385,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # Reachable by the same route as the two-line case: the real five-line
     # `ScriptError#message` blocks in any pane under six rows.
     #
-    # The sting worth recording: AC1's own comment above already named `"rm"`
-    # as `-- More --` and no example exercised it. A named-but-unexercised mode
-    # is how this got missed twice.
+    # The sting worth recording: the hit-enter comment above already named
+    # `"rm"` as `-- More --` and no example exercised it. A named-but-unexercised
+    # mode is how this got missed twice.
     #
     # Both halves are asserted here on purpose, so this one example is the
     # whole property: it does not block, AND `:messages` still holds the
@@ -1480,7 +1480,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC4, on the wide sentence specifically: the traceback-free rule already
+    # On the wide sentence specifically: the traceback-free rule already
     # pinned for refusals that FIT must survive the path that shortens one.
     it "stays traceback-free on the path that shortens a refusal" do
       frontend = described_class.new(channel:, socket_path: @socket)
@@ -1517,7 +1517,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   def settled_delta(frontend, review, token, timeout: 8)
     Sync do |task|
       replies = replies_for(frontend, review, token)
-      # session_surfaces: the editor rail is the conversation's since T33.
+      # session_surfaces: the editor rail is the conversation's.
       surfaces = replies.session_surfaces(task)
       deadline = Async::Clock.now + timeout
       task.sleep(0.02) until token.resolved? || Async::Clock.now > deadline
@@ -1531,7 +1531,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T15: the compose round trip against a REAL editor. lain://compose is the
+  # The compose round trip against a REAL editor. lain://compose is the
   # one lain:// buffer nvim must be able to `:write`, and the two escalation
   # triggers the card names are both setup errors that show up here as nvim's
   # own E382/E32 -- so the buffer options are asserted, not assumed.
@@ -1677,7 +1677,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(compose_state).to include("modified" => true)
     end
 
-    # PANEL SHOULD-FIX 4: the generation stamped on the buffer is what lets a
+    # Panel should-fix: the generation stamped on the buffer is what lets a
     # late answer from an earlier compose be dropped rather than mistaken for
     # this one's.
     it "stamps each compose with its own generation, and reuses the one buffer" do
@@ -1696,7 +1696,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # PANEL P6: renders and the compose post share ONE queue and ONE thread, so
+    # Panel probe: renders and the compose post share ONE queue and ONE thread, so
     # a compose racing a flood of renders must neither reorder nor touch the
     # session off-thread. The compose post is also the only non-blocking push
     # onto that queue, which is exactly what a flood would otherwise stall.
@@ -1747,7 +1747,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # PANEL SHOULD-FIX 6, recorded rather than defended against: `:wall` and
+    # Panel should-fix, recorded rather than defended against: `:wall` and
     # autosave plugins DO fire BufWriteCmd, and the round trip takes that as
     # the human's answer. Pinned so the behaviour is a known limitation rather
     # than a surprise -- lain attaches to the human's own nvim, plugins and all.
@@ -1786,7 +1786,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T12: lain://question against a REAL editor. It is `acwrite` for
+  # lain://question against a REAL editor. It is `acwrite` for
   # lain://compose's reason -- `:w` IS the submit -- and it is the one lain://
   # buffer whose write can be REFUSED, because the grammar reads the document
   # back BEFORE the ack. nil until the buffer exists at all.
@@ -2295,16 +2295,16 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # C1/F72, and the operational half of
+  # The operational half of
   # `spec/refusal_delivery_discipline_spec.rb`. `define`
   # (`runtime/30_commands.lua:8-11`) does not rescue -- its only `pcall` guards
   # the idempotent delete -- so an `error()` inside a user-command callback
   # escapes into nvim, which appends its own `stack traceback:` and, with a UI
   # attached, raises the hit-enter prompt the block above measures. Behind that
   # prompt every non-fast RPC request queues, so the editor answers nothing at
-  # all while a refusal naming the recovery is on screen. F31 fixed that at
-  # `:LainNoteDone`; F72 found the same defect at `:LainNote`, and
-  # `:LainReviewMark` and `:LainAnnotate` carried it too.
+  # all while a refusal naming the recovery is on screen. An earlier QA round
+  # fixed that at `:LainNoteDone`; a later one found the same defect at
+  # `:LainNote`, and `:LainReviewMark` and `:LainAnnotate` carried it too.
   #
   # THE OTHER DOOR IS `vim.notify`, and it reaches the same prompt by WIDTH
   # rather than by a raise -- `51_thread.lua` carries the measurement, roughly
@@ -2461,7 +2461,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # F73: `gf` out of a review buffer silently ended the review. The new side is
+  # `gf` out of a review buffer silently ended the review. The new side is
   # DELIBERATELY a real, editable, file-backed buffer -- that is what makes the
   # language server and treesitter attach (`47_diff.lua`'s header) -- so the
   # gestures that leave it are the ordinary ones, and `47_diff.unstamp` had
@@ -2485,7 +2485,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # re-acquiring against a review nobody is holding.
   #
   # A SURVEY rather than a changeset for most of these, because that is the round
-  # F73 was measured in and the harder one: one side, so the row's buffer IS the
+  # the defect was measured in and the harder one: one side, so the row's buffer IS the
   # file on disk and there is no `nofile` old side to fall back into.
   describe "a review that survives the tabpage" do
     # `47_diff.lua` freezes the project root at attach and resolves every
@@ -2519,8 +2519,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # actually posts it is `spec/lain/review/surface/neovim_spec.rb`'s to pin.
     def settle_round = inspector.exec_lua("_G.__lain.review_settled()", [])
 
-    # F73's OWN gesture: out of the REVIEW BUFFER, which is the file pane and not
-    # the navigator. `open_changeset` lands the human in the sidebar
+    # The reported gesture itself: out of the REVIEW BUFFER, which is the file
+    # pane and not the navigator. `open_changeset` lands the human in the sidebar
     # (`review_diff.landing`), so an `:edit` run wherever focus happens to be
     # measures re-entry into the navigator instead -- a different window, and not
     # the one the defect was reported from. So the file pane is focused first, and
@@ -2642,7 +2642,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       LUA
     end
 
-    # AC1. The keys come back, and the command they name works -- asserted
+    # The keys come back, and the command they name works -- asserted
     # together, because a key that is bound and refuses is the failure this whole
     # autocmd exists to prevent.
     it "binds the note keys again on a row this round already opened" do
@@ -2668,7 +2668,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC2. The deferred half, stated as a refusal rather than as a guess: a
+    # The deferred half, stated as a refusal rather than as a guess: a
     # buffer no row has opened needs a revision, a side and a repository-relative
     # path that only Ruby holds, and deriving one from the buffer's name is the
     # second silent spelling of `OLD_PREFIX` that `47_diff.stamp` refuses.
@@ -2691,12 +2691,13 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC2's OTHER half, and the one a sentence cannot be trusted without: the
-    # remedy has to work FROM WHERE THE HUMAN IS. `gf` replaces the buffer in the
-    # window it was pressed in, so a refusal naming the sidebar names a surface
-    # this very gesture can have taken off the screen. `<C-o>` is nvim's own way
-    # back from a jump, it needs no window the human can still see, and landing is
-    # what re-acquires the stamp -- so the sentence and the fix are one gesture.
+    # The other half of the example above, and the one a sentence cannot be
+    # trusted without: the remedy has to work FROM WHERE THE HUMAN IS. `gf`
+    # replaces the buffer in the window it was pressed in, so a refusal naming
+    # the sidebar names a surface this very gesture can have taken off the
+    # screen. `<C-o>` is nvim's own way back from a jump, it needs no window the
+    # human can still see, and landing is what re-acquires the stamp -- so the
+    # sentence and the fix are one gesture.
     it "names a way back that works from the buffer the human landed in" do
       Dir.mktmpdir("lain-review-tab") do |dir|
         write_round(dir)
@@ -2715,7 +2716,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC3, renamed for what it pins: a file the round has MOVED PAST. The old
+    # Renamed for what it pins: a file the round has MOVED PAST. The old
     # title said "a reviewed file", which is also true of one the human has just
     # revisited -- and that one is the example below, whose answer is the
     # opposite until the stamp is given back at the boundary.
@@ -2828,7 +2829,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC4, and the one that matters: the INTERLEAVING, not the endpoints. A
+    # The one that matters: the INTERLEAVING, not the endpoints. A
     # stamp that was never withdrawn would pass an endpoint assertion and prove
     # nothing about `unstamp`; a stamp re-acquired from anywhere but the round's
     # own memory could come back naming the wrong file or the wrong revision.
@@ -3066,7 +3067,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     def displayed_width(line) = inspector.exec_lua("return vim.fn.strdisplaywidth(...)", [line])
 
-    # AC1. The whole round trip of the long path: opened from a line, typed into,
+    # The whole round trip of the long path: opened from a line, typed into,
     # written -- and the note lands on THAT line with THOSE words.
     it "places the note the pane was written with, on the line the pane was opened from" do
       Dir.mktmpdir("lain-note-pane") do |dir|
@@ -3090,7 +3091,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC2, AND THE CARD'S WHOLE POINT: the INTERLEAVING. The pane is opened first
+    # THE WHOLE POINT OF THE CARD: the INTERLEAVING. The pane is opened first
     # and written LAST, so a sequence assigned at commit time would hand these
     # back in the wrong order -- and every assertion about the notes' content
     # would still pass. Only the order can catch it.
@@ -3113,7 +3114,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC3. Whitespace under nothing is not a note -- and the refusal is the
+    # Whitespace under nothing is not a note -- and the refusal is the
     # thread pane's shape exactly: on the rail, no traceback, and 'modified' left
     # standing, because clearing it would be the one write that says "saved" over
     # text lain never took.
@@ -3164,7 +3165,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC4. The short path is untouched: `<leader>Ln` still PRE-FILLS the cmdline
+    # The short path is untouched: `<leader>Ln` still PRE-FILLS the cmdline
     # with the same characters, byte for byte, and the pane's own key sits beside
     # it rather than in place of it.
     it "leaves the cmdline note keys exactly as they were, and adds the pane's beside them" do
@@ -3271,12 +3272,13 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # THE SETTLE THAT WOULD INVERT AC2 THROUGH A DOOR AC2 DOES NOT WATCH. A pane
-    # holding a reservation it has not spent is a note whose place in line is
-    # taken and whose words have not arrived; settling around it hands back the
-    # LATER note first and files the earlier one in a later batch, which is the
-    # one thing this card exists to prevent. `assert_saved` refuses an unsaved
-    # reviewed buffer for the neighbouring reason; this is the same obligation.
+    # THE SETTLE THAT WOULD INVERT THE INTERLEAVING THROUGH A DOOR THAT EXAMPLE
+    # DOES NOT WATCH. A pane holding a reservation it has not spent is a note
+    # whose place in line is taken and whose words have not arrived; settling
+    # around it hands back the LATER note first and files the earlier one in a
+    # later batch, which is the one thing this card exists to prevent.
+    # `assert_saved` refuses an unsaved reviewed buffer for the neighbouring
+    # reason; this is the same obligation.
     it "refuses to settle while a pane still holds a reservation, and names it" do
       Dir.mktmpdir("lain-note-pane") do |dir|
         write_round(dir)

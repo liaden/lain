@@ -4,7 +4,7 @@ require "async"
 
 module Lain
   module Gherkin
-    # GG-1: the fail-closed approval gate a {Criteria} must pass before anything
+    # The fail-closed approval gate a {Criteria} must pass before anything
     # generates tests from it or records a closure against its digest. {#call}
     # renders the scenarios into a question, asks through the injected
     # `ask_human`-shaped duck ({#ask} returns a {Lain::Promise} without awaiting,
@@ -22,7 +22,7 @@ module Lain
     #
     # An approval is remembered by the criteria's {Criteria#digest}, so
     # {#approved?}/{#ensure_approved!} are the small guard a downstream calls
-    # before consuming a digest (G3's generation, P2's closure records). Because
+    # before consuming a digest (test generation, closure records). Because
     # the digest addresses the criteria's CONTENT, one edited clause is a
     # different digest -- an approval of the old text does not carry to the new,
     # and {#ensure_approved!} refuses loudly, naming the un-approved digest. The

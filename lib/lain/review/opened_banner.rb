@@ -6,7 +6,7 @@ module Lain
     # read it, and the two gestures that reach it. ONE object because the
     # banner was duplicated byte-for-byte between {CLI::Command::Survey} and
     # {CLI::Command::Review} until it drifted from the protocol without
-    # anything failing (F4) -- two files carrying one instruction string about
+    # anything failing -- two files carrying one instruction string about
     # two different surfaces is exactly how it drifted, and it is the same
     # failure shape each command's own class doc already names for the
     # HEADLINE half of this sentence ("so the two surfaces cannot describe

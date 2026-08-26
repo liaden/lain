@@ -160,9 +160,9 @@ RSpec.describe "runtime/49_diagnostics.lua", :nvim, :seam do
 
   def lua(source, args = []) = @editor.exec_lua(source, args)
 
-  # A review buffer as T15 leaves one: real lines, and STAMPED. The stamp is
-  # what says this buffer is still under review; T15 withdraws it when the human
-  # moves on, and this module has to honour that.
+  # A review buffer as the diff mode leaves one: real lines, and STAMPED. The
+  # stamp is what says this buffer is still under review; the diff mode
+  # withdraws it when the human moves on, and this module has to honour that.
   def review_buffer(lines: (1..8).map { |i| "line #{i}" }, side: "new")
     lua(<<~LUA, [lines, side])
       local content, side = ...
@@ -437,9 +437,9 @@ RSpec.describe "runtime/49_diagnostics.lua", :nvim, :seam do
   end
 
   describe "honouring T15's stamp" do
-    # T15 withdraws `b:lain_review_side` when the human moves on, and the new
-    # side is a real file buffer that outlives the review. Diagnostics left on
-    # it would be a review of a file nobody is reviewing.
+    # The diff mode withdraws `b:lain_review_side` when the human moves on, and
+    # the new side is a real file buffer that outlives the review. Diagnostics
+    # left on it would be a review of a file nobody is reviewing.
     it "clears and forgets a buffer whose review stamp has been withdrawn" do
       buf = review_buffer
       place(buf, [entry(anchor(buf, 1))])
@@ -461,11 +461,11 @@ RSpec.describe "runtime/49_diagnostics.lua", :nvim, :seam do
     end
   end
 
-  # The set/refresh asymmetry, applied to the MARK rather than to T15's stamp.
-  # A `set` is Ruby naming a mark it believes in, so an unresolvable one is a
-  # slip and is refused (see "refusals" above). A refresh is speculative, and
-  # T16 owns annotation removal -- so a mark that has gone since the render is a
-  # note somebody withdrew.
+  # The set/refresh asymmetry, applied to the MARK rather than to the review
+  # stamp. A `set` is Ruby naming a mark it believes in, so an unresolvable one
+  # is a slip and is refused (see "refusals" above). A refresh is speculative,
+  # and annotation removal is a supported gesture -- so a mark that has gone
+  # since the render is a note somebody withdrew.
   #
   # Raising there is not merely strict, it is silently catastrophic: nvim
   # SWALLOWS an error thrown from an autocmd callback, so the buffer stays
@@ -574,7 +574,7 @@ RSpec.describe "runtime/49_diagnostics.lua", :nvim, :seam do
   end
 
   describe "the per-buffer registry" do
-    # octo's own defect, named in T18's card: a registry keyed by bufnr that
+    # octo's own defect: a registry keyed by bufnr that
     # nothing ever cleans grows for the life of the session.
     it "drops a buffer's entries when the buffer unloads" do
       buf = review_buffer

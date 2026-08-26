@@ -2,7 +2,7 @@
 
 require "stringio"
 
-# PC-7: eager unit summaries on their own fibers. {Oracle::Eager} holds tool-result
+# Eager unit summaries on their own fibers. {Oracle::Eager} holds tool-result
 # summaries keyed by the result's SOURCE DIGEST (an immutable source can never go
 # stale) and fires each on its own transient task, so a slow local oracle never
 # blocks the turn that produced the source. {Effect::Handler::Summarizing} is the
@@ -246,7 +246,7 @@ RSpec.describe Lain::Oracle::Eager do
       expect(eager.held(digest)).to be_nil
     end
 
-    # T4: the decorator holds no size policy any more, so a SMALL result is
+    # The decorator holds no size policy any more, so a SMALL result is
     # offered to the oracle instead of being skipped -- that offer is the only
     # way a declared, free summarizer ever sees an ordinary tool result. The
     # byte rule itself did not disappear; it moved down to
@@ -380,7 +380,7 @@ RSpec.describe Lain::Oracle::Eager do
 
     # SystemStackError descends straight from Exception, so it is neither of the
     # two the rescue above names. A user `suitable?` that recurses without bound
-    # raises it, and since T4 every tool result runs those predicates -- so the
+    # raises it, and every tool result now runs those predicates -- so the
     # task boundary has to cover this one too, or an ordinary `bash` result can
     # kill the turn that produced it.
     it "contains a fire that overflows the stack, holding nothing and killing no turn" do

@@ -8,9 +8,9 @@ module Lain
     #
     # The ruling is only trustworthy if something checks it, and this is that
     # something. It is also the record's READER: nothing reads a `compaction`
-    # record back today (Grounding F7), and a write-only trace is this
-    # subsystem's default failure mode -- a field nobody consumes drifts from
-    # what it claims to mean without a single spec going red.
+    # record back today, and a write-only trace is this subsystem's default
+    # failure mode -- a field nobody consumes drifts from what it claims to mean
+    # without a single spec going red.
     #
     # == It re-derives; it does not replay
     #
@@ -81,12 +81,12 @@ module Lain
     #
     # Which means the auditor's own configuration can produce a disagreement,
     # and a guard that cries "derivation bug" at its own misconfiguration is a
-    # guard that gets muted -- F7's write-only trace with extra steps. So the
+    # guard that gets muted -- the write-only trace above with extra steps. So the
     # re-derivation is asked for ITS OWN edge ({Derivation} takes any `#<<` duck
     # as `journal:`) and the two edges are compared before any verdict is
     # reached.
     #
-    # T9 has since added `keep_last` to the record. This reader still prefers
+    # The record has since gained a `keep_last` field. This reader still prefers
     # its parameter and ignores that field; switching the precedence -- record
     # first, parameter as the fallback for older journals -- is a filed
     # follow-up. The comparison stays either way, and this is why: the field

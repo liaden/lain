@@ -3,7 +3,7 @@
 module Lain
   module Frontend
     class Neovim
-      # The C-g compose round trip (T15): the draft at the terminal prompt opens
+      # The C-g compose round trip: the draft at the terminal prompt opens
       # in the editor as lain://compose, and `:w` there hands the edited text
       # back to the prompt for the human to review and submit themselves.
       #
@@ -116,7 +116,7 @@ module Lain
         #   {RunClock::MONOTONIC} by default, the same seam {Middleware::Timeout}
         #   and {CLI::Shutdown} take. Injectable so a spec can expire a 300s
         #   bound without waiting 300 seconds, which is the only way an example
-        #   can tell that the bound is anchored at all (T33)
+        #   can tell that the bound is anchored at all
         def initialize(rpc: Detached, notify: SILENT, timeout: GRACE, clock: RunClock::MONOTONIC)
           @rpc = rpc
           @notify = notify
@@ -146,7 +146,7 @@ module Lain
         # editor through a non-blocking post and returns immediately.
         #
         # @param draft [String] every line typed so far, joined with "\n", with
-        #   continuation backslashes still present (the T14 seam's contract)
+        #   continuation backslashes still present ({Frontend::LineEditor}'s contract)
         # @return [String, nil] the marker for the prompt to hold while the
         #   editor has it, or nil (prompt untouched) when nothing took it
         def open(draft)
@@ -260,10 +260,10 @@ module Lain
         end
 
         # The prompt hands {#open} the RAW buffer, continuation backslashes
-        # still present, but hands {#settle} the JOINED text -- T14's `#read`
-        # strips them on the way out. Joining once here is what keeps the draft
-        # we post, the draft we compare and the draft we keep for recovery all
-        # one string.
+        # still present, but hands {#settle} the JOINED text -- the line
+        # editor's `#read` strips them on the way out. Joining once here is what
+        # keeps the draft we post, the draft we compare and the draft we keep
+        # for recovery all one string.
         def joined(draft) = draft.gsub(Frontend::LineEditor::CONTINUED_LINE, "\n")
 
         # An empty draft is ONE empty line, not no lines. `"".split("\n", -1)`

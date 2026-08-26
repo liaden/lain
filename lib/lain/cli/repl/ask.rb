@@ -78,7 +78,7 @@ module Lain
           nil
         end
 
-        # B5 (panel amendment): catch_up FIRST -- a raise can land AFTER commits
+        # A panel amendment: catch_up FIRST -- a raise can land AFTER commits
         # (the ask tore mid-loop), so the committed turns are journaled before
         # the stop is recorded, and interrupted then names the true last commit.
         def record_interruption(reason)
@@ -89,7 +89,7 @@ module Lain
         # This is the catch-all frame, so it is the only place that can tell the
         # record WHICH failure tore the ask -- and the one distinction the record
         # owed a reader is whether the MODEL went quiet or the HARNESS stopped
-        # (round 6's F26, which was untriageable from the file because both
+        # (a round-6 finding: it was untriageable from the file because both
         # landed as the same bare run_interrupted).
         def reason_for(error) = stalled?(error) ? :stalled_stream : :torn
 

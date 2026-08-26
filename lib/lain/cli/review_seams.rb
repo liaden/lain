@@ -25,9 +25,9 @@ module Lain
     # {Review::Surface::Null} is {Tools::RequestReview::Implementation::Seams}'
     # job, which is the one place that decision is made.
     module ReviewSeams
-      # No editor to draw a changeset in, and so no rail to answer its writes on
-      # (T31a). {HumanReplies::NoEditor}'s fourth sibling, and a fourth object
-      # for the same reason the third is one: a headless chat, a `--nvim` chat
+      # No editor to draw a changeset in, and so no rail to answer its writes
+      # on. {HumanReplies::NoEditor}'s fourth sibling, and a fourth object for
+      # the same reason the third is one: a headless chat, a `--nvim` chat
       # before its frontend exists, and a chat whose editor died are all this,
       # and none of them is "no review is open".
       #

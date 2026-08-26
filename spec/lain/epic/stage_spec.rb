@@ -108,7 +108,6 @@ RSpec.describe Lain::Epic::Stage do
     end
   end
 
-  # AC3
   describe "deferral never crosses a stage boundary within an epic" do
     it "raises naming the epic and the undrained earlier stage" do
       park(epic_slug: "alpha", stage: "research")
@@ -151,7 +150,6 @@ RSpec.describe Lain::Epic::Stage do
     end
   end
 
-  # AC4
   describe "epics do not block each other's boundaries" do
     it "opens beta's epic_plan gate while alpha's research partition is still parked" do
       park(epic_slug: "alpha", stage: "research")

@@ -219,12 +219,12 @@ RSpec.describe Lain::Review::Anchor do
     end
   end
 
-  # T5 independently declared Review::SIDES as Strings (the journal is the
-  # durable artifact and every record stores Strings); Anchor's own domain is
-  # Symbols. Two literals that happen to agree today is exactly the trap: this
-  # pin is what would have caught T1's `%i[old new]` and T5's `%w[old new]`
-  # drifting apart, and it only holds because Anchor derives from
-  # Review::SIDES rather than declaring its own list.
+  # The membership list `Review::SIDES` was independently declared as Strings
+  # (the journal is the durable artifact and every record stores Strings), while
+  # Anchor's own domain is Symbols. Two literals that happen to agree today is
+  # exactly the trap: this pin is what would have caught Anchor's `%i[old new]`
+  # and Review's `%w[old new]` drifting apart, and it only holds because Anchor
+  # derives from `Review::SIDES` rather than declaring its own list.
   describe "SIDES" do
     it "agrees with Lain::Review::SIDES, the one place membership is decided" do
       expect(described_class::SIDES.map(&:to_s)).to eq(Lain::Review::SIDES)

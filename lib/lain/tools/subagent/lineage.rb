@@ -16,7 +16,7 @@ module Lain
         # within a dispatch and nobody folds it.
         #
         # `observer` is the outward slot on the same funnel -- how a session
-        # scribe (T13) sees every event this writer puts, attached as one line
+        # scribe sees every event this writer puts, attached as one line
         # at the call site. A further observer must COMPOSE with the @log
         # append (as this constructor composes `observer`), never substitute
         # for it, or @log's mailbox fold silently stops.
@@ -60,14 +60,14 @@ module Lain
         # final turn F, so the provenance walk reaches both the intent and the
         # answer.
         #
-        # The JOIN to the parent is at CORRELATION grain (T19 panel ruling):
+        # The JOIN to the parent is at CORRELATION grain (a panel ruling):
         # `message.to == parent.correlation` -- the parent chain's root digest
         # -- NOT the parent's rendered tool_result turn, which keeps
         # causal_parents [] because ToolRunner and Timeline#commit (gate 2's
         # guts) stay out of this seam. A provenance walk therefore enters at
         # the correlation, finds this :message, and descends `causal_parents`
         # to the :spawn and F. Edge-grain linkage (the rendered turn naming F
-        # directly) is recorded in the plan for the M5 tail, deliberately not
+        # directly) is recorded in the plan for later work, deliberately not
         # built here.
         def message(parent, spawn, child, response)
           final = child.head_digest
@@ -86,7 +86,7 @@ module Lain
         # `lifecycle` ("settled"/"stopped", or "launched" on a :spawn) is the
         # body-level discriminator a reader keys on WITHOUT parsing prose --
         # events are content-addressed, so this marker had to land before
-        # recorded journals existed, not after (W3 review fix 4). Its absence
+        # recorded journals existed, not after. Its absence
         # is meaningful: a tell is conversation, not a transition.
         def note(parent, from:, to:, text:, causal_parents:, lifecycle: nil)
           body = { "text" => text }

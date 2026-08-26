@@ -58,11 +58,11 @@ RSpec.describe Lain::Provider::Anthropic do
     end
   end
 
-  # T17w fix round: Backend now hands live chat traffic to this transport
-  # under --journal, where it used to be the SDK client -- so its effective
-  # request envelope must match the SDK's, not the vendored HTTP stack's own
-  # (ruby_llm-derived) generic defaults, or --journal silently trades away
-  # timeout/retry budget nobody asked to trade.
+  # Backend now hands live chat traffic to this transport under --journal,
+  # where it used to be the SDK client -- so its effective request envelope
+  # must match the SDK's, not the vendored HTTP stack's own (ruby_llm-derived)
+  # generic defaults, or --journal silently trades away timeout/retry budget
+  # nobody asked to trade.
   describe "the default request envelope" do
     it "mirrors the SDK's own timeout and retry budget, not HTTP::Configuration's generic defaults" do
       config = described_class.new(api_key: "sk-test").instance_variable_get(:@config)
@@ -127,7 +127,7 @@ RSpec.describe Lain::Provider::Anthropic do
     end
   end
 
-  # CE-5: the transient first-token scheduling signal (cache-economics.md).
+  # The transient first-token scheduling signal (cache-economics.md).
   describe "#complete stream_started" do
     let(:channel) { RecordingChannel.new }
     let(:canned) { Lain::Response.new(stop_reason: :end_turn, content: [{ "type" => "text", "text" => "hi" }]) }
@@ -291,7 +291,7 @@ RSpec.describe Lain::Provider::Anthropic do
     end
   end
 
-  # RES1: a streamed error must be classified by the REAL HTTP status --
+  # A streamed error must be classified by the REAL HTTP status --
   # already known from the response headers, before any body byte streams in
   # (see FaradayHandlers#v2_on_data) -- exactly as the sync path is. Left
   # unfixed, `parse_streaming_error`'s body-shape guess (500, or 529 for

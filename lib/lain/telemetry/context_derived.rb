@@ -57,7 +57,7 @@ module Lain
     #   `:empty`    -- the request was vacuous; `keep_last` covered the whole
     #     history, so nothing was ever droppable.
     #   `:declined` -- {Compaction::Boundary} found no legal cut but 0. Under
-    #     the cut rule T4 shipped this is nearly unreachable, and through a
+    #     the shipped cut rule this is nearly unreachable, and through a
     #     DERIVATION it is unreachable outright: every declining shape carries
     #     either a `tool_use` at index 0 or one message holding both a
     #     `tool_result` and a `tool_use`, and {Context::Conversation} refuses
@@ -124,11 +124,12 @@ module Lain
       private
 
       # An anonymous class renders as `#<Class:0x00007f...>`, and that address
-      # is fresh in every process. T8 replays these records by strategy name, so
-      # an address would read as drift on the next run -- and would leak a heap
-      # address into the experiment record for nothing. Anonymous strategies are
-      # unauditable by name anyway (spec doubles, mostly), so they collapse to
-      # one honest token rather than to a lie that looks specific.
+      # is fresh in every process. {Compaction::DerivationAudit} replays these
+      # records by strategy name, so an address would read as drift on the next
+      # run -- and would leak a heap address into the experiment record for
+      # nothing. Anonymous strategies are unauditable by name anyway (spec
+      # doubles, mostly), so they collapse to one honest token rather than to a
+      # lie that looks specific.
       def named(strategy)
         name = strategy.to_s
 

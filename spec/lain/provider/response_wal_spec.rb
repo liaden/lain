@@ -166,13 +166,13 @@ RSpec.describe Lain::Provider::ResponseWal do
     end
   end
 
-  # T17w blocker: the main Agent and every parallel subagent share ONE spool,
-  # and subagents fan out as sibling async fibers that yield on socket IO
-  # BETWEEN writes. Two frames streaming to one file would interleave at record
-  # granularity -- exactly the "bytes trail a terminator record" corruption the
-  # Reader refuses, which would make a crashed parallel-subagent session
-  # unresumable. Only one frame streams; every other fiber's frame buffers and
-  # lands atomically, so no records ever interleave.
+  # The main Agent and every parallel subagent share ONE spool, and subagents
+  # fan out as sibling async fibers that yield on socket IO BETWEEN writes. Two
+  # frames streaming to one file would interleave at record granularity --
+  # exactly the "bytes trail a terminator record" corruption the Reader refuses,
+  # which would make a crashed parallel-subagent session unresumable. Only one
+  # frame streams; every other fiber's frame buffers and lands atomically, so no
+  # records ever interleave.
   describe "concurrent frames from different fibers" do
     # Steps two fibers through open/append/close the way the async scheduler
     # would -- yielding between every write, so the OLD single-shared-writer path

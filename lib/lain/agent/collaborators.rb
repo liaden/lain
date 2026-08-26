@@ -33,7 +33,7 @@ module Lain
       # is not injected. Read two ways: the vocabulary {#refuse_unknown} polices,
       # and the clash table {#refuse_double_wiring} consults. Four of these
       # keywords -- `model_middleware`, `tool_middleware`, `tool_observer`,
-      # `journal` -- are {Instrumentation} members too (T22), so their DEFAULTS
+      # `journal` -- are {Instrumentation} members too, so their DEFAULTS
       # come from that value now rather than from this file; they stay named here
       # because the clash rule is keyed on what a caller actually wrote.
       INGREDIENTS = { model_caller: %i[provider model_middleware],
@@ -70,8 +70,8 @@ module Lain
       # @param instrumentation [Instrumentation] where a default-built
       #   collaborator reports: the model and tool phases, the tool observer, and
       #   the journal an {Accounting} rolls up into. Defaults to the all-Null
-      #   value, so a caller resolving collaborators alone gets what this class
-      #   hard-coded before T22.
+      #   value, so a caller resolving collaborators alone gets the same no-op
+      #   wiring this class used to hard-code.
       # @param model_caller [ModelCaller] the run's ModelCaller, handed over
       #   whole. Left at {OMITTED} when the caller instead supplies
       #   `provider:`/`model_middleware:` for this class to build one from.

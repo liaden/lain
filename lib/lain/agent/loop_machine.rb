@@ -57,7 +57,7 @@ module Lain
         event(:refusal) { transition awaiting_model: :failed }
         event(:unknown) { transition awaiting_model: :failed }
 
-        # The dual-ledger outer loop's stall->replan pair (B11). Purely ADDITIVE:
+        # The dual-ledger outer loop's stall->replan pair. Purely ADDITIVE:
         # both move to or from the new `:stalled` state, so no move that was
         # legal before becomes illegal, and neither lands in `:failed` (so the
         # FAILURE_REASONS totality is untouched). `stall` parks the loop when

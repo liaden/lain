@@ -34,7 +34,7 @@ module Lain
       # @param cache_profile [Lain::CacheProfile] defaults to NO_CACHING --
       #   never Anthropic's numbers by accident, since a spec that forgot to
       #   inject one should see an honest "nothing caches", not a silently
-      #   warm cache. A scheduler spec (CAC-3/4) that wants warm-cache
+      #   warm cache. A scheduler spec that wants warm-cache
       #   behavior injects {CacheProfile::ANTHROPIC} explicitly.
       def initialize(responses: [], capabilities: CAPABILITIES.dup, channel: Channel::Null.instance,
                      cache_profile: CacheProfile::NO_CACHING)
@@ -50,7 +50,7 @@ module Lain
         request.cache_payload
       end
 
-      # `on_stream_started` is CE-5's first-token signal (see
+      # `on_stream_started` is the first-token signal (see
       # {StreamStartedSignal}). Mock fires it under the SAME two conditions the
       # live backends do -- an observer is wired AND `request.stream` is set --
       # so a fan-out driven through Mock exercises {Tools::Subagent::Stagger}'s

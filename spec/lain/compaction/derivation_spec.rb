@@ -13,8 +13,8 @@ module DerivationFixtures
   # `user` on even indices, which is both the shape a well-formed conversation
   # has and the one {Lain::Compaction::Boundary}'s backward search reads.
   # `roles:` cycles a different pattern -- `%w[user]` is the all-user history
-  # that makes the boundary decline, and T1 ruled that shape ordinary
-  # production output rather than exotic.
+  # that makes the boundary decline, and that shape is ordinary production
+  # output rather than exotic.
   def history(size, store: Lain::Store.new, roles: %w[user assistant])
     (0...size).inject(Lain::Timeline.empty(store:)) do |timeline, index|
       timeline.commit(role: roles[index % roles.size], content: [text("turn #{index}")])
@@ -23,7 +23,7 @@ module DerivationFixtures
 
   # A tool round in the middle of an ordinary history: the `tool_use` at index 1
   # is answered by the `tool_result` at index 2, which is what makes a range
-  # that collapses only index 1 an orphan-producing cut (Grounding F2).
+  # that collapses only index 1 an orphan-producing cut.
   def tool_history(store: Lain::Store.new)
     blocks = [[text("ask")], [tool_use(0)], [tool_result(0)]] +
              Array.new(5) { |index| [text("after #{index}")] }
@@ -32,7 +32,7 @@ module DerivationFixtures
     end
   end
 
-  # T4's declining shape: the message at index 2 carries a `tool_result` for the
+  # The declining shape: the message at index 2 carries a `tool_result` for the
   # `tool_use` before it AND a `tool_use` answered by the one after it, so the
   # naive cut and the single move off it both split a pair. Nothing in `lib/`
   # emits this -- `Agent#perform_tools` commits one user message per assistant
@@ -60,7 +60,7 @@ module DerivationFixtures
   # The strategy doubles below deliberately declare NO algebra.
   # {Lain::Algebra.registry} is process-wide and spec/algebra_laws_spec.rb
   # asserts that every declaration has a generator and every generator a
-  # declaration (D5), so an anonymous class declaring against the global
+  # declaration, so an anonymous class declaring against the global
   # registry goes red in that file rather than in this one.
 
   # Collapses the whole span it is offered, into one block naming how many
@@ -163,7 +163,7 @@ RSpec.describe Lain::Compaction::Derivation do
     # The VALUE is pinned, not merely its constancy: `uniq.size == 1` stays
     # green for an implementation that writes a constant WRONG chain (always
     # length 1, say). 21 events is `keep_last` plus the replacement -- this
-    # history splits no tool pair, so T4's boundary cuts at the naive split and
+    # history splits no tool pair, so the boundary cuts at the naive split and
     # retains nothing extra; 22 objects is those 21 envelopes plus the
     # replacement's payload, every retained payload being already in the store
     # since role and content are unchanged and `meta` is empty on both sides, so
@@ -184,7 +184,7 @@ RSpec.describe Lain::Compaction::Derivation do
       expect(measured).to eq([[21, 22], [21, 22], [21, 22]])
     end
 
-    # T17. The caller on the render path has already walked this chain and
+    # The caller on the render path has already walked this chain and
     # projected it -- that is how it decided a compaction was warranted at all
     # -- so walking it a second time here reads the whole Store again for a
     # projection byte-identical to the one it was holding. Handed the walk, this
@@ -213,7 +213,7 @@ RSpec.describe Lain::Compaction::Derivation do
         expect(threaded.head_digest).to eq(derivation.derive(source).head_digest)
       end
 
-      # T17 review fix 6. `walk: Walk.of(source)` as a DEFAULT ARGUMENT is
+      # Review fix. `walk: Walk.of(source)` as a DEFAULT ARGUMENT is
       # evaluated before the method body, so the refusal below it charged a full
       # walk of the chain for a call that was never going to derive anything.
       it "refuses a foreign store before paying for a walk" do
@@ -229,7 +229,7 @@ RSpec.describe Lain::Compaction::Derivation do
       end
     end
 
-    # T17 review fix 5. The docstring claims turns and messages are
+    # Review fix. The docstring claims turns and messages are
     # index-aligned and that the value is safe to hand to shareable code; both
     # are the OBJECT's to guarantee, not its one careful constructor's.
     describe Lain::Compaction::Derivation::Walk do
@@ -290,10 +290,10 @@ RSpec.describe Lain::Compaction::Derivation do
     # an object, so a chain committed before its projection was judged is dead
     # weight in the session's own Store forever. A deterministic strategy leaks
     # a bounded amount (content addressing dedupes the identical retry), but a
-    # model-backed one answers differently every turn, and T9 puts this on the
-    # render path -- one buggy `Strategy::Summarizing` would then grow the store
-    # by a fresh dead chain per compacting turn with nothing but an exception to
-    # show for it.
+    # model-backed one answers differently every turn, and this object is bound
+    # for the render path -- one buggy `Strategy::Summarizing` would then grow
+    # the store by a fresh dead chain per compacting turn with nothing but an
+    # exception to show for it.
     it "writes nothing to the store when it refuses the chain" do
       store = Lain::Store.new
       source = fixtures.history(9, store:)
@@ -359,8 +359,8 @@ RSpec.describe Lain::Compaction::Derivation do
     # A derivation that collapsed nothing has three causes and they are NOT
     # interchangeable: the request was vacuous, no valid cut existed, or the
     # strategy was offered a span and declined it. All three journal `spans:
-    # []`, so without the cause on the record T8 cannot tell them apart -- an
-    # audit can only audit what was written.
+    # []`, so without the cause on the record an auditor cannot tell them
+    # apart -- an audit can only audit what was written.
     describe "the cause of a derivation that collapses nothing" do
       def cut_for(source, strategy:, keep_last: 3)
         journal = []
@@ -377,7 +377,7 @@ RSpec.describe Lain::Compaction::Derivation do
 
       # FINDING, recorded rather than papered over. This example used to build
       # its decline from an all-`user` history, which declined only under the
-      # role-landing rule T4 retired. Rebuilt on T4's own shape -- a message
+      # role-landing rule since retired. Rebuilt on the entangled shape -- a message
       # carrying a `tool_result` for the previous turn AND a `tool_use` answered
       # by the next, which declines because both the naive cut and the one move
       # off it split a pair -- it no longer reaches a record at all, because
@@ -403,7 +403,7 @@ RSpec.describe Lain::Compaction::Derivation do
       # So `cut: :declined` is UNREACHABLE end to end for a source this object
       # would accept, and the two guards agree: the shape the boundary cannot
       # cut is the shape the validator will not send. The vocabulary stays,
-      # because `Boundary` can still answer `declined?` and T8 must handle a
+      # because `Boundary` can still answer `declined?` and a reader must handle a
       # record carrying it -- an older journal has them, and a future cut rule
       # may reach it again.
       it "cannot reach a declined cut, because every declining shape is one the validator refuses" do
@@ -443,13 +443,13 @@ RSpec.describe Lain::Compaction::Derivation do
 
   # CHARACTERIZATION of inherited behaviour -- no red step, because nothing here
   # is new: these examples measure what the shipped object already does with the
-  # shape follow-up 14 is about, and they exist so T9 wires the derived path in
-  # knowing the answer.
+  # shape follow-up 14 is about, and they exist so whoever wires the derived
+  # path in does it knowing the answer.
   #
-  # T4 pinned a defect on `Context::Compact`'s path: a pin inside the span can
+  # A known defect on `Context::Compact`'s path: a pin inside the span can
   # strand a `tool_result` whose `tool_use` it retains, and the render is a 400
   # with pins on and clean with pins off. The derivation reaches the same shape
-  # by a different road -- this object never consults pins, but T3's seam makes a
+  # by a different road -- this object never consults pins, but the pin seam makes a
   # pin a CUT POINT, so a pin-aware strategy answers N ranges with the pinned
   # turn retained between them, and the counterpart inside a collapsed range is
   # stranded exactly as it is under Compact.
@@ -515,13 +515,13 @@ RSpec.describe Lain::Compaction::Derivation do
       expect(described_class.public_instance_methods(false)).to contain_exactly(:derive)
     end
 
-    # A CHARACTERIZATION example: it is here to be READ, and it pins a negative
-    # (Grounding F8). Derivation is not a functor on the prefix order -- a
-    # source timeline being a prefix of another says nothing about their derived
-    # chains -- because `render_parent` is folded into the digest (`event.rb:100`)
-    # and the `keep_last` window slides, so every event of the later chain is
-    # re-addressed. That is Grounding F5 restated: the failure of structural
-    # sharing IS the failure of functoriality.
+    # A CHARACTERIZATION example: it is here to be READ, and it pins a negative.
+    # Derivation is not a functor on the prefix order -- a source timeline being
+    # a prefix of another says nothing about their derived chains -- because
+    # `render_parent` is folded into the digest (`event.rb:100`) and the
+    # `keep_last` window slides, so every event of the later chain is
+    # re-addressed. Put another way, the failure of structural sharing IS the
+    # failure of functoriality.
     #
     # If this ever goes red because derivation became prefix-preserving, that is
     # a real result and needs confirming -- but the far likelier cause is

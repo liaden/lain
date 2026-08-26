@@ -96,10 +96,10 @@ RSpec.describe Lain::Project::Consent do
   # Nothing here hands `detected_by:` to a `Project` constructor any more, and
   # that was a defect rather than a shortcut. Every fixture used to pass
   # `cwd: root` alongside a hand-written `detected_by: :flag` -- which happens
-  # to be exactly what T6's `--cwd` default produces, so ACs 2 and 3 were right
-  # by COINCIDENCE rather than by construction. A fixture that supplies the
-  # rung it means to test cannot test it; the resolver has to be the one that
-  # says `:flag`.
+  # to be exactly what the resolver's `--cwd` default produces, so those
+  # examples were right by COINCIDENCE rather than by construction. A fixture
+  # that supplies the rung it means to test cannot test it; the resolver has to
+  # be the one that says `:flag`.
   def flagged_project(root, paths:, home: @home, cwd: nil)
     Lain::Project::Resolver.new(home:, paths:).call(root:, cwd: cwd || root).project
   end
@@ -188,9 +188,9 @@ RSpec.describe Lain::Project::Consent do
       end
     end
 
-    # T6 landed, so there IS a flag to name. `--root` ALONE, because
-    # `exe/lain`'s `project_override` defaults `--cwd` to the root -- the
-    # remedy must be the command the binary actually needs, not the longer one.
+    # There IS a flag to name. `--root` ALONE, because `exe/lain`'s
+    # `project_override` defaults `--cwd` to the root -- the remedy must be the
+    # command the binary actually needs, not the longer one.
     it "names the remedy, as one flag over this root" do
       with_root do |root, paths|
         write_config(root, allows_bash)
@@ -229,13 +229,13 @@ RSpec.describe Lain::Project::Consent do
     end
   end
 
-  # T6's flag, driven through the REAL resolver on the exact call `exe/lain`'s
-  # `resolved_project` makes. These three examples exist because the fixtures
-  # below used to ASSERT the rung they meant to test: they passed
+  # The `--root` flag, driven through the REAL resolver on the exact call
+  # `exe/lain`'s `resolved_project` makes. These three examples exist because
+  # the fixtures below used to ASSERT the rung they meant to test: they passed
   # `detected_by: :flag` to a `Project` constructor and `cwd: root` beside it,
-  # which is what T6 later made the default -- so ACs 2 and 3 were right by
-  # coincidence. Now the resolver has to say `:flag`, and the coincidence is an
-  # assertion.
+  # which is what the resolver later made the default -- so those examples were
+  # right by coincidence. Now the resolver has to say `:flag`, and the
+  # coincidence is an assertion.
   describe "the rung a flag actually produces" do
     it "answers :flag for a named root, which is what consent reads" do
       with_root do |root, paths|
@@ -344,7 +344,7 @@ RSpec.describe Lain::Project::Consent do
       end
     end
 
-    # N5: the keying claim, which no example made until this one -- every other
+    # The keying claim, which no example made until this one -- every other
     # project here has `cwd == root`, so reading the mark off the CWD would
     # have been indistinguishable from reading it off the root.
     it "keys on the root, so a session started in a subdirectory inherits the decision" do
@@ -359,7 +359,7 @@ RSpec.describe Lain::Project::Consent do
     end
   end
 
-  # S1: a `--root` is an intent about THIS session. It must not become a
+  # A `--root` is an intent about THIS session. It must not become a
   # standing decision about a repository that has nothing to grant yet, because
   # a consented root is silent by design -- so the table added later would be
   # honoured with nobody asked and no line printed.
@@ -397,7 +397,7 @@ RSpec.describe Lain::Project::Consent do
     end
   end
 
-  # S2/S3: presence is not the test, and the key is not a filename. Each of
+  # Presence is not the test, and the key is not a filename. Each of
   # these EXISTS at the mark's path and none of them is a grant.
   describe "a mark that is not one" do
     def prepare(root, paths)
@@ -491,7 +491,7 @@ RSpec.describe Lain::Project::Consent do
       end
     end
 
-    # S4: a closed stream is the ORDINARY headless shape, and the escalation
+    # A closed stream is the ORDINARY headless shape, and the escalation
     # trigger says an unsurfaceable prompt answers "not consented". It must not
     # be able to answer "crash" instead.
     it "refuses, and does not take the chat down, when the confirmer itself raises" do
@@ -587,7 +587,7 @@ RSpec.describe Lain::Project::Consent do
     end
   end
 
-  # MA-1 (`approval/rule.rb`): the hazard consent must not open. A per-root yes
+  # The hazard consent must not open (see `approval/rule.rb`). A per-root yes
   # is only safe while what it turns on matches WHOLE call shapes, so these are
   # the examples that would catch a wiring which widened the match.
   describe "what a consented root does NOT grant" do
@@ -688,7 +688,7 @@ RSpec.describe Lain::Project::Consent do
     # rung 2 first ({Resolver::Declarations#declared_root}, looking for `root =`),
     # so an unparseable config refuses THERE -- upstream of consent, rendered by
     # `exe/lain` as one line. Consent is total either way; it is simply not the
-    # only thing that opens that file, and AC 8's "does not prevent launch"
+    # only thing that opens that file, and the "does not prevent launch" claim
     # holds for a malformed `[approval]` TABLE rather than for unparseable TOML.
     it "is refused by the resolver, not by consent, when a WALKED project's config will not parse" do
       with_root do |root, paths|

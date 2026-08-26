@@ -35,7 +35,7 @@ module Lain
     # diff's shape: {Source::LocalBranch#diff} is `git diff <base> <head>`, and git
     # emits a combined diff (`@@@ -1,8 -1,8 +1,8 @@@`, two old sides, which {Hunk}'s
     # single `(old_start, old_count)` cannot represent) only for a commit against
-    # its own parents. T3 already closed the other half of the same gap, by
+    # its own parents. The other half of the same gap is already closed, by
     # passing `--diff-merges=first-parent` so a file changed only by a hand
     # resolution reaches some commit's numstat. There is a spec for both.
     class Changeset

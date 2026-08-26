@@ -72,7 +72,7 @@ module Lain
         # from the same body by the same parser and there is nothing to add. The
         # status is the response's real one -- never the severity guess
         # {Streaming::ErrorHandling#parse_streaming_error} would make, which is
-        # what relabeled a genuine 400 as a retryable 500 on Anthropic (RES1).
+        # what relabeled a genuine 400 as a retryable 500 on Anthropic.
         def supersedes?(response)
           return false if @body.nil?
           return false unless response.respond_to?(:status) && response.respond_to?(:body)

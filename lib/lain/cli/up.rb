@@ -7,7 +7,7 @@ module Lain
     # `lain up`: create (idempotently) or attach to the "lain" tmux session,
     # and give it the session-scoped HUD planning/interface-integration.md §
     # "One state feed, three renderers" designs -- status-right/status-interval
-    # reading I1's published state file via jq, `monitor-bell` on the spawned
+    # reading the published state file via jq, `monitor-bell` on the spawned
     # chat window. Session-scoped, never global (`set-option -t SESSION`,
     # never `-g`): tmux's own inheritance rule (session beats global) is what
     # keeps the theme plugin's globals untouched, so this needs zero
@@ -53,8 +53,8 @@ module Lain
       # reads the result -- both panes' tmux `-c`, the nvim socket's hash, and
       # the HUD's state file -- so a PATH honoured by only some of them would
       # leave a cockpit in the project the user asked for beside a status bar
-      # reading the shell's, which since F50 is a status bar with nothing to
-      # read at all rather than a stale one.
+      # reading the shell's, which since the feed moved into XDG state is a
+      # status bar with nothing to read at all rather than a stale one.
       class Workdir
         # Refused BY NAME rather than left to tmux, whose answer to `-c <file>`
         # is a pane that dies before anything reaches the screen -- and rather
@@ -149,13 +149,13 @@ module Lain
           created ? "created tmux session '#{session}'" : "reattaching to '#{session}'"
         end
 
-        # The one place a human is told where the state feed is. Before F50 the
-        # answer was `ls .lain/`; the file now sits in a directory named by
-        # twelve hex characters of a hash, which nobody can guess, and the
-        # degraded HUD line ("lain: no state yet") names no path at all. So if
-        # this is not printed there is nothing, anywhere, that answers "which
-        # file is my status bar reading" -- and a HUD stuck on that line is
-        # undiagnosable rather than merely unhelpful.
+        # The one place a human is told where the state feed is. Before the feed
+        # moved into XDG state the answer was `ls .lain/`; the file now sits in a
+        # directory named by twelve hex characters of a hash, which nobody can
+        # guess, and the degraded HUD line ("lain: no state yet") names no path
+        # at all. So if this is not printed there is nothing, anywhere, that
+        # answers "which file is my status bar reading" -- and a HUD stuck on
+        # that line is undiagnosable rather than merely unhelpful.
         def hud_line = "HUD state: #{state_path}"
 
         # Everything the exe `say`s, in print order: warnings first (a degraded
@@ -172,7 +172,7 @@ module Lain
 
       # The pane-command recipe lives in {PaneCommand} -- what a spawned pane
       # is missing is a question about shells and environments, not about tmux.
-      # Kept here as the public seam T16 F2 established, so /fork's window and
+      # Kept here as the established public seam, so /fork's window and
       # /btw's popup still share it under the name they already use.
       def self.pane_command(*argv) = PaneCommand.call(*argv)
 
@@ -646,7 +646,7 @@ module Lain
         new(chat_args:, **Flags.new(options).to_h, **Workdir.option(path))
       end
 
-      # `nvim:` is the T19 cockpit switch: nil is off (`--no-nvim`), "" is the
+      # `nvim:` is the cockpit switch: nil is off (`--no-nvim`), "" is the
       # cockpit with no explicit `--nvim-socket` (derive the plugin's
       # deterministic one), a non-empty String is that socket path used
       # verbatim. `cwd:` and `paths:` feed {Cockpit}, which owns the
@@ -657,9 +657,9 @@ module Lain
       # about the shell that typed `lain up PATH` -- the chat pane publishes it
       # from its own cwd ({StatusFeed}'s `default_path`), and both panes are
       # pinned to `@cwd` with tmux's `-c`, which is what makes the writer and
-      # this HUD name one file. They now HAVE to: since F50 the feed lives
-      # under `$XDG_STATE_HOME/lain`, keyed by `sha256(realpath(dir))[0, 12]`,
-      # so a HUD defaulted from a different directory would poll a path nothing
+      # this HUD name one file. They now HAVE to: the feed now lives under
+      # `$XDG_STATE_HOME/lain`, keyed by `sha256(realpath(dir))[0, 12]`, so a
+      # HUD defaulted from a different directory would poll a path nothing
       # writes rather than merely look stale. The realpath is what absorbs the
       # difference between the two spellings -- the PATH argument this class
       # expands, and the kernel-resolved `Dir.pwd` the pane reads. {ProjectDir}
@@ -846,7 +846,7 @@ module Lain
         keep_failed_pane
       end
 
-      # T19's degrade AC: the cockpit without an nvim binary is TODAY's single
+      # The degrade contract: the cockpit without an nvim binary is TODAY's single
       # chat pane plus a named warning -- mirroring the jq fallback's "degraded
       # is never silent" rule, and probed only on the create path (a reattaching
       # `lain up` changes nothing, so it has nothing to warn about).
@@ -891,7 +891,7 @@ module Lain
                   self.class.pane_command("chat", *@cockpit.chat_flags, *@chat_args))
       end
 
-      # T2 degrade AC: probed only on the create path (mirrors
+      # The degrade contract: probed only on the create path (mirrors
       # {#warn_unsplit_reattach}'s own create-vs-reattach split) -- a
       # reattach never rebuilds the pane commands, so it has nothing new to
       # warn about even when the shipped plugin cannot be located.

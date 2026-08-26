@@ -2,7 +2,7 @@
 
 module Lain
   module Plan
-    # PC-3's driver: the bench-style loop that runs a {Plan::Document} chunk by
+    # The plan driver: the bench-style loop that runs a {Plan::Document} chunk by
     # chunk behind ONE continuation contract, so a study can swap the execution
     # SHAPE ({ForkPerStep} vs {LinearRewrite}) without touching plan content. The
     # same built-for-the-bench posture as {Bench::Arm} and {Compaction::Scheduler}:

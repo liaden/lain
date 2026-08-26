@@ -574,13 +574,13 @@ module Lain
         # verdict will judge. The other order would need the claim to name
         # something else, and then one review would have two identities.
         #
-        # {Review::Bounds::TooLarge} joined this list with T31c, which moved the
-        # size guard onto {Review::Session#present} -- the call `tell` makes
-        # below. An implementation stage over a changeset past a ceiling is a
-        # review that could not be opened, which is precisely what these
-        # rescues mean; without it a ceiling would leave a TOOL CALL raising,
-        # and the model would meet a stack rather than a sentence naming the
-        # ceiling and the walk to take instead.
+        # {Review::Bounds::TooLarge} joined this list when the size guard moved
+        # onto {Review::Session#present} -- the call `tell` makes below. An
+        # implementation stage over a changeset past a ceiling is a review that
+        # could not be opened, which is precisely what these rescues mean;
+        # without it a ceiling would leave a TOOL CALL raising, and the model
+        # would meet a stack rather than a sentence naming the ceiling and the
+        # walk to take instead.
         def hold(input)
           return Refusals.needs_base if Blankness.blank?(input.base)
 
@@ -630,22 +630,22 @@ module Lain
           Baton.give_back(@review, token) unless told
         end
 
-        # The open review as BOTH rails see it (T31a). One object, bound once
-        # here and fanned out to the editor's answered rail by whoever holds
-        # both ({CLI::HumanReplies#bind_changeset_review}) -- so a note and a
-        # verdict cannot reach two different reviews.
+        # The open review as BOTH rails see it. One object, bound once here and
+        # fanned out to the editor's answered rail by whoever holds both
+        # ({CLI::HumanReplies#bind_changeset_review}) -- so a note and a verdict
+        # cannot reach two different reviews.
         #
         # The view comes off the seams rather than off the surface, and it has
         # to: a surface holds no review state and exposes no rendering, while a
         # gesture's row number is only resolvable by the view that STAMPED the
         # rendering it came from. The wiring passes one object to both.
         #
-        # `reviewing` is the other half of that one wiring (T32a): the view's
-        # diff surface is built with the editor and holds no round, so a `<CR>`
-        # on a sidebar row opens nothing until the changeset reaches it from
-        # whoever opened one. Sent on the same line of reasoning as the bind
-        # below -- before anything is drawn, because a row the human can see is a
-        # row they can press.
+        # `reviewing` is the other half of that one wiring: the view's diff
+        # surface is built with the editor and holds no round, so a `<CR>` on a
+        # sidebar row opens nothing until the changeset reaches it from whoever
+        # opened one. Sent on the same line of reasoning as the bind below --
+        # before anything is drawn, because a row the human can see is a row
+        # they can press.
         # The redraw carries {SCOPE}, which is the same scope {#tell} presents at
         # one line below: a gesture that changed a row has to draw the sidebar
         # again, and which grouping is on screen is the one thing that rail

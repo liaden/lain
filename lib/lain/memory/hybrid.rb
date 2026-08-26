@@ -2,13 +2,13 @@
 
 module Lain
   module Memory
-    # A Manifest::Hit-duck search index (T14) fusing two ALREADY-BUILT arms
+    # A Manifest::Hit-duck search index fusing two ALREADY-BUILT arms
     # by Reciprocal Rank Fusion (RRF) -- the fourth boosting arm over the
     # Manifest floor (references/memory-and-retrieval.md #2), and the first
     # one that combines two OTHER arms' rankings rather than scoring the
     # corpus itself.
     #
-    # @bm25 and @vector are INJECTED, not constructed: Hybrid owns fusion,
+    # `@bm25` and `@vector` are INJECTED, not constructed: Hybrid owns fusion,
     # not corpus indexing, so it depends on the two `#search`-duck
     # collaborators exactly the way Context::Recall depends on an
     # already-built index instead of building one (CLAUDE.md: "inject

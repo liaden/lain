@@ -66,9 +66,9 @@ RSpec.describe Lain::Tools::MemoryWrite do
     expect(result.is_error).to be(false)
   end
 
-  # T5 fix round, S1. The ceiling belongs on the WRITE, not only on the read: a
-  # toolset that accepts a body and then refuses it forever is the same
-  # read/write asymmetry T3's trigger exists to prevent, in a different
+  # The ceiling belongs on the WRITE, not only on the read: a toolset that
+  # accepts a body and then refuses it forever is the same read/write asymmetry
+  # `edit_file`'s partial-read refusal exists to close, in a different
   # toolset. Bounding here is also the only place the model has a genuinely
   # narrower action -- write less, or split across ids -- because it still
   # holds the bytes it is being asked to shorten.

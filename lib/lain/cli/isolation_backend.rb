@@ -115,7 +115,7 @@ module Lain
       #   a spec substitutes it
       #
       # `realpath`, not `expand_path`. This object and {Project::Resolver} both
-      # ascend for `.git`, and until T5 they ascended DIFFERENT ancestries: a
+      # ascend for `.git`, and they once ascended DIFFERENT ancestries: a
       # symlink whose lexical parent holds a repository its real parent does not
       # made the resolver answer the plain leaf and this walk answer the trap.
       # {Project::Resolver.resolved} is the resolver's own spelling of it, and

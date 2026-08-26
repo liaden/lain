@@ -161,7 +161,7 @@ module Lain
         #   the spike to "go read" something it cannot locate, and `researcher`
         #   holds no tool that would fail loudly about it. It would come back
         #   with plausible prose about nothing, which then reads as gathered
-        #   evidence. A caller must say how its artifacts render; T9's artifact
+        #   evidence. A caller must say how its artifacts render; the artifact
         #   home is what will supply the real one.
         # @param decisions [Enumerable<Hash, String>] the journal read BACK --
         #   the {Journal.records} duck -- which {Decided} folds for terminal

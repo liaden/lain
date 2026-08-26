@@ -227,7 +227,7 @@ module Lain
         end
 
         # There is a spike to read, so this one can actually be decided now. An
-        # item parked with no evidence (a researcher spawn that failed -- T7's
+        # item parked with no evidence (a researcher spawn that failed -- the
         # fail-closed path) has nothing for a human to weigh yet, so it sorts
         # behind. That is what "ready-to-review first" means here.
         def reviewable? = !item.evidence_digest.nil?

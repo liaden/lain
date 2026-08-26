@@ -19,33 +19,33 @@ module Lain
     #
     # == Why there is no longer a second, role-based correction
     #
-    # RE-RULED 2026-07-27 (orchestrator, during T4). This class shipped with a
+    # RE-RULED 2026-07-27 (orchestrator). This class shipped with a
     # second rule -- *land the retained tail on `assistant`* -- and an argument
     # that it and the tool-pair rule were one backward search. That argument
     # was sound when it was written and is now wrong, so it is recorded here
     # rather than deleted: the next reader's instinct will be to restore it.
     #
-    # It was derived while the replacement was an **assistant** message. F1's
-    # second 400 was `summary(assistant)` followed by another assistant, and
-    # landing the tail on `assistant` was the fix for THAT. T4 then fixed the
-    # replacement's role at **`user`** (Open decisions ruling), and T1
-    # separately ruled -- verified against `agent_spec.rb:407-410` -- that
-    # adjacent `user` messages are legal production shape while only adjacent
-    # `assistant` is a violation. Together those make the role rule vacuous: a
-    # `user` replacement can be followed by EITHER role (`user + assistant`
-    # alternates, `user + user` is legal), so no tail role can produce an
-    # invalid adjacency, and the rule's only remaining effect was to move cuts
-    # that never needed moving.
+    # It was derived while the replacement was an **assistant** message. The
+    # second 400 seen in the field was `summary(assistant)` followed by another
+    # assistant, and landing the tail on `assistant` was the fix for THAT. The
+    # re-ruling then fixed the replacement's role at **`user`** (Open decisions
+    # ruling), and a separate ruling -- verified against `agent_spec.rb:407-410`
+    # -- held that adjacent `user` messages are legal production shape while
+    # only adjacent `assistant` is a violation. Together those make the role
+    # rule vacuous: a `user` replacement can be followed by EITHER role
+    # (`user + assistant` alternates, `user + user` is legal), so no tail role
+    # can produce an invalid adjacency, and the rule's only remaining effect was
+    # to move cuts that never needed moving.
     #
     # That effect was not small. The backward walk ran until it found an
-    # `assistant`, so a long run of `user` messages -- legal per T1, and the
-    # ordinary shape of a tool_result turn followed by the human's next ask --
-    # pushed the cut arbitrarily far back, or off the front entirely. Measured
-    # during T4: six spec files asserting compaction over all-`user` histories
-    # went red, and the T2 panel's near-decline case retained 31 of 32 messages
-    # when 3 were asked for.
+    # `assistant`, so a long run of `user` messages -- legal per the ruling
+    # above, and the ordinary shape of a tool_result turn followed by the
+    # human's next ask -- pushed the cut arbitrarily far back, or off the front
+    # entirely. Measured when the rule was relaxed: six spec files asserting
+    # compaction over all-`user` histories went red, and a panel's near-decline
+    # case retained 31 of 32 messages when 3 were asked for.
     #
-    # **The cost, named by T2's own NIT 7 and now come due:** pair safety used
+    # **The cost, named in review and now come due:** pair safety used
     # to be EMERGENT. A `tool_result` is always a `user` message immediately
     # after its `assistant` `tool_use`, so "land on assistant" implied "do not
     # split a pair" for free -- which meant nothing turned red for pair safety
@@ -110,7 +110,7 @@ module Lain
       #   this object and {Head} cannot drift onto two refusals for one question.
       # @param pins [Context::PinnedMessages] accepted for interface parity
       #   with {Head} and {Context::Compact}, which both take the SAME pins
-      #   object (F3). It is never consulted: pin exemption is applied
+      #   object. It is never consulted: pin exemption is applied
       #   downstream against the fixed span this object answers, exactly as
       #   {Head#droppable} already applies it AFTER its own slice. Holding it
       #   anyway (an inert ivar, "for future introspection") was tried and
@@ -146,7 +146,7 @@ module Lain
 
       private
 
-      # @return [Array(Integer, bool, Integer)] index, declined?, moved
+      # @return [Array(Integer, Boolean, Integer)] index, declined?, moved
       #
       # The one-position move is checked again at its destination rather than
       # taken on faith. In a well-formed history it always clears -- a

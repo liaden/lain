@@ -98,7 +98,7 @@ module Lain
 
           # EVERY FIELD THE RECORD SUPPLIES GOES THROUGH {#prose}, sender included.
           # The sender is here because a rendered newline is a known-shape defect in
-          # this repo rather than a hypothesis (T17/F17: nvim refuses a line holding
+          # this repo rather than a hypothesis (nvim refuses a line holding
           # one, the render rides as a NOTIFY, and the buffer silently stops taking
           # writes) -- and because scrubbing it makes the EDITOR more dependable, not
           # less: `RECORD_START[INBOX]` and 70_inbox.lua's `inbox_row` both find a row
@@ -138,7 +138,7 @@ module Lain
 
           # A rendered LINE may not carry a newline: `nvim_buf_set_lines`
           # refuses one and the render rides as a notify, so a view that emits
-          # one loses every later write to its buffer in silence (T17/F17). The
+          # one loses every later write to its buffer in silence. The
           # wrap {BODY} does is this object's own; a record's newlines are
           # collapsed before it.
           #

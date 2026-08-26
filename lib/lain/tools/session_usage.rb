@@ -4,10 +4,11 @@ module Lain
   module Tools
     # Tier 1 (structured): reports what THIS session has spent, in tokens.
     #
-    # It exists because of F77. Asked for its own usage, the agent invented a
-    # metrics table -- a model name it was not running, plus fabricated memory,
-    # CPU, round-trip and network figures -- while eight `turn_usage` records
-    # carrying the true answer sat in the journal it had itself just written.
+    # It exists because of a QA finding. Asked for its own usage, the agent
+    # invented a metrics table -- a model name it was not running, plus
+    # fabricated memory, CPU, round-trip and network figures -- while eight
+    # `turn_usage` records carrying the true answer sat in the journal it had
+    # itself just written.
     # The defect was REACHABILITY, not honesty: no tool could answer the
     # question, so the model answered it from nowhere. This one makes the true
     # answer reachable, which is what makes the invented one unnecessary.
@@ -18,8 +19,9 @@ module Lain
     # than pricing a model it has no entry for, and the ollama-cloud arm has no
     # {Lain::PriceBook} entry at all -- so a dollar figure here would have to be
     # guessed for exactly the runs a human is most likely to ask about. That is
-    # F77 with better manners. The description says so, because the description
-    # is the lever that keeps the model from reaching for one anyway.
+    # the same invention with better manners. The description says so, because
+    # the description is the lever that keeps the model from reaching for one
+    # anyway.
     #
     # == And never a turn count
     #
@@ -53,9 +55,9 @@ module Lain
       # A named refusal rather than a Null Object, and that is the whole design:
       # the only thing a Null could answer is `Usage.zero`, which is
       # indistinguishable from the honest zero of a run that has asked nothing.
-      # A silent zero is the F77 defect wearing this tool's clothes, so the nil
-      # is CHECKED and refused by name instead. It raises rather than returning
-      # an error {Tool::Result} because an unwired collaborator is a wiring
+      # A silent zero is the invented-figure defect wearing this tool's clothes,
+      # so the nil is CHECKED and refused by name instead. It raises rather than
+      # returning an error {Tool::Result} because an unwired collaborator is a wiring
       # defect, not a tool failing at its job -- {Lain::Effect::Handler} turns it
       # into an error result for the model, and a direct caller gets the raise.
       class Unwired < Lain::Error; end

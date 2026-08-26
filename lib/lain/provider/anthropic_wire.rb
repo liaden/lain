@@ -21,7 +21,7 @@ module Lain
     # the retry backoff both endpoints' rate-limit headers demand.
     #
     # It deliberately does NOT own `#complete` or `#dispatch`. Those diverge for
-    # real reasons -- Anthropic threads a WAL frame and CE-5's
+    # real reasons -- Anthropic threads a WAL frame and its own
     # `on_stream_started` through its round trip, Bedrock neither -- and a
     # shared `#complete` would have to reconcile which error arms each backend
     # rescues. Those arms are the loud part; they stay written out, per backend,

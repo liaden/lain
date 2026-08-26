@@ -106,10 +106,10 @@ module Lain
       private_class_method :home_from
 
       # Closed-set validation belongs to the VALUE, not only to the
-      # TOML-parsing path that usually builds it (T1's `Epic::Issue` does the
+      # TOML-parsing path that usually builds it (`Epic::Issue` does the
       # same): `Epics.new(home: :bogus)` must refuse just as loudly as a bad
       # `config.toml`, so a value built by any future caller that isn't
-      # `.from` can never carry a symbol T9's `case epics_home` doesn't
+      # `.from` can never carry a symbol the `case epics_home` reader doesn't
       # expect. `.from`'s own check stays -- it names the config path, which
       # this constructor-level guard cannot.
       #

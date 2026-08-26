@@ -10,20 +10,20 @@ module Lain
       # {Resume} is about resolving a selector into a {Resume::Result}, not
       # about how a refusal reads.
       #
-      # THE BACKSTOP, since T3, and a SENTENCE rather than a gate. A torn head
-      # no longer refuses at all: {Resume#settled} projects a {Cancellation}
-      # onto the rebuilt timeline and the session resumes. What still reaches
-      # here is the one shape that projection cannot answer -- a stranded
-      # `tool_use` naming no id, which {Tool::ResultBlock}'s gate 4 refuses to
-      # build a result for and which no projection makes valid. It is reached
-      # from {Resume#cancellation}'s rescue arm, which already KNOWS both facts:
-      # the head is torn and it is unanswerable. So nothing is re-asked here.
-      # Re-deriving either would put a second copy of a predicate beside the
-      # one that just answered, free to disagree with it.
+      # THE BACKSTOP, since the repair landed, and a SENTENCE rather than a
+      # gate. A torn head no longer refuses at all: {Resume#settled} projects
+      # a {Cancellation} onto the rebuilt timeline and the session resumes.
+      # What still reaches here is the one shape that projection cannot answer
+      # -- a stranded `tool_use` naming no id, which {Tool::ResultBlock}'s gate
+      # 4 refuses to build a result for and which no projection makes valid. It
+      # is reached from {Resume#cancellation}'s rescue arm, which already KNOWS
+      # both facts: the head is torn and it is unanswerable. So nothing is
+      # re-asked here. Re-deriving either would put a second copy of a
+      # predicate beside the one that just answered, free to disagree with it.
       #
-      # `/fork` does not come through here (T5). It used to run this gate
-      # parent-side against a LIVE timeline (F1), which stopped being the same
-      # question when T3 made these doors repair: on disk an unanswered
+      # `/fork` does not come through here. It used to run this gate
+      # parent-side against a LIVE timeline, which stopped being the same
+      # question once these doors began to repair: on disk an unanswered
       # tool_use is stranded, live it may be in flight.
       # {CLI::Command::Fork#anchor!} keeps a gate of its own over the same
       # {Event.pending_tool_use?}, narrowed by `env.replies.pending?` -- the

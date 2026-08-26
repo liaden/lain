@@ -33,8 +33,8 @@ module Lain
     # 3. MASK ON THE CONTENT, once bytes exist. Whether a file's BYTES look like
     #    a credential is a question no path classifier can answer before the
     #    open, so {Middleware::RedactSecretReads} masks the flagged regions
-    #    post-read and parks a pending for their release. OS confinement
-    #    (M5/M6) is the layer under all three.
+    #    post-read and parks a pending for their release. OS confinement is
+    #    the layer under all three.
     #
     # It withholds SENSITIVE paths, never OUTSIDE-ROOT ones. An absolute
     # pattern, or one that climbs out via `../`, is still honored rather than
@@ -77,7 +77,7 @@ module Lain
         # sentinel STRUCTURALLY -- by rebuilding it from this one definition
         # and comparing -- rather than by matching words inside it, which is
         # what let a no-match result under a gated directory get misread as
-        # a withheld path (T7's own regression). See {Tools::WebSearch}'s
+        # a withheld path (a real regression). See {Tools::WebSearch}'s
         # no_results_message for the template this follows.
         def no_matches_message(pattern, base)
           "glob: no matches for #{pattern.inspect} under #{base}"

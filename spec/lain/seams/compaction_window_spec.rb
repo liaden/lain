@@ -3,7 +3,7 @@
 require "json"
 require "stringio"
 
-# F3, end to end, over the path QA actually broke: a real {Lain::CLI::Backend}
+# End to end, over the path QA actually broke: a real {Lain::CLI::Backend}
 # resolves the run's window book, hands it to the real {Lain::Compaction::Source}
 # it builds, and a real {Lain::Agent} accounts real turns against it.
 #

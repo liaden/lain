@@ -4,7 +4,7 @@ require "json"
 require "stringio"
 
 # Shareable fixtures, mirroring SchedulerShareableFixtures in scheduler_spec:
-# the composed pipeline must be Ractor-shareable (the T21 injected-pipeline
+# the composed pipeline must be Ractor-shareable (the injected-pipeline
 # contract), so whatever the module-scope COMPOSE lambda closes over -- the
 # base pipeline here -- must already be shareable. Living in a module body is
 # what lets `self` inside each lambda be the (shareable) module rather than
@@ -15,7 +15,7 @@ end
 
 # A counting double standing in for the injected summarizer Compact.new
 # takes (compact.rb:35) -- deterministic, and it remembers how many times it
-# was actually asked to summarize, which is the one fact CAC-5's "two idle
+# was actually asked to summarize, which is the one fact the "two idle
 # ticks, one summarization" claim needs proof of. Plain #call duck, same as
 # Provider::Mock / Effect::Handler::Mock elsewhere. Top-level (not defined
 # inside the RSpec.describe block) per Lint/ConstantDefinitionInBlock.
@@ -189,7 +189,7 @@ RSpec.describe Lain::Compaction::Prepared do
       expect(context).to be_deeply_frozen
     end
 
-    # T17 review fix 2. This Replay substitutes the held compaction and drops
+    # This Replay substitutes the held compaction and drops
     # whatever `#render` projected, exactly as {Compaction::Source::Derived}'s
     # does -- so it declares the same thing, and the resume path stops walking a
     # chain it is about to discard. Asserted through a real Timeline, because the

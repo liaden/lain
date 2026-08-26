@@ -36,12 +36,12 @@ module Lain
     #
     # == Where the size guard is called, and what moving it cost
     #
-    # Not here (T31c). `bounds:` is still this command's to inject, but the
-    # ceiling is enforced by {Review::Session#present} -- the one place every
-    # surface is reached through -- so a re-callable `present`, an editor
-    # sidebar toggling scope and `/review` inside a chat are all bounded by that
-    # single caller instead of by whichever command remembered to ask. This
-    # command's own doc wrote that follow-up while the guard was still here.
+    # Not here. `bounds:` is still this command's to inject, but the ceiling is
+    # enforced by {Review::Session#present} -- the one place every surface is
+    # reached through -- so a re-callable `present`, an editor sidebar toggling
+    # scope and `/review` inside a chat are all bounded by that single caller
+    # instead of by whichever command remembered to ask. This command's own doc
+    # wrote that follow-up while the guard was still here.
     #
     # The move cost one property, named rather than left to be discovered: the
     # ceiling now runs AFTER `Session.open` has journaled the round, so a
@@ -146,7 +146,8 @@ module Lain
         # source then serves the diff from the object database and reports
         # `already_local` for a combined diff GitHub actually refused. That
         # ordering used to come free from the size guard reading `files` here;
-        # T31c moved the guard, so it is stated rather than inherited.
+        # moving that guard to {Review::Session#present} left the order stated
+        # rather than inherited.
         report = fell_back(resolved.source)
         journal = Journal.open(paths: @paths)
         begin

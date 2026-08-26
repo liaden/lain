@@ -136,8 +136,8 @@ RSpec.describe Lain::Sensitivity::Ledger do
   # Traversable exactly ONCE, which is what an Enumerator over a streamed read
   # is. CLAUDE.md's style section tells implementers to return an Enumerator
   # rather than materialize an Array and calls `Enumerator::Lazy` free
-  # streaming, so T15 -- the arm that holds the bytes -- is the one most likely
-  # to hand this over.
+  # streaming, so the masking arm -- the one that holds the bytes -- is the one
+  # most likely to hand this over.
   def single_pass(items)
     Class.new do
       include Enumerable
@@ -202,7 +202,7 @@ RSpec.describe Lain::Sensitivity::Ledger do
       expect(ledger.released(path).size).to eq(2)
     end
 
-    # The check sits ahead of `regions.to_a`, and that ordering is B1's fail-open
+    # The check sits ahead of `regions.to_a`, and that ordering is the fail-open
     # arriving through the rescue path: drain a single-pass collection before
     # raising and a caller that rescues and retries hands over an EMPTY list, so
     # `outstanding` answers `[]` -- nothing masked, everything released.
@@ -238,7 +238,8 @@ RSpec.describe Lain::Sensitivity::Ledger do
       expect(ledger.outstanding(path, two.lazy)).to eq(two)
     end
 
-    # A Lazy in gave a Lazy out, which has no `#empty?` -- T15's natural call.
+    # A Lazy in gave a Lazy out, which has no `#empty?` -- the masking arm's
+    # natural call.
     it "answers an Array whatever it was given" do
       expect(ledger.outstanding(path, two.lazy)).to be_an(Array)
     end
@@ -450,10 +451,10 @@ RSpec.describe Lain::Sensitivity::Ledger do
   end
 
   describe "one ledger per run" do
-    # T15 masks against the ledger and T16 prompts against it, through different
-    # files in different waves. Two half-wirings give two ledgers and a release
-    # control that silently releases nothing, so sharing is a property with an
-    # example rather than a diagram.
+    # One arm masks against the ledger and another prompts against it, through
+    # different files in different waves. Two half-wirings give two ledgers and
+    # a release control that silently releases nothing, so sharing is a property
+    # with an example rather than a diagram.
     it "shows one arm's release to another arm holding the same ledger" do
       masking = ledger
       approving = ledger
@@ -542,7 +543,7 @@ RSpec.describe Lain::Sensitivity::Ledger do
     end
 
     # Depend on messages, not on types: the ledger sends `#digest` and nothing
-    # else, which is what lets T15 hand it whatever it detected.
+    # else, which is what lets the masking arm hand it whatever it detected.
     it "asks a region for its digest and nothing else" do
       region = instance_double(Lain::Sensitivity::Regions::Region, digest: "blake3:abc")
 

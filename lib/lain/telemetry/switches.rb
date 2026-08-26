@@ -116,8 +116,8 @@ module Lain
     # name or a list of names. A {Mode} itself is refused by the guard, in a
     # name field and inside a layer list alike: `JSON.generate` would write the
     # object's `to_s` into a line that parses while carrying garbage. The
-    # constant is public and T8/T22 construct one directly, so that refusal
-    # cannot rely on {Mode::Switch} being the only caller.
+    # constant is public and other callers construct one directly, so that
+    # refusal cannot rely on {Mode::Switch} being the only caller.
     ModeSwitch = Data.define(:from, :to, :from_layers, :to_layers, :surface) do
       include Journalable
 

@@ -30,7 +30,7 @@ module Lain
 
         # Nothing shows it in place, so perform it -- AND READ THE ANSWER.
         #
-        # B1: {Promotion} refuses a diverged remote, an occupied namespace and an
+        # {Promotion} refuses a diverged remote, an occupied namespace and an
         # inexact sha as `ok: false` values. A step that discarded that verdict
         # would carry on to open a pull request from a branch the promotion
         # never wrote, and merge somebody else's commit as this issue's approved
@@ -129,7 +129,7 @@ module Lain
 
         private
 
-        # S5: only DIRTY is a merge CONFLICT. {Gh::Poll} answers UNKNOWN when its
+        # Only DIRTY is a merge CONFLICT. {Gh::Poll} answers UNKNOWN when its
         # own bound runs out -- GitHub has not finished computing mergeability,
         # which usually means CI is still running -- and BLOCKED, BEHIND and
         # UNSTABLE are review and branch protection saying "not yet". Telling a

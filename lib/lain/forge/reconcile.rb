@@ -49,7 +49,7 @@ module Lain
     # the `Handback#preserve` and `Salvage#already_committed?` doctrine that
     # idempotency is a property of the remote, observed each time.
     #
-    # The `world` duck, in full (T24 implements it over the gh executor):
+    # The `world` duck, in full (the gh executor implements it):
     #
     #   #ref_exists?(ref)  -> Boolean
     #   #sha_of(ref)       -> String, the sha the ref stands at

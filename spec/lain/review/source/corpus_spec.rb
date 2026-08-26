@@ -11,7 +11,7 @@ require "fileutils"
 # itself. The count is taken at the CHUNKER's own `#call` rather than at the
 # dispatch's, so an implementation that resolved a chunker eagerly and chunked
 # lazily still counts zero -- which is the fact the laziness pins are about.
-# B10 drives the same seam through a real session.
+# The session-level examples drive the same seam through a real session.
 class CorpusChunkCounter
   Counted = Data.define(:chunker, :log) do
     def call(path:, source:)
@@ -751,8 +751,8 @@ RSpec.describe Lain::Review::Source::Corpus do
     end
   end
 
-  # The observation seam B10 rides, and the reason it is a constructor argument
-  # rather than a lookup: the whole laziness claim is only assertable through a
+  # The observation seam these examples ride, and the reason it is a constructor
+  # argument rather than a lookup: the whole laziness claim is only assertable through a
   # chunker somebody else supplied.
   describe "the injected chunker" do
     it "defaults to the dispatch, so each file type meets the chunker that reads it" do

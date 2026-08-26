@@ -187,7 +187,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     # the provider sent arrives here first. Indexing a non-Hash with a String is
     # `Array#[]("path")`, a TypeError, and `nil["path"]` is a NoMethodError:
     # both escape {Effect::Handler::Gate#gated_tool_call?}, where nothing raised
-    # before this card, because the pre-T11 gate read only `effect.name`.
+    # before this card, because the earlier gate read only `effect.name`.
     #
     # A raise here fails the turn, and the repair somebody reaches for under
     # time pressure is a `rescue` answering false -- which is this boundary
@@ -323,8 +323,8 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
-  # T12's half of the same question, asked of the SAME object so the two axes
-  # read one table. Covered here rather than only through the handler that
+  # The denial half of the same question, asked of the SAME object so the two
+  # axes read one table. Covered here rather than only through the handler that
   # consults it: a method whose only test lives in a consumer is a method a
   # refactor can delete without anything noticing.
   describe "#denial" do
@@ -400,7 +400,7 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
-  # T23. The listing filter is this object's SECOND answer over the SAME
+  # The listing filter is this object's SECOND answer over the SAME
   # classifier, rather than something a caller builds beside it. That is what
   # makes "the gate refused a path the listing enumerated" unrepresentable: the
   # classifier is exposed nowhere, so there is no second filter to construct

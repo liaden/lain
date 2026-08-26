@@ -56,7 +56,7 @@ module Lain
       DEFAULT_REMOTE = "origin"
 
       # What the answer's `detail["reason"]` says, as constants rather than
-      # sentences: a caller (T24's landing) branches on these, and a reworded
+      # sentences: a caller branches on these, and a reworded
       # message must not silently change what it decided.
       PROMOTED = "promoted"
       ALREADY_PROMOTED = "already_promoted"

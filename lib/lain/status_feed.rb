@@ -17,7 +17,7 @@ module Lain
   # three renderers default through, and it is deliberately NOT in the project:
   # this struct is rewritten on every turn, so writing it beside the code left
   # permanent `git status` noise in the user's repository, with no ignore path
-  # and nothing in `lib/` that writes one (F50). It lives under
+  # and nothing in `lib/` that writes one. It lives under
   # `$XDG_STATE_HOME/lain`, keyed by project, beside the sessions and the
   # epics; {ProjectDir}'s own comment carries the recipe and what it costs.
   #
@@ -33,7 +33,7 @@ module Lain
   #   absolute deadline (not a remaining-seconds count) is what lets a
   #   renderer tick locally with zero RPC/poll chatter (the approved doc's
   #   explicit instruction). The TTL itself comes from the injected
-  #   `cache_profile:` (CAC-2's `Provider#cache_profile` -- {ttl:,
+  #   `cache_profile:` (a `Provider#cache_profile` -- {ttl:,
   #   min_prefix_tokens:, write_multiplier:, read_multiplier:,
   #   tiered_invalidation:}, see {DEFAULT_CACHE_PROFILE} for the fallback),
   #   never a hardcoded constant, so a swept provider arm each slides its own
@@ -43,9 +43,9 @@ module Lain
   #   exactly where it was, because the TTL it named has not been touched.
   # * `fleet` -- the digests of every DISTINCT `:spawn` event observed, keyed
   #   so a redelivered event (a journal replay) never grows a phantom second
-  #   entry for one real spawn. W3's lifecycle events will later enrich this
-  #   with running/done state; I1 only has to prove the field reflects
-  #   exactly what the journal shows.
+  #   entry for one real spawn. Lifecycle events will later enrich this with
+  #   running/done state; for now the field only has to reflect exactly what
+  #   the journal shows.
   # * `inbox_count` -- what is still addressed to {Tools::AskHuman::HUMAN} and
   #   not yet named a causal parent by a committed turn. {Inbox} holds it: the
   #   projection's rule, the incremental fold, and the {Store} the live
@@ -98,7 +98,7 @@ module Lain
   #   ⚠️ THIS IS THIS MACHINE'S SPEND ON THIS KEY, not a plan's consumption.
   #   Another client on the same subscription is invisible to it, and no
   #   provider lain talks to publishes a used/remaining pair to reconcile
-  #   against (E7 settles that for the ollama-cloud arm: the headers carry
+  #   against (that was checked for the ollama-cloud arm: the headers carry
   #   concurrency and queue depth, no bucket over time). So the figure is
   #   exact about what it measures and silent about what it cannot see -- the
   #   same discipline {ContextWindow}'s published-versus-guessed provenance
@@ -162,7 +162,7 @@ module Lain
   #   case and is deliberately loud: {Publication} argues it ("a state feed
   #   that cannot write is not a state feed that should pretend it did") and
   #   spec/lain/status_feed_spec.rb's "replaces the file atomically" pins the
-  #   `Errno::ENOSPC`. planning/specs/chunk-modes-approval-undo.md's T8 asked
+  #   `Errno::ENOSPC`. planning/specs/chunk-modes-approval-undo.md asked
   #   for "nothing is raised" from an unwritable path; that was implemented as
   #   the derivation half ONLY, because swallowing the write for `mode_switch`
   #   alone -- while every other field's write still raised -- would be
@@ -194,7 +194,7 @@ module Lain
   #   succeeding. A STREAK, not a running total, which is the difference
   #   between it and `compactions` beside it: one refusal is an awkward
   #   history, a rising streak is a session that has stopped compacting, and
-  #   until this field nothing in `lib/` read the number at all (F47).
+  #   until this field nothing in `lib/` read the number at all.
   #
   #   Both ends ride ONE channel, and that is what makes the field real rather
   #   than a slot nothing feeds. `CLI::Backend#compaction_source` hands the
@@ -243,7 +243,7 @@ module Lain
   # of an absence repaints forever, full stop.
   class StatusFeed
     # The TTL used when no caller injects a provider's own `#cache_profile`
-    # (CAC-2, planning/specs/cache-aware-compaction.md) -- Anthropic's default
+    # (planning/specs/cache-aware-compaction.md) -- Anthropic's default
     # 5-minute sliding window (planning/interface-integration.md § 1). Kept
     # here rather than reaching into `Provider::AnthropicReference::CACHE_PROFILE`
     # because `lib/lain.rb` loads this file BEFORE `lib/lain/provider.rb`;
@@ -267,10 +267,10 @@ module Lain
     # @param path [String] where the state struct is atomically published;
     #   defaults to this project's file under `$XDG_STATE_HOME/lain`, resolved
     #   by {ProjectDir#state_path} -- machine state that moves every turn, kept
-    #   out of the source tree it describes (F50).
+    #   out of the source tree it describes.
     # @param clock [#call] answers the current Time; injectable so a spec
     #   never races the real clock to compute a deadline.
-    # @param cache_profile [Hash] a provider's `#cache_profile` (CAC-2) --
+    # @param cache_profile [Hash] a provider's `#cache_profile` --
     #   only `:ttl` is read here; defaults to {DEFAULT_CACHE_PROFILE} when the
     #   caller has no specific provider to name.
     # @param run_clock [RunClock] the RUN's clock, not this object's: the
@@ -530,7 +530,7 @@ module Lain
 
     public
 
-    # The whole struct, as published -- exposed (T13) so a live in-process
+    # The whole struct, as published -- exposed so a live in-process
     # reader (Command::Env's `status`, the `/status` command) reads the SAME
     # derivation the JSON file carries, without touching the published file
     # (absent under --no-journal, where a headless run's StatusFeed is still
@@ -569,7 +569,7 @@ module Lain
     # once a second forever -- while this streak moves only when a record moved
     # it. A refusal that changed no compared field would earn no write, and the
     # published state would go on saying compaction was healthy while the
-    # session had stopped compacting, which is F47 with an extra step.
+    # session had stopped compacting -- the same blind spot with an extra step.
     #
     # @return [Hash] string-keyed, JSON-shaped
     def observed

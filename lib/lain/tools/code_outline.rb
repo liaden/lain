@@ -4,8 +4,8 @@ module Lain
   module Tools
     # Tier 1 (structured): a FIXED set of catalog queries -- Structural::Patterns'
     # `:class_def` and `:method_def` -- run over ONE file through
-    # Structural::Matcher. This is not a new mechanism; T2's catalog and T3's
-    # Matcher already exist, so this tool is only the read-one-file-and-format
+    # Structural::Matcher. This is not a new mechanism; the pattern catalog and
+    # the Matcher already exist, so this tool is only the read-one-file-and-format
     # wiring over them.
     #
     # Because matching is structural (an ast-grep pattern against a parsed
@@ -17,8 +17,8 @@ module Lain
     # Nesting (a class inside a module) is deliberately NOT reconstructed:
     # each hit carries only its own line, so the outline is flat and
     # line-ordered rather than a tree. Recovering real lexical scope needs a
-    # scope walk over the CST (tree-sitter `locals`), which is T8's job, not
-    # this card's.
+    # scope walk over the CST (tree-sitter `locals`), which is a separate tool's
+    # job, not this one's.
     class CodeOutline < Tool
       # An outline is an ENUMERATION under {Tool::Bounds}' stated boundary: one
       # row per definition, independent of the rest, so the first N of them are

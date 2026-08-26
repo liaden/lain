@@ -56,7 +56,7 @@ module Lain
         end
         private_class_method :located
 
-        # S2: `fetch` that raises and NAMES the record beats three speculative
+        # A `fetch` that raises and NAMES the record beats three speculative
         # arms over `respond_to?(:value)` and a fallback that put a raw Hash into
         # `gh pr merge`'s argv. {Reconcile::World#pr_for} already promises a
         # document, so the type assertion is a canary for a `world` duck that
@@ -116,10 +116,10 @@ module Lain
 
         private
 
-        # B1b: settled-ness FOLDS ON `ok`. A settled-but-failed promote is a
-        # promote that did not happen, and reading it as "already done" is what
-        # let a resume open and merge a branch the promotion had refused to
-        # write -- somebody else's commit landed as this issue's approved work.
+        # Settled-ness FOLDS ON `ok`. A settled-but-failed promote is a promote
+        # that did not happen, and reading it as "already done" is what let a
+        # resume open and merge a branch the promotion had refused to write --
+        # somebody else's commit landed as this issue's approved work.
         def settled_ok(action)
           @report.settled.select { |item| item.intent.action == action && item.outcome.ok? }
         end
@@ -138,7 +138,7 @@ module Lain
             @report.unaddressable.map(&:reason) + @unreadable
         end
 
-        # S4: every exit from a landing answers the same duck. A raw
+        # Every exit from a landing answers the same duck. A raw
         # {Reconcile::Report} handed back here is a Data inspect dump to the
         # human and a NoMethodError to a caller that sends `ok?`.
         def inconsistent(refusals)

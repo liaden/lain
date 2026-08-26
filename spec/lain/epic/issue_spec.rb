@@ -192,7 +192,7 @@ RSpec.describe Lain::Epic::Issue do
     end
   end
 
-  # FIX 1 (panel BLOCKER). Gherkin::Parse only sees scenarios inside a
+  # Gherkin::Parse only sees scenarios inside a
   # ```gherkin fence, so fence-less criteria parse to ZERO scenarios and
   # #criteria_digest returns the digest of an empty scenario list -- a
   # valid-looking content address that every malformed issue shares. The
@@ -223,18 +223,17 @@ RSpec.describe Lain::Epic::Issue do
         .to raise_error(Lain::Epic::MalformedIssue, /clause outside any Scenario/)
     end
 
-    # The contract T4 depends on: the delimiters are part of the stored source,
-    # so re-emitting `criteria` verbatim re-emits a parseable fence.
+    # The contract re-emission depends on: the delimiters are part of the stored
+    # source, so re-emitting `criteria` verbatim re-emits a parseable fence.
     it "keeps the fence delimiters in the stored source" do
       expect(issue(criteria: criteria_source).criteria).to include("```gherkin")
       expect(Lain::Gherkin::Criteria.parse(issue(criteria: criteria_source).criteria).count).to eq(1)
     end
   end
 
-  # FIX 2 (panel). `nil.to_s` is the silent coercion the doctrine forbids: an
-  # empty id is a duplicate-"" collision in T2's graph and an unnamed file in
-  # T9's home. It also leaves `nil` as the one spelling of an absent
-  # discovered_from.
+  # `nil.to_s` is the silent coercion the doctrine forbids: an empty id is a
+  # duplicate-"" collision in the graph and an unnamed file in the epic home.
+  # It also leaves `nil` as the one spelling of an absent discovered_from.
   describe "identifier totality" do
     it "refuses a nil id rather than coercing it to an empty String" do
       expect { issue(id: nil) }.to raise_error(Lain::Epic::MalformedIssue, /issue id.*nil/m)
@@ -274,7 +273,7 @@ RSpec.describe Lain::Epic::Issue do
     end
   end
 
-  # FIX 3 (panel). A NoMethodError escapes the Lain::Error -> Thor::Error
+  # A NoMethodError escapes the Lain::Error -> Thor::Error
   # mapping in exe/lain and names neither the field nor the value.
   describe "edge sets are Arrays, loudly" do
     it "is a Lain::Error, so exe/lain renders it instead of crashing" do
@@ -292,7 +291,7 @@ RSpec.describe Lain::Epic::Issue do
     end
   end
 
-  # FIX 4 (panel). Same shape as the BLOCKER: passes its own constructor, then
+  # Same shape as the BLOCKER: passes its own constructor, then
   # fails its own content-addressing. Canonical is what hashes these bytes, so
   # anything Canonical refuses must not be constructible.
   describe "text that cannot be content-addressed" do
@@ -318,14 +317,14 @@ RSpec.describe Lain::Epic::Issue do
     end
 
     # Encoding is settled before ids are deduplicated, so one id cannot survive
-    # under two spellings and reach T2's graph as two nodes.
+    # under two spellings and reach the graph as two nodes.
     it "settles edge encoding before dedup, so one id is one id" do
       expect(issue(blocks: ["b", "b".b]).blocks).to eq(%w[b])
       expect(issue(blocks: ["b".b]).blocks.map(&:encoding)).to eq([Encoding::UTF_8])
     end
   end
 
-  # FIX 5 (panel). The id grammar is genuinely shared with Plan -- both wrap ids
+  # The id grammar is genuinely shared with Plan -- both wrap ids
   # in backticks in markdown -- and the title rules merely coincide today. The
   # extracted collaborator both grammars should depend on is owed (it would
   # touch lib/lain/plan/step.rb, outside this card), so drift is pinned here
@@ -371,7 +370,7 @@ RSpec.describe Lain::Epic::Issue do
     end
   end
 
-  # T10: Issue is where BOTH downstream grammars are answered together -- the
+  # Issue is where BOTH downstream grammars are answered together -- the
   # document grammar Document::Writer refuses, and the filesystem grammar
   # Home::NAME refuses for issues/<id>.md -- so a value can be checked before
   # either one raises at a distance.

@@ -5,7 +5,7 @@ module Lain
     # A Journal-duck decorator over any Isolation backend -- {Memory::JournalMemoryRoot}
     # and {Session::Journaled}'s shape, applied to the Isolation seam: `acquire`
     # forwards to the wrapped backend untouched, and each lease transition
-    # ADDITIONALLY emits a {Telemetry::IsolationLease} record, so B5's supervisor
+    # ADDITIONALLY emits a {Telemetry::IsolationLease} record, so a supervisor
     # and any {Arm} can wrap ANY backend -- {Null}, {Worktree}, a future
     # DbIndex/Compose -- without the backend itself ever knowing a journal
     # exists. This is what keeps every backend's own spec journal-ignorant, the

@@ -2,8 +2,8 @@
 
 # The sweep that turns {Lain::Algebra}'s declarations into obligations.
 #
-# A1 put the claims in `lib/`, beside the operations they are about, and made
-# them enumerable. That is only worth something if something enumerates them: a
+# The claims live in `lib/`, beside the operations they are about, and are
+# enumerable. That is only worth something if something enumerates them: a
 # marker nothing reads is decoration, and a marker read by a hand-maintained
 # list in a spec is decoration with extra steps. So this file walks
 # {Lain::Algebra.registry} itself and names no class and no operation of its

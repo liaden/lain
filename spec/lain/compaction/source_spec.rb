@@ -154,7 +154,7 @@ RSpec.describe Lain::Compaction::Source do
   # ENDS on `user`, and no two `assistant` turns are adjacent -- which is
   # exactly what {Lain::Context::Conversation} asks of a conversation (adjacent
   # `user` messages are the real Agent shape, a tool_result turn followed by the
-  # human's next ask, and T1 ruled them legal). Ending on `user` is what lets
+  # human's next ask, and they are legal). Ending on `user` is what lets
   # {Lain::Context::Reminder} still find somewhere to inject.
   def role_at(index) = index.odd? && index > 1 ? "assistant" : "user"
 
@@ -195,9 +195,9 @@ RSpec.describe Lain::Compaction::Source do
   # change in canonical framing fails loudly here rather than sliding the
   # fixture quietly off the boundary.
   #
-  # MOVED BY T4, 366 -> 361: the summary message's role went from `"assistant"`
+  # MOVED ONCE, 366 -> 361: the summary message's role went from `"assistant"`
   # to `"user"` (Open decisions ruling), five fewer bytes in the canonical dump.
-  # MOVED AGAIN BY T9, 361 -> 85, because the fixture's blocks are now `text`
+  # MOVED AGAIN, 361 -> 85, because the fixture's blocks are now `text`
   # rather than orphan `tool_result`s (see {#block}), its roles alternate, and
   # the rewrite being measured is the DERIVED chain's projection rather than
   # `Context::Compact`'s. Walked one character at a time, as before: at 85 Z's
@@ -241,14 +241,14 @@ RSpec.describe Lain::Compaction::Source do
   # model still raises through it.
   #
   # A PUBLISHED book, keyed by the family token every model in this file
-  # carries, and NOT the `fallback:` form it used to be: since T9 a fallback is
+  # carries, and NOT the `fallback:` form it used to be: a fallback is
   # by construction a GUESS, and a guessed window never fires
   # `:approaching_window` -- so the fallback form would make every ratio
   # example here pass vacuously. {#guessed_window_book} is the other side, and
   # is used only where the guess itself is the subject.
   def window_book(tokens) = Lain::ContextWindow.new(windows: { "claude" => tokens })
 
-  # The F3 shape: nothing in the table matched, so the number is a floor
+  # The guessed shape: nothing in the table matched, so the number is a floor
   # somebody picked rather than anything known about the model.
   def guessed_window_book(tokens) = Lain::ContextWindow.new(windows: {}, fallback: tokens)
 
@@ -459,7 +459,7 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
-  # C1. The window is derived from the LIVE Context every turn, not fixed when
+  # The window is derived from the LIVE Context every turn, not fixed when
   # the Source was built -- `/model` rewrites {Context::ModelSwitch}'s slot
   # mid-session, and a window frozen at startup would keep measuring occupancy
   # against the model the run began with.
@@ -523,11 +523,11 @@ RSpec.describe Lain::Compaction::Source do
     # the fallback is what is being measured against -- and it still degrades
     # rather than raising.
     #
-    # F3: it does NOT fire. This example asserted the opposite until T9, which
-    # is the defect written down as a test: a 32,768-token qwen3 runner read as
-    # 300% full against the guess, and lain rewrote history three times. The
-    # DENOMINATOR is still journaled, because a reader has to be able to see
-    # which number the silence was about.
+    # It does NOT fire. This example asserted the opposite until it was
+    # corrected, which is the defect written down as a test: a 32,768-token
+    # qwen3 runner read as 300% full against the guess, and lain rewrote
+    # history three times. The DENOMINATOR is still journaled, because a reader
+    # has to be able to see which number the silence was about.
     it "does not authorise a rewrite off a window it guessed" do
       built = source
 
@@ -556,7 +556,7 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
-  # T9 / F3. `:approaching_window` is the one signal that spends a number the
+  # `:approaching_window` is the one signal that spends a number the
   # bench may have INVENTED, and what it buys is an irreversible lossy rewrite.
   # The `context_window.rb` comment this card amends argued the early firing
   # was "self-correcting, not a one-shot latch" -- true about FREQUENCY, and
@@ -606,7 +606,7 @@ RSpec.describe Lain::Compaction::Source do
 
     # A Served book answering for a model it did NOT probe is published (or
     # guessed) by whatever `shipped` says, never probed -- getting that
-    # backwards would re-create F3 in the opposite direction, handing a
+    # backwards would re-create that defect in the opposite direction, handing a
     # rewrite the authority of a runner that was never asked about this model.
     it "does not fire it for a model a Served book merely delegated" do
       served = Lain::CLI::Backend::WindowBook::Served.new(
@@ -684,8 +684,8 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
-  # C2, the other half of C1's pair. C1 made the WINDOW follow the live model
-  # and left the PRICE behind: the Source is priced once, at construction, so
+  # The other half of the pair: the WINDOW already follows the live model, but
+  # the PRICE was left behind -- the Source is priced once, at construction, so
   # after a `/model` switch it would go on quoting dollars at the rate of a
   # model that is no longer answering. It now names what actually ran and
   # quotes nothing, which is {PriceBook}'s own refusal one tier up.
@@ -813,7 +813,7 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
-  # The eager tier still reaches the render after T9 moved it onto the derived
+  # The eager tier still reaches the render now that it sits on the derived
   # chain. It is no longer {Context::Compact}'s summarizer -- it is the
   # un-flagged COLLAPSE POLICY's, read through the same per-turn
   # {SummarySnapshot} -- and these assert the summary a dispatch fired still
@@ -868,7 +868,7 @@ RSpec.describe Lain::Compaction::Source do
       messages = messages_of(line)
       # `user`, fixed by the Open decisions ruling and never computed from the
       # history's parity: with nothing pinned the summary IS `messages[0]`, and
-      # the Messages API requires that to be `user` (T4, Grounding F1).
+      # the Messages API requires that to be `user`.
       summary = { "role" => "user",
                   "content" => [{ "type" => "text",
                                   "text" => Lain::Compaction::SummarySnapshot.new
@@ -1007,7 +1007,7 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
-  # B2. This is the ONE object holding both the timeline and the session, so it
+  # This is the ONE object holding both the timeline and the session, so it
   # is the only place a pin -- recorded as a turn DIGEST -- can be mapped onto
   # the projected TEXT {Context::Compact} filters on. The head and the Compact
   # are handed the SAME {Context::PinnedMessages} value, which is what makes
@@ -1026,14 +1026,14 @@ RSpec.describe Lain::Compaction::Source do
 
     # Scenario: a pinned message survives a compaction verbatim, IN POSITION.
     #
-    # RE-TITLED AND RE-POINTED BY T4 (Grounding F3). This used to read "ahead of
+    # RE-TITLED AND RE-POINTED. This used to read "ahead of
     # the summary message", because `Compact#call` PARTITIONED the span and
     # hoisted every protected message to the front -- so a pin from the middle
     # of the span landed at index 0, ahead of the summary of everything that
     # preceded it, with its own predecessor gone. Reading order inverted.
     #
-    # RE-POINTED AGAIN BY T9, and the count moved with it. A pin is now a CUT
-    # POINT rather than a shield (F8: `#ranges` is an interval partition): the
+    # RE-POINTED AGAIN, and the count moved with it. A pin is now a CUT
+    # POINT rather than a shield (`#ranges` is an interval partition): the
     # span becomes one range per contiguous run of unpinned messages, so the pin
     # is not lifted out of a collapse at all -- it simply falls in no range, and
     # the derivation retains it, between the summary of what preceded it and the
@@ -1152,7 +1152,7 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
-  # F51. A journalled compaction has to name the ARM it ran under -- the one
+  # A journalled compaction has to name the ARM it ran under -- the one
   # axis `--compact-strategy` exists to vary -- and the {Lain::Compaction::Scheduler}
   # that writes the record cannot: it is handed a pipeline, not a policy. So the
   # operator's word rides in the slot the policy already rides in, and this
@@ -1222,7 +1222,7 @@ RSpec.describe Lain::Compaction::Source do
       expect(built.instance_variable_get(:@derived).instance_variable_get(:@strategy)).to equal(policy)
     end
 
-    # F51, and the reason the name is held here at all. This is the only object
+    # The reason the name is held here at all. This is the only object
     # holding both the arm's word and the {Lain::Compaction::Scheduler} that
     # writes the accounting -- the scheduler is handed a PIPELINE and can name
     # no policy behind it -- so the word travels per call out of #commit.
@@ -1243,7 +1243,7 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
-  # T9. What a compacting turn actually renders is the projection of a SECOND
+  # What a compacting turn actually renders is the projection of a SECOND
   # LINEAGE -- a derived chain materialized in the source's own Store, whose
   # replacement events name the source turns they subsume. These are the claims
   # that only hold once the render goes through it.
@@ -1287,8 +1287,8 @@ RSpec.describe Lain::Compaction::Source do
       expect(derivations.first["source_head"]).to eq(before)
     end
 
-    # F5/F8, as a characterization example: `T1 <= T2` does NOT imply
-    # `derive(T1) <= derive(T2)`. `Event#payload` folds `render_parent`, so a
+    # As a characterization example: `A <= B` does NOT imply
+    # `derive(A) <= derive(B)`. `Event#payload` folds `render_parent`, so a
     # retained turn re-committed under a new parent chain gets a different
     # address, and the `keep_last` window slides besides. The wrong conceptual
     # model this exists to prevent is "derivation is incremental" -- if it ever
@@ -1308,7 +1308,7 @@ RSpec.describe Lain::Compaction::Source do
       expect(chain_at(first, shorter.store).ancestor_digests).not_to include(second)
     end
 
-    # F5: the derived chain is bounded by `keep_last` plus the number of ranges,
+    # The derived chain is bounded by `keep_last` plus the number of ranges,
     # never by history length -- which is what makes deriving FULLY on every
     # compacting turn affordable and an incremental `#extend` unnecessary.
     it "writes the same number of store objects however long the history is" do
@@ -1321,9 +1321,10 @@ RSpec.describe Lain::Compaction::Source do
       line.store.size - before
     end
 
-    # The F1/F2 class of 400, on the path that actually reaches Anthropic.
+    # The malformed-conversation class of 400, on the path that actually
+    # reaches Anthropic.
     #
-    # STATED HONESTLY, per T4's measurement: this is the UNPINNED claim. A pin
+    # STATED HONESTLY, per measurement: this is the UNPINNED claim. A pin
     # punches a hole in the middle of the span, and a pinned `tool_use` whose
     # `tool_result` is inside a collapsed range is still stranded (follow-up
     # 14). What this path does NOT do is ship it -- see the refusal group below.
@@ -1347,14 +1348,14 @@ RSpec.describe Lain::Compaction::Source do
       expect(derivations.map { |record| record["derived_head"] }.uniq.size).to eq(2)
     end
 
-    # A8's regression, one object further in: the live `/model` slot makes the
+    # A regression, one object further in: the live `/model` slot makes the
     # chat Context unshareable, and `Scheduler::COMPOSE` calls
     # `Ractor.make_shareable` on a Proc -- which RAISES on anything it refers to
     # that is not already shareable rather than deep-freezing it. A replay
     # holding an ordinary Array fails there, on the first compacting turn of
     # every real chat.
     # The LIVE Context is deliberately not shareable -- `/model`'s slot is
-    # mutable by design -- so what is asserted is what A8 asserts: the composed
+    # mutable by design -- so what is asserted is narrower: the composed
     # pipeline is established shareable around it without raising, and the turn
     # really did compact.
     it "compacts a base Context carrying the live model slot, without raising" do
@@ -1457,7 +1458,7 @@ RSpec.describe Lain::Compaction::Source do
     end
 
     # FOLLOW-UP 14, CHARACTERIZED ON THIS PATH. A pin whose tool counterpart is
-    # inside a collapsed range strands it -- the hole T4 measured through
+    # inside a collapsed range strands it -- the hole measured through
     # `Context::Compact`, where it renders and 400s. Here the same hole exists
     # and does NOT ship: the derivation validates its own projection, refuses,
     # and the turn renders the full history instead. That is not the repair --
@@ -1503,7 +1504,7 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
-  # T17. A walk and its projection are O(n) in history length, and a compacting
+  # A walk and its projection are O(n) in history length, and a compacting
   # turn used to pay for THREE of each over the source chain: this object's own,
   # the {Lain::Compaction::Derivation}'s, and -- built, discarded unread --
   # {Lain::Context#render}'s. The rendered bytes are identical either way, so no

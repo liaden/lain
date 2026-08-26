@@ -100,7 +100,7 @@ RSpec.describe Lain::IntervalPartition do
       expect(partition([0...2, 2...4], span: 0...4).validated).to eq([0..1, 2..3])
     end
 
-    # T10 tags ranges with their owning strategy by subclassing Range, and the
+    # Callers tag ranges with their owning strategy by subclassing Range, and the
     # fold reads that tag back off the object #validated answers.
     it "answers an already-inclusive range by identity, class intact" do
       tagged = Class.new(Range).new(0, 1)

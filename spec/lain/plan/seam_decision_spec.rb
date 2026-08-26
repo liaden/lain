@@ -5,8 +5,8 @@ require "bigdecimal"
 RSpec.describe Lain::Plan::SeamDecision do
   # The runtime-measured chunk the seam decision prices: its size annotation,
   # the current (long) prefix, and the shorter prefix a rewrite would leave. A
-  # plain duck -- P3/P6 own the object that carries these at live seams -- so an
-  # anonymous Data stands in rather than a coupled Plan type.
+  # plain duck -- a later card owns the object that carries these at live seams
+  # -- so an anonymous Data stands in rather than a coupled Plan type.
   def build_chunk(size:, before:, after:)
     Data.define(:size, :bytes_before, :bytes_after).new(size:, bytes_before: before, bytes_after: after)
   end
@@ -20,12 +20,12 @@ RSpec.describe Lain::Plan::SeamDecision do
   subject(:decision) { described_class.new(model: "opus", journal:) }
 
   let(:profile) { Lain::CacheProfile::ANTHROPIC } # write 1.25x, read 0.1x
-  let(:prices)  { Lain::PriceBook.default }       # opus input = $5/Mtok (T1: corrected from $15/Mtok)
+  let(:prices)  { Lain::PriceBook.default }       # opus input = $5/Mtok (corrected from $15/Mtok)
   let(:journal) { [] }
 
   # Hand-computed against opus's $5/Mtok input rate (0.000005/token). Both
   # operands are BYTES and the rate is per TOKEN, so each crosses through
-  # {Lain::ProxyBytes#to_tokens} first (UX5) -- BYTES_PER_TOKEN is 4:
+  # {Lain::ProxyBytes#to_tokens} first -- BYTES_PER_TOKEN is 4:
   #   rewrite_cost = (bytes_after / 4) * input * write_multiplier(1.25)
   #   payback      = (bytes_removed / 4) * input * read_multiplier(0.1) * turns
   describe "#call" do
@@ -124,7 +124,7 @@ RSpec.describe Lain::Plan::SeamDecision do
     end
   end
 
-  # UX5's conversion moved the DOLLARS and not the DECISION. `pay > cost`
+  # The token conversion moved the DOLLARS and not the DECISION. `pay > cost`
   # compares two products that each carry the divisor exactly once, so it
   # cancels -- and that is the reason converting was safe, not a reason to have
   # left the dollars wrong. Proved rather than asserted: every verdict below is
@@ -164,7 +164,7 @@ RSpec.describe Lain::Plan::SeamDecision do
     end
   end
 
-  # PC-4 AC2: a deliberately mis-sized annotation produces a visible
+  # A deliberately mis-sized annotation produces a visible
   # estimate-vs-actual delta. The record faithfully carries the estimate it
   # used (the annotation default, un-calibrated), so once the chunk's ACTUAL
   # turn count is measured after the run, the drift is computable and non-zero

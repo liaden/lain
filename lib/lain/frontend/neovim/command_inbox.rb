@@ -31,10 +31,10 @@ module Lain
         def pop(...) = @inbox.pop(...)
         def review_refused(message) = @rpc.review_refused(message)
 
-        # A gesture lain answered LOCALLY joining the same rail (T12): the
+        # A gesture lain answered LOCALLY joining the same rail: the
         # editor's question write is parsed on the RPC thread, and the answer
         # set it produced is popped by the consumer that serves every other
-        # verb. `[verb, args]` with args ONE array, the shape since T16 --
+        # verb. `[verb, args]` with args ONE array, the shape every verb uses --
         # flat positionals is how a payload got silently dropped once already.
         #
         # It is called on the RPC thread, inside the editor's write, under

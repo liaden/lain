@@ -24,11 +24,11 @@ module Lain
       # owns collapsing the four metric registries in `lib/` (two incompatible
       # shapes: this `{of:, fmt:}` and {Compare::METRICS}' `{label:, reader:,
       # fmt:}`). It is one entry in the pre-collapse shape -- a line for that
-      # item to move -- rather than the computed-total metric CE-6.3's
-      # `token-cost + $/sec x wall-clock` would need, which neither shape can
-      # express and which item 21 would then have to undo. A chunk about the
-      # cost axis that reports no cost was not worth landing; a second registry
-      # design was not worth building twice.
+      # item to move -- rather than the computed-total metric that a
+      # `token-cost + $/sec x wall-clock` cost axis would need, which neither
+      # shape can express and which item 21 would then have to undo. A chunk
+      # about the cost axis that reports no cost was not worth landing; a second
+      # registry design was not worth building twice.
       METRICS = {
         "grader score" => { of: :score, fmt: ->(value) { format("%.3f", value) } },
         "total tokens" => { of: :total_tokens, fmt: ->(value) { format("%.1f", value) } },

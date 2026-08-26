@@ -11,7 +11,7 @@ RSpec.describe Lain::Event do
     Lain::Event.new(kind:, payload_digest:, **rest)
   end
 
-  # TL-2, the cut: Turn collapsed into Event(kind: :turn), so the one primitive
+  # The cut: Turn collapsed into Event(kind: :turn), so the one primitive
   # is all there is -- one content-addressing scheme, one Store, one Ractor spec.
   it "is the only turn primitive: no Lain::Turn constant remains" do
     expect(Lain.const_defined?(:Turn)).to be(false)
@@ -51,7 +51,7 @@ RSpec.describe Lain::Event do
                                     causal_parents: [], correlation: nil)
     end
 
-    # Review fix (T4): accepting a carried Payload made payload_digest an
+    # Review fix: accepting a carried Payload made payload_digest an
     # optional keyword, so the old required-keyword loudness moves into an
     # explicit guard -- an envelope with no payload address at all is a bug.
     it "demands a payload address: neither payload_digest nor carried_payload is loud" do
@@ -174,7 +174,7 @@ RSpec.describe Lain::Event do
         expect(tagged.payload_digest).to eq(Lain::Event::Payload.new(kind: :turn, body:).digest)
       end
 
-      # Review fix (T4): the turn CARRIES the very Payload object it addresses,
+      # Review fix: the turn CARRIES the very Payload object it addresses,
       # so a writer (Timeline#commit) stores that object rather than rebuilding
       # an equal one -- which would repeat the normalize+digest pass per commit.
       it "carries the Payload it addresses, the same object a writer stores" do
@@ -244,7 +244,7 @@ RSpec.describe Lain::Event do
     end
   end
 
-  # T4: one definition of "the head is a tool_use awaiting results", shared by
+  # One definition of "the head is a tool_use awaiting results", shared by
   # resume, fork, and rewind -- previously duplicated in resume.rb and
   # rewind.rb with a load-bearing difference (rewind's guarded the nil case,
   # resume's did not).
@@ -312,7 +312,7 @@ RSpec.describe Lain::Event do
       expect(store.fetch(ev.payload_digest)).to eq(pay)
     end
 
-    # T4: storing the payload is purely additive -- payload_digest was already
+    # Storing the payload is purely additive -- payload_digest was already
     # in the hashed envelope, so an event's identity is unchanged whether or not
     # its body is in the Store, and the stored body reproduces from the carried
     # body. This is why every variance fixture still verifies through the Loader.

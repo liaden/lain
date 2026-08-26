@@ -4,11 +4,11 @@
 # rollback on every attempt it opens, and records which round trip opened and
 # abandoned one.
 #
-# It exists because the link T10 stands on -- Provider opens an attempt ->
+# It exists because the link a rollback rides -- Provider opens an attempt ->
 # Transport puts it on the request context -> retry_block finds it THERE -- has
-# no other observer. Nothing in `lib/` registers a rollback yet (T10 is what
-# will), so without a tap that registers one for itself, every line of that
-# chain can be deleted and the suite stays green. Measured: it did.
+# no other observer. Nothing in `lib/` registers a rollback yet, so without a
+# tap that registers one for itself, every line of that chain can be deleted
+# and the suite stays green. Measured: it did.
 #
 # INJECTED, never patched on afterwards. The Faraday middleware stack --
 # `retry_block` included -- is snapshotted when the transport is built

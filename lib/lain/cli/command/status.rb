@@ -5,7 +5,7 @@ require "time"
 module Lain
   module CLI
     module Command
-      # `/status` (T13): the live {Lain::StatusFeed}'s own derivation
+      # `/status`: the live {Lain::StatusFeed}'s own derivation
       # (`#state`), rendered inline -- never the published file. Command::Env's
       # `status` reader IS the one StatusFeed instance {ChatLaunch} threads
       # through both the tee (when one exists) and {Wiring}, so this renders
@@ -35,7 +35,7 @@ module Lain
 
         def usage = "/status -- cache warmth, fleet size, inbox count"
 
-        # T9: a {Lain::Renderable}, not a String -- the same words, with the
+        # A {Lain::Renderable}, not a String -- the same words, with the
         # cache marker naming its own token so the theme can show warmth
         # without the whole listing taking that colour. Only the three keys
         # named here are read, so a {StatusFeed} that publishes MORE renders

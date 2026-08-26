@@ -73,8 +73,8 @@ module Lain
                   "NIT" => SEVERITIES.fetch("note") }.freeze
 
         # Where the human's own notes render. A finding renders in its own
-        # namespace (T22 passes one), so a suggestion is visibly a suggestion
-        # and clearing one never touches the other.
+        # namespace (the caller passes one), so a suggestion is visibly a
+        # suggestion and clearing one never touches the other.
         DEFAULT_NAMESPACE = "lain_review_diagnostics"
 
         # What nvim prints beside a message. Says which door a note came in by,

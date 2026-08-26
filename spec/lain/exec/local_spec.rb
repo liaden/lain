@@ -30,7 +30,7 @@ RSpec.describe Lain::Exec::Local do
     end
   end
 
-  # F45. lain runs under `bundle exec`, so BUNDLE_GEMFILE and friends name LAIN's
+  # lain runs under `bundle exec`, so BUNDLE_GEMFILE and friends name LAIN's
   # own toolchain; a child inheriting them resolves lain's Gemfile instead of the
   # project it was pointed at. Grader::TestHarness already knew this; the tool the
   # model actually uses did not.

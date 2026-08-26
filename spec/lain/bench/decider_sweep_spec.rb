@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# T6/OR-4: the decider-locus sweep. For T4's prune-scoring decision point,
-# ranks heuristic vs ollama vs haiku vs inline vs model_self_directed over a
+# The decider-locus sweep. For the prune-scoring decision point, ranks
+# heuristic vs ollama vs haiku vs inline vs model_self_directed over a
 # committed, zero-network fixture (spec/fixtures/bench/decider/cases.yml) --
-# reusing {Lain::Compare} itself (T5's cache-write column is exactly why this
+# reusing {Lain::Compare} itself (its cache-write column is exactly why this
 # sweep, unlike {Lain::Bench::Sweep}/{Lain::Bench::DisclosureSweep}, can).
 RSpec.describe Lain::Bench::DeciderSweep do
   def fixture_path(name) = File.join(__dir__, "..", "..", "fixtures", "bench", "decider", "#{name}.yml")

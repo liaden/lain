@@ -2,11 +2,11 @@
 
 module Lain
   module Grader
-    # GR-2: a Journal analysis that diffs each declared tool's stated purpose
+    # A Journal analysis that diffs each declared tool's stated purpose
     # against how often it actually won a call, and flags a tool selected far
     # out of proportion to that purpose -- the "vendor steering hidden in the
     # tool description" case. Pure and deterministic: no model call, built
-    # entirely on {ToolCallIndex} (T8, observed selection) and the session
+    # entirely on {ToolCallIndex} (observed selection) and the session
     # header's `"tools"` schema ({SessionRecord.header}'s `"description"` per
     # tool).
     #

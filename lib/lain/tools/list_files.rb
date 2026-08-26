@@ -42,7 +42,7 @@ module Lain
         # STRUCTURALLY -- by rebuilding it from this one definition and
         # comparing -- rather than by matching words inside it, which is
         # what let an empty listing under a gated directory get misread as a
-        # withheld path (T7's own regression). See {Tools::WebSearch}'s
+        # withheld path (an observed regression). See {Tools::WebSearch}'s
         # not_configured_message for the template this follows.
         def empty_message(path)
           "list_files: #{path.inspect} is empty -- no entries."

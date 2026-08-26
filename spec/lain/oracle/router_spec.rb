@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# OR-5: the spawn-time router oracle -- "which model (and shared sibling
+# The spawn-time router oracle -- "which model (and shared sibling
 # template, if any) should THIS child run under" -- answered from the task's
 # own text, before any child exists. {Arm::AdaptiveRouter} is the one caller;
 # this spec pins the baseline heuristic tier and the content-addressed

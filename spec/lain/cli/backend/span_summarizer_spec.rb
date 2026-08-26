@@ -107,7 +107,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
       expect(chosen.policy).to be_a(Lain::Compaction::Strategy::Elide)
     end
 
-    # F51. The policy alone cannot be journalled by name: `Strategy::Base#name`
+    # The policy alone cannot be journalled by name: `Strategy::Base#name`
     # answers a CLASS name, and a composition answers two of them joined by
     # ` | `, neither of which is what an operator typed or what a bench groups
     # its arms by. So the flag's own string travels beside the policy, in the
@@ -195,12 +195,12 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
     end
   end
 
-  # F28. The SPAN tier's half of the pair. Its sibling
+  # The SPAN tier's half of the pair. Its sibling
   # {Lain::CLI::Backend::Summarizer} is pinned in its own file, and the two are
   # deliberately not collapsed into one: they call the same
   # `#summarizer_provider` with opposite `queue:` answers, and an eager tier that
-  # started queueing would be F26's own mechanism -- the turn that produced a
-  # tool result waiting on its summary.
+  # started queueing would be the same self-inflicted stall -- the turn that
+  # produced a tool result waiting on its summary.
   describe "the record a collapsed span leaves" do
     it "journals the request_sent its round trip spent, over the summarizer's model" do
       in_project_declaring(:nothing) { collapsed(wired_strategy(summarizing_backend)) }

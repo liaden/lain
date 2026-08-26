@@ -3,7 +3,7 @@
 module Lain
   module CLI
     module Command
-      # `/inbox` (T13): reuses {HumanReplies}'s OWN drain object at `you>` --
+      # `/inbox` reuses {HumanReplies}'s OWN drain object at `you>` --
       # `#drain_at_prompt`, the same TTY drain UX and the same @ask_human
       # resolution `/inbox` at `human>` already uses (`read_drained_answer`).
       # Never a second listing, never a second reply path.

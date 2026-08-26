@@ -171,7 +171,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
       end
     end
 
-    # Dir.chdir into the tmpdir so the I1 StatusFeed sink (now always on the
+    # Dir.chdir into the tmpdir so the StatusFeed sink (now always on the
     # live-view tee, so `.lain/state.json` publishes for the tmux HUD) writes
     # its state file under the temp tree rather than the repo. The journal path
     # keys off XDG_STATE_HOME, not cwd, so the chdir is invisible to it.
@@ -199,12 +199,12 @@ RSpec.describe Lain::CLI::ChatLaunch do
       end
     end
 
-    # I1 wiring: the state feed is a live-view tee sink even without --nvim, so
+    # The state feed is a live-view tee sink even without --nvim, so
     # the state file publishes for the tmux HUD (`lain up`'s chat window carries
     # no --nvim). A turn that touched the cache slides the deadline; a
     # journal-only run still fans telemetry through the tee to the state feed.
     #
-    # Globbed, not composed: since F50 the feed lands under
+    # Globbed, not composed: the feed lands under
     # `$XDG_STATE_HOME/lain/status/<project hash>/state.json`, and spelling that
     # hash here would be this fixture rebuilding the recipe
     # `spec/lain/project_dir_spec.rb` forbids `lib/` from rebuilding.

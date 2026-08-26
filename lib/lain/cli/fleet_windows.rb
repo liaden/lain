@@ -5,7 +5,7 @@ require "async"
 module Lain
   module CLI
     # A `#<<` sink on the live-view tee ({JournalTee}) that gives each spawned
-    # subagent a tmux window running `lain watch <spawn-digest>` (T7's
+    # subagent a tmux window running `lain watch <spawn-digest>` (its
     # read-only tail), and marks the window title done when that actor's
     # lineage closes -- an actor's "stopped" farewell, or a one-shot's result
     # message. The window is never killed: the human closes it, after reading
@@ -181,6 +181,11 @@ module Lain
 
       # A Null-or-live factory for the wiring one-liner: live only when the
       # operator asked (--windows) AND there is a tmux to open windows in.
+      #
+      # @param options [Hash] the invoked command's parsed flags
+      # @option options [Boolean] :windows whether the operator asked for windows
+      # @param env [Hash] the process environment, read for TMUX
+      # @return [FleetWindows, Null]
       def self.for(options, env: ENV)
         return Null.new if !options[:windows] || env["TMUX"].to_s.empty?
 

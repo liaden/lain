@@ -65,7 +65,7 @@ module Lain
         # -- {Effect::Handler::Sensitivity} for what may not be touched at all,
         # {Effect::Handler::Gate} for what is merely worth asking about.
         #
-        # T23: until this existed nothing anywhere called {Lain::Sensitivity.new}
+        # Until this existed nothing anywhere called {Lain::Sensitivity.new}
         # and nothing called {Lain::Sensitivity::Rules.from}, so every real chat
         # ran on {Lain::Sensitivity::Policy::Null} -- `gates?` false for every
         # path there is -- and the `[sensitivity]` table was parsed by nobody.

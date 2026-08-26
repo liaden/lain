@@ -3,7 +3,7 @@
 module Lain
   module Frontend
     class Neovim
-      # One anchor's conversation, as the editor's thread pane holds it (T18):
+      # One anchor's conversation, as the editor's thread pane holds it:
       # the Ruby half renders the exchange into buffer lines and posts it; the
       # editor half (`runtime/51_thread.lua`) shows it in the diff pane the
       # cursor is NOT in, swapping the buffer as the cursor moves.
@@ -16,23 +16,23 @@ module Lain
       # is nothing here for a write to answer, and nothing here to keep: this
       # renders and posts, and a spec pins that its only instance variable is
       # the rail out. That is also what {Review::Surface}'s own doc means by "a
-      # surface holds NO review state"; T19's adapter reaches this object, so
+      # surface holds NO review state"; the surface adapter reaches this object, so
       # the promise has to be true one layer down too.
       #
       # == The anchor rides whole, not as a bare id
       #
       # {RpcThread::RenderQueue::SET_THREAD} names its first argument
-      # `anchor_id`, and T11's reasoning for keying on an id rather than a line
+      # `anchor_id`, and the reasoning for keying on an id rather than a line
       # is right and is kept: an id is a stamp Ruby minted and can hand back
       # unchanged, while a line only names a position in the rendering that drew
       # it. What that reasoning does not supply is the one fact the pane cannot
       # work without -- WHERE the anchor sits. The pane is cursor-driven: it
       # answers "is there a thread on the line I am on", and no other entry
-      # point on this rail carries an anchor's position (T15's `open_changeset`
+      # point on this rail carries an anchor's position (`open_changeset`
       # carries the file, never its notes). Ruby is the only side that knows,
       # so the identity that crosses is the id AND the position: `id`, `path`,
       # `side`, `line`. The editor treats the id as opaque and never parses it,
-      # which is the half of T11's rule that actually binds.
+      # which is the half of that rule that actually binds.
       #
       # The keys are Strings and `side` is a String, because that is what a lua
       # table on the far side of msgpack reads as -- {Review::Wire}'s rule for
@@ -96,7 +96,7 @@ module Lain
         HEADER = "-- thread at %s --"
 
         # One message in the conversation. `speaker` is who said it (the human,
-        # the docent T24 spawns, or lain refusing), `text` is what they said,
+        # the docent the review wires in, or lain refusing), `text` is what they said,
         # newlines and all -- this object cuts it into buffer lines.
         Entry = Data.define(:speaker, :text)
 

@@ -2,7 +2,7 @@
 
 require "bigdecimal"
 
-# T11: the two halves of a cache-waste meter, joined. `Bench::Rewrites` knows
+# The two halves of a cache-waste meter, joined. `Bench::Rewrites` knows
 # WHERE a prompt prefix broke; the Journal's `turn_usage` records know what the
 # next call was BILLED for; `PriceBook` turns the difference into dollars.
 #
@@ -51,7 +51,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       "requirer" => "Lain::Context", "provider" => "Lain::Provider::Ollama" }
   end
 
-  # AC 1: a broken prefix reports re-billed tokens and their cost.
+  # A broken prefix reports re-billed tokens and their cost.
   describe "a prefix that broke, and the cache creation the next call was billed for" do
     subject(:waste) { described_class.from_journal(entries) }
 
@@ -71,7 +71,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(waste.rebilled_tokens).to eq(12_000)
     end
 
-    # 12_000 tokens x opus cache-creation ($6.25/MTok, T1's corrected table)
+    # 12_000 tokens x opus cache-creation ($6.25/MTok, the corrected table)
     # = $0.075 exactly. BigDecimal throughout: a drifting cost metric is worse
     # than none (price_book.rb's own reasoning).
     it "prices those tokens at that call's own model rate" do
@@ -87,7 +87,7 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
   end
 
-  # AC 2: a model switch is not counted as waste. THE card's central difficulty.
+  # A model switch is not counted as waste. THE card's central difficulty.
   describe "a prefix divergence that is only a model switch" do
     subject(:waste) { described_class.from_journal(entries) }
 
@@ -121,7 +121,7 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
   end
 
-  # AC 2, the other half: segmentation must not SUPPRESS a real edit that
+  # The other half: segmentation must not SUPPRESS a real edit that
   # happens to sit near a switch. Within one model's segment, a real break is
   # still a break.
   describe "a real edit inside one model's run, after a switch" do
@@ -149,7 +149,7 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
   end
 
-  # AC 3: a session whose cache never broke.
+  # A session whose cache never broke.
   describe "a session where every call read the cache" do
     subject(:waste) { described_class.from_journal(entries) }
 
@@ -267,7 +267,7 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
   end
 
-  # B1: `chunk_while` chunked into MAXIMAL CONSECUTIVE runs, so an alternating
+  # `chunk_while` chunked into MAXIMAL CONSECUTIVE runs, so an alternating
   # `/model` session put every opus call in a run of length 1 and the meter
   # became structurally incapable of reporting anything. But the prompt cache is
   # keyed per `(model, prefix)` -- an intervening haiku call does not touch the
@@ -310,7 +310,7 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
   end
 
-  # B2: `Tools::Subagent` hands the child the SESSION's journal, and its
+  # `Tools::Subagent` hands the child the SESSION's journal, and its
   # long-lived actor can land a `turn_usage` between the parent's `request_sent`
   # and the parent's own. Positional pairing then consumes the CHILD's record as
   # the parent's and discards the parent's real one.
@@ -359,7 +359,7 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
   end
 
-  # S1: `rebilled_cost` summed only the priceable rebills, so a mixed journal
+  # `rebilled_cost` summed only the priceable rebills, so a mixed journal
   # with the break on the UNPRICED side printed the exact `$0.000000` that was
   # already removed for the all-unpriced case. The object must know whether the
   # figure behind it is complete.
@@ -408,7 +408,7 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
   end
 
-  # S2: `payload["model"]` reached the render verbatim. A local model is
+  # `payload["model"]` reached the render verbatim. A local model is
   # routinely configured BY PATH, and this report's stated constraint is
   # digests, token counts and dollars -- never a path.
   describe "a model name that is not a model name" do
@@ -444,7 +444,7 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
   end
 
-  # S4: the card asked for the cache fact as a REUSABLE object, and
+  # The card asked for the cache fact as a REUSABLE object, and
   # ROADMAP.md:221-225's scheduler asks "is the cache cold right now" of the
   # `turn_usage` it just saw. Reaching it through `from_journal` would re-fold
   # the whole journal every turn, over `request_sent` payloads that
@@ -493,7 +493,7 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
   end
 
-  # T11. A provider with no prompt cache reports BOTH cache fields as 0 on every
+  # A provider with no prompt cache reports BOTH cache fields as 0 on every
   # call (`provider/ollama/decoding.rb:91-93`), so the fixtures in this block are
   # all-zero where every other fixture in this file is deliberately not. That is
   # not an exemption from the premise at the top: all-zero IS the shape under
@@ -658,7 +658,6 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(Lain::Friction::Report::ANALYZERS).to include("Friction::CacheWaste")
     end
 
-    # AC 1
     it "states the re-billed token count and its cost" do
       rendered = render([request_sent([[0, "blake3:a"]]), turn_usage(creation: 20_000),
                          request_sent([[0, "blake3:a-EDITED"]]), turn_usage(creation: 12_000)])
@@ -668,7 +667,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rendered).to include("0.075")
     end
 
-    # AC 1's anti-metric half: never a waste figure on its own.
+    # The anti-metric half: never a waste figure on its own.
     it "reports the waste beside what the cache bought" do
       rendered = render([request_sent([[0, "blake3:a"]]), turn_usage(creation: 20_000, read: 5_000),
                          request_sent([[0, "blake3:a-EDITED"]]), turn_usage(creation: 12_000, read: 40_000)])
@@ -677,7 +676,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rendered).to include("served from cache")
     end
 
-    # AC 2: "the report attributes no waste to it AND SAYS WHY".
+    # The report must attribute no waste to it AND SAY WHY.
     it "says why a model switch is not waste" do
       rendered = render([request_sent(real_chain(model: "claude-opus-4-8"), model: "claude-opus-4-8"),
                          turn_usage(model: "claude-opus-4-8", creation: 20_000),
@@ -688,7 +687,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rendered).to include(Lain::Friction::Report::MODEL_SWITCH_NOTE)
     end
 
-    # AC 3: stated, not omitted.
+    # Stated, not omitted.
     it "states there was no cache waste rather than omitting the section" do
       rendered = render([request_sent([[0, "blake3:a"]], model: "claude-sonnet-4-6"),
                          turn_usage(model: "claude-sonnet-4-6", read: 100_000),
@@ -699,7 +698,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rendered).to include("200000")
     end
 
-    # T11/AC 1. The round-8 ollama session rendered `4 prefix rewrites detected`
+    # The round-8 ollama session rendered `4 prefix rewrites detected`
     # and, two lines later, `saving $0.000000` -- a confident dollar figure from
     # a provider that has no cache to save with.
     it "says the provider does not cache, and quotes no saving, when the journal recorded that" do
@@ -727,7 +726,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rendered).not_to include("tokens served from cache")
     end
 
-    # AC 5. Two journals identical but for the one record, so the cacheless
+    # Two journals identical but for the one record, so the cacheless
     # statement is pinned to the RECORD rather than to the all-zero cache
     # fields both journals share -- an inference from those fields cannot tell a
     # cacheless provider from a session too short to have cached anything, and
@@ -776,7 +775,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rendered).not_to include("does not cache")
     end
 
-    # Review fix (Jeremy, judgement taken). F49's own sentence -- `saving
+    # Review fix (Jeremy, judgement taken). The reported sentence -- `saving
     # $0.000000` -- survived on any journal carrying no capability record, which
     # is every recorded bench session and every strict-policy run. Withheld now
     # for a reason that needs no inference about the provider: zero tokens times
@@ -822,7 +821,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rendered).not_to match(/re-billed[^;]*costing \$/)
     end
 
-    # S1: the bug the all-unpriced guard missed. `models != unpriced_models`
+    # The bug the all-unpriced guard missed. `models != unpriced_models`
     # here, so the old predicate printed a figure -- and `rebilled_cost` had
     # dropped every unpriced rebill, so that figure was exactly `$0.000000`.
     it "withholds the dollar figure when the BREAK is on the unpriced side of a mixed journal" do
@@ -838,7 +837,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rendered).not_to include("$0.000000")
     end
 
-    # S3: the upper-bound reasoning and the main-agent scoping are both argued
+    # The upper-bound reasoning and the main-agent scoping are both argued
     # in the source, where nobody running `lain friction SESSION` sees them.
     it "puts the error direction and the scope in the sentence a user reads" do
       rendered = render([request_sent([[0, "blake3:a"]]), turn_usage(creation: 20_000),
@@ -848,7 +847,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       expect(rendered).to include("main-agent call(s)")
     end
 
-    # S2: integration check 9 greps a real run's journal for a credential
+    # Integration check 9 greps a real run's journal for a credential
     # against exactly this. A local model is configured BY PATH.
     it "never renders a filesystem path, even as a model name" do
       rendered = render([request_sent([[0, "blake3:a"]], model: "/home/tara/models/qwen3-8b.gguf"),

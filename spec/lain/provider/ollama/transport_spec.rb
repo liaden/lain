@@ -100,7 +100,7 @@ RSpec.describe Lain::Provider::Ollama::Transport do
 
     # Both keys on ONE context, which is what makes the tap's two lookups
     # independent -- RULING 3's requirement that a frame rotation cannot
-    # displace the F7b assembler discard.
+    # displace the assembler discard.
     # A REAL retry, because that is the only way faraday-retry hands the block
     # the env and so the only way this reads the context the tap really sees.
     # It was written against a 200 first, and was vacuous: nothing retried, the

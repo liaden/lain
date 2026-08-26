@@ -5,7 +5,7 @@ require "json"
 
 module Lain
   module Bench
-    # The M6 retrieval eval (6-2.4): a deterministic, offline comparison of the
+    # The retrieval eval: a deterministic, offline comparison of the
     # five retrieval arms -- manifest, bm25, vector, hybrid, graph -- over the
     # committed gold corpus, ranked by recall@k with a tokens-on-recall column.
     #

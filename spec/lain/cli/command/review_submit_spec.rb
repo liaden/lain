@@ -3,7 +3,7 @@
 require "json"
 require "stringio"
 
-# `/review-submit` (T34): the last hop, and the one this chunk never built.
+# `/review-submit`: the last hop, and the one this chunk never built.
 #
 # (Opening deliberately not with the class's own name: `Style/CommentAnnotation`
 # reads a leading "Review" as an annotation keyword.)

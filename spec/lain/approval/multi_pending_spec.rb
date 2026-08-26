@@ -3,7 +3,7 @@
 require "async"
 require "stringio"
 
-# T13: what {Approval::Queue#settle} does to `@parked` when SEVERAL pendings are
+# What {Approval::Queue#settle} does to `@parked` when SEVERAL pendings are
 # parked at once. The load-bearing example is the third one, and the property it
 # owns is not an arity claim: *the answered pending, and only it, leaves the
 # parked list, by identity, promptly, with oldest-first order preserved.* Three
@@ -30,7 +30,7 @@ require "stringio"
 # while {Frontend::ApprovalPolicy#watch}, the one sanctioned consumer, is handed
 # nothing and no human is ever asked. `approval_spec.rb` covers arrival at arity
 # one and `queue_concurrency_spec.rb` at two; nothing covers it at three. Off
-# limits for this card by instruction (round 8's F40 lives in `#dequeue`'s
+# limits here by instruction (arrival lives in `#dequeue`'s
 # one-arrival-one-waiter FIFO, and draining it here would consume what a surface
 # is owed); raised as its own follow-up.
 #

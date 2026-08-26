@@ -4,7 +4,7 @@ require "json"
 require "stringio"
 require "tmpdir"
 
-# T2: a spawned child's turns reach the session record.
+# A spawned child's turns reach the session record.
 #
 # A child runs its own chain, and things OUTSIDE that chain cite it -- the
 # `"final"` edge {Lain::Tools::Subagent::Lineage#message} writes, and the head an

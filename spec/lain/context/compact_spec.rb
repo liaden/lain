@@ -64,13 +64,13 @@ RSpec.describe Lain::Context::Compact do
     expect(composed.call(messages).size).to eq(2)
   end
 
-  # T4. What this combinator renders has to be a conversation the Messages API
-  # accepts. Grounding F1 measured the shipped one ASSISTANT-first at every
-  # keep_last, and non-alternating at every even one; F2 measured it splitting
+  # What this combinator renders has to be a conversation the Messages API
+  # accepts. Grounding measured the shipped one ASSISTANT-first at every
+  # keep_last, and non-alternating at every even one, and measured it splitting
   # tool pairs. {Lain::Context::Conversation} is the assertion here and nowhere
   # else -- it is deliberately not wired into the render path, because a
   # repairing or raising validator would hide the producer bug rather than name
-  # it (T1's ruling). The producer is what got fixed.
+  # it. The producer is what got fixed.
   describe "the rendered conversation" do
     def alternating(count)
       (1..count).map { |index| message(index.odd? ? "user" : "assistant", "turn #{index}") }
@@ -98,7 +98,7 @@ RSpec.describe Lain::Context::Compact do
     # The composed production pipeline, in {Compaction::Scheduler::COMPOSE}'s
     # order -- Compact ahead of Reminder and CacheBreakpoints -- rendered
     # through the real {Context#render} rather than by calling the combinator,
-    # because that composition is what F1 measured invalid.
+    # because that composition is what the grounding measured invalid.
     def rendered_through(compact, history)
       Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024,
                         pipeline: ->(workspace) { compact >> Lain::Context.pipeline(workspace) })
@@ -140,7 +140,7 @@ RSpec.describe Lain::Context::Compact do
 
     # The Open decisions ruling, pinned: one role, decided once, never computed
     # from history parity. An assistant summary is what made messages[0] invalid
-    # at EVERY keep_last (F1), so the role cannot be a function of anything.
+    # at EVERY keep_last, so the role cannot be a function of anything.
     it "emits its summary as a user message whatever the history's parity" do
       (1..8).each do |keep_last|
         rendered = compacting(keep_last).call(alternating(9))
@@ -149,7 +149,7 @@ RSpec.describe Lain::Context::Compact do
       end
     end
 
-    # Scenario: a pinned message keeps its neighbours (F3). The hoist put a pin
+    # Scenario: a pinned message keeps its neighbours. The hoist put a pin
     # from the middle of the span at index 0, ahead of the summary of everything
     # that PRECEDED it -- reading order inverted, and its predecessor gone.
     it "leaves a pinned message after the summary of what preceded it, not ahead of it" do
@@ -196,16 +196,17 @@ RSpec.describe Lain::Context::Compact do
     # the validity claim: {Compaction::Boundary} protects the CUT, but a pin
     # punches a hole in the MIDDLE of the span and nothing looks at that hole.
     # Pin a `tool_use` turn and it survives while the `tool_result` answering it
-    # is summarized away -- F1 and F2 reconstituted, on the pinned path only.
+    # is summarized away -- the original split-pair defect reconstituted, on the
+    # pinned path only.
     # Measured through the real {Compaction::Source} at the shipped
     # `keep_last: 20`; swept at this level, 780 introduced `unanswered_tool_use`
     # and 780 `orphaned_tool_result` across 20,060 cells.
     #
     # It is pinned rather than fixed because the fix is a decision about what a
     # PIN MEANS -- a pin that would strand its counterpart either drags the
-    # counterpart along or is dropped with it -- and that decision is not T4's.
-    # This is the repo's own idiom for a property that cannot yet be made
-    # structural (`chunk-compaction-tiers-pins-isolation.md`'s A5). It is not a
+    # counterpart along or is dropped with it -- and that decision is out of
+    # scope here. This is the repo's own idiom for a property that cannot yet be made
+    # structural (`chunk-compaction-tiers-pins-isolation.md`). It is not a
     # regression: the rule this replaced never covered the pinned path either.
     #
     # WHEN THE PIN SEMANTICS ARE DECIDED, this example must go red and be

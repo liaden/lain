@@ -56,9 +56,9 @@ RSpec.describe Lain::Project::Resolver do
   # committing an empty tree in a tmpdir. Outside a hook the variables are
   # unset, so the example passes everywhere except the one moment that matters.
   #
-  # This card's own subject, turned on itself: T2 exists to stop inherited git
-  # environment from deciding a project root, and its spec was itself being
-  # decided by inherited git environment.
+  # This card's own subject, turned on itself: the resolver exists to stop
+  # inherited git environment from deciding a project root, and its spec was
+  # itself being decided by inherited git environment.
   #
   # `GIT_INDEX_FILE`, `GIT_COMMON_DIR`, `GIT_WORK_TREE`, `GIT_CONFIG_COUNT` and
   # `GIT_CONFIG_PARAMETERS` are the ones measured to actually redirect git (a

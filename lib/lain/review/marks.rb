@@ -112,7 +112,7 @@ module Lain
       # `submit` walks the whole corpus however little of it has been drawn
       # (measured: a 10-file session that presented with 0 chunked chunks 10 of
       # 10 on approve alone), and that is now the ONLY one left outside this
-      # object: B19 (`b45553e`) removed {Frontend::Neovim::ReviewView}'s forcing
+      # object: commit `b45553e` removed {Frontend::Neovim::ReviewView}'s forcing
       # of every file at render, so drawing a survey reads nothing at all. What
       # reads a file now is the `<CR>` that opens it
       # ({Frontend::Neovim::ChangesetDiff}), one file per gesture.

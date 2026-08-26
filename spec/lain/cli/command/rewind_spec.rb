@@ -3,7 +3,7 @@
 require "json"
 require "stringio"
 
-# T15: `/rewind` moves the live session backward with zero model turns --
+# `/rewind` moves the live session backward with zero model turns --
 # Agent#rewind in place, the move journaled as an additive `rewound` record
 # ({from:, to:}) so the file's fold can follow the checkout and the session
 # stays loadable. A bad target (unknown digest, out-of-range count) refuses
@@ -137,8 +137,8 @@ RSpec.describe Lain::CLI::Command::Rewind do
   # tool_use (a real-API 400). It moves a LIVE head and projects nothing, so
   # unlike a resume there is no load to answer the stranded call: the torn turn
   # would simply be the head. (The older second reason -- "the journaled file
-  # would then refuse to resume" -- stopped being true at T3, which repairs
-  # that file rather than refusing it. The first reason is sufficient.)
+  # would then refuse to resume" -- stopped being true once resume learned to
+  # repair that file rather than refuse it. The first reason is sufficient.)
   describe "a mid-tool target is refused (parity with the session-loading doors)" do
     let(:provider) do
       Lain::Provider::Mock.new(responses: [tool_response(["tu_1", "echo", { "text" => "ping" }]),

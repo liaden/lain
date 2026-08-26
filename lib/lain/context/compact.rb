@@ -65,7 +65,7 @@ module Lain
       # `messages[0...-keep_last]`: the naive slice landed the retained tail on
       # whatever role parity happened to put there, which made the summary and
       # the tail two adjacent assistant messages at every even keep_last, and
-      # split tool pairs (Grounding F1/F2). {Compaction::Head} consults the same
+      # split tool pairs. {Compaction::Head} consults the same
       # object with the same arguments, which is what keeps the two in step --
       # a `Boundary` is a pure function of `(messages, keep_last)`, so consulting
       # it twice and holding one instance are the same answer. The instance
@@ -84,12 +84,12 @@ module Lain
       # object agree because they compute the same pure `Boundary` from the same
       # `(messages, keep_last)` -- so a combinator composed AHEAD of this one
       # that reshapes the array silently breaks the agreement rather than
-      # failing: measured during T4, a Head naming 5 messages beside a Compact
+      # failing: measured once, a Head naming 5 messages beside a Compact
       # summarizing 3, with nothing raising. `Compaction::Source` composes it
       # first (`scheduler.rb:187-191`) and hands both the same list, which is
       # why this is a precondition and not a bug today. Handing ONE `Boundary`
       # to both sites would make it structural instead; that needs a `Source`
-      # change and belongs to T9.
+      # change and is not made here.
       def call(messages)
         span = messages[0...Compaction::Boundary.new(messages:, keep_last: @keep_last).index]
         exempt = protected_indices(span)
@@ -112,7 +112,7 @@ module Lain
       # Survivors in POSITION, which is {Prune#call}'s idiom -- select indices
       # in order, `values_at` -- rather than the `partition` that hoisted every
       # protected message to the front and put a pin from the middle of the span
-      # at index 0, ahead of the summary of what preceded it (F3).
+      # at index 0, ahead of the summary of what preceded it.
       #
       # One summary replaces a set that pins may have left non-contiguous, so it
       # takes the position of the FIRST message it subsumes: everything pinned
@@ -124,7 +124,7 @@ module Lain
       # MIDDLE of the span and nothing looks at that hole. A pinned `tool_use`
       # turn survives while the `tool_result` answering it is summarized away
       # (and vice versa), and a pinned assistant turn can end up adjacent to the
-      # retained tail's assistant -- F1 and F2 reconstituted, on the pinned path
+      # retained tail's assistant -- both failures reconstituted, on the pinned path
       # only. Measured through the real `Compaction::Source` at the shipped
       # `keep_last: 20`. The fix is a decision about what a PIN MEANS -- either a
       # pin that would strand its counterpart drags the counterpart along, or it

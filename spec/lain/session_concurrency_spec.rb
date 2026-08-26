@@ -3,7 +3,7 @@
 require "async"
 require "stringio"
 
-# E3's fixture, kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
+# This spec's fixture, kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module SessionConcurrencySpecSupport
   # A parallel-safe read tool built on the entered/release Async::Queue idiom
   # (spec/lain/tools/parallel_safety_spec.rb): it announces entry, parks until
@@ -38,7 +38,7 @@ module SessionConcurrencySpecSupport
   end
 end
 
-# E3: pins the fiber-safety invariant E1/E2's concurrency rests on.
+# Pins the fiber-safety invariant the gathered-tool concurrency rests on.
 # {Session::Journaled#record_read} is a check-then-mutate pair (read? then
 # record_read then a conditional journal write), and its documented claim
 # (session.rb) is that no yield point sits between the check and the mutate --
@@ -48,8 +48,8 @@ end
 # the mutate, which made both fibers journal the same path, then restored.
 #
 # ESCALATION RULE (the card's whole point): if this spec ever needs a NEW lock
-# in Session to pass, the no-yield claim has failed and E1/E2 are unsound --
-# that diagnosis belongs to a human, not to a patch.
+# in Session to pass, the no-yield claim has failed and the concurrent gather
+# is unsound -- that diagnosis belongs to a human, not to a patch.
 RSpec.describe "Session read-set coherence under concurrent gather" do
   it "records one path once and journals exactly one session_read across two gathered readers" do
     journal_io = StringIO.new
@@ -95,7 +95,7 @@ RSpec.describe "Session read-set coherence under concurrent gather" do
   end
 end
 
-# T22: the completeness bit's monotonicity, driven under the SAME real gather.
+# The completeness bit's monotonicity, driven under the SAME real gather.
 #
 # The card's first escalation trigger is explicitly about two sibling fibers
 # racing a complete read into a partial one, and every other monotonicity

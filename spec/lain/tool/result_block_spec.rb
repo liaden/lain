@@ -1,18 +1,18 @@
 # frozen_string_literal: true
 
 # Captured from the scripted run below against the pre-lens ToolRunner (the
-# "before" half of AC 1). Kept out of the RSpec block per
+# "before" half). Kept out of the RSpec block per
 # Lint/ConstantDefinitionInBlock.
 #
-# Re-captured (T5, lain/effect/handler/live.rb): Live's error-result text
+# Re-captured (lain/effect/handler/live.rb): Live's error-result text
 # dropped its "#{e.class}: " prefix, so BoomTool's committed tool_result
 # content changed from "RuntimeError: kaboom" to "kaboom". Only entries [2]
 # and [3] moved -- [2] is the turn CARRYING that content, and [3] moved only
 # because its render_parent chains to [2]'s (now different) digest; [3]'s own
 # body ("done") is byte-identical before and after. [0] and [1] precede the
 # tool_result turn entirely and are untouched. Verified by reconstructing the
-# pre-T5 body (re-adding "RuntimeError: ") and recomputing: it reproduces the
-# four digests this constant held before T5, byte for byte.
+# earlier body (re-adding "RuntimeError: ") and recomputing: it reproduces the
+# four digests this constant held before that change, byte for byte.
 PRE_RESULT_LENS_DIGESTS = %w[
   blake3:4c979108fe0fccd553f923deb23d9cf48d1628f1f37caf4faaa3e9a984a6a9e1
   blake3:dfa6fa7152989de6a82b43afd5e9c1e345b66ae209312d768d94402d416ff8eb
@@ -242,7 +242,7 @@ RSpec.describe Lain::Tool::ResultBlock do
     end
   end
 
-  # AC 1. The lens is a VIEW: nothing it touches may move a committed byte. The
+  # The lens is a VIEW: nothing it touches may move a committed byte. The
   # literals above were captured from this same scripted run against the
   # pre-lens ToolRunner, so a drift in the wire hash the runner builds and
   # commits fails here rather than silently in a replay.

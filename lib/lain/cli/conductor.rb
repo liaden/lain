@@ -24,8 +24,8 @@ module Lain
     # {#close} is the guarded closer the coordinator's `closer:` duck resolves to
     # AND the one chat's normal-exit ensure calls, so a signal-driven close and a
     # `close(:exit)` never both write session_closed. On an interrupt reason it
-    # preserves {Repl}'s catch_up -> run_interrupted -> session_closed order (the
-    # B5 amendment), which the signal path would otherwise skip.
+    # preserves {Repl}'s catch_up -> run_interrupted -> session_closed order,
+    # which the signal path would otherwise skip.
     class Conductor
       # What the caller reads back from {#supervise}: the ask's response (nil when
       # the run was interrupted before it committed one) and whether the session
@@ -52,14 +52,14 @@ module Lain
       end
 
       # `supervisor:` answers `#drain(within:)` with an Enumerable of
-      # {Shutdown}'s `#settle` drain duck -- in production the OM-6
+      # {Shutdown}'s `#settle` drain duck -- in production the
       # {Lain::Supervisor}, whose bounded view settles the fleet within the
       # window; {Supervisor::Null} (nothing to drain) by default.
       #
       # `run_clock:` defaults to a fresh, private {RunClock} so a caller that
       # does not yet care about it (most specs) pays nothing; production
       # wants ONE shared instance injected here AND handed to whatever also
-      # reads it or feeds it compaction events (T7/T13), never a second
+      # reads it or feeds it compaction events, never a second
       # Conductor-local clock the reader could drift from.
       def initialize(tty:, chronicle:, signals:, grace: Shutdown::GRACE_DEFAULT,
                      budget: Agent::Budget.new, supervisor: Supervisor::Null, run_clock: RunClock.new,
@@ -258,8 +258,8 @@ module Lain
       # clear lands on the next tick -- an up-to-@tick (1s) latency, accepted as
       # the price of one cadence for both the render and the clear.
       #
-      # actors: is the injected supervisor's BOUNDED drain view (OM-6, the
-      # follow-up the old note here promised): a graceful `#drain` settles the
+      # actors: is the injected supervisor's BOUNDED drain view (the follow-up
+      # the old note here promised): a graceful `#drain` settles the
       # fleet after the run task, so wait_responses means the fleet's
       # in-flight work too -- capped at the same grace window the countdown
       # uses, because an unbounded fleet settle would wedge the coordinator
@@ -332,7 +332,7 @@ module Lain
 
         # One tick per @tick until the fiber is stopped: render the grace window
         # while the coordinator counts down (the countdown reads its own keys and
-        # feeds them back to the coordinator -- T21), erase it otherwise. The
+        # feeds them back to the coordinator), erase it otherwise. The
         # `loop` needs no break because `Async::Task#stop` unwinds it when
         # {Conductor#teardown} stops the fiber.
         def run(shutdown, task)

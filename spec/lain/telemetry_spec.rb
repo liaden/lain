@@ -4,8 +4,8 @@ require "json"
 require "stringio"
 
 RSpec.describe Lain::Telemetry do
-  # T1 freed the Lain::Event name from telemetry (records moved to
-  # Lain::Telemetry); T8 then reused Lain::Event for the event envelope. The
+  # The Lain::Event name was freed from telemetry (records moved to
+  # Lain::Telemetry) and then reused for the event envelope. The
   # rename must not have left a telemetry record resolvable under Lain::Event --
   # the envelope owns the name now, and every record still lives only under
   # Lain::Telemetry.
@@ -282,7 +282,7 @@ RSpec.describe Lain::Telemetry do
 
     describe "#prefix_digests" do
       # nil = not computed; [] = computed, zero markers. The offline rewrite
-      # projection (T4) needs that distinction on the wire, so absence is a
+      # projection needs that distinction on the wire, so absence is a
       # value here, not a missing Null Object.
       it "defaults to nil, meaning the chain was never computed" do
         expect(event.prefix_digests).to be_nil
@@ -395,8 +395,9 @@ RSpec.describe Lain::Telemetry do
     end
   end
 
-  # 4-2.3 provenance (T16 panel fix #1; dispatch reading superseded by T18). A
-  # hand-edited resend must journal DISTINGUISHABLY from a real dispatch:
+  # 4-2.3 provenance (a panel fix; the dispatch reading is superseded by the
+  # ResendDispatched marker below). A hand-edited resend must journal
+  # DISTINGUISHABLY from a real dispatch:
   # JournalRequests documents "a request_sent with no following turn_usage is
   # how a failure reads", and this record is the EDIT's projection, never the
   # wire's, so recording it as a plain request_sent would fabricate one failed
@@ -405,7 +406,7 @@ RSpec.describe Lain::Telemetry do
   # in `extra`, because `extra` is documented as exactly what Request.new needs
   # to rebuild the request, and a provenance flag there would ride onto the
   # wire on any rebuild-and-dispatch. Whether the edit then ALSO dispatched
-  # (T18's ResendBridge) is a following resend_dispatched marker plus the
+  # (the ResendBridge) is a following resend_dispatched marker plus the
   # dispatch's own ordinary request_sent/turn_usage pair -- see below.
   describe Lain::Telemetry::RequestResent do
     subject(:event) { described_class.new(digest: "d", payload: { "model" => "m" }, stream: true, extra: {}) }
@@ -431,7 +432,7 @@ RSpec.describe Lain::Telemetry do
     end
   end
 
-  # T18's dispatch marker: the record TYPE that says a hand-edited resend was
+  # The dispatch marker: the record TYPE that says a hand-edited resend was
   # handed to the loop for dispatch. Emitted by CLI::ResendBridge attempt-first
   # (before Agent#run), so a dispatch the wire then failed still reads as
   # attempted; `digest` is the edited request's content address -- the join key
@@ -498,7 +499,7 @@ RSpec.describe Lain::Telemetry do
     end
   end
 
-  # CE-5: the transient first-token scheduling signal. Not journaled as
+  # The transient first-token scheduling signal. Not journaled as
   # history -- see the "no Store event, no new kind" spec below -- but it is
   # an ordinary {Journalable} Telemetry event like every other record here.
   describe Lain::Telemetry::StreamStarted do
@@ -629,7 +630,7 @@ RSpec.describe Lain::Telemetry do
     end
   end
 
-  # T1 AC2: the committed variance fixtures were written before the rename,
+  # The committed variance fixtures were written before the rename,
   # so they are the regression proof that the wire format (the `type` tags
   # Journalable#to_journal derives from the class name) did not shift under
   # Bench::Session::Loader -- the loader discriminates records by that string,
@@ -655,7 +656,7 @@ RSpec.describe Lain::Telemetry do
     end
   end
 
-  # T13's additive session-record types (SessionClosed, RunInterrupted, Message).
+  # The additive session-record types (SessionClosed, RunInterrupted, Message).
   # Each new discriminator is pinned here as the on-disk contract -- additive by
   # construction, so the turn-chain loader's `of_type` narrowing skips them and an
   # older reader stays unaffected.
@@ -820,7 +821,7 @@ RSpec.describe Lain::Telemetry do
     end
   end
 
-  # T12 / MODEL-2: the local model emits its tool call as assistant TEXT on
+  # The local model emits its tool call as assistant TEXT on
   # roughly half of first turns, and the turn then lands on the HEALTHY
   # `end_turn` arm with nothing journaled at all. This record is the witness.
   #

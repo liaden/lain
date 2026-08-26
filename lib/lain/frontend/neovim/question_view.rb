@@ -3,7 +3,7 @@
 module Lain
   module Frontend
     class Neovim
-      # The question round trip's Ruby end (T9): a pending {Question::Set} opens
+      # The question round trip's Ruby end: a pending {Question::Set} opens
       # in the editor as lain://question, the human ticks boxes and writes
       # indented prose, and `:w` hands the parsed {Question::AnswerSet} on.
       #

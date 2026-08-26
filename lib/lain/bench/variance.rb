@@ -2,7 +2,7 @@
 
 module Lain
   module Bench
-    # The experiment engine (design decision D3): n recordings of ONE task,
+    # The experiment engine: n recordings of ONE task,
     # reported along three axes in one String.
     #
     # 1. Determinism -- each recording, dry-replayed under its own Context,

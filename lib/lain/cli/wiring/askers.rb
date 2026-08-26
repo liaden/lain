@@ -109,7 +109,7 @@ module Lain
           Lain::Tools::AskHuman::Notifying.new(parent:, observer: @observer, agent:, notify:)
         end
 
-        # I5, widened: ONE arrival, three surfaces. What rides the queue
+        # Widened: ONE arrival, three surfaces. What rides the queue
         # is the inbox item itself, not the question's bytes -- the digest an
         # answer must cite, and the asker that asked it -- and both are read
         # HERE, at the instant the Q event was written, because that is the

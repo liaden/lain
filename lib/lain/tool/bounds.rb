@@ -81,7 +81,7 @@ module Lain
       # hands the model the very bytes a refusal exists to withhold -- one hop
       # past the refusal, and just as leaked. That hazard is in `e.message`
       # itself, not in how Live used to frame it: it held before Live stopped
-      # prefixing the class (T5, lain/effect/handler/live.rb) and holds
+      # prefixing the class (lain/effect/handler/live.rb) and holds
       # unchanged after.
       def self.ceiling(value)
         raise ArgumentError, "a bound must be an Integer, got #{value.class}" unless value.is_a?(Integer)

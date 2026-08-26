@@ -3,7 +3,7 @@
 module Lain
   module CLI
     module Command
-      # `/unpin [digest]` (B1): the retraction half of {Pin}, resolving its
+      # `/unpin [digest]`: the retraction half of {Pin}, resolving its
       # argument through the very same {Pin::Target} so the two commands cannot
       # disagree about what a prefix names. It refuses an unresolvable target
       # rather than quietly unpinning nothing -- an operator who mistyped a

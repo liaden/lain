@@ -2,13 +2,14 @@
 
 require "timeout"
 
-# T22: the OS-signal installer that drives a Shutdown coordinator. INT/TERM/QUIT
+# The OS-signal installer that drives a Shutdown coordinator. INT/TERM/QUIT
 # traps whose bodies are PUSH-ONLY -- each does exactly one `sink.signal(symbol)`,
 # the single async-signal-safe pipe write Shutdown::Ingress documents. The sink is
 # swappable (a fresh coordinator per ask), and prior handlers are restored on
-# teardown. Real signals are delivered to self, exactly as the T20 SIGUSR2 example
-# does -- safe because OUR trap is installed for the delivery's whole duration, so
-# the default action (which would kill the runner for TERM/QUIT) never runs.
+# teardown. Real signals are delivered to self, exactly as the shutdown spec's
+# SIGUSR2 example does -- safe because OUR trap is installed for the delivery's
+# whole duration, so the default action (which would kill the runner for
+# TERM/QUIT) never runs.
 RSpec.describe Lain::CLI::Signals do
   # Records the symbols routed to it -- the coordinator's #signal duck, but with
   # no pipe behind it so an example needs no reactor.

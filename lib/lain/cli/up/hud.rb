@@ -75,7 +75,7 @@ module Lain
         # so `// ""` covers an older `lain` and the pre-first-switch window
         # alike, both of which must render the line they always did.
         #
-        # `run:` is E7's cumulative token spend, and BOTH halves of the label
+        # `run:` is the run's cumulative token spend, and BOTH halves of the label
         # are load-bearing. "usage:" would read as the plan's consumption:
         # {Lain::StatusFeed} sums what THIS process was billed on THIS key,
         # another client on the same subscription is invisible to it, and no
@@ -89,7 +89,7 @@ module Lain
         # `lain`, the window before the first turn) is silent, while a genuine
         # zero still renders.
         #
-        # The trailing `+ " "` is E8, and it is the LAST concatenation on
+        # The trailing `+ " "` is padding, and it is the LAST concatenation on
         # purpose -- whatever the optional segments did, the line ends with one
         # space so the bar's right edge has room. It lives here rather than on
         # the tmux `status-right` option value because trailing whitespace in an
@@ -114,7 +114,7 @@ module Lain
         DEFAULT_INTERVAL = 5
 
         # @param state_path [String] the state file the job reads, resolved by
-        #   {Lain::ProjectDir#state_path} -- since F50 that is under
+        #   {Lain::ProjectDir#state_path} -- which today lives under
         #   `$XDG_STATE_HOME/lain`, not in the project
         # @param interval [Integer] seconds between re-renders; tmux's
         #   `status-interval`, which {Up} writes as a session option

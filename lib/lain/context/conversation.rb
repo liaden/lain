@@ -36,7 +36,7 @@ module Lain
     # echoed `tool_use` lands in a user message with its `tool_result` still
     # immediately after it. Pairing reports nothing, alternation reports
     # nothing, and the wire returns 400 -- which is the exact class of bug this
-    # object exists to catch, found by T5's panel one rule short.
+    # object exists to catch, found by a review panel one rule short.
     #
     # == Why adjacent USER messages are legal and adjacent ASSISTANT ones are not
     #
@@ -91,12 +91,13 @@ module Lain
                       "thinking" => "assistant", "redacted_thinking" => "assistant" }.freeze
 
       # `positions` are indices into the message array, so a violation points at
-      # the messages rather than describing them -- what T4/T5 need to localize
-      # a producer bug. `subject` is the datum the violation is ABOUT (a tool
-      # id, an offending role) and exists because that datum must not be
-      # readable only out of the prose: two `:split_tool_pair` violations for
-      # different ids can carry identical positions, and a derivation audit
-      # grouping by `(rule, positions)` would silently fuse them.
+      # the messages rather than describing them -- what a derivation's author
+      # needs to localize a producer bug. `subject` is the datum the violation
+      # is ABOUT (a tool id, an offending role) and exists because that datum
+      # must not be readable only out of the prose: two `:split_tool_pair`
+      # violations for different ids can carry identical positions, and a
+      # derivation audit grouping by `(rule, positions)` would silently fuse
+      # them.
       #
       # Data instances are frozen, so freezing the members is all a Violation
       # needs to be shareable.
@@ -291,7 +292,7 @@ module Lain
       # oversight: matching by multiplicity means consuming answers pairwise,
       # and nothing in `lib/` emits a duplicated tool id inside one message --
       # `ToolRunner` mints one id per call. A follow-up covers the counting
-      # rule; T5 carries an escalation trigger for the day a derivation can
+      # rule; this limit is an escalation trigger for the day a derivation can
       # produce that shape.
       class ToolPairs
         attr_reader :violations

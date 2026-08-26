@@ -2,7 +2,7 @@
 
 require "async"
 
-# T8: an answer NAMES a question set (its Q event's digest), and once more than
+# An answer NAMES a question set (its Q event's digest), and once more than
 # one asker can hold a pending set -- a subagent asking the human beside its
 # parent -- something has to know WHICH asker owns the name. That is the whole
 # of this object: {Lain::Event::Projection#pending} stays the authority on what

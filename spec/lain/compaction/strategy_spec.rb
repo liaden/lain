@@ -36,7 +36,7 @@ module StrategyFixtures
 
   # Elementwise and unconditional -- {Lain::Algebra::Elementwise::Alone} -- so it
   # writes ONLY its per-message map and inherits both the span map and #collapse.
-  # This is T7's shape. Declared against a scratch registry:
+  # This is the elementwise shape. Declared against a scratch registry:
   # {Lain::Algebra.registry} is process-wide and spec/algebra_laws_spec.rb
   # asserts that every generator answers a declaration somebody makes, so an
   # anonymous double declaring against the global one goes red in that file, not
@@ -56,7 +56,7 @@ module StrategyFixtures
   end
 
   # Pure and NOT elementwise: a tally is a function of the whole span, so no map
-  # over elements can produce it. T6's shape, and the subject of both negatives
+  # over elements can produce it. This is the shape behind both negatives
   # -- the homomorphism one and the registry refutation of :elementwise. The two
   # helpers that look unused are the knobs a refutation's generator must supply,
   # since a battery needs SOMETHING to hold the claim to.
@@ -163,11 +163,11 @@ RSpec.describe Lain::Compaction::Strategy do
     # `method_added` fires for every `def`-shaped door, but it structurally
     # cannot see module composition: an `include`d or `prepend`ed module that
     # defines #collapse, or a `define_singleton_method`, never reaches it. That
-    # is not the door the card invites -- but T7 is told to `include` two
-    # modules, so composition IS the idiom here and a shared mixin is the
-    # obvious next refactor. Ownership catches every door at once, including
-    # the three the hook cannot, so this assertion is the seal and the hook is
-    # only the early, better-worded half of it.
+    # is not the door the card invites -- but such a strategy is told to
+    # `include` two modules, so composition IS the idiom here and a shared
+    # mixin is the obvious next refactor. Ownership catches every door at once,
+    # including the three the hook cannot, so this assertion is the seal and
+    # the hook is only the early, better-worded half of it.
     it "keeps both questions owned by Base, whatever a strategy includes" do
       strategies = [described_class::Identity, described_class::Base,
                     StrategyFixtures.marking(registry).class,
@@ -271,8 +271,8 @@ RSpec.describe Lain::Compaction::Strategy do
 
   # The group the REGISTRY SWEEP judges every :elementwise claim by -- a
   # different file from the homomorphism group below, and the one that decides
-  # whether T7's declaration and T6's refutation can be swept at all. It was
-  # hardcoded to `instance.call(span)`, and this seam has no #call by design.
+  # whether an :elementwise declaration and a refutation can be swept at all. It
+  # was hardcoded to `instance.call(span)`, and this seam has no #call by design.
   describe "the elementwise battery the registry sweep judges strategies by" do
     def battery(strategy, each:, operation: :blocks, analysis: nil)
       AlgebraLaws::Elementwise.from(instance: -> { strategy }, spans: -> { StrategyFixtures.repeating },

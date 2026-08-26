@@ -62,7 +62,7 @@ module Lain
 
       # Hex-only below a full "blake3:" prefix: a partial scheme spelling
       # ("b", "bla") would otherwise match EVERY digest through the scheme
-      # string and silently resolve on a one-turn file (T3 fix round).
+      # string and silently resolve on a one-turn file.
       def match?(digest, prefix)
         return digest.start_with?(prefix) if prefix.start_with?("blake3:")
 

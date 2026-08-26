@@ -1,4 +1,4 @@
--- I7 motions: ]]/[[ jump between "records", but the three bespoke buffers
+-- Record motions: ]]/[[ jump between "records", but the three bespoke buffers
 -- pack records differently, so each gets its own boundary TEST rather than
 -- one shared regex. lain://timeline is one turn per LINE (Buffers#turn_line);
 -- lain://inbox is one question SET per item and an item spans as many lines as
@@ -85,7 +85,7 @@ end
 
 local RECORD_START = {
   [TIMELINE] = function(lines, i) return lines[i]:match("^%a+:") ~= nil end,
-  -- lain://inbox's items SPAN lines since T12 -- InboxView folds a set's whole
+  -- lain://inbox's items SPAN lines -- InboxView folds a set's whole
   -- prose under the summary that could not hold it -- so its boundary is the
   -- continuation convention above, the same one lain://approval rides, and
   -- unwrapped for the same reason: the drawing side indents nothing outside

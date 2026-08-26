@@ -8,17 +8,17 @@
 # spec/support/store_fetch_count.rb, so it lives one level up where only
 # discovery finds it. Do not "tidy" it back inside spec/support/.
 #
-# T14 built that helper and spec/lain/session_record_spec.rb is its first
-# consumer, but the contract belongs here rather than buried under an unrelated
-# subject: T17 and T20 reuse it. What it measures is a COST, and a broken cost
-# meter does not fail loudly -- it reads LOW, and a low reading passes every
-# assertion a cost spec makes. So the ways it can lie are the ways its callers
+# spec/lain/session_record_spec.rb is that helper's first consumer, but the
+# contract belongs here rather than buried under an unrelated subject: other
+# specs reuse it too. What it measures is a COST, and a broken cost meter does
+# not fail loudly -- it reads LOW, and a low reading passes every assertion a
+# cost spec makes. So the ways it can lie are the ways its callers
 # can go green while regressing.
 RSpec.describe StoreFetchCount do
   let(:store) { Lain::Store.new }
   let(:timeline) { Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "a" }]) }
 
-  # Panel probe P3b (Schneeman): a second arming replaces the first's stub, so
+  # Panel probe (Schneeman): a second arming replaces the first's stub, so
   # the first tally stops counting and reads 0 -- and 0 passes. Loud beats
   # convenient, the same reasoning that keeps StringInquirer out of this
   # codebase (CLAUDE.md).
@@ -35,7 +35,7 @@ RSpec.describe StoreFetchCount do
     expect { count_store_fetches(store) }.to raise_error(/Tally#reset/)
   end
 
-  # Panel probe P3f: the block form READS as scoped, so it must BE scoped --
+  # Panel probe: the block form READS as scoped, so it must BE scoped --
   # otherwise a measurement quietly absorbs whatever the example does next.
   it "stops counting when its block returns, so later work is not absorbed" do
     tally = count_store_fetches(store) { store.fetch(timeline.head_digest) }

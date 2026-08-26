@@ -22,10 +22,10 @@ module Lain
       #
       # CACHE-WRITES is derived from {Bench::Rewrites} over the mainline's
       # prefix-digest chain, NOT from Usage -- because {Provider::Mock} never
-      # populates cache fields (the PC-6 escalation trigger). A cache-write is a
+      # populates cache fields. A cache-write is a
       # prefix REWRITE: the persistent cached prefix invalidated and re-created.
       # The plan-shaped arms project rewrites over the mainline CONTINUATION chain
-      # (the append-only proof P3 pins: fork rewrites zero, linear one per seam);
+      # (the append-only proof: fork rewrites zero, linear one per seam);
       # the reactive arm projects over its single linear timeline's per-turn chain
       # (its timeline IS the mainline). Same meaning -- rewrites of the persistent
       # prefix -- sampled where each shape's mainline actually advances.
@@ -183,7 +183,7 @@ module Lain
 
         # Rewrites over the mainline: render each continuation (its timeline
         # through its pipeline) into a request and count the prefix rewrites across
-        # the chain -- exactly the churn projection P3's seam-policy spec pins.
+        # the chain -- exactly the churn projection the seam-policy spec pins.
         def mainline_writes(continuations, store)
           chain = continuations.map do |continuation|
             request = render(continuation.timeline(store), continuation.pipeline)

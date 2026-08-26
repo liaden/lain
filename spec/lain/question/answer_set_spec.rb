@@ -83,7 +83,7 @@ RSpec.describe Lain::Question::AnswerSet do
       expect(spoken.map(&:question_id)).to eq(%w[deploy reviewers])
     end
 
-    # SF-2. This example was named "non-breaking space" and passed U+0020, so
+    # This example was named "non-breaking space" and passed U+0020, so
     # the ASCII-only `strip` it exists to rule out survived here while the
     # identical mutant died in `answer_spec` -- a character nobody can see is a
     # character nobody can check.
@@ -196,7 +196,7 @@ RSpec.describe Lain::Question::AnswerSet do
       expect(rendered).to include("just ship it, and ask sandi")
     end
 
-    # SF-1. The human's prose is the one part of this document nobody reviewed,
+    # The human's prose is the one part of this document nobody reviewed,
     # and the grammar around it is `### \`id\`` / `Chose:` / `Unanswered.` /
     # the count header -- all of which a pasted diff or stack trace can hold.
     # This is `Rules.fenced!`'s concern on the reply side.

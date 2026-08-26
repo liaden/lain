@@ -588,23 +588,24 @@ end
 -- put the placement SEQUENCE at the mercy of how fast the human types into two
 -- overlapping prompts, and the sequence is this card's whole output.
 -- ALL THREE REFUSALS RIDE `__lain.review_refused` AND RETURN, which is
--- `:LainNoteDone`'s rail one function down and F72's fix. They used to
--- `error()`, and nvim appends its own `stack traceback:` to anything escaping a
--- `define`d callback -- `error(msg, 0)` included, because the traceback is
--- nvim's outer wrapper's doing -- then raises a hit-enter prompt behind which
--- every non-fast RPC request queues. That is F30's shape at a second site: the
--- editor answers nothing at all, including the `:messages` the refusal tells
--- them to read, until a human presses a key. NONE OF THE THREE SPELLS `lain: `
--- any more, for `assert_saved`'s reason above: the rail prepends one.
+-- `:LainNoteDone`'s rail one function down, and the fix that put it there. They
+-- used to `error()`, and nvim appends its own `stack traceback:` to anything
+-- escaping a `define`d callback -- `error(msg, 0)` included, because the
+-- traceback is nvim's outer wrapper's doing -- then raises a hit-enter prompt
+-- behind which every non-fast RPC request queues. That is the hit-enter
+-- deadlock at a second site: the editor answers nothing at all, including the
+-- `:messages` the refusal tells them to read, until a human presses a key.
+-- NONE OF THE THREE SPELLS `lain: ` any more, for `assert_saved`'s reason
+-- above: the rail prepends one.
 -- `spec/refusal_delivery_discipline_spec.rb` is the gate.
 define("LainNote", function(opts)
   local buf = vim.api.nvim_get_current_buf()
   local stamp = review_notes.stamp(buf)
   if stamp == nil then
-    -- THE REMEDY IS THE TAIL, and it is what F73 leaves this refusal owing. A
-    -- buffer the round already opened re-acquires its stamp on entry now, so the
-    -- human who reaches this sentence is in a file no row has opened -- a `gf`
-    -- into a neighbour, most likely.
+    -- THE REMEDY IS THE TAIL, and it is what the entry-time stamp re-acquisition
+    -- leaves this refusal owing. A buffer the round already opened re-acquires
+    -- its stamp on entry now, so the human who reaches this sentence is in a file
+    -- no row has opened -- a `gf` into a neighbour, most likely.
     --
     -- IT NAMES A GESTURE THAT WORKS FROM WHERE THEY ARE, which is why it is not
     -- the sidebar's `<CR>`. `gf` replaces the buffer in the window it was pressed
@@ -694,8 +695,8 @@ end, {
 -- above says it would -- wearing a `stack traceback:`, and, with a UI attached,
 -- raising the hit-enter prompt that leaves the editor answering no RPC at all.
 -- `:messages` and `:LainApprove` were then unavailable exactly while a refusal
--- was on screen, which is to say the recovery it named could not be taken (F30,
--- the shape F25 measured on the sidebar's rail).
+-- was on screen, which is to say the recovery it named could not be taken -- the
+-- same shape QA measured on the sidebar's rail.
 --
 -- THREE LEGS ANSWER AND ONE HANDS OVER, and the emptiness check sits between
 -- the two `pcall`s rather than before them. NOT because an earlier count would
@@ -786,9 +787,9 @@ vim.api.nvim_create_autocmd("BufUnload", {
 -- refuses teaches the human that notes are broken, where a key that is absent
 -- teaches them they are somewhere else.
 --
--- AND IT FOLLOWS BOTH WAYS, which is F73: entering a buffer is also the moment a
--- withdrawn stamp can become true again -- and the moment a stamp that has left
--- the review's tabpage stops being true. `review_diff.entered` decides both, and
+-- AND IT FOLLOWS BOTH WAYS: entering a buffer is also the moment a withdrawn
+-- stamp can become true again -- and the moment a stamp that has left the
+-- review's tabpage stops being true. `review_diff.entered` decides both, and
 -- it is called here rather than from a second `BufEnter` of its own so the order
 -- is written down instead of inherited from module load order. It is not a
 -- second membership test: it may put a stamp back or take one away, and the line

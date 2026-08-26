@@ -35,8 +35,8 @@ module Lain
   # errors. One requirement, two payoffs: reproducible dry replay, and a cache
   # that actually hits.
   #
-  # M1 ships a single renderer. The composable combinators (Prune, Compact,
-  # Reminders) and their monoid land in M3; the seam is shaped for them now so
+  # Today there is a single renderer. The composable combinators (Prune, Compact,
+  # Reminders) and their monoid land later; the seam is shaped for them now so
   # that arrival is a swap rather than a rewrite.
   class Context
     # Delegated to Context::CacheBreakpoints, the combinator that actually
@@ -89,7 +89,7 @@ module Lain
     # combinator; a bare lambda whose self is `main` is not, so a provider is
     # built where self is shareable.
     #
-    # WARNING: a raw Combinator injected here freezes whatever Workspace it was
+    # @note a raw Combinator injected here freezes whatever Workspace it was
     # constructed with -- `#pipeline_for` hands it straight back and never sees
     # the per-render Workspace. A stage that must read the LIVE Workspace (a
     # Reminder over the caller's evolving reminders) MUST come from the

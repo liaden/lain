@@ -2,7 +2,7 @@
 
 require "pp"
 
-# Converted from the T1 review's probes-T1/probe_redaction.rb: the redacting
+# Converted from a review probe (probe_redaction.rb): the redacting
 # `#inspect`/`instance_variables` pair on the shared vendored Configuration is
 # a security seam, so its regression guard lives here, where the behavior
 # lives, not in any one provider's spec.

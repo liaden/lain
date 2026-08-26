@@ -19,7 +19,7 @@ module Lain
       # Timeline and never reaches into the Agent -- the frontend holds no
       # commit path at all, so nothing HERE can move a head no matter how many
       # resends fire. Whether the resent request then also DISPATCHES is the
-      # injected bridge's business, one level up (T18): {Neovim}'s resend
+      # injected bridge's business, one level up: {Neovim}'s resend
       # worker offers the rebuilt Request to {CLI::ResendBridge} AFTER this
       # class journals the projection, and that dispatch commits through the
       # Agent like any turn -- onto a rewound head whose dropped turn stays
@@ -33,11 +33,11 @@ module Lain
       # state those two threads share, so a Mutex guards exactly it -- and
       # nothing else here is mutable.
       #
-      # Known limitation (accepted, T16 panel): a NEW RequestSent arriving while
+      # Known limitation, accepted: a NEW RequestSent arriving while
       # a human is mid-edit replaces the whole buffer -- their unsent keystrokes
       # are clobbered. That is last-writer-wins on a buffer with two writers,
       # and the honest fix (dirty-buffer detection, or a CRDT -- see
-      # planning/crdt-exploration.md) is real work this card does not owe. In
+      # planning/crdt-exploration.md) is real work this class does not owe. In
       # practice the window is narrow: requests arrive between turns, and a
       # human edits while the agent is idle.
       class RequestBuffer
@@ -90,7 +90,7 @@ module Lain
           resent
         end
 
-        # {#build}'s inverse, for T18's dispatch offer: a {Telemetry::RequestResent}
+        # {#build}'s inverse, for the resend bridge's dispatch offer: a {Telemetry::RequestResent}
         # this class produced becomes a live {Request} again, by the proven
         # rebuild idiom ({Bench::Session::RequestReplay}) -- the payload keys
         # are exactly Request.new's content keywords, with the digest-excluded

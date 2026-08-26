@@ -2,7 +2,7 @@
 
 require "async"
 
-# T5: the one home for message-writing and correlation. Before this, the
+# The one home for message-writing and correlation. Before this, the
 # `head && (head.correlation || head_digest)` derivation and the
 # payload-then-envelope write lived as three separate copies (Timeline,
 # Lineage, AskHuman). This pins that ChainWriter is the shared object all
@@ -123,8 +123,8 @@ RSpec.describe Lain::Event::ChainWriter do
     end
   end
 
-  # Review fix (T5 panel, Metz): the observer seam is single-slot, and
-  # Lineage's own @log wiring must not spend it -- T13's scribe attaches with
+  # Review fix (panel, Metz): the observer seam is single-slot, and
+  # Lineage's own @log wiring must not spend it -- the scribe attaches with
   # a one-line `observer:` at Lineage's call site, composed with (never
   # substituting) the @log append.
   describe "Lineage's injectable observer" do
@@ -152,10 +152,11 @@ RSpec.describe Lain::Event::ChainWriter do
       expect(log.to_a).to eq([spawn])
     end
 
-    # T13 makes the composition order load-bearing: Lineage's wiring is
-    # `@log << event; observer.call(event)`, so a raising injected observer (a
-    # scribe that is down) must leave @log STILL holding the event -- the mailbox
-    # fold does not lose the event just because the outward observation failed.
+    # The injected scribe makes the composition order load-bearing: Lineage's
+    # wiring is `@log << event; observer.call(event)`, so a raising injected
+    # observer (a scribe that is down) must leave @log STILL holding the event
+    # -- the mailbox fold does not lose the event just because the outward
+    # observation failed.
     it "appends to @log BEFORE the observer runs, so a raising observer leaves @log intact" do
       log = Lain::Tools::Subagent::Log.new
       lineage = Lain::Tools::Subagent::Lineage.new(policy:, log:, observer: ->(_event) { raise "scribe down" })

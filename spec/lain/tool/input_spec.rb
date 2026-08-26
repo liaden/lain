@@ -554,7 +554,7 @@ RSpec.describe "an Input declaring array fields" do
     end
   end
 
-  # T3 migrates TodoWrite onto this DSL, and the tools block is the
+  # TodoWrite migrates onto this DSL, and the tools block is the
   # prompt-cache prefix: the emitted bytes must be identical or every cached
   # prefix in the bench breaks.
   describe "the declaration TodoWrite is migrated onto" do

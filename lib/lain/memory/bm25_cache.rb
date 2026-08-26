@@ -10,11 +10,11 @@ module Lain
     # itself is never touched here, only constructed and kept.
     #
     # Retention is deliberately just the most recent build: the intended
-    # first consumer (push-recall over a moving index, M6) calls #for with
+    # first consumer (push-recall over a moving index) calls #for with
     # "latest root, repeatedly," never a working set of many roots, so an LRU
     # would be answering a question nobody is asking yet.
     #
-    # @root tracks the last-served root and @bm25 the Bm25 built for it, but
+    # `@root` tracks the last-served root and `@bm25` the Bm25 built for it, but
     # #root is nil for BOTH "never built" and "built at the empty index" --
     # the two are not the same state, so the guard is on @bm25 being unbuilt
     # (a Bm25.new(index:) call never returns nil), not on @root.

@@ -5,8 +5,8 @@ module Lain
     class Repl
       # What a CONVERSATION holds open, as against what one ask does -- lifted
       # out of {Repl} for {ApprovalSurfaces}' reason, and named by the question
-      # T33 turned out to be about: which scope owns this fiber, and who stops
-      # it. Two things live here, and they are one fact: the OM-6 supervisor's
+      # the split turned out to be about: which scope owns this fiber, and who
+      # stops it. Two things live here, and they are one fact: the supervisor's
       # reactor, which must outlive every per-ask Sync so the fleet has a home
       # across asks, and the reply surfaces whose rail a human uses BETWEEN
       # asks -- the editor's gesture consumer ({HumanReplies#session_surfaces}).
@@ -22,7 +22,7 @@ module Lain
       # stops what IT started, and this object exists so the two are told apart
       # by name rather than by reading two ensures.
       #
-      # The counterpart lifetime is one DISPATCHED LINE, not one ask (T1): a
+      # The counterpart lifetime is one DISPATCHED LINE, not one ask: a
       # question can be raised from a command or from a skill spawn's short
       # circuit, neither of which reaches {Repl#respond}. It still is not THIS
       # one, and the reason is the terminal: the TTY reply read parks on the

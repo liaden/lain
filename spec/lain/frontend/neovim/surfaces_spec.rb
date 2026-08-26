@@ -60,7 +60,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
                                            Lain::Frontend::Neovim::RequestBuffer::REQUEST)
     end
 
-    # UX4. A human who went looking for the approval surface at rest found no
+    # A human who went looking for the approval surface at rest found no
     # buffer at all, because this collaborator did not hold the view that draws
     # it -- the view hung off {Lain::Frontend::Neovim} and only ever rendered
     # from its own watch fiber, which nothing spawns until a call is gated.
@@ -76,14 +76,14 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
       expect(rpc.approvals.last[:rows]).to eq(0)
     end
 
-    # PANEL FIX 1, and it is the defect the panel's revert probe found rather
+    # A PANEL FIX, and it is the defect the panel's revert probe found rather
     # than a tightening for its own sake: with `approval_view:` DEFAULTED, the
     # `approval_view: @approval_view` argument could be deleted from
     # {Lain::Frontend::Neovim}'s one call site and all four live `:nvim`
     # examples stayed GREEN -- Surfaces would build a second view of its own,
     # prime it, and put a buffer on screen that the repl's bound view knows
-    # nothing about. That is UX4 again, one level in, and the live specs cannot
-    # see it because priming and handing-over are different claims.
+    # nothing about. That is the same defect again, one level in, and the live
+    # specs cannot see it because priming and handing-over are different claims.
     #
     # So the hand-over is UNREPRESENTABLE-IF-MISSING rather than merely
     # untested, which is the doctrine {Lain::Sensitivity::Policy} already
@@ -122,7 +122,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
     end
 
     # The stamp is the editor's only honest answer to "which rendering am I
-    # looking at" (T16), so it rides with the rendering it belongs to -- and
+    # looking at", so it rides with the rendering it belongs to -- and
     # ONLY the inbox has one, because it is the only view whose gesture
     # resolves through a rendering index.
     it "stamps the inbox's post with the rendering the gesture must name, and stamps no other view" do
@@ -204,7 +204,7 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
       expect(stamps.uniq).to eq(stamps)
     end
 
-    # T17/F17. `nvim_buf_set_lines` refuses an item containing a newline and the
+    # `nvim_buf_set_lines` refuses an item containing a newline and the
     # render rides `nvim_exec_lua` as a NOTIFY, so a view that emits one loses
     # every later write to its buffer in silence -- the frozen-view defect
     # manual QA found on lain://timeline. lain://inbox was the second exposure:

@@ -76,7 +76,7 @@ RSpec.describe Lain::Grader::Recall do
   end
 end
 
-# The gold retrieval corpus that will feed the M6 retrieval-arm sweep (bm25, vector,
+# The gold retrieval corpus that will feed the retrieval-arm sweep (bm25, vector,
 # hybrid, graph). These specs are the "validity spec, not a runtime check" the card
 # asks for: nothing here builds a Memory::Index or runs a real search, it only checks
 # the fixture's own internal consistency and its ability to separate arms by design.

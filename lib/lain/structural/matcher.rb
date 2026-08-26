@@ -2,7 +2,7 @@
 
 module Lain
   module Structural
-    # The single Ruby seam over `Lain::Ext::AstGrep` (T1): no other unit may
+    # The single Ruby seam over `Lain::Ext::AstGrep`: no other unit may
     # reference that ext class directly, so a breaking ext bump touches this
     # file alone. It owns three things the ext deliberately does not: the
     # supported-language allowlist (rejecting a typo BEFORE the FFI call),
@@ -44,7 +44,7 @@ module Lain
       class DumpCapped < Error; end
 
       # ast-grep-core's own supported set is larger; this project's seam only
-      # vouches for the languages it actually exercises (T2's catalog is
+      # vouches for the languages it actually exercises (the catalog is
       # Ruby-only so far). Extend as a language grows real callers.
       SUPPORTED_LANGUAGES = %i[ruby rust python typescript javascript].freeze
 

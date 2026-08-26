@@ -64,7 +64,7 @@ require_relative "review/prefill"
 # After the aggregate it reads; nothing else requires it and nothing reads it.
 require_relative "review/submit"
 
-# The docent (T24), and the fourth deletable unit in this tail. This line plus
+# The docent, and the fourth deletable unit in this tail. This line plus
 # `review/docent.rb` are all of it HERE, but not all of it: the docent is a
 # ROLE, so removal also takes the `:diff_docent` entry in `role/catalog.rb`, the
 # `diff-docent.md` role template, the name in `role_spec.rb`'s roll call, and

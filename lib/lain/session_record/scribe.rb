@@ -126,7 +126,7 @@ module Lain
       # @param toolset [#to_schema] the toolset in effect
       # @param workspace [Lain::Workspace] the workspace in effect
       # @param resumed_from [Hash, nil] `{"file" =>, "head" =>}` naming the
-      #   prior file this session chains to (T19); header-only, absent when nil
+      #   prior file this session chains to; header-only, absent when nil
       # @param written [Array<String>] the resumed chain's already-recorded
       #   turn digests, in chain order (root first). Seeding them matters:
       #   they live in the PRIOR file, so catch_up must not re-record them
@@ -134,7 +134,7 @@ module Lain
       #   extends-check must anchor on the resumed head, not nil. The ORDER is
       #   part of the claim and {WrittenChain} checks it -- see there.
       # @param message_journal [#<<, nil] where {#call}'s message records land
-      #   -- the telemetry tee under --nvim (I6), so the live inbox surfaces
+      #   -- the telemetry tee under --nvim, so the live inbox surfaces
       #   (lain://inbox, {StatusFeed}) fold the same Q/A records the file
       #   holds. ROUTED, not duplicated: the tee's journal leg IS `journal`,
       #   so the file still gets each record exactly once. Defaults to the
@@ -189,7 +189,7 @@ module Lain
         self
       end
 
-      # T15: the ONE sanctioned backward move. Announces a rewind as its own
+      # The ONE sanctioned backward move. Announces a rewind as its own
       # `rewound` record, then retreats the append point so the next
       # {#catch_up} extends from `to` -- the {Diverged} raise keeps guarding
       # every divergence NOT announced through here.
