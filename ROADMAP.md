@@ -1525,6 +1525,41 @@ XDG path relative, which put machine state back inside the user's repository)
    streaming path, leaving one acceptance criterion with zero real coverage while 296 of 297 examples
    stayed green.
 
+38. **Planned (2026-08-26, panel-reviewed)** —
+   `planning/specs/chunk-shell-term-approval.md`: **the pipeline algebra proper**, which
+   `chunk-modes-approval-undo.md` deferred as "a separate feature chunk" and nobody wrote. **The
+   headline is that lain's term arm has never bought what it exists to buy.** A command
+   `Shell::Verdict` fully understands already runs as reconstructed argv with no shell anywhere —
+   and still asks a human every time, because `Triage::Command` can only deny or abstain (its
+   terminal constant is literally `NOT_SAFE`) and the one rung that *can* auto-approve matches on
+   the model's raw string. So `Shell::Pipeline` is live in production, contrary to this chunk's own
+   first assumption, while the deterministic-approval win sits uncollected. The chunk builds one
+   frozen `Shell::Verdict` from a new config exclusion table and injects it at both seams that
+   construct one today — at once the deny path (never reachable before: `capability_set` defaults
+   to `AnyProgram` and nothing in `lib/` ever passed another), the end of a double parse, and the
+   supply of an authoritative term to a rule that approves fully-safe pipelines with no human and
+   no LLM. Alongside: every exec backend learns `#takes_term?` so `--exec docker` stops erroring on
+   ordinary pipelines, both `sh -c` descriptions stop promising a shell the term arm never starts,
+   the arm is journalled so `/mode auto` is no longer blind, and `lib/lain/shell/` gets the
+   manual-QA scenario it has never had. **10 cards, 5 waves.** The oil question was researched and
+   closed — **do not mandate YSH**: 225 `.ysh` files on GitHub against 26.4M `.sh`, no Linguist
+   entry so The Stack v2's `go-enry` drops them, and a syntax constraint stated to a model holds
+   about two-thirds of the time and fails *silently into bash*. **The panel returned five blockers,
+   one a reproduced privilege escalation**: `Triage` downgrades a denied path named as a **bare
+   word** from deny to abstain (`cat .netrc` abstains, `cat ./.netrc` denies — the model picks the
+   spelling), safe today only because "the call still reaches a human anyway", which is exactly the
+   premise an auto-approving rung destroys. It also caught the approval allowlist being drawn from
+   `STDIN_SAFE`, a list answering a different question (`gzip`, `sort`, `xz` are on it and all
+   destroy when handed argv); a widened `Data` whose `#with` would have accepted a forged term; a
+   card wiring a tool nothing in `lib/` constructs; and a truncation constraint that does not
+   exist. Cards went 13 → 10, waves 6 → 5. The plan carries a **Defense in depth** table naming
+   which rung each axis stands on and the next one, on the standing principle that a stated limit
+   describes where the implementation is rather than where it should stop — and it names a
+   recurring defect shape this chunk is the **third** instance of: a safety mechanism that exists,
+   is specced, and has never been wired (`Triage`'s `AnyPath`, `Shell::Verdict`'s `capability_set`,
+   and `Tools::WebFetch`'s host allowlist, which is nil in production so cloud metadata and
+   localhost are reachable today).
+
 ---
 
 ## Map of the documents
