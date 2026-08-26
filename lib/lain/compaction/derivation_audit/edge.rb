@@ -33,8 +33,8 @@ module Lain
 
         def complete? = violations.empty?
 
-        # The record type's own WRITE-side guard, plus the two things it cannot
-        # see: that the keys are there at all, and that the heads are heads.
+        # The record type's own WRITE-side contract, plus the two things it cannot see:
+        # that the keys are there at all, and that the heads are heads.
         # Reusing the guard is what keeps a reader's idea of the shape from
         # drifting from the writer's -- there is one definition of what a
         # `context_derived` record is, and this is it.
@@ -65,7 +65,7 @@ module Lain
           ["#{record["derived_head"].inspect} is named as derived from no source head at all"]
         end
 
-        # The guard is a throwaway {Lain::Guard} carrier, asked with `valid?`
+        # The guard is a throwaway {Lain::Declarative::Carrier}, asked with `valid?`
         # rather than `check!`: a reader reports what is wrong with a record it
         # did not write, and never raises over it.
         def guarded
