@@ -433,13 +433,15 @@ RSpec.describe Lain::Tools::WebFetch do
       expect(result.content).to include("landed")
     end
 
-    # SSRF: a redirect that hops to an internal/disallowed host is refused, and
-    # the disallowed host is NEVER contacted.
+    # SSRF: a redirect that hops off the allowlist is refused, and the
+    # disallowed host is NEVER contacted. The hop target is a PUBLIC one, so
+    # this example still measures the allowlist -- the egress floor below
+    # refuses an internal address on its own, and would answer here instead.
     it "refuses a redirect to a disallowed host and never contacts it" do
       contacted = []
       connection = WebFetchStubConnection.new do |url|
         contacted << url
-        WebFetchStubResponse.new(status: 302, headers: { "location" => "http://169.254.169.254/latest" }, body: "")
+        WebFetchStubResponse.new(status: 302, headers: { "location" => "http://evil.test/latest" }, body: "")
       end
       tool = described_class.new(connection:, allowlist: ["example.com"])
       result = tool.call({ url: "https://example.com" }, nil)
@@ -505,6 +507,161 @@ RSpec.describe Lain::Tools::WebFetch do
       tool = described_class.new(connection:, allowlist: ["example.com"])
       result = tool.call({ url: "https://example.com" }, nil)
       expect(result).to be_ok
+    end
+  end
+
+  # The egress floor. `Wiring::BaseTools` constructs this tool with NO
+  # arguments, so anything a live session is protected by has to be a property
+  # of the class rather than configuration -- every example here builds the tool
+  # that way on purpose, because a floor nobody remembered to wire would pass a
+  # spec that injected it.
+  describe "egress floor (non-routable destinations, unconditional)" do
+    subject(:tool) { described_class.new(connection: recording) }
+
+    let(:contacted) { [] }
+    let(:recording) do
+      WebFetchStubConnection.new do |url|
+        contacted << url
+        WebFetchStubResponse.new(status: 200, headers: {}, body: "instance credentials")
+      end
+    end
+
+    # The one that matters: 169.254.169.254 is where the major clouds serve
+    # instance metadata, credentials included.
+    it "refuses the cloud metadata endpoint, naming the range and not the allowlist" do
+      result = tool.call({ url: "http://169.254.169.254/latest/meta-data/" }, nil)
+
+      expect(result).to be_error
+      expect(result.content).to include("169.254.0.0/16")
+      expect(result.content).to match(/link-local/i)
+      expect(result.content).not_to match(/allowlist/i)
+      expect(contacted).to be_empty
+    end
+
+    it "refuses loopback, the private ranges and internal-only names without connecting" do
+      urls = ["http://localhost:6379/", "http://127.0.0.1/", "http://[::1]/", "http://10.0.0.1/",
+              "http://192.168.1.1/", "http://172.16.0.1/", "http://[fc00::1]/", "http://0.0.0.0/",
+              "http://metadata.internal/", "http://printer.local/"]
+
+      expect(urls.map { |url| tool.call({ url: }, nil) }).to all(be_error)
+      expect(contacted).to be_empty
+    end
+
+    # An IPv4-mapped IPv6 literal is the same destination written so a
+    # dotted-quad comparison never sees it.
+    it "refuses an IPv4-mapped spelling of a blocked address" do
+      result = tool.call({ url: "http://[::ffff:169.254.169.254]/latest/" }, nil)
+
+      expect(result).to be_error
+      expect(result.content).to include("169.254.0.0/16")
+      expect(contacted).to be_empty
+    end
+
+    # Measured through Socket.getaddrinfo on this box: 2130706433, 0177.0.0.1
+    # and 127.1 all resolve to 127.0.0.1, and IPAddr parses none of them. Where
+    # the resolver and a lexical check disagree, the lexical check is the one
+    # that is wrong, so an address-shaped host this tool cannot canonicalise is
+    # refused rather than passed.
+    it "refuses the numeric spellings of loopback that a resolver accepts" do
+      urls = ["http://2130706433/", "http://0177.0.0.1/", "http://127.1/"]
+
+      expect(urls.map { |url| tool.call({ url: }, nil) }).to all(be_error)
+      expect(contacted).to be_empty
+    end
+
+    it "still permits an ordinary public host" do
+      expect(tool.call({ url: "https://example.com/x" }, nil)).to be_ok
+      expect(contacted).to eq(["https://example.com/x"])
+    end
+
+    # A floor that refuses everything passes the first half of this file and
+    # fails the point of it.
+    it "permits public hosts that merely resemble a blocked one" do
+      urls = ["https://172.32.0.1/", "https://169.253.0.1/", "https://11.0.0.1/",
+              "https://100.63.255.255/", "https://100.128.0.0/", "https://192.0.1.1/",
+              "https://198.17.255.255/", "https://223.255.255.255/", "https://[2001:4860:4860::8888]/",
+              "https://local.example.com/", "https://internal-docs.example.com/"]
+
+      expect(urls.map { |url| tool.call({ url: }, nil) }).to all(be_ok)
+    end
+
+    # An empty host is not "no destination": getaddrinfo("") is 0.0.0.0, which
+    # on Linux is this machine. So `http://:6379/` is the same door as
+    # `http://0.0.0.0:6379/`, spelled so that a host comparison sees nothing to
+    # compare -- measured against a real listener, it fetched the body.
+    it "refuses a url that names no host, which is a live route to this machine" do
+      result = tool.call({ url: "http://:6379/" }, nil)
+
+      expect(result).to be_error
+      expect(result.content).to match(/no host/i)
+      expect(contacted).to be_empty
+    end
+
+    it "refuses a redirect into a url that names no host" do
+      hops = []
+      connection = WebFetchStubConnection.new do |url|
+        hops << url
+        WebFetchStubResponse.new(status: 302, headers: { "location" => "http://:6379/" }, body: "")
+      end
+      result = described_class.new(connection:).call({ url: "https://example.com" }, nil)
+
+      expect(result).to be_error
+      expect(result.content).to match(/no host/i)
+      expect(hops).to eq(["https://example.com"])
+    end
+
+    # The card's axis is cloud instance metadata, and two of those services do
+    # not sit in RFC1918 or link-local at all.
+    it "refuses the cloud metadata endpoints that live outside RFC1918" do
+      alibaba = tool.call({ url: "http://100.100.100.200/latest/meta-data/" }, nil)
+      oracle = tool.call({ url: "http://192.0.0.192/latest/" }, nil)
+
+      expect(alibaba.content).to include("100.64.0.0/10")
+      expect(oracle.content).to include("192.0.0.0/24")
+      expect(contacted).to be_empty
+    end
+
+    it "refuses multicast, broadcast and benchmarking addresses" do
+      urls = ["http://224.0.0.1/", "http://255.255.255.255/", "http://198.18.0.1/"]
+
+      expect(urls.map { |url| tool.call({ url: }, nil) }).to all(be_error)
+      expect(contacted).to be_empty
+    end
+
+    # Two different things, both refused. A transition prefix embeds a v4
+    # address, so it is one more spelling of a blocked destination -- and
+    # 64:ff9b::/96 is the NAT64 well-known prefix, which on a NAT64 network
+    # genuinely reaches the metadata service. fec0::1 embeds nothing; it is
+    # deprecated site-local unicast, the v6 counterpart of the private ranges.
+    it "refuses the IPv6 transition prefixes, and deprecated site-local" do
+      urls = ["http://[::169.254.169.254]/", "http://[::ffff:0:169.254.169.254]/",
+              "http://[64:ff9b::169.254.169.254]/", "http://[fec0::1]/", "http://[2002:a9fe:a9fe::1]/"]
+
+      expect(urls.map { |url| tool.call({ url: }, nil) }).to all(be_error)
+      expect(contacted).to be_empty
+    end
+
+    it "refuses a redirect into a blocked range, because the guard re-runs on every hop" do
+      hops = []
+      connection = WebFetchStubConnection.new do |url|
+        hops << url
+        WebFetchStubResponse.new(status: 302, headers: { "location" => "http://169.254.169.254/" }, body: "")
+      end
+      result = described_class.new(connection:).call({ url: "https://example.com" }, nil)
+
+      expect(result).to be_error
+      expect(result.content).to include("169.254.0.0/16")
+      expect(hops).to eq(["https://example.com"])
+    end
+
+    # The optional allowlist narrows; it cannot widen. Naming a blocked host in
+    # it is the one configuration that must not be able to lift the floor.
+    it "refuses a blocked host that a configured allowlist names" do
+      narrowed = described_class.new(connection: recording, allowlist: %w[169.254.169.254 localhost])
+
+      expect(narrowed.call({ url: "http://169.254.169.254/latest/meta-data/" }, nil)).to be_error
+      expect(narrowed.call({ url: "http://localhost:6379/" }, nil)).to be_error
+      expect(contacted).to be_empty
     end
   end
 
