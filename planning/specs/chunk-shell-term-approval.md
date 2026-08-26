@@ -4,7 +4,7 @@ status: draft
 commit-mode: orchestrator-commits
 language: ruby
 panel: Torvalds, Evans, Metz, Schneeman, Patterson, plus the category-theory seat for T1 and
-T12 (one review agent embodies all)
+T9 (one review agent embodies all)
 
 ---
 
@@ -25,9 +25,13 @@ table, so a project can make `curl … | sh` a named refusal instead of a prompt
 every exec backend learns to say whether it can take a term, the model is told what shape earns
 the deterministic arm, and the shell subsystem gets the manual-QA scenario it has never had.
 
-Two limits belong here rather than 150 lines down. **What gets approved is coreutils-shaped
-pipelines — `cat README.md | head -20`, `grep -rn foo lib | wc -l` — and not `git`**, which
-abstains at the verdict for a measured reason this chunk deliberately does not lift. And
+Three limits belong here rather than 150 lines down. **What gets approved is a narrow set of
+non-recursive readers over paths that classify ordinary** — `cat README.md | head -20`,
+`grep -n foo lib | wc -l`. Not `git`, which abstains at the verdict for a measured reason this
+chunk deliberately does not lift; and **not a recursive read**, because `grep -r . ~/.ssh` has
+every word classifying ordinary while the file it prints is one nothing may lift — the check is
+over the term, the hazard is over the **read set**, and those coincide only for programs whose
+read set is exactly their literal arguments. And
 **everything this chunk builds inside the escalation ladder is inert under `/mode auto`**, which
 replaces the ladder wholesale; the deny path and the approval rule both live in rungs that mode
 never consults.
@@ -38,14 +42,16 @@ and that `Approval::Rule`'s own class comment names as its unmechanized half.
 
 ## Grounding
 
-Verified 2026-08-26 against **`survey/dogfood-2026-08-25` at `12e5715c`**, which is 22 commits
-ahead of `main` (`345b1e98`). **Every line citation below is measured against that branch and is
-wrong on `main`** — `verdict.rb` is 359 lines there against 384 on main, `escalation.rb` 611
-against 662, `bash.rb` 173 against 195 — and the `Declarative` work the plan builds on
-(`eaccf600 guard: delete it, and Guardable with it`) is not on main at all. **So this chunk must
-be based on that branch, or on a `main` that has absorbed it; forking a worktree from today's
-`main` misfires every card.** Confirm the base ref in the staleness check before spawning
-anything. Everything below was read or measured, not
+Verified 2026-08-26 against `12e5715c`, **which is now an ancestor of `main` at `c23774f1`
+(merge `8179ca2c`) — so `main` is the correct base ref and carries every line this plan cites.**
+Suite at the merge: **16,176 examples, 0 failures, 15 pendings**.
+
+⚠️ **Do not base a worktree on `survey/dogfood-2026-08-25`.** Its content is identical, but its
+working tree carries another session's uncommitted edits in ~16 files including
+`planning/qa/README.md`, which **T10 modifies**. Confirm the base ref in the staleness check.
+(An earlier draft of this paragraph said the reverse — that `main` was 22 commits behind and every
+citation was wrong against it. That was true before the merge and is now inverted; it is recorded
+because a stale base-ref warning points executors at exactly the wrong tree.) Everything below was read or measured, not
 inferred; where a doc and the code disagreed, the code won and the doc is a card.
 
 **`Shell::Pipeline` is on the live production path** — the opposite of what this chunk's
@@ -267,11 +273,15 @@ cost. Consequence for this chunk: **T2 steers toward the parsable bash subset, n
   `chunk-modes-approval-undo.md` recorded that unit index files it left with their cards
   collided at merge when two same-wave cards both added under one namespace; this plan takes the
   lesson for indexes.
-- **Not** orchestrator-owned, deliberately: `lib/lain/exec.rb`, `lib/lain/cli/base_tools.rb`,
-  `lib/lain/cli/switchboard.rb`. These are a contract document and two construction sites, not
-  manifests, and each is edited by exactly one card per wave (`exec.rb` by T3 only;
-  `base_tools.rb` by T8 then T10; `switchboard.rb` by T8 then T12). Making them wiring-only would
-  put each owning card's ACs out of reach of the card that must turn them green.
+- **Not** orchestrator-owned, deliberately: `lib/lain/exec.rb`, `lib/lain/cli/wiring/base_tools.rb`,
+  `lib/lain/cli/switchboard.rb`, `lib/lain/cli/wiring/board_build.rb`, `lib/lain/cli/wiring.rb`.
+  These are a contract document and four construction sites, not manifests, and each is edited by
+  at most one card per wave (`exec.rb` by T3 only; `wiring.rb`, `board_build.rb`, `switchboard.rb`
+  and `base_tools.rb` by T6 in wave 2, then `base_tools.rb` again by T7 in wave 3 and
+  `board_build.rb` again by T9). Making them wiring-only would put each owning card's ACs out of
+  reach of the card that must turn them green.
+  **Note the real path is `lib/lain/cli/wiring/base_tools.rb`** — there is no
+  `lib/lain/cli/base_tools.rb`, and it has no mirrored spec today.
 - Deviations from the default process: none. The two docs-only cards (T1, T13) still get a
   panel pass — T1 because the claim it corrects is an algebraic one and the CT seat is the
   reader who can check it, T13 because a QA scenario asserting the wrong string is worse than
@@ -294,17 +304,22 @@ more predicate rather than a restructuring — T9 carries that requirement expli
 | axis | rung after this chunk | next rung |
 |---|---|---|
 | **What reaches a shell** | Understood commands run as reconstructed argv through `execvp`; everything else through `sh -c`. Coverage measured, not assumed. | Flag-aware per-program policy, so `git log` earns the term arm without allowlisting the name |
-| **Who decides** | A deterministic rule approves fully-safe terms with no human and no LLM; a config table denies by name. | Widen what qualifies as flag-awareness lands; project-expressible term policy |
-| **Program identity** | **Trusted by name.** `PATH` is inherited and uncontrolled; `execvp` resolves argv0 against it. Qualified names (`/tmp/evil/cat`) are refused, so this is no weaker than a human reading the string. | Resolve and record the absolute path — cheap, changes no decision, prerequisite for everything above it |
+| **Who decides** | A deterministic rule approves, with no human and no LLM, a term whose every word classifies **ordinary** and whose programs read **exactly their literal arguments**; a config table denies by name. | Widen what qualifies as flag-awareness lands; project-expressible term policy |
+| **What a command may read** | Bounded by the two predicates above, not by the term alone. Recursive readers are refused outright because their read set is not their argv — `grep -r . ~/.ssh` has every word ordinary and prints a file nothing may lift. Gated paths (`.env`, `*.pem`, `.git-credentials`) are refused, not merely un-denied. | Per-entry flag policy rich enough to re-admit bounded recursion; a read-set predicate that survives a program's own config files |
+| **Program identity** | **Trusted by name.** `PATH` is inherited and uncontrolled; `execvp` resolves argv0 against it. Qualified names (`/tmp/evil/cat`) are refused, so **on this axis alone** it is no weaker than a human reading the string — that parity is a claim about program identity and not about the composite. | Resolve and record the absolute path — cheap, changes no decision, prerequisite for everything above it |
 | **Content the command pulls in** | `web_fetch` refuses non-routable destinations — cloud metadata, loopback, RFC1918 — unconditionally and on every redirect hop (**T11**). The check is lexical on the host. `curl X \| sh` still abstains to a human who has seen only a URL. | Refuse by **resolved** address, so a public name pointing into a blocked range is caught (needs connect-to-resolved-IP or DNS rebinding reopens it); then fetch-once / content-address / approve the digest / run those exact bytes |
-| **Where it runs** | Local process with an inherited environment, or a container under `--exec docker` — which this chunk makes usable for ordinary pipelines for the first time. | Piped terms inside a container, which needs a design rather than a card |
+| **Where it runs** | Local process with an inherited environment, or a container under `--exec docker`, which stops erroring on ordinary pipelines. **Note what that fix is**: T3 falls back to the model's string, which `Docker#entrypoint` (`docker.rb:151`) runs as `["sh","-c",command]` *inside* the container — contained, but the term arm's no-shell property is gone on that path. | Piped terms that stay terms inside a container, which needs a design rather than a card |
 | **What the record proves** | Which arm ran, in both attended and `auto` mode. | Which binary actually ran (rung 1 of program identity) |
 
-Two of these are worth stating flatly rather than as table cells, because a reader skimming should
-not have to infer them. **This chunk does not make the shell safe; it makes a narrow, measured
-subset of it decidable without a human.** And **a program name is not an identity** — the
+Three of these are worth stating flatly rather than as table cells, because a reader skimming
+should not have to infer them. **This chunk does not make the shell safe; it makes a narrow,
+measured subset of it decidable without a human.** **A program name is not an identity** — the
 allowlist says `cat` is a safe *program*, and whether the thing `execvp` finds is that program is
-a question no rung of this chunk asks.
+a question no rung here asks. And **a term is not a read set** — the rule inspects the words the
+model wrote, while the exposure is the files the program opens, and this chunk closes the gap only
+by refusing every program whose read set can exceed its arguments. Both blockers the second review
+pass found lived in that gap, which is why the axis is in the table at all: an earlier draft had
+six axes and none of them was the one this chunk moves furthest.
 
 **A recurring defect shape, named here because this chunk is the third instance.** Three separate
 safety mechanisms in this codebase exist, are specced, and have never been wired: `Triage`'s
@@ -402,12 +417,13 @@ rather than re-deriving it.
 ```
 Wave 1: T1, T3, T4, T5, T11     (no unmet deps)
 Wave 2: T2, T6 (<-T4)
-Wave 3: T7 (<-T5,T6), T8 (<-T6)
-Wave 4: T9 (<-T6,T8)
-Wave 5: T10 (<-T2,T7,T9)
+Wave 3: T7 (<-T5,T6)
+Wave 4: T8 (<-T6,T7)
+Wave 5: T9 (<-T6,T8)
+Wave 6: T10 (<-T2,T7,T9,T11)
 ```
 
-Critical path: **T4 → T6 → T8 → T9 → T10** (five waves). T11 depends on nothing and could land
+Critical path: **T4 → T6 → T7 → T8 → T9 → T10** (six waves). T11 depends on nothing and could land
 anywhere; it sits in wave 1 because it is the only card closing a **presently exploitable** gap
 rather than building a capability.
 
@@ -426,9 +442,9 @@ blocks nothing but T10.
 
 No two same-wave cards modify the same file. Wave 1: T1 (a planning doc), T3 (`exec/*` and
 `bash.rb`), T4 (`shell/exclusions.rb`, `config.rb`), T5 (`telemetry/`), T11
-(`tools/web_fetch.rb`). Wave 2: T2 (`bash.rb`,
-`core_exec.rb`), T6 (`cli/wiring/*`). Wave 3: T7 (`bash.rb`), T8 (`approval/rule.rb`,
-`approval/escalation.rb`).
+(`tools/web_fetch.rb`). Wave 2: T2 (`bash.rb`, `core_exec.rb`), T6 (`cli/wiring/*` and
+`switchboard.rb`). Waves 3–6 hold one card each, so collision is not a question there — T8 sits
+in its own wave rather than beside T7 precisely because both must edit `bash.rb`.
 
 ## Tasks
 
@@ -521,7 +537,16 @@ parity argument ("`{#description}` therefore promises the SUBSET both paths acce
 **Shared-file wiring:** none
 **Reachable from:** `Tool#to_schema` (`tool.rb:148-155`) puts `description` on the wire for every
 request; `field :command`'s description reaches both arms through the shared `Bash::Input`
-(`core_exec.rb:40`). Both are live for any session holding `bash`.
+(`core_exec.rb:40`). The `bash` half is live for any session holding it.
+
+**The `core_exec` half is deliberately held to a weaker standard than the cut CoreExec card was,
+and the plan should say so rather than apply its own rule unevenly.** Nothing in `lib/` constructs
+`Tools::CoreExec` (only `spec/support/tool_registry.rb:57`) and `--exec` cannot resolve it
+(`exec_backend.rb:42-48`, `BACKENDS = %w[local docker]`). A card *building a capability* there
+would be shipping something dormant, which is why that card was cut. Keeping the description in
+step is different in kind: it completes a contract the shared `Input` already enforces on one
+half, and letting the two `#description` strings drift would guarantee a defect the day someone
+does construct it. Cheap, and it prevents rather than builds.
 
 Both tools tell the model they run the command "via `sh -c`". That is false whenever
 `Shell::Verdict` allows — that path runs reconstructed argv through `Open3.pipeline_r` with no
@@ -818,9 +843,10 @@ Scenario: the record cannot be mistaken for a safety claim
 
 **Depends on:** T4
 **Files:** modify `lib/lain/cli/wiring.rb`, `lib/lain/cli/wiring/toolset_build.rb`,
-`lib/lain/cli/wiring/board_build.rb`, `lib/lain/cli/wiring/base_tools.rb`; create
-`spec/lain/cli/wiring/base_tools_spec.rb`; modify `spec/lain/cli/wiring/toolset_build_spec.rb`,
-`spec/lain/cli/wiring/board_build_spec.rb`
+`lib/lain/cli/wiring/board_build.rb`, `lib/lain/cli/wiring/base_tools.rb`,
+**`lib/lain/cli/switchboard.rb`**; create `spec/lain/cli/wiring/base_tools_spec.rb`; modify
+`spec/lain/cli/wiring/toolset_build_spec.rb`, `spec/lain/cli/wiring/board_build_spec.rb`,
+`spec/lain/cli/switchboard_spec.rb`
 **Reuse:** `Shell::Exclusions` from T4. **Both injection points already exist and neither needs
 changing**: `Triage#initialize(verdict: Shell::Verdict.new, …)` (`escalation.rb:480`) and
 `Tools::Bash#initialize(exec:, verdict: Shell::Verdict.new)` (`bash.rb:111`).
@@ -848,6 +874,14 @@ Three properties fall out of one change, and each is why an earlier draft needed
   can be forged in transit.
 - **Downstream cards get an authoritative term** without a new trust edge, which is what T8 and
   T9 build on.
+
+**`Triage` is built two hops past `BoardBuild`, and that is the fifth file.** The board arm is
+`Wiring#switchboard` (`wiring.rb:354-356`) → `BoardBuild.for` (`board_build.rb:45-55`) →
+`Switchboard.for` (`switchboard.rb:90-94`) → `#initialize` (`switchboard.rb:133-150`) → `seed` →
+**`#build_ladder` (`switchboard.rb:265-270`)**, which is where `Triage.new` actually happens.
+Neither `Switchboard.for` nor `#initialize` has a `verdict:` slot today, so both gain one. An
+earlier draft of this card stopped at `board_build.rb` and could not have turned either of its
+headline ACs green.
 
 **The threading is the work, and it is genuinely awkward.** `wiring.rb:302` builds the toolset;
 `wiring.rb:355` builds the switchboard *from* the finished toolset. So the shared verdict must be
@@ -977,14 +1011,20 @@ Scenario: a tool built without a journal writes nowhere and does not fail
   there; that is the finding, not a spec to skip.
 - If journalling on every call measurably slows the suite or a session, report the number.
 
-### T8 — A rule's Call carries a term it cannot be given [wave 3] [risk: high]
+### T8 — A rule's Call carries a term it cannot be given [wave 4] [risk: high]
 
-**Depends on:** T6
+**Depends on:** T6, T7
 **Files:** modify `lib/lain/approval/rule.rb` (`Call` at :101-125, the guard at :144-149),
 `lib/lain/approval/escalation.rb` (the `Rules` rung's `Call.for`); create
 `spec/lain/approval/rule_spec.rb`; modify `spec/lain/approval/escalation_spec.rb`
 **Reuse:** `Approval::Rule::Call` (`rule.rb:101`) and `Call.for` (`rule.rb:121`) — the door being
-widened. The shared verdict from T6, so the term is derived rather than transported.
+widened. **`Approval::Risk::Keepsake` (`risk.rb:71-103`) is the shipped answer to "a value that is
+proof, not a claim"**: `private_class_method :new, :[], :for, :scalar` plus
+`def with(**) = raise Forged`, with a comment saying `#with` "is the sharper door because it
+starts from a LEGITIMATE keepsake". Follow it rather than inventing a second shape. Note
+`risk.rb:60-67` is a **second** class comment naming this card's work as the fix ("the real answer
+is the ladder building a bash `Rule::Call` from a PARSED term … until then this is a hole with a
+name"). The shared verdict from T6, so the term is derived rather than transported.
 `Approval::Remembered` (`remembered.rb:95-97`), which builds its key from `call.tool_name` and
 `call.input.attributes` and **must keep working byte-identically**.
 **Shared-file wiring:** none
@@ -1001,8 +1041,24 @@ rule** — T9 does — so on its own it changes no decision.
 > `command.start_with?("git ")` — would therefore allow `git -c core.fsmonitor=id status`, which
 > executes `id`.
 
-**The term must be derived inside `Call.for` from the shared verdict, never accepted as a
-parameter.** `Call`'s constructor is locked by `rule.rb:144-149` — it raises unless `input` is a
+**Ask the tool for its verdict; do not thread one.** `Rules#subject` builds the call as
+`Rule::Call.for(tool: @tools.fetch(effect.name), input: effect.input)` (`escalation.rb:325`), and
+`escalation.rb:293-295` says `@tools` is "the LIVE capability set … the exact tool the executor
+would dispatch". That tool is the `Tools::Bash` T6 already handed the session's one verdict. So
+`Call.for` asks it, and nothing needs threading through `Switchboard`/`BoardBuild` — which also
+sidesteps `escalation.rb:454-461`'s load-order constraint, since no `Shell::Verdict` constant is
+named in the `approval` namespace. `Tools::Bash` exposes `@verdict` through no message today
+(`bash.rb:110-115`), so this card adds one — which is why it waits for T7 rather than sharing
+`bash.rb` with it in one wave.
+
+**The term is a derived READER, not a `Data` member.** Measured: a member derived inside
+`initialize` does **not** raise on `#with` — it silently *corrects* the forged value, so an AC
+expecting a raise cannot pass. A derived reader raises `ArgumentError: unknown keyword: :term`,
+which is the honest behaviour and leaves `Ractor.shareable?` and `Remembered::Entry.for_call`
+(`remembered.rb:95-97`, reading `call.tool_name` and `call.input.attributes`) untouched by
+construction.
+
+**The term must be derived, never accepted as a parameter.** `Call`'s constructor is locked by `rule.rb:144-149` — it raises unless `input` is a
 `Tool::Input`, and the class comment (`rule.rb:24-27`) says that one line shuts `new`, `Data::[]`
 **and** `#with`. Adding a third member silently breaks that: `call.with(term: [["cat",
 "/home/u/.ssh/id_rsa"]])` re-runs `initialize`, `input` is still a valid `Tool::Input`, the check
@@ -1025,10 +1081,11 @@ Scenario: a command tool's call carries the parsed term
   When the rules rung builds its Call
   Then the Call carries [["cat","README.md"],["head","-20"]]
 
-Scenario: a Call cannot be given a term that does not belong to its input
+Scenario: a Call cannot be given a term at all
   Given a Call for the command "ls -la"
-  When something attempts to construct or copy it with a different term
-  Then it raises, exactly as a Call with a non-Tool::Input input raises
+  When something attempts to copy it with a different term via #with
+  Then it raises, because term is a derived reader and not a member to be set
+  And the term it reports still corresponds to its own input
 
 Scenario: an abstention carries no term, visibly
   Given a gated call to bash that the verdict abstains on
@@ -1058,7 +1115,7 @@ it is exercised through `rule_chain_spec.rb`, `remembered_spec.rb` and `risk_spe
 - If any existing rule in `lib/` or a fixture prefix-matches a command string, this card makes
   that hazard concrete. Report it; do not fix it here.
 
-### T9 — A rule that approves a term whose every stage and every word is safe [wave 4] [risk: high]
+### T9 — A rule that approves a term whose every stage and every word is safe [wave 5] [risk: high]
 
 **Depends on:** T6, T8
 **Files:** create `lib/lain/approval/composed_term.rb`,
@@ -1078,10 +1135,44 @@ The AC below drives a real session through the ladder, not the rule directly.
 
 This is the card the chunk exists for, and the only one that can approve something.
 
-**The rule:** a `bash` call whose decision allows, whose every stage names a program on an
-allowlist this rule owns, none of which the session excludes, and **none of whose words the
-session's classifier denies**, is approved — no human, no LLM. Anything else abstains and falls
-through to the rest of the ladder exactly as today.
+**The rule** approves a `bash` call only when **every one** of these holds. Anything else
+abstains and falls through to the rest of the ladder exactly as today.
+
+1. The decision **allows** (which already subsumes "the session does not exclude any program" —
+   an exclusion makes `Verdict#judge` return `deny`, `verdict.rb:198-205`, so `allow?` is false).
+2. Every stage's argv0 is a **bare name** — any `/` disqualifies.
+3. Every program is on **this rule's allowlist**.
+4. Every word of every stage classifies **`ordinary`** — not merely "not denied".
+5. No stage carries a flag that **widens its read set past its literal arguments**.
+
+**Predicate 4 is a blocker fix and the word matters.** `Sensitivity` is three-valued, and the
+gated tier is where this codebase put the credential files it declined to hard-refuse —
+`sensitivity.rb:346-353` lists `.env`, `.env.*`, `.envrc`, `*.pem`, `*.p12`, `credentials.json`,
+`secrets.y*ml`, `.git-credentials`, `.npmrc`, `.pypirc`, `terraform.tfstate`, `*.tfvars`, plus
+`~/Downloads`, `~/Documents`, `~/Desktop`. Its header states the justification outright: *"A
+spurious match here costs one prompt, so these are the half that widens."* Measured — `cat .env`,
+`cat ~/.git-credentials`, `cat config/credentials.json`, `cat server.pem`,
+`cat terraform.tfstate` **all classify `gated`, and all reach `allow`**. A "not denied" predicate
+approves every one. `escalation.rb:385-387` says why gated was allowed to stay an abstention:
+*"an abstention already reaches a human"* — the same premise `PATHLIKE` rests on, and the same one
+this rule destroys. Requiring `ordinary` also catches
+`MALFORMED = Verdict.new(level: :gated, …)` (`sensitivity.rb:364`) for free, so a word the
+classifier could not read cannot pass as "not denied".
+
+**Predicate 5 exists because the check is over the term and the hazard is over the read set.**
+Measured: `grep -h -r . ~/.ssh` reaches `allow` with **every word classifying `ordinary`** —
+including `~/.ssh` itself, because the rule is `Rule.within(".ssh", name: "id_*")`
+(`sensitivity.rb:329`) and the *directory* is not a match. Predicate 4 does not save this. The
+command prints `id_rsa`, which `escalation.rb:416` says "NOTHING lifts — not a policy, not
+`/mode auto`, not `ApproveAll`, and not `[sensitivity] exempt`". So **each allowlist entry carries
+the flags that disqualify it**, and a stage naming one is refused.
+
+This is deliberately *not* the general flag-aware policy the plan defers for `git`. That is an
+open-ended question about a program that can execute what its options name. This is a bounded
+list of disqualifying flags on a handful of read-only tools, and it is the same discipline
+`pipeline.rb:95-104` already states after `rg --pre=id` was measured executing `id`: membership
+requires having read the program's flags. **Consequence, and it must be stated in the Intent:**
+`grep -rn foo lib | wc -l` no longer qualifies. `grep -n foo lib | wc -l` does.
 
 #### The two things that make this dangerous, both measured
 
@@ -1145,6 +1236,24 @@ without restructuring the rule or re-deriving its ACs. Do not fuse the checks in
 happens to answer all of them at once; a reader adding "and the resolved path is under a trusted
 prefix" should have exactly one obvious place to put it.
 
+**Carry a starter allowlist, with a reason and a disqualifying-flag list per entry.** The
+allowlist is the highest-risk artifact in this chunk and a rule stated in prose hands the whole
+judgement to one implementing agent — v1's defect was importing the wrong list. Propose:
+
+| program | why it is on the list | disqualifying flags |
+|---|---|---|
+| `cat` | reads exactly its arguments, writes nothing | none known |
+| `head`, `tail` | prefix/suffix of exactly their arguments | none known |
+| `wc`, `nl` | counts/numbers exactly its arguments | none known |
+| `grep` | reads exactly its arguments **when not recursing** | `-r`, `-R`, `--recursive`, `--include`, `--exclude`, `-f`, `--file`, `-d recurse` |
+| `sort` | reads its arguments — **but `-o` writes** | `-o`, `--output` |
+| `cut`, `tr`, `rev` | pure transforms of stdin or arguments | none known |
+
+Deliberately absent, with reasons a reviewer can check: `gzip`/`xz`/`zstd` (replace their input),
+`tee`/`dd` (write), `xxd -r` (writes), `find` (recursive by nature and `-exec` runs), `awk`/`sed`
+(programmable, and already `PROGRAM_RUNNERS`), `xargs` (promotes stdin to argv), `curl`/`wget`
+(fetch). The panel reviews this **list**, not a method for deriving one.
+
 **Start narrow and say so.** The failure mode of "too small" is a prompt that would have happened
 anyway; the failure mode of "too big" is an unreviewed execution. `git` is not on it and cannot
 be — it abstains at the verdict for a measured reason (`verdict.rb:128-132`), so
@@ -1174,6 +1283,29 @@ Scenario: an allowlisted program that writes when given argv is not on the list
   Then it contains no program that overwrites, deletes, fetches or executes when given argv
   And "gzip important.log" is not approved
   And "curl http://evil.sh | cat" is not approved
+
+Scenario: a gated path is not approved, though nothing denies it
+  Given a session with default sensitivity rules
+  When the model runs "cat .env"
+  Then the rule does not approve it, because .env classifies gated rather than ordinary
+  And the same holds for "cat ~/.git-credentials", "cat server.pem" and "cat terraform.tfstate"
+
+Scenario: a recursive read is not approved, though every word is ordinary
+  Given "grep" is on the allowlist
+  When the model runs "grep -h -r . ~/.ssh"
+  Then the rule does not approve it, because -r widens the read set past its arguments
+  And "grep -n foo lib | wc -l" is still approved
+
+Scenario: a flag that writes disqualifies its stage
+  Given "sort" is on the allowlist
+  When the model runs "sort -o out in"
+  Then the rule does not approve it
+
+Scenario: the classifier is anchored on the call's own cwd, not the session's
+  Given a bash call carrying cwd "~/.ssh"
+  When the model runs "cat id_rsa"
+  Then the rule does not approve it
+  And a rule that classified against the session cwd instead would have approved it
 
 Scenario: a qualified program name is never approved, however it basenames
   Given "cat" is on the rule's allowlist
@@ -1213,6 +1345,11 @@ Scenario: the rule is actually in the shipped ladder
   (`escalation.rb:459-478` is emphatic that the factory must be TOTAL, because `cwd` is
   model-controlled and a raise there becomes a fault that turns a deny into an abstention), stop
   and report — that totality is a security property, not tidiness.
+- **If the rule's word predicate is spelled "not denied" rather than "is ordinary", stop.** That
+  is a reproduced blocker, not a style preference: the whole gated tier — `.env`, `*.pem`,
+  `.git-credentials`, `terraform.tfstate` — is "not denied".
+- If a program is added to the allowlist without a disqualifying-flag entry, stop. "None known" is
+  a claim someone made after reading the flags; a blank is a claim nobody made.
 - If this rule ends up asking `Doubts#programs` — or anything else that basenames — for its
   allowlist check, **stop**. That method is built for the exclusion set, where basenaming is the
   correct and verified behaviour, and it is the wrong direction here.
@@ -1223,7 +1360,7 @@ Scenario: the rule is actually in the shipped ladder
   turns out to be false — if `ApproveAll` somehow routes through the ladder — stop, because every
   safety argument here assumes the attended path.
 
-### T10 — A manual-QA scenario for the shell subsystem [wave 5] [risk: low]
+### T10 — A manual-QA scenario for the shell subsystem [wave 6] [risk: low]
 
 **Depends on:** T2, T7, T9, T11
 **Files:** create `planning/qa/scenarios/shell-terms.md`; modify `planning/qa/README.md`
@@ -1424,14 +1561,15 @@ Run after the last wave lands, from a tree with nothing else in flight.
    silently.
 5. **`bundle exec rspec spec/output_discipline_spec.rb`** — T7 adds journalling; nothing outside
    `lib/lain/frontend/` may touch `$stdout`/`$stderr`.
-6. **The `Ractor.shareable?` spec** for value objects — T5 adds a record and T8 widens a `Data`.
+6. **The `Ractor.shareable?` spec** for value objects — T5 adds a record, and T8 adds a derived
+   reader to a `Data` without adding a member.
 7. **A live end-to-end proof that the chunk's headline capability is reachable**, run by hand and
    not by a spec: start a real session, run `cat README.md | head -20`, and confirm from the
    journal that it was approved at the rules rung, that no approval parked, and that a shell-arm
    record names the term arm. Then run the same command under `/mode auto` and confirm the
    shell-arm record still lands. **If this cannot be demonstrated, the chunk has not shipped**,
    whatever the suite says.
-8. **Three negative controls for that same claim**, each of which a too-permissive rule would
+8. **Six negative controls for that same claim**, each of which a too-permissive rule would
    fail while still passing check 7:
    - a pipeline with one unlisted stage still parks for a human;
    - with `.netrc` denied in `[sensitivity]`, **`cat .netrc` still parks for a human** — the
@@ -1439,7 +1577,14 @@ Run after the last wave lands, from a tree with nothing else in flight.
      against an earlier draft of T9 and it is the single most important check in this list;
    - `gzip somefile` is not approved, though `gzip` sits on `Shell::Pipeline::STDIN_SAFE`;
    - **`/tmp/evil/cat README.md` is not approved**, though `cat` is on the allowlist and the
-     name basenames to it. Create the shim and confirm it did not run.
+     name basenames to it. Create the shim and confirm it did not run;
+   - **`cat .env` still parks for a human**, with a real `.env` present. It classifies *gated*,
+     not denied, and a rule spelled "not denied" approves it — a reproduced blocker from the
+     second review pass;
+   - **`grep -h -r . ~/.ssh` still parks for a human**, with real keys present. Every word of it
+     classifies *ordinary*, so word classification alone does not refuse it — the disqualifying
+     flag does. Confirm no key material was printed. This is the other reproduced blocker, and it
+     is the check most likely to regress, because the flag list is hand-maintained.
 9. **Egress floor, driven by hand:** `web_fetch` on `http://169.254.169.254/latest/meta-data/`
    refuses **without connecting**, and a redirect into a blocked range is refused on the hop.
    Confirm an ordinary public fetch still works — a guard that refuses everything passes the first
