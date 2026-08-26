@@ -36,13 +36,14 @@ module Lain
     # == The predicate downstream of a pipe, and why it defaults to refusing
     #
     # Pipeline safety is not the conjunction of per-stage safety
-    # (`planning/tool-use-algebra.md:223-231`). A pipe opens a SECOND channel:
-    # stdin now carries bytes the previous stage chose. `sh`, `ruby` and `psql`
-    # are ordinary programs with fixed argv and become an execution primitive the
-    # moment something upstream writes their input. So a stage after a pipe must
-    # be ON {STDIN_SAFE}; membership is not the absence of a denylist entry.
-    # The first stage is not judged here at all -- its stdin is `/dev/null`, and
-    # what its PROGRAM may do is {Verdict}'s question, not this object's.
+    # (planning/tool-use-algebra.md §6 "The trap, and the law that matters"). A
+    # pipe opens a SECOND channel: stdin now carries bytes the previous stage
+    # chose. `sh`, `ruby` and `psql` are ordinary programs with fixed argv and
+    # become an execution primitive the moment something upstream writes their
+    # input. So a stage after a pipe must be ON {STDIN_SAFE}; membership is not
+    # the absence of a denylist entry. The first stage is not judged here at all
+    # -- its stdin is `/dev/null`, and what its PROGRAM may do is {Verdict}'s
+    # question, not this object's.
     #
     # == Refusals are shaped like a shell's, not like an exception
     #

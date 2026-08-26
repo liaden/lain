@@ -8,6 +8,9 @@ shape it would take and what it would cost under the registry's rules.
 `planning/specs/chunk-tool-algebra-lenses-partition.md` executed the tool/tool-use half of this
 doc. The rest of the document is left as it was written, so the record keeps saying what it said;
 this section is where it disagrees with the tree. **Where the two disagree, the code is right.**
+One exception to the leave-it-as-written rule has since been taken, and it says so where it
+stands: §6 was corrected in place on 2026-08-26, because it specified a mechanism the shipped
+code refused and a later chunk plans that subsystem from it.
 
 | Idea | Status | Where |
 |---|---|---|
@@ -16,7 +19,7 @@ this section is where it disagrees with the tree. **Where the two disagree, the 
 | 3. attenuation laws, and `Toolset#==` | shipped | `lib/lain/algebra/attenuation.rb`, `lib/lain/toolset.rb`, `spec/support/shared_examples/attenuation.rb` |
 | 4. attenuation commutes with rendering | partly, inside idea 3 | monotonicity's `observed` probes the rendered names, so the schema cannot reveal a dropped tool; the entry-for-entry equality is still open |
 | 5. used-capability ledger | open | — |
-| 6. pipeline algebra over whitelisted commands | open | — |
+| 6. pipeline algebra over whitelisted commands | partly: the term arm shipped, deterministic approval over terms is in flight | `lib/lain/shell/parse.rb`, `lib/lain/shell/verdict.rb`, `lib/lain/shell/pipeline.rb`, reached through `lib/lain/tools/bash.rb`; the approval half is `planning/specs/chunk-shell-term-approval.md`, and §6 below is corrected in place rather than left as written |
 | 7. glossary additions | shipped | `docs/GLOSSARY.md` (interval partition, lens, attenuation, chain of responsibility) |
 | B4. one partition value, two consumers | shipped, three consumers | `lib/lain/interval_partition.rb` |
 | B6. typed content blocks | shipped as 4 read-only lenses; the typed sum type and the error coproduct are open | `lib/lain/response/tool_use.rb`, `lib/lain/tool/result_block.rb` |
@@ -199,6 +202,13 @@ is trivial; the value is the metric, so this is a bench feature first and a decl
 
 ### 6. A pipeline algebra over whitelisted commands (Joel's pipe idea)
 
+**Corrected in place, 2026-08-26**, which the rest of this document deliberately is not. The
+pipeline arm shipped as `Shell::Verdict` and `Shell::Pipeline` while the text below specified a
+mechanism the code considered and refused, and a section a future chunk plans this subsystem from
+cannot go on specifying an unsafe one in the present tense. Three claims are struck or rewritten
+below and the strikes say what they used to say; everything that was correct is untouched. Where
+the two disagree, the code is right.
+
 Joel's original thought: let whitelisted tools compose, so `grep pattern | rspec` is
 considered safe because it was built as a composition of safe pieces rather than as a shell
 string. This supplies the consumer the Kleisli rejection below said was missing, and it lands
@@ -216,19 +226,80 @@ and "does the model control the command string" stays false because there is no 
 term form matters: `[["grep", "pattern"], ["rspec"]]`, never a `"grep pattern"` string that
 gets re-split.
 
-**Capability semantics compose for free.** A term is authorized iff the Toolset holds every
-component, so `only(:grep, :rspec)` already bounds the expressible pipelines, and attenuation
-needs no new mechanism.
+**Capability attenuation does not reach a pipe stage.** *Struck: "capability semantics compose
+for free — a term is authorized iff the Toolset holds every component, so `only(:grep, :rspec)`
+already bounds the expressible pipelines, and attenuation needs no new mechanism."* The Toolset
+holds one tool on this path, `bash`; the words inside a term are program names that `execvp`
+resolves, not tools. `only(:grep)` attenuates lain's `grep` **tool**, an object unrelated to the
+`grep` binary a stage names, and dropping it removes nothing a term may spell. Attenuation
+composes over tools and stops at the tool boundary, so a bound on the programs a pipeline may
+name is something to build rather than something inherited: `Shell::Verdict` decides which
+commands are understood at all, and `Shell::Pipeline` decides which programs may stand downstream
+of a pipe.
 
 **The trap, and the law that matters.** Pipeline safety is not the conjunction of each
 component's tier-2 safety. Tier 2 means "safe given model-controlled argv". Pipe opens a
 second channel: stdin now carries bytes influenced by the previous stage. A command that
 executes its stdin (`psql`, `ruby`, `sh`) is tier-2-safe alone, with fixed argv, and unsafe
-downstream of a pipe. So pipeline membership needs a stronger per-tool predicate, "safe under
-arbitrary stdin", declared per tool like `parallel_safe?` is, defaulting false. The algebraic
-statement is that those tools form a **submonoid**: closed under pipe, so safety is inductive
-over terms and a compound never needs its own review. `parallel_safe?` composes the same way,
-as conjunction over components.
+downstream of a pipe. That much the code agrees with, and it is why the check exists at all.
+
+**What decides membership is a program-name allowlist, not a per-tool declaration.** *Struck:
+"pipeline membership needs a stronger per-tool predicate, 'safe under arbitrary stdin', declared
+per tool like `parallel_safe?` is, defaulting false."* There is nothing to declare it on. A stage
+names an arbitrary program — `jq`, `wc`, `head` — and lain has no `Tool` for `jq`, so the
+predicate is held by the object that runs the term. `Shell::Pipeline::STDIN_SAFE`
+(`pipeline.rb:105-113`) is an enumerated list of **46 program names**, hand-maintained and
+deliberately incomplete, applied by `refused_downstream` (`pipeline.rb:267-273`) to
+`@term.drop(1)`. The first stage is not judged there at all: its stdin is `/dev/null`, and what
+its program may do is `Shell::Verdict`'s question. Bare names only, since a basename match would
+accept `/tmp/sort`, which is the attacker's spelling of a name on the list.
+
+An allowlist rather than a denylist, because "I have no evidence this is safe under
+attacker-chosen stdin" is the honest reading of an absence, and it errs toward a refusal rather
+than an execution. No derivation replaces it, because membership is a claim about a program's
+*flags* and only reading them settles it. The comment above the list records the measurement that
+proves the point: `rg` sat on the list until `echo hi | rg --pre=id foo` was seen executing `id`.
+A predicate derived from a name, from a category, or from a program's reputation as a reader
+would have kept `rg` there. Note the division of labour the rule keeps clean
+(`pipeline.rb:78-104`): the list answers for STDIN and nothing else — `sort -o FILE` stays on it
+because that path came from argv — and what a stage's own argv may ask for is `Shell::Verdict`'s
+question and the tier-3 premise of the whole tool.
+
+**The closure is real; the review it retires was paid in advance.** *Struck: "those tools form a
+**submonoid**: closed under pipe, so safety is inductive over terms and a compound never needs its
+own review."* Most of that is what the code does, and the correction is narrower than a
+retraction. Terms whose every stage — the first included — is on the list are closed under pipe,
+and `cat` is on it, so the submonoid is there by construction rather than by discovery;
+`refused_downstream` (`pipeline.rb:267-273`) is exactly the conjunction over stages, one fold of
+membership across `@term.drop(1).map(&:first)` with no per-compound judgement anywhere. Nor does
+the trap paragraph above contradict it: what fails to conjoin is *tier-2* safety, and what the
+checker conjoins is the strictly stronger stdin predicate.
+
+Mind the one stage that predicate skips, because it is what decides which set is the closed one.
+`refused_downstream` accepts a strictly larger set than the submonoid, since it exempts stage 0
+(`@term.drop(1)`), whose stdin is `/dev/null`. Measured against the real checker: `cat README.md`
+passes, a bare `sh` passes **vacuously** because nothing about it is ever examined, and
+`cat README.md | sh` is refused. So that larger set is not closed under pipe, and the witness is
+the program the trap paragraph already named — `sh`, tier-2-safe alone and an execution primitive
+the moment something upstream writes its input. Stage 0 is `Shell::Verdict`'s question, not this
+predicate's, which is why the closure argument does not need it and why the list does not lean on
+that denylist to hold (`pipeline.rb:102-104`).
+
+The clause that misleads is the last one, and it misleads by inverting where the safety comes
+from. A compound needs no review of its own **because every name in it was reviewed first**, and a
+name that was not is refused rather than blessed. Membership is asserted about each program by
+someone who read that program's flags — never derived from the name, its category, or its
+reputation as a reader — which is why `rg` sat on the list until `echo hi | rg --pre=id foo` was
+measured executing `id`. The rule such a derivation would have to encode is the one written out at
+`pipeline.rb:78-81`: bytes arriving on stdin may not make a stage execute a program and may not
+NAME anything it then acts on. `xargs` is **not** on the list, and that rule is why —
+`printf 'foo\n-rf /tmp/xx\n' | xargs echo` yields `foo -rf /tmp/xx`, promoting stdin into argv, so
+a program that is tier-2 safe standing alone becomes an argv-injection point standing downstream.
+So "closed under pipe" is what the list *asserts about the names on it*, never a theorem the names
+supply. The induction is valid and worth exactly its base case: the review did not disappear when
+the algebra arrived, it moved from the compound to the list, where it is paid once per name
+instead of once per command. Everything else survives untouched — associativity, `cat` as
+identity, the monoid.
 
 **Consumer.** Shrinks the approval surface: compound read-and-analyze commands stop being
 gated tier-3 bash calls. If any current or future tool exists mainly to avoid a gated bash
@@ -237,11 +308,30 @@ content-addressable data, so dedupe and replay come free where a bash string is 
 "one bash tool" versus "pipeline terms" becomes a tool-design arm.
 
 **Cost.** A term `Tool::Input` (list of argv arrays), an evaluator on `Open3.pipeline`, the
-new stdin-safety declaration per tool, and a placement question if pipelines get long-running
+stdin-safety allowlist, and a placement question if pipelines get long-running
 (process management for the exec arm lives in `lain-core` today). This is a feature chunk
 with an algebra inside it, not a declaration retrofit. It is also the one idea in this doc
 that simplifies anything, by cutting approval prompts and by capping the number of bespoke
 compound tools anyone needs to write.
+
+**Defense in depth, and how to read every limit stated above.** Adopted by
+`planning/specs/chunk-shell-term-approval.md` and recorded here because this is the section a
+later chunk plans this subsystem from. Every safety property in this area is one rung on a ladder
+and never a finished answer, so a limit written down — an allowlist that is incomplete on purpose,
+a program trusted by its name, a term inspected in place of the read set it stands for — states
+**where the implementation currently stands** and is never an argument for staying there. "A human
+would have been fooled too" describes parity with the approver of the day; it does not make parity
+the goal, and the reason to want a deterministic approver at all is that it can be made strictly
+stronger over time in a way a human cannot. So a chunk touching this subsystem states its position
+on each axis and names the next rung, and an axis left unmentioned reads as a claim that nothing
+moved there — a reader is entitled to hold it to that. Cards get built so the next rung bolts on
+as one more predicate rather than as a restructuring, and on this path that predicate has a home
+already: `Refusals::TIERS` (`pipeline.rb:205-226`) is an ordered chain of six, walked lazily, the
+first with something to say winning. That chunk's **Defense in depth** table is
+the worked example to read: what reaches a shell, who decides, what a command may read, program
+identity, what content it pulls in, where it runs, and what the record proves, each with the rung
+it stands on and the one after it. The discipline is what transfers, not the table — the axes
+belong to the chunk that names them.
 
 ### 7. Glossary additions, zero code
 
@@ -270,8 +360,9 @@ would have zero consumers.
 **Tools as Kleisli arrows, Toolset as a category.** Rejected for the tools as they stand:
 there is no second category to map to and no composition of tools (tools do not call tools).
 Idea 6 revises this: pipe composition of whitelisted commands is a real composition with a
-real consumer, and its useful residue is a monoid plus a submonoid safety claim, with the
-Kleisli typing held in reserve until something needs typed ends.
+real consumer, and its useful residue is a monoid plus a submonoid whose safety content is the
+hand-audited list rather than the closure (idea 6 says why), with the Kleisli typing held in
+reserve until something needs typed ends.
 
 **A term algebra of orchestration topologies.** The bench enumerates context strategies as
 words in a free monoid; the same move on `Arm` (a grammar of spawn combinators, swept
