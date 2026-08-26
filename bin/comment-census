@@ -129,7 +129,9 @@ module CommentCensus
     #   Z0      the `[a-zA-Z0-9]` character class, quoted in prose
     #   TA3     a probe script's filename
     #   NET-1   RFC 5737's TEST-NET-1 address block
-    THIRD_PARTY_TOKENS = (NVIM_ERRORS + %w[C0 H1 H2 N-1 N-2 U3 Z0 TA3 NET-1]).to_set.freeze
+    #   NAT64   RFC 6146's IPv6-to-IPv4 translation, whose well-known prefix
+    #           `64:ff9b::/96` the egress floor refuses
+    THIRD_PARTY_TOKENS = (NVIM_ERRORS + %w[C0 H1 H2 N-1 N-2 U3 Z0 TA3 NET-1 NAT64]).to_set.freeze
 
     # Ours AND somebody else's, in this same tree. No mechanical rule separates
     # those readings, so the sweep is told about them by name and a human
