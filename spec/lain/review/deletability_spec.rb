@@ -148,7 +148,8 @@ module DeletionMap
                   "lib/lain/forge/journaled.rb", "lib/lain/forge/reconcile.rb", "spec/lain/forge/gh_spec.rb",
                   "lib/lain/cli/command/surface.rb", "spec/lain/cli/command/review_spec.rb",
                   "spec/lain/cli/command/survey_spec.rb", "spec/lain/seams/survey_subdirectory_spec.rb",
-                  "spec/lain/forge/gh/recorded_spec.rb", "spec/support/shared_examples/gh_parity.rb"],
+                  "spec/lain/forge/gh/recorded_spec.rb", "spec/support/shared_examples/gh_parity.rb",
+                  "spec/lain/cli/command/introspect_spec.rb"],
       edits: {
         "lib/lain/review.rb" => ['require_relative "review/submit"'],
         "lib/lain/forge/gh.rb" => ['require_relative "gh/endpoint"'],
@@ -165,6 +166,13 @@ module DeletionMap
         # talking to it.
         "lib/lain/cli/command/review.rb" => OUTBOX_REACH,
         "lib/lain/cli/command/survey.rb" => OUTBOX_REACH + ["@outbox.open?"],
+        # A THIRD outbox reader, and the only one that neither opens a round nor
+        # posts one: `/introspect` REPORTS the held round at the prompt. It names
+        # no constant of this capability in code, so the sweep is blind to it and
+        # only these literals find it -- `annotation_count` among them, since
+        # that reader exists for this caller and no other.
+        "lib/lain/cli/command/introspect.rb" => %w[outbox: @outbox.open? @outbox.target
+                                                   @outbox.held_source @outbox.annotation_count],
         "spec/lain/cli/command/surface_spec.rb" => ["review-submit"],
         "spec/lain/forge/intent_spec.rb" => ["promote pr_create pr_merge review_submit"],
         "spec/lain/forge/reconcile_spec.rb" => ['blind(action: "review_submit"']

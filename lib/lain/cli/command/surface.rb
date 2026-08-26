@@ -128,22 +128,38 @@ module Lain
           end
         end
 
-        # The parameterless commands, split out so #registry's ABC stays honest
-        # as the set grows (T17 added /btw and /keep): each `.new` is an ABC
-        # method call, and this list is data, not the registration behavior
-        # #registry owns.
+        # The shipped commands that need nothing #registry has to build for them
+        # -- most take no argument at all, and the four that do (`/goal`,
+        # `/meta`, `/introspect`, and the review trio one line down) take a
+        # collaborator this class already holds. "Parameterless" was the
+        # criterion when the list was one, and it stopped being true: what
+        # actually separates this from #registry is that #registry builds
+        # arguments (a live registry, a catalog, a prompt) and this does not.
+        #
+        # Split out so #registry's ABC stays honest as the set grows (T17 added
+        # /btw and /keep): each `.new` is an ABC method call, and this list is
+        # data, not the registration behavior #registry owns.
+        #
+        # ⚠️ THAT SPLIT HAS NOW RUN OUT ITSELF: with `/introspect` this method
+        # measures 17.0 against Metrics/AbcSize's limit of 17, so the NEXT
+        # command added here trips the cop. The answer is another extraction (a
+        # named group, as #review_commands already is), never a loosened limit.
         def builtins
           [Quit.new, Rewind.new, Pin.new, Unpin.new, Fork.new, Btw.new, Keep.new, Status.new, Sessions.new,
            Inbox.new, Ruby.new, Mode.new, Goal.new(driver: @goal_driver), Meta.new(root: @root),
-           *review_commands]
+           Introspect.new(outbox:), *review_commands]
         end
 
         # The commands of one review: `/review` and `/survey` each open a round
         # into {#outbox} -- the run's ONE, which is what lets each refuse over
         # the other's open surface -- and `/review-submit` takes it out and posts
-        # it. Their own line because they are the only group here sharing a
-        # collaborator, and because #builtins reached its ABC budget, which is
-        # the same pressure saying the same thing.
+        # it. Their own line because they are the group that shares {#outbox}
+        # AS A ROUND -- each holds one in or takes one out, so a second outbox
+        # would be a review open in one command and absent from another. That is
+        # a different relationship from `/introspect`'s, which is a READER: it
+        # reports the round these three own and could never disagree with them
+        # about one, because it never writes. And because #builtins reached its
+        # ABC budget, which is the same pressure saying the same thing.
         def review_commands
           [Review.new(root: @root, outbox:), ReviewSubmit.new(root: @root, outbox:),
            Survey.new(root: @root, cwd: @cwd, outbox:, ledger: @ledger)]

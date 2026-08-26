@@ -20,13 +20,17 @@ RSpec.describe Lain::CLI::Command::Surface do
   let(:model_switch) { instance_double(Lain::Context::ModelSwitch) }
   let(:mode_switch) { instance_double(Lain::Mode::Switch) }
   let(:ledger) { Lain::Sensitivity::Ledger.new }
+  # `/introspect` reads the run's own token ledger and occupancy off this, so
+  # the spy answers both -- absence for the occupancy, which is what a chat
+  # with no turn honestly has.
+  let(:agent) { instance_spy(Lain::Agent, usage: Lain::Usage.zero, occupancy: nil) }
 
   # `library:` is required (T15's posture, T40's one keyword): the run loads ONE
   # library and hands it over, so a surface that read its own would be a second
   # read of the same tree -- the drift this class's one-snapshot promise exists
   # to deny.
   def build_surface(root, approvals: nil)
-    described_class.new(agent: instance_spy(Lain::Agent), replies: instance_spy(Lain::CLI::HumanReplies),
+    described_class.new(agent:, replies: instance_spy(Lain::CLI::HumanReplies),
                         supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
                         chronicle: Lain::CLI::Chronicle::Null.new, library: Lain::Skill::Library.load(root:),
                         status_feed:, model_switch:, mode_switch:, ledger:)
@@ -137,8 +141,36 @@ RSpec.describe Lain::CLI::Command::Surface do
 
       expect(surface.commands.registry.map(&:name)).to contain_exactly(
         "quit", "rewind", "pin", "unpin", "fork", "btw", "keep", "status", "sessions", "inbox",
-        "ruby", "mode", "goal", "meta", "review", "review-submit", "survey", "help", "approve", "model"
+        "ruby", "mode", "goal", "meta", "introspect", "review", "review-submit", "survey",
+        "help", "approve", "model"
       )
+    end
+  end
+
+  # C12/F77, and the failure the LITERAL set above exists to catch, driven end
+  # to end: a command file can load, pass its own spec, and still be untypeable
+  # because nothing constructed it here. This dispatches the real thing through
+  # the registry this class assembles -- and asserts /help lists it, since a
+  # capability a human cannot discover is one step from not shipping at all.
+  #
+  # It also pins the run's ONE outbox reaching `/introspect`: the review it
+  # reports must be the round `/review` and `/survey` opened, not a second
+  # holder's idea of one -- the same identity claim the example below makes for
+  # `/review-submit`, from the reporting side.
+  it "dispatches /introspect over the run's own collaborators, and lists it in /help" do
+    with_project do |root|
+      surface = build_surface(root)
+      allow(model_switch).to receive(:current).and_return("claude-opus-4-8")
+      round = instance_double(Lain::Review::Session, source: "github_pr",
+                                                     annotations: [instance_double(Lain::Review::AnnotationPlaced)])
+      surface.outbox.hold(session: round, number: 7, label: "pull request 7")
+
+      rendered = surface.commands.dispatch("/introspect") { raise "fallthrough must not run" }
+
+      expect(rendered.text).to include("model claude-opus-4-8", "occupancy no turn yet in this run",
+                                       "review open over pull request 7 (github_pr)", "annotations 1")
+      expect(surface.commands.dispatch("/help") { raise "fallthrough must not run" }.text)
+        .to include("/introspect")
     end
   end
 

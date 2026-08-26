@@ -192,16 +192,47 @@ RSpec.describe Lain::Review::Submit::Outbox do
       expect(outbox.held_verdict).to be(Lain::Review::Verdict::None)
     end
 
-    # The two readers over one held round, agreeing about how much absence they
+    # The THREE readers over one held round, agreeing about how much absence they
     # tolerate. `#hold` validates nothing by design and defers the failure to
-    # its readers, so what must not happen is one reader answering while the
-    # other raises about the same round -- a caller would then have to know
-    # which of the two it was holding.
+    # its readers, so what must not happen is one reader answering while another
+    # raises about the same round -- a caller would then have to know which of
+    # them it was holding.
     it "tolerates a round with no session exactly as held_source does, and answers the null verdict" do
       outbox.hold(session: nil, number: nil, label: "branch feature/widget")
 
       expect(outbox.held_source).to be_nil
+      expect(outbox.annotation_count).to be_nil
       expect(outbox.held_verdict).to be(Lain::Review::Verdict::None)
+    end
+
+    # THE POSITIVE ARM, over the REAL collection. `/introspect` renders this
+    # number at the prompt, so what it counts has to be what the round actually
+    # recorded -- `Session#annotations` dups and freezes the live Array, and a
+    # doubled `annotations:` would pin nothing but the message's existence.
+    #
+    # Zero and absent are the two answers this file has to keep apart: a round
+    # opened with nothing written yet is a real round, and a human looking at it
+    # must not be told the same thing as a human with no round at all.
+    it "counts the notes the held round actually recorded, zero being a real answer" do
+      expect(outbox.annotation_count).to be_nil
+
+      outbox.hold(session:, number: 4271, label: "pull request 4271")
+
+      expect(outbox.annotation_count).to eq(0)
+
+      annotate
+      annotate(text: "and a second note")
+
+      expect(outbox.annotation_count).to eq(2)
+    end
+
+    # The source word, asserted positively for the first time: its nil arm above
+    # was the only assertion in this file, so the reader every `/review` and
+    # `/survey` refusal branches on was pinned only by what it does with nothing.
+    it "answers the held round's own source word" do
+      held
+
+      expect(outbox.held_source).to eq("github_pr")
     end
   end
 

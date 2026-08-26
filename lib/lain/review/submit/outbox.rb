@@ -130,7 +130,25 @@ module Lain
         # ...` read as one question rather than two.
         #
         # @return [String, nil]
-        def held_source = @held&.session&.source
+        def held_source = held_session&.source
+
+        # HOW MUCH the held round has to say, for a report rather than for a
+        # submission: `/introspect` names it at the prompt so a human can see a
+        # round they have annotated and one they have only opened as the
+        # different things they are.
+        #
+        # A COUNT and not the notes themselves, deliberately -- this class's one
+        # responsibility is submission, and handing out the round's annotations
+        # would let a caller build a payload beside {#submit}, which is the one
+        # thing that may not happen twice.
+        #
+        # nil with nothing held, on {#held_source}'s terms and for its reason:
+        # zero is a real answer about a real round (opened, nothing written yet)
+        # and must not be how absence reads. Callers ask `open? && ...`, one
+        # question, exactly as they do there.
+        #
+        # @return [Integer, nil]
+        def annotation_count = held_session&.annotations&.size
 
         # WHAT the held round concluded, in the session's own word -- or
         # {Verdict::None} while it is still awaiting judgement, and with nothing
@@ -148,16 +166,17 @@ module Lain
         # {Verdict::None} with nothing held keeps that from being a nil check
         # either.
         #
-        # It navigates the held round EXACTLY as {#held_source} does, so the two
-        # readers tolerate the same amount of absence and no caller has to know
-        # which of them it is holding: `&.` for a round that is not there, and a
-        # loud `NoMethodError` for a `session:` that is not a {Session} -- which
-        # is what {#hold}'s own doc defers to its readers. All that differs is
-        # what stands in for the absence, and only because a verdict HAS a null
-        # object to stand in with and a source word does not.
+        # It navigates the held round EXACTLY as {#held_source} and
+        # {#annotation_count} do -- through {#held_session}, the one peek all
+        # three share -- so the three readers tolerate the same amount of absence
+        # and no caller has to know which of them it is holding: `&.` for a round
+        # that is not there, and a loud `NoMethodError` for a `session:` that is
+        # not a {Session}, which is what {#hold}'s own doc defers to its readers.
+        # All that differs is what stands in for the absence, and only because a
+        # verdict HAS a null object to stand in with and the other two do not.
         #
         # @return [String, Verdict::None]
-        def held_verdict = @held&.session&.verdict || Verdict::None
+        def held_verdict = held_session&.verdict || Verdict::None
 
         # How the held round's target was named on screen, which is what a
         # report says instead of restating a class or re-deriving a number.
@@ -189,6 +208,14 @@ module Lain
         end
 
         private
+
+        # The held round's own model, or nothing -- the ONE `@held` peek all
+        # reading readers above go through ({#held_source},
+        # {#annotation_count}, {#held_verdict}), so "is a round held" is asked in
+        # one place rather than spelled as a safe-navigation chain per reader,
+        # which is how the three would come to tolerate different amounts of
+        # absence one edit at a time.
+        def held_session = @held&.session
 
         # Every reason not to send, asked before a payload is built.
         def ready!
