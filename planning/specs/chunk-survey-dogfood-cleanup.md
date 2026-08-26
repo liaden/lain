@@ -1,6 +1,6 @@
 # Chunk: survey dogfood cleanup — refusals, self-knowledge, and the comment sweep
 
-status: in-progress
+status: done (2026-08-26, 26f0e4d5..17e2e7c3)
 commit-mode: orchestrator-commits
 language: ruby (with a substantial neovim-runtime Lua component)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -380,6 +380,200 @@ Execute-plan must **not** start a card gated on one of these.
   single source of truth is a claim that needs the same verification as any other**, and this one was
   verified against the two callers the card already knew about.
 
+- **A delegate's report did not match the tree, and only re-reading caught it.** The compaction/bench
+  card fanned two of its slices to sub-agents and re-verified both itself. One **claimed to have
+  removed a comment whose wording never existed in this repo**, and placed two cited sites at
+  `:356`/`:369` when they are at `:328`/`:340`. It also kept editing after the first verification, so
+  an earlier census was stale by ten lines. Every figure in that hand-back was re-read out of the tree
+  rather than copied from the delegate. **This is the orchestrator's own failure mode one level down**
+  — the chunk has now seen a summary that was confidently wrong at both the sub-agent and the card
+  level, and in both cases the fix was the same: verify against the artifact, never the report.
+
+- **The octal defect is live, four-to-six sites, and its comment actively defends the hole.** Measured
+  on 4.0.6: `--runs 010` silently books **8**, `--runs 0x10` books **16**, and `--runs 08` is *refused*
+  as "not a whole number" — an incoherent trio from the outside. Sites reported across two cards:
+  `bench/cli.rb` (two), `bench/decider_sweep/fixture.rb` (two), and `bench/sweep.rb`; line numbers
+  moved under the sweep, so **re-locate before fixing**. The sharp part: the comment above `check_runs`
+  offers *"so the parse goes through the String"* as the **safety measure** against `Integer(2.5)`
+  truncating — and that route is exactly what opens the octal hole. **A comment defending the defect
+  it causes.** `Integer(runs.to_s, 10, exception: false)` makes the existing sentence true as written.
+  Not fixed here: it is a code change and every prose card is comment-only.
+
+- **INTEGRATION CHECK 4b CANNOT BE SATISFIED AS WRITTEN, and the reason is a cop conflict.** The
+  check asks for `yard-lint lib/` → zero. Two of its cops are **mutually exclusive** on 31 vendored
+  `provider/http/**` files that carry a file-header comment above `module Lain`:
+  - **`Documentation/BlankLineBetween`** (per-file) wants the blank line *removed*, so the header
+    attaches as `Lain`'s docstring.
+  - **`Documentation/DuplicateNamespaceComment`** (whole-tree only — it must see all 31 at once) then
+    fires, because 31 files would each be documenting `Lain`.
+
+  Satisfying either breaks the other. The orchestrator tried the removal, got the duplicate-namespace
+  failure from the pre-commit hook, and **reverted all 31 to their original shape**. `#--`/`#++` does
+  not help: YARD still attaches the block.
+  **Final state, measured against the chunk's own starting commit: 31 offenders, all 31 pre-existing,
+  ZERO introduced.** Every pre-commit hook passes on `--all-files`.
+  **4b should be re-specified** as "no NEW yard-lint offence, measured per file against the chunk's
+  base" — which this chunk meets exactly — plus a follow-up to resolve the 31 by moving those headers
+  inside the module, which is a code edit no comment-only card could make.
+
+- **`yard-lint` UNDER-REPORTS AT SCALE, SILENTLY — and Integration check 4b was measuring the wrong
+  number.** Found by the wide-subtree prose card, which noticed that over its 91 paths yard-lint
+  printed *"No offenses found"* and exited 0 while genuinely hiding two offences that appear
+  file-by-file. **Verified by the orchestrator on the real tree: `bundle exec yard-lint lib/` reports
+  11; the same files linted one at a time report 40.** A 3.6x under-count, with a zero exit.
+
+  Consequences, all of which change how this chunk's evidence should be read:
+  - **Integration check 4b as written (`bundle exec yard-lint lib/` → zero) is not a real gate.** It
+    is satisfiable while dozens of violations stand. It must be re-specified as a **per-file sweep**.
+  - **The pre-commit hook is the trustworthy one**, and always was — it runs `--staged`, i.e. a small
+    set, which is why it repeatedly caught violations that a whole-tree run had just declared clean.
+    That mismatch was visible three times this chunk and was misread each time as "the hook is
+    stricter" rather than "the wide run is lying."
+  - **Any card that verified with one wide invocation has a false green.** The ten prose cards were
+    told to run `yard-lint` over their subtree; those that did so in one call cannot be trusted on
+    that criterion, and the orchestrator must re-check per-file before landing.
+
+  **The general shape is this chunk's own thesis pointed at its tooling: a gate that reports success
+  while the thing it checks is present.** It is the same defect as the unrouted gesture that acked, the
+  counter that never retired, and the honesty command that said "none open" — found, this time, in the
+  instrument rather than the subject.
+
+- **ZSH WORD-SPLITTING IS A SILENT DATA-LOSS TRAP IN THIS WORKFLOW, and it hit four of us.** `FILES=$(cat
+  list); tool $FILES` does **not** word-split under zsh, so the tool receives one giant argument. For
+  `comment-census --strip` that means it emits **nothing and exits 0** — and the resulting diff shows a
+  full delete that reads as catastrophic loss. **Three of the ten sweep agents hit it**, and the
+  orchestrator hit the same shape with `git add $FILES`, which failed loudly only because git rejects
+  a pathspec that long. **Always `while IFS= read -r f; do … done < list`, or
+  `--pathspec-from-file`.** The dangerous version is the one that exits 0.
+
+- **Five YARD defects yard-lint cannot see, found by reading rather than by a gate.** Prose paragraphs
+  sitting **below** a tag block get published as that parameter's description (`command/review.rb`,
+  `epic_submit.rb`, `isolation_backend.rb`, `tmux_surface.rb`, `composed_prompt.rb`). Each block is
+  individually well-formed, which is why every linter passes them — the same shape as the misattached
+  `plan/closure.rb` docstring. **A tag block followed by prose is a defect this codebase has no
+  automated check for**, and the sweep is the only pass that has ever looked.
+
+- **A follow-up card the CLI sweep earned: three construction-order constraints that nothing asserts.**
+  In `cli/backend/`, `RunJournal` works **only because a Hash literal evaluates left to right**, and
+  `SpanSummarizer#tier` and `Backend#run_journal` each rest on an ivar assigned one statement earlier.
+  The card's phrase for it is exact: **"latent defects wearing comments as a seatbelt."** A comment is
+  not a constraint. These want specs, and finding them was possible only because somebody read every
+  line of the subtree.
+
+- **The CLI subtree's real finding is that it was never padded with junk.** No file fell by more than
+  half; prose went 10,872 → 8,313 (−23.5%) by **compression**, not deletion, and nothing was worth
+  relocating — every long block was local reasoning about its own object. The four repeating patterns
+  cut were: extraction ceremony ("lifted out because `Metrics/ClassLength` said so"), superseded
+  history, prose above `#initialize` restating the `@param` block below it keyword-for-keyword, and
+  `foo.rb:45-47` citations rewritten as bare references. **Two files were deliberately left dense and
+  two more flagged for a second reader**, on the grounds that the next cut would have been a reason.
+
+- **The prose sweep is finding live documentation defects, not just verbosity.** `plan/closure.rb`
+  carried a **genuinely misattached docstring** — `Closure`'s doc ran into `ChunkRangeOutOfBounds`'s,
+  so YARD handed the whole block to the error class and the class it described was undocumented. Found
+  and split by the shell/tool/sensitivity card, comments only. That is the exact defect yard-lint
+  exists to catch and did not, because the two blocks were individually well-formed.
+  **Ruled, not moved:** `tool/spawn_policy.rb`'s docstring sits on the `Data.define` **assignment**
+  rather than the reopen, which the card flagged against CLAUDE.md's one-docstring-per-reopen rule.
+  Verified by the orchestrator — `yard stats` reports **2 constants, 0 undocumented**, and the reopen
+  carries its own separate note, so the two describe different things and nothing is discarded.
+  **Leave it.** The card was right to raise it and right not to touch it.
+
+- **`ARCHITECTURE.md` was missing two sections CLAUDE.md promised it had.** CLAUDE.md says the "full
+  treatment" of the secret boundary lives there; it contained **zero** mentions of `Sensitivity` or
+  `Shell::Parse`. The sweep's relocation mandate turned that into a fix rather than a finding: a
+  **"Triaging a bash command"** section (three parse signals, the tree-sitter-bash bug, the `time`
+  sweep and reserved words, verdict tiers) and a **"The secret boundary"** section (the gate/filter/
+  mask table, the measured pre-gate rates, the ledger's keying) now exist, with one-line pointers left
+  behind. **A card that only deleted would have left that gap open.**
+
+- **"YARD tag coverage did not fall" is a subtly WRONG acceptance criterion, and the top-level prose
+  card found out why.** `session.rb` carried two prose lines beginning `@complete` and `@masked` —
+  which the census *counts as tags* and which **YARD would misread as tags**, the same defect that had
+  to be hand-fixed at `@context`, `@root` and `@bm25`. So **fixing the hazard lowers the tag count**,
+  and an AC that forbids the count falling would forbid the fix. The card resolved it correctly: it
+  restored the count with **real `@param` coverage** rather than restoring the hazard. The AC should
+  read "no *genuine* tag was deleted", and a fall explained by de-tagging prose is a pass.
+
+- **Two more classifier gaps, both found by cards using the tool rather than by the tool's own spec.**
+  The ticket sweep found **letter-suffixed citations** (`F7a`, `T31c`, `T32a`, `P2d`) pass
+  `--check-tickets` unseen — it swept 60 such sites by hand. The top-level prose card then found
+  **dotted and lowercase forms** (`R.2`, `3c-2.4`) escape too. Neither is a defect in what the
+  classifier *claims* — it reports UNKNOWN rather than guessing — but both are shapes it never sees at
+  all. **Follow-up: teach it the suffixed, dotted and lowercase forms, and add `--check-tickets` to
+  pre-commit**, which was deliberately left out pending exactly this kind of shakedown.
+
+- **A deliberate outcome worth recording, so a later reader does not "finish the job":** four
+  top-level files stay at **2.0–2.5 prose:code on purpose** (`notify.rb`, `status_feed.rb`,
+  `context_window.rb`, `arm.rb`) because what remains in them is **hand-measured evidence** — figures
+  nobody can re-derive without re-running an experiment. And `status_feed.rb`'s class doc is a single
+  133-line block (down from 215) that **cannot be split without detaching the docstring**. The
+  exemplar `timeline.rb` is byte-identical, comments included: it is the reference, not a target.
+
+- **THE DECLARATIVE WING IS COMPLETE 2026-08-26** — `fa644bde..eaccf600`, seven commits. `Guard` and
+  `Guardable` are deleted; 57 carriers, 11 includers and 96 call sites declare instead. Suite
+  **16,153 examples, 0 failures**, reconciling exactly (+5 from the last migration, −14 from the two
+  deleted spec files). All 14 deleted examples were checked against the foundation's 97 before the
+  deletion: eight near-verbatim counterparts, the rest renamed for the new vocabulary.
+  `Capability::Guard` survives, as intended — it shadows the deleted constant for anything lexically
+  inside `Lain`, which is exactly why a grep-driven deletion would have taken it.
+
+- **A 29TH CARRIER SURVIVED BOTH ITS MIGRATION AND ITS REVIEW, and only the deletion gate caught it.**
+  `lib/lain/telemetry/handback.rb` still held `module Guards` and `class Handback < Guard` after the
+  telemetry card reported "all 28 carriers migrated" and its panel independently reported a clean
+  grep over the same subtree. **Two separate greps of the same directory both missed a plain
+  `< Guard`.** The tree therefore carried *two namespaces for one idea* — 28 carriers under the new
+  name and one under the old — so a reader looking for the handback contract would have found the
+  wrong answer in the right place. Found by the orchestrator's pre-deletion sweep, which is the only
+  check in the chunk that looks at the whole tree at once rather than one card's subtree.
+  **The lesson is about scope, not diligence: every grep in this wing was scoped to a card's own
+  subtree, and the one thing no card owned was the question "is the tree as a whole clean now."**
+
+- **The wing's most-cited danger turned out to be real, and it cost the one all-four-yes conversion.**
+  The epic/forge card produced the wing's **only** class answering "yes" to all four review questions —
+  and its panel found the fourth yes was bought by deleting a `.to_h`, silently widening
+  `Gh::Answer#detail` from *always a Hash* to *anything `Canonical` accepts*, with two callers
+  subscripting it directly. The card's **own** hand-back had named that exact hazard as its reason for
+  declining a sibling conversion, then accepted it here because no caller writes a non-Hash today —
+  which is the "merely never happened to be built wrong" standard `promotion_spec.rb:456` explicitly
+  rejects. **Reading across the wing: the four-question review produced 2 clean yeses out of ~65
+  classes, and the one enthusiastic yes was the one that broke something.** That is the strongest
+  evidence yet that `check!`-with-a-declaration is the pattern's real reach and `settle!` is the
+  exception, exactly as the foundation card's own measurements predicted.
+
+- **A refusal can regress at the terminal while every spec stays green.** `lain epic submit qa` used to
+  say *"unknown epic stage "qa" (the pipeline is …)"* and now says *"name is not a stage — "qa" names
+  none of …"*. The `"#{attribute} #{message}"` join the wing standardises on **forces the attribute to
+  the front**, so a message written as a bare clause opens with a word the human never typed. The spec
+  matched on a loose `/"qa".*research.*implementation/m` and never saw it. **Every card in this wing
+  that moved a message into a declaration should have checked the rendered first line**, and only this
+  one was caught — by a panel, not a gate.
+
+- **C14 and four of five migrations LANDED 2026-08-26** — `84874b11` (compose pane), then `fa644bde`,
+  `a6199fdc`, `e58c9868`, `f403117c` for the memory, review/approval, telemetry and
+  context/question/mode subtrees. Suite **16,162 examples, 0 failures, 15 pendings**. D3c is the last
+  of the wing and was the one card whose review the orchestrator failed to spawn when its siblings
+  landed — caught on a stocktake, not by any gate. **Nothing in the process notices a card that was
+  implemented and never reviewed**; the ready-queue tracks dependencies, not review state.
+
+- **`yard-lint` blocked three of four migration commits, always on PRE-EXISTING violations** newly
+  exposed because a card staged a file nobody had touched. That is the config working as designed —
+  its own header says it runs `--staged` so "the legacy 58 can be cleared separately without blocking
+  anyone" — and the effect is that each card pays down the legacy in the files it touches, which
+  beats deferring all 27 to the sweep. Two were genuine improvements (`Gate.from_journal` gained
+  accurate `@option` tags; `Question#initialize` gained a real docstring). The third is worth keeping:
+  **`Question::Fence`'s docstring explains how fenced code blocks work, and writing the backtick runs
+  literally unbalanced its own markdown.** It now spells them in words, with a line saying why.
+  **Budget for this on every remaining card that stages an untouched file.**
+
+- **Orchestrator process failure, third instance of the same family — a check that printed reassurance
+  regardless of its result.** The intersection check for the telemetry landing **did** flag
+  `compaction/derivation_audit/edge.rb` as a collision, and the script printed a hardcoded
+  `"(empty = safe)"` line next to the warning. The copy silently reverted a `yard-lint` fix landed an
+  hour earlier; it was caught by reading the file afterwards, not by the check. **A verification step
+  whose output does not depend on what it verified is not a verification step.** Rewritten to branch
+  on the result.
+
 - **Wave 2 LANDED 2026-08-26** — C10, C13, C12, C11 in four commits `ed394ff3..64cf02cb`, full suite
   green through the real pre-commit gate at each. Final count **16,051 examples, 0 failures, 15
   pendings** against a 15,983 start. Every card went through the panel; **three of the four returned
@@ -406,6 +600,135 @@ Execute-plan must **not** start a card gated on one of these.
   the `$stdout`-freezing hazard **structurally unreachable** rather than correctly classified, which is
   a stronger guarantee than the card asked for.
 
+- **FOUNDATION DEFECT: a strict type pre-empts the declaration's own refusal class, and on a `check!`
+  class it enforces nothing at all.** Characterised by the telemetry card at the orchestrator's
+  request, after it noticed `:lain_strict_integer` got zero uses and structurally could not get any.
+  Both halves are measured, not suspected:
+
+  - **With a validation on the same attribute:** `valid?` must READ the attribute to validate it, so
+    the cast fires inside `valid?` and raises `Types::CoercionError` **instead of** the declared
+    `raising:` class. It is read-dependent, not order-dependent — no reordering avoids it. **The split
+    is the trap:** a well-typed-but-invalid value (`n: 0`) refuses *correctly* with the declared class,
+    while a malformed one (`n: nil`, `"3x"`) escapes as `CoercionError`. So every test written with a
+    well-typed value passes, and the failure lands on exactly the input the strict type was added to
+    catch.
+  - **Without one, under `check!`:** nothing reads the attribute, so **the cast never runs and the
+    malformed value passes silently.** A strict type on a `check!` class is not weak, it is **inert** —
+    and `check!` is the majority path across the wing.
+  - **`rescue ArgumentError` misses it too.** `CoercionError.ancestors` is
+    `[CoercionError, Lain::Error, StandardError]`, and `ArgumentError` is the **default** `refusal` for
+    any declaration naming no custom class — so this reaches every such carrier. **This half is the
+    orchestrator's own ruling coming back**: reparenting `CoercionError` out of `ArgumentError` was
+    right for the CLI boundary (`exe/lain` still renders one clean line) and wrong for intermediate
+    rescues. Owning it here so the follow-up card is not written as if the foundation simply erred.
+
+  **A declaration-level fix exists with no foundation change** — a bespoke `validate` that reads the
+  attribute inside `rescue CoercionError => e; errors.add(...)` restores the declared class for both
+  entry points — and there is **no before-type-cast escape hatch** (reaching for one routes through
+  `method_missing` → `attributes` → the cast). **The better fix is in the concern**: `check!`/`settle!`
+  should translate a `CoercionError` into the declaration's `raising:` class with the original as
+  `.cause`, exactly as the types themselves were made to wrap `Canonical`'s errors into one class. That
+  is the follow-up card.
+
+  **Interim constraint, relayed to every running migration: do not pair a strict type with a
+  `validates` rule on the same attribute, and do not put one on a `check!`-only class.** The one cell
+  that behaves is a `settle!` class with no validation touching the typed attribute — which is where
+  the telemetry card's two adoptions sit, by luck rather than by design.
+
+- **`rubocop -a` IS DANGEROUS IN THIS WING, and CLAUDE.md currently says it is not.** Found by the
+  epic/forge card: **`Lint/UselessAccessModifier` misreads a `private` sitting inside a
+  `declare do … end` block and deletes it**, silently making the methods below it **public**. It is a
+  `Safe: true` cop, so plain `-a` applies it with no prompt — and **no spec catches it**, because a
+  method becoming public breaks nothing that was passing. It was caught only by reading the
+  autocorrect output. Three methods leaked in one subtree.
+  CLAUDE.md's RuboCop section says "`rubocop -a` applies only `Safe: true` cops" and warns that **`-A`**
+  is the dangerous one. That is now incomplete: `-a` is dangerous too, in the presence of `declare`.
+  **Owed on landing: a `docs/toolchain-traps.md` entry and a CLAUDE.md amendment.** All five migrations
+  and their reviewers were told to audit their access modifiers against the pre-migration source; a
+  leaked private is a BLOCKER, because it is an unrequested API change invisible to every count and
+  every suite run the orchestrator does.
+
+- **A CROSS-CARD HAZARD the wing's design did not anticipate: a carrier with an EXTERNAL reader
+  cannot become an inline `declare`.** `declare raising: … do … end` builds an **anonymous** subclass
+  reachable only through the declaring class and leaves **no named constant behind** — so any caller
+  outside the declaring file loses its receiver. Found by the wide-subtree card, which turned up two:
+  - `compaction/derivation_audit/edge.rb:70` uses `Telemetry::Guards::ContextDerived` as a read-only
+    **`valid?`/`errors` reporter**, not as a construction-time refusal. A `declare` conversion in the
+    telemetry subtree would have **crashed** it.
+  - `channel/drop_oldest.rb:57` calls `Channel::Guard.check!` across a subtree boundary; the class is
+    one card's, the call site another's.
+
+  **The rule, relayed to all four running migrations: a carrier with an external reader stays a named
+  `Carrier` subclass.** The foundation's docstring already draws the line — *"subclass Carrier where
+  the carrier is worth a name … `declare` where the rules belong to the value and nothing else would
+  ever mention the carrier"* — but nothing in the wing's cards said to **check** which case a carrier
+  is in, and a naive conversion looks correct until an unrelated subtree's spec reds. **Each card now
+  reports its external-reader list, which the deletion card needs in order to sequence.**
+
+- **The wide-subtree card's real answer was 33 "no"s, and that is the finding.** Its card said an
+  all-"no" subtree should be escalated rather than reported quietly. It converted **one** class of 34
+  sites — and on the **coercion**, not the guard (three repeated `Canonical.normalize` calls becoming
+  three `:lain_canonical` attributes). The 33 declines are grouped by *why*, and the grouping is the
+  useful artifact: named errors whose constructors take `(value, path:)` — the largest group, because
+  `declare raising:` can only `raise X, message`; nil-collaborator Null-idiom assertions where
+  `presence: true` would be actively **wrong** (`blank?` delegates to `empty?`); coercions that run
+  before the guard; positional constructors; and closed-set guards where a declaration is the same
+  length with a worse message. **That first group is a real limit of the design** — a refusal carrying
+  structured context cannot be expressed declaratively today — and it should shape whether the wing
+  grows further or stops here. Its population count was also **34 sites, not the card's 48**; the gap
+  is scan methodology, reported rather than quietly absorbed.
+
+- **Two live octal-coercion defects found in passing, out of scope and recorded:** `bench/sweep.rb:161`
+  and `bench/cli.rb:369` both call `Integer()` without base 10, so `k = "010"` silently reads as **8**.
+  That is exactly the defect the strict types were built to prevent, sitting in the tree today —
+  independent evidence that the type earns its place, against a panel that had recommended cutting it.
+
+- **C14 is the chunk's best worked example of a review paying for itself, and of an implementer
+  out-thinking both the card and the panel.** The panel found a live `E95` traceback on the ordinary
+  `lain up` restart path (below). Neither the card nor the panel's suggested fix was what shipped: the
+  implementer **decoupled the pane's NAME from its SEQUENCE** — names chosen against the editor,
+  sequence for order — so the collision became *unrepresentable* rather than handled. It then
+  **declined** the reclaim the panel proposed, and the panel's re-review endorsed the decline with a
+  better argument than either had: a survivor holds no place in line at all, so reclaiming it would
+  have to mint a fresh reservation against the *current* cursor and stamp, silently re-anchoring last
+  session's words to this session's line under a revision they were never read against — "the drift
+  detector's nightmare wearing a convenience." **The lesson for the remaining cards: a panel finding
+  names a defect, not a design. An implementer that solves it a third way and argues for it is doing
+  the job.**
+
+- **THE REFUSAL-DELIVERY GATE HAS A BLIND SPOT, and it let a traceback through.** The gate this chunk
+  built lexes each `.lua` module for a literal `error(...)` or `vim.notify` inside a `define()`d
+  callback. It **cannot see an nvim API call that raises** — and C14 shipped one:
+  `nvim_buf_set_name` on a name that already exists raises `E95` with nvim's `stack traceback:` and a
+  hit-enter prompt behind which every non-fast RPC queues. That is precisely the defect the gate
+  exists to end, arriving through a door the gate does not watch, with the suite green. The gate's own
+  header warns about "silent green"; this is one.
+  **Follow-up card:** widen the gate to the raising API surface, or pin the reclaim contract itself.
+  The known raisers are the buffer-naming family (`nvim_buf_set_name` → E95) and `:w` on a `nofile`
+  buffer (E382) — `51_thread.lua:288-294` already documents both and guards them; the gate should
+  make that guard mandatory rather than exemplary. **Every future `lain://` pane is exposed until
+  then**, which makes this worth a card rather than a note.
+
+- **The reattach lifecycle is under-tested across the runtime, not just in one card.** `lain up`
+  reattaches to a tmux session whose nvim pane and deterministic socket outlive the Ruby process
+  (`ARCHITECTURE.md:12-15`), and `SocketOwned` refuses only a *concurrent* second lain, never a
+  sequential restart. So per-attach chunk state (`review_notes.placed` and its kin) resets while
+  `lain://` buffers survive. C14 assumed a monotonic counter could not collide; across an attach it
+  can, on the first gesture. **Any card holding per-attach state that names a buffer needs a
+  reattach example**, and there is currently no shared helper for driving one.
+
+- **Two findings from a concurrent session, banked not actioned** (2026-08-26; theirs is prose only,
+  recorded in `planning/remote-surface-research-2026-08.md`). Both are **this chunk's own defect
+  class — something reporting success while doing nothing** — and are follow-up card material:
+  - **`AutoSurface#settle` is a no-op on `:defer`** (`auto_surface.rb:64`), so an abstention is
+    journaled nowhere. That is F77's hole from the other side: on a bench whose deliverable *is* the
+    experiment record, a decision that happened and was never written down is worse than a wrong one
+    that was.
+  - **The `notify` mode layer is declared `alters_outcome: false` with no consumer** in `lib/` or
+    `exe/` (`layer.rb:86`), while `Notify` is a deciding surface. A flag nothing reads, asserting a
+    property that looks false, is precisely how `:LainSurveyAdd` acked success with no route behind
+    it.
+
 - **LANDING HAZARD, C11 — do not land it by copying `neovim_runtime_spec.rb`.** C11's worktree was
   cut *before* C10 landed, and both cards append to that orchestrator-owned file. Measured: the
   landed file holds **76** examples (74 base + C10's 2); C11's worktree holds **84** (74 base + its
@@ -418,6 +741,20 @@ Execute-plan must **not** start a card gated on one of these.
   **The general rule: an append-only shared file makes two cards' work invisible to each other. Any
   card whose base predates a sibling's landing must be landed by patch, never by copy.** C12 was
   checked the same way and has **zero** overlap with the landed set, so it copies safely.
+
+- **The same hazard bit a SECOND time, and remembering the rule was not enough to prevent it.** The
+  declarative foundation was cut before `/introspect` landed, so its `.rubocop.yml` predated the
+  `Metrics/ModuleLength` exclusion that card added — and copying the file **silently reverted it**.
+  The hook caught it (`deletability_spec.rb 103/100`), but only because that config change happened
+  to have a spec behind it; a reverted change without one lands invisibly. The first instance was
+  caught by looking at the file I had already been burned on, which is not a method.
+  **The method, run before every landing:**
+  ```
+  comm -12 <(git diff --name-only <card-base> HEAD | sort) <(card's touched files | sort)
+  ```
+  Anything in that intersection lands by `git apply --3way` of the card's own diff; everything else
+  may be copied. Two-line result here (`.rubocop.yml` only), five seconds to run, and it is the
+  difference between a caught revert and a silent one.
 
 - **Orchestrator process failure, wave 2: an applied wiring diff was verified against too narrow a
   set.** I applied C13's `Wiring#run` diff and ran a targeted five-file selection (333 examples,
