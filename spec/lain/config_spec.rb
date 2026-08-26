@@ -300,4 +300,102 @@ RSpec.describe Lain::Config do
       end
     end
   end
+
+  # `[shell]` is the second table read on its own, for the reason above: it
+  # names programs a project has ruled out, so a typo that silently drops one
+  # reads as a refusal that is in force and is not.
+  describe ".shell_exclusions" do
+    it "takes its root from the caller rather than the working directory" do
+      expect { described_class.shell_exclusions }.to raise_error(ArgumentError, /root/)
+    end
+
+    it "permits every program for a root with no config file at all" do
+      Dir.mktmpdir do |root|
+        expect(described_class.shell_exclusions(root:).permits?("curl")).to be(true)
+      end
+    end
+
+    it "permits every program when the file carries no shell table" do
+      Dir.mktmpdir do |root|
+        write_config(root, "[epics]\nhome = \"repo\"\n")
+
+        expect(described_class.shell_exclusions(root:)).to eq(Lain::Shell::Exclusions.empty)
+      end
+    end
+
+    it "excludes the programs the table names, by basename" do
+      Dir.mktmpdir do |root|
+        write_config(root, %([shell]\nexclude = ["curl", "wget"]\n))
+
+        exclusions = described_class.shell_exclusions(root:)
+
+        expect([exclusions.permits?("/usr/bin/curl"), exclusions.permits?("cat")]).to eq([false, true])
+      end
+    end
+
+    # The strictest posture the file can express, and legal precisely because
+    # this table can only ever restrict.
+    it "honours a wildcard entry" do
+      Dir.mktmpdir do |root|
+        write_config(root, %([shell]\nexclude = ["*"]\n))
+
+        expect(described_class.shell_exclusions(root:).permits?("cat")).to be(false)
+      end
+    end
+
+    it "refuses a scalar where the table belongs, naming the file" do
+      Dir.mktmpdir do |root|
+        write_config(root, %(shell = "off"\n))
+
+        expect { described_class.shell_exclusions(root:) }
+          .to raise_error(Lain::Shell::Exclusions::NotATable, /#{Regexp.escape(config_path(root))}/)
+      end
+    end
+
+    it "refuses a key it does not read, naming the file" do
+      Dir.mktmpdir do |root|
+        write_config(root, %([shell]\nexcluded = ["curl"]\n))
+
+        expect { described_class.shell_exclusions(root:) }
+          .to raise_error(Lain::Shell::Exclusions::UnknownKeys, /#{Regexp.escape(config_path(root))}/)
+      end
+    end
+
+    it "refuses a pattern that could never match, naming the file" do
+      Dir.mktmpdir do |root|
+        write_config(root, %([shell]\nexclude = ["/usr/bin/curl"]\n))
+
+        expect { described_class.shell_exclusions(root:) }
+          .to raise_error(Lain::Shell::Exclusions::MalformedPattern, /#{Regexp.escape(config_path(root))}/)
+      end
+    end
+
+    # The independence, both ways, as for the table above.
+    it "reads its table even when another table is malformed" do
+      Dir.mktmpdir do |root|
+        write_config(root, %(epics = "not a table"\n\n[shell]\nexclude = ["curl"]\n))
+
+        expect { described_class.load(root:) }.to raise_error(Lain::Config::Epics::NotATable)
+        expect(described_class.shell_exclusions(root:).permits?("curl")).to be(false)
+      end
+    end
+
+    it "refuses its own bad table even when every other table is fine" do
+      Dir.mktmpdir do |root|
+        write_config(root, %(shell = "off"\n\n[epics]\nhome = "repo"\n))
+
+        expect { described_class.load(root:) }.not_to raise_error
+        expect { described_class.shell_exclusions(root:) }
+          .to raise_error(Lain::Shell::Exclusions::NotATable)
+      end
+    end
+
+    it "still reports an unparseable file as Malformed" do
+      Dir.mktmpdir do |root|
+        write_config(root, "this is not [valid toml")
+
+        expect { described_class.shell_exclusions(root:) }.to raise_error(Lain::Config::Malformed)
+      end
+    end
+  end
 end

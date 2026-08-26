@@ -14,16 +14,18 @@ module Lain
   # root with no file returns the same value {.empty} does, so a caller never
   # writes an `if File.exist?` guard of its own (Null Object).
   #
-  # `[epics]`, `[approval]` and `[sensitivity]` are understood. Every OTHER
-  # top-level table is tolerated and ignored: other consumers are coming
+  # `[epics]`, `[approval]`, `[sensitivity]` and `[shell]` are understood. Every
+  # OTHER top-level table is tolerated and ignored: other consumers are coming
   # (chat-ux's prompt config may converge on this same file later), and a table
   # this class doesn't yet read is not this class's typo to catch. Each table it
   # DOES read is one small class's whole surface -- {Epics}, {Answers},
-  # {Sensitivity::Rules} -- so a typo or a wrong-shaped value inside one is loud
-  # instead of silently defaulting or crashing three call frames deep.
+  # {Sensitivity::Rules}, {Shell::Exclusions} -- so a typo or a wrong-shaped
+  # value inside one is loud instead of silently defaulting or crashing three
+  # call frames deep.
   #
-  # `[sensitivity]` is read by {.sensitivity} and NOT by {.load}, which is a
-  # decision rather than an oversight: the two have opposite postures about a
+  # `[sensitivity]` and `[shell]` are read by {.sensitivity} and
+  # {.shell_exclusions}, NOT by {.load}, which is a decision rather than an
+  # oversight: those two readers and {.load} have opposite postures about a
   # typo, and reading them together forces one on both. {.sensitivity} carries
   # the argument.
   class Config
@@ -117,6 +119,34 @@ module Lain
       return Sensitivity::Rules.empty unless File.exist?(path)
 
       Sensitivity::Rules.from(read(path)["sensitivity"], path:)
+    end
+
+    # The `[shell]` table: the programs this project has ruled out of every
+    # shell command, whatever else the command says.
+    #
+    # Read on its own for the same reason `[sensitivity]` is, and it is the same
+    # reason twice rather than a habit: this table RESTRICTS, so an exclusion
+    # silently not being in force is the worst outcome available. {.load}
+    # tolerates a typo because there it costs only the mistyped table's own
+    # feature; here it would cost a refusal a project asked for, and the two
+    # postures cannot be had from one reader.
+    #
+    # `root:` is REQUIRED, as {.sensitivity}'s is: the caller holds a resolved
+    # {Project}, and a working-directory default is a divergence.
+    #
+    # @param root [String] a project root; `.lain/config.toml` is resolved under it
+    # @return [Shell::Exclusions] empty -- restricting nothing -- when the file
+    #   or the table is absent
+    # @raise [Malformed] when the file exists but cannot be read as TOML
+    # @raise [Shell::Exclusions::NotATable] when `shell` is not a table
+    # @raise [Shell::Exclusions::UnknownKeys] when it names a key this class does not read
+    # @raise [Shell::Exclusions::NotAList] when `exclude` is not a list of program names
+    # @raise [Shell::Exclusions::MalformedPattern] when an entry could never match a program
+    def self.shell_exclusions(root:)
+      path = path_for(root)
+      return Shell::Exclusions.empty unless File.exist?(path)
+
+      Shell::Exclusions.from(read(path)["shell"], path:)
     end
 
     def self.path_for(root) = File.join(root, ".lain", "config.toml")
