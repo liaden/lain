@@ -181,33 +181,16 @@ call per turn.
 
 ## Findings
 
-Written per round, kept in `planning/` alongside the chunk specs that discharge them:
+Written per round. **Rounds 2 through 12 have been deleted** -- every finding in them is
+discharged, and git history is the archive: `git log --diff-filter=D --stat -- planning/` names the
+commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
+stays here only while it is still in flight:
 
-- [`../qa-findings-round12-2026-08-25.md`](../qa-findings-round12-2026-08-25.md) — round 12, the
-  scoped `survey` **regression re-drive** after round 11's chunk landed: all eight of round 11's
-  findings verified fixed on the real cockpit, and **§7's `:LainThread` did not raise** — round 7's
-  F31 shape has not returned to the surface the layout card reshaped. Two new LOW findings (F71,
-  F72) and one process finding (P18, the orphaned load-probe spinners)
-- [`../qa-findings-round11-2026-08-25.md`](../qa-findings-round11-2026-08-25.md) — round 11, the
-  scoped `survey` round: all seven sections driven, **§7's docent-thread debt discharged**
 - [`../specs/chunk-qa-round11-survey-surfaces.md`](../specs/chunk-qa-round11-survey-surfaces.md)
   — the chunk that discharges round 11, following the round-7 precedent below: fourteen cards,
   F64–F70 plus the corpus ceiling, verified by round 12
-- [`../qa-findings-round10-2026-08-23.md`](../qa-findings-round10-2026-08-23.md) — round 10
-- [`../qa-findings-round9-2026-08-23.md`](../qa-findings-round9-2026-08-23.md) — round 9
-- [`../qa-findings-round9-remaining-2026-08-23.md`](../qa-findings-round9-remaining-2026-08-23.md)
-  — round 9, the continuation: the first drives of `repl-commands`, `epic-tier`, `secret-boundary`
-  and `changeset-review`
-- [`../qa-findings-round8-2026-08-21.md`](../qa-findings-round8-2026-08-21.md) — round 8
-- [`../qa-findings-round7-2026-08-20.md`](../qa-findings-round7-2026-08-20.md) — round 7
-- [`../qa-findings-round7-survey-2026-08-20.md`](../qa-findings-round7-survey-2026-08-20.md) — round 7,
-  the `/survey` supplement: `cockpit-surfaces` §4 and §4b, the first time §4b was ever driven
 - [`../specs/chunk-qa-round7-constructed-and-consistent.md`](../specs/chunk-qa-round7-constructed-and-consistent.md)
   — the chunk that discharges both round-7 documents
-- [`../qa-findings-round6-2026-08-19.md`](../qa-findings-round6-2026-08-19.md) — round 6
-- [`../qa-findings-round5-2026-08-18.md`](../qa-findings-round5-2026-08-18.md) — round 5
-- [`../qa-findings-round4-2026-08-18.md`](../qa-findings-round4-2026-08-18.md) — round 4
-- [`../qa-findings-round2-2026-08-18.md`](../qa-findings-round2-2026-08-18.md) — rounds 2–3
 - [`../qa-findings-research-2026-08.md`](../qa-findings-research-2026-08.md) — the research pass
 
 ## Coverage notes
@@ -242,7 +225,7 @@ first exercised the section rather than what the section asks for:
   telling them apart is the first round's real job. Until then they are coverage on paper only.
 
 - **`cockpit-surfaces.md` §4b (notes on a survey) was first driven on 2026-08-20**, in round 7's
-  `/survey` supplement (`../qa-findings-round7-survey-2026-08-20.md`). Rounds 4, 5, 6 and round 7's
+  `/survey` supplement. Rounds 4, 5, 6 and round 7's
   own main pass had all skipped it — nobody had placed a note on a survey before that round.
   **Round 8 skipped it again; round 9 drove it, so it now stands at TWO drives.** Round 9 passed
   every check in it except the thread pane (`\Lt`, the one part that spends a model call): the
