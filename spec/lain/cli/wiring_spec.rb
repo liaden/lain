@@ -121,9 +121,12 @@ RSpec.describe Lain::CLI::Wiring do
   end
   let(:channel) { Lain::Channel.new }
   let(:chronicle) { Lain::CLI::Chronicle::Null.new }
-  # status_feed: is required, not defaulted (the Null placeholder is gone); the
-  # direct-Wiring path only threads it into the Command::Env's status reader.
-  let(:status_feed) { instance_double(Lain::StatusFeed) }
+  # status_feed: is required, not defaulted (the Null placeholder is gone). The
+  # direct-Wiring path threads it into the Command::Env's status reader -- and
+  # #run hands it the run's Store, which is the ONE line that makes the HUD's
+  # inbox_count able to retire anything (F76). Stubbed rather than doubled away
+  # so the #run group below can assert that call actually happened.
+  let(:status_feed) { instance_double(Lain::StatusFeed, bind_store: nil) }
   let(:wiring) { described_class.new(options: { grace: 5 }, chronicle:, status_feed:) }
 
   def wire_agent
@@ -1154,6 +1157,21 @@ RSpec.describe Lain::CLI::Wiring do
       wiring = run_wiring
 
       expect(opened).to eq([wiring.conductor])
+    end
+
+    # F76, and the ONE production line the fix rests on. {Lain::StatusFeed} is
+    # built a layer above this class ({Lain::CLI::ChatLaunch}, which must have
+    # it in the live-view tee's sink list before Wiring exists), so it holds no
+    # Store at construction and its inbox_count can retire nothing until this
+    # class hands it one. Nothing else observes that hand-over: deleting it left
+    # every example in this file green while the HUD went back to counting up
+    # forever, which is the defect class this card exists to remove. So the call
+    # is EXPECTED here, and against the run's own Store -- an `instance_of`
+    # would still pass for a second, empty one, which retires exactly nothing.
+    it "hands the StatusFeed the run's own Store, the only thing that lets inbox_count retire" do
+      wiring = run_wiring
+
+      expect(status_feed).to have_received(:bind_store).with(wiring.command_surface.env.agent.timeline.store)
     end
 
     # The Conductor is the ONE place a user prompt is answered, so it is

@@ -967,30 +967,69 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
     end
   end
 
+  # The consuming walk's ONE failure mode, held to the same promise on this side
+  # of the parity as on {Lain::StatusFeed::Inbox}'s -- deliberately together, so
+  # the two cannot drift. A head naming a stored BODY rather than a turn (the
+  # ChainWriter puts one per message) walks into `NoMethodError: undefined
+  # method 'parent' for an instance of Lain::Event::Payload`, past a rescue that
+  # named only MissingObject and out through the drain thread that feeds this
+  # view.
+  describe "a head the chain walk cannot make sense of" do
+    it "is a miss, not a raise that kills the drain" do
+      question = stored_question
+      view.update(Lain::Telemetry::Message.from_event(question))
+
+      expect { view.update(turn_usage(question.payload_digest)) }.not_to raise_error
+      expect(view.update(question_record("blake3:q9")).size).to eq(2)
+    end
+  end
+
   # AC: "the state feed's inbox_count matches the pending projection after each
   # arrival and drain." One logical stream, two consumers on their production
   # diets: StatusFeed folds the Event log, the view folds the tee's records
   # (Telemetry::Message + TurnUsage over the shared Store). They must agree at
   # EVERY step -- including the reply step, where both still count 1.
+  # One question, long enough that {InboxView::Row} wraps it -- which the same
+  # file's "the keys under a folded list" group already proves is the ordinary
+  # case, not an edge one. A question this shape is what separates "how many
+  # questions does the view render" from "how many lines does it draw".
+  def folding_question
+    "which database should the migration target, and should it run before or after " \
+      "the deploy window closes tonight, given the replica lag we saw this morning?"
+  end
+
   describe "parity with StatusFeed's inbox_count" do
     around do |example|
       Dir.mktmpdir { |dir| @dir = dir and example.run }
     end
 
     let(:path) { File.join(@dir, "state.json") }
-    let(:feed) { Lain::StatusFeed.new(path:) }
+    let(:feed) { Lain::StatusFeed.new(path:, store:) }
 
     def inbox_count = JSON.parse(File.read(path)).fetch("inbox_count")
 
-    def pending_in(view_lines)
-      view_lines == ["(no questions pending)"] ? 0 : view_lines.size
+    # HOW MANY QUESTIONS THE VIEW RENDERS -- the quantity AC2 names, and not the
+    # one `view_lines.size` answers. A question long enough to wrap draws five
+    # lines (and a folded list adds a two-line trailer), so the line count was a
+    # proxy that held only for short single-line items -- and it failed OPEN in
+    # F76's own direction: a feed over-counting to 5 against a view drawing one
+    # folded question compares 5 to 5 and passes.
+    #
+    # Counted off the view's OWN line -> digest index, which is the same index
+    # the `<CR>` gesture resolves against, so this measures what the human can
+    # actually act on rather than re-deriving a second opinion from the text.
+    # The placeholder remembers an empty owner set, so it counts zero without
+    # being special-cased.
+    def questions_in(view_lines)
+      generation = view.generation
+      (1..view_lines.size).filter_map { |line| view.digest_at(line, generation:) }.uniq.size
     end
 
     it "agrees after arrival, after the bare reply, and after the consuming turn" do
       question = stored_question
       feed << question
       lines = view.update(Lain::Telemetry::Message.from_event(question))
-      expect(pending_in(lines)).to eq(inbox_count).and eq(1)
+      expect(questions_in(lines)).to eq(inbox_count).and eq(1)
 
       answer = Lain::Event.new(kind: :message, payload_digest: "blake3:ap",
                                body: { "answer" => "postgres" }, from: "human", to: "orchestrator",
@@ -1002,7 +1041,66 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       citing = citing_timeline(question.digest)
       feed << citing.head
       lines = view.update(turn_usage(citing.head_digest))
-      expect(pending_in(lines)).to eq(inbox_count).and eq(0)
+      expect(questions_in(lines)).to eq(inbox_count).and eq(0)
+    end
+
+    # F76 (measured live 2026-08-25: HUD 2, this buffer 1). The example above
+    # feeds each object the carrier its own diet names, and the :turn Event it
+    # hands the feed is the one carrier a live chat NEVER delivers --
+    # SessionRecord::Scribe#catch_up writes committed turns to the session
+    # journal, not to the tee both of these ride. So this drives ONE stream, the
+    # records the tee actually carries, through BOTH: agreeing here is the claim
+    # the HUD makes to a human, and the example above cannot make it.
+    it "agrees when the ONE stream the tee actually carries drives both" do
+      question = stored_question(question: folding_question)
+      arrival = Lain::Telemetry::Message.from_event(question)
+      commit = turn_usage(citing_timeline(question.digest).head_digest)
+
+      feed << arrival
+      lines = view.update(arrival)
+      # The point of the long question: if it ever stopped folding, this example
+      # would go back to being the single-line case it cannot afford to be.
+      expect(lines.size).to be > 1
+      expect(questions_in(lines)).to eq(inbox_count).and eq(1)
+
+      feed << commit
+      expect(questions_in(view.update(commit))).to eq(inbox_count).and eq(0)
+    end
+
+    # Agreeing on the records both surfaces are DRIVEN with is only half a
+    # parity contract; the other half is agreeing on which records count. This
+    # view tested `respond_to?(:usage) && respond_to?(:digest)` while
+    # {Lain::StatusFeed}'s {Lain::StatusFeed#turn_usage?} tested the CLASS, and
+    # that gap is silent: the next Telemetry record carrying both fields would
+    # retire here and not there, with every example above still green -- which
+    # is the defect turn_usage?'s own comment says a class check exists to
+    # prevent ({Lain::Telemetry::OracleAnswer} answering `#usage` cost three
+    # derivations at once once already).
+    it "admits exactly the records StatusFeed admits -- a dual-field lookalike retires in neither" do
+      question = stored_question
+      arrival = Lain::Telemetry::Message.from_event(question)
+      feed << arrival
+      view.update(arrival)
+
+      lookalike = Struct.new(:usage, :digest).new({}, citing_timeline(question.digest).head_digest)
+      feed << lookalike
+
+      expect(view.update(lookalike)).to be_nil
+      expect(inbox_count).to eq(1)
+    end
+
+    # The tripwire for the day that gap could re-open: every Telemetry record
+    # answering BOTH readers must be the one record that names a committed
+    # turn's payment. A new one appearing fails here rather than silently
+    # retiring on one surface -- which is the whole failure mode above, and the
+    # reason two identical class checks in two files are safe to keep.
+    it "leaves TurnUsage the only Telemetry record answering both #usage and #digest" do
+      dual_field = ObjectSpace.each_object(Class).select do |klass|
+        klass.name.to_s.start_with?("Lain::Telemetry::") &&
+          klass.method_defined?(:usage) && klass.method_defined?(:digest)
+      end
+
+      expect(dual_field).to contain_exactly(Lain::Telemetry::TurnUsage)
     end
   end
 end

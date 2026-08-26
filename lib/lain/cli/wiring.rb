@@ -210,7 +210,7 @@ module Lain
         tty = @tty_factory.call(channel:, prompt_renderer: prompt_renderer(agent, notice))
         @conductor = open_conductor(tty)
         @conductor.guard do
-          build_repl(tty:, agent:, backend:).run(nvim:, store: agent.timeline.store, session:,
+          build_repl(tty:, agent:, backend:).run(nvim:, store: bind_hud_store(agent), session:,
                                                  first_prompt: @options[:prompt])
         end
       end
@@ -315,6 +315,18 @@ module Lain
       private
 
       attr_reader :options, :chronicle, :run_clock
+
+      # Hands the HUD's feed the run's ONE Store, and answers with it, because
+      # #run's Repl needs the same object. The feed is built a layer above this
+      # class -- {ChatLaunch}, which must have it in the live-view tee's sink
+      # list before Wiring exists at all -- so it holds none at construction,
+      # and until it does its inbox_count retires nothing and only climbs (F76).
+      # This is the first line at which the run HAS a Store.
+      #
+      # Named for the BINDING rather than for the value, and private, because it
+      # is a command that happens to answer: a query name on the public surface
+      # would hide the write from every caller who read it.
+      def bind_hud_store(agent) = agent.timeline.store.tap { |store| @status_feed.bind_store(store) }
 
       # D2: `--isolation`, read at its construction site (the --auto-approve
       # pattern) and resolved into the backend each ADOPTION leases a WorkerEnv

@@ -87,6 +87,8 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
+  def text(body) = [{ "type" => "text", "text" => body }]
+
   def path = File.join(@dir, "state.json")
 
   def published = JSON.parse(File.read(path))
@@ -238,14 +240,14 @@ RSpec.describe Lain::StatusFeed do
     # edges ONLY". So the human answering does NOT retire their own question;
     # only a LATER :turn (an assistant commit whose folded mailbox names Q) does.
     #
-    # T13 investigated retiring on this A instead (the live over-count this
-    # card's escalation trigger names -- see the class doc's T13 note for why
-    # the underlying :turn Event genuinely never reaches this sink in
-    # production) and reverted it: {Frontend::Neovim::InboxView}'s parity
-    # spec pins this class and the nvim inbox view to agreeing at every step
-    # on exactly this rule, and a correct fix needs a live Store this class
-    # cannot see at its (pre-Agent) construction point -- escalated in the
-    # T13 hand-back rather than fixed by breaking that parity.
+    # Retiring on this A instead was investigated once and REFUSED, and the
+    # refusal still stands: {Frontend::Neovim::InboxView}'s parity spec pins
+    # this class and the nvim inbox view to agreeing at every step on exactly
+    # this rule, and retiring on a reply would break it. The live over-count
+    # that made the question worth asking (F76) was a different defect with a
+    # different fix -- the committed turn reaches this sink as a
+    # {Lain::Telemetry::TurnUsage}, not as a :turn Event -- and it is fixed, in
+    # the "retiring off the record the tee actually carries" group below.
     it "an AskHuman-shaped reply does not retire the question by itself; only a later :turn's causal_parents does" do
       feed = described_class.new(path:)
       asker = "orchestrator"
@@ -263,6 +265,135 @@ RSpec.describe Lain::StatusFeed do
 
       feed << turn_event(causal_parents: [question.digest]) # the assistant commit that actually folds Q in
       expect(published["inbox_count"]).to eq(0)
+    end
+
+    # F76, measured live 2026-08-25: the HUD said 2 while `lain://inbox` drew
+    # one. The :turn Event every example above hands this feed NEVER REACHES IT
+    # in a live chat -- SessionRecord::Scribe#catch_up appends committed turns
+    # to the session journal, not to the tee -- so the count only ever climbed.
+    # What the tee does carry for a commit is the Telemetry::TurnUsage naming
+    # the head, and these examples drive that record, which is the one a live
+    # chat actually delivers.
+    describe "retiring off the record the tee actually carries" do
+      let(:store) { Lain::Store.new }
+
+      def stored_question(question: "which db?", from: "orchestrator")
+        parent = Lain::Timeline.empty(store:).commit(role: :user, content: text("seed #{question}"))
+        Lain::Event::ChainWriter.new.put(parent, kind: :message, from:, to: "human",
+                                                 causal_parents: [], body: { "question" => question })
+      end
+
+      # The delivery commit's shape: a committed chain whose head turn cites
+      # the questions it folded in.
+      def commit_citing(*digests)
+        Lain::Timeline.empty(store:)
+                      .commit(role: :user, content: text("hi"))
+                      .commit(role: :assistant, content: text("asking"), causal_parents: digests)
+                      .head_digest
+      end
+
+      it "retires an answered question off the committed turn's usage record, not off a :turn Event" do
+        feed = described_class.new(path:, store:)
+        question = stored_question
+        feed << question
+        expect(published["inbox_count"]).to eq(1)
+
+        feed << turn_usage(digest: commit_citing(question.digest))
+
+        expect(published["inbox_count"]).to eq(0)
+      end
+
+      it "retires nothing for a commit that cited no question" do
+        feed = described_class.new(path:, store:)
+        feed << stored_question
+
+        feed << turn_usage(digest: commit_citing)
+
+        expect(published["inbox_count"]).to eq(1)
+      end
+
+      # ChatLaunch builds this feed before Wiring exists, so the run's Store is
+      # bound later; until it is, a head names nothing this feed can resolve.
+      it "counts a question that arrived before any Store was bound rather than raising on the commit" do
+        feed = described_class.new(path:)
+        question = stored_question
+        feed << question
+        head = commit_citing(question.digest)
+
+        expect { feed << turn_usage(digest: head) }.not_to raise_error
+
+        expect(published["inbox_count"]).to eq(1)
+      end
+
+      it "retires once the run's Store is bound -- the live chat's order, ChatLaunch builds and Wiring binds" do
+        feed = described_class.new(path:)
+        question = stored_question
+        feed << question
+        head = commit_citing(question.digest)
+
+        feed.bind_store(store)
+        feed << turn_usage(digest: head)
+
+        expect(published["inbox_count"]).to eq(0)
+      end
+
+      # The chain walk is the only thing here that can fail, and it must fail
+      # as a miss: this sink rides the JournalTee, which re-raises into the
+      # agent loop, so a head the store cannot resolve may not cost the turn.
+      it "treats a head the bound Store does not hold as a miss, never a raise" do
+        feed = described_class.new(path:, store: Lain::Store.new)
+        question = stored_question
+        feed << question
+
+        expect { feed << turn_usage(digest: commit_citing(question.digest)) }.not_to raise_error
+
+        expect(published["inbox_count"]).to eq(1)
+      end
+
+      # Both carriers write the same standing `@consumed` set, so a replayed
+      # log that delivers BOTH retires once and never goes negative.
+      it "is idempotent across both carriers -- the usage record and a replayed :turn Event" do
+        feed = described_class.new(path:, store:)
+        question = stored_question
+        feed << question
+
+        feed << turn_usage(digest: commit_citing(question.digest))
+        feed << turn_event(causal_parents: [question.digest])
+
+        expect(published["inbox_count"]).to eq(0)
+      end
+
+      # The two derivations that ride this same record are the CONTRACTED ones
+      # -- `run_tokens` is the published form of Accounting#usage -- so a walk
+      # that cannot resolve the head must cost neither them nor the turn. The
+      # head here names a stored BODY rather than a turn (ChainWriter puts one
+      # per message), which the walk answers with a NoMethodError; the
+      # accounting is derived AHEAD of the walk for that reason, and the walk
+      # answers a miss rather than raising.
+      it "still pays the turn's tokens when the head's chain cannot be walked at all" do
+        feed = described_class.new(path:, store:)
+        question = stored_question
+        feed << question
+
+        expect { feed << turn_usage(digest: question.payload_digest, input: 10, output: 5) }.not_to raise_error
+
+        expect(published["run_tokens"]).to eq(15)
+        expect(published["inbox_count"]).to eq(1)
+      end
+
+      # slide_cache_deadline and occupancy already rode this record; retirement
+      # joined them and may not have disturbed either.
+      it "leaves the cache deadline and the occupancy the same record already derived untouched" do
+        now = Time.utc(2026, 8, 25, 12, 0, 0)
+        feed = described_class.new(path:, store:, clock: -> { now })
+        question = stored_question
+        feed << question
+
+        feed << turn_usage(digest: commit_citing(question.digest), cache_read: 128, input: 1_000)
+
+        expect(published["cache_deadline"]).to eq((now + described_class::DEFAULT_CACHE_PROFILE[:ttl]).iso8601)
+        expect(published["occupancy"]).to eq(1_128.fdiv(Lain::ContextWindow::CONSERVATIVE_FALLBACK))
+      end
     end
   end
 

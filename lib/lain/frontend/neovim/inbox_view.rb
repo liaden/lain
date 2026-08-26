@@ -329,8 +329,20 @@ module Lain
         # cited digests are read off the head's chain in the shared Store,
         # {Buffers#timeline_update}'s idiom, including its never-raise rule: a
         # head this store cannot resolve is a miss, not a drain-thread death.
+        # ⚠️ MATCHED BY CLASS, and it was a two-method duck. That duck was not
+        # the same test {Lain::StatusFeed#turn_usage?} applies to the same
+        # record, and the gap was silent in the direction that matters: the next
+        # {Lain::Telemetry} record carrying both `#usage` and `#digest` would
+        # have retired HERE and not there, leaving the HUD's count and this
+        # buffer disagreeing with the parity spec between them still green.
+        # {Lain::Telemetry::OracleAnswer} answering `#usage` already cost that
+        # file three derivations at once. The two checks are written out twice
+        # rather than shared, because a frontend view reaching into the status
+        # sink for a predicate is the worse coupling -- and the parity spec now
+        # carries a tripwire that fails the day a second dual-field record
+        # exists, which is the only way the two spellings could come to differ.
         def consume(event)
-          return false unless event.respond_to?(:usage) && event.respond_to?(:digest)
+          return false unless event.is_a?(Lain::Telemetry::TurnUsage)
 
           cited_by_chain(event.digest).inject(false) do |moved, digest|
             @consumed << digest
@@ -344,9 +356,18 @@ module Lain
           end
         end
 
+        # ⚠️ THE RESCUE IS AS WIDE AS "a miss, not a drain-thread death", and it
+        # was not. `MissingObject` alone covers only the head this store does
+        # not HOLD; a head it holds that names something other than a turn walks
+        # into `NoMethodError: undefined method 'parent' for an instance of
+        # Event::Payload`, and every message ever written puts such a digest in
+        # the same store. Widened together with {Lain::StatusFeed::Inbox}'s
+        # identical walk, and deliberately in one change: that class is held to
+        # this one's answer by a parity spec, and a rescue that differs between
+        # them is a difference the parity spec cannot see.
         def cited_by_chain(head_digest)
           Timeline.new(head_digest:, store: @store).to_a.flat_map(&:causal_parents)
-        rescue Store::MissingObject
+        rescue StandardError
           []
         end
 

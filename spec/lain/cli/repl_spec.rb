@@ -129,7 +129,7 @@ RSpec.describe Lain::CLI::Repl do
                               history_path: File.join(dir, "history"))
     end
     wiring = Lain::CLI::Wiring.new(options:, chronicle:, tty_factory:,
-                                   status_feed: instance_double(Lain::StatusFeed))
+                                   status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
     wiring.run(backend:, resumed: nil, nvim: nil)
     wiring.conductor.close(reason: :exit)
     output.string
@@ -164,7 +164,7 @@ RSpec.describe Lain::CLI::Repl do
       wiring = Lain::CLI::Wiring.new(options: { grace: 5, prompt:, non_interactive: true },
                                      chronicle: Lain::CLI::Chronicle::Null.new,
                                      tty_factory: waiting_terminal(output, dir:),
-                                     status_feed: instance_double(Lain::StatusFeed))
+                                     status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
       Timeout.timeout(20) { wiring.run(backend: headless, resumed: nil, nvim: nil) }
       wiring.conductor.close(reason: :exit)
       [wiring, output.string]
@@ -364,7 +364,7 @@ RSpec.describe Lain::CLI::Repl do
                                 history_path: File.join(dir, "history"))
       end
       wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
-                                     status_feed: instance_double(Lain::StatusFeed))
+                                     status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
       wiring.run(backend:, resumed: nil,
                  nvim: { channel: Lain::Channel::DropOldest.new, socket_path: @socket })
       wiring.conductor.close(reason: :exit)

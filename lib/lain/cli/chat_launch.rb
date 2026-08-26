@@ -190,6 +190,16 @@ module Lain
       # unchanged into Wiring's Command::Env -- so /status reads the same live
       # instance the tee feeds. Exists even for a headless run (--no-journal
       # --no-nvim builds no tee), so /status still answers its honest zeros.
+      #
+      # It is built here and BOUND LATER, and the two halves are not the same
+      # question. Everything the feed derives from a journal record it can do
+      # from birth; `inbox_count` alone needs the session's {Lain::Store} to
+      # resolve a committed head's causal chain, and that store does not exist
+      # until `Wiring#run` has built the Agent -- a whole layer below this line,
+      # which must already have run for `wrap_tee` to have a sink list. So
+      # Wiring hands it over ({Lain::StatusFeed#bind_store}) rather than this
+      # method waiting for something it is deliberately ahead of; until then an
+      # empty Store resolves nothing and the count only climbs (F76).
       def status_feed = @status_feed ||= @status_feed_factory.call(run_clock:, context_window: backend.context_window)
 
       # The ONE {Backend} for the run, resolved on first read and shared

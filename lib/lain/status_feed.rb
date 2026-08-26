@@ -46,42 +46,15 @@ module Lain
   #   entry for one real spawn. W3's lifecycle events will later enrich this
   #   with running/done state; I1 only has to prove the field reflects
   #   exactly what the journal shows.
-  # * `inbox_count` -- what is still addressed to {Tools::AskHuman::HUMAN}
-  #   and not yet named a causal parent by a committed **`:turn`** --
-  #   {Event::Projection#pending}'s exact semantics, mirrored here
-  #   incrementally (see {#observe_message}/{#observe_turn}) rather than
-  #   re-run as a fresh `Projection` fold on every event, which was an O(n)
-  #   refold per event (O(n^2) over a session) that a review pass measured at
-  #   8.5s for an 8k-event history. Pending clears ONLY on consumption by a
-  #   `:turn`'s `causal_parents` -- Projection's own doc is explicit that a
-  #   `:message`'s `causal_parents` is lineage, not consumption -- so an
-  #   {Tools::AskHuman#reply} answer (a `:message`, however it cites the
-  #   question) does NOT retire the question by itself; see
-  #   spec/lain/status_feed_spec.rb's "inbox_count" examples for the pinned
-  #   before/after, and {Frontend::Neovim::InboxView}'s parity spec, which
-  #   holds this class and the nvim `lain://inbox` view to the SAME rule.
-  #
-  #   T13 KNOWN GAP (escalated, not fixed here -- see the card's hand-back):
-  #   in a live chat, `inbox_count` never actually decrements, because the
-  #   `:turn` Event `#observe_turn` waits for never reaches this sink.
-  #   `SessionRecord::Scribe#catch_up` appends committed turns straight to
-  #   the session JOURNAL, never to the `message_journal`/tee this class
-  #   rides (see its own doc: "turn records never route -- they are record
-  #   data, not live-view telemetry"). {Frontend::Neovim::InboxView} solves
-  #   the SAME problem correctly by consuming the `Telemetry::TurnUsage`
-  #   that DOES reach a tee and resolving its head's causal chain against a
-  #   live `Store` -- but that view is constructed AFTER the session's
-  #   Store exists (`Repl#run`, deep inside `Wiring#run`), while this class
-  #   is constructed BEFORE it (`ChatLaunch#open_chronicle`, per the T9
-  #   panel's binding amendment: it must be in the tee's sink list at
-  #   `wrap_tee` time, which runs before `Wiring` exists at all). Porting
-  #   InboxView's fix here needs a Store made available AFTER that point --
-  #   a late-bound thunk/box `ChatLaunch`/`Wiring` would populate once the
-  #   Agent exists -- which is a real construction-order design change to
-  #   two orchestrator-owned files, not a StatusFeed-local one. Left as the
-  #   documented follow-up rather than fixed via a mechanism (retiring on
-  #   the human's own reply) that would break the InboxView parity spec
-  #   above.
+  # * `inbox_count` -- what is still addressed to {Tools::AskHuman::HUMAN} and
+  #   not yet named a causal parent by a committed turn. {Inbox} holds it: the
+  #   projection's rule, the incremental fold, and the {Store} the live
+  #   carrier's chain is resolved in are all its, and no other field on this
+  #   struct has any use for that store. Read its doc before touching the
+  #   count -- it is the only field here whose ANSWER depends on a
+  #   collaborator this object cannot be given at construction (see
+  #   {#bind_store}), and it is held to the nvim `lain://inbox` buffer's
+  #   answer by a parity spec.
   #
   # * `occupancy` -- how full the live model's context window the LAST turn
   #   left it, as a 0..1 fraction, or nil before any turn (absence, never a
@@ -286,7 +259,9 @@ module Lain
     # {Tools::AskHuman::HUMAN} is not required here: reaching into the Tools
     # tree from this early-loading struct would invert the dependency this
     # class actually has (none), so the address is named again rather than
-    # imported -- both spellings are pinned by spec.
+    # imported -- both spellings are pinned by spec. {Inbox} is what reads it,
+    # and it stays HERE rather than moving there because two other files cite
+    # this constant by name as the precedent for not importing an address.
     INBOX_RECIPIENT = "human"
 
     # @param path [String] where the state struct is atomically published;
@@ -307,13 +282,18 @@ module Lain
     # @param context_window [#occupancy] the book resolving a model name into
     #   the denominator, the same duck {Agent#occupancy} takes. A bench arm
     #   measuring against a known local window passes its own.
+    # @param store [Store] where a committed turn's causal chain is resolved --
+    #   {Inbox}'s collaborator, and nothing else here reads it. Defaulted to an
+    #   EMPTY one rather than required, because the live chat has none yet at
+    #   this object's construction point; see {#bind_store}.
     def initialize(path: default_path, clock: -> { Time.now }, cache_profile: DEFAULT_CACHE_PROFILE,
-                   run_clock: RunClock.new, context_window: ContextWindow.default)
+                   run_clock: RunClock.new, context_window: ContextWindow.default, store: Store.new)
       @publication = Publication.new(path)
       @clock = clock
       @cache_profile = cache_profile
       @run_clock = run_clock
       @context_window = context_window
+      @inbox = Inbox.new(store:)
       start_empty
     end
 
@@ -335,13 +315,6 @@ module Lain
       # Insertion-ordered, keyed by digest: a Hash (not an Array) is what
       # makes a redelivered :spawn a no-op update instead of a second entry.
       @fleet = {}
-      # Mirrors Projection#consumed_by_turns/#pending without ever refolding
-      # a log: `@consumed` is every digest ANY :turn has ever named among its
-      # causal_parents (order the :turn/:message arrived in cannot matter, so
-      # neither can it matter here -- see #observe_message); `@pending` is
-      # the human inbox's still-unconsumed :message digests.
-      @consumed = Set.new
-      @pending = {}
     end
     private :start_empty
 
@@ -384,7 +357,7 @@ module Lain
       # tally kept here could only come to be a second opinion about it.
       @derivation_refusal_streak = event.consecutive if event.is_a?(Compaction::Source::DerivationRefused)
       @derivation_refusal_streak = 0 if event.is_a?(Telemetry::ContextDerived)
-      observe_usage(event) if turn_usage?(event)
+      observe_commit(event) if turn_usage?(event)
       observe(event) if event.respond_to?(:kind)
       # Matched by class, for {Telemetry::Compaction}'s reason and not the
       # approval pair's: a `#to`/`#to_layers` duck would also catch an
@@ -394,6 +367,17 @@ module Lain
       publish_if_changed
       self
     end
+
+    # The run's {Store}, handed over the moment one exists -- `Wiring#run`, the
+    # first line at which the Agent (and so its Timeline's store) has been
+    # built. Late rather than injected because this object is constructed a
+    # whole layer above that, in `ChatLaunch#open_chronicle`, which must be in
+    # the tee's sink list before `Wiring` exists at all. {Inbox} is the only
+    # thing here that wants it, and its doc says what an unbound one answers.
+    #
+    # @param store [Store] the session's object database
+    # @return [void]
+    def bind_store(store) = @inbox.bind_store(store)
 
     private
 
@@ -431,6 +415,27 @@ module Lain
     # trustworthy. A figure that names oracle spend as its own is a separate
     # field. See spec/lain/seams/usage_parity_spec.rb, which measures both.
     def turn_usage?(event) = event.is_a?(Telemetry::TurnUsage)
+
+    # A committed turn's one record and the two unrelated debts it settles:
+    # what the turn PAID ({#observe_usage}) and which questions it CONSUMED
+    # ({Inbox#committed}). Split because only the first is about tokens, and
+    # because the second must still run for a record whose `usage` is nil, which
+    # is where {#observe_usage} gives up.
+    #
+    # THE PAYMENT IS DERIVED FIRST, and that is the order rather than the split:
+    # `run_tokens` is contracted to equal {Agent::Accounting}'s total
+    # (spec/lain/seams/usage_parity_spec.rb), while the retirement walks a chain
+    # in a Store this object does not own. Retiring first made every failure in
+    # that walk cost the accounting too -- measured: a head naming a stored body
+    # rather than a turn left `run_tokens` nil for a turn that was genuinely
+    # billed. {Inbox#committed} answers a miss rather than raising now, so this
+    # order is no longer load-bearing for the crash; it is still the honest one,
+    # because the derivation that owes another object a number goes before the
+    # one that merely draws a status line.
+    def observe_commit(event)
+      observe_usage(event)
+      @inbox.committed(event.digest)
+    end
 
     # One {Telemetry::TurnUsage} carries all three derivations a turn owes this
     # sink: the cache activity that slides the deadline, the tokens that --
@@ -518,34 +523,8 @@ module Lain
     def observe(event)
       case event.kind
       when :spawn then @fleet[event.digest] = true
-      when :message then observe_message(event)
-      when :turn then observe_turn(event)
-      end
-    end
-
-    # A :message addressed to the human inbox joins `@pending` UNLESS a
-    # :turn already named its digest a causal parent -- the out-of-order case
-    # (a replayed log can hand this class the :turn before the :message it
-    # consumes), which is exactly why consumption is tracked as a standing
-    # digest Set rather than "remove from whatever is in @pending right now".
-    def observe_message(event)
-      return unless event.to == INBOX_RECIPIENT
-      return if @consumed.include?(event.digest)
-
-      @pending[event.digest] = true
-    end
-
-    # A :turn's causal_parents are the ONLY thing that retires a pending
-    # message (Projection#pending's documented rule, and InboxView's parity
-    # spec) -- a :message's own causal_parents (how {Tools::AskHuman#reply}'s
-    # answer cites the question) are lineage, never consumption, so they are
-    # not read here. See the class doc's T13 note: in a live chat, no such
-    # :turn Event ever actually reaches this sink -- a known, escalated gap,
-    # not something this method should route around unilaterally.
-    def observe_turn(event)
-      event.causal_parents.each do |digest|
-        @consumed << digest
-        @pending.delete(digest)
+      when :message then @inbox.arrived(event)
+      when :turn then @inbox.retire(event.causal_parents)
       end
     end
 
@@ -594,7 +573,7 @@ module Lain
     #
     # @return [Hash] string-keyed, JSON-shaped
     def observed
-      { "cache_deadline" => @cache_deadline, "fleet" => @fleet.keys, "inbox_count" => @pending.size,
+      { "cache_deadline" => @cache_deadline, "fleet" => @fleet.keys, "inbox_count" => @inbox.pending_size,
         "approvals_pending" => @approvals_pending, "occupancy" => @occupancy,
         "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak,
         "run_tokens" => @run_tokens }
@@ -625,10 +604,11 @@ module Lain
   end
 end
 
-# This file is `status_feed/`'s index. Both children reopen the class above, so
-# they load AFTER the class body -- `effect/handler.rb`'s ordering, for the same
-# reason (CLAUDE.md, Requires). Nothing at load time needs either constant;
-# #initialize does, and that runs later.
+# This file is `status_feed/`'s index. All four children reopen the class above,
+# so they load AFTER the class body -- `effect/handler.rb`'s ordering, for the
+# same reason (CLAUDE.md, Requires). Nothing at load time needs any of the four
+# constants; #initialize does, and that runs later.
 require_relative "status_feed/publication"
 require_relative "status_feed/mode_state"
 require_relative "status_feed/journaled_usage"
+require_relative "status_feed/inbox"

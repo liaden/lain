@@ -95,7 +95,7 @@ RSpec.describe "a human question raised while a skill spawn is dispatched", :sea
                              history_path: File.join(dir, "history"))
     end
     wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
-                                   status_feed: instance_double(Lain::StatusFeed))
+                                   status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
     Timeout.timeout(seconds) { wiring.run(backend: backend_over(provider), resumed: nil, nvim: nil) }
     wiring.conductor.close(reason: :exit)
     output.string
