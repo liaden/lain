@@ -1633,14 +1633,39 @@ failure count alone.
 
 ### Cards
 
-- [ ] T1 — algebra doc correction
+- [x] T1 — algebra doc correction — `174fad5e` (the closure is real; its safety content is the audited list)
 - [ ] T2 — honest tool descriptions
-- [ ] T3 — `#takes_term?` and the arm chooser
-- [ ] T4 — excluded-programs config table
-- [ ] T5 — shell-arm journal record
+- [x] T3 — `#takes_term?` and the arm chooser — `1d97c490` (contract made executable, not aspirational)
+- [x] T4 — excluded-programs config table — `173dcd5d` (the deny path is reachable from config)
+- [x] T5 — shell-arm journal record — `3b9d8fba` (its own spec is its only coverage; the sweeps cannot build it)
 - [ ] T6 — one verdict, injected at both seams
 - [ ] T7 — bash journals its arm
 - [ ] T8 — `Rule::Call` carries a derived term
 - [ ] T9 — the composed-term approval rule
 - [ ] T10 — shell manual-QA scenario
 - [ ] T11 — `web_fetch` egress floor
+
+### Landed, in order
+
+`173dcd5d` T4 · `3b9d8fba` T5 · `174fad5e` T1 · `1d97c490` T3 · `ede7d5cf` census
+
+`ede7d5cf` is orchestrator-owned and belongs to no card: `NAT64` was reported
+UNCLASSIFIED by `bin/comment-census --check-tickets` when T11 wanted it in prose.
+CLAUDE.md's rule is to **teach the enumerated classifier before sweeping**, so the
+token was added rather than the comment bent around it.
+
+### Toolchain notes earned during execution
+
+Three traps cost real time here and are recorded so the next run does not re-pay them.
+
+1. **`pgrep -f 'parallel_rspec'` matches its own waiting shell**, so CLAUDE.md's
+   concurrency gate written as a `while` loop never exits. Write it `parallel[_]rspec`.
+   Separately, `pgrep -cf` read `1` for one agent because it matched *another agent's
+   waiter loop*, whose command line embeds the pattern — CLAUDE.md's stated `ps | grep`
+   over-count trap reaching `pgrep` itself.
+2. **A killed suite run leaves a truncated `tmp/parallel_runtime_rspec.log`** — 69 lines
+   against 638 spec files — and the next `--group-by runtime` run dies with
+   `RuntimeLogTooSmallError`, which reads exactly like a code failure. `rm -f` it. The
+   killed run's `parallel_rspec` children also **outlive the aborted `git commit`**.
+3. **A commit whose hook runs the suite needs more than two minutes.** Killing it mid-hook
+   is what produces trap 2.
