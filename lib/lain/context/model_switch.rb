@@ -5,7 +5,7 @@ module Lain
     # The delegating model slot `/model` writes and {Context#render} reads at
     # render time -- the same delegating-value pattern as
     # {Approval::PolicySwitch}, because the seam reality is the same: Agent's
-    # @context is construction-fixed and call_model always renders from it, so
+    # `@context` is construction-fixed and call_model always renders from it, so
     # a live model change has to be a slot INSIDE the Context, never a setter
     # on Agent. Deliberately MUTABLE coordination state, unlike the frozen
     # value objects: it exists to be switched.

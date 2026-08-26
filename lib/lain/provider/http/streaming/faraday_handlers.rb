@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+#--
 # Split from streaming.rb -- see that file's header. A real, separate module:
 # building the `on_data` proc Faraday calls is a distinct concern from the SSE
 # parsing the engine does with the bytes once they arrive. Extracting it also
@@ -17,6 +18,7 @@
 # only line where each half is knowable: the middleware
 # ({Connection::MiddlewareStack::StallProtection}) owns the request's SCOPE,
 # and the `on_data` proc below owns the TICKS.
+#++
 module Lain
   class Provider
     module HTTP
