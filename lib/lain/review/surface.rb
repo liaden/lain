@@ -3,24 +3,9 @@
 module Lain
   module Review
     # The seam between the review model and whatever renders a changeset for a
-    # human. A plain buffer today ({Surface::Neovim}, T19), a table of text
-    # ({Surface::Text}, T9), tomorrow something else -- the port is what lets
-    # the UI be rebuilt without touching the model. {CLAUDE.md}'s Null Object
-    # rule names {Sink::Null} as the exemplar; {Surface::Null} is this chunk's
-    # instance of it, so every review-model spec below the surface runs
-    # without spawning an editor.
-    #
-    # A surface holds NO review state of its own. {Surface::Neovim}'s own card
-    # is where that is enforced, but it is a promise of the PORT, not one
-    # adapter's private discipline: the session (T13), not the surface, is the
-    # aggregate, which is what lets a surface be swapped or dropped mid-review
-    # with nothing lost and no message depending on another having run first.
-    # `spec/support/shared_examples/review_surface.rb` is where the SHAPE of
-    # each message and that ordering promise are checked once so every
-    # adapter is held to the same law -- see that file's own doc for exactly
-    # what it does and does NOT prove; a review-panel pass on this card found
-    # its first cut proved less than its doc claimed, and both were fixed
-    # together.
+    # human -- {Surface::Neovim}, {Surface::Text}, and {Surface::Null}, this
+    # chunk's instance of {CLAUDE.md}'s Null Object rule, which is what lets
+    # every review-model spec run without spawning an editor.
     #
     # Eight messages, each a plain method a duck-typed surface answers:
     #
@@ -33,145 +18,56 @@ module Lain
     #   settle(verdict)               say the review has landed on this verdict
     #   refuse(message)               decline the review, naming why
     #
-    # == Why `focus` is not part of `present`
+    # A surface holds NO review state of its own, and that is a promise of the
+    # PORT rather than one adapter's discipline: the session is the aggregate,
+    # which is what lets a surface be swapped or dropped mid-review with nothing
+    # lost and no message depending on another having run first.
+    # `spec/support/shared_examples/review_surface.rb` holds every adapter to
+    # the same law; read its own doc for what it does and does NOT prove.
     #
-    # They differ in how often they are allowed to happen, which is the whole
-    # of it. `present` runs on EVERY redraw -- a mark redraws a row, a scope
-    # toggle redraws the sidebar, {Handover::Redraw} calls it after a gesture --
-    # and a redraw that moved the human would yank them out of the chat pane
-    # mid-sentence every time they marked a hunk. `focus` happens ONCE, when a
-    # round is opened, because that is the moment lain handed them something and
-    # asked them to work on it.
-    #
-    # The editor half already draws exactly this line and names it in those
-    # terms: `41_layout.lua` has `review_place` ("MOVES NOBODY, ever") and
-    # `review_layout` ("The ONLY entry point that takes focus"), with the second
-    # one reachable from Lua and called by nothing in Ruby -- so a `/survey`
-    # built the review tabpage, drew into it, and left the human in the session
-    # tab to go and find it. The port was where the distinction had nowhere to
-    # live.
-    #
-    # == Why `verdict` and `settle` are two messages and not one
-    #
-    # They travel in opposite directions and neither can be inferred from the
-    # other. `verdict` ASKS -- it goes out when there is no judgement yet, and
-    # it is a QUERY, which is the whole reason the port has nowhere to put its
-    # refusal. `settle` SAYS ONE LANDED -- it goes out after {Session#submit}
-    # has journaled a judgement the policy admitted, and it carries the word
-    # inward, so a String coming back is unambiguously a refusal and it joins
-    # the command law rather than `verdict`'s exemption
-    # (`spec/support/shared_examples/review_surface.rb`, law #5).
-    #
-    # It exists because the review's ONE TERMINAL gesture was the only one that
-    # acknowledged nothing: `:LainReviewVerdict approve` journaled correctly and
-    # printed nowhere, while `mark` and `refuse` both said so in words. A human
-    # who makes the gesture that ends the review and is answered with silence
-    # reads it as broken -- which is exactly how the previous, genuinely broken
-    # version of that command read.
-    #
-    # It is a PUSH and not a return value, and that is forced rather than
-    # chosen: {Review::Handover#wrote_verdict} answers `nil` for "taken",
-    # because its return value is what the editor's `:w` succeeds or fails
-    # with. There is no room in that answer for a sentence, so the sentence has
-    # to leave by the surface.
-    #
-    # == What `present`'s `changeset` argument answers
-    #
-    # `Lain::Review::Changeset` (T7) and `Lain::Review::Marks` (T8) had not
-    # landed when {Surface::Text} was written, so the duck `present` actually
-    # needs is stated ONCE here rather than in each adapter's own doc -- the
-    # drift {MESSAGES} exists to prevent for a message's SHAPE applies just as
-    # much to what one argument of one message answers, and a second adapter
-    # inventing its own reading (T19) is exactly that drift.
-    #
-    # `changeset.files` answers an Enumerable of file entries (`#path`,
-    # `#state` -- one of `Review::FILE_STATES`) for the FLAT scope,
-    # `:cumulative`. `changeset.partitions` answers an Enumerable of group
-    # entries (`#label`, `#files` -- same file-entry shape) for every GROUPED
-    # scope, whichever {Review::Partition::Strategy} produced them.
-    #
-    # `changeset.sides` answers which of {Review::SIDES} the ROUND presents at
-    # all, as a subset of that vocabulary in its own order -- both for anything
-    # spanning a base revision and a head one, the new side alone for a corpus
-    # surveyed as it stands. It is the round's fact and never a file's: a file
-    # with no old path is an addition INSIDE a two-sided round, and only a
-    # surface that can build panes needs to tell those apart before it draws
-    # ({Surface::Neovim#present} is the one that does, and it sends the fact
-    # rather than a layout). See {Review::Source} for why the question belongs
-    # to the source.
-    #
-    # A surface that draws more than a path and a glyph needs more than that,
-    # and {Frontend::Neovim::ReviewView} is where the additional members and
-    # their reasons are stated -- including the two a LAZY source makes
-    # necessary (`#chunked?` on a file, `#counted?` on a group), which are how a
-    # surface tells "there is nothing here" from "nobody has looked yet"
-    # WITHOUT reading the corpus it is drawing.
-    #
-    # It reads `#partitions` and not `#by_commit`, and the rename is the
-    # contract rather than a spelling: grouping-by-commit is one strategy on
-    # that axis, so a surface that named it would be a surface that could only
-    # ever render one. A group answers `#label` -- what heads it -- because a
-    # directory has no subject and a commit's sha is not what a heading shows.
-    # `#partitions` takes no argument HERE: whoever built the view chose the
-    # strategy, and a renderer re-partitioning what it was handed could draw
-    # rows the session never marked.
-    #
-    # Neither `Changeset` nor `Marks` alone answers this: a changeset (T7) is
-    # files/hunks/anchorable lines with no notion of review state, and marks
-    # (T8) derives that state from hunks with no notion of files-as-such. The
-    # object that answers `#files`/`#partitions` above has to be built by
-    # JOINING the two -- T13's session is the one place both are held
-    # together, so it is T13's job to produce it (from a real `Changeset`'s
-    # structure and `Marks`' derived tri-state per file), not either T7 or T8
-    # alone, and not a surface reaching for both on its own.
+    # Three arguments this port settled live in `docs/review.md` under "The
+    # surface port": why `focus` is not part of `present`, why `verdict` and
+    # `settle` are two messages, and what `present`'s `changeset` argument
+    # answers (`#files`, `#partitions`, `#sides`, and why the session builds it).
     #
     # == Why `check!` is a duck probe, not a base class
     #
-    # A surface is never required to subclass anything -- forcing one would
-    # make {Surface::Text} (a plain renderer over a {Lain::Sink}) inherit
-    # machinery it does not need just to prove it belongs. {check!} is instead
-    # a lightweight collaborator check callers can run at the point a surface
-    # is handed in, the same shape {CLI::CompactionStrategy#live_tier} already
-    # runs against its `tier:` collaborator: reject what does not answer,
-    # raise naming what's missing. This card's escalation trigger asks
-    # specifically whether {Effect::Handler} already owns this convention --
-    # it does not: `Handler#handles?`/`#perform` is internal dispatch on a
-    # CLOSED effect algebra a handler chooses to interpret, never a check
-    # that an externally supplied collaborator answers a full duck.
-    # {CLI::CompactionStrategy} is the one real precedent, so this reuses its
-    # shape rather than adding a second, competing one.
+    # A surface is never required to subclass anything -- forcing one would make
+    # {Surface::Text} (a plain renderer over a {Lain::Sink}) inherit machinery it
+    # does not need just to prove it belongs. {check!} is instead a lightweight
+    # collaborator check callers run where a surface is handed in, the same shape
+    # {CLI::CompactionStrategy#live_tier} runs against its `tier:` collaborator.
+    # {Effect::Handler} was checked and does NOT already own this convention:
+    # `#handles?`/`#perform` is internal dispatch on a CLOSED effect algebra a
+    # handler chooses to interpret, never a check that an externally supplied
+    # collaborator answers a full duck.
     #
-    # {check!} was widened past a bare `respond_to?` reject after a
-    # review-panel probe (`probe_check.rb`) showed the original version
-    # blessed a candidate with every message present but the WRONG ARITY --
-    # exactly the shape {CLI::CompactionStrategy#live_tier} exists to refuse
-    # BEFORE construction rather than let die inside the first real call.
-    # {MESSAGES} is now the single place the port's shape is stated; the
-    # spec above used to keep its own second copy, checked but never
-    # reconciled against this one.
+    # {check!} was widened past a bare `respond_to?` reject after a review-panel
+    # probe showed the original blessed a candidate with every message present
+    # but the WRONG ARITY. {MESSAGES} is now the single place the port's shape is
+    # stated; the shared examples used to keep a second copy, never reconciled.
     module Surface
       # A candidate surface does not fully, publicly, and correctly answer
       # the port.
       class Incomplete < Error; end
 
-      # The port's messages, and each one's exact `Method#parameters` shape,
-      # in the order the class doc above lists them. `check!` and
+      # The port's messages and each one's exact `Method#parameters` shape, in
+      # the order the class doc lists them. `check!` and
       # `spec/support/shared_examples/review_surface.rb` both read this Hash
-      # rather than keeping their own copy of the shape.
+      # rather than keeping a second copy.
       #
-      # Compared through {shape_of}, never `==` against this Hash directly:
-      # what the port actually constrains is each argument's KIND and, for a
-      # keyword, its NAME -- a keyword IS its name at every call site, while a
-      # positional's is private to the method. Pinning positional names refused
-      # `def thread(_anchor)` as "the wrong shape", which is a rename, not a
-      # defect; a T19 review panel hit it writing a probe. The names below stay
-      # because this Hash is also the port's documentation -- they say what each
-      # argument MEANS -- and only the comparison relaxes.
+      # Compared through {shape_of}, never `==` against this Hash directly: what
+      # the port constrains is each argument's KIND and, for a keyword, its NAME
+      # -- a keyword IS its name at every call site, while a positional's is
+      # private to the method. Pinning positional names refused
+      # `def thread(_anchor)` as the wrong shape, which is a rename, not a
+      # defect. The names stay because this Hash is also the port's
+      # documentation; only the comparison relaxes.
       #
-      # DEEPLY frozen (CLAUDE.md's rule for every value object here): `.freeze`
-      # on the outer Hash alone leaves the `%i[req changeset]`-shaped inner
-      # Arrays mutable, and `MESSAGES[:present] << :whatever` would then mutate
-      # the one shape `check!` and the shared example group both trust.
+      # DEEPLY frozen: `.freeze` on the outer Hash alone leaves the
+      # `%i[req changeset]`-shaped inner Arrays mutable, and
+      # `MESSAGES[:present] << :whatever` would mutate the one shape `check!`
+      # and the shared example group both trust.
       MESSAGES = {
         present: [%i[req changeset], %i[keyreq scope]],
         focus: [],
@@ -184,54 +80,28 @@ module Lain
       }.transform_values { |shape| shape.map(&:freeze).freeze }.freeze
 
       # How much of a `Hunk` key {Surface::Neovim#mark} and {Surface::Text#mark}
-      # show a human, and the one place that decision is made -- see F5's
-      # grounding in `planning/qa-findings-research-2026-08.md`. A hunk key is
-      # a 64-hex-character content digest behind a SCHEME prefix
-      # (`Hunk::CONTENT_SCHEME`/`Hunk::SPAN_SCHEME`, `review/hunk.rb`), and no
-      # path reaches either adapter's `#mark` to show a file name instead --
-      # `Session#mark` (`review/session.rb`) forwards only the key and the
-      # state.
+      # show a human, decided once at the port rather than per adapter: two
+      # independent copies is exactly what let the two adapters' preview lengths
+      # silently disagree under a mutation probe. A hunk key is a 64-hex content
+      # digest behind a scheme prefix (`review/hunk.rb`), and no path reaches
+      # either `#mark` to show a file name instead -- `Session#mark` forwards
+      # only the key and the state.
       #
-      # {preview} lives HERE, at the port, rather than once per adapter,
-      # because "how much of a key a human is shown" is a property of the
-      # SEAM both adapters implement -- the same argument {MESSAGES} makes
-      # for the port's shape -- and because two independent copies is
-      # exactly what let them silently disagree once: a review-panel
-      # mutation probe on an earlier draft of this card set the two
-      # adapters' preview lengths apart and nothing failed.
+      # 12 hex digits follows the house convention for a shortened digest in a
+      # human-readable message (`cli/command/pin.rb`, `Event#to_s`) minus their
+      # fixed-width `"blake3:"` prefix, which ours has no equivalent of. The
+      # trailing `...` is what tells a reader they are looking at a prefix; an
+      # earlier draft showed 8 digits with no ellipsis and gave neither signal.
       #
-      # {DIGEST_PREVIEW_LENGTH} follows the house convention for a
-      # shortened content digest in a human-readable message --
-      # `cli/command/pin.rb`: `"pinned #{digest[0, 19]}..."`, and
-      # `Event#to_s`'s `"#{digest[0, 19]}..."`, both 12 hex digits behind a
-      # 7-character `"blake3:"` prefix. Ours has no fixed-width prefix (the
-      # scheme name varies, see the SPLIT paragraph below), so the number
-      # that carries over is the 12 hex digits, not the 19. The trailing
-      # `...` carries over unchanged: it is what tells a reader they are
-      # looking at a prefix and not the whole thing -- an earlier draft of
-      # this constant showed 8 digits with no ellipsis, which gave neither
-      # signal. (`Isolation::Worktree::Handback#fingerprint` and
-      # `Review::Delta::...#fingerprint` also cut to 12 hex digits, but for
-      # a git REFNAME, not a human message, so they drop the ellipsis --
-      # a different consumer, not a second convention to reconcile with.)
+      # 12 digits is 48 bits. At 10,000 hunks -- two orders of magnitude past
+      # `Bounds::DEFAULT_MAX_FILES` -- a birthday collision on an 8-digit
+      # (32-bit) prefix runs about 1.2%; on 12 it is about 2e-7. The longest
+      # rendered message is 49 characters, under the 60-character bar.
       #
-      # 12 digits is 48 bits. `Bounds::DEFAULT_MAX_FILES` (300) and
-      # `DEFAULT_MAX_LINES` (30,000) cap what a survey admits at all, and
-      # even at 10,000 hunks -- a couple of orders of magnitude past
-      # `DEFAULT_MAX_FILES`, and the size a review-panel probe actually
-      # measured against -- a birthday collision on an 8-digit (32-bit)
-      # prefix runs about 1.2%; on 12 digits it is about 2e-7. The four
-      # extra digits cost four characters, and the longest rendered message
-      # (`hunk-content-v1:` plus 12 hex digits plus `...` plus
-      # ` is now unreviewed`) is still 49, under AC1's 60-character bar.
-      #
-      # SPLIT on the scheme boundary, never a flat slice off the front of
-      # the whole key: a flat cut hands the CONSTANT scheme prefix
-      # priority over the digest, so a longer scheme name (`hunk-span-v1:`,
-      # or some future `hunk-content-v2:`) would silently shrink the
-      # entropy budget with nothing failing. Splitting means every scheme
-      # keeps exactly {DIGEST_PREVIEW_LENGTH} hex digits of digest,
-      # whatever its own name's length.
+      # SPLIT on the scheme boundary, never a flat slice off the front of the
+      # whole key: a flat cut gives the CONSTANT scheme prefix priority over the
+      # digest, so a longer scheme name would silently shrink the entropy budget
+      # with nothing failing.
       DIGEST_PREVIEW_LENGTH = 12
 
       # @param hunk_key [String] `Review::Hunk`'s content or span key
@@ -246,55 +116,33 @@ module Lain
       end
 
       # The port's ANSWER convention, enforced at the one call where an adapter
-      # breaking it is unrecoverable -- {check!}'s sibling, and here for
-      # {check!}'s reason. That one refuses a candidate that lies about its
-      # SHAPE, before construction; this one absorbs a candidate that lies
-      # about DECLINING IN WORDS, at the single message where the lie costs
-      # more than the message is worth.
+      # breaking it is unrecoverable. {check!} refuses a candidate that lies
+      # about its SHAPE, before construction; this absorbs one that lies about
+      # DECLINING IN WORDS.
       #
-      # {Session#submit} is that message's caller. The acknowledgement runs
-      # after the judgement is DURABLE, `#submit` is the round's terminal act,
-      # and a second attempt is refused as `AlreadySettled` -- so an exception
-      # escaping it reaches {Handover#wrote_verdict}'s rescue and comes back as
-      # the sentence a human reads as "your verdict did not land", over a
-      # verdict that did, with the baton never settled and no way to say it
-      # again. That is a worse lie than the silence the acknowledgement was
-      # added to remove, so this is the one place the port stops trusting an
-      # adapter's promise and enforces it instead.
+      # {Session#submit} is the caller. The acknowledgement runs after the
+      # judgement is DURABLE, `#submit` is the round's terminal act, and a second
+      # attempt is refused as `AlreadySettled` -- so an exception escaping here
+      # reaches {Handover#wrote_verdict}'s rescue and comes back as the sentence
+      # a human reads as "your verdict did not land", over a verdict that did,
+      # with no way to say it again. Both shipped adapters try to keep the
+      # promise and neither can be relied on to: `Surface::Text`'s sink answers
+      # `IOError`, and `Frontend::Neovim::RenderInlet#refusable` converts only
+      # `ClosedQueueError` and `ThreadError`.
       #
-      # Both shipped adapters try to keep the promise; neither can be relied on
-      # to. `Surface::Text`'s sink answers `IOError`, and
-      # `Frontend::Neovim::RenderInlet#refusable` converts only
-      # `ClosedQueueError` and `ThreadError`, so anything else off the RPC path
-      # escapes too.
-      #
-      # WIDE deliberately, and the cost is named rather than hidden: an adapter
-      # BUG (a `NoMethodError`) is absorbed here as well. {check!} catches only
-      # part of that, and the part it catches is SHAPE -- a correctly-shaped
-      # adapter broken INSIDE `settle` passes it cleanly. A real
-      # {Surface::Neovim} holding a nil `rpc` is exactly that adapter: it
-      # answers all seven messages at the right arities, `check!` blesses it,
-      # and this method then returns `nil` in silence.
-      #
-      # SO THE RESIDUAL IS AN F4 REGRESSION THAT CANNOT ANNOUNCE ITSELF: the
-      # human makes the terminal gesture, the verdict lands, and nothing is
-      # printed -- the precise defect the acknowledgement was added to remove.
-      # It is accepted anyway, because the alternative is the strictly worse
-      # failure this method exists to prevent (a durable verdict reported as
-      # refused, with no way to say it again). Recorded so that "the
-      # acknowledgement is silent" is diagnosed as a broken adapter rather than
-      # as a missing feature.
-      #
-      # Not narrowable, either: an adapter's I/O error classes cannot be
-      # enumerated from here, so a hand-written list would reopen the hole this
-      # closes. `StandardError` and not `Exception` -- `SystemExit` and
-      # `Interrupt` must still propagate, which `spec/lain/review/surface/
-      # null_spec.rb`'s `.acknowledge` group pins.
-      #
-      # What does bound the residual is the layer above: a structurally broken
-      # adapter is refused earlier and far louder, by {check!} at wiring time
-      # and by `spec/support/shared_examples/review_surface.rb`.
-      #
+      # WIDE deliberately, with the cost named rather than hidden: an adapter BUG
+      # (a `NoMethodError`) is absorbed too, and {check!} does not catch that --
+      # a correctly-shaped adapter broken INSIDE `settle` passes it cleanly, and
+      # a real {Surface::Neovim} holding a nil `rpc` is exactly that. So the
+      # residual is a regression that cannot announce itself: the human makes the
+      # terminal gesture, the verdict lands, and nothing is printed -- the precise
+      # defect the acknowledgement was added to remove. Accepted anyway, because
+      # the alternative is the strictly worse failure above, and recorded so that
+      # "the acknowledgement is silent" is diagnosed as a broken adapter rather
+      # than a missing feature. Not narrowable either: an adapter's I/O error
+      # classes cannot be enumerated from here. `StandardError` and not
+      # `Exception` -- `SystemExit` and `Interrupt` must still propagate, which
+      # `spec/lain/review/surface/null_spec.rb` pins.
       # @param surface [#settle] the adapter this round draws on
       # @param verdict [String] the verdict, as journaled
       # @return [Object, nil] whatever the surface answered, or nothing when it
@@ -322,14 +170,11 @@ module Lain
       end
 
       # What the port constrains about one message's arguments: every one's
-      # KIND, and a keyword's NAME. A positional's name is dropped, because it
-      # is the method's own business and never appears at a call site -- see
-      # {MESSAGES}. `**` and `&` are not in this port at all, so a candidate
-      # carrying one lands in `wrong_shape` on kind alone.
-      #
-      # Takes a `Method`/`UnboundMethod` or a {MESSAGES} value, so the two
-      # sides of every comparison are normalized by the same code rather than
-      # by two readings of one rule.
+      # KIND, and a keyword's NAME. A positional's name is dropped -- it never
+      # appears at a call site (see {MESSAGES}). `**` and `&` are not in this
+      # port at all, so a candidate carrying one lands in `wrong_shape` on kind
+      # alone. Takes a `Method`/`UnboundMethod` or a {MESSAGES} value, so both
+      # sides of a comparison are normalized by the same code.
       # @return [Array<Array<Symbol>>]
       def self.shape_of(parameters)
         parameters = parameters.parameters if parameters.respond_to?(:parameters)
@@ -367,10 +212,8 @@ module Lain
       private_class_method :incomplete_message
 
       # `candidate.class.name` is `nil` for an anonymous class (every
-      # `Class.new do ... end` test double), and `candidate.class` alone
-      # prints a bare memory address (`#<Class:0x...>`) that names nothing a
-      # reader can act on -- both read as noise, not as "here is what was
-      # handed in".
+      # `Class.new do ... end` double), and `candidate.class` alone prints a
+      # bare memory address that names nothing a reader can act on.
       def self.candidate_name(candidate)
         candidate.class.name || "an anonymous class"
       end
@@ -379,12 +222,11 @@ module Lain
   end
 end
 
-# The port's own value, ahead of every adapter: it belongs to none of them,
-# and it is what a rendered conversation is made of on both sides of the seam.
+# The port's own value, ahead of every adapter: it belongs to none of them.
 require_relative "surface/message"
 require_relative "surface/null"
 require_relative "surface/text"
-# LAST, and it is the one entry here with a load-order reason: this adapter
-# names `Frontend::Neovim::ReviewView` as its default collaborator, which
-# resolves only because `lain.rb` loads `lain/frontend` before `lain/review`.
+# LAST, and the one entry here with a load-order reason: this adapter names
+# `Frontend::Neovim::ReviewView` as its default collaborator, which resolves
+# only because `lain.rb` loads `lain/frontend` before `lain/review`.
 require_relative "surface/neovim"

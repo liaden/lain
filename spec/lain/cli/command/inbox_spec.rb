@@ -2,17 +2,17 @@
 
 require "async"
 
-# T13: /inbox at `you>` delegates ENTIRELY to Command::Env's `replies` reader
+# /inbox at `you>` delegates ENTIRELY to Command::Env's `replies` reader
 # (the SAME HumanReplies#drain_at_prompt human_replies_spec.rb covers) -- this
 # command owns only the argument-free call, never a second listing/answer
 # path or a second rendering of what the drain already showed through @tty.
 #
-# The last example documents the T13 escalation instead of asserting a fix:
+# The last example documents the escalation instead of asserting a fix:
 # StatusFeed's inbox_count is Projection-parity-pinned (see
 # status_feed_spec.rb and Frontend::Neovim::InboxView's parity spec) to
 # retire ONLY on a committed :turn's causal_parents, and that :turn Event
-# never reaches the live tee in production (status_feed.rb's class doc, T13
-# note) -- so answering here, exactly like answering at `human>`, does NOT
+# never reaches the live tee in production (status_feed.rb's class doc says
+# so) -- so answering here, exactly like answering at `human>`, does NOT
 # retire the count by itself. Hand-back flags this as the known constraint
 # rather than forking a second counter or breaking the parity spec.
 RSpec.describe Lain::CLI::Command::Inbox do
@@ -41,7 +41,7 @@ RSpec.describe Lain::CLI::Command::Inbox do
     build_command_env(replies:, status:)
   end
 
-  # T11: what rides the arrival queue is the inbox item, not the question's
+  # What rides the arrival queue is the inbox item, not the question's
   # bytes -- it carries the digest an answer names its set by, and the asker
   # that asked ({Lain::CLI::Wiring::Askers#announce} is what does this in a
   # run). The reply seam here is the lone asker rather than the run's
@@ -81,7 +81,7 @@ RSpec.describe Lain::CLI::Command::Inbox do
   # consumption, so the count is UNCHANGED right after the reply -- matching
   # exactly what typing the same answer at `human>` would do. Retiring in
   # real time needs a live :turn signal StatusFeed cannot see at its
-  # construction point (see the class doc's T13 note); escalated in the
+  # construction point (see the class doc's note on this); escalated in the
   # hand-back, not solved here by diverging from the parity spec.
   it "does not retire on the reply alone -- the pre-existing, escalated gap, unchanged by this card" do
     Sync do
@@ -95,7 +95,7 @@ RSpec.describe Lain::CLI::Command::Inbox do
     end
   end
 
-  # T1 review, BLOCKER 1. This command opens its OWN `human> ` read through the
+  # Review BLOCKER 1. This command opens its OWN `human> ` read through the
   # drain, and {Lain::CLI::Repl::LineScope} now brackets every dispatched line in
   # the reply surfaces -- so without this declaration the loop and the drain
   # would both read the one stdin, and the human's answer would land on
@@ -105,7 +105,7 @@ RSpec.describe Lain::CLI::Command::Inbox do
     expect(command.serves_replies?).to be(true)
   end
 
-  # T3/round 11. The drain resolves its answer through {HumanReplies#resolve_reply},
+  # Round 11. The drain resolves its answer through {HumanReplies#resolve_reply},
   # which SETTLES on a refusal -- deliberately, so a dead question does not list
   # forever and refuse every time it is offered. What was not deliberate is that
   # it settled a NIL digest too: an answer naming nothing marked nothing

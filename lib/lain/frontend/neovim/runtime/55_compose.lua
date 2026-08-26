@@ -1,4 +1,4 @@
--- lain://compose (T15): the ONE lain:// buffer nvim must be able to `:write`,
+-- lain://compose: the ONE lain:// buffer nvim must be able to `:write`,
 -- because `:w` IS the return leg of the compose round trip. Two option
 -- choices here are not preferences, they are the only settings that work, and
 -- both were found the hard way:
@@ -42,12 +42,10 @@ local function compose_buf(name)
   return buf
 end
 
--- Open lain://compose on the human's draft (T15). The ONE render entry point
--- that deliberately takes the cursor: every other buffer here is a live
--- projection that must never steal focus mid-thought, whereas this one exists
--- because the human just pressed C-g and asked to be put in it. It is shown
--- in a split only when no window already holds it, so a second compose lands
--- in the window they left open rather than stacking splits.
+-- Open lain://compose on the human's draft. It takes the cursor, where every
+-- other projection must never steal focus mid-thought, because the human just
+-- pressed C-g and asked to be put in it. Shown in a split only when no window
+-- already holds it, so a second compose lands in the window they left open.
 --
 -- 'modified' is cleared after the write: the buffer's content came from lain,
 -- not from the human, so leaving it dirty would make nvim argue about unsaved
@@ -68,14 +66,11 @@ function _G.__lain.set_compose(name, lines, generation)
   announce_render(name, buf)
 end
 
--- The compose round trip's return leg (T15). No :Lain* command here on
--- purpose: the human's gesture is `:w`, the one thing every vim user already
--- knows means "I am done with this text", and lain://compose is `acwrite`
--- exactly so that gesture can be intercepted. Both callbacks are ordinary
--- enqueue-and-ack rpcREQUESTS -- the same path :LainResend takes -- so the
--- Ruby side answers in microseconds and nothing new reads the RPC session.
--- Cleared augroup, like every lain augroup, so re-attach redefines rather
--- than stacks (a stacked BufWriteCmd would report one write twice).
+-- The compose round trip's return leg. No :Lain* command, on purpose: the
+-- human's gesture is `:w`, and lain://compose is `acwrite` exactly so that
+-- gesture can be intercepted. Both callbacks are enqueue-and-ack rpcREQUESTS.
+-- Cleared augroup, so re-attach redefines rather than stacks -- a stacked
+-- BufWriteCmd would report one write twice.
 --
 -- BufWriteCmd REPLACES the write: nothing is persisted anywhere, and clearing
 -- 'modified' is what tells nvim the write succeeded. That is the whole point

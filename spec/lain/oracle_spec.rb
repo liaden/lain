@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T2: an Oracle is a content-addressed question -- a template, the typed answer
+# An Oracle is a content-addressed question -- a template, the typed answer
 # schema its reply is validated against, and which tier answers it. This spec
 # pins the Definition value object: rendering the question purely, validating an
 # answer through the schema, and a digest that covers all three fields.

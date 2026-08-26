@@ -75,10 +75,10 @@ RSpec.describe Lain::Project do
     end
   end
 
-  # Fix round -- SF-1 (panel): `cwd.start_with?("#{root}/")` builds a bogus
-  # "//" at the filesystem root, refusing every cwd under "/". The
-  # trailing-slash idiom itself has to stay, though -- it is what refuses a
-  # same-prefix SIBLING (`/tmp` vs `/tmp-other`) rather than a real child.
+  # Panel fix: `cwd.start_with?("#{root}/")` builds a bogus "//" at the
+  # filesystem root, refusing every cwd under "/". The trailing-slash idiom
+  # itself has to stay, though -- it is what refuses a same-prefix SIBLING
+  # (`/tmp` vs `/tmp-other`) rather than a real child.
   describe "when root is the filesystem root" do
     it "accepts an ordinary cwd under it, rather than refusing on a doubled slash" do
       Dir.mktmpdir do |dir|
@@ -103,10 +103,10 @@ RSpec.describe Lain::Project do
     end
   end
 
-  # Fix round -- SF-2 (panel, mutation-proven): a hand-copied "must be one of
-  # :project, :home" literal can drift out of sync with the real KINDS/
-  # DETECTED_BY the inclusion check enforces (the panel's mutant added
-  # :library to KINDS and the OLD hardcoded message stayed green and wrong).
+  # Panel fix (mutation-proven): a hand-copied "must be one of :project,
+  # :home" literal can drift out of sync with the real KINDS/DETECTED_BY the
+  # inclusion check enforces (the panel's mutant added :library to KINDS and
+  # the OLD hardcoded message stayed green and wrong).
   # Asserting against `described_class::KINDS.inspect`/`DETECTED_BY.inspect`
   # ties the expectation to the SAME live constant the check enforces, so a
   # future member added to one and not reflected in the other's message
@@ -128,9 +128,9 @@ RSpec.describe Lain::Project do
     end
   end
 
-  # Fix round -- SF-3 (panel): `root`'s own symlink resolution, #to_s and
-  # #inspect were all exercised by nothing -- three mutants (drop realpath on
-  # root, blank #to_s, drop `include Inspectable`) survived the suite.
+  # Panel fix: `root`'s own symlink resolution, #to_s and #inspect were all
+  # exercised by nothing -- three mutants (drop realpath on root, blank #to_s,
+  # drop `include Inspectable`) survived the suite.
   describe "when root itself is a symlink resolving to a real directory" do
     it "is accepted, and #root reports the resolved path" do
       Dir.mktmpdir do |real_root|
@@ -163,8 +163,8 @@ RSpec.describe Lain::Project do
     end
   end
 
-  # Fix round -- SF-4 (panel ruling): a missing/unreadable root or cwd used to
-  # let a raw `Errno::ENOENT`/`Errno::EACCES` escape -- exactly the failure
+  # A panel ruling: a missing/unreadable root or cwd used to let a raw
+  # `Errno::ENOENT`/`Errno::EACCES` escape -- exactly the failure
   # {Epic::Home::UnreadableHome} exists to prevent for `exe/lain`, which
   # rescues `Lain::Error` only. The refusal names WHICH role failed (root vs
   # cwd resolved separately, so this is free) and the path given.

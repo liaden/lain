@@ -5,28 +5,25 @@ module Lain
     # Batch embeddings over Ollama's native `/api/embed`. A free, local bench arm
     # -- the real-backend counterpart to {Static}. It REUSES {Provider::Ollama}'s
     # base-url/env posture: the same `ollama_api_base` Configuration option and
-    # the same vendored Faraday stack, differing only in the path it posts to
-    # (`api/embed`, not `api/chat`).
+    # the same vendored Faraday stack, differing only in the path it posts to.
     #
     # THIS EMBEDDER sends no credential -- it exposes no key seam, so the
     # Configuration it builds carries no `ollama_api_key` and the inherited
-    # `#headers` answers empty. That is a fact about this class, not about the
-    # transport it inherits: the transport gained the ability to carry a Bearer
-    # when {Provider::Ollama::Deployment::Cloud} arrived, and a caller who hands
-    # `config:` a key-bearing Configuration will send it.
+    # `#headers` answers empty. A fact about this class, not the transport it
+    # inherits: that can carry a Bearer since
+    # {Provider::Ollama::Deployment::Cloud}, and a caller who hands `config:` a
+    # key-bearing Configuration will send it.
     #
     # The wire is `{ "model": ..., "embeddings": [[float, ...], ...], ... }` --
     # one vector per input text, in input order (verified against a local server;
-    # nomic-embed-text returns dimension 768). A missing/short/non-Float
-    # `embeddings` is a malformed response and raises {APIError}; a non-2xx raises
-    # {APIStatusError} with the status lifted out. Neither ever returns a silent
-    # empty vector -- that is the whole contract this arm exists to keep honest.
+    # nomic-embed-text returns dimension 768). A malformed `embeddings` raises
+    # {APIError}, a non-2xx raises {APIStatusError} with the status lifted out,
+    # and neither ever returns a silent empty vector -- that is the whole
+    # contract this arm exists to keep honest.
     class Ollama < Embedder
-      # APIError / APIStatusError, plus both error arms of the round trip, nested
-      # here as on the three Providers that share this concern -- but rooted at
-      # {Embedder::Error}, not {Lain::Error}, so `rescue Embedder::Error` catches
-      # every failure of the round TRIP. That difference in base is why the
-      # concern is parameterized.
+      # Rooted at {Embedder::Error}, not {Lain::Error}, so `rescue
+      # Embedder::Error` catches every failure of the round TRIP. That
+      # difference in base is why the concern is parameterized.
       #
       # It does NOT catch every failure of `#embed`: {Transport::UnusableCredential}
       # is a {Lain::Error} and propagates past it, deliberately. This family means
@@ -34,13 +31,11 @@ module Lain
       # reached one -- so wrapping it here would report a round trip that did not
       # happen, and let a caller degrade past a misconfiguration it should hear.
       #
-      # An {Embedder} reaching into `Provider::` is deliberate, not an accident
-      # of where the file landed: what gets wrapped is a {Provider::HTTP::Error}
-      # off the shared vendored transport, which is the same reason {Transport}
-      # below subclasses {Provider::Ollama::Transport}. A third namespace holding
-      # one concern used by two would be worse than the reach.
+      # An {Embedder} reaching into `Provider::` is deliberate: what gets wrapped
+      # is a {Provider::HTTP::Error} off the shared vendored transport, the same
+      # reason {Transport} below subclasses {Provider::Ollama::Transport}.
       #
-      # deliberately absent: a `channel:` and a `spool:`, exactly as on
+      # Deliberately absent: a `channel:` and a `spool:`, exactly as on
       # {Provider::Ollama} -- retries on this arm are not journaled and nothing
       # is salvageable after a crash.
       include Provider::ErrorWrapping.under(Embedder::Error)
@@ -48,35 +43,32 @@ module Lain
       DEFAULT_MODEL = "nomic-embed-text"
       MALFORMED = "malformed /api/embed response"
 
-      # {Provider::Ollama::Transport} with one more round trip on it: same
-      # vendored Faraday stack, same `ollama_api_base`/DEFAULT_API_BASE posture,
-      # same per-instance `#local?` and `#headers` -- all INHERITED, not copied
-      # -- differing only in the path it posts to.
+      # {Provider::Ollama::Transport} with one more round trip on it -- stack,
+      # base-url posture, `#local?` and `#headers` all INHERITED, not copied.
       #
-      # PER-INSTANCE, and the distinction bites here: `local?` is read off the
-      # base an instance will really dial, so the CLASS method is the vendored
-      # base's conservative `false` even though every instance this embedder
-      # builds is loopback. Ask an instance, never this class. Subclassing also makes the
+      # `local?` is PER-INSTANCE, read off the base an instance will really
+      # dial, so the CLASS method answers the vendored base's conservative
+      # `false` even though every instance this embedder builds is loopback.
+      # Ask an instance, never this class. Subclassing also makes the
       # `ollama_api_base` option registration explicit rather than a hidden
-      # load-order coupling: the superclass's file registers it at its own load,
-      # and this class cannot even be DEFINED until that file has loaded.
+      # load-order coupling: this class cannot be DEFINED until the superclass's
+      # file, which registers the option, has loaded.
       class Transport < Provider::Ollama::Transport
         EMBED_PATH = "api/embed"
 
-        # One non-streaming round trip. `faraday.response :json` has already
-        # parsed the body, so `#body` is a Hash. No headers parameter: unlike
-        # the chat path's sync_post, nothing ever customizes embed headers.
+        # `faraday.response :json` has already parsed the body, so `#body` is a
+        # Hash. No headers parameter: unlike the chat path's sync_post, nothing
+        # customizes embed headers.
         def embed_post(payload)
           connection.post(EMBED_PATH, payload)
         end
       end
 
-      # @param model [String] the embed model; defaults to the pinned one.
+      # @param model [String] the embed model; defaults to the pinned one
       # @param transport [#embed_post] injected in specs; a real {Transport} over
-      #   the vendored connection otherwise.
+      #   the vendored connection otherwise
       # @param config [Configuration, nil] resolved options, `ollama_api_base`
-      #   included; built from `api_base:` when omitted, same as
-      #   {Provider::Ollama}'s own posture.
+      #   included; built from `api_base:` when omitted
       # @param sink [Lain::Sink] where the transport's debug/log lines go
       # @param api_base [String, nil] overrides `ollama_api_base` (default
       #   http://localhost:11434). There is deliberately no key parameter: the
@@ -88,10 +80,8 @@ module Lain
         @transport = transport || Transport.new(@config, sink:)
       end
 
-      # Both error arms come from {Provider::ErrorWrapping#wrapping_errors}; this
-      # was the second of the two backends missing the connection-level one.
-      # {#extract}'s own APIError for a torn body is raised INSIDE the block and
-      # passes through it untouched.
+      # {#extract}'s own APIError for a torn body is raised INSIDE the wrapping
+      # block and passes through it untouched.
       def embed(texts)
         wrapping_errors { extract(@transport.embed_post(payload_for(texts)).body || {}, texts.size) }
       end
@@ -107,10 +97,8 @@ module Lain
         { model: @model, input: texts }
       end
 
-      # Loud on any shape the wire should never send: the count must match the
-      # request and each vector must be a non-empty list of Floats. Anything else
-      # is a torn response, and a torn response raises -- it is never handed back
-      # as data a caller might treat as a real embedding.
+      # A torn response raises -- it is never handed back as data a caller might
+      # treat as a real embedding.
       def extract(body, expected)
         embeddings = body["embeddings"]
         problem = malformation(embeddings, expected)

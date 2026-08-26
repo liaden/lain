@@ -5,7 +5,7 @@ require "stringio"
 # The epic tier's one write path. {Epic::Scribe} is the only thing in lib
 # permitted to construct an {Epic::IssueTransition} or {Epic::StageTransition}
 # -- everywhere else, a caller that wants a transition journaled goes through
-# here, so the write-side guards in {Epic::Guards} are checked in exactly one
+# here, so the write-side contracts in {Epic::Contracts} are checked in exactly one
 # place. {Epic::Progress.fold} is the read-side oracle: these specs prove what
 # the scribe wrote is what the fold sees, never re-asserting the fold's own
 # behaviour (that belongs to progress_spec.rb).
@@ -23,7 +23,7 @@ RSpec.describe Lain::Epic::Scribe do
 
   def fold = Lain::Epic::Progress.fold(io.string.lines, graph: chain, epic_slug: "demo")
 
-  # AC1: "the fold sees what the scribe writes"
+  # The fold sees what the scribe writes.
   it "writes an issue_moved and a stage_started record the fold reads back", :aggregate_failures do
     scribe.issue_moved("a", from: "pending", to: "done")
     scribe.stage_started("issue_plan")
@@ -35,8 +35,8 @@ RSpec.describe Lain::Epic::Scribe do
   end
 
   # A stage_completed record is journaled as its own event; whether the fold
-  # advances on it is Progress's own rule (it does not -- T19's concern, not
-  # this card's), so this only proves the scribe's write lands.
+  # advances on it is Progress's own rule (it does not -- the fold's concern,
+  # not the scribe's), so this only proves the scribe's write lands.
   it "writes a stage_completed record" do
     scribe.stage_started("research")
     scribe.stage_completed("research")
@@ -45,7 +45,7 @@ RSpec.describe Lain::Epic::Scribe do
     expect(records.map { |r| r["event"] }).to eq(%w[started completed])
   end
 
-  # AC2: "a bad status never reaches the journal"
+  # A bad status never reaches the journal.
   it "raises before an out-of-range status reaches the journal", :aggregate_failures do
     expect { scribe.issue_moved("a", from: "pending", to: "finished") }
       .to raise_error(ArgumentError, /to_status/)
@@ -63,7 +63,7 @@ RSpec.describe Lain::Epic::Scribe do
     expect(scribe.stage_completed("research")).to be(scribe)
   end
 
-  # T4 review, fix 1 -- probe_t4b.rb's central finding: `Guards::IssueTransition`
+  # Review fix 1 -- probe_t4b.rb's central finding: `Contracts::IssueTransition`
   # only demands a non-blank epic_slug, but `Refold#mine?` partitions on
   # BYTE-EXACT equality against the slug a caller names to `Progress.fold`.
   # A Scribe built on a slug that differs only in whitespace or case therefore
@@ -132,7 +132,7 @@ RSpec.describe Lain::Epic::Scribe do
     end
   end
 
-  # T4 review, fix 2 -- `Progress`'s own rule (`named_epic`/`refuse_stranger!`)
+  # Review fix 2 -- `Progress`'s own rule (`named_epic`/`refuse_stranger!`)
   # applied to the Scribe's other collaborator: a construction-time argument
   # that cannot do its job is refused AT construction, not on first use deep
   # inside a private method with the real mistake off the backtrace.

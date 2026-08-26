@@ -5,10 +5,10 @@ require "stringio"
 require "thor"
 require "tmpdir"
 
-# T19: resolving `lain chat --resume [SESSION]` into the pieces the exe wires --
-# the verified Timeline (T15 injection), the replayed Session run-state and
-# memory recorder (T16), the chained-header fields the new journal opens with
-# (T14's resumed_from), and the notices the frontend renders. The exe stays
+# Resolving `lain chat --resume [SESSION]` into the pieces the exe wires --
+# the verified Timeline (injected), the replayed Session run-state and memory
+# recorder, the chained-header fields the new journal opens with
+# (`resumed_from`), and the notices the frontend renders. The exe stays
 # thin; this object owns every choice.
 RSpec.describe Lain::CLI::Resume do
   subject(:resume) { described_class.new(paths:) }
@@ -31,9 +31,9 @@ RSpec.describe Lain::CLI::Resume do
   end
 
   # `provider:` merges in only when given -- absence is no key, never a nil
-  # value, the same discipline `resumed_from` already follows here: an old,
-  # pre-RES2 header genuinely has no "provider" key at all, not a nil-valued
-  # one, and the fixture must be able to say that.
+  # value, the same discipline `resumed_from` already follows here: a header
+  # written before `provider` existed genuinely has no "provider" key at all,
+  # not a nil-valued one, and the fixture must be able to say that.
   def open_header(resumed_from: nil, provider: nil)
     header = Lain::SessionRecord.header(context: recorded_context, toolset:, head: nil)
     header = header.merge("resumed_from" => resumed_from) unless resumed_from.nil?
@@ -147,7 +147,7 @@ RSpec.describe Lain::CLI::Resume do
             }
     end
 
-    # T3 fix round: the selector's bare/prefix view must agree with `lain
+    # The selector's bare/prefix view must agree with `lain
     # sessions` -- an ephemeral scratch file is not silently the "newest"
     # session, and a fork/resume must not manufacture the accepted-edge
     # resumed_from against a name promotion will later break. The EXACT
@@ -174,7 +174,7 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
-    # T3 fix round: Journal.open creates the session file long before the
+    # Journal.open creates the session file long before the
     # scribe writes its header, so a chat that died in that window leaves a
     # zero-byte .ndjson -- and it sorts NEWEST, so a bare --resume picked it
     # and the Loader raised Corrupt on a file that is not corrupt, merely
@@ -274,7 +274,7 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
-  # T18: an open session whose crash left an unanswered request_sent gets one
+  # An open session whose crash left an unanswered request_sent gets one
   # salvage attempt before anything else about it is decided.
   describe "salvage on resume" do
     let(:committed) { chain("hi", "hello") }
@@ -486,7 +486,7 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
-    # T3 fix round (probe 4a): a crash BETWEEN promotion's two renames leaves
+    # A crash BETWEEN promotion's two renames leaves
     # {x.btw.ndjson, x.wal} -- the derived x.btw.wal no longer exists, so a
     # naive salvage would find NOTHING and the paid-for frames would sit
     # unreachable with nothing ever triggering the healing retry. Salvage
@@ -596,7 +596,7 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
-  # T3: fork mode. `--fork "<session>@<digest-prefix>"` starts a NEW run at an
+  # Fork mode. `--fork "<session>@<digest-prefix>"` starts a NEW run at an
   # arbitrary recorded head of the parent. Read-only by construction: the fork
   # path never salvages and never opens a writable handle on the parent, so a
   # LIVE parent's journal stays exactly as its owner is writing it.
@@ -687,7 +687,7 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
-    # T3 replaced this door's refusal with a repair: a fork point that is an
+    # This door's refusal was replaced with a repair: a fork point that is an
     # assistant tool_use turn still awaiting its results gets the cancellation
     # projected onto it, exactly as a resume of the same head does. What stays
     # fork-specific is the ANCHOR -- the chained header must keep naming the
@@ -709,7 +709,7 @@ RSpec.describe Lain::CLI::Resume do
         .to eq("file" => "20260101T000000-1.ndjson", "head" => mid_tool.head_digest)
     end
 
-    # T3 fix round (probe 5d): the TOCTOU between ForkPoint's read and this
+    # The TOCTOU between ForkPoint's read and this
     # path's own Loader re-open -- a reap or rename can win that race, and a
     # raw Errno::ENOENT must not escape to the exe.
     it "maps the parent vanishing between resolution and load to a named Refusal" do
@@ -777,8 +777,8 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
-  # RES2: the same LOUD-and-continue policy T19 already gave `model`, extended
-  # to the provider the header now names as data.
+  # The same LOUD-and-continue policy `model` already has, extended to the
+  # provider the header now names as data.
   describe "the provider-mismatch notice (LOUD, then continue with the flags)" do
     before { write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), provider: "anthropic") }
 
@@ -796,7 +796,7 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
-  # RES2: a header written before this field existed carries no "provider" key
+  # A header written before this field existed carries no "provider" key
   # at all -- resume must still proceed (never a refusal), naming the gap.
   describe "a header recorded with no provider field (old-caller compatibility)" do
     before { write_closed("20260101T000000-1.ndjson", chain("hi", "yo")) }
@@ -821,7 +821,7 @@ RSpec.describe Lain::CLI::Resume do
       end
     end
 
-    # C2 review FIX 1, end to end -- and STILL legitimate after the Loader's
+    # The review fix, end to end -- and STILL legitimate after the Loader's
     # fixpoint. This journal writes no `message` record at all, so the cited
     # event is genuinely dangling rather than merely not-landed-yet, and no
     # amount of alternation between the two folds can resolve it. An assistant
@@ -869,10 +869,10 @@ RSpec.describe Lain::CLI::Resume do
     end
 
     # Panel fix round (finding 2): the run-state walk carries its OWN cycle
-    # guard -- driven here at the seam directly (now {Resume::ChainWalk}, the
-    # T3 extraction), so its safety is proven independent of the Loader having
-    # refused the cycle first (an ordering invariant a reorder of rebuild's
-    # statements would silently break).
+    # guard -- driven here at the seam directly (now {Resume::ChainWalk}, its
+    # own extracted object), so its safety is proven independent of the Loader
+    # having refused the cycle first (an ordering invariant a reorder of
+    # rebuild's statements would silently break).
     it "refuses a cyclic chain in the run-state walk itself, never a SystemStackError" do
       a = open_header(resumed_from: { "file" => "20260102T000000-1.ndjson", "head" => "blake3:#{"1" * 64}" })
       b = open_header(resumed_from: { "file" => "20260101T000000-1.ndjson", "head" => "blake3:#{"2" * 64}" })
@@ -886,7 +886,7 @@ RSpec.describe Lain::CLI::Resume do
         end
     end
 
-    # T3 repairs a torn head instead of refusing it -- but not a head whose
+    # Resume repairs a torn head instead of refusing it -- but not a head whose
     # stranded call names no tool_use, which no projection can answer
     # ({Tool::ResultBlock}'s gate 4). That shape must still refuse HERE, with
     # the file on it: deleting the backstop would leave it escaping the exe as
@@ -905,14 +905,14 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
-  # T3 / F46. A run stopped between the assistant's `tool_use` commit
+  # A run stopped between the assistant's `tool_use` commit
   # (agent.rb:433) and the tool_result commit (:516-517) leaves a head no
   # request can be built from: the Messages API rejects an unanswered
   # tool_use. The repair is a PROJECTION onto the rebuilt in-memory
   # timeline -- one user turn answering every stranded call with a
   # cancellation -- and the NDJSON keeps the honest torn record, which is
-  # what separates it from the fabrication the backstop refused (T5 collapsed
-  # that gate into {Resume::MidTool}; the refusal itself is unchanged).
+  # what separates it from the fabrication the backstop refused (that gate
+  # collapsed into {Resume::MidTool}; the refusal itself is unchanged).
   describe "a session torn mid-tool (F46)" do
     def tool_use(id) = { "type" => "tool_use", "id" => id, "name" => "echo", "input" => { "text" => "hi" } }
 
@@ -998,7 +998,7 @@ RSpec.describe Lain::CLI::Resume do
       expect(block["content"]).to match(/no result/i)
     end
 
-    # F46's own shape: the tear leaves the file OPEN, so the resume salvages
+    # The tear's own shape: it leaves the file OPEN, so the resume salvages
     # first and repairs second. Both must land.
     it "repairs a torn head in an OPEN (crashed) session too, after salvage" do
       write_session("20260104T000000-1.ndjson", [open_header] + turn_records(torn))
@@ -1063,9 +1063,9 @@ RSpec.describe Lain::CLI::Resume do
 
       expect { resume.call(selector: "20260102") }.to raise_error(described_class::Refusal) do |error|
         expect(error.message).to include("20260102T000000-1.ndjson", "tool")
-        # The real reason, not the pre-T3 one: T3 established that projecting a
-        # result falsifies nothing, so "fabricating results would falsify the
-        # record" is now false at the only door that reaches this.
+        # The real reason, not the old one: projecting a result falsifies
+        # nothing, so "fabricating results would falsify the record" is now
+        # false at the only door that reaches this.
         expect(error.message).to match(/names no tool_use id|nothing can answer/i)
         expect(error.message).not_to match(/falsify|re-ask/i)
       end
@@ -1094,12 +1094,13 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
-  # T5. After T3 this refusal fires for exactly ONE shape -- a stranded
-  # tool_use naming no id, which {Tool::ResultBlock}'s gate 4 will not pair a
-  # result with -- and what it says is the whole of what a human gets. Two
-  # things were wrong with what it said. It hardcoded "cannot resume" at a
-  # door the user may well have opened with `--fork`, and it sent them to
-  # "re-ask the question in a new session", which throws the chain away.
+  # Once the projection repair landed, this refusal fires for exactly ONE
+  # shape -- a stranded tool_use naming no id, which {Tool::ResultBlock}'s
+  # gate 4 will not pair a result with -- and what it says is the whole of
+  # what a human gets. Two things were wrong with what it said. It hardcoded
+  # "cannot resume" at a door the user may well have opened with `--fork`,
+  # and it sent them to "re-ask the question in a new session", which throws
+  # the chain away.
   #
   # The remedy has to be one reachable FROM HERE, which is what rules
   # `/rewind` out even though it can already decline a torn turn:
@@ -1110,7 +1111,7 @@ RSpec.describe Lain::CLI::Resume do
   describe "the torn-head refusal names its own door and a reachable remedy (T5)" do
     def prefix_for(digest) = digest.delete_prefix("blake3:")[0, 12]
 
-    # The one shape T3's projection cannot answer.
+    # The one shape the projection cannot answer.
     let(:unpairable) do
       Lain::Timeline.empty(store: Lain::Store.new)
                     .commit(role: :user, content: text("echo hi"))
@@ -1233,13 +1234,13 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
-  # F23, at the door a user actually walks through. A session that spawned
-  # writes its child's turns as `child_turn` records and the lineage message
-  # that cites them as a `message` record -- and the parent's OWN next turn
-  # cites that message back, so the flat records and the render chain cite each
-  # other across the spawn boundary. Neither pass can run first, which stranded
-  # every spawned session from both `--fork` and `--resume`; the Loader's
-  # fixpoint is what re-opens them.
+  # The spawn-boundary defect, at the door a user actually walks through. A
+  # session that spawned writes its child's turns as `child_turn` records and
+  # the lineage message that cites them as a `message` record -- and the
+  # parent's OWN next turn cites that message back, so the flat records and the
+  # render chain cite each other across the spawn boundary. Neither pass can run
+  # first, which stranded every spawned session from both `--fork` and
+  # `--resume`; the Loader's fixpoint is what re-opens them.
   describe "a session that spawned a subagent" do
     let(:spawn_store) { Lain::Store.new }
     let(:parent) { Lain::Timeline.empty(store: spawn_store).commit(role: :user, content: text("spawn a helper")) }

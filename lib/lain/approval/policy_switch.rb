@@ -6,79 +6,82 @@ require "delegate"
 
 module Lain
   module Approval
-    # The delegating slot a posture flip writes: {Effect::Handler::Gate}'s policy
-    # duck (`#call(effect, context) -> Boolean`), answering through whichever
-    # policy is current. Nothing types at this slot directly -- {CLI::Switchboard#apply}
-    # writes it as the DERIVED consequence of the `/mode` flip it carries, which
-    # is what keeps one slot to one writer. Gate stays construction-fixed -- it
-    # holds this ONE object for the session, and the flip swaps the delegate
-    # inside it, never a setter on Gate. Deliberately MUTABLE coordination state, like {Approval::Queue::Pending}
-    # and unlike the frozen value objects: it exists to be switched.
+    # The delegating slot a posture flip writes: {Effect::Handler::Gate}'s
+    # policy duck, answering through whichever policy is current. Gate stays
+    # construction-fixed -- it holds this ONE object for the session and the
+    # flip swaps the delegate inside it, never a setter on Gate. Deliberately
+    # MUTABLE coordination state: it exists to be switched.
     #
-    # Every flip lands in the Journal attributed to the surface that made it
-    # ("who turned the gate off, and when" is evidence on a study bench, not
-    # incident detail). The INITIAL policy is the wiring's choice, already
-    # visible in the session's flags -- construction journals nothing.
+    # Every flip lands in the Journal attributed to the surface that made it --
+    # "who turned the gate off, and when" is evidence on a study bench. The
+    # INITIAL policy is the wiring's choice, already visible in the session's
+    # flags, so construction journals nothing.
     #
-    # Like Queue's @parked, there is deliberately no lock: a flip is
-    # straight-line Ruby with no yield point, and a fiber only interleaves at
-    # an IO yield -- the command's write and the Gate's read can never tear.
+    # Like Queue's @parked, deliberately NO LOCK: a flip is straight-line Ruby
+    # with no yield point, so the command's write and the Gate's read can never
+    # tear.
     class PolicySwitch
       # WHO a gated call is asked on behalf of, riding the `context` every
-      # policy on this seam already threads unexamined -- {Escalation} says so
-      # in as many words: forwarded to every rung's own call untouched.
+      # policy on this seam already threads unexamined.
       #
-      # A rail and not a parameter, because the alternative is widening the
-      # `call(effect, context)` duck that {Effect::Handler::Gate::DenyAll},
-      # {Effect::Handler::Gate::ApproveAll}, this class and every {Escalation}
-      # rung implement -- five objects each forwarding an identity none of them
-      # reads, for the one object that does ({Approval::Queue}).
+      # A RAIL and not a parameter, because the alternative is widening the
+      # `call(effect, context)` duck five objects implement -- each forwarding
+      # an identity none of them reads, for the one that does.
       #
       # A DELEGATOR: it answers every message the wrapped `context` answers, so
-      # a rung that reads the run's {Session} still gets one. It is NOT `is_a?`
-      # the wrapped class, though, and `case`/`===`/`==` do not see through it
-      # either -- a rung must duck-type on the context and never type-test it.
-      # Built by whoever knows the actor -- the child seam's gate policy
-      # ({CLI::Wiring::ToolsetBuild::LivePolicy}), from the same
-      # `announces_as:` name {Tools::Subagent} already enrols its asker under.
-      # A context nobody wrapped names nobody, which is the parent's own turn.
+      # a rung reading the run's {Session} still gets one. It is NOT `is_a?` the
+      # wrapped class, and `case`/`===`/`==` do not see through it either -- a
+      # rung must DUCK-TYPE on the context and never type-test it. A context
+      # nobody wrapped names nobody, which is the parent's own turn.
       class Requested < SimpleDelegator
-        # One bare word, which is what every wired requester is: `"agent"`,
-        # {CLI::Wiring::ToolsetBuild::SPAWN_REQUESTER}, and every
-        # {Role::Catalog} name. See {#initialize} for why the rule is mechanical.
+        include Declarative
+
+        # One bare word, which is what every wired requester is.
         NAME = /\A[\w-]+\z/
         private_constant :NAME
 
         # @return [String] what a human is TOLD is asking
         attr_reader :requester
 
-        # Refused at construction, in the one place that cannot be degraded
-        # away, and for two separate reasons that happen to share a rule.
+        # Refused at construction, the one place that cannot be degraded away,
+        # for two separate reasons that happen to share a rule.
         #
         # BLANK, because the downstream guard does not fire where it looks like
         # it does: {Telemetry::Guards::ApprovalPending} validates presence, but
         # its raise lands inside {Approval::Queue#record_evidence}, which
-        # rescues and degrades. So a blank name does not fail loudly -- measured,
-        # it DELETES the approval_pending record ("something is waiting", the one
-        # state a human is asked to act on), journals a decision naming nobody,
-        # and renders " asks: approve ..." at the terminal.
+        # rescues and degrades. Measured, a blank name DELETES the
+        # approval_pending record -- "something is waiting", the one state a
+        # human is asked to act on -- journals a decision naming nobody, and
+        # renders " asks: approve ..." at the terminal.
         #
         # UNPRINTABLE, because this string is rendered RAW into both human
         # surfaces. A newline forges a whole second approval question in front
         # of the real one at the terminal -- the attack
-        # {Approval::Queue::Outstanding#preamble} spends twenty lines defeating,
-        # one slot over -- and in {Frontend::Neovim::ApprovalView} it splits one
-        # row across two buffer lines while the renderings stay one-per-pending,
-        # so a cursor resolves to the WRONG pending. Every value reaching this
-        # slot is a closed literal today; what changed is that it became a
-        # wiring ARGUMENT, and an invariant resting on "all current callers
-        # happen to be literals" is prose. A whitelist rather than a blacklist,
-        # for `Outstanding`'s reason: the escapes worth refusing are not a set
-        # anyone can finish enumerating.
+        # {Approval::Queue::Outstanding#preamble} defeats, one slot over -- and
+        # in {Frontend::Neovim::ApprovalView} it splits one row across two
+        # buffer lines while the renderings stay one-per-pending, so a cursor
+        # resolves to the WRONG pending. Every value reaching this slot is a
+        # closed literal today, but it became a wiring ARGUMENT, and an
+        # invariant resting on "all current callers happen to be literals" is
+        # prose. A WHITELIST rather than a blacklist: the escapes worth refusing
+        # are not a set anyone can finish enumerating.
+        #
+        # The attribute is deliberately UNTYPED: ActiveModel's format validator
+        # matches against `value.to_s` anyway, so an untyped slot applies the
+        # same rule while leaving the refusal free to `inspect` what the caller
+        # actually passed -- a typed one would report the cast String and lose
+        # the difference between nil and `""`.
+        declare do
+          attribute :requester
+          validates :requester,
+                    format: { with: NAME,
+                              message: lambda { |_record, error|
+                                "must name who is asking in one bare word, got #{error[:value].inspect}"
+                              } }
+        end
+
         def initialize(context, requester)
-          unless requester.to_s.match?(NAME)
-            raise ArgumentError, "a requester must name who is asking in one bare word, got #{requester.inspect}"
-          end
+          self.class.check!(requester:)
 
           super(context)
           @requester = -requester.to_s
@@ -87,12 +90,9 @@ module Lain
 
       attr_reader :current
 
-      # @param initial [#call] the starting mode's resolved gate policy --
-      #   {Mode::Resolution}'s `gate_policy`, which is the session's
-      #   {Approval::Escalation} ladder for an asking posture and a
-      #   {Effect::Handler::Gate::ApproveAll}/{Effect::Handler::Gate::DenyAll}
-      #   for a posture that declares one. NOT the bare {Approval::Queue}: the
-      #   queue is the parked list the ladder's asking rung parks ON.
+      # @param initial [#call] the starting mode's resolved gate policy. NOT
+      #   the bare {Approval::Queue}: the queue is the parked list the ladder's
+      #   asking rung parks ON.
       # @param journal [#record] where each flip lands as evidence
       def initialize(initial, journal:)
         @current = initial
@@ -101,9 +101,8 @@ module Lain
 
       def call(effect, context) = @current.call(effect, context)
 
-      # Swap the live policy, journaling the flip from/to (the same symmetry
-      # model_switch records carry). Answers the policy now in force, so a
-      # caller's confirmation text can name what it got.
+      # Answers the policy now in force, so a caller's confirmation text can
+      # name what it got.
       def switch(policy, surface:)
         from = policy_name(@current)
         @current = policy
@@ -113,8 +112,8 @@ module Lain
 
       private
 
-      # The same snake_case naming Telemetry::Journalable stamps its records
-      # with, so journal readers grep one convention.
+      # The same snake_case naming Telemetry::Journalable stamps records with,
+      # so journal readers grep one convention.
       def policy_name(policy) = policy.class.name.split("::").last.underscore
     end
   end

@@ -5,71 +5,66 @@ module Lain
     # A worker's completion point, as one object: hand its committed work back to
     # the parent checkout ({Worktree::Handback}), spawn a resolver when that
     # merge conflicts, and give the leased environment up. An {Arm} calls this
-    # exactly where it already called `lease.release`, so nothing about WHEN a
-    # worker finishes changes -- only what happens in the instant before the
-    # checkout is reclaimed.
+    # exactly where it already called `lease.release`, so only what happens in
+    # the instant before the checkout is reclaimed changes.
     #
     # == The two invariants, and why they are one object's job
     #
-    # THE LEASE IS RELEASED. Handback must run while the lease is STILL LIVE
-    # (there is nothing to read from a reclaimed checkout) and the release must
-    # happen even when the resolver explodes -- a leaked worktree is the failure
-    # {Worktree} calls the one that "silently defeats the next acquire".
+    # THE LEASE IS RELEASED. Handback must run while the lease is STILL LIVE --
+    # there is nothing to read from a reclaimed checkout -- and the release must
+    # happen even when the resolver explodes, because a leaked worktree
+    # silently defeats the next acquire.
     #
     # THE PARENT CHECKOUT IS LEFT USABLE. A `:conflicted` handback leaves the
-    # parent mid-merge ON PURPOSE (that is the only form in which a resolver can
-    # see both sides), and D4 declines every LATER handback into a parent that is
-    # already merging. So a merge this object started and did not finish is not
-    # untidiness -- it poisons the checkout for every worker after it, and it
-    # leaves `<<<<<<<` markers in a real person's working tree. {#restore}
-    # therefore abandons an unfinished merge from the same `ensure` that releases
-    # the lease, so both obligations hold over exactly the same set of paths.
+    # parent mid-merge ON PURPOSE (the only form in which a resolver can see
+    # both sides), and every LATER handback into a parent that is already
+    # merging is declined. So a merge this object started and did not finish
+    # poisons the checkout for every worker after it, and leaves `<<<<<<<`
+    # markers in a real person's working tree. {#restore} therefore abandons an
+    # unfinished merge from the same `ensure` that releases the lease.
     #
     # THAT `ensure` IS THE POINT, because `Async::Cancel` and `Interrupt` are
     # `< Exception`, NOT `< StandardError`, and a `rescue StandardError` does not
     # see either. {Arm::OrchestratorWorker}'s fan-out is
     # `Sync { ...map { Async { work } }.map(&:wait) }`, so ONE worker's `acquire`
-    # raising cancels its siblings mid-resolve; Ctrl-C does the same at any
+    # raising cancels its siblings mid-resolve, and Ctrl-C does the same at any
     # moment. Both climb past every rescue here, and must: an `ensure` restores
     # the parent and releases the lease, then the exception continues.
     #
     # NOTHING IS RELEASED WITHOUT FIRST TRYING TO ANCHOR. {Worktree} releases
     # with `--force` on a `--detach`ed checkout, so the instant a worktree is
-    # reclaimed an unanchored commit is unreachable and gc-able -- D4's whole
-    # "ref-first, because reclaim destroys" premise. {#surrender} is the
-    # unwinding path's version: it hands back, releases, and spawns NOTHING. An
+    # reclaimed an unanchored commit is unreachable and gc-able. {#surrender} is
+    # the unwinding path's version -- hand back, release, spawn NOTHING -- and an
     # arm's `ensure` calls it, so no exception class can route around the
-    # ATTEMPT; {#reclaim}, on the settled path, is the same sequence with the
-    # resolver in it. Both no-op on an already-released lease, so calling one and
-    # then the other costs a boolean.
+    # ATTEMPT. {#reclaim} is the same sequence with the resolver in it. Both
+    # no-op on an already-released lease, so calling one then the other costs a
+    # boolean.
     #
-    # THE ATTEMPT IS NOW THE GUARANTEE. The `update-ref` lives inside
-    # `Handback#call`, so an exception raised THERE -- mid-`rev-parse`,
+    # THE ATTEMPT IS THE GUARANTEE. The `update-ref` lives inside
+    # {Worktree::Handback#call}, so an exception raised THERE -- mid-`rev-parse`,
     # mid-`update-ref`, mid-merge -- used to reclaim with no ref written, and by
-    # the time anything noticed the lease was released and the checkout gone.
-    # {Worktree::Handback#anchor} closes it: the ref without the merge, touching
-    # no working tree and idempotent because it reads the ref before writing
-    # one. {#complete}'s `ensure` calls it whenever the body left nothing
-    # anchored, so no path reaches `lease.release` until either a ref holds the
-    # worker's commits or git itself refused to write one. ONE attempt, never a
-    # loop: this runs while an exception is climbing, and an unbounded retry
-    # would hold the worktree for as long as git kept failing.
+    # the time anything noticed, the lease was released and the checkout gone.
+    # {Worktree::Handback#anchor} closes it, and {#complete}'s `ensure` calls it
+    # whenever the body left nothing anchored, so no path reaches
+    # `lease.release` until either a ref holds the worker's commits or git
+    # itself refused to write one. ONE attempt, never a loop: this runs while an
+    # exception is climbing, and an unbounded retry would hold the worktree for
+    # as long as git kept failing.
     #
-    # NO MODEL CALL WHILE UNWINDING. {#surrender} spawns nothing on purpose: a
-    # resolver is an unbounded provider round trip with no deadline anywhere in
-    # the chain, and running one inside an `ensure` while a `Timeout::Error` or a
-    # Ctrl-C climbs would hold the lease -- and the worktree -- for as long as
-    # the provider hangs. That is precisely the leak `worktree.rb` names. A
-    # conflict met while unwinding is anchored, abandoned, and reported.
+    # NO MODEL CALL WHILE UNWINDING. A resolver is an unbounded provider round
+    # trip with no deadline anywhere in the chain, and running one inside an
+    # `ensure` while a `Timeout::Error` or a Ctrl-C climbs would hold the lease,
+    # and the worktree, for as long as the provider hangs. A conflict met while
+    # unwinding is anchored, abandoned, and reported.
     #
-    # A MARKER REFUSAL IS NOT RETRIED. `#continue` answers `:conflicted` again
-    # when markers survive, and that is a real second chance -- but taking it
-    # would loop a model on an unattended path with no bound and no budget owner,
-    # against a prompt that already stated the marker rule and produced this. So
-    # one attempt, then `#abandon`: the parent goes back to clean and the work
-    # stays anchored on its ref for a human to take. The cost of not retrying is
-    # one deferred merge; the cost of retrying is unbounded spend nobody is
-    # watching. Reporting is the knob that makes that survivable -- see {Reply}.
+    # A MARKER REFUSAL IS NOT RETRIED. {Worktree::Handback#continue} answers
+    # `:conflicted` again when markers survive, and that is a real second chance
+    # -- but taking it would loop a model on an unattended path with no bound
+    # and no budget owner, against a prompt that already stated the marker rule
+    # and produced this. So one attempt, then abandon: the parent goes back to
+    # clean and the work stays anchored on its ref for a human to take. The cost
+    # of not retrying is one deferred merge; the cost of retrying is unbounded
+    # spend nobody is watching.
     class WorkerHandoff
       ROLE = :merge_resolver
 
@@ -78,9 +73,9 @@ module Lain
       CONTEXT_MODE = :fresh
 
       # The one state a person has to fix by hand. Unwinding a merge needs git,
-      # and git is the thing that just failed, so there is no second mechanism to
-      # try -- what is left is to SAY it, in the one sentence that names the fix.
-      # A parent left mid-merge declines every later handback into it, forever.
+      # and git is the thing that just failed, so all that is left is to SAY it
+      # in the sentence that names the fix. A parent left mid-merge declines
+      # every later handback into it, forever.
       STRANDED = "the parent checkout is STILL MID-MERGE and could not be unwound -- " \
                  "run `git merge --abort` there before any further handback"
 
@@ -96,13 +91,13 @@ module Lain
       # was abandoned and `ref` still holds the work), `:declined`, or `:failed`.
       # `paths` is always an Array and `detail` always a String, so no caller
       # writes a nil guard; `ref` is nil only when nothing was ever anchored.
+      #
+      # Reopened rather than declared in a `Data.define ... do` block: a
+      # constant there is lexically scoped to the enclosing module, not the Data
+      # class.
       class Report
-        # Reopened rather than declared in a `Data.define ... do` block: a constant
-        # there is lexically scoped to the enclosing module, not the Data class
-        # (the pinned Ruby trap {Request::SYSTEM_PREFIX} records).
         KINDS = %i[nothing_to_do merged resolved conflicted declined failed].freeze
 
-        # Nothing happened, and there is nothing to say about it.
         def self.nothing = new(kind: :nothing_to_do)
 
         # A {Worktree::Handback::Outcome} that needed no resolver, carried
@@ -121,7 +116,7 @@ module Lain
 
         # The one line a caller folds into the worker's result. It names the
         # PATHS on a resolved conflict and the REF on every outcome that left
-        # work behind, because those are the two things a human acts on; it
+        # work behind, because those are the two things a human acts on, and
         # carries no conflict transcript, which is the child's business alone.
         # Empty when there is nothing to report, so a caller appends it blind.
         def summary
@@ -136,12 +131,11 @@ module Lain
 
         private
 
-        # A nil ref is a legitimate answer -- nothing was anchored, because a CAS
-        # lost, a lease was already released, or the raise landed before the
-        # write -- and rendering it as literal empty parens made a `:failed` read
-        # as "the work is gone" when there was simply never anything to name.
-        # Empty rather than "(none)": the sentence should not mention a ref it
-        # has no ref to mention.
+        # A nil ref is a legitimate answer -- a lost CAS, an already-released
+        # lease, a raise before the write -- and rendering it as literal empty
+        # parens made a `:failed` read as "the work is gone" when there was
+        # never anything to name. Empty rather than "(none)": the sentence
+        # should not mention a ref it has no ref to mention.
         def at_ref = ref.nil? ? "" : " (#{ref})"
 
         def detailed(sentence) = detail.empty? ? sentence : "#{sentence} -- #{detail}"
@@ -149,24 +143,23 @@ module Lain
 
       Reply = Data.define(:text, :refused)
 
-      # The resolver's own answer, normalized. The spawn seam hands back a
-      # {Tool::Result} ({Skill::RoleSpawn} -> {Tools::Subagent#run}), and a spawn
-      # that was REFUSED and never ran -- the depth ceiling's `depth_exceeded`, a
-      # Null resolver -- comes back as an ERROR result rather than a raise. The
-      # two are told apart because "never ran" and "ran and mis-edited" are
-      # different failures a human fixes differently, and the text rides onto the
-      # {Report} because the role template PROMISES the child somewhere to say
-      # what it had to drop. Squeezed and truncated: a Report summary is one line
-      # folded into a worker's result, not a transcript.
+      # The resolver's own answer, normalized. A spawn that was REFUSED and never
+      # ran -- the depth ceiling, a Null resolver -- comes back as an ERROR
+      # {Tool::Result} rather than a raise, and the two are told apart because
+      # "never ran" and "ran and mis-edited" are different failures a human
+      # fixes differently. The text rides onto the {Report} because the role
+      # template PROMISES the child somewhere to say what it had to drop.
+      # Squeezed and truncated: a Report summary is one line folded into a
+      # worker's result, not a transcript.
+      #
+      # Reopened for the same reason {Report} is: a constant declared inside a
+      # `Data.define ... do` block scopes to the enclosing module.
       class Reply
-        # Reopened for the same reason {Report} is: a constant declared inside a
-        # `Data.define ... do` block scopes to the enclosing module, not the Data
-        # class.
         LIMIT = 400
         ELLIPSIS = "..."
 
-        # `Tool::Result#error?` is already a strict Boolean (it coerces in its
-        # own initializer), so it rides through untouched.
+        # `Tool::Result#error?` is already a strict Boolean, so it rides through
+        # untouched.
         def self.from(result)
           new(text: squeeze(flatten(result.content)), refused: result.error?)
         end
@@ -191,7 +184,6 @@ module Lain
       # The spawn seam's Nulls. Neither edits anything, so a conflict falls down
       # the SAME path a resolver that changed nothing takes -- and, because both
       # answer an ERROR result, the {Report} says WHICH of them declined to run.
-      # No branch, no special case.
       module Resolver
         # No resolver wired at all.
         Null = Class.new do
@@ -210,9 +202,8 @@ module Lain
       # THE WAY TO BUILD ONE. `repo_root` is what the conflicted paths are
       # relative to and what the prompt absolutizes against, and it must be the
       # SAME checkout the handback merges into -- two roots would name files
-      # that are not the ones on disk. Taking one argument and building both
-      # halves from it is what makes that impossible to get wrong; {#initialize}
-      # stays open for a spec that substitutes the handback.
+      # that are not the ones on disk. Building both halves from one argument is
+      # what makes that impossible to get wrong.
       #
       # @param repo_root [String] the parent checkout work comes back to
       # @param journal [#<<] where {Telemetry::Handback} records land
@@ -248,8 +239,7 @@ module Lain
       # The UNWINDING completion: try to anchor the worker's commits to a ref
       # before the reclaim destroys them, restore the parent, release the lease
       # -- and spawn nothing. An arm calls this from its `ensure`, which is what
-      # keeps any exception class from skipping the attempt; the attempt's own
-      # `ensure` is what makes it a guarantee (see the class doc).
+      # keeps any exception class from skipping the attempt.
       #
       # @return [Report] with the same totality contract as {#reclaim}
       def surrender(lease, worker_id:) = complete(lease, worker_id:, resolver: Resolver::Skipped)
@@ -258,10 +248,9 @@ module Lain
 
       # `anchored` and `restoration` are read in the `ensure`, and a local the
       # parser has SEEN assigned is nil rather than undefined even when the
-      # assignment never ran -- so the unwind below is reachable however the body
-      # ended. `restoration.nil?` is precisely "no reported path got there",
-      # which is the `Exception` case: it has no Report to decorate, only a
-      # parent to leave usable.
+      # assignment never ran -- so the unwind below is reachable however the
+      # body ended. `restoration.nil?` is precisely "no reported path got
+      # there", which is the `Exception` case.
       def complete(lease, worker_id:, resolver:)
         return Report.nothing if lease.nil? || lease.released?
 
@@ -275,19 +264,16 @@ module Lain
         lease&.release
       end
 
-      # What the `ensure` owes when no reported path got there -- the `Exception`
-      # case, which has no Report to decorate, only obligations. Anchor first:
-      # the ref is the thing that survives the release under it.
+      # Anchor first: the ref is the thing that survives the release under it.
       def unwind(lease, anchored, worker_id:)
         anchor(lease, anchored, worker_id:)
         restore(anchored, worker_id:)
       end
 
       # Write the ref the body did not get to. {Worktree::Handback#anchor} merges
-      # nothing and touches no working tree, which is what makes it callable from
-      # here; it is also idempotent, so the guard below is an optimization rather
-      # than a correctness condition -- a handback that already anchored has a
-      # ref, and is handed straight back.
+      # nothing and touches no working tree, which is what makes it callable
+      # from here, and it is idempotent, so the guard below is an optimization
+      # rather than a correctness condition.
       #
       # TOTAL and UNREPEATED, for the reasons {#restore} is total: this runs from
       # an `ensure` where a raise would REPLACE the exception already climbing
@@ -299,12 +285,10 @@ module Lain
       # nothing, so against the real collaborator this rescue never fires. It
       # stays because `handback` is INJECTED: a substitute that raises would
       # otherwise replace the climbing exception with its own and skip the
-      # release -- measured, not assumed, by the one-attempt example. Keeping it
-      # here is what lets that rescue live where it can still journal.
+      # release -- measured, not assumed, by the one-attempt example.
       #
       # A lease that is nil or ALREADY RELEASED is refused rather than asked:
-      # there is nothing to read from a reclaimed checkout, and {#complete}'s own
-      # early return leaves through this same `ensure`.
+      # there is nothing to read from a reclaimed checkout.
       def anchor(lease, anchored, worker_id:)
         return anchored if lease.nil? || lease.released? || anchored&.ref
 
@@ -317,21 +301,20 @@ module Lain
       # `:untouched` when there was no merge of ours to unwind, `:restored` once
       # the parent is clean again, `:stranded` when it is not.
       #
-      # Only a merge THIS handback started is unwound -- `merge_in_progress?` is
-      # false when D4 declined because SOMEONE ELSE was already merging, and
-      # aborting a sibling worker's merge would be real damage.
+      # Only a merge THIS handback started is unwound -- `merge_in_progress?`
+      # is false when this class declined because SOMEONE ELSE was already
+      # merging, and aborting a sibling worker's merge would be real damage.
       #
       # TOTAL, and that is the whole point of the cop being off. This runs from
       # an `ensure`: an exception leaving here REPLACES the one already climbing
-      # through that `ensure` and skips the `lease&.release` under it, so the
-      # object's own guarantee would depend on a caller's paired {#surrender} to
-      # rescue it. `Async::Cancel` and `Interrupt` are `< Exception` -- the exact
-      # classes that made the first blocker -- and a `rescue StandardError` here
-      # is that blocker one level down. Every raise becomes `:stranded`, which is
-      # the loudest thing this method can honestly say: the parent could not be
-      # unwound, and {#told} escalates that onto the Report with the command that
-      # fixes it. Swallowing a cancel is not lost, either: `async` re-raises it
-      # at the task's next suspension point.
+      # through it and skips the `lease&.release` under it, so the object's own
+      # guarantee would depend on a caller's paired {#surrender} to rescue it.
+      # `Async::Cancel` and `Interrupt` are `< Exception`, so a `rescue
+      # StandardError` here is the original blocker one level down. Every raise
+      # becomes `:stranded`, the loudest thing this method can honestly say, and
+      # {#told} escalates it onto the Report with the command that fixes it. A
+      # swallowed cancel is not lost: `async` re-raises it at the task's next
+      # suspension point.
       def restore(anchored, worker_id:)
         return :untouched if anchored.nil? || anchored.ref.nil? || !anchored.merge_in_progress?
 
@@ -340,9 +323,8 @@ module Lain
         :stranded
       end
 
-      # A parent that could not be unwound is the one outcome a person must act
-      # on by hand, so it is escalated onto the Report rather than left to be
-      # discovered when the NEXT handback declines.
+      # Escalated onto the Report rather than left to be discovered when the
+      # NEXT handback declines.
       def told(report, restoration)
         return report unless restoration == :stranded
 
@@ -365,11 +347,11 @@ module Lain
       end
 
       # {Worktree::Handback#continue} is the only thing that decides a conflict
-      # is settled: it re-reads the files and refuses while markers survive, so a
-      # resolver that merely CLAIMED success cannot commit corruption. Either way
-      # the resolver's own words ride back, because a `:resolved` that says
-      # nothing and a `:conflicted` that says nothing are the two reports a human
-      # cannot act on.
+      # is settled: it re-reads the files and refuses while markers survive, so
+      # a resolver that merely CLAIMED success cannot commit corruption. Either
+      # way the resolver's own words ride back, because a `:resolved` that says
+      # nothing and a `:conflicted` that says nothing are the two reports a
+      # human cannot act on.
       def conclude(outcome, worker_id:, reply:)
         continued = @handback.continue(outcome.ref, worker_id:)
         if continued.kind == :merged
@@ -379,7 +361,6 @@ module Lain
         stand_down(outcome, detail: "#{continued.detail}; the resolver said: #{reply.text}")
       end
 
-      # One attempt, then out -- see the class doc for why this does not retry.
       # The merge itself is unwound by {#restore}, which runs on every path
       # including the ones that never reach here, so this only says WHY.
       def stand_down(outcome, detail:)
@@ -398,14 +379,14 @@ module Lain
       #
       # ABSOLUTE, because the child does not stand where these paths are from.
       # Git reports them relative to the parent checkout, but a spawned resolver
-      # resolves a relative path against its OWN `session.worker_env.cwd`
-      # ({Tools::ReadFile}), which is never the parent -- so a repo-relative path
-      # reads some other file, or none.
+      # resolves a relative path against its OWN `session.worker_env.cwd`, which
+      # is never the parent -- so a repo-relative path reads some other file, or
+      # none.
       #
-      # QUOTED, because a filename may contain a newline and D4 went to the
-      # trouble of `-z` and an encoding re-tag precisely so those paths open: a
-      # bare `- #{path}` shears one across two bullets and names a file that does
-      # not exist.
+      # QUOTED, because a filename may contain a newline, and the listing goes to
+      # the trouble of `-z` and an encoding re-tag precisely so those paths open:
+      # a bare `- #{path}` shears one across two bullets and names a file that
+      # does not exist.
       def prompt_for(outcome)
         <<~PROMPT
           A worker's commits were merged into this checkout and the merge conflicted. The
@@ -425,9 +406,8 @@ module Lain
     end
 
     class WorkerHandoff
-      # Reopened to hold the Null identity beside the class (the effect/handler
-      # idiom): no handoff wired means release and nothing else, so every arm that
-      # does not inject one behaves exactly as it did before this existed.
+      # No handoff wired means release and nothing else, so every arm that does
+      # not inject one behaves exactly as it did before this existed.
       Null = Class.new do
         def reclaim(lease, **)
           lease&.release

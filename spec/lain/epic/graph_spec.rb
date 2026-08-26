@@ -64,8 +64,8 @@ RSpec.describe Lain::Epic::Graph do
         .to raise_error(Lain::Epic::MalformedGraph, /"ghost".*related.*"a"/m)
     end
 
-    # discovered_from is provenance, not an edge: T3's split removes the original
-    # and T10 folds transitions naming it as inert history, so an id the graph no
+    # discovered_from is provenance, not an edge: a split removes the original
+    # and transitions naming it fold as inert history, so an id the graph no
     # longer holds is the DESIGNED state, not drift.
     it "accepts a discovered_from naming an issue the graph no longer holds" do
       value = graph(issue("a", discovered_from: "gone"))
@@ -86,7 +86,7 @@ RSpec.describe Lain::Epic::Graph do
         .to raise_error(Lain::Epic::MalformedGraph, /a -> b -> c -> a/)
     end
 
-    # T1 left the self-edge to this check on purpose, judging a cycle path the
+    # The self-edge is left to this check on purpose, judging a cycle path the
     # better message.
     it "refuses an issue that blocks itself, as a one-hop cycle" do
       expect { graph(issue("a", blocks: %w[a])) }.to raise_error(Lain::Epic::MalformedGraph, /a -> a/)

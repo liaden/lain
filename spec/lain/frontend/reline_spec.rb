@@ -150,7 +150,7 @@ RSpec.describe Lain::Frontend::LineEditor do
       expect(described_class.new.read("> ")).to eq("one\ntwo\nthree")
     end
 
-    # F8, specified rather than accidental: the rule is "a line ENDING in a
+    # Specified rather than accidental: the rule is "a line ENDING in a
     # backslash", so a backslash followed by a space is not one, and submits
     # with the backslash left in as ordinary text. Deliberate -- tolerating
     # trailing whitespace would weaken the rule from something a human can
@@ -163,7 +163,7 @@ RSpec.describe Lain::Frontend::LineEditor do
       expect(editor.join_continuations("first \\ ")).to eq("first \\ ")
     end
 
-    # F7: the two halves of the rule agree on line endings. Reline normalises
+    # The two halves of the rule agree on line endings. Reline normalises
     # CRLF out of the buffer itself, so this pins that they stay symmetric
     # rather than one silently tolerating what the other does not.
     it "treats the continuation marker identically in both halves of the rule" do
@@ -233,7 +233,7 @@ RSpec.describe Lain::Frontend::LineEditor do
       end
     end
 
-    # S2: vi_mode is a KNOWN-DEGRADED mode, and the damage is worse than a
+    # vi_mode is a KNOWN-DEGRADED mode, and the damage is worse than a
     # footnote. vi INSERT mode -- where the human actually types -- binds every
     # one of C-a..C-z to ed_insert, so a key action cannot fire AND the keypress
     # inserts a literal control character into the message. vi COMMAND mode
@@ -469,7 +469,7 @@ RSpec.describe Lain::Frontend::LineEditor do
       expect(described_class.bound?("C-x")).to be(false)
     end
 
-    # F4: the handler used to land in @handlers before the keymap loop, so a
+    # The handler used to land in @handlers before the keymap loop, so a
     # keymap failure left `bound?` answering true for a key that routed nowhere
     # -- a registration that reports success and can never fire.
     it "registers nothing at all when installing the keymap binding fails" do
@@ -479,7 +479,7 @@ RSpec.describe Lain::Frontend::LineEditor do
       expect(described_class.bound?("C-g")).to be(false)
     end
 
-    # F5: Config#key_bindings is Composite([oneshot, additional[mode],
+    # Config#key_bindings is Composite([oneshot, additional[mode],
     # default[mode]]) and inputrc populates `additional`, which OUTRANKS the
     # default table lain writes to. Checking only the frozen MAPPING constants
     # therefore accepts a key the user has already taken, and hands back a
@@ -500,8 +500,9 @@ RSpec.describe Lain::Frontend::LineEditor do
     # Found by running the review panel's probe against a REAL machine whose
     # inputrc selects vi mode. The live table is then vi_insert's catch-all,
     # where every one of C-a..C-z reads as :ed_insert -- so a naive "is the
-    # live binding non-nil" check refuses every key there is, and T15/T16 get
-    # no seam at all. Self-insert is the absence of a binding, not a claim.
+    # live binding non-nil" check refuses every key there is, and the features
+    # that need one get no seam at all. Self-insert is the absence of a
+    # binding, not a claim.
     it "still binds when the user's inputrc selects vi mode" do
       with_vi_inputrc do
         expect { described_class.bind("C-g") { |_buffer| nil } }.not_to raise_error
@@ -542,8 +543,8 @@ RSpec.describe Lain::Frontend::LineEditor do
         .to raise_error(described_class::KeyTaken)
     end
 
-    # The general guard against the failure mode that produced both this
-    # blocker and S1: a bind that succeeds and yields a key which does nothing.
+    # The general guard against the failure mode that produced this blocker and
+    # its sibling: a bind that succeeds and yields a key which does nothing.
     # After registering, the ACTIVE keymap must actually route to lain.
     it "refuses, rather than returning a binding the active keymap will not route" do
       allow(described_class.registry).to receive(:active_binding).and_return(nil, :ed_ignore)
@@ -621,7 +622,7 @@ RSpec.describe Lain::Frontend::LineEditor do
       expect(reported.join).to include("Integer")
     end
 
-    # F2: the report itself runs inside dispatch's rescue. A notifier that
+    # The report itself runs inside dispatch's rescue. A notifier that
     # raises would otherwise escape straight into Reline's input loop -- which
     # is precisely the outcome the rescue exists to prevent.
     it "survives a notifier that itself raises" do
@@ -634,7 +635,7 @@ RSpec.describe Lain::Frontend::LineEditor do
     end
   end
 
-  # F3: constructing a LineEditor used to install its notifier on the
+  # Constructing a LineEditor used to install its notifier on the
   # process-global registry, so a second construction silently disarmed the
   # first one's. The notifier is now scoped to a read, which is the only window
   # in which a key action can fire at all.
@@ -681,9 +682,9 @@ RSpec.describe Lain::Frontend::LineEditor do
       expect(Reline::KeyActor::VI_INSERT_MAPPING[ctrl_g]).to eq(:ed_insert)
     end
 
-    # The contract published to T15 and T16 names exactly two keys. This is the
-    # spec that fails if a reline bump changes that, rather than two cards
-    # discovering it in a terminal.
+    # The contract published to the two consuming features names exactly two
+    # keys. This is the spec that fails if a reline bump changes that, rather
+    # than two cards discovering it in a terminal.
     it "still offers exactly C-g and C-x, free in all three keymaps" do
       free = (1..26).select do |byte|
         described_class::Registry::KEYMAPS.each_value.all? do |mapping|

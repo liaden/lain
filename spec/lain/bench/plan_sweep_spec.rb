@@ -2,7 +2,7 @@
 
 require "tmpdir"
 
-# PC-6: the shape x density sweep, the chunk's closing deliverable. One fixed
+# The shape x density sweep, the chunk's closing deliverable. One fixed
 # multi-step plan runs under six arms -- shapes (Plan::LinearRewrite /
 # Plan::ForkPerStep) crossed with seam densities (every / thinned / none) -- and
 # each arm reports grader, tokens, and cache-write DISTRIBUTIONS over the
@@ -88,7 +88,7 @@ RSpec.describe Lain::Bench::PlanSweep do
 
     it "derives cache-writes from Bench::Rewrites, not Usage (the escalation trigger)" do
       # Fork-per-step's mainline is append-only: zero rewrites, proven over the
-      # continuation chain the same way P3's seam-policy spec proves it.
+      # continuation chain the same way the seam-policy spec proves it.
       ["fork / every", "fork / thinned"].each do |arm|
         writes = measurements_by_arm.fetch(arm).map(&:cache_writes)
         expect(writes).to all(eq(0))

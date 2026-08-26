@@ -7,7 +7,7 @@ require "shellwords"
 module Lain
   module CLI
     module Command
-      # `/meta` (T23): generate a customized harness from a prompt, then -- only
+      # `/meta`: generate a customized harness from a prompt, then -- only
       # on an explicit `/meta run <slug>` -- launch it in a new tmux window.
       #
       # The generate/run split IS the safety line. A generated script runs with
@@ -25,7 +25,7 @@ module Lain
       # and its `require "lain"`, so provenance never rests on the model's
       # goodwill. The role assembles the body; the command frames it.
       #
-      # `/meta summarizer <prompt>` (A4) aims that same generate-then-review
+      # `/meta summarizer <prompt>` aims that same generate-then-review
       # discipline at a {Summarizer} declaration instead of a harness. It writes
       # `.lain/summarizers/<slug>.rb` -- deliberately NOT the `.lain/meta/` the
       # run verb indexes, so a summarizer can never be launched as a script. A

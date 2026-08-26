@@ -2,7 +2,7 @@
 
 require "stringio"
 
-# T3: the Journal-duck decorator over {Lain::Provider::Admission}. The RECORD it
+# The Journal-duck decorator over {Lain::Provider::Admission}. The RECORD it
 # emits is spec'd at its own mirror path, `spec/lain/telemetry/provider_wait_spec.rb`;
 # what is asserted here is the DECORATION -- that a caller which queued is
 # journaled, that one admitted on its first attempt is not, that a refusal is
@@ -192,7 +192,7 @@ RSpec.describe Lain::Provider::Admission::Journal do
     end
   end
 
-  # T2 made {Admission.for} canonicalise before it builds, so one server has one
+  # {Admission.for} canonicalises before it builds, so one server has one
   # gate whatever spelling reached it -- and `#endpoint` therefore reports the
   # CANONICAL form. That silently changes what this decorator's records name, so
   # it is pinned rather than left to be discovered from a report that groups

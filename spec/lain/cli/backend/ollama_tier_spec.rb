@@ -119,7 +119,7 @@ RSpec.describe Lain::CLI::Backend::OllamaTier do
       expect(endpoint_of(provider)).to eq("https://ollama.example")
     end
 
-    # T6 AC: the run's chronicle must reach the ollama provider, not a Null
+    # The run's chronicle must reach the ollama provider, not a Null
     # spool. This is the line that decides whether the whole WAL is live or
     # dormant -- every OTHER spec in this card injects its own spool, so all of
     # them stay green if this forwarding is missing. Asserted on the spool

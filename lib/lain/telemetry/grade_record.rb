@@ -2,12 +2,12 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A grade attestation must name the grader that produced it, the subject
       # it judged, say whether it passed as a real boolean (the same
       # `presence:`-cannot-reject-`false` reasoning as {Verdict}'s `survived`),
       # and explain itself.
-      class GradeRecord < Guard
+      class GradeRecord < Declarative::Carrier
         attribute :grader
         attribute :subject_digest
         attribute :pass
@@ -19,35 +19,21 @@ module Lain
       end
     end
 
-    # GG-5's attestation: a plain {Grader::Grade} was never journaled before
-    # this record existed -- {Verdict} above is {Grader::Verified}'s own
-    # second-pass verdict, not a record of the ORDINARY `#grade` every grader
-    # (`Fixture`/`Recall`/`Rubric`/`TestHarness`) answers with. {Grader::Journaling}
-    # decorates any `#grade` duck and journals one of these per call, unchanged
-    # alongside the Grade it passes through.
+    # The grader's attestation for the ORDINARY `#grade` every grader answers
+    # with -- {Verdict} above is {Grader::Verified}'s second-pass verdict, which
+    # is a different question.
     #
-    # `grader` is the producing class's NAME (a String, like {IsolationLease}'s
-    # `backend`), not the object -- a self-describing value, never a live
-    # reference. `subject_digest` addresses whatever was graded, resolved by
-    # {Grader::Journaling#digest_for} in a pinned order that never guesses: an
-    # injected `subject_digest:` callable wins outright, else the subject's
-    # OWN `#digest` is trusted verbatim, else a bare String subject is hashed
-    # via `Canonical.digest`, else a named `UndigestableSubject` raises rather
-    # than silently addressing the subject's `Object#inspect` identity -- an
-    # attribution key, not a claim that two equal digests graded
-    # byte-identical subjects across runs.
+    # `grader` is the producing class's NAME, not the object: a self-describing
+    # value, never a live reference. `subject_digest` addresses whatever was
+    # graded, resolved by {Grader::Journaling#digest_for} in a pinned order that
+    # never guesses -- and where nothing in that order applies, an
+    # `UndigestableSubject` raises rather than silently addressing the subject's
+    # `Object#inspect` identity. It is an attribution key, not a claim that two
+    # equal digests graded byte-identical subjects across runs.
     #
-    # `criteria_digest` is the {Gherkin::Criteria#digest} this grade was judged
-    # against, when the subject was generated from Gherkin acceptance criteria
-    # -- optional and nil by default, since not every grader judges against a
-    # parsed criteria doc. Its presence is what lets a later {Bench::DryReplay}
-    # read recover "which criteria was this run graded against" from the
-    # record alone, the same join-key role {MemoryRoot}'s `root` plays for a
-    # committed turn's memory snapshot.
-    #
-    # Emitted by {Grader::Journaling}, the decorate-and-journal idiom
-    # {Grader::Verified} already established one level up for its own
-    # second-pass {Verdict}.
+    # `criteria_digest` is nil by default, since not every grader judges against
+    # a parsed criteria doc. Its presence is what lets a later replay recover
+    # "which criteria was this run graded against" from the record alone.
     GradeRecord = Data.define(:grader, :score, :pass, :why, :subject_digest, :criteria_digest) do
       include Journalable
 
@@ -60,7 +46,7 @@ module Lain
 
       def initialize(grader:, score:, pass:, why:, subject_digest:, criteria_digest: nil)
         grader = grader.to_s
-        Guards::GradeRecord.check!(grader:, subject_digest:, pass:, why:)
+        Carriers::GradeRecord.check!(grader:, subject_digest:, pass:, why:)
 
         super(
           grader: grader.dup.freeze,

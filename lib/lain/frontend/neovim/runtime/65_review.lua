@@ -30,12 +30,9 @@ function _G.__lain.open_review(path, generation, epic_slug)
   vim.b[buf].lain_review_epic_slug = epic_slug
 end
 
--- What marks the words a one-line echo could not carry. The MIDDLE is what
--- goes: every sentence on this rail leads with the CONDITION and ends with the
--- REMEDY -- `:LainReviewDone`'s own two refusals below,
--- `Review::Surface::Neovim::PARTLY_MARKED` -- so a head-first clip would drop
--- exactly the half that says what to do next, and a refusal that names a
--- condition but not its remedy is the loop this rail exists to break.
+-- What marks the words a one-line echo could not carry. The MIDDLE is what goes:
+-- every sentence on this rail leads with the CONDITION and ends with the REMEDY,
+-- so a head-first clip would drop exactly the half that says what to do next.
 local ELISION = " ... "
 
 -- The least a refusal can say and still be one: something happened, and
@@ -130,14 +127,14 @@ end
 -- both. That is the honest cost of the only route into the history, and it is
 -- still bounded -- the second event is what a reader ends on.
 --
--- Measured on nvim 0.12, and the reason this is not spelled the obvious way:
+-- Measured on nvim 0.12, and why this is not spelled the obvious way:
 -- `nvim_echo(_, true, _)` is the ONLY route into the message history, and it
 -- always DISPLAYS what it records, which is exactly what pages. Every "record
 -- quietly" spelling records nothing at all -- `:silent echomsg`,
 -- `:silent! echomsg`, `vim.fn.execute(..., "silent")` and
 -- `nvim_exec2(..., { output = true })` each suppress the HISTORY along with the
--- display. 'shortmess' is no help either: `T` (truncate in the middle) is
--- already in the default and `nvim_echo` ignores it.
+-- display. 'shortmess' is no help: `T` is already in the default and
+-- `nvim_echo` ignores it.
 --
 -- TWO PROMPTS, TWO OPTIONS, and 'messagesopt' only ever governed one of them.
 -- A message wider than the area raises the hit-enter prompt (`mode == "r"`),
@@ -151,29 +148,26 @@ end
 -- At 60 lines in a 20-line pane, twenty `<CR>`s did not clear it.
 --
 -- THE SWAPS ARE ON GLOBAL OPTIONS, so the echo is wrapped and both restores are
--- unconditional. An error escaping that one call used to leave `wait:0` in place
--- for the rest of the session, and with it nvim stops raising the hit-enter
--- prompt for ANY message from ANY source -- every over-long message anywhere
--- silently vanishing, which is a far worse failure than the one this rail was
--- built to fix. Verified by injecting a raise around `nvim_echo`: before the
--- `pcall`, a plain 400-cell echo from elsewhere afterwards read `blocking=false`.
--- With two options the live hazard is a PARTIAL restore, which is why both are
--- read back in the spec rather than only the one a given blocker named.
+-- unconditional. An error escaping that one call leaves `wait:0` in place for
+-- the rest of the session, and with it nvim stops raising the hit-enter prompt
+-- for ANY message from ANY source -- every over-long message anywhere silently
+-- vanishing, a far worse failure than the one this rail fixes. Verified by
+-- injecting a raise around `nvim_echo`: without the `pcall`, a plain 400-cell
+-- echo from elsewhere afterwards read `blocking=false`. With two options the
+-- live hazard is a PARTIAL restore, which is why both are read back in the
+-- spec.
 --
 -- An echo failure inside the `pcall` is deliberately not re-raised, so the
 -- DISPLAY half below still runs and the human still gets their answer; what
 -- THAT failure costs is the copy in `:messages`, and nothing else.
 --
--- That invariant rests on nvim 0.11+, the runtime's stated minimum (see
--- README.md's cockpit section). `vim.o.messagesopt` is read OUTSIDE the
--- `pcall`, at the top of `recorded`, so on an older editor the READ ITSELF
--- raises `Unknown option` -- escaping `recorded` before the `pcall` is ever
--- reached, and skipping the display echo below it entirely. Below the floor,
--- a refusal either escapes a `define`d callback and surfaces as nvim's own
--- `stack traceback:` (the paragraph on `:LainReviewDone` below carries that
--- measurement -- exactly the plugin-crash shape this rail exists to avoid) or,
--- over `notify`, vanishes without a trace: `:messages` empty, nothing echoed,
--- no error anything downstream ever sees.
+-- That invariant rests on nvim 0.11+, the runtime's stated minimum.
+-- `vim.o.messagesopt` is read OUTSIDE the `pcall`, at the top of `recorded`, so
+-- on an older editor the READ ITSELF raises `Unknown option`, escaping before
+-- the `pcall` is reached and skipping the display echo entirely. Below the
+-- floor, a refusal either escapes a `define`d callback and surfaces as nvim's
+-- own `stack traceback:` -- the plugin-crash shape this rail exists to avoid --
+-- or, over `notify`, vanishes without a trace.
 local function recorded(full)
   local messagesopt, more = vim.o.messagesopt, vim.o.more
   vim.o.messagesopt = messagesopt:gsub("hit%-enter", "wait:0")
@@ -188,21 +182,18 @@ end
 -- file that moved, an annotation it could not read. Echoed rather than silent
 -- because the human made a deliberate gesture and is owed an answer to it.
 --
--- WHAT THE ECHO GIVES UP THAT A RAISE DID NOT, stated because it is the one
--- shape where this rail loses ground and a reader would look for it here. A
--- raise survives `:silent`; `nvim_echo` does not, and neither does the history
--- copy `recorded` writes -- so under `:silent LainNoteDone` or `:silent w` a
--- refusal reaches NOTHING, screen and `:messages` alike. Not reachable today:
--- no lain keymap sets `silent = true`, and both gestures are typed, so the
--- refusals that ride this rail are all delivered under a human's own cmdline.
--- It becomes reachable the moment a mapping, a script or a `<Cmd>` wrapper
--- silences one of them, which is the cost to weigh before adding one.
+-- WHAT THE ECHO GIVES UP THAT A RAISE DID NOT: a raise survives `:silent`,
+-- while `nvim_echo` does not and neither does the history copy `recorded`
+-- writes -- so under `:silent LainNoteDone` or `:silent w` a refusal reaches
+-- NOTHING, screen and `:messages` alike. Not reachable while no lain keymap sets
+-- `silent = true`; it becomes reachable the moment a mapping, a script or a
+-- `<Cmd>` wrapper silences one of them, which is the cost to weigh first.
 --
 -- SIZE-AWARE ON THREE AXES, and it has to be. `nvim_echo` writes the MESSAGE
 -- AREA and never reads a window (`Review::Surface::Neovim::MARKED` carries that
 -- measurement), and a message the area cannot hold blocks the RPC rather than
 -- merely the keyboard -- so `:messages` and `:LainApprove` are both unreachable
--- exactly while a refusal is on screen (F25 measured a full two-minute hang over
+-- exactly while a refusal is on screen (measured: a full two-minute hang over
 -- `--server`). A sentence can fail to fit in three separate ways, each with its
 -- own prompt and its own option, and all three had to be closed before the rail
 -- could survive ANY sentence handed to it rather than only the short ones its
@@ -213,13 +204,11 @@ end
 --   HEIGHT  more lines than the editor has -> `-- More --`, `mode == "rm"` ('more')
 --
 -- Each was found separately and the first two fixes did not close the third, so
--- treat this list as the checklist any change here has to re-run. What "any
--- sentence" is worth is what was measured: eleven shapes crossing all three axes
--- -- 2000 lines in a ten-row pane, 20000 cells on one line, 200x400, CJK and
--- emoji in a six-row pane, a one-ROW pane, a 10x2 pane, 500 bare newlines, the
--- real five-line `ScriptError` in a three-row pane -- every one of them
--- `blocking = false` with a non-fast RPC round trip answering afterwards, and
--- both options back as found.
+-- treat this list as the checklist any change here has to re-run. Measured over
+-- eleven shapes crossing all three axes -- 2000 lines in a ten-row pane, 20000
+-- cells on one line, 200x400, CJK and emoji in a six-row pane, a one-ROW pane, a
+-- 10x2 pane, 500 bare newlines, the real five-line `ScriptError` in a three-row
+-- pane -- every one `blocking = false`, with both options back as found.
 --
 -- Two things are owed at once and one call cannot do both, because the flag
 -- that records is the flag that displays. They are separated instead: the whole
@@ -247,15 +236,13 @@ function _G.__lain.review_refused(message)
 end
 
 -- Annotation text for a buffer that is gone is text nothing can read again, and
--- this table would otherwise grow for the life of the session -- octo's own
--- registry defect. Cleared on unload, where the extmarks die anyway.
+-- this table would otherwise grow for the life of the session. Cleared on
+-- unload, where the extmarks die anyway.
 --
--- The reason recorded here first was that bufnrs get REUSED, which would make
--- this a correctness bug rather than a leak. Measured against this nvim: they do
--- not -- `nvim_create_buf` after a wipe answers a strictly higher number -- so
--- the growth is the whole of it. 41_layout's `buf_for` rides the same fact from
--- the other side: a remembered bufnr can go invalid, never come back as somebody
--- else's.
+-- A LEAK and not a correctness bug: bufnrs are not reused -- measured,
+-- `nvim_create_buf` after a wipe answers a strictly higher number -- so a stale
+-- entry can never be read as somebody else's. 41_layout's `buf_for` rides the
+-- same fact from the other side.
 vim.api.nvim_create_autocmd("BufUnload", {
   group = vim.api.nvim_create_augroup("lain_review", { clear = true }),
   callback = function(ev) review_annotations[ev.buf] = nil end,
@@ -307,24 +294,18 @@ end)
 -- lua table entirely and the Ruby side would read the hole as a malformed
 -- review rather than as a note that was never written.
 --
--- BOTH refusals below answer through `__lain.review_refused` and RETURN,
--- rather than `error()`ing: this command is bound by `nvim_create_user_command`
--- (`define`, `30_commands.lua`), and nvim wraps every such callback in its own
--- protected call -- an error that escapes THIS function gets a Lua
--- `stack traceback:` appended underneath it no matter how it was raised
--- (measured: even `error(msg, 0)` gets one, and re-raising a caught error from
--- inside a `pcall` does too, because the traceback is nvim's own outer
--- wrapper's doing, not this function's). That reads as a plugin crash. A
--- refusal a human can act on is not one, and this is the command's OWN
--- refusal rather than one the Ruby side sent back over the wire, so it names
--- the surface itself: a buffer this guard rejects is not open for the EPIC
--- review `:LainReviewDone` hands back -- it is very likely a changeset review
--- or a survey, which answer to `:LainReviewVerdict {verdict}` instead
--- (`46_sidebar.lua:188`). `{verdict}` is a PLACEHOLDER -- see :h lain-runtime-commands
--- for doc/lain.txt's own spelling of this command's argument -- lua has no
--- `Lain::Review::VERDICTS` to read an exemplar off, unlike the banner
--- (`cli/command/survey.rb#drawn`, `cli/command/review.rb#drawn`), which shows
--- a real one for exactly that reason.
+-- BOTH refusals below answer through `__lain.review_refused` and RETURN rather
+-- than `error()`ing: nvim wraps every `define`d callback in its own protected
+-- call, so an error escaping THIS function gets a Lua `stack traceback:`
+-- appended however it was raised -- measured, `error(msg, 0)` and a re-raise
+-- from inside a `pcall` included, because the traceback is nvim's outer
+-- wrapper's doing. That reads as a plugin crash.
+--
+-- A buffer this guard rejects is not open for the EPIC review
+-- `:LainReviewDone` hands back -- very likely a changeset review or a survey,
+-- which answer to `:LainReviewVerdict {verdict}` instead. `{verdict}` is a
+-- PLACEHOLDER -- see :h lain-runtime-commands for doc/lain.txt's own spelling,
+-- since lua has no `Lain::Review::VERDICTS` to read an exemplar off.
 define("LainReviewDone", function()
   local buf = vim.api.nvim_get_current_buf()
   local generation = vim.b[buf].lain_review_generation

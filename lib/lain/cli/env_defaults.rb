@@ -11,35 +11,26 @@ module Lain
     # Thor uses a `default:` only when the flag is absent, so
     # `default: EnvDefaults.string("LAIN_PROVIDER", "anthropic")` already means
     # "explicit flag beats env beats built-in default" without anything
-    # comparing the parsed options against the defaults afterward -- which is the
-    # version of this that cannot tell `--provider anthropic` from silence.
+    # comparing the parsed options against the defaults afterward -- which is
+    # the version of this that cannot tell `--provider anthropic` from silence.
     #
     # == What is deliberately NOT configurable here
     #
-    # The line is: **the environment may say how the model answers; it may never
-    # say what lain is allowed to do, or whether it keeps a record.**
-    #
-    # * Auto-approval, in either of its two shapes: the `auto` posture
-    #   (`/mode auto`, which resolves the gate to
-    #   {Effect::Handler::Gate::ApproveAll}) and the `--auto-approve` layer. A
-    #   stray `export` in a directory's `.envrc` would silently disable the
-    #   approval gate for every session started there, and the failure is
-    #   invisible -- tool calls simply stop being asked about. Approving without
-    #   being asked is a decision worth typing.
-    # * `--journal`. The Journal is the experiment record and usage accounting
-    #   reads it; a session that silently stopped journaling looks exactly like
-    #   one that ran cheaply.
-    #
-    # Both are reachable per invocation, by flag or by a typed `/mode` line,
-    # where they are visible.
+    # The environment may say how the model answers; it may never say what lain
+    # is allowed to do, or whether it keeps a record. So neither auto-approval
+    # shape (the `auto` posture and the `--auto-approve` layer) nor `--journal`
+    # is readable here. A stray `export` in a directory's `.envrc` would
+    # silently disable the approval gate for every session started there, and
+    # the failure is invisible -- tool calls simply stop being asked about; a
+    # session that silently stopped journaling looks exactly like one that ran
+    # cheaply. Both stay reachable per invocation, where they are visible.
     #
     # == Garbage fails loudly
     #
-    # A typo'd `LAIN_MAX_TOKENS=lots` refuses by name rather than falling back to
-    # the built-in default, which is the same reasoning that kept
-    # `StringInquirer` out of the state machine (CLAUDE.md): a silent answer to a
-    # malformed question is the one outcome nobody can debug. An UNSET variable
-    # is not garbage -- it is absence, and takes the default.
+    # A typo'd `LAIN_MAX_TOKENS=lots` refuses by name rather than falling back
+    # to the built-in default: a silent answer to a malformed question is the
+    # one outcome nobody can debug. An UNSET variable is not garbage -- it is
+    # absence, and takes the default.
     module EnvDefaults
       module_function
 
@@ -63,9 +54,8 @@ module Lain
       end
 
       # Integer when it reads as one, Float otherwise, so `LAIN_MAX_TOKENS` and
-      # `LAIN_TEMPERATURE` share one reader. nil is the refusal signal; `Float()`
-      # would raise here and be caught, but `Integer(exception: false)` reads the
-      # same way for both and keeps the raise in one place.
+      # `LAIN_TEMPERATURE` share one reader. nil is the refusal signal, which
+      # keeps the raise at the one call site above.
       def number(raw)
         Integer(raw, exception: false) || Float(raw, exception: false)
       end

@@ -5,13 +5,11 @@ require "monitor"
 module Lain
   # An append-only, content-addressed object database — git's, in miniature.
   #
-  # Separating the store from the Timeline is what makes forking O(1). A Timeline
-  # is only a (head digest, store) pair, so branching allocates nothing: both
-  # branches read the same immutable objects, and a shared prefix is stored once.
-  #
-  # Entries are never mutated and never removed, so writes are idempotent and a
-  # branch that becomes unreachable simply leaves garbage behind, exactly as an
-  # unreferenced git object does.
+  # Separating the store from the Timeline is what makes forking O(1): a Timeline
+  # is only a (head digest, store) pair, so branching allocates nothing and a
+  # shared prefix is stored once. Entries are never mutated and never removed, so
+  # writes are idempotent and an unreachable branch leaves garbage behind exactly
+  # as an unreferenced git object does.
   class Store
     class MissingObject < Error; end
 
@@ -23,12 +21,11 @@ module Lain
     # Returns the digest. Storing the same turn twice is a no-op, because the
     # digest already names its content.
     #
-    # Refuses (raising MissingObject) any predecessor digest the store does not
-    # already hold -- the referential-integrity check at the API boundary
-    # that keeps every chain reachable from any Store non-dangling. Checked
-    # inside the same #synchronize as the write, so a concurrent #put cannot
-    # race between the check and the insert. An object with no predecessor
-    # edges (Memory::Index puts Items alongside Nodes) is treated as
+    # Refuses (MissingObject) any predecessor digest the store does not already
+    # hold -- the referential-integrity check that keeps every chain reachable
+    # from any Store non-dangling. Checked inside the same #synchronize as the
+    # write, so a concurrent #put cannot race between check and insert. An object
+    # with no predecessor edges (Memory::Index puts Items alongside Nodes) is
     # parentless, same as one whose edge is nil.
     def put(object)
       @monitor.synchronize do
@@ -54,15 +51,13 @@ module Lain
 
     private
 
-    # The predecessor digests `object` requires the store to already hold. A
-    # Memory::Index::Node names one (`#parent`); an Event names three edges --
-    # a single `#render_parent` (which its `#parent` aliases, hence the `uniq`),
-    # a `#causal_parents` set, and a `#payload_digest` naming its out-of-line
-    # body. All are duck-typed: an object whose `#parent` means something OTHER
-    # than "digest of my predecessor in this store" (today only Event and
-    # Memory::Index::Node reach here through it, and both mean exactly that)
-    # would be misvalidated -- give such an object a differently-named accessor.
-    # An object naming no edge (Memory::Item) is parentless.
+    # The predecessor digests `object` requires the store to already hold: a
+    # Memory::Index::Node's `#parent`, or an Event's `#render_parent` (which its
+    # `#parent` aliases, hence the `uniq`), `#causal_parents` and the
+    # `#payload_digest` naming its out-of-line body. All duck-typed, so an object
+    # whose `#parent` means something OTHER than "digest of my predecessor in
+    # this store" would be misvalidated -- give such an object a differently
+    # named accessor. An object naming no edge (Memory::Item) is parentless.
     #
     # `payload_digest` is ordered AFTER the render edge so a chain built through
     # the public API (`Event.turn(parent: absent)`, whose body is also unstored)
@@ -75,20 +70,19 @@ module Lain
       [*single.uniq, *causal]
     end
 
-    # Refuses the FIRST predecessor edge the store does not already hold, in the
-    # message the original single-parent turn put pinned byte-for-byte across the
-    # Ruby and Rust stores -- extended to events, never reworded. Reads `@objects`
-    # directly (never `#key?`): `Monitor` is reentrant, so a second `#synchronize`
-    # here would not deadlock, but it would be a pointless second lock
-    # acquisition inside one already held.
+    # Refuses the FIRST missing predecessor edge, in the message the original
+    # single-parent turn put pinned byte-for-byte across the Ruby and Rust
+    # stores -- extended to events, never reworded. Reads `@objects` directly
+    # rather than `#key?`: `Monitor` is reentrant so it would not deadlock, but
+    # it would be a pointless second acquisition of a lock already held.
     #
     # Asks `#empty?` of the rejected edges rather than whether a `#find` result
-    # was nil, and that is the whole reason this reads as it does. A nil INSIDE
-    # `causal_parents` is an edge naming nothing, and the store holds nothing
-    # under nil -- but `find` answers nil for that edge exactly as it answers
-    # nil for "every edge is present", so the sentinel swallowed the malformed
-    # edge and minted the event. `parent_edges`' `filter_map` already drops the
-    # nil of a root's `#parent`, so no legitimate edge arrives here as nil.
+    # was nil, and that is why this reads as it does. A nil INSIDE
+    # `causal_parents` is an edge naming nothing, but `find` answers nil for it
+    # exactly as it answers nil for "every edge is present" -- so the sentinel
+    # swallowed the malformed edge and minted the event. `parent_edges`'
+    # `filter_map` already drops a root's nil `#parent`, so no legitimate edge
+    # arrives here as nil.
     def validate_parents!(object)
       dangling = parent_edges(object).reject { |digest| @objects.key?(digest) }
       return if dangling.empty?

@@ -12,31 +12,24 @@ module Lain
     # tool_result re-sent inside a bigger turn is ordinary. A pin names one
     # message exactly, which is set membership over whole canonical dumps.
     #
-    # == A digest is not a dump
+    # A DIGEST IS NOT A DUMP. A pin is recorded as a turn digest
+    # ({Session#pins}), and a turn's content address folds `meta` and
+    # `causal_parents` that the projected message never carries. A set built out
+    # of digests would be a well-formed set of Strings that misses EVERY lookup,
+    # silently and permanently. So this object takes MESSAGES and derives the
+    # bytes itself: there is no spelling of the constructor that accepts the
+    # wrong bytes.
     #
-    # A pin is recorded as a turn DIGEST ({Session#pins}), and a turn's content
-    # address folds `meta` and `causal_parents` that the projected message
-    # `{"role" =>, "content" =>}` never carries. A set built out of digests
-    # would be a perfectly well-formed set of Strings that misses EVERY lookup,
-    # silently and permanently -- the failure {Compaction::SummarySnapshot}'s
-    # "ALWAYS BUILD ONE WITH .take" comment describes, where the counts report
-    # 0/0 and an empty run looks the same as a broken one. So this object takes
-    # MESSAGES and derives the bytes itself, and refuses anything that is not
-    # one: there is no spelling of the constructor that accepts the wrong bytes.
+    # Two answers, one policy. {#protects?} is what {Compact} asks, per message,
+    # about text; {#indices_in} is what {Compaction::Head} asks, once, about
+    # positions -- which is how the head excludes the pinned span WITHOUT
+    # dumping a message per turn on the every-turn render path. Both read the
+    # same set, so the head and the Compact cannot name different messages.
     #
-    # == Two answers, one policy
-    #
-    # {#protects?} is what {Compact} asks, per message, about text. {#indices_in}
-    # is what {Compaction::Head} asks, once, about positions -- which is how the
-    # head excludes the pinned span WITHOUT dumping a message per turn on the
-    # every-turn render path. Both read the same set, so the head and the
-    # Compact cannot name different messages.
-    #
-    # {#indices_in} answers every BYTE-IDENTICAL position, not only the one
-    # whose turn was pinned. That is not a convenience: Compact can only ever
-    # see text, so it protects both occurrences of a repeated tool result once
-    # either is pinned, and a head that named only one would be measuring bytes
-    # no compaction will reclaim.
+    # {#indices_in} answers every BYTE-IDENTICAL position, not only the one whose
+    # turn was pinned: Compact can only ever see text, so it protects both
+    # occurrences of a repeated tool result once either is pinned, and a head
+    # naming only one would be measuring bytes no compaction will reclaim.
     class PinnedMessages
       # @param messages [Array<Hash>] the PROJECTED messages of the pinned
       #   turns, as {Context#render} builds them. Only read -- a deeply frozen
@@ -61,23 +54,21 @@ module Lain
 
       # Which of `messages` this policy protects, positionally.
       #
-      # Structural equality, never a dump: {Compaction::Head} runs on EVERY
-      # turn including the deferring ones, and a `Canonical.dump` per message
-      # there is a per-turn cost the head does not otherwise pay. An unpinned
-      # session -- the overwhelming majority -- pays nothing at all, because
-      # there is no set to look in.
+      # Structural equality, never a dump: {Compaction::Head} runs on EVERY turn
+      # including the deferring ones, and a `Canonical.dump` per message there is
+      # a per-turn cost the head does not otherwise pay. An unpinned session
+      # pays nothing at all -- there is no set to look in.
       #
-      # PRECONDITION, and it is load-bearing: `messages` are CANONICAL-NORMALIZED
+      # PRECONDITION, load-bearing: `messages` are CANONICAL-NORMALIZED
       # projections. `Hash#eql?` distinguishes `{"type" => …}` from `{type: …}`
-      # while {#protects?}'s canonical dumps deliberately collapse them
-      # (canonical.rb:18-21), so a candidate that dumps equal to a pin without
-      # being `eql?` to it is protected by {Context::Compact} and named by the
-      # head -- the over-report both were changed to delete. The pins themselves
-      # are canonicalized at construction, so only the CANDIDATES can violate
-      # this. Nothing reaches it through {Compaction::Source}: an Event's body is
-      # normalized at commit, so every Timeline projection is String-keyed. It is
-      # stated rather than checked because checking it per candidate is exactly
-      # the per-message dump this method exists to avoid.
+      # while {#protects?}'s canonical dumps deliberately collapse them, so a
+      # candidate that dumps equal to a pin without being `eql?` to it would be
+      # protected by {Context::Compact} and named by the head -- the over-report
+      # both were changed to delete. Pins are canonicalized at construction, so
+      # only CANDIDATES can violate this, and nothing reaches it through
+      # {Compaction::Source} (an Event's body is normalized at commit). Stated
+      # rather than checked, because checking it per candidate is exactly the
+      # per-message dump this method exists to avoid.
       #
       # @param messages [Array<Hash>] canonical-normalized projected messages,
       #   in order
@@ -100,12 +91,11 @@ module Lain
       #
       # Canonicalizing is what keeps {#protects?} and {#indices_in} reading the
       # SAME equivalence relation. `Canonical` collapses Symbol keys onto String
-      # keys (canonical.rb:18-21) and `Hash#eql?` does not, so a pin carrying
-      # Symbol keys inside its content dumps one way and hashes another: Compact
-      # protects the message, the head names it anyway, and the over-report is
-      # back. Paid once per pin, never per candidate. It also deep-freezes,
-      # which is what makes this object `Ractor.shareable?` and a snapshot
-      # rather than a reference into the caller's Hash.
+      # keys and `Hash#eql?` does not, so a pin carrying Symbol keys inside its
+      # content dumps one way and hashes another: Compact protects the message,
+      # the head names it anyway, and the over-report is back. Paid once per pin,
+      # never per candidate. It also deep-freezes, which is what makes this a
+      # snapshot rather than a reference into the caller's Hash.
       def canonical(message)
         raise ArgumentError, "a pin protects a projected message, got #{message.inspect}" unless projection?(message)
 

@@ -9,43 +9,32 @@ module Lain
     # cares about -- model, occupancy, elapsed time -- and this class turns
     # that string into something a line editor can actually accept.
     #
-    # Two jobs, and they are the two reasons the seam is an object rather than
-    # a lambda at the call site:
+    # Two jobs, and they are why the seam is an object rather than a lambda at
+    # the call site:
     #
     # 1. **Split.** Reline fixes its prompt to ONE line: `line_editor.rb`
     #    rewrites a newline in the prompt to a literal backslash-n, so a
     #    two-line rendering arrives mangled rather than wrapped. The frontend
     #    prints everything above the last line itself and hands the editor only
-    #    the last -- see {Rendering}.
-    # 2. **Contain.** A renderer reads live run state, and live run state
-    #    raises -- {Agent#occupancy} raises on a blank model, {Ext::Prompt}
-    #    raises on an unknown style word at RENDER time. A renderer is called
-    #    once per prompt, so one such mistake is not an ugly REPL but an
-    #    unusable one. A renderer that fails degrades to the text it was given
-    #    and the human keeps typing.
+    #    the last.
+    # 2. **Contain.** A renderer reads live run state, and live run state raises
+    #    -- {Agent#occupancy} on a blank model, {Ext::Prompt} on an unknown style
+    #    word at RENDER time. A renderer is called once per prompt, so one such
+    #    mistake is not an ugly REPL but an unusable one. The shipped renderer
+    #    contains both cases itself, closer to where it knows what they mean, so
+    #    this net is here for the renderer nobody has written yet.
     #
-    #    The shipped renderer contains those two cases itself, closer to where
-    #    it knows what they mean -- so this net catches nothing it can produce,
-    #    and that is the intended end state, not a gap. It is here for the
-    #    renderer nobody has written yet.
-    #
-    # Containment is total but never silent, which is the same trade
-    # {TTY::History} makes for an unwritable history file: the fallback is a
-    # rendered warning, ONCE, not an exception and not nothing. A misspelled
-    # style token is the case that forces this -- {Theme::UnknownToken} is a
-    # `KeyError`, so a rescue broad enough to keep the REPL alive is broad
-    # enough to hide it, and CLAUDE.md's loud-failure rule says a styling bug
-    # that renders plain in silence is the outcome to avoid. Warning once
-    # rather than per prompt is what keeps a broken renderer from becoming a
-    # second broken thing.
+    # Containment is total but never SILENT: the fallback is a rendered warning,
+    # once. {Theme::UnknownToken} is a `KeyError`, so a rescue broad enough to
+    # keep the REPL alive is broad enough to hide a misspelled style token, and
+    # a styling bug that renders plain in silence is the outcome to avoid.
+    # Warning once rather than per prompt is what keeps a broken renderer from
+    # becoming a second broken thing.
     #
     # {#compose} is pure ON THE SUCCESS PATH -- a function of its argument and
-    # the renderer's own state, with no memoization -- so a caller may call it
-    # as often as it likes, once per prompt today or once per tick if something
-    # later wants to redraw. The degrade path is deliberately NOT pure: it moves
-    # the warned-once latch and calls `notify`. It does not own the bottom line
-    # and does not arbitrate with {TTY::Countdown}; it only answers what the
-    # prompt says.
+    # the renderer's own state, no memoization -- so a caller may call it as
+    # often as it likes. The degrade path is deliberately NOT pure: it moves the
+    # warned-once latch and calls `notify`.
     #
     # Named `PromptComposer`, not `Prompt`, because `Prompt` here would SHADOW
     # {Lain::Prompt} -- the prompt-format language -- for every file lexically
@@ -72,16 +61,13 @@ module Lain
       # anyone is listening. A frontend passes `method(:render_warning)`.
       SILENT = ->(_message) {}
 
-      # A composed prompt, already split for the line editor: print `header`
-      # (often empty), then hand `line` over. Two fields rather than one string
-      # because the split is the frontend's contract with Reline, and a value
-      # that has already made it cannot be handed over half-applied.
+      # Two fields rather than one string because the split is the frontend's
+      # contract with Reline, and a value that has already made it cannot be
+      # handed over half-applied.
       Rendering = Data.define(:header, :line) do
-        # Put the header on the screen and hand back the one line the editor
-        # gets. Tell-Don't-Ask, and the reason the split is safe: a caller that
-        # read `line` on its own would silently drop the header, which is the
-        # exact bug the split exists to prevent. Both fields stay readable for
-        # anyone asserting on a rendering rather than drawing one.
+        # Tell-Don't-Ask, and the reason the split is safe: a caller that read
+        # `line` on its own would silently drop the header, which is the exact
+        # bug the split exists to prevent.
         #
         # @param output [#puts, #flush] the frontend's stream, never $stdout
         #   directly -- this class is inside lib/lain/frontend, but the stream
@@ -93,13 +79,10 @@ module Lain
         end
       end
 
-      # The renderer that composes nothing: the prompt is exactly the text the
-      # frontend already built. Null Object rather than a `nil` check, so
-      # {#compose} has one path and the default prompt is not a special case of
-      # itself.
-      #
-      # `**` rather than a named `theme:`: it accepts every keyword a renderer
-      # may be handed, today's and tomorrow's, and ignores all of them.
+      # The renderer that composes nothing, so {#compose} has one path and the
+      # default prompt is not a special case of itself. `**` rather than a named
+      # `theme:`: it accepts every keyword a renderer may be handed and ignores
+      # all of them.
       class Null
         def call(text:, **) = text
       end
@@ -135,12 +118,9 @@ module Lain
       private
 
       # Once per contiguous failure RUN, which is why {#compose} re-arms the
-      # latch on every success. Two failures to avoid, and only this shape
-      # avoids both: a warning per prompt buries the session it is trying to
-      # explain, while a warning once per process hides an outage that starts
-      # after the first one ended -- and run state flaps, so it does. That is
-      # the difference from {TTY::History}, whose warn-once is right precisely
-      # because a file that becomes unwritable stays unwritable.
+      # latch on every success. A warning per prompt buries the session it is
+      # trying to explain, while a warning once per process hides an outage that
+      # starts after the first one ended -- and run state flaps, so it does.
       def warn_degraded(error)
         return if @warned
 
@@ -163,11 +143,9 @@ module Lain
     end
 
     class PromptComposer
-      # Reopened rather than grown inside the body above -- tty.rb's idiom: each
-      # collaborator is its own responsibility, and the split keeps each body
-      # inside Metrics/ClassLength instead of loosening it. This half (T13) is
-      # what fills the renderer seam: a prompt composed from the run's own state
-      # through {Lain::Ext::Prompt}, the format language the extension compiles.
+      # Reopened rather than grown inside the body above -- tty.rb's idiom,
+      # which keeps each body inside Metrics/ClassLength instead of loosening
+      # it. This half fills the renderer seam.
 
       # The prompt lain ships with, beside {Lain::Prompt}'s other prompt assets
       # under `lib/lain/prompt/`. `lain.gemspec` builds `spec.files` from `git
@@ -175,21 +153,18 @@ module Lain
       # ships with the gem and needs no manifest line of its own.
       DEFAULT_CONFIG = File.expand_path("../prompt/default.toml", __dir__)
 
-      # Room a composed line has when the config names no `max_width`. Read
-      # ONCE per chat, in {Formatted}'s constructor -- see the comment on
-      # {Formatted#resolve_room} for why a per-prompt read is a fork/exec trap.
+      # Room a composed line has when the config names no `max_width`. Read ONCE
+      # per chat -- {Formatted#resolve_room} has the fork/exec reason.
       #
-      # The leading `::` is what the class doc's shadow warning is about from
-      # this side: bare `TTY` inside `module Frontend` is {Frontend::TTY}, and
-      # `TTY::Screen` would be a NameError under it.
+      # The leading `::` is the class doc's shadow warning from this side: bare
+      # `TTY` inside `module Frontend` is {Frontend::TTY}, and `TTY::Screen`
+      # would be a NameError under it.
       SCREEN = -> { ::TTY::Screen.width }
 
-      # Where a run's prompt format comes from: the project's own, then the
-      # machine's, then what we ship. Narrowest scope that answered wins, and
-      # `.lain/` is the project-scoped convention `services.rb` and
-      # `summarizers.rb` already follow. NOT the state feed, which left this
-      # tree for `$XDG_STATE_HOME/lain` (F50, {ProjectDir}): a prompt format is
-      # something a user writes and may commit, and machine state is not.
+      # The project's own, then the machine's, then what we ship: narrowest
+      # scope that answered wins. NOT `$XDG_STATE_HOME/lain`, where the state
+      # feed lives -- a prompt format is something a user writes and may commit,
+      # and machine state is not.
       def self.config_path(paths: Paths.new, project: Dir.pwd)
         [File.join(project, ".lain", "prompt.toml"), File.join(paths.config_home, "prompt.toml")]
           .find { |candidate| File.exist?(candidate) } || DEFAULT_CONFIG
@@ -203,11 +178,10 @@ module Lain
       # in a prompt format must not cost a chat.
       #
       # `EncodingError` is in the rescue list because it is NOT under
-      # {Lain::Error}: {Lain::Ext::Prompt.from_toml} refuses non-UTF-8 bytes
-      # with Ruby's own class, and nothing above catches it -- {CLI::Wiring#run}
-      # wraps this in no net and `exe/lain` rescues only {Lain::Error}. Without
-      # it, one Latin-1 byte in a config aborted the REPL with a backtrace
-      # BEFORE a prompt existed, which is the opposite of degrading.
+      # {Lain::Error}: {Lain::Ext::Prompt.from_toml} refuses non-UTF-8 bytes with
+      # Ruby's own class, and nothing above catches it. Without it, one Latin-1
+      # byte in a config aborted the REPL with a backtrace BEFORE a prompt
+      # existed.
       #
       # @param state [#to_h] the run's readings; a {RunState} in a live chat
       # @param path [String] the config to compile
@@ -221,23 +195,19 @@ module Lain
         Null.new
       end
 
-      # Today's prompt with the run's state composed ABOVE it, never around it.
-      #
-      # Above, because the text this is handed is already styled and already
-      # carries the frontend's warmth prefix: interpolating it as a variable
-      # would strip every control byte out of it, since the formatter sanitizes
-      # Cc on the way in (which is what stops a directory name smuggling SGR).
-      # So the composed line takes its own row and the editor's line arrives
-      # byte for byte -- {PromptComposer#compose} then does the split.
+      # Today's prompt with the run's state composed ABOVE it, never around it:
+      # the text this is handed is already styled and already carries the
+      # frontend's warmth prefix, and interpolating it as a variable would strip
+      # every control byte out of it, since the formatter sanitizes Cc on the way
+      # in. So the composed line takes its own row and the editor's line arrives
+      # byte for byte.
       class Formatted
-        # The columns a rendering occupies: the WIDEST of its lines.
-        #
-        # Never `.width` over the whole string. That counts a literal "\n" as
-        # zero, so a multi-line source reports the SUM of its lines' widths,
-        # which is not a terminal column. Graphemes, not characters, is the
-        # other half: unicode-width 0.2 stopped defining a str's width as the
-        # sum of its chars', which is why a ZWJ family emoji is one glyph here
-        # and three under a naive per-char sum.
+        # The WIDEST of its lines, never `.width` over the whole string: that
+        # counts a literal "\n" as zero, so a multi-line source reports the SUM
+        # of its lines' widths, which is not a terminal column. Graphemes, not
+        # characters, is the other half -- unicode-width 0.2 stopped defining a
+        # str's width as the sum of its chars', which is why a ZWJ family emoji
+        # is one glyph here and three under a naive per-char sum.
         def self.columns(rendered)
           rendered.lines.map { |line| Lain::Ext::Prompt.width(line) }.max.to_i
         end
@@ -252,8 +222,8 @@ module Lain
         #   which is why a spec needs no stand-in class
         # @param path [String] the config this format was read from. Required,
         #   not defaulted: every degraded-path warning names the file the human
-        #   has to open, and with three config layers in play a default would
-        #   let a caller silently misattribute one.
+        #   has to open, and with three config layers a default would let a
+        #   caller silently misattribute one.
         # @param screen [#call] columns available, called at most ONCE
         # @param notify [#call] renders a degraded-path warning line
         def initialize(format:, state:, path:, screen: SCREEN, notify: SILENT)
@@ -276,34 +246,27 @@ module Lain
 
         private
 
-        # A composed line wider than its room wraps, and a wrapped row above
-        # the cursor smears the moment anything redraws. Dropping it is the
-        # honest degrade: the prompt still works, it just says less. A blank
-        # rendering takes the same path -- a chat with nothing to report is
-        # not owed an empty row.
+        # A composed line wider than its room wraps, and a wrapped row above the
+        # cursor smears the moment anything redraws. A blank rendering takes the
+        # same path -- a chat with nothing to report is not owed an empty row.
         def fits?(status)
           !status.strip.empty? && Formatted.columns(status) <= @room
         end
 
-        # Read ONCE, here, and never again -- and not at all when the config
-        # named its own `max_width`.
-        #
-        # `TTY::Screen.width` looks cheap and is not. It memoizes nothing, and
-        # with no ioctl answer -- a pty whose winsize was never set, which is
-        # the default in plenty of pty and CI contexts -- its chain falls
-        # through to `size_from_tput`, which shells out `tput lines` AND `tput
-        # cols`. Measured: 200 subprocess spawns per 100 width reads, 3.0 ms
-        # per prompt against 9 us for the render itself. Avoiding a fork/exec
-        # per prompt is the ENTIRE argument for composing in process rather
-        # than shelling out to starship, so paying one to decide whether a line
-        # fits would give the whole thing away.
+        # Read ONCE, here, and not at all when the config named its own
+        # `max_width`. `TTY::Screen.width` looks cheap and is not: it memoizes
+        # nothing, and with no ioctl answer -- a pty whose winsize was never set,
+        # the default in plenty of pty and CI contexts -- its chain falls through
+        # to `size_from_tput`, which shells out `tput lines` AND `tput cols`.
+        # Measured: 200 subprocess spawns per 100 width reads, 3.0 ms per prompt
+        # against 9 us for the render itself. Avoiding a fork/exec per prompt is
+        # the ENTIRE argument for composing in process.
         #
         # Deliberately NOT refreshed on SIGWINCH. Reline installs its own WINCH
-        # handler for the line editor's redraw and `Signal.trap` REPLACES
-        # rather than chains, so trapping it here would break the editor's
-        # resize in order to keep a status row from wrapping -- a bad trade. A
-        # terminal resized mid-chat therefore keeps the width it started with;
-        # the cost is at worst one wrapped row until the next chat.
+        # handler for the line editor's redraw and `Signal.trap` REPLACES rather
+        # than chains, so trapping it here would break the editor's resize to
+        # keep a status row from wrapping. A terminal resized mid-chat keeps the
+        # width it started with.
         def resolve_room(screen)
           usable(@format.settings["max_width"]) || usable(read_screen(screen)) || FALLBACK_COLUMNS
         end
@@ -321,17 +284,13 @@ module Lain
         end
 
         # A `$style` variable resolves at RENDER time, so an unknown word is a
-        # per-prompt refusal that compiling the config could not have caught.
-        # Rescued here rather than left to {PromptComposer}'s own net because
-        # only this object knows a CONFIG supplied the word.
+        # per-prompt refusal compiling the config could not have caught. Rescued
+        # here rather than by {PromptComposer}'s own net because only this object
+        # knows a CONFIG supplied the word.
         #
-        # Once per contiguous failure RUN, re-armed by {#call} on every success
-        # -- {PromptComposer#warn_degraded}'s policy, held here for the same
-        # reason it holds there. A `$style` word is not a fixed property of the
-        # config the way a misspelled literal would be: it arrives in the
-        # variables, which is run state, and run state flaps. Warning once per
-        # process would hide the second outage; warning per prompt would bury
-        # the first.
+        # Once per contiguous failure RUN, {PromptComposer#warn_degraded}'s
+        # policy: a `$style` word arrives in the variables, which is run state,
+        # and run state flaps.
         def warn_unstyled(error)
           return if @warned
 
@@ -351,13 +310,10 @@ module Lain
         HOUR = 3600
 
         # Past this a reading says nothing a human wants at a prompt. A ratio
-        # over 1.0 is rarer since T10 -- a live chat's Agent carries the book
-        # {CLI::Backend#context_window} built from the window the provider says
-        # it is serving -- but it is still ORDINARY rather than a bug: a model
-        # no book carries and no server reports on still divides by
-        # {ContextWindow::CONSERVATIVE_FALLBACK}, which is deliberately small so
-        # compaction fires early. "412%" is noise either way, and
-        # {CLI::Up::Hud} clamps for exactly the same reason.
+        # over 1.0 is ORDINARY rather than a bug: a model no book carries and no
+        # server reports on divides by {ContextWindow::CONSERVATIVE_FALLBACK},
+        # which is deliberately small so compaction fires early. "412%" is noise
+        # either way, and {CLI::Up::Hud} clamps for the same reason.
         FULL = 1.0
 
         # @param agent [#occupancy, #context, #dispatching?] the LIVE agent, so
@@ -369,12 +325,9 @@ module Lain
         #   `"derivation_refusal_streak"` are the readings this class takes
         #   from it
         # @param mode [#posture, #layers, nil] the session's live mode -- a
-        #   {Lain::Mode} value or a {Mode::Switch} both answer this duck.
-        #   `nil` until the mode ladder is wired into a live chat (T5/T10),
-        #   which is why it defaults to nil rather than being required: this
-        #   card owns no line in `cli/wiring.rb`, so today's caller keeps
-        #   constructing a {RunState} exactly as it always has, and `#to_h`
-        #   reports no mode -- byte-identical to before this card.
+        #   {Lain::Mode} value or a {Mode::Switch} both answer this duck. nil
+        #   until the mode ladder is wired into a live chat, so a caller that
+        #   passes nothing gets a `#to_h` reporting no mode.
         def initialize(agent:, clock:, status_feed:, mode: nil)
           @agent = agent
           @clock = clock
@@ -390,17 +343,15 @@ module Lain
         private
 
         # NO keyword, deliberately: the book is the AGENT's, set once when the
-        # chat was wired ({CLI::Backend#context_window}, the same instance the
-        # {StatusFeed} and {Compaction::Source} divide by), so this segment and
-        # the state feed report one occupancy for one turn. Passing a book
-        # here would be this class deciding a denominator it has no way to
-        # resolve, which is how the two surfaces came to disagree.
+        # chat was wired, so this segment and the state feed report one occupancy
+        # for one turn. Passing a book here would be this class deciding a
+        # denominator it has no way to resolve, which is how the two surfaces
+        # came to disagree.
         #
         # The book is loud about a blank model slot and {Lain::Agent#occupancy}
         # lets it raise. A prompt is not the place to answer for a wiring bug:
         # absence is the only honest reading left, and the missing segment is
-        # itself the signal -- {StatusFeed#occupancy_of}'s reasoning, one
-        # altitude up, and the same two error classes.
+        # itself the signal.
         def occupancy
           ratio = @agent.occupancy
           ratio && "#{(ratio.clamp(0.0, FULL) * 100).round}%"
@@ -413,66 +364,44 @@ module Lain
           size.positive? ? size.to_s : nil
         end
 
-        # F47: {Compaction::Source::Derived} has been counting consecutive
-        # refused derivations and journaling the streak, and nothing read it.
-        # This is the reading, and it is ABSENT for a healthy session --
-        # {#fleet}'s convention, so the `( ... )` group elides rather than
-        # rendering a standing "compaction ok" nobody asked for.
-        #
-        # {Compaction::Source::Derived.stalled?} decides WHETHER a streak is a
-        # stall -- asked, never re-implemented here. The threshold is private
-        # over there for the reason F47 exists: a number exported across two
-        # namespaces grows a second `>=` in the next reader (`cli/up/hud.rb`,
-        # the day it projects this field) and the two drift.
+        # ABSENT for a healthy session, {#fleet}'s convention, so the `( ... )`
+        # group elides rather than rendering a standing "compaction ok" nobody
+        # asked for. {Compaction::Source::Derived.stalled?} decides WHETHER a
+        # streak is a stall -- asked, never re-implemented here, because a
+        # threshold exported across two namespaces grows a second `>=` in the
+        # next reader and the two drift.
         #
         # `to_i` rather than a nil guard: a feed that has published no streak
         # reads as zero, which is healthy, and absence must never render as a
-        # stall. That covers a state struct written before the field existed
-        # AND a `--no-journal --no-nvim` run, where no tee is built, the feed
-        # observes nothing at all, and this reads absent for the life of the
-        # session -- F47's silence, unchanged, exactly as `#fleet` behaves on
-        # the same run. The card's promise holds for a journaling run.
+        # stall. That covers a state struct written before the field existed AND
+        # a `--no-journal --no-nvim` run, where no tee is built and this reads
+        # absent for the life of the session.
         #
-        # == THE READING LATCHES, deliberately
+        # THE READING LATCHES, deliberately. Only a SUCCESSFUL derivation clears
+        # the streak, so a session that refused twice and then settled into the
+        # warm-cache defer band goes on reporting a stall while nothing is being
+        # refused. What "stalled" says is: no derivation has succeeded since
+        # `stalled?`'s worth of consecutive refusals -- this session has stopped
+        # shrinking its context and is rendering the full history. It does NOT
+        # say a derivation was attempted and failed on this turn.
         #
-        # {Compaction::Source#context_for} reaches a derivation only when
-        # `need.needed?` and `#timely?` both say so, and only a SUCCESSFUL
-        # derivation clears the streak. So a session that refused twice and
-        # then settled into the warm-cache defer band -- what `Source#timely?`
-        # itself calls "the steady state" -- goes on reporting a stall while
-        # nothing is being refused.
-        #
-        # What "stalled" therefore says: no derivation has succeeded since
-        # {Compaction::Source::Derived.stalled?}'s worth of consecutive
-        # refusals. An operator should conclude that this session has stopped
-        # shrinking its context and is rendering the full history -- true in
-        # the defer band too -- and should NOT conclude that a derivation was
-        # attempted and failed on this turn.
-        #
-        # Decaying it was considered and refused. `Source#record` journals a
-        # {Compaction::Source::CompactionDecision} on EVERY turn, deferred or
-        # not, so the signal is reachable from {StatusFeed} -- but
-        # `compacted: false` covers both a defer and a refusal, and a refusing
-        # turn writes both records, so a sink clearing on it would clear the
-        # streak on the very turn that just refused. And a defer is no evidence
-        # the chain became derivable: refusals are deterministic over a history
-        # that only grows, so clearing on one trades a reading that is LATE for
-        # one that is WRONG. A live reading needs a record that distinguishes
-        # "not attempted" from "attempted and succeeded", which is a change to
-        # what `Source` journals and a card of its own.
+        # Decaying it was refused. `compacted: false` covers both a defer and a
+        # refusal, and a refusing turn writes both records, so a sink clearing on
+        # it would clear the streak on the very turn that just refused. And a
+        # defer is no evidence the chain became derivable: refusals are
+        # deterministic over a history that only grows, so clearing on one trades
+        # a reading that is LATE for one that is WRONG.
         def compaction
           streak = @status_feed.state["derivation_refusal_streak"].to_i
 
           Compaction::Source::Derived.stalled?(streak) ? "stalled" : nil
         end
 
-        # The posture's own lighter, then every active layer's, in the same
-        # precedence order {Mode#describe} reports -- `LayerSet#layers`
-        # already canonicalizes to declaration order, so this does not
-        # re-sort. `accept_edits` with no layers reduces to an empty Array,
-        # which is nil here for the same reason {#fleet} and {#occupancy} are:
-        # a `( ... )` group elides a variable that is absent, never one that
-        # is an empty String rendered anyway.
+        # The posture's own lighter, then every active layer's, in the precedence
+        # order {Mode#describe} reports -- `LayerSet#layers` already
+        # canonicalizes to declaration order. An empty result is nil for {#fleet}
+        # and {#occupancy}'s reason: a `( ... )` group elides a variable that is
+        # absent, never one that is an empty String rendered anyway.
         def mode
           return nil unless @mode
 
@@ -484,25 +413,22 @@ module Lain
         # describes the run while nothing is running. The two diverge at the
         # `human>` prompt a parked `ask_human` opens: a dispatch is in flight,
         # the composer runs anyway, and the line read "qwen3-coder:30b idle 0s"
-        # while ollama was prefilling 4,339 tokens. An operator driving on
-        # "retry until the status leaves idle" turned one prompt into four
-        # journaled turns on the strength of it.
+        # while ollama was prefilling 4,339 tokens. An operator driving on "retry
+        # until the status leaves idle" turned one prompt into four journaled
+        # turns on the strength of it.
         #
         # {Agent#dispatching?} rather than {Agent#state}: the state records what
         # the loop was last DOING, so a torn turn leaves it parked in
         # `:awaiting_model` and would suppress this reading for the rest of the
-        # session -- silence that is just as dishonest, and a regression against
-        # the run this segment exists to describe.
-        #
-        # The clock is not wrong and is not changed. The segment simply has
-        # nothing to say mid-dispatch, so it elides the way {#fleet} and {#mode}
-        # do -- and the shipped format keeps the literal word "idle" inside the
-        # same `( ... )` group, so eliding the reading elides the claim.
+        # session. The clock is not wrong and is not changed -- the segment
+        # simply has nothing to say mid-dispatch, and the shipped format keeps
+        # the literal word "idle" inside the same `( ... )` group, so eliding the
+        # reading elides the claim.
         #
         # NOT an endless method: `def idle = expr unless cond` parses as
-        # `(def idle = expr) unless cond`, so the guard would run once at class-
-        # body level against a nil receiver rather than per call. Verified -- it
-        # raised NoMethodError while lain.rb was still loading.
+        # `(def idle = expr) unless cond`, so the guard would run once at
+        # class-body level against a nil receiver rather than per call. Verified
+        # -- it raised NoMethodError while lain.rb was still loading.
         def idle
           humanize(@clock.idle) unless @agent.dispatching?
         end

@@ -7,74 +7,50 @@ require "English"
 module Lain
   module Tools
     # Hands one of an epic's documents to the human and waits for it back --
-    # the agent's end of the ownership baton {Epic::Review} keeps.
-    #
-    # The exchange is {Tools::AskHuman}'s shape applied to a file instead of a
-    # sentence: resolve the artifact, open a review on it, ask an editor to
-    # open it, tell the human, then park on that review's promise inside
-    # {#perform}. Parking parks the FIBER, so the reactor keeps running and a
-    # second review on a second path proceeds alongside. The wait is unbounded
-    # on purpose -- a review is done when the human says it is.
+    # the agent's end of the ownership baton {Epic::Review} keeps. Parking parks
+    # the FIBER, so the reactor keeps running and a second review on a second
+    # path proceeds alongside. The wait is unbounded on purpose: a review is
+    # done when the human says it is.
     #
     # == No instance-wide pending state, and why that is structural
     #
-    # AskHuman's single-question `@pending` ivar is its own invariant and is
-    # deliberately not copied here. Everything one call needs -- the generation,
-    # the path, the baseline, the promise -- rides the {Epic::Review::Token} that
-    # call opened, and the notes it draws are keyed by `(epic_slug, generation)`
-    # in {Notes}. Two agents reviewing two paths therefore cannot resolve each
-    # other's delta, which an ivar would do in silence.
+    # AskHuman's single-question `@pending` ivar is deliberately not copied here.
+    # Everything one call needs -- generation, path, baseline, promise -- rides
+    # the {Epic::Review::Token} that call opened, and the notes it draws are
+    # keyed by `(epic_slug, generation)`. Two agents reviewing two paths
+    # therefore cannot resolve each other's delta, which an ivar would do in
+    # silence.
     #
     # == Two halves, one baton: three documents and one changeset
     #
     # {REVIEWABLE} holds three stages because {Epic::Home} holds exactly three
-    # documents. {IMPLEMENTATION} is the fourth and it is NOT a document: it
-    # gates a changeset digest, so the review that opens over it is a
-    # {Review::Session} over a {Review::Changeset} drawn on a {Review::Surface}.
-    # This tool refused that stage by name until the surface existed; it does
-    # now, and the two halves are told apart by ONE branch in {#perform} rather
-    # than by a table that could fold a stage onto the wrong artifact.
+    # documents. {IMPLEMENTATION} is the fourth and is NOT a document: it gates
+    # a changeset digest. The two are told apart by ONE branch in {#perform}
+    # rather than by a table that could fold a stage onto the wrong artifact.
     #
-    # Both halves take a generation from the SAME {Epic::Review}, and that is
-    # what makes "a second review proceeds alongside the first" true across
-    # them: two documents already shared the counter, and a changeset review
-    # with a counter of its own would hand out a number a document review had
-    # already stamped on a buffer.
+    # Both halves take a generation from the SAME {Epic::Review}: a changeset
+    # review with a counter of its own would hand out a number a document review
+    # had already stamped on a buffer.
     #
-    # What the changeset half's claim HOLDS is nothing, and that is deliberate.
-    # {Epic::Review#open?} is asked with {Epic::Home::Artifact#path} -- an
-    # absolute path -- and this claim's is {Review::Session#digest}, a
-    # scheme-prefixed content address ({Review::Keying.digest}) that no
-    # filesystem path can equal. So the write guard stays inert, which is
-    # correct for a review holding no document, while a SECOND review of the
-    # same changeset is still refused by {Epic::Review::AlreadyOpen}.
-    #
-    # `review_closed` therefore records the diff on both sides, because a
-    # changeset review hands back a JUDGEMENT and not edited bytes -- the same
-    # statement {Epic::Review#abandon} makes deliberately about its own close,
-    # except this one really did complete. The judgement itself is journaled by
-    # {Review::Session#submit} as a `review_verdict`, addressed to the changeset
-    # it judged, which is the record {Epic::Submission.implementation} takes as
-    # its `digest:`.
+    # The changeset half's claim HOLDS nothing, deliberately. {Epic::Review#open?}
+    # is asked with an absolute path, and this claim's is a scheme-prefixed
+    # content address that no filesystem path can equal. So the write guard stays
+    # inert -- correct for a review holding no document -- while a SECOND review
+    # of the same changeset is still refused by {Epic::Review::AlreadyOpen}.
     #
     # == What the written side is, per stage
     #
-    # Only `epic_plan` is a resolved graph, which is both why it lives at
-    # `home.epic` and why its written side is {Epic::Intake::Written}. The other
-    # two are {Epic::Intake::Prose}, which is never parsed: running the epic
-    # grammar over a research note reports the human's ordinary prose as a
-    # malformed epic, which is a false alarm about their work rather than a
-    # report of it. {Epic::Review#baseline_for} reads that difference off
-    # `graph_digest`, so this tool chooses the written side and never a baseline.
+    # Only `epic_plan` is a resolved graph. The other two are
+    # {Epic::Intake::Prose}, which is never parsed: running the epic grammar
+    # over a research note reports the human's ordinary prose as a malformed
+    # epic -- a false alarm about their work rather than a report of it.
     class RequestReview < Tool
-      # An artifact whose bytes are read whole, then wrapped in the written side
-      # that names what may honestly be compared over them. ONE table because it
-      # is one decision, not two that must agree.
+      # ONE table because it is one decision, not two that must agree.
       #
       # The graph comes from parsing the bytes THIS read returned, not from a
-      # second `Home#read_epic`: two reads can straddle a write, and a graph from
-      # one revision handed to {Epic::Intake::Written} with bytes from another is
-      # exactly what that value refuses.
+      # second `Home#read_epic`: two reads can straddle a write, and a graph
+      # from one revision paired with bytes from another is exactly what
+      # {Epic::Intake::Written} refuses.
       PROSE = ->(bytes) { Epic::Intake::Prose.new(bytes:) }
       GRAPH = ->(bytes) { Epic::Intake::Written.new(graph: Epic::Document.parse_markdown(bytes), bytes:) }
 
@@ -85,23 +61,16 @@ module Lain
       }.freeze
 
       # The one stage {REVIEWABLE} does not hold, because the artifact behind it
-      # is a diff. See the class doc for what its review claims and what it does
-      # not.
+      # is a diff. See the class doc for what its review claims.
       IMPLEMENTATION = "implementation"
 
-      # What a changeset is read against when the caller names only a base: the
-      # working tree's own head, which is the revision an agent has just written
-      # and the human is being asked about.
+      # The revision an agent has just written and the human is being asked
+      # about -- always the head, never a caller's choice.
       HEAD = "HEAD"
 
-      # Everything, in one view. {Review::Bounds} is what decides when a
-      # cumulative view is too large to be one, and wiring it is the review
-      # CLI's card rather than this one's.
-      #
-      # Resolved out of the strategy registry rather than restated, the two CLI
-      # defaults' rule: a literal here would go on naming a grouping after the
-      # registry stopped shipping one, and would say so to a MODEL rather than
-      # raising.
+      # Resolved out of the strategy registry rather than restated: a literal
+      # here would go on naming a grouping after the registry stopped shipping
+      # one, and would say so to a MODEL rather than raising.
       SCOPE = Review::Partition::DEFAULT_SCOPE.to_sym
 
       WAITING = "%<path>s is open for review (generation %<generation>d, epic %<slug>s). " \
@@ -115,16 +84,13 @@ module Lain
 
       AGENT = "lain"
 
-      # The stage vocabulary is {Epic::STAGES} entire, and now every member of
-      # it opens a review. One list, so the wire contract cannot drift from the
-      # pipeline.
+      # The stage vocabulary is {Epic::STAGES} entire -- one list, so the wire
+      # contract cannot drift from the pipeline.
       #
-      # `base` is the field the changeset half cannot default. A diff is read
-      # against a ref, and picking one here -- `main`, `origin/HEAD`, the fork
-      # point -- would be lain guessing which work is under review; the wrong
-      # guess shows a human somebody else's commits and asks them to judge them.
-      # So it is asked for, and its absence is a refusal ({Refusals.needs_base})
-      # rather than a default.
+      # `base` is the field the changeset half cannot default. Picking one here
+      # -- `main`, `origin/HEAD`, the fork point -- would be lain guessing which
+      # work is under review, and the wrong guess shows a human somebody else's
+      # commits and asks them to judge them. Its absence is a refusal.
       class Input < Tool::Input
         field :stage, :string, required: true,
                                description: "Which of the epic's stages to hand to the human: research, " \
@@ -141,22 +107,18 @@ module Lain
 
       input_model Input
 
-      # The editor that is not there ({CLI::HumanReplies::NoEditor}'s name, and
-      # {Sink::Null}'s bargain): a headless run still opens and settles a
-      # review, the human just finds the file themselves -- the notification
-      # below names the path either way. Nothing asks whether one is attached.
+      # A headless run still opens and settles a review; the human just finds
+      # the file themselves, since the notification names the path either way.
+      # Nothing asks whether an editor is attached.
       module NoEditor
         def self.open_review(_path, _generation, **) = nil
       end
 
       # A verdict has no rail to arrive on, so a changeset review could never be
-      # answered. Its own refusal because there is nothing to do about it after
-      # the fact: see {NoBindings}.
+      # answered. See {NoBindings}.
       class Unroutable < Error; end
 
-      # No rail for the editor's `done` or `verdict` gestures to arrive on, so
-      # nothing to route them to. Both messages are {CLI::HumanReplies}'s
-      # exactly, because that is the object the wiring binds in as this duck.
+      # No rail for the editor's `done` or `verdict` gestures to arrive on.
       #
       # == The two halves answer DIFFERENTLY, and that difference is the object
       #
@@ -167,12 +129,9 @@ module Lain
       #
       # `bind_changeset_review` REFUSES, because not one of those is true of it.
       # There is no file, no `:LainReviewDone`, and no second answer path: a
-      # verdict arrives on this rail or it never arrives, so a review that parks
-      # with nothing bound parks forever with nothing said. A Null Object is
-      # right when a message has an honest nowhere to go ({Sink::Null}); this
-      # one has none, so the honest null is the one that says so -- and the
-      # SILENT version is worse than the missing source beside it, which at
-      # least refuses in a sentence.
+      # verdict arrives on this rail or never, so a review that parks with
+      # nothing bound parks forever with nothing said. A Null Object is right
+      # when a message has an honest nowhere to go; this one has none.
       #
       # It raises rather than answering a refusal value because
       # {Implementation#tell} binds BEFORE anything is drawn: the raise lands
@@ -189,21 +148,19 @@ module Lain
       end
 
       # Nothing is wired to produce a changeset, so `implementation` has nothing
-      # to review. LOUD rather than silent, and unlike {NoEditor} it is not a
-      # bargain a headless run can still work under: a human without an editor
-      # can open a file the notification names, and there is no equivalent way
-      # to read a diff that was never built.
+      # to review. LOUD, unlike {NoEditor}: a human without an editor can still
+      # open a file the notification names, and there is no equivalent way to
+      # read a diff that was never built.
       module NoChangesets
-        # `source` and not `call`, deliberately: {#live} treats anything
-        # answering `call` as a thunk to be read with no arguments, so a
-        # callable seam here would be invoked as one and answer the source it
-        # was asked to build.
+        # `source` and not `call`: {#live} treats anything answering `call` as a
+        # thunk to be read with no arguments, so a callable seam here would be
+        # invoked as one instead of building a source.
         def self.source(base:, head:) = nil # rubocop:disable Lint/UnusedMethodArgument
       end
 
       # No tee between the Review and the journal, so the notes went only to the
-      # journal and this call has none to quote. A review still opens, settles,
-      # and reports its delta -- see {Notes} for why the tee is what reads them.
+      # journal and this call has none to quote. A review still opens, settles
+      # and reports its delta.
       module NoNotes
         def self.take(**) = []
       end
@@ -260,25 +217,22 @@ module Lain
 
       protected
 
-      # ONE branch, because there are two kinds of artifact and not four. The
-      # document half is a table; {Implementation} is the other.
+      # ONE branch, because there are two kinds of artifact and not four.
       def perform(input, _invocation)
         input.stage == IMPLEMENTATION ? implementation.hold(input) : hold_document(input)
       end
 
       private
 
-      # Built per call and never held, so the thunked collaborators below
-      # ({#bindings}, {#changesets}) are read at the moment they are used --
-      # which is the whole reason they are thunks.
+      # Built per call and never held, so the thunked collaborators are read at
+      # the moment they are used -- the whole reason they are thunks.
       def implementation
         Implementation.new(review:, notes: @notes, bindings:, notify: @notify, seams: @seams)
       end
 
-      # `fetch` and not `[]`: {Implementation} takes the one stage this table
-      # omits, so a member added to {Epic::STAGES} with no artifact behind it
-      # raises here rather than falling through to a refusal that would describe
-      # it as a document.
+      # `fetch` and not `[]`: a member added to {Epic::STAGES} with no artifact
+      # behind it raises here rather than falling through to a refusal that
+      # would describe it as a document.
       def hold_document(input)
         reader, written_side = REVIEWABLE.fetch(input.stage)
         artifact = reader.call(home, input.issue_id)
@@ -296,15 +250,14 @@ module Lain
         settled(open_on(artifact, written), written)
       end
 
-      # The await and the report over it. Its own method so the `ensure` names
-      # ONE token rather than guarding on whether a review was ever opened.
+      # Its own method so the `ensure` names ONE token rather than guarding on
+      # whether a review was ever opened.
       #
       # {Notes#take} is delete-on-read and this is its only reader, so notes
       # that never reach a report would sit in the tee for the life of the
-      # process. The drain therefore runs whether or not the report is built --
-      # a `done` that lands while this turn is being cancelled is the case.
-      # Idempotent by construction: on the ordinary path the line above already
-      # took them and this takes nothing.
+      # process -- a `done` landing while this turn is cancelled is the case.
+      # The drain is idempotent: on the ordinary path the line above already
+      # took them.
       def settled(token, written)
         Tool::Result.ok(Report.new(path: token.path, delta: token.await, compared: !written.graph_digest.nil?,
                                    notes: notes_of(token)).to_s)
@@ -314,11 +267,6 @@ module Lain
 
       def notes_of(token) = @notes.take(epic_slug: token.epic_slug, generation: token.generation)
 
-      # The route back is bound BEFORE the editor is told, because the editor
-      # answers on its own thread: a human fast enough to hit `done` between the
-      # two calls would otherwise send a gesture nothing could route, and the
-      # awaiting fiber below would never wake.
-      #
       # The editor's answer is a NOTICE, not an outcome -- nil when the open
       # landed, else its own words for having no window to put the file in. It
       # rides the notification rather than being discarded, so a human whose
@@ -327,33 +275,22 @@ module Lain
         tell(review.open(path: artifact.path, written:))
       end
 
-      # Everything between taking the baton and the human knowing they have it,
-      # in one method because a raise anywhere in it means the same thing.
+      # The route back is bound BEFORE the editor is told, because the editor
+      # answers on its own thread: a human fast enough to hit `done` between the
+      # two calls would otherwise send a gesture nothing could route, and the
+      # awaiting fiber would never wake.
       #
       # {Epic::Review#open} journals its claim BEFORE handing back the token, so
-      # the claim is durable the instant it exists. A raise here therefore wedges
-      # the epic permanently: no editor buffer exists to send `done` from, no
-      # binding was routed for the CLI to settle through, and a restarted lain
-      # rebuilds the claim from the journal and goes on refusing every write.
-      # There is no user-reachable escape at all -- so the baton goes back before
-      # the error propagates.
+      # a raise here wedges the epic permanently: no editor buffer exists to
+      # send `done` from, no binding was routed for the CLI to settle through,
+      # and a restarted lain rebuilds the claim from the journal and goes on
+      # refusing every write. There is no user-reachable escape, so the baton
+      # goes back before the error propagates.
       #
-      # An `ensure` and not a `rescue`, which is the difference between
-      # implementing the rule and implementing half of it: `Async::Stop`
-      # descends from Exception rather than StandardError, so a turn cancelled
-      # at exactly this instant is invisible to any ordinary rescue -- and it
-      # lands in precisely the window where nobody has been told and no `done`
-      # can ever arrive. `ensure` covers the raise, the cancellation and the
-      # throw alike.
-      #
-      # Whatever was propagating goes on propagating, with one deliberate
-      # exception that {#give_back} names and nothing else: an `ensure` that
-      # raises REPLACES the error it was cleaning up after, which is why the
-      # give-back has to be careful about what it may raise.
-      #
-      # {Effect::Handler} turns a raising tool into an error Result, so a dead
-      # RPC socket or a missing notifier still reaches the model as a failure
-      # rather than as a review that quietly did not happen.
+      # An `ensure` and not a `rescue`: `Async::Stop` descends from Exception
+      # rather than StandardError, so a turn cancelled at exactly this instant
+      # is invisible to any ordinary rescue -- and it lands in precisely the
+      # window where nobody has been told and no `done` can ever arrive.
       #
       # Deliberately NOT extended over `token.await`. Past this point the human
       # genuinely holds the file: a cancelled turn must leave the baton exactly
@@ -369,25 +306,7 @@ module Lain
         give_back(token) unless told
       end
 
-      # `$ERROR_INFO` because the failure is not an argument here: `ensure` sees
-      # whatever is propagating, including the cancellations a rescue cannot
-      # name, and the journal should say which one it was.
-      #
-      # {Epic::Review::NotOpen} is swallowed, and it is the ONLY thing that may
-      # be. It means the baton is already back -- which is this method's entire
-      # postcondition -- so there is nothing left to do and nothing to report.
-      # The race is real and the bind-first ordering opens it deliberately: the
-      # editor answers on its own thread, so a `done` can settle the review
-      # between the bind and a later failure. Without this, `abandon` would
-      # raise out of the caller's `ensure` and REPLACE the real error with a
-      # refusal about a review that had already closed itself -- including
-      # replacing an `Async::Stop`, which is the very class the ensure exists
-      # for.
-      #
-      # Nothing wider. Any other failure out of `abandon` -- a dead journal
-      # above all -- is a real breakage AND leaves the baton genuinely held, so
-      # hiding it would trade a loud error for the silent wedge this whole path
-      # was built to close.
+      # Both halves close the window the same way; see {Baton.give_back}.
       def give_back(token) = Baton.give_back(review, token)
 
       def waiting(token, notice)
@@ -419,27 +338,19 @@ module Lain
 
     class RequestReview
       # Reopened so the collaborators below are measured on their own rather
-      # than inflating the class they serve ({Tool::SchemaValidator}'s idiom).
+      # than inflating the class they serve.
 
       # Handing the baton back when the hand-over never completed. Its own
-      # module because BOTH halves of this tool need it and neither owns it:
-      # {RequestReview#tell} and {Implementation#tell} open the same window and
-      # close it the same way, and a second copy would be free to close it
-      # differently.
+      # module because BOTH halves need it and neither owns it: a second copy
+      # would be free to close the same window differently.
       module Baton
-        # The baton as {Review::Handover} sees it: one message, and the epic's
-        # whole share of a changeset review.
+        # One message, and the epic's whole share of a changeset review. It
+        # exists so the handover -- the review tier's object, bound by callers
+        # that have no epic at all -- never names {Epic::Review}.
         #
-        # It exists so that the handover -- which is the review tier's object,
-        # and is bound by callers that have no epic at all -- never names
-        # {Epic::Review}. A review opened outside one passes
-        # {Review::Handover::Unheld}, whose `settle` is genuinely nothing;
-        # everything an epic needs to be told is here.
-        #
-        # `disk:` is the DIFF on both sides, and that is a statement rather than
-        # a placeholder: a changeset review hands back a judgement and not
-        # edited bytes, so what is "on disk" is exactly what lain drew. See the
-        # class doc on {RequestReview}.
+        # `disk:` is the DIFF on both sides, a statement rather than a
+        # placeholder: a changeset review hands back a judgement and not edited
+        # bytes, so what is "on disk" is exactly what lain drew.
         class Held
           def initialize(review:, token:, written:)
             @review = review
@@ -447,11 +358,10 @@ module Lain
             @written = written
           end
 
-          # Nothing is rescued here. {Epic::Review::NotOpen} -- the second
-          # answer to a review that has already closed -- is a refusal the human
-          # is owed in words, and the rail that called this is the one that
-          # turns it into one ({Review::Handover#wrote_verdict}); swallowing it
-          # here would report a verdict that settled nothing as one that stood.
+          # Nothing is rescued. {Epic::Review::NotOpen} -- the second answer to
+          # a review already closed -- is a refusal the human is owed in words,
+          # and the calling rail turns it into one; swallowing it here would
+          # report a verdict that settled nothing as one that stood.
           #
           # @return [Epic::Intake::Delta] whatever the epic made of the close
           def settle = @review.settle(@token.generation, disk: @written.bytes)
@@ -463,21 +373,17 @@ module Lain
         # sees whatever is propagating, including the cancellations a rescue
         # cannot name, and the journal should say which one it was.
         #
-        # {Epic::Review::NotOpen} is swallowed, and it is the ONLY thing that
-        # may be. It means the baton is already back -- which is this method's
-        # entire postcondition -- so there is nothing left to do and nothing to
-        # report. The race is real and the bind-first ordering opens it
-        # deliberately: the editor answers on its own thread, so a `done` can
-        # settle the review between the bind and a later failure. Without this,
-        # `abandon` would raise out of the caller's `ensure` and REPLACE the
-        # real error with a refusal about a review that had already closed
-        # itself -- including replacing an `Async::Stop`, which is the very
-        # class the ensure exists for.
+        # {Epic::Review::NotOpen} is the ONLY thing that may be swallowed. It
+        # means the baton is already back, which is this method's whole
+        # postcondition. The race is real and the bind-first ordering opens it
+        # deliberately: a `done` can settle the review between the bind and a
+        # later failure, and without this `abandon` would raise out of the
+        # caller's `ensure` and REPLACE the real error -- including an
+        # `Async::Stop`, the very class that ensure exists for.
         #
         # Nothing wider. Any other failure out of `abandon` -- a dead journal
         # above all -- is a real breakage AND leaves the baton genuinely held,
-        # so hiding it would trade a loud error for the silent wedge this whole
-        # path was built to close.
+        # so hiding it would trade a loud error for a silent wedge.
         def give_back(review, token)
           failure = $ERROR_INFO
           review.abandon(token.generation,
@@ -490,42 +396,29 @@ module Lain
 
       # The `implementation` stage's half of this tool: build a changeset, open
       # a {Review::Session} over it, hand it to a human, park on the baton, and
-      # report the verdict.
-      #
-      # Its own object because it shares NOTHING with the document half but the
-      # baton and the notifier -- no {Epic::Home}, no {Epic::Intake} comparison,
-      # no editor, no {Notes} tee -- and the two were sitting in one class only
-      # because one `stage` argument reaches both. `Metrics/ClassLength` said so
-      # first.
+      # report the verdict. Its own object because it shares NOTHING with the
+      # document half but the baton and the notifier.
       class Implementation
-        # The three collaborators the changeset half needs and the document half
-        # has no use for, with their nulls resolved ONCE.
+        # The collaborators the changeset half needs and the document half has
+        # no use for, with their nulls resolved ONCE -- which is why every
+        # reader below coalesces rather than any caller nil-checking.
         #
         # A plain class and deliberately NOT a `Data.define`, which is what the
         # shape suggests and what `spec/value_object_shareability_spec.rb`
-        # refuses: every Data value here is deeply frozen and Ractor-shareable,
+        # refuses: a Data value here must be deeply frozen and Ractor-shareable,
         # and these are live COLLABORATORS -- a surface holding an RPC socket, a
-        # policy, a source factory. Freezing them would be a lie about what they
-        # are.
+        # policy, a source factory.
         #
-        # == When the port is checked, and why it is not always at construction
+        # == When the port is checked, and why not always at construction
         #
-        # {Review::Surface.check!} ran HERE, when the tool was constructed, and
-        # still does for a surface handed over as itself: that is before any
-        # `review_opened` claim exists, so a surface answering the port badly
-        # refuses a WIRING rather than wedging an epic.
-        #
-        # A THUNK cannot be checked then -- there is nothing behind it yet, and
-        # a Proc answers none of the seven messages -- so a thunked surface is
-        # checked when it RESOLVES, on every {Implementation#hold}. That is
-        # still before anything durable: the read happens while `Session.open`'s
-        # arguments are evaluated, ahead of its own `changeset_opened` and well
-        # ahead of the epic's claim, and `hold` answers the refusal as a
-        # {Refusals.unopened}. What is lost is only the moment -- a bad wiring
-        # is found by the first `implementation` call instead of at startup.
-        #
-        # The nulls resolve HERE and nowhere else, which is why every reader
-        # below coalesces rather than any caller nil-checking.
+        # {Review::Surface.check!} runs at construction for a surface handed
+        # over as itself, which is before any `review_opened` claim exists: a
+        # surface answering the port badly refuses a WIRING rather than wedging
+        # an epic. A THUNK cannot be checked then -- a Proc answers none of the
+        # port's messages -- so it is checked when it RESOLVES, on every
+        # {Implementation#hold}. That is still ahead of anything durable, so all
+        # that is lost is the moment: a bad wiring is found by the first
+        # `implementation` call instead of at startup.
         class Seams
           attr_reader :policy
 
@@ -566,21 +459,15 @@ module Lain
           @seams = seams
         end
 
-        # {RequestReview#hold_document}'s shape: resolve the artifact, open a
-        # review on it, hand it over, park.
-        #
         # The session is opened BEFORE the baton, and that order is what lets
         # the claim be keyed on {Review::Session#digest} -- the address a
         # verdict will judge. The other order would need the claim to name
-        # something else, and then one review would have two identities.
+        # something else, and one review would then have two identities.
         #
-        # {Review::Bounds::TooLarge} joined this list with T31c, which moved the
-        # size guard onto {Review::Session#present} -- the call `tell` makes
-        # below. An implementation stage over a changeset past a ceiling is a
-        # review that could not be opened, which is precisely what these
-        # rescues mean; without it a ceiling would leave a TOOL CALL raising,
-        # and the model would meet a stack rather than a sentence naming the
-        # ceiling and the walk to take instead.
+        # {Review::Bounds::TooLarge} belongs in the rescue list because a
+        # changeset past the ceiling is a review that could not be opened;
+        # without it the model would meet a stack rather than a sentence naming
+        # the ceiling and the walk to take instead.
         def hold(input)
           return Refusals.needs_base if Blankness.blank?(input.base)
 
@@ -601,25 +488,19 @@ module Lain
                                source: source.class.name, surface: @seams.surface, policy: @seams.policy)
         end
 
-        # The award of the baton, on the changeset's own address. The written
-        # side is the DIFF -- the bytes lain drew for the human -- which is
-        # prose by {Epic::Intake::Prose}'s reading, so nothing structural is
-        # claimed over it either way.
+        # The written side is the DIFF -- the bytes lain drew for the human --
+        # which is prose, so nothing structural is claimed over it either way.
         def opened(session, source)
           written = Epic::Intake::Prose.new(bytes: source.diff)
           [session, tell(@review.open(path: session.digest, written:), session, written)]
         end
 
-        # {RequestReview#tell}'s rule on the changeset rail, and its whole
-        # `ensure` argument with it: bind BEFORE anything is drawn, because a
-        # human fast enough to answer between the two would otherwise send a
-        # verdict nothing could route, and give the baton back if the
-        # hand-over raises before they have been told.
+        # {RequestReview#tell}'s rule on the changeset rail, `ensure` argument
+        # and all: bind BEFORE anything is drawn, and give the baton back if the
+        # hand-over raises before the human has been told.
         #
-        # `present` answers a refusal SENTENCE or nothing ({Review::Surface}'s
-        # convention, which is exactly `open_review`'s), so it rides the
-        # notification the same way: a human whose editor refused still learns
-        # a review is waiting on them.
+        # `present` answers a refusal SENTENCE or nothing, so it rides the
+        # notification the way `open_review`'s notice does.
         def tell(token, session, written)
           @bindings.bind_changeset_review(handover(session, token, written))
           notice = session.present(scope: SCOPE)
@@ -630,26 +511,22 @@ module Lain
           Baton.give_back(@review, token) unless told
         end
 
-        # The open review as BOTH rails see it (T31a). One object, bound once
-        # here and fanned out to the editor's answered rail by whoever holds
-        # both ({CLI::HumanReplies#bind_changeset_review}) -- so a note and a
+        # The open review as BOTH rails see it: one object, so a note and a
         # verdict cannot reach two different reviews.
         #
         # The view comes off the seams rather than off the surface, and it has
         # to: a surface holds no review state and exposes no rendering, while a
         # gesture's row number is only resolvable by the view that STAMPED the
-        # rendering it came from. The wiring passes one object to both.
+        # rendering it came from.
         #
-        # `reviewing` is the other half of that one wiring (T32a): the view's
-        # diff surface is built with the editor and holds no round, so a `<CR>`
-        # on a sidebar row opens nothing until the changeset reaches it from
-        # whoever opened one. Sent on the same line of reasoning as the bind
-        # below -- before anything is drawn, because a row the human can see is a
-        # row they can press.
-        # The redraw carries {SCOPE}, which is the same scope {#tell} presents at
-        # one line below: a gesture that changed a row has to draw the sidebar
-        # again, and which grouping is on screen is the one thing that rail
-        # cannot ask anybody for -- a session takes it and forgets it.
+        # `reviewing` is sent before anything is drawn, on the bind's own
+        # reasoning: a row the human can see is a row they can press, and the
+        # view's diff surface holds no round until a changeset reaches it.
+        #
+        # The redraw carries {SCOPE} because a gesture that changed a row has to
+        # draw the sidebar again, and which grouping is on screen is the one
+        # thing that rail cannot ask anybody for -- a session takes it and
+        # forgets it.
         def handover(session, token, written)
           view = @seams.view
           view.reviewing(session.changeset)
@@ -657,34 +534,25 @@ module Lain
                                baton: Baton::Held.new(review: @review, token:, written:))
         end
 
-        # It parks on the BATON's promise and reads the verdict off the session
+        # Parks on the BATON's promise and reads the verdict off the session
         # afterwards, because the two are one event:
         # {Review::Handover#wrote_verdict} submits the verdict and settles the
         # claim in that order, so a woken fiber cannot observe a settled claim
         # with no judgement on it.
-        # The `ensure` IS extended over `token.await` here, and that is the one
-        # place this half deliberately departs from {RequestReview#tell}'s rule
-        # rather than copying it.
         #
-        # The document half must NOT release on a cancelled wait: past the
-        # hand-over a human genuinely holds a file, and letting lain regenerate
-        # underneath somebody mid-edit is the harm the baton exists to prevent.
-        # Its own example says the escape is that "with an editor attached they
-        # can still send `done`".
+        # The `ensure` IS extended over `token.await` here -- the one place this
+        # half deliberately departs from {RequestReview#tell}'s rule. That rule
+        # protects a human mid-edit, and nobody holds anything here: the claim's
+        # path is a synthetic digest, so there is no file, no `:LainReviewDone`
+        # to send and no CLI that abandons it. A cancelled park would leave a
+        # claim {Epic::Review.from_journal} rebuilds across a RESTART, after
+        # which every `implementation` call over that changeset refuses
+        # {Epic::Review::AlreadyOpen} forever -- and the inertness that makes
+        # the claim harmless to the write guard is what makes that wedge silent.
         #
-        # None of that transfers. Nobody holds anything -- the claim's path is a
-        # synthetic digest, so there is no file to protect, no `:LainReviewDone`
-        # to send and no CLI that abandons it. A cancelled park would therefore
-        # leave a claim that {Epic::Review.from_journal} rebuilds across a
-        # RESTART, after which every `implementation` call over that changeset
-        # refuses {Epic::Review::AlreadyOpen} forever -- and the very
-        # inertness that makes the claim harmless to the write guard is what
-        # makes that wedge silent instead of loud.
-        #
-        # Idempotent on the ordinary path: {Review::Handover#wrote_verdict}
-        # settles before it resolves, so `settled` is already true and the
-        # give-back never runs -- and were it to, {Epic::Review::NotOpen} is
-        # exactly what {Baton.give_back} swallows.
+        # Idempotent on the ordinary path: `wrote_verdict` settles before it
+        # resolves, so the give-back never runs, and were it to,
+        # {Epic::Review::NotOpen} is what {Baton.give_back} swallows.
         def judged(session, token)
           token.await
           settled = true
@@ -701,24 +569,18 @@ module Lain
         end
       end
 
-      # Every way this tool can decline, as the sentences the MODEL reads.
-      #
-      # Its own object because "hold a document and report what came back" and
-      # "explain to a model why this call cannot happen" are different jobs, and
-      # {Metrics/AbcSize} said so when the four branches sat in {#perform}. Each
-      # one names what did not happen -- no review was opened -- because the
+      # Every way this tool can decline, as the sentences the MODEL reads. Each
+      # names what did NOT happen -- no review was opened -- because the
       # difference between a refused call and a settled one that found nothing
       # is the whole of what a model needs to decide what to do next.
+      #
+      # Both changeset refusals are about THIS call or THIS wiring, never about
+      # the stage: `implementation` is reviewable, so the only things left to
+      # decline are a call naming no base and a run with nothing wired to build
+      # a diff.
       module Refusals
         module_function
 
-        # There is no changeset half to refuse ANY MORE, and the two sentences
-        # below are what replaced the one that did. `NO_DOCUMENT` said reviewing
-        # an implementation "would mean reviewing a diff, and lain has no
-        # surface for that"; there is one, so the stage opens a review and the
-        # only things left to decline are a call that named no base and a run
-        # with nothing wired to build a diff. Both are about THIS call or THIS
-        # wiring, never about the stage.
         NO_CHANGESET = "no changeset could be built for this run, so there is no diff to review and no review " \
                        "was opened. `implementation` reads its changeset from a source the chat is wired with; " \
                        "this one has none."
@@ -727,10 +589,10 @@ module Lain
                      "one there is no diff to open, and guessing would ask a human to judge somebody else's " \
                      "commits. No review was opened."
 
-        # It says "nothing is under review" rather than "lain still holds the
-        # baton". The baton is what the HUMAN takes when a review opens, so the
-        # shorter sentence read as its own opposite -- a model could take it for
-        # "a review is open" and wait for a settle that is never coming.
+        # "Nothing is under review" rather than "lain still holds the baton":
+        # the baton is what the HUMAN takes when a review opens, so the shorter
+        # sentence reads as its own opposite -- a model could take it for "a
+        # review is open" and wait for a settle that is never coming.
         UNPARSEABLE = "%<path>s no longer parses as an epic document, so there is nothing to compare a review " \
                       "against and no review was opened: %<reason>s. The file is untouched and nothing is " \
                       "under review, so lain may still regenerate it -- or repair it by hand."
@@ -741,9 +603,9 @@ module Lain
 
         def needs_base = Tool::Result.error(NEEDS_BASE)
 
-        # The only {Epic::Home::MalformedName} this tool can provoke: its slug
-        # was checked when the home resolved, so the name it composes here is
-        # the issue id and nothing else.
+        # The only {Epic::Home::MalformedName} this tool can provoke: the slug
+        # was checked when the home resolved, so the malformed name is the issue
+        # id and nothing else.
         def needs_issue_id(error) = Tool::Result.error(format(NEEDS_ID, reason: error.message))
 
         def unparseable(error, artifact)
@@ -754,27 +616,23 @@ module Lain
         def unopened(error) = Tool::Result.error("#{error.message} -- no review was opened")
       end
 
-      # What the model reads when a changeset review closes.
-      #
-      # {Report}'s rule kept: every line is a report and none is a judgement --
-      # except the one line that IS the human's judgement, which is quoted
-      # rather than interpreted. The changeset ADDRESS is on it because that is
-      # what {Epic::Submission.implementation} takes as its `digest:`: a report
-      # naming the verdict and not the address would leave the stage's gate with
-      # nothing to key on.
+      # What the model reads when a changeset review closes. {Report}'s rule
+      # kept: every line is a report and none a judgement, except the one line
+      # that IS the human's, which is quoted rather than interpreted. The
+      # changeset ADDRESS is on it because {Epic::Submission.implementation}
+      # takes it as `digest:` -- a report naming the verdict and not the address
+      # would leave the stage's gate with nothing to key on.
       class ChangesetReport
         def initialize(session:, token:)
           @session = session
           @token = token
         end
 
-        # {Review::Session#regenerated?} is deliberately NOT among these lines.
-        # It compares the round's opened digest against the changeset's address
-        # NOW, and this tool opens a session and never resumes one, so both are
-        # computed from the one changeset it holds and the answer is false for
-        # every call that can reach here. A line that can never render is a
-        # claim with no test behind it; the honest place for it is whatever
-        # resumes a round, which is not this tool.
+        # {Review::Session#regenerated?} is deliberately NOT among these lines:
+        # this tool opens a session and never resumes one, so the answer is
+        # false for every call that can reach here. A line that can never render
+        # is a claim with no test behind it; it belongs to whatever resumes a
+        # round.
         def to_s = [heading, verdict, address, *annotations].compact.join("\n")
 
         private
@@ -800,32 +658,22 @@ module Lain
       end
 
       # A journal decorator that forwards every record and REMEMBERS the
-      # annotations, keyed by the `(epic_slug, generation)` pair a review is
-      # identified by.
-      #
-      # This is the reader those records have never had. {Epic::Review#settle}
-      # journals the notes and only then resolves the promise, so by the time
-      # the awaiting fiber wakes they are already here -- an ordering that is
-      # {Review#settle}'s own and is why no coordination is needed between them.
+      # annotations, keyed by the `(epic_slug, generation)` a review is
+      # identified by. {Epic::Review#settle} journals the notes and only then
+      # resolves the promise, so by the time the awaiting fiber wakes they are
+      # already here -- which is why no coordination is needed between them.
       #
       # `take` rather than `for`: the notes belong to the one call that awaited
       # them, and a reader that left them behind would grow for the life of the
       # process.
       #
-      # == What that leaves, stated rather than left to be found
+      # == The one leak, stated rather than left to be found
       #
-      # An abandoned review ({Epic::Review#abandon}) draws no notes at all, and
-      # a settle from the CLI is the ORDINARY path -- it resolves the promise,
-      # which is what wakes the awaiting call that takes them. Neither leaks.
-      # {RequestReview#settled} drains in an `ensure`, so a turn cancelled after
-      # the notes have landed does not either.
-      #
-      # What remains is a turn cancelled BEFORE its settle: the drain has
-      # already run, and the notes arrive after it. Those stay. It is bounded by
-      # reviews-per-process rather than by anything this object can enforce --
-      # closing it would need `Review` to tell the tee that a generation is
-      # finished, and it journals the close BEFORE the notes, so there is no
-      # such moment to hook.
+      # A turn cancelled BEFORE its settle: the drain has already run and the
+      # notes arrive after it. Those stay, bounded by reviews-per-process rather
+      # than by anything this object can enforce -- closing it would need
+      # `Review` to tell the tee that a generation is finished, and it journals
+      # the close BEFORE the notes, so there is no such moment to hook.
       class Notes
         def initialize(journal:)
           @journal = journal
@@ -843,8 +691,8 @@ module Lain
 
         private
 
-        # On the record's own durable discriminator rather than its class, which
-        # is what every other reader in this tier keys on.
+        # On the record's own durable discriminator rather than its class,
+        # which is what every other reader in this tier keys on.
         def keep(record)
           return unless record.respond_to?(:journal_type) && record.journal_type == Epic::Annotation::JOURNAL_TYPE
 
@@ -854,15 +702,13 @@ module Lain
         def key(epic_slug, generation) = [epic_slug.to_s, generation]
       end
 
-      # What the model reads when the human hands the file back.
-      #
-      # Every line is a report and none is a judgement, which is
-      # {Epic::Intake}'s own rule kept at the surface. The three ways an account
-      # can be empty are spelled out separately, because a renderer that
-      # collapsed them would make a false statement about somebody's work:
-      # prose was never compared, a rebuilt review no longer holds what lain
-      # wrote, and a document that did not parse could not be compared -- none
-      # of them is "nothing changed".
+      # What the model reads when the human hands the file back. Every line is
+      # a report and none a judgement, which is {Epic::Intake}'s rule kept at
+      # the surface. The three ways an account can be empty stay spelled apart
+      # because a renderer that collapsed them would make a false statement
+      # about somebody's work: prose was never compared, a rebuilt review no
+      # longer holds what lain wrote, and a document that did not parse could
+      # not be compared. None of them is "nothing changed".
       class Report
         NOT_PROSE = "structure: not compared -- this artifact is prose, so nothing structural was claimed " \
                     "either way. The byte addresses above are the whole of what was measured."

@@ -3,8 +3,8 @@
 require "async"
 require "faraday"
 
-# F10, and its two halves are one defect: the stall clock was installed in a
-# THREAD variable and raised into a THREAD, while the unit of work is a FIBER.
+# One defect with two halves: the stall clock was installed in a THREAD
+# variable and raised into a THREAD, while the unit of work is a FIBER.
 # Lain streams a parent turn and a subagent turn as sibling tasks on ONE reactor
 # thread (`cli/repl.rb`'s `Sync`, `agent/tool_runner.rb#gather`'s fan-out), so
 # two live streams shared one slot: the second `watch` displaced the first, the
@@ -352,12 +352,12 @@ RSpec.describe "a stalled stream under an Async reactor", :seam do
 
       expect([Fiber.scheduler, error])
         .to match([nil, a_kind_of(api_error).and(having_attributes(message: /stalled stream/))])
-      # T5: and the stall is still ON that error's cause chain, which is the ONLY
+      # And the stall is still ON that error's cause chain, which is the ONLY
       # place it survives -- it is not a {Lain::Error}, so `wrapping_errors`
       # re-raises it as the arm's APIError and {CLI::Repl::Ask#refuse} classifies
       # off the chain. A re-raise that dropped the cause would leave `ask_spec`
       # green (it builds the caused error itself) while every stalled run in the
-      # record read `:torn` and F26 went back to being untriageable.
+      # record read `:torn` and stalled runs went back to being untriageable.
       expect(Enumerator.produce(error, &:cause).take_while(&:itself)).to include(a_kind_of(stall_error))
     end
   end

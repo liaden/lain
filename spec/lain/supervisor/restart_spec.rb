@@ -6,11 +6,11 @@ require "open3"
 require "stringio"
 require "tmpdir"
 
-# W4, the chunk's flagship: supervision-as-replay. A killed actor's session
-# record -- the SAME NDJSON file M2 resume loads -- replays through
+# The chunk's flagship: supervision-as-replay. A killed actor's session
+# record -- the SAME NDJSON file resume loads -- replays through
 # Bench::Session::Loader's verified re-commit (never a second replay
 # implementation), its file bytes come back from the journal's own
-# workspace_blob sidecar records, the last :snapshot restores through W2's
+# workspace_blob sidecar records, the last :snapshot restores through
 # Workspace::Restore, and the revived actor is adopted under the Supervisor.
 RSpec.describe Lain::Supervisor::Restart do
   around do |example|
@@ -48,7 +48,7 @@ RSpec.describe Lain::Supervisor::Restart do
       end
     end)
     # The Isolation duck: real {Isolation::Lease}s over a fixed WorkerEnv,
-    # recording every acquire/release by worker key. Used by the B5 scenario
+    # recording every acquire/release by worker key. Used by the lease scenario
     # below, where a restart re-acquires a lease the dead worker's process took
     # with it.
     stub_const("RecordingIsolation", Class.new do
@@ -142,7 +142,7 @@ RSpec.describe Lain::Supervisor::Restart do
 
   def workspace_file(name) = File.join(dir, name)
 
-  # ---- Scenario: restart re-acquires an equivalent lease (B5) ----------------
+  # ---- Scenario: restart re-acquires an equivalent lease ---------------------
   #
   # The killed worker's lease died with its process; the restart RE-ACQUIRES a
   # fresh one via the supervisor's isolation backend and hands its WorkerEnv to
@@ -219,7 +219,7 @@ RSpec.describe Lain::Supervisor::Restart do
     expect(heads.last(2).uniq.size).to eq(1) # the printed head digests match
   end
 
-  # ---- The workspace-blob sidecar (closing W1's stated persistence gap) ------
+  # ---- The workspace-blob sidecar (closing a stated persistence gap) ---------
 
   describe "the workspace_blob sidecar records" do
     it "journals each blob once, content-addressed: an unchanged file's bytes are never re-journaled" do
@@ -286,7 +286,7 @@ RSpec.describe Lain::Supervisor::Restart do
     end
   end
 
-  # ---- Reuse of W2's restore semantics ---------------------------------------
+  # ---- Reuse of Workspace::Restore's semantics -------------------------------
 
   it "refuses to clobber post-crash out-of-band bytes (Restore::Dirty), waived by force:" do
     provider = Lain::Provider::Mock.new(responses: life_responses)
@@ -328,12 +328,12 @@ RSpec.describe Lain::Supervisor::Restart do
 
   # ---- A damaged record refuses by NAME, and the supervisor survives it -------
   #
-  # THE M2 code path had no rescue at all, so a journal that lost bytes took a
-  # supervised restart down with whatever the Loader happened to raise, carrying
-  # no role, no record and no supervision context -- and for one real damage
-  # shape that was a bare Store::MissingObject, a store's private complaint. The
-  # other two doors onto the same rebuild (CLI::Resume, Bench::CLI) had long
-  # since learned to attribute it; this one had not.
+  # THE RESUME code path had no rescue at all, so a journal that lost bytes
+  # took a supervised restart down with whatever the Loader happened to raise,
+  # carrying no role, no record and no supervision context -- and for one real
+  # damage shape that was a bare Store::MissingObject, a store's private
+  # complaint. The other two doors onto the same rebuild (CLI::Resume,
+  # Bench::CLI) had long since learned to attribute it; this one had not.
   #
   # It stays a RAISE. Nothing here decides retry-versus-abandon -- Restore::Dirty
   # above already establishes that a refused restart raises, registers nothing,

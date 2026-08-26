@@ -2,9 +2,9 @@
 
 require "stringio"
 
-# I5: a desktop-notification surface over dunstify, joining the SAME
-# Approval::Queue surface shape Frontend::ApprovalPolicy (I4) does --
-# #watch(queue) sweeps the PARKED set (T15: it never consumes the arrival
+# A desktop-notification surface over dunstify, joining the SAME
+# Approval::Queue surface shape Frontend::ApprovalPolicy does --
+# #watch(queue) sweeps the PARKED set (it never consumes the arrival
 # queue, which belongs to the human's surface), #decide answers one Pending. dunstify with
 # -A actions BLOCKS its own process until the human picks a button, dismisses,
 # or its own -t window expires, so every real invocation runs on a dedicated
@@ -106,7 +106,7 @@ RSpec.describe Lain::Notify do
       expect(invocations.first.join(" ")).to include("bash").and include("rm -rf /tmp/x")
     end
 
-    # T16, and the review round's own correction: this surface DECIDES. A click
+    # The review round's own correction: this surface DECIDES. A click
     # on Approve signs a full approval as surface "dunst", racing the TTY prompt
     # and the editor's list -- so it is the third deciding surface and it says
     # the same sentence they do.
@@ -155,7 +155,7 @@ RSpec.describe Lain::Notify do
       end
 
       # The pre-existing half of the same hole, closed in the same commit: the
-      # body has carried unescaped `input.inspect` since I5.
+      # body has carried unescaped `input.inspect` since this surface was written.
       it "escapes markup in the input body too" do
         crafted = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { command: "<i>ls</i> & go" })
         factory, invocations = stub_dunstify(answer: "deny")
@@ -243,7 +243,7 @@ RSpec.describe Lain::Notify do
       end
     end
 
-    # T15 / manual-QA round 4, F18. This surface OBSERVES the parked set; it
+    # Manual-QA round 4. This surface OBSERVES the parked set; it
     # must never drain {Approval::Queue#dequeue}, which delivers each arrival
     # to exactly one caller and belongs to the human's terminal surface
     # (`queue_surface.rb`'s two-surface discipline). It used to drain it, and
@@ -274,7 +274,7 @@ RSpec.describe Lain::Notify do
       expect(consumed).to contain_exactly("tu_0", "tu_1")
     end
 
-    # T4, from manual-QA round 5 (F24). A pending gets its notification when it
+    # From manual-QA round 5. A pending gets its notification when it
     # PARKS, not when the previous one is answered. `dunstify -A` blocks its own
     # process for the whole of the queue's 300s window, so a surface that waited
     # inline showed the human exactly ONE approval per window however many calls
@@ -373,8 +373,8 @@ RSpec.describe Lain::Notify do
         Async::Task.current.sleep(interval) until yield
       end
 
-      # Hoisted from "a popup whose approval somebody else answered" (T8
-      # review): both that describe's own withdrawal examples and this
+      # Hoisted from "a popup whose approval somebody else answered" in a
+      # review round: both that describe's own withdrawal examples and this
       # describe's own "several approvals park together" examples need a
       # recording dunstify that tracks `-r` ids and `-C` withdrawals, so the
       # fixture lives at the level both share rather than inside either one.
@@ -473,9 +473,9 @@ RSpec.describe Lain::Notify do
         desk.lock.synchronize { desk.ids[command] = args[args.index("-r") + 1] }
       end
 
-      # The first half of what T4 buys, and the half that cannot be seen with
-      # one gated call -- which is exactly why a green suite shipped the
-      # serialised version. Driven through the REAL queue, because "consumed
+      # The first half of what the non-blocking sweep buys, and the half that
+      # cannot be seen with one gated call -- which is exactly why a green suite
+      # shipped the serialised version. Driven through the REAL queue, because "consumed
       # neither" is a claim about {Approval::Queue#dequeue} and nothing else can
       # make it.
       it "raises the second notification while the first is still unanswered, and consumes neither" do
@@ -649,9 +649,9 @@ RSpec.describe Lain::Notify do
       # guard, which is otherwise UNREACHABLE: nothing between {Notify#sweep}'s
       # `select` and the ask yields, so a set that settles as it is enumerated is
       # the only shape that can flip a pending in between. Contrived on purpose
-      # -- the guard is kept for T4b, which puts a real yield point back when it
-      # adds the withdrawal, and an untested guard is one that quietly stops
-      # working before the card that needs it arrives.
+      # -- the guard is kept for the withdrawal of a settled notification, which
+      # puts a real yield point back, and an untested guard is one that quietly
+      # stops working before the code that needs it arrives.
       it "raises nothing for a pending that settles between the snapshot and the ask" do
         factory, raised, = scripted_dunstify("one")
         approval = parked("one")
@@ -666,9 +666,10 @@ RSpec.describe Lain::Notify do
         expect(approval).to have_attributes(decision: :deny, surface: "tty")
       end
 
-      # T4b: the second limb of F24. T4 made every parked approval get its own
-      # popup at once and knowingly left a popup naming a call somebody else had
-      # already answered on screen for as long as the 305s backstop, because
+      # The second limb of the round-5 finding. The non-blocking sweep made every
+      # parked approval get its own popup at once and knowingly left a popup naming
+      # a call somebody else had already answered on screen for as long as the 305s
+      # backstop, because
       # `-u critical` is exempt from auto-expiry. These examples are the
       # withdrawal that closes it.
       #
@@ -690,10 +691,10 @@ RSpec.describe Lain::Notify do
       # denying every approval.
       describe "a popup whose approval somebody else answered" do
         # `closed_via_api`, `withdrawable_dunstify` and friends are defined one
-        # level up, in "several approvals parked at once" -- T8's own examples
-        # need the same recording dunstify and sit at that level too (T8
-        # review: a describe block that lies about its contents costs the next
-        # reader more than the reuse saves), so the fixture lives where both
+        # level up, in "several approvals parked at once" -- that describe's own
+        # examples need the same recording dunstify and sit at that level too (a
+        # review ruling: a describe block that lies about its contents costs the
+        # next reader more than the reuse saves), so the fixture lives where both
         # can reach it rather than being re-specified.
 
         # The correlation itself: two live popups must not share an id, or `-r`
@@ -765,7 +766,7 @@ RSpec.describe Lain::Notify do
         # mechanical statement of "this surface signed nothing over the
         # sibling's answer".
         #
-        # The `thread:` assertion is T4's central constraint inherited whole:
+        # The `thread:` assertion is the sweep's central constraint inherited whole:
         # the late verdict is applied on the reactor thread, never on the
         # dunstify Thread that carried it back.
         it "lets the withdrawn notification's own late verdict lose, changing nothing" do
@@ -790,7 +791,7 @@ RSpec.describe Lain::Notify do
         # like every other one here and runs on its own Thread, for the reason
         # the class comment gives -- Mixlib's wait is not verified
         # fiber-scheduler-safe, and stalling the whole reactor on a D-Bus round
-        # trip to a wedged dunst is exactly the chance T4 declined to take.
+        # trip to a wedged dunst is exactly the chance this surface declined to take.
         #
         # {Notify#sweep} contains no yield point, so a withdrawal already
         # ordered by the time a synchronous `sweep` RETURNS was ordered by the
@@ -999,10 +1000,10 @@ RSpec.describe Lain::Notify do
         end
 
         # Degrade, never wedge. A desktop whose withdrawal fails leaves the
-        # surface exactly as T4 left it -- a stale popup, the state this card
-        # improves on and never a worse one. A notifier that RAISED out of a
+        # surface exactly as it was before withdrawal existed -- a stale popup,
+        # the state this card improves on and never a worse one. A notifier that RAISED out of a
         # withdrawal would be a session with no desktop approvals at all, which
-        # is the failure class T4's own guard exists to prevent.
+        # is the failure class the sweep's own guard exists to prevent.
         it "keeps approving and denying when the withdrawal command itself fails" do
           dunst = withdrawable_dunstify("one", "two")
           first, second = %w[one two].map { |command| parked(command) }
@@ -1058,7 +1059,7 @@ RSpec.describe Lain::Notify do
         end
       end
 
-      # T8: the fan-out this file could otherwise only argue about with two
+      # The fan-out this file could otherwise only argue about with two
       # pendings, exercised through spec/support/parked_approvals.rb --
       # ParkedApprovals.park generalises this describe's own `gated`-shaped
       # Sync/async/spun-until dance (approval_view_spec.rb:311-322's working
@@ -1068,7 +1069,7 @@ RSpec.describe Lain::Notify do
       # recording double for dunstify -- no real binary, {Notify::Null}'s
       # degrade path untouched -- reused rather than re-specified, per its own
       # escalation trigger. Sits at THIS level, not nested inside "a popup
-      # whose approval somebody else answered" (T8 review): these three are
+      # whose approval somebody else answered" (per a review ruling): these three are
       # not about a popup somebody else answered, and a describe that
       # misdescribes its own contents costs the next reader more than nesting
       # depth saves.
@@ -1081,7 +1082,7 @@ RSpec.describe Lain::Notify do
         end
       end
 
-      # T8 review: `shown.compact.size == 3` alone is blind to WHICH pending
+      # `shown.compact.size == 3` alone is blind to WHICH pending
       # got notified -- a defect that raised the same pending three times and
       # never touched the other two would still leave three non-nil argvs in
       # `shown`. Mapping each raised argv back to the command it correlates to
@@ -1128,7 +1129,7 @@ RSpec.describe Lain::Notify do
     end
 
     # {QueueSurface#swept}'s guard, and the reason it is not optional here any
-    # more: post-T15 this surface raises the notification for EVERY approval, so
+    # more: this surface raises the notification for EVERY approval, so
     # a sweep that raises and kills the fiber deletes desktop notification for
     # the rest of the session -- silently, with nothing but async's "Task may
     # have ended with unhandled exception" on a stderr nobody is reading. That

@@ -193,7 +193,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   def todo(content, status) = Struct.new(:content, :status).new(content, status)
 
   # Reflection into the backlog behind RpcThread's RenderInlet -- the
-  # T6-inherited fix lives there (see lib/lain/frontend/neovim/rpc_thread.rb),
+  # fix it inherits lives there (see lib/lain/frontend/neovim/rpc_thread.rb),
   # and this is the same instance_variable_get idiom the rest of the suite
   # already uses to assert on an internal without widening a class's public API
   # just for a spec. The inlet owns the RenderQueue, which owns the SizedQueue
@@ -220,13 +220,13 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # UX4, and it is a WIRING claim, which is why it is here and not in
-    # surfaces_spec: the cause was that {Lain::Frontend::Neovim::Surfaces} did
-    # not hold the {Lain::Frontend::Neovim::ApprovalView} at all -- the view
-    # hung off the frontend and rendered only from its own watch fiber, which
-    # nothing spawns until a call is gated. A doubled Surfaces handed an
-    # approval view primes happily whether or not `#attach` ever wires one, so
-    # only the real attach path can witness this.
+    # A WIRING claim, which is why it is here and not in surfaces_spec: the
+    # cause was that {Lain::Frontend::Neovim::Surfaces} did not hold the
+    # {Lain::Frontend::Neovim::ApprovalView} at all -- the view hung off the
+    # frontend and rendered only from its own watch fiber, which nothing spawns
+    # until a call is gated. A doubled Surfaces handed an approval view primes
+    # happily whether or not `#attach` ever wires one, so only the real attach
+    # path can witness this.
     it "primes lain://approval too, so the surface a gated agent waits on exists at rest" do
       frontend = described_class.new(channel:, socket_path: @socket, store:)
 
@@ -239,15 +239,15 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         # b:lain_view is what says which view it is. It is also what
         # neovim_runtime_spec's "sets b:lain_view on every lain:// buffer" reads.
         expect(buffer_view_var("lain://approval")).to eq("lain://approval")
-        # PANEL FIX 2, and it is what separates priming through `set_approval`
-        # from priming through `set_view`: only `set_approval` writes
-        # b:lain_approval_rows, and 62_approval.lua's `submit_approval` reads it
-        # (`line <= (vim.b[buf].lain_approval_rows or 0)`) to decide whether the
-        # cursor is on an answerable row at all. A buffer primed through the
-        # wrong inlet passes every other assertion in this block -- it has the
-        # name, the lines and b:lain_view -- and leaves the variable nil, which
-        # is indistinguishable from zero here and is NOT indistinguishable once
-        # rows exist. Zero is also exactly why this prime takes no window.
+        # This is what separates priming through `set_approval` from priming
+        # through `set_view`: only `set_approval` writes b:lain_approval_rows,
+        # and 62_approval.lua's `submit_approval` reads it (`line <=
+        # (vim.b[buf].lain_approval_rows or 0)`) to decide whether the cursor is
+        # on an answerable row at all. A buffer primed through the wrong inlet
+        # passes every other assertion in this block -- it has the name, the lines
+        # and b:lain_view -- and leaves the variable nil, which is
+        # indistinguishable from zero here and is NOT indistinguishable once rows
+        # exist. Zero is also exactly why this prime takes no window.
         expect(buffer_approval_rows("lain://approval")).to eq(0)
       end
     end
@@ -314,12 +314,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # T12 panel fix (SUBSTANTIVE). A digest the store cannot resolve must not
-    # kill the sole drain thread: Neovim#post rescues only ClosedQueueError and
-    # FrontendListener#died fires only for RPC-thread death, so an uncaught
-    # Store::MissingObject here would silently stop the Channel draining and
-    # eventually wedge the agent's producer. The miss renders VISIBLY in the
-    # timeline buffer rather than being swallowed, and later events still flow.
+    # A digest the store cannot resolve must not kill the sole drain thread:
+    # Neovim#post rescues only ClosedQueueError and FrontendListener#died
+    # fires only for RPC-thread death, so an uncaught Store::MissingObject
+    # here would silently stop the Channel draining and eventually wedge the
+    # agent's producer. The miss renders VISIBLY in the timeline buffer rather
+    # than being swallowed, and later events still flow.
     it "survives a TurnUsage whose digest is not in the store, making the miss visible" do
       frontend = described_class.new(channel:, socket_path: @socket, store:)
 
@@ -460,7 +460,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # The property the T6 review named: a saturated render path must not starve
+    # The property a review named: a saturated render path must not starve
     # an inbound editor command. Small capacity + a real flood makes the render
     # path genuinely saturated without needing the original ~800K-entry scale.
     it "still acks an inbound command promptly while the render path is saturated" do

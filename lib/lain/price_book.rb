@@ -4,14 +4,13 @@ require "bigdecimal"
 
 module Lain
   # The dollar price of one model's four token classes. Cost accounting is OURS,
-  # deliberately not a vendored pricing table (the plan rejects dragging in
-  # `models.json`): the numbers live here, in code, where the bench owns them.
+  # deliberately not a vendored pricing table: the numbers live in code, where
+  # the bench owns them.
   #
   # All arithmetic is `BigDecimal`, never Float. Token counts reach the hundreds
-  # of thousands and per-token prices are tiny fractions; Float would accumulate
+  # of thousands against tiny per-token prices, so Float would accumulate
   # rounding error across a session, and a cost metric that drifts is worse than
-  # none. Prices are quoted per million tokens (the industry convention) and
-  # divided down once, exactly.
+  # none. Prices are quoted per million tokens and divided down once, exactly.
   Price = Data.define(:input, :output, :cache_creation, :cache_read) do
     # Build a Price from per-million-token dollar figures.
     #
@@ -40,52 +39,43 @@ module Lain
     end
   end
 
-  # A per-model price map. Given a model name and a {Lain::Usage}, it answers the
-  # dollar cost. Matching is exact first, then by the longest known family token
-  # the model name contains -- so `"claude-3-5-sonnet-20241022"` resolves to the
-  # `sonnet` family without the map having to enumerate every dated snapshot.
+  # A per-model price map. Matching is exact first, then by the longest known
+  # family token the model name contains, so `"claude-3-5-sonnet-20241022"`
+  # resolves to `sonnet` without enumerating every dated snapshot.
   #
-  # An unknown model raises rather than guessing a price of zero: on a bench whose
-  # headline metric is cost, a silently-free model is a lie. A deployment that
-  # wants graceful degradation passes an explicit `fallback` Price.
+  # An unknown model raises rather than guessing zero: on a bench whose headline
+  # metric is cost, a silently-free model is a lie. A deployment that wants
+  # graceful degradation passes an explicit `fallback` Price.
   #
-  # Ruling (chunk-ollama-cloud-arm.md T15): Ollama Cloud is billed by
-  # subscription quota, not per token, so DEFAULT deliberately carries no
-  # ollama row and no fallback -- #price raises {UnknownModel} for one, same
-  # as any other unpriced model (spec/lain/ledger_spec.rb). A row or a
-  # process-wide fallback here would silently price every OTHER unknown
-  # model too (the exact failure this file already records for
-  # `claude-fable-5`/`claude-mythos-5`), so the withholding lives one layer
-  # up instead: {Friction::CacheWaste#price_for} rescues UnknownModel per
-  # model and {Friction::Report::CacheWasteSection#figure_phrase} renders
-  # the gap as an explicit "no price recorded" rather than a fabricated
-  # dollar figure (spec/lain/friction/report_spec.rb) -- verified, not
-  # assumed: this book is not touched to make that true.
+  # Ollama Cloud is billed by subscription quota, not per token, so DEFAULT
+  # carries no ollama row and no fallback -- #price raises {UnknownModel} for one
+  # like any other unpriced model. A row or a process-wide fallback here would
+  # silently price every OTHER unknown model too, so the withholding lives one
+  # layer up: {Friction::CacheWaste#price_for} rescues UnknownModel per model and
+  # {Friction::Report::CacheWasteSection#figure_phrase} renders the gap as an
+  # explicit "no price recorded" rather than a fabricated dollar figure.
   class PriceBook
     class UnknownModel < Error; end
 
-    # Representative Anthropic list prices, per million tokens, USD. These are the
-    # bench's DEFAULT map and are meant to be overridden, not treated as an
-    # oracle: prices change, and the point of keeping them here is that changing
-    # them is a one-line edit under version control, not a vendored 1.4 MB table.
-    # Cache-write is Anthropic's 1.25x input; cache-read is its 0.1x input.
+    # Representative Anthropic list prices, per million tokens, USD. Meant to be
+    # overridden, not treated as an oracle: prices change, and keeping them here
+    # makes that a one-line edit under version control rather than a vendored
+    # 1.4 MB table. Cache-write is Anthropic's 1.25x input, cache-read its 0.1x.
     #
-    # Reviewed 2026-08-18 against the published list rates for the Opus
-    # 5/4.8/4.7/4.6 family, Sonnet, and Haiku 4.5. Two callouts that a
-    # single-rate-per-model row cannot express, recorded here rather than
-    # silently left wrong: Sonnet is carrying an introductory rate of $2/$10
-    # per MTok through 2026-08-31 while this table holds the $3/$15 list rate
-    # that takes over after -- the two will diverge until then, and the
-    # freshness lint is what catches this table drifting further behind a later
-    # price change. `claude-fable-5` and `claude-mythos-5` have no row here and
-    # deliberately raise {UnknownModel} rather than matching a family token:
-    # no rate is recorded for them because none was verified when this line was
-    # written, and a guessed row is worse than a loud refusal. Opus 5's "fast
-    # mode" bills a different rate for the SAME model id under a request-level
-    # flag this table cannot see, which one-rate-per-model cannot express at
-    # all. Both are gaps to close with an exact-model key, not bugs in the
-    # family-token match; see `planning/specs/chunk-cost-axis-and-compaction-arm.md`
-    # Open decision 7.
+    # Reviewed 2026-08-18 against published list rates for the Opus 5/4.8/4.7/4.6
+    # family, Sonnet and Haiku 4.5. Three gaps a single-rate-per-model row cannot
+    # express, recorded rather than silently left wrong:
+    #
+    # * Sonnet carries an introductory $2/$10 per MTok through 2026-08-31 while
+    #   this table holds the $3/$15 list rate that takes over after; the
+    #   freshness lint is what catches this drifting behind a later change.
+    # * `claude-fable-5` and `claude-mythos-5` have no row and deliberately raise
+    #   {UnknownModel} rather than matching a family token -- no rate was
+    #   verified, and a guessed row is worse than a loud refusal.
+    # * Opus 5's fast mode bills a different rate for the SAME model id, under a
+    #   request-level flag this table cannot see.
+    #
+    # All three close with an exact-model key, not by changing the family match.
     DEFAULTS = {
       "opus" => Price.per_mtok(input: 5, output: 25, cache_creation: 6.25, cache_read: 0.5),
       "sonnet" => Price.per_mtok(input: 3, output: 15, cache_creation: 3.75, cache_read: 0.3),
@@ -124,16 +114,13 @@ module Lain
       price(model).cost(usage)
     end
 
-    # The bench's default map as a shared value -- a constant, not a memoized
-    # class ivar (`@default ||=`), so there is no first-call race. Deep
-    # frozenness comes from the constructor, not from this line: every
-    # PriceBook freezes itself and its price map at construction.
+    # A constant, not a memoized class ivar, so there is no first-call race. Deep
+    # frozenness comes from the constructor, not from this line.
     DEFAULT = new(prices: DEFAULTS)
 
     private
 
-    # Longest family token the name contains, so a more specific key wins over a
-    # more general one were both present.
+    # Longest family token the name contains, so a more specific key wins.
     def matched(name)
       key = @prices.keys.select { |token| name.include?(token) }.max_by(&:length)
       key && @prices.fetch(key)

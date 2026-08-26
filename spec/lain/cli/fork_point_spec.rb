@@ -3,7 +3,7 @@
 require "json"
 require "tmpdir"
 
-# T3: resolving `--fork "<session>@<digest-prefix>"` into the parent file and
+# Resolving `--fork "<session>@<digest-prefix>"` into the parent file and
 # the FULL digest of the fork point. The file part reuses Resume::Selector's
 # rules (empty picks the newest); the digest prefix resolves against the turn
 # digests RECORDED in that file -- the same fold-membership set a chained load
@@ -97,7 +97,7 @@ RSpec.describe Lain::CLI::ForkPoint do
         .to raise_error(Lain::CLI::Resume::Refusal, /nope/)
     end
 
-    # T3 fix round (probe 3a): a prefix that only partially spells the scheme
+    # Fix round (probe 3a): a prefix that only partially spells the scheme
     # ("b", "bl", "bla") must not match EVERY digest through
     # `"blake3:...".start_with?` -- matching is hex-only below a full
     # "blake3:" prefix.
@@ -106,7 +106,7 @@ RSpec.describe Lain::CLI::ForkPoint do
         .to raise_error(Lain::CLI::Resume::Refusal, /no turn matching/)
     end
 
-    # T3 fix round (probe 3c): a hand-edited or foreign turn record without a
+    # Fix round (probe 3c): a hand-edited or foreign turn record without a
     # "digest" key refuses namedly, never a raw KeyError backtrace.
     it "refuses a malformed turn record missing its digest, naming the file" do
       records = [Lain::SessionRecord.header(context:, toolset:, head: nil),
@@ -120,7 +120,7 @@ RSpec.describe Lain::CLI::ForkPoint do
         end
     end
 
-    # T3 fix round (probe 5d): the file can vanish between the Selector's
+    # Fix round (probe 5d): the file can vanish between the Selector's
     # listing and this read (a reaped ephemeral, an external rename) -- a raw
     # Errno::ENOENT must not escape.
     it "maps a file vanishing between listing and read to a named Refusal" do
@@ -135,7 +135,7 @@ RSpec.describe Lain::CLI::ForkPoint do
         .to raise_error(Lain::CLI::Resume::Refusal, /20260101T000000-1\.ndjson/)
     end
 
-    # T3 fix round (probe 6c): a bare "@<prefix>" must not silently land on a
+    # Fix round (probe 6c): a bare "@<prefix>" must not silently land on a
     # scratch file `lain sessions` hides -- the durable view is the
     # resolvable one, mirroring Resume::Selector's bare pick.
     it "a bare @<digest-prefix> ignores ephemeral sessions" do

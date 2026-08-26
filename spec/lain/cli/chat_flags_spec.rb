@@ -269,10 +269,10 @@ RSpec.describe "lain chat's flag surface" do
     # materializes the key, so the reader can never see "no strategy was named"
     # and {Lain::CLI::Backend::SpanSummarizer}'s whole opt-in branch becomes
     # unreachable from the executable -- the arm always on, the control arm
-    # (the eager tool-result tier) selectable by nobody. That is F7's pattern
-    # inverted: not "declared and read by nobody" but "declared with a default
-    # that hides its off-state", which this file's read-but-undeclared guard
-    # cannot see.
+    # (the eager tool-result tier) selectable by nobody. That is the dead-flag
+    # pattern inverted: not "declared and read by nobody" but "declared with a
+    # default that hides its off-state", which this file's read-but-undeclared
+    # guard cannot see.
     it "parses to nil when unset, so the reader can tell that no strategy was named" do
       expect(parse.key?(:compact_strategy)).to be(false)
       expect(parse[:compact_strategy]).to be_nil
@@ -436,9 +436,9 @@ RSpec.describe "lain chat's flag surface" do
     end
   end
 
-  # S4. EVERY other spec in this repo builds Backend and Wiring from a plain
+  # EVERY other spec in this repo builds Backend and Wiring from a plain
   # option Hash that simply omits the keys it does not care about -- including
-  # the A8 shareability regression at `wiring_spec.rb:397-403`. That is the
+  # the shareability regression at `wiring_spec.rb:397-403`. That is the
   # exact blind spot this file's header describes from the other direction: a
   # hand-built Hash cannot reproduce what Thor MATERIALIZES, so a flag whose
   # declared default changes the run is invisible to all of them.
@@ -492,7 +492,7 @@ RSpec.describe "lain chat's flag surface" do
         .to be_a(Lain::Compaction::Strategy::Elide)
     end
 
-    # B2, end to end and through the DEFAULT summarizer provider, which is the
+    # End to end and through the DEFAULT summarizer provider, which is the
     # one whose transport errors leaked. Nothing is listening on the ollama port
     # under WebMock, so the tier really is down -- and a down summarizer must
     # cost the SPAN, never the turn.

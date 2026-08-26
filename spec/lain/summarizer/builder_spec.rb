@@ -231,10 +231,11 @@ RSpec.describe Lain::Summarizer::Builder do
       .to raise_error(ArgumentError, /bodyless.*suitable\?.*compact/m)
   end
 
-  # Pins the contract A3 has to build against: #for CALLS user predicates, so it
-  # is as brittle as the file it loaded. It stays loud on purpose -- rescuing
-  # inside the catalog would hide a broken summarizer forever -- which means a
-  # caller's fallthrough to the model tier must wrap #for as well as #compact.
+  # Pins the contract the model tier has to build against: #for CALLS user
+  # predicates, so it is as brittle as the file it loaded. It stays loud on
+  # purpose -- rescuing inside the catalog would hide a broken summarizer
+  # forever -- which means a caller's fallthrough to the model tier must wrap
+  # #for as well as #compact.
   it "lets a raising suitable? propagate out of #for, consulting no later summarizer" do
     catalog = load_catalog(<<~RUBY)
       summarizer "brittle" do

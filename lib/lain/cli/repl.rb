@@ -9,34 +9,22 @@ require_relative "repl/outcome"
 module Lain
   module CLI
     # One conversation: reads lines at `you>`, consults the command registry
-    # first, routes everything else through the repl phase, hosts the
-    # fleet's reactor for the conversation's life, and delegates the ask_human
-    # reply surfaces to {HumanReplies}. Extracted from the Thor class because a
-    # conversation is its own responsibility (and the Metrics trip said so --
-    # extract, do not loosen).
+    # first, routes everything else through the repl phase, hosts the fleet's
+    # reactor for the conversation's life, and delegates the ask_human reply
+    # surfaces to {HumanReplies}. Extracted from the Thor class because a
+    # conversation is its own responsibility -- the Metrics trip said so.
     class Repl
-      # `chronicle:` is required, not defaulted -- the same reasoning as
-      # build_agent's `session:`: a defaulted Null here would let a caller
-      # silently lose the session record with no error anywhere. `middleware:`
-      # is the repl phase: a Middleware::Stack wrapping EACH command typed at
-      # the prompt, the seam a future history/logging/confirmation phase lands
-      # on; an honest pass-through by default. `notifier:` is the I5 desktop
-      # surface watching the SAME approval queue the TTY prompt does (first
-      # answer wins); Null when no dunstify, so the second watch fiber is inert.
-      # `supervisor:` is the OM-6 fleet reactor #run hosts across asks.
-      # `commands:` is the command surface -- a {Command::Registry::Bound},
-      # the registry curried over the one frozen {Command::Env} Wiring
-      # assembled -- consulted BEFORE the middleware phase, so a registered
-      # `/word` never costs a model turn. `replies:` is the {HumanReplies}
-      # drain Wiring wired over this same tty/conductor pair (injected, not
-      # constructed here, so the Env's replies reader and this collaborator are
-      # one object). Both required: a defaulted Null would let a mis-wired
-      # session silently lose its command or reply surface.
-      # `attended:` is whether a human is at this terminal. False
+      # The keywords with no default are required for one reason: a defaulted
+      # Null would let a mis-wired session silently lose its session record, its
+      # command surface or its reply drain, with no error anywhere.
+      #
+      # `commands:` is consulted BEFORE the middleware phase, so a registered
+      # `/word` never costs a model turn; `notifier:` is a desktop surface over
+      # the SAME approval queue the TTY prompt watches (first answer wins), Null
+      # when there is no dunstify. False for the attended keyword
       # (`--non-interactive`) makes the seeded question the WHOLE conversation:
-      # nothing reads a second line, so the run ends where an attended one
-      # would go back to the prompt. Defaulted true, because every other caller
-      # has a person in front of it.
+      # nothing reads a second line, so the run ends where an attended one would
+      # go back to the prompt.
       def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil,
                      notifier: Lain::Notify::Null.new, supervisor: Lain::Supervisor::Null,
                      middleware: Lain::Middleware::Stack.new, auto_surface: nil, secret_surface: nil,
@@ -54,58 +42,46 @@ module Lain
       end
 
       # What this conversation was worth as a process exit status, for the one
-      # caller entitled to ask (`lain chat --non-interactive`, through
-      # {Wiring#exit_status}). An attended chat says the same words at the
-      # terminal and exits 0 regardless, because the human read them.
+      # caller entitled to ask (`lain chat --non-interactive`). An attended chat
+      # says the same words at the terminal and exits 0 regardless.
       def exit_status = outcome.exit_status
 
-      # What {#render_missing_response} says, hoisted so that method is the one
-      # line it reads as -- the same reason {Tools::AskHuman::DESCRIPTION} sits
-      # outside its method.
+      # Hoisted out of {#render_missing_response} so that method stays the one
+      # line it reads as.
       MIDDLEWARE_BREACH = "repl middleware short-circuited without setting :response"
 
       # No next/break: the loop exit is text's own truthiness, reassigned each
-      # pass, the same shape the project style favors elsewhere. Prompts read
-      # through the conductor so an idle-prompt signal breaks out cleanly.
-      # `first_prompt` (the `/btw` child's `--prompt` seed) stands in for ONLY
-      # the first read: the seeded question dispatches straight away, then
-      # next_text resumes reading the terminal exactly as an unseeded chat
-      # does. An UNATTENDED conversation is the same shape with the reading
-      # taken out at both ends -- the seed is the only line there will ever be.
+      # pass. Prompts read through the conductor so an idle-prompt signal breaks
+      # out cleanly. `first_prompt` (the `/btw` child's `--prompt` seed) stands
+      # in for ONLY the first read; an unattended conversation is the same shape
+      # with the reading taken out at both ends, so the seed is its only line.
       def converse(first_prompt: nil)
         text = first_prompt || (prompt.read if reads_a_line?)
         text = next_text(dispatch(text)) while continue?(text)
       end
 
-      # Run the conversation inside the terminal frontend, nested inside the optional
-      # Neovim frontend when one is attached (`nvim:` carries its wiring bits, or nil).
-      # Both frontends' ensures -- nvim's RPC stop+join (in that order) and tty#run's screen
-      # restore -- run when converse returns, including a signal-ended session.
-      # OM-6: the supervisor's reactor must OUTLIVE each per-ask Sync (an actor
+      # Run the conversation inside the terminal frontend, nested inside the
+      # optional Neovim frontend when one is attached. Both frontends' ensures --
+      # nvim's RPC stop+join, in that order, and tty#run's screen restore -- run
+      # when converse returns, including a signal-ended session.
+      #
+      # The supervisor's reactor must OUTLIVE each per-ask Sync (an actor
       # launched inside an ask's Sync would be that ask's captive child), so one
       # chat-level Sync here gives every inner ask the shared reactor and the
-      # fleet a home across asks. supervisor.stop farewells the fleet before the
-      # reactor closes; the drain-on-shutdown itself is wired lib-side through
-      # the conductor. The editor's :LainReply queue (or nil, no editor) is bound
-      # onto the reply surfaces before converse runs. `first_prompt` seeds
-      # the child chat /btw opens with its --prompt question, threaded to
-      # converse so the very first read is the side-question, not the terminal.
+      # fleet a home across asks.
       #
-      # The editor's gesture rail is consumed HERE, for the conversation,
-      # and not by {#respond} for one ask. A human marking hunks in a review
-      # does it between turns, so a consumer whose lifetime is one ask answers
-      # nothing while they work -- and the rail is their only signal a gesture
-      # landed. {ConversationScope} is what owns that lifetime, opened on this
-      # Sync and closed by the ensure on every path out, including a raise and
-      # an interrupt at the prompt.
+      # The editor's gesture rail is consumed HERE, for the conversation, and
+      # not by {#respond} for one ask: a human marking hunks in a review does it
+      # between turns, so an ask-scoped consumer answers nothing while they work
+      # -- and the rail is their only signal a gesture landed. {ConversationScope}
+      # owns that lifetime, closed by the ensure on every path out.
       def run(nvim:, store:, session:, first_prompt: nil)
         frontend = attach_editor(nvim, store:, session:)
         @replies.bind_editor(frontend&.command_inbox, views: frontend&.buffers, approvals: frontend&.approval_view)
-        # The frontend ITSELF, and not a piece of it. A changeset review
-        # needs three things from an editor that no single collaborator answers
-        # -- where the diff is drawn, the rendering a row gesture resolves
-        # through, and the rail its writes are answered on -- and this is the
-        # only line in any process that puts them within a tool's reach.
+        # The frontend ITSELF, not a piece of it: a changeset review needs three
+        # things no single collaborator answers -- where the diff is drawn, the
+        # rendering a row gesture resolves through, and the rail its writes are
+        # answered on.
         @replies.bind_review_editor(frontend)
         @prompt = composed_prompt(frontend)
         Sync do |task|
@@ -120,37 +96,28 @@ module Lain
 
       # The three lifetimes a conversation runs, each named by the object that
       # owns it -- so which fiber belongs to which, and who stops it, is read
-      # off a name rather than off three ensures.
-      #
-      # The approval-watching surfaces are their own collaborator (the TTY
-      # prompt, dunst, the opt-in auto surface and -- once #run has attached one
-      # -- the editor's own list, over one queue); nothing here touches the
-      # individual surfaces. {ConversationScope} is the longest lifetime:
-      # the fleet's reactor and the editor's gesture consumer, which is why
-      # `supervisor:` is no longer an ivar. {LineScope} is the middle one:
-      # every surface a human answers at THIS terminal through, live for one
-      # dispatched line, because a question can be raised from any frame a line
-      # reaches and not only from the ask.
+      # off a name rather than off three ensures. {ConversationScope} is the
+      # longest (the fleet's reactor and the editor's gesture consumer);
+      # {LineScope} is the middle one, live for ONE dispatched line, because a
+      # question can be raised from any frame a line reaches and not only from
+      # the ask.
       def name_lifetimes(replies:, supervisor:, **approval_seams)
         @surfaces = ApprovalSurfaces.new(**approval_seams)
         @conversation = ConversationScope.new(supervisor:, replies:)
         @line = LineScope.new(replies:, surfaces: @surfaces)
       end
 
-      # The bridge over the agent's own override slot, sharing the nvim
-      # views' journal so the resend_dispatched marker lands beside the
-      # request_resent projection it promotes. `compose_notify:` is what makes
-      # the compose round trip's notices reachable -- its default is silent, so
+      # The bridge over the agent's own override slot, sharing the nvim views'
+      # journal so the resend_dispatched marker lands beside the request_resent
+      # projection it promotes. The compose_notify keyword is what makes the
+      # compose round trip's notices reachable -- its default is silent, so
       # without it an abandoned compose ends with no signal at all.
       #
-      # It also hands the editor's approval list to the surface set, which
-      # was built a whole lifetime ago in #initialize and cannot have been given
-      # one then. It is bound HERE and not in #run because this is the method
-      # that knows whether an editor exists at all -- and a nil view is the
-      # honest answer for a headless chat, which is what leaves the fourth watch
-      # fiber unspawned. Note which way round that is: the view is built BY the
-      # frontend, so "no editor" means there is nothing to construct rather than
-      # a capability left unwired.
+      # The editor's approval list is bound HERE rather than in #run because
+      # this is the method that knows whether an editor exists at all: the view
+      # is built BY the frontend, so nil means there is nothing to construct
+      # rather than a capability left unwired, and it is what leaves the fourth
+      # watch fiber unspawned for a headless chat.
       def attach_editor(nvim, store:, session:)
         bridge = nvim && ResendBridge.new(agent: @agent, record: @chronicle,
                                           journal: nvim.fetch(:journal, Lain::Channel::Null.instance))
@@ -161,10 +128,8 @@ module Lain
       end
 
       # A prompt that reads and nothing more, for the paths that never build a
-      # frontend. {Compose}'s own defaults are a detached editor and a silent
-      # notifier, so this is the no-editor path rather than a special case of
-      # it. Lazy so that constructing a Repl neither builds a frontend nor --
-      # crucially -- rebinds the human's keyboard; #run overwrites `@prompt`
+      # frontend. Lazy so that constructing a Repl neither builds a frontend nor
+      # -- crucially -- rebinds the human's keyboard; #run overwrites `@prompt`
       # before any read, and binding happens only there.
       def prompt
         @prompt ||= ComposedPrompt.new(conductor: @conductor, tty: @tty,
@@ -181,51 +146,37 @@ module Lain
 
       def continue?(text) = text && !@conductor.closed? && !farewell?(text)
 
-      # :quit -- the /quit command's action -- ends the conversation through
-      # the SAME exit a bare "quit" takes: a nil text fails continue? exactly
-      # as a farewell does, so run's ensures fire identically on both paths.
-      # The standing-goal driver is consulted BETWEEN asks, here, after a
-      # turn has fully settled (respond returned, its approval/reply surfaces
-      # stopped). A driving goal answers the next prompt -- the loop feeds it
-      # like a typed line -- and yields an inline stop notice when it ends;
-      # Null (no goal) answers nil cheaply, so the human prompt is read as
-      # before.
+      # :quit ends the conversation through the SAME exit a bare "quit" takes: a
+      # nil text fails continue? exactly as a farewell does, so run's ensures
+      # fire identically on both paths. The standing-goal driver is consulted
+      # BETWEEN asks, after a turn has fully settled and its surfaces stopped; a
+      # driving goal answers the next prompt as a typed line would, and Null (no
+      # goal) answers nil cheaply so the human prompt is read as before.
       def next_text(action)
         return if action == :quit || !reads_a_line?
 
         @goal_driver.poll(@agent.timeline) { |notice| deliver_text(notice) } || prompt.read
       end
 
-      # Whether there is any point asking the terminal for another line: not
-      # once the conductor has closed the session, and never at all when
-      # nobody is at it. Both are "no line is coming", which is why one
-      # question answers for both.
+      # Whether any line is coming: not once the conductor has closed the
+      # session, and never at all when nobody is at the terminal.
       def reads_a_line? = @attended && !@conductor.closed?
 
-      # This conversation's running answer to "did every line come through",
-      # built on first use so the collaborator has one home and no second
-      # constructor. See {Outcome} for why it is sticky.
+      # See {Outcome} for why it is sticky.
       def outcome = @outcome ||= Outcome.new
 
       # Routes one typed line: the command registry FIRST -- a registered
-      # `/word` runs lib-side with zero model turns and hands back rendered
-      # text or a Repl action -- and everything else falls through to the
-      # middleware phase unchanged. The boundary rescues Lain::Error raised
-      # WITHIN EITHER PATH (a malformed invocation from the registry's parse or
-      # the skill middleware's alike): render it and return, so `converse`
-      # loops to the next prompt instead of dying.
+      # `/word` runs lib-side with zero model turns -- and everything else falls
+      # through to the middleware phase unchanged. The rescue covers BOTH paths,
+      # so a malformed invocation renders and `converse` loops to the next
+      # prompt instead of dying.
       #
-      # It is also the frame the human's answer surfaces are bracketed over
-      # ({LineScope}), because a question or a parked approval can now be raised
-      # from EITHER path -- a command running lib-side, or the subagent a
-      # `@role[/skill]` line spawns -- and the fiber that parks on one is this
-      # one. See {LineScope} for why the line, and not the ask or the
-      # conversation, is the right lifetime, and for the invariant that decides
-      # what gets spawned: a line which reads the terminal ITSELF (`/inbox`) must
-      # be the ONLY reader, so it is asked about before it is bracketed. The
-      # command surface answers that from the line alone, without calling
-      # anything, so the question costs no side effect -- and its parse raises
-      # into the same rescue a malformed invocation already does.
+      # It is also the frame the human's answer surfaces are bracketed over,
+      # because a question or a parked approval can be raised from either path
+      # and the fiber that parks on one is this one. {LineScope} holds the
+      # reason the line is the right lifetime, and the invariant `serves_replies?`
+      # answers here: a line which reads the terminal ITSELF gets no surface
+      # spawned over it, and the question costs no side effect.
       def dispatch(text)
         @line.serve(owns_terminal: @commands.serves_replies?(text)) do
           settle_command(@commands.dispatch(text) { middleware_turn(text) }, text)
@@ -237,22 +188,16 @@ module Lain
         nil
       end
 
-      # A command's contract ({Command::Registry}): rendered TEXT -- a String,
+      # A command's contract ({Command::Registry}): rendered TEXT (a String,
       # delivered through the same boundary renderer a model turn uses, because
-      # commands return text and never print -- a {Lain::Renderable}, the same
-      # answer given as STRUCTURE, or a Repl ACTION (:quit today), handed
-      # up for #converse to act on. The middleware fallthrough settles its own
-      # delivery and returns nil. Anything else is that command's bug; name the
-      # breach loudly and RECOVERABLY, the render_missing_response discipline.
+      # commands return text and never print), a {Lain::Renderable}, or a Repl
+      # ACTION (:quit today) for #converse to act on. The middleware
+      # fallthrough settles its own delivery and returns nil. Anything else is
+      # that command's bug; name the breach loudly and RECOVERABLY.
       #
-      # String stays first-class forever: a command with no structure worth
-      # showing has nothing to gain from a renderable, and migrating one is
-      # never the price of adding one.
-      # `returned`, not `outcome`: the private {#outcome} reader is a
-      # collaborator this class asks about the whole conversation, and a
-      # parameter of that name would shadow it for the length of this method --
-      # the same collision {#respond}'s `supervised` local avoids one method
-      # down. What a command handed back is not the conversation's outcome.
+      # `returned`, not `outcome`: a parameter of that name would shadow the
+      # private {#outcome} reader for the length of this method -- the same
+      # collision {#respond}'s `supervised` local avoids one method down.
       def settle_command(returned, text)
         return returned if returned.nil? || returned == :quit
         return deliver_text(returned) if returned.is_a?(String)
@@ -260,24 +205,20 @@ module Lain
 
         @tty.render_error("command #{called(text)} returned neither a renderable, " \
                           "rendered text, nor a Repl action: #{returned.inspect}")
-        # Explicit nil, as in dispatch's rescue: never render_error's return.
         nil
       end
 
-      # The `/word` the human typed, so a breach says WHICH command misbehaved
-      # and not merely what came back -- the same attribution
-      # {Command::Registry#invoke} gives a command that RAISES. Split off the
-      # typed line rather than re-run {Skill::Invocation.parse}: only a line the
-      # registry already matched reaches here, so its leading word is the
-      # command by construction, and a second parse could only disagree.
+      # The `/word` the human typed, so a breach says WHICH command misbehaved.
+      # Split off the typed line rather than re-running {Skill::Invocation.parse}:
+      # only a line the registry already matched reaches here, so its leading
+      # word is the command by construction and a second parse could only disagree.
       def called(text) = text.to_s.split.first
 
       # A command's String rides the same Response shape SkillDispatch's
       # short-circuit uses, so render_response stays the single delivery
       # renderer for model turns, skill short-circuits, and commands alike. No
-      # catch_up HERE: a command that moves the Timeline (/rewind)
-      # journals its own move through the chronicle before returning, so this
-      # boundary owes the record nothing.
+      # catch_up HERE: a command that moves the Timeline (/rewind) journals its
+      # own move before returning, so this boundary owes the record nothing.
       def deliver_text(text)
         @tty.render_response(Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: :end_turn))
         nil
@@ -286,27 +227,20 @@ module Lain
       # A renderable does NOT ride deliver_text's synthetic Response: a Response
       # carries text blocks, so wrapping one would flatten the segments back
       # into the single string render_response paints with one token -- exactly
-      # the information the renderable exists to keep. So the frontend gets the
-      # value itself and paints it segment by segment. Same shape otherwise:
-      # returns nil, so only a Repl action ever reaches #converse.
+      # the information the renderable exists to keep. Returns nil like its
+      # sibling, so only a Repl action ever reaches #converse.
       def deliver_rendered(renderable)
         @tty.render_renderable(renderable)
         nil
       end
 
-      # The middleware phase for a line no command claimed. `:text`/`:agent` go
-      # in; the phase downstream runs the real ask and adds `:response` (nil on
-      # a rescued Lain::Error) on the way out -- the same in/out shape
-      # model_middleware uses for `:request`/`:response`.
-      #
-      # Delivery is this boundary's, not respond's: a middleware may
-      # SHORT-CIRCUIT -- set `:response` and never call downstream -- and that
-      # answer still has to reach the terminal, so the one renderer is here over
-      # `env.response`, spent exactly once whether the response came from the
-      # model turn or a middleware that skipped it. An error from the ask itself
-      # is respond's own (it must journal the torn turns), so that path renders
-      # and returns nil here -- no double. Returns nil ALWAYS, so only a
-      # command can hand #converse an action.
+      # The middleware phase for a line no command claimed. Delivery is this
+      # boundary's, not respond's: a middleware may SHORT-CIRCUIT -- set
+      # `:response` and never call downstream -- and that answer still has to
+      # reach the terminal, so the one renderer is here, spent exactly once
+      # whichever produced it. An error from the ask itself is respond's own (it
+      # must journal the torn turns), so that path renders and returns nil here.
+      # Returns nil ALWAYS, so only a command can hand #converse an action.
       def middleware_turn(text)
         env = @middleware.call({ text:, agent: @agent }) do |inner|
           inner.merge(response: respond(inner.fetch(:text)))
@@ -315,51 +249,36 @@ module Lain
         nil
       end
 
-      # The repl phase's out-key is `:response` (Env's per-phase contract): the
-      # downstream ask sets it, and a short-circuiting middleware MUST set it too.
-      # One that short-circuits WITHOUT it is a bug in that middleware, not a
-      # reason to kill the REPL: `env.response` (fetch) would raise KeyError --
-      # NOT a Lain::Error, so dispatch's rescue misses it and it escapes converse.
-      # Guard the contract loudly and RECOVERABLY -- name the breach to the
-      # terminal and let converse read the next prompt. A PRESENT `:response` of
-      # nil is not this case (an explicit-nil short-circuit renders nothing via
-      # deliver's own guard); absence is the bug, nil is a choice -- so never a
-      # silent nil deliver here.
+      # A middleware that short-circuits WITHOUT setting `:response` is a bug in
+      # that middleware, not a reason to kill the REPL: `env.response` (fetch)
+      # would raise KeyError -- NOT a Lain::Error, so dispatch's rescue misses
+      # it and it escapes converse. Guard the contract loudly and RECOVERABLY.
+      # A PRESENT `:response` of nil is not this case: absence is the bug, nil
+      # is a choice.
       def render_missing_response = @tty.render_error(outcome.torn_by(MIDDLEWARE_BREACH))
 
       # The model turn, returned for {#dispatch} to deliver -- never rendered
       # here, so a short-circuiting middleware's response and this one share the
-      # single boundary renderer. The concurrent surfaces an ask needs (`ask`
-      # parks inside ask_human#perform awaiting the reply, and the reply comes
-      # from this same terminal -- a single-fiber ask-then-prompt deadlocks, OM-4
-      # depends on OM-0) are already live: {LineScope} starts them for the whole
-      # dispatched line, and this Sync nests inside that one rather than opening
-      # a second set.
+      # single boundary renderer. The concurrent surfaces an ask needs are
+      # already live: {LineScope} starts them for the whole dispatched line, and
+      # this Sync nests inside that one rather than opening a second set. They
+      # must be concurrent at all because `ask` parks inside ask_human#perform
+      # awaiting a reply from this same terminal, and a single-fiber
+      # ask-then-prompt deadlocks.
       #
-      # A TORN ASK IS {Ask}'S, not this method's -- it owns the interrupted
-      # record and the one line the human reads, and it returns nil so dispatch
-      # delivers nothing over the top of it. It also runs the ask, so that a
+      # A TORN ASK IS {Ask}'S, not this method's. It runs the ask too, so a
       # refusal comes back as a VALUE rather than killing the `Async::Task`
-      # {Conductor#supervise} ran it in; read its class doc for why, because the
-      # reason is measured and is not visible from here.
+      # {Conductor#supervise} ran it in -- read its class doc for why, because
+      # that reason is measured and is not visible from here. The rescue is not
+      # redundant beside it: a {Lain::Error} raised OUTSIDE the task, by the
+      # supervisor itself, lands here and is owed the same one line. `ask` is
+      # assigned before anything can raise, so the rescue always has one.
       #
-      # The rescue is not redundant beside that. A {Lain::Error} raised OUTSIDE
-      # the task -- by the supervisor itself -- lands here and is owed the same
-      # one line, so both paths hand the same collaborator the same question.
-      # `ask` is assigned before anything can raise, so the rescue always has
-      # one; it is built PER ASK rather than memoized because that is what its
-      # own name claims to be, and three ivar writes are not worth making the
-      # name a lie.
-      #
-      # {Conductor#supervise} now reaches its `settle` and returns a
-      # {Conductor::Outcome} -- ROOT of the name, because {Repl::Outcome} is a
-      # sibling in this very namespace and a bare `{Outcome}` here resolves to
-      # that one instead (CLAUDE.md's shadowing trap, one namespace down) --
-      # on a refused ask, where the raise used to leave through its ensure. That
-      # is the normal end-of-ask path -- retire the parked coordinator, no
-      # signal -- so a bust is settled exactly as a completed ask is, which is
-      # the more correct of the two. Recorded because it is a real change to the
-      # supervisor's behaviour that nothing in supervise itself says.
+      # A refused ask reaches {Conductor#supervise}'s `settle` and returns a
+      # {Conductor::Outcome} -- kept qualified, because {Repl::Outcome} is a
+      # sibling here and a bare reference resolves to that one -- where the
+      # raise used to leave through its ensure. So a bust settles exactly as a
+      # completed ask does, which is the more correct of the two.
       def respond(text)
         ask = Ask.new(agent: @agent, tty: @tty, chronicle: @chronicle)
         supervised = Sync { |task| @conductor.supervise(task, -> { @agent.timeline }) { ask.attempt(text) } }
@@ -369,15 +288,13 @@ module Lain
       end
 
       # Turns durable before the reply renders: the belt over the chronicle's
-      # per-iteration JournalTurns braces (idempotent), and it re-anchors the
-      # head a graceful close records.
+      # per-iteration braces (idempotent), and it re-anchors the head a graceful
+      # close records.
       def deliver(response)
         @chronicle.catch_up(@agent.timeline)
         @tty.render_response(response) if response
       end
 
-      # Endless, like {#continue?} which is its only caller: one expression, and
-      # the multi-line form was the odd one out in this file.
       def farewell?(text) = %w[exit quit].include?(text.strip.downcase)
     end
   end

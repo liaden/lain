@@ -2,13 +2,13 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # An approval verdict must name the criteria it judged, say whether it
       # was approved as a real boolean (the same `presence:`-cannot-reject-
       # `false` reasoning as {Verdict}'s `survived`), and name who answered --
       # a surface, never nil, so a journal reader never guards (the same
       # named-not-nil discipline {Approval::Queue::TIMEOUT_SURFACE} keeps).
-      class GherkinApproval < Guard
+      class GherkinApproval < Declarative::Carrier
         attribute :criteria_digest
         attribute :approved
         attribute :answered_by
@@ -18,7 +18,7 @@ module Lain
       end
     end
 
-    # One GG-1 approval verdict over a {Gherkin::Criteria}. `criteria_digest`
+    # One approval verdict over a {Gherkin::Criteria}. `criteria_digest`
     # is the {Gherkin::Criteria#digest} the gate judged -- the JOIN KEY a
     # downstream refuses to consume unapproved, and precisely why an edited
     # clause (a different digest) is a distinct, un-approved criteria rather
@@ -36,7 +36,7 @@ module Lain
       include Journalable
 
       def initialize(criteria_digest:, approved:, answered_by:, latency:)
-        Guards::GherkinApproval.check!(criteria_digest:, approved:, answered_by:)
+        Carriers::GherkinApproval.check!(criteria_digest:, approved:, answered_by:)
 
         super(
           criteria_digest: criteria_digest.dup.freeze,

@@ -2,17 +2,17 @@
 
 module Lain
   module Plan
-    # PC-5: folds `closure_record` journal pointers ({Plan::Closure#record},
-    # P2) into per-size-class turn/token distributions. The pointer is P2's
+    # Folds `closure_record` journal pointers ({Plan::Closure#record}) into
+    # per-size-class turn/token distributions. The pointer is the
     # Store-pointer-in-the-Journal move, so this fold works from the Journal
     # ALONE, across sessions and processes -- the Store that held the actual
     # {Plan::Closure} values never survives the process that built them.
-    # `#median_turns(size_class)` is the one method P4's `calibration:` input
-    # calls; `#render` is the human-reportable fold, including the drift
-    # between a chunk's OWN measurement and its class's calibrated median --
-    # `plan-shaped-compaction.md`'s "annotated-S chunks measured at a median of
-    # N turns, and drift between annotation and measurement is itself a
-    # journaled, reportable signal."
+    # `#median_turns(size_class)` is the one method {SeamDecision}'s
+    # `calibration:` input calls; `#render` is the human-reportable fold,
+    # including the drift between a chunk's OWN measurement and its class's
+    # calibrated median -- `plan-shaped-compaction.md`'s "annotated-S chunks
+    # measured at a median of N turns, and drift between annotation and
+    # measurement is itself a journaled, reportable signal."
     #
     # Tokens join onto {Telemetry::TurnUsage} exactly the way {Ledger} prices a
     # Timeline -- {Ledger::Index.from_journal} folds `turn_usage` records into
@@ -49,7 +49,7 @@ module Lain
       # @param size_class [String, Symbol] one of {Step::SIZES}
       # @return [Float, Integer, nil] the median turn count measured for
       #   `size_class`, or nil when no closed chunk of that class has landed
-      #   yet -- P4's annotation-only fallback.
+      #   yet -- {SeamDecision}'s annotation-only fallback.
       def median_turns(size_class)
         turns_distribution(size_class)&.median
       end

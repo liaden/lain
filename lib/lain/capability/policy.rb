@@ -2,18 +2,17 @@
 
 module Lain
   module Capability
-    # Resolves what a requirer `#requires` against what a provider `#supports?`,
-    # under one of two named policies. The two policies share the resolution --
-    # find the required capabilities the provider lacks -- and differ only in what
-    # they do about a missing one, which is exactly a strategy split: {Strict}
-    # raises (reusing {Provider#require!}, so the error and its message stay in one
-    # place); {Degrade} no-ops but LOUDLY, journaling one {Telemetry::CapabilityDegraded}
-    # per missing capability so the no-op is a durable record rather than a silent
-    # divergence.
+    # Resolves what a requirer `#requires` against what a provider `#supports?`.
+    # Both policies share the resolution -- find the required capabilities the
+    # provider lacks -- and differ only in what they do about a missing one,
+    # which is exactly a strategy split: {Strict} raises (reusing
+    # {Provider#require!}, so the error and its message stay in one place);
+    # {Degrade} no-ops but LOUDLY, journaling one
+    # {Telemetry::CapabilityDegraded} per missing capability so the no-op is a
+    # durable record rather than a silent divergence.
     #
     # The journal is injected and defaults to a {Channel::Null}, so no code path
-    # ever guards `if journal`. Both a real {Journal} and a {Channel} answer `<<`,
-    # so either can receive the attributed event.
+    # ever guards `if journal`. Both a real {Journal} and a {Channel} answer `<<`.
     #
     # Every {#resolve} returns the run's {DegradedSet} -- empty under `:strict`
     # (it would have raised otherwise) and under `:degrade` when nothing was
@@ -29,12 +28,10 @@ module Lain
       # @raise [ArgumentError] on an unknown policy name (unknown values fail loudly)
       def self.for(name, journal: Channel::Null.instance)
         strategy = STRATEGIES[name]
-        # Not `validates :strategy, presence: true`: this is a FACTORY mapping a
-        # name to a strategy class, and Policy has no `strategy` attribute to
-        # validate. Validate-then-freeze (T6) governs a value object's OWN
-        # construction; a lookup that rejects an unknown key is a different shape.
-        # The explicit raise also NAMES the valid options (NAMES), which a bare
-        # presence error cannot -- so it is kept, more diagnostic, not less.
+        # Not `validates :strategy, presence: true`: validate-then-freeze governs
+        # a value object's OWN construction, and this is a factory with no
+        # `strategy` attribute to validate. The explicit raise also NAMES the
+        # valid options, which a bare presence error cannot.
         if strategy.nil?
           raise ArgumentError,
                 "unknown capability policy #{name.inspect}, expected one of #{NAMES.inspect}"
@@ -67,9 +64,8 @@ module Lain
         raise NotImplementedError, "#{self.class} must implement #handle_missing"
       end
 
-      # `:strict`. A missing capability is an error; reuse the provider's own
-      # `require!` so the raised {Provider::Unsupported} and its message live in
-      # one place.
+      # `:strict`. Reuses the provider's own `require!` so the raised
+      # {Provider::Unsupported} and its message live in one place.
       class Strict < Policy
         private
 
@@ -93,8 +89,8 @@ module Lain
       end
 
       # Defined after the strategies it names: `.for` reads it at call time, so a
-      # forward reference from the top of the class body is avoided. Private: an
-      # internal lookup table, not part of the surface (`.for` is).
+      # forward reference from the top of the class body is avoided. Private
+      # because `.for` is the surface, not this table.
       STRATEGIES = { strict: Strict, degrade: Degrade }.freeze
       private_constant :STRATEGIES
     end

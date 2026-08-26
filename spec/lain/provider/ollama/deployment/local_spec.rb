@@ -60,8 +60,8 @@ RSpec.describe Lain::Provider::Ollama::Deployment::Local do
     expect(deployment.cache_profile).to eq(Lain::CacheProfile::NO_CACHING)
   end
 
-  # Six minutes of a model thinking is this arm's honest shape (F7a), and the
-  # vendored 300/3 envelope is what the whole ollama suite is measured against.
+  # Six minutes of a model thinking is this arm's honest shape, and the vendored
+  # 300/3 envelope is what the whole ollama suite is measured against.
   it "leaves the vendored envelope exactly where it was" do
     expect([deployment.request_timeout, deployment.max_retries]).to eq([300, 3])
   end

@@ -22,6 +22,10 @@ module Lain
       # {Backend#provider}, so no API key is fetched and nothing can quietly
       # reach a model -- which is what lets {Lain::Consolidation} require every
       # collaborator, since "no model here" is now a thing this wiring SAYS.
+      #
+      # @param options [Hash] the invoked command's parsed flags
+      # @option options [Boolean] :dry_run swaps the provider for an unreachable one
+      # @return [Consolidate]
       def self.from_options(options)
         backend = Backend.new(options)
         new(consolidation: Lain::Consolidation.new(

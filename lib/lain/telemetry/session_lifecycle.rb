@@ -2,7 +2,7 @@
 
 module Lain
   module Telemetry
-    # The session-record FORMAT's lifecycle events (T13): how a session ended,
+    # The session-record FORMAT's lifecycle events: how a session ended,
     # how one run inside it ended, and the non-turn Events promoted into it.
 
     # A session's final anchor, written by {SessionRecord::Scribe} on a graceful
@@ -26,15 +26,11 @@ module Lain
       # enclosing MODULE (Telemetry), not the Data class (the pinned Ruby trap the
       # Request::SYSTEM_PREFIX comment records).
 
-      # `:salvaged` (T18) is additive: no reader branches on a
-      # {SessionClosed} reason's VALUE, only on its presence (that is what
-      # tells {Bench::Session::Anchor} a session closed at all) and, here, on
-      # membership in this list -- verified before adding it. It names a
-      # closed-file shape none of `exit`/`interrupted`/`grace_expired` is
-      # honest about: {CLI::Resume::Salvager} closes the file from a LATER
-      # process than the one that opened it, after recovering what it could
-      # from the response log, not because the run that opened it stopped on
-      # purpose or was interrupted mid-turn.
+      # `:salvaged` names a closed-file shape none of the other three is honest
+      # about: {CLI::Resume::Salvager} closes the file from a LATER process than
+      # the one that opened it, after recovering what it could from the response
+      # log -- not because the run stopped on purpose or was interrupted
+      # mid-turn.
       REASONS = %i[exit interrupted grace_expired salvaged].freeze
 
       # `respond_to?` rather than a bare `to_sym`, and nil is the case that
@@ -50,21 +46,15 @@ module Lain
       end
     end
 
-    # A single run stopped before its response committed -- a Ctrl-C, an expiring
-    # grace window, or a provider that went quiet. Distinct from
+    # A single run stopped before its response committed. Distinct from
     # {SessionClosed}: the session lives on, but THIS ask produced no complete
-    # turn, so `head` names the last committed turn the interrupted run was
-    # generating from (nil if none yet). A reader pairs it with the absence of a
-    # following turn record the way {Middleware::JournalRequests} reads a
-    # request_sent with no turn_usage -- the interruption is in the record, not
-    # inferred from a gap.
+    # turn, so `head` names the last committed turn it was generating from --
+    # the interruption is in the record, not inferred from a gap.
     #
     # `reason` says WHICH stop it was, because the gap alone cannot: a run the
     # human interrupted, a fleet the shutdown window closed on, and a stream the
     # model stopped feeding all leave the identical hole, and only the first two
-    # are anybody's decision. Round 6's F26 -- a hung ask nobody could attribute
-    # from the file afterwards -- is that ambiguity, and this field is what makes
-    # the triage a read rather than a guess.
+    # are anybody's decision.
     RunInterrupted = Data.define(:head, :reason) do
       include Journalable
 
@@ -78,25 +68,21 @@ module Lain
       # the reason {SessionClosed}'s own REASONS records: a constant there is
       # lexically scoped to the enclosing MODULE, not the Data class.
 
-      # DELIBERATELY NOT {SessionClosed::REASONS}. That enum answers "how did the
-      # SESSION end", and two of its members cannot describe an interrupted run
-      # at all -- `:exit` is the clean quit this record's existence contradicts,
-      # and `:salvaged` is a later process's verdict on a file. It also has
-      # nowhere to put a stall. The overlap is real and intended:
-      # `:interrupted`/`:grace_expired` are exactly {CLI::Conductor::INTERRUPT_REASONS},
-      # the pair a signal-driven close already holds and used to throw away.
+      # DELIBERATELY NOT {SessionClosed::REASONS}. That enum answers "how did
+      # the SESSION end", and two of its members cannot describe an interrupted
+      # run at all -- `:exit` is the clean quit this record contradicts, and
+      # `:salvaged` is a later process's verdict on a file -- while it has
+      # nowhere to put a stall. The overlap is intended.
       #
-      # `:stalled_stream` names the one failure that is NOT the harness's doing
-      # ({Provider::HTTP::Streaming::StalledStreamError}); `:torn` is the honest
-      # residue -- some other {Lain::Error} ended the ask -- and the default,
-      # because it is the only thing every stopped run is known to have in
-      # common. A record built with no classification says the unclassified
-      # thing rather than borrowing a narrower one it cannot support.
+      # `:torn` is the honest residue and the default, because it is the only
+      # thing every stopped run is known to have in common: a record built with
+      # no classification says the unclassified thing rather than borrowing a
+      # narrower one it cannot support.
       REASONS = %i[interrupted grace_expired stalled_stream torn].freeze
 
-      # Mirrors {SessionClosed.reason!}, nil-tolerance included; the two are kept
-      # identical on purpose, because a guard that refuses differently from its
-      # sibling is a guard a reader has to check twice.
+      # Mirrors {SessionClosed.reason!}, nil-tolerance included: a guard that
+      # refuses differently from its sibling is one a reader has to check
+      # twice.
       def self.reason!(reason)
         symbol = reason.respond_to?(:to_sym) ? reason.to_sym : reason
         return symbol if REASONS.include?(symbol)
@@ -110,8 +96,8 @@ module Lain
     # :message can never survive {Timeline#commit}'s digest re-derivation, so it
     # must not wear the `turn` shape). Field-pinned to what a later re-put into a
     # Store needs -- `payload` is the addressed body, `causal_parents` the
-    # backward edges a provenance walk descends -- carried as data here; T14 owns
-    # reconstructing the Store from it.
+    # backward edges a provenance walk descends -- carried as data here, and
+    # reconstructing the Store from it is a separate job this type does not do.
     Message = Data.define(:digest, :kind, :from, :to, :payload, :causal_parents, :correlation) do
       include Journalable
 
@@ -153,12 +139,11 @@ module Lain
     # carried.
     #
     # It is not cheap, and the price is the child's whole transcript: measured
-    # over `Provider::Mock` runs, these records are 47% of a journal with one
-    # trivial spawn in it and 88% of one with eight four-deep spawns (136KB,
-    # 180 records, 18.6ms to reload). That is the dominant term in a
-    # spawn-heavy run's file, and it is the deliberate cost of the session
-    # being forkable at all -- a subagent's work was previously the one part
-    # of a run the experiment record could not reproduce.
+    # over mock runs, these records are 47% of a journal with one trivial spawn
+    # and 88% of one with eight four-deep spawns (136KB, 180 records, 18.6ms to
+    # reload). That is the deliberate cost of the session being forkable at all
+    # -- a subagent's work was previously the one part of a run the experiment
+    # record could not reproduce.
     ChildTurn = Data.define(:digest, :kind, :from, :to, :render_parent, :payload, :causal_parents, :correlation) do
       include Journalable
 

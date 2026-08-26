@@ -9,13 +9,6 @@ module Lain
     # each element -- so the whole-span map is *derived* from the per-element
     # one rather than written twice:
     #
-    #   include Algebra::Elementwise
-    #
-    #   private
-    #
-    #   def stale_tool_use_ids(messages) = ...
-    #   def without_stale(message, stale_ids) = ...
-    #
     #   elementwise on: :call, each: :without_stale, given: :stale_tool_use_ids
     #
     # == The declaration goes BELOW the helpers it names
@@ -31,16 +24,16 @@ module Lain
     #
     # The per-element map is `M -> [M]`, zero or more, NOT `M -> M`.
     # {Context::DedupeToolCalls} drops a whole message when removing a stale
-    # tool_use empties its content, so "map" has to be able to answer nothing.
-    # Concatenation is what makes that a drop rather than a hole.
+    # tool_use empties its content, so "map" has to be able to answer nothing;
+    # concatenation is what makes that a drop rather than a hole.
     #
-    # And elementwise is often relative to a fixed ANALYSIS of the whole span
-    # rather than unconditional: DedupeToolCalls must know every stale tool_use
-    # id before it can map a single message -- a tool_use's staleness is
-    # recorded on its answering tool_result, which may live anywhere in the
-    # list. `given:` names that analysis, it runs once per span, and its result
-    # is passed to each per-element call. Saying so is the point: an
-    # unconditional elementwise claim about DedupeToolCalls would be false.
+    # And elementwise is often relative to a fixed ANALYSIS of the whole span:
+    # DedupeToolCalls must know every stale tool_use id before it can map a
+    # single message, because a tool_use's staleness is recorded on its
+    # answering tool_result, which may live anywhere in the list. `given:` names
+    # that analysis, it runs once per span, and its result is passed to each
+    # per-element call -- an unconditional elementwise claim about
+    # DedupeToolCalls would be false.
     #
     # Note which law that makes the discriminating one. The plain homomorphism
     # `call(A ++ B) == call(A) ++ call(B)` FAILS even for an honest
@@ -57,22 +50,18 @@ module Lain
     # classification, with no separate label to drift from it. That is why
     # {ClassMethods#not_elementwise} refuses rather than files -- the refutation
     # of elementwise-ness is an absence, not a verb. A class that wants the
-    # negative RECORDED does not include the module and files it directly --
-    # {Context::PurgeFailedInputs} is the live instance, and its witness is
-    # worth knowing because it rules out every candidate analysis at once:
+    # negative RECORDED does not include the module and calls
+    # `Algebra.registry.refute` directly. {Context::PurgeFailedInputs} is the
+    # live instance, and its witness rules out every candidate analysis at once:
     # a span `[m, error, m]` whose first and last messages are `==` gives them
     # DIFFERENT images in one call, and a map that is a function of
     # `(element, analysis)` cannot do that for any analysis whatever.
-    #
-    #   Algebra.registry.refute(subject: PurgeFailedInputs, operation: :call,
-    #                           structure: :elementwise,
-    #                           reason: "the trailing window is positional")
     #
     # == The generated method's shape
     #
     # Exactly one positional argument, no keywords, and a block is swallowed
     # rather than forwarded -- a per-element map has nowhere to send one. It
-    # overwrites an INHERITED method silently (that is ordinary subclassing, and
+    # overwrites an INHERITED method silently (ordinary subclassing, and
     # {Context::Combinator#call} is inherited by every combinator that will
     # carry this declaration) but refuses to overwrite one the class wrote
     # itself, which would delete a working implementation with no warning.
@@ -87,9 +76,9 @@ module Lain
       end
 
       # Elementwise given a whole-span analysis, computed once and handed to
-      # every element. A Null-Object pair with {Alone} rather than a `given ?`
-      # branch inside the generated method, so the per-element call's arity is
-      # settled once, at declaration, instead of at every element.
+      # every element. A Null-Object pair with {Alone} rather than a branch
+      # inside the generated method, so the per-element call's arity is settled
+      # once, at declaration, instead of at every element.
       GivenAnalysis = Data.define(:per_element, :analysis) do
         def helpers = [per_element, analysis]
 

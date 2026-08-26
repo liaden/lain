@@ -7,11 +7,6 @@ module Lain
     # questions the feed asks of one turn's payment: did it touch the cache,
     # what filled the window on the way in, and what did it cost in total.
     #
-    # Extracted from {StatusFeed} for {ModeState}'s reason, which was
-    # {Publication}'s before it: the cop naming that class's line budget was
-    # naming a missing object. Reading a payment record is not deriving a status
-    # struct, and this is the third field the two had been tangled over.
-    #
     # It restates {Usage}'s arithmetic rather than delegating to it, because the
     # feed is handed the RECORD, never the {Usage} value the record was built
     # from. {Usage.from_anthropic_wire} decodes these same four keys and would

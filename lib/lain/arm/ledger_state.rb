@@ -6,22 +6,20 @@ module Lain
     # (`facts` gathered + `plan` laid out) and the Progress ledger (`progress`
     # made + the single `next_subtask` to attempt). The {DualLedger} arm carries
     # it sent-not-stored in the {Workspace} and swaps it for a new value each
-    # step -- never mutates it, so `Ractor.shareable?` stays true and two runs
-    # over the same inputs render byte-identical prompts.
+    # step, so `Ractor.shareable?` stays true and two runs over the same inputs
+    # render byte-identical prompts.
     #
-    # NOT {Lain::Ledger}. That is the COST ledger (tokens -> dollars, joined off
-    # the Journal). This is the orchestrator's task/progress STRUCTURE, and the
-    # two never meet -- the collision is only in the English word.
+    # NOT {Lain::Ledger}, which is the COST ledger. The collision is only in the
+    # English word.
     #
-    # `signature` is the stall detector's whole input: two consecutive states
+    # {#signature} is the stall detector's whole input: two consecutive states
     # with the same signature made no progress. It is derived from progress
     # COUNT and the pending subtask, not the facts/plan, because replanning
     # rewrites the plan without advancing progress -- and a stall is precisely
-    # "the plan changed but nothing got done."
+    # "the plan changed but nothing got done".
     LedgerState = Data.define(:facts, :plan, :progress, :next_subtask) do
-      # The seed ledger for a task: the task itself is the first fact, nothing
-      # planned or done yet, no subtask chosen. The arm's first render carries
-      # this; the progress detector and replanner grow it from here.
+      # The seed ledger: the task itself is the first fact, nothing planned or
+      # done yet, no subtask chosen.
       def self.initial(task:)
         new(facts: ["Task: #{task}"], plan: [], progress: [], next_subtask: nil)
       end
@@ -39,10 +37,9 @@ module Lain
         )
       end
 
-      # The sent-not-stored projection the {Workspace} carries: one tagged block
-      # of text the model reads as its standing task/progress ledger. Sections
-      # are always present (even when empty) so the shape is stable across steps
-      # -- a disappearing "Progress:" heading would read as a different prompt.
+      # The sent-not-stored projection the {Workspace} carries. Sections are
+      # always present, even when empty, so the shape is stable across steps: a
+      # disappearing "Progress:" heading would read as a different prompt.
       def to_reminder
         [
           "Task/Progress ledger",
@@ -53,23 +50,19 @@ module Lain
         ].join("\n")
       end
 
-      # Record a step's progress: append `note` and set the subtask to attempt
-      # next. Returns a NEW state -- the caller swaps its handle, nothing mutates.
       def advanced(note:, next_subtask: nil)
         self.class.new(facts:, plan:, progress: progress + [note.to_s], next_subtask:)
       end
 
-      # A replan: keep the facts and what was already done, install a fresh plan
-      # and subtask. Progress is retained (the work done survives a replan); the
-      # signature changes because `next_subtask` moved, which is what lets the
-      # stall detector's counter reset after the arm reacts.
+      # Progress is RETAINED across a replan -- the work done survives it -- and
+      # the signature changes only because `next_subtask` moved, which is what
+      # lets the stall detector's counter reset after the arm reacts.
       def replanned(plan:, next_subtask: nil)
         self.class.new(facts:, plan: Array(plan), progress:, next_subtask:)
       end
 
-      # The stall detector's input: unchanged between two steps means no
-      # progress was made. Frozen (Array of an Integer and a frozen String/nil),
-      # so it is a safe Hash/comparison key.
+      # Frozen -- an Array of an Integer and a frozen String or nil -- so it is a
+      # safe Hash and comparison key.
       def signature
         [progress.size, next_subtask].freeze
       end

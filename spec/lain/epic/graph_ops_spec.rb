@@ -1,14 +1,14 @@
 # frozen_string_literal: true
 
 # The operations that restructure an epic mid-flight. Every one is pure and ends
-# in Graph.new, so T2's construction validation re-runs over the result for free
+# in Graph.new, so the construction validation re-runs over the result for free
 # -- which is what makes "refuses a cycle" and "refuses an unknown edge" true here
 # without a line of new checking.
 #
 # The contract that carries the weight is the REWRITE: when an operation removes
 # an id, every edge anywhere in the graph that named it is restated to name what
 # replaced it. Forgetting the rewrite does not lose an edge quietly -- it trips
-# T2's dangling-edge error, which is the wrong failure, blaming the author for a
+# the dangling-edge error, which is the wrong failure, blaming the author for a
 # graph the operation malformed. Both edge kinds in EDGE_FIELDS are rewritten,
 # `related` as much as `blocks`.
 RSpec.describe Lain::Epic::Graph do
@@ -56,7 +56,7 @@ RSpec.describe Lain::Epic::Graph do
       expect(value.fetch("b").discovered_from).to eq("a")
     end
 
-    # T2's duplicate check, re-run for free by returning a Graph.new.
+    # The construction duplicate check, re-run for free by returning a Graph.new.
     it "refuses an id the graph already holds" do
       expect { graph(issue("a")).add(issue("a")) }
         .to raise_error(Lain::Epic::MalformedGraph, /duplicate.*"a"/m)
@@ -115,7 +115,7 @@ RSpec.describe Lain::Epic::Graph do
       expect(chain.split("y", into: [issue("y1"), issue("y2")]).ids).to eq(%w[x y1 y2 z])
     end
 
-    # The correction T2's panel found: `related` is validated against known ids
+    # The correction the panel found: `related` is validated against known ids
     # just as `blocks` is, so a third party holding one to the split issue would
     # blow up as a dangling edge if only `blocks` were rewritten.
     it "rewrites inbound related edges too, not only blocks" do

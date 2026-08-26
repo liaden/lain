@@ -5,7 +5,7 @@ require "irb"
 module Lain
   module CLI
     module Command
-      # `/ruby` (T22): inspect the live conversation in Ruby, three arities over
+      # `/ruby`: inspect the live conversation in Ruby, three arities over
       # one {InspectionBinding}.
       #
       #   /ruby                 opens an embedded IRB console over the binding;
@@ -66,7 +66,7 @@ module Lain
 
         # The real console: an embedded IRB over the inspection binding, mirroring
         # `Binding#irb` but forcing {IRB::StdioInputMethod} -- the deliberate
-        # answer to T22's escalation trigger. IRB's default input method is
+        # answer to this command's escalation trigger. IRB's default input method is
         # Reline-backed and shares the ONE global `Reline` module and
         # `Reline::HISTORY` the chat's own prompt already owns; nesting it would
         # let a console session pollute (or clobber) the chat's history and

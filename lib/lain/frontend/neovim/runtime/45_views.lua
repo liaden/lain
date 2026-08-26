@@ -1,19 +1,16 @@
--- Whole-buffer replace for the state views (4-2.2): lain://timeline,
--- lain://workspace, lain://diff. Unlike the journal these are PROJECTIONS of
--- live state, not a log, so an update REPLACES the buffer's content rather
--- than growing it -- never nvim_input/feedkeys, and the buffer is never
--- focused or jumped to, so a live update cannot steal the human's cursor.
+-- Whole-buffer replace for the state views. Unlike the journal these are
+-- PROJECTIONS of live state, not a log, so an update REPLACES the buffer's
+-- content rather than growing it -- never nvim_input/feedkeys, and the buffer is
+-- never focused or jumped to, so a live update cannot steal the human's cursor.
+--
 -- The write starts at the first DIFFERING line, not at line 0: a naive
 -- whole-buffer replace makes the editor refold everything, resetting every
--- manually opened fold to the foldlevel default (verified live -- probe H's
--- stomp had a second root besides the old forced re-close), while lines an
--- edit never touches keep their fold state naturally (probe I's append
--- evidence). These views grow append-mostly (a timeline gains turns; the
--- shared prefix is stable), so the trimmed write makes the natural
--- preservation the folds rely on the common case -- and skips redraw work
--- for free.
+-- manually opened fold to the foldlevel default (verified live), while lines an
+-- edit never touches keep their fold state naturally. These views grow
+-- append-mostly, so the trimmed write makes that preservation the common case --
+-- and skips redraw work for free.
 --
--- b:lain_view_generation is the RENDERING STAMP (T16), and it is optional: a
+-- b:lain_view_generation is the RENDERING STAMP, and it is optional: a
 -- view whose gesture resolves through a Ruby-side line -> digest index sends
 -- one, every other view sends nothing and the buffer never gains the variable.
 -- lain://inbox is the only such view today. It matters because this buffer's

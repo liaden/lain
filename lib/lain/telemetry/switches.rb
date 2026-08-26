@@ -15,9 +15,6 @@ module Lain
     # detail. The flip is DERIVED rather than typed: {CLI::Switchboard#apply}
     # writes the posture's gate policy as the consequence of a `/mode` flip, so
     # `surface` names the surface that flipped the MODE.
-    # `from`/`to` are the snake_case policy names {Approval::PolicySwitch}
-    # derives; `surface` names the deciding surface. Deeply frozen (interned
-    # strings) so the record stays Ractor-shareable.
     PolicySwitch = Data.define(:from, :to, :surface) do
       include Journalable
 
@@ -27,9 +24,7 @@ module Lain
     end
 
     # A /model flip, the same shape and the same attributed-evidence purpose as
-    # {PolicySwitch}: `from`/`to` are the model ids {Context::ModelSwitch} held
-    # and now holds, `surface` the deciding surface. Deeply frozen so it stays
-    # Ractor-shareable.
+    # {PolicySwitch}.
     ModelSwitch = Data.define(:from, :to, :surface) do
       include Journalable
 
@@ -38,14 +33,13 @@ module Lain
       end
     end
 
-    module Guards
-      # Every field of a switch record is stringified on the way in, so a nil
-      # would journal `""` -- a line that parses, sits in the experiment record,
-      # and names neither the flip nor who made it. All five are REQUIRED, and
-      # the two layer lists are refused as nil rather than coerced: `Array(nil)`
-      # answers `[]`, which is a perfectly ordinary layer set and would record
-      # "no layers were active" for a caller that knew nothing at all.
-      class ModeSwitch < Guard
+    module Carriers
+      # Every field is stringified on the way in, so a nil would journal `""` --
+      # a line that parses, sits in the experiment record, and names neither the
+      # flip nor who made it. The two layer lists are refused as nil rather than
+      # coerced, because `Array(nil)` answers `[]`, an ordinary layer set that
+      # would record "no layers were active" for a caller that knew nothing.
+      class ModeSwitch < Declarative::Carrier
         attribute :from
         attribute :to
         attribute :from_layers
@@ -57,10 +51,9 @@ module Lain
         validates :surface, presence: { message: "must name the deciding surface, got nil" }
         # Hand-rolled because neither declarative validator can say "not nil"
         # about a list: `presence` rejects the empty layer set, which is the
-        # ordinary case, and `exclusion: { in: [nil] }` rejects it too --
-        # ActiveModel's Clusivity tests an ARRAY value member-by-member with
-        # `all?`, and `[].all?` is vacuously true, so the empty list is exactly
-        # the value it excludes.
+        # ordinary case, and `exclusion: { in: [nil] }` rejects it too, since
+        # ActiveModel's Clusivity tests an ARRAY member-by-member with `all?`
+        # and `[].all?` is vacuously true.
         validates_each :from_layers, :to_layers do |record, attribute, value|
           fault = layer_list_fault(value)
           record.errors.add(attribute, fault) if fault
@@ -111,18 +104,17 @@ module Lain
     # leave the FIRST flip of a session unable to say what was active before it,
     # since construction journals nothing.
     #
-    # Every field is interned on the way in, so the record is deeply frozen and
-    # stays Ractor-shareable -- and so that what reaches the NDJSON line is a
-    # name or a list of names. A {Mode} itself is refused by the guard, in a
+    # Every field is interned on the way in, so what reaches the NDJSON line is
+    # a name or a list of names. A {Mode} itself is refused by the guard, in a
     # name field and inside a layer list alike: `JSON.generate` would write the
     # object's `to_s` into a line that parses while carrying garbage. The
-    # constant is public and T8/T22 construct one directly, so that refusal
-    # cannot rely on {Mode::Switch} being the only caller.
+    # constant is public, so that refusal cannot rely on {Mode::Switch} being
+    # the only caller.
     ModeSwitch = Data.define(:from, :to, :from_layers, :to_layers, :surface) do
       include Journalable
 
       def initialize(from:, to:, from_layers:, to_layers:, surface:)
-        Guards::ModeSwitch.check!(from:, to:, from_layers:, to_layers:, surface:)
+        Carriers::ModeSwitch.check!(from:, to:, from_layers:, to_layers:, surface:)
 
         super(from: -from.to_s, to: -to.to_s, surface: -surface.to_s,
               from_layers: interned_names(from_layers), to_layers: interned_names(to_layers))

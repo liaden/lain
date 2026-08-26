@@ -99,7 +99,7 @@ RSpec.describe Lain::Tools::TodoWrite do
     # so the stored value was the validated one. Under {Tool::Input} the
     # ambiguity is refused outright instead -- the same call {Lain::Canonical}
     # makes -- because nothing justifies preferring either spelling, and a rule
-    # nobody remembers is worse than a loud failure. Renegotiated with T3.
+    # nobody remembers is worse than a loud failure. A deliberate renegotiation.
     it "refuses a mixed-key item rather than picking a spelling, naming the element by index" do
       mixed = { "content" => "canonical", :content => "shadow",
                 "status" => "in_progress", :status => "completed" }
@@ -131,7 +131,7 @@ RSpec.describe Lain::Tools::TodoWrite do
   # Scenario: an empty todo list is still accepted
   #
   # This is how a run CLEARS its list, it succeeds on main, and no spec pinned
-  # it before T3. Schema equality cannot catch its loss: `todos` stays in the
+  # it before. Schema equality cannot catch its loss: `todos` stays in the
   # emitted `required` either way, so a `required:` that rejected `[]` as blank
   # would leave the bytes identical and break the tool. Pinned on the real
   # tool, not on a stand-in declaration.
@@ -162,7 +162,7 @@ RSpec.describe Lain::Tools::TodoWrite do
 
   # Scenario: A completed todo raises the need flag
   #
-  # The seam T16 adds: Session cannot detect a status TRANSITION from an
+  # The seam this adds: Session cannot detect a status TRANSITION from an
   # overwrite alone (write_todos replaces the whole list, keeping no prior
   # state -- see Session#write_todos), so it now retains the prior
   # structured list IN MEMORY ONLY to compare against, exactly like the
@@ -266,7 +266,7 @@ RSpec.describe Lain::Tools::TodoWrite do
 
   # Scenario: a bad status is refused before perform runs
   #
-  # Renegotiated with T3: this used to be an error Result, because the enum
+  # Renegotiated: this used to be an error Result, because the enum
   # check was hand-rolled inside #perform. Declared as an `inclusion` validator
   # on the element, the SAME declaration emits the schema's `enum` and refuses
   # the call, and it refuses it in {Tool#call} -- before #perform, so there is
@@ -296,7 +296,7 @@ RSpec.describe Lain::Tools::TodoWrite do
   end
 
   # Two refusals the field DSL introduces. Both inputs were SILENTLY ACCEPTED
-  # before T3 -- the raw-Hash validator checked types and required keys and
+  # before -- the raw-Hash validator checked types and required keys and
   # nothing else -- so both are behaviour changes, and a behaviour change
   # nobody pins is one that regresses without a spec noticing. Refusing beats
   # accepting for the same reason everywhere else in this repo: an empty todo

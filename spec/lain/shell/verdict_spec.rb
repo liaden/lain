@@ -432,8 +432,8 @@ RSpec.describe Lain::Shell::Verdict do
     # Today every command that produces one is ALSO broken, so the guard above
     # is reached through a defect rather than through the shape it guards. This
     # builds the shape directly: a clean, covered parse whose argv carries an
-    # empty term must still abstain, because `exec ""` is not a command and T17
-    # is promised it can never be handed one.
+    # empty term must still abstain, because `exec ""` is not a command and the
+    # caller is promised it can never be handed one.
     it "abstains on an empty term even from a parse that reported nothing wrong" do
       empty_term = Lain::Shell::Parse::Result.new(
         source: "echo", stages: [Lain::Shell::Parse::Stage.new(argv: ["echo", ""].freeze, byte_range: 0...4)].freeze,
@@ -639,7 +639,7 @@ RSpec.describe Lain::Shell::Verdict do
     end
   end
 
-  # What T17 may rely on: an allowed term is a non-empty list of non-empty
+  # What a caller may rely on: an allowed term is a non-empty list of non-empty
   # argvs, joined by the pipe and nothing else. Open3 raises on an empty argv,
   # so this is the property that keeps a term runnable.
   describe "the term an allow hands over" do

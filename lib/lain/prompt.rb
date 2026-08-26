@@ -18,17 +18,15 @@ module Lain
     # A slot fill that renders itself, caught before it overflows the stack.
     class CircularSlot < Error; end
 
-    # A resolver handed a non-String slot value -- ERB.new only accepts a
-    # String template, so anything else (an Integer digest, a byte count)
-    # otherwise crashed opaquely inside ERB, naming neither the slot nor the
-    # value. No coercion: a caller stringifies deliberately (loud failure
-    # doctrine), never LockedBinding on its behalf.
+    # ERB.new only accepts a String template, so an Integer digest or a byte
+    # count otherwise crashed opaquely inside ERB, naming neither the slot nor
+    # the value. No coercion: a caller stringifies deliberately, never
+    # LockedBinding on its behalf.
     class NonStringSlot < Error; end
   end
 end
 
-# Children reference the error classes above, so the module body loads first --
-# the effect/handler ordering pattern, not the context/combinator one.
+# Children reference the error classes above, so the module body loads first.
 require_relative "prompt/locked_binding"
 require_relative "prompt/skill_slots"
 require_relative "prompt/slots"

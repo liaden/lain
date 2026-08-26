@@ -6,61 +6,55 @@ require "event_stream_parser"
 module Lain
   module SessionRecord
     # Recovers a paid-for-but-uncommitted response from the response WAL when a
-    # session resumes open (T18). {Middleware::JournalRequests} journals a
-    # `request_sent` BEFORE the round trip dispatches (see that class's doc
-    # comment), and {Agent#commit_and_account} commits the Timeline turn and
-    # journals its `turn_usage` as ONE atom, deferred against a stop -- so a
-    # process that dies between the two has already spent real tokens the
-    # session record alone cannot show, and only the {Provider::ResponseWal}
-    # might still hold the bytes.
+    # session resumes open. {Middleware::JournalRequests} journals a
+    # `request_sent` BEFORE the round trip dispatches, and {Agent#commit_and_account}
+    # commits the Timeline turn and journals its `turn_usage` as ONE atom -- so a
+    # process that dies between the two has already spent real tokens the session
+    # record alone cannot show, and only the {Provider::ResponseWal} might still
+    # hold the bytes.
     #
     # == Finding the target
     #
-    # The candidate is the session's LAST `request_sent` record, but only when
-    # nothing SUPERSEDES it later in the file: a `turn_usage` after it is
-    # proof the round trip already committed normally (the atom above), and a
-    # `rewound` record after it (T15) is the user explicitly abandoning that
-    # branch -- committing the "recovered" response onto the post-rewind head
-    # would silently reverse the rewind. Either way: {Nothing}, a clean no-op.
+    # The candidate is the session's LAST `request_sent`, but only when nothing
+    # SUPERSEDES it later in the file: a `turn_usage` after it is proof the round
+    # trip already committed normally (the atom above), and a `rewound` after it
+    # is the user explicitly abandoning that branch -- committing the "recovered"
+    # response onto the post-rewind head would silently reverse the rewind.
+    # Either way: {Nothing}, a clean no-op.
     #
-    # == Frame selection, per the retry ruling
+    # == Frame selection
     #
-    # A request can retry at the transport level, and {Provider::ResponseWal}
-    # rotates a fresh frame per attempt, so several frames can share one
-    # request digest -- only the LAST one is real; earlier ones are aborted
-    # attempts, inert history. The last COMPLETE frame for the target digest
-    # wins; when none is complete, the most recent matching frame (however
-    # torn, or absent entirely) is surfaced as a reviewable {Incomplete}
-    # artifact rather than guessed into a commit.
+    # A request can retry at the transport level and {Provider::ResponseWal}
+    # rotates a fresh frame per attempt, so several frames can share one request
+    # digest -- only the LAST one is real. The last COMPLETE frame for the target
+    # digest wins; when none is complete, the most recent matching frame (however
+    # torn, or absent entirely) is surfaced as a reviewable {Incomplete} artifact
+    # rather than guessed into a commit.
     #
     # == Reassembly reuses the accumulator, not the transport
     #
     # A complete frame holds the EXACT bytes {Provider::Anthropic::Transport}
-    # teed off the wire -- raw SSE lines, verbatim (see {Provider::ResponseWal}'s
-    # header comment). `EventStreamParser::Parser` is the very parser class the
-    # live streaming path drives (`Provider::HTTP::Streaming`); it is pure text
-    # -- no socket, no Faraday -- so feeding it one recorded blob in a single
-    # `#feed` call is indistinguishable to it from many small chunks off a
-    # wire. The events it yields go straight into
-    # {Provider::Anthropic::StreamAssembler}, the SAME block-preserving
-    # accumulator a live call uses, so a recovered {Response} is exactly what
-    # the original call would have produced -- not a second, parallel parser.
+    # teed off the wire -- raw SSE lines, verbatim.
+    # `EventStreamParser::Parser` is the very parser class the live streaming
+    # path drives; it is pure text, so feeding it one recorded blob in a single
+    # `#feed` call is indistinguishable to it from many small chunks off a wire.
+    # The events go straight into {Provider::Anthropic::StreamAssembler}, the
+    # SAME block-preserving accumulator a live call uses, so a recovered
+    # {Response} is exactly what the original call would have produced -- not a
+    # second, parallel parser.
     #
-    # A frame the Reader marks complete cannot hold an in-band SSE error
-    # event: {Provider::HTTP::Streaming::ErrorHandling} raises on one, which
-    # unwinds {Provider::Anthropic::Transport#stream} before it ever reaches
-    # `frame.close(complete: true)`. So a complete frame is trusted to be a
-    # clean, fully-terminated stream, with no error-event branch to reproduce
-    # here.
+    # A frame the Reader marks complete cannot hold an in-band SSE error event:
+    # {Provider::HTTP::Streaming::ErrorHandling} raises on one, which unwinds
+    # {Provider::Anthropic::Transport#stream} before it ever reaches
+    # `frame.close(complete: true)`. So there is no error-event branch to
+    # reproduce here.
     #
     # == What this class does not do
     #
     # It never touches a file and never opens a socket: {#call} is a pure
-    # function of the three ducks it is handed (`entries`, `frames`,
-    # `timeline`), and a {Recovered} commits onto the Timeline it was GIVEN,
-    # handing the caller a NEW one. Writing that back to disk -- and deciding
-    # how the session record reads afterward -- is {CLI::Resume}'s job, the
-    # same separation it already keeps from {Bench::Session::Loader}.
+    # function of the three ducks it is handed, and a {Recovered} commits onto
+    # the Timeline it was GIVEN, handing the caller a NEW one. Writing that back
+    # to disk is {CLI::Resume}'s job.
     class Salvage
       REQUEST_SENT_TYPE = "request_sent"
       TURN_USAGE_TYPE = "turn_usage"
@@ -187,20 +181,18 @@ module Lain
 
       # Content, never digest: a re-resume commits the SAME response onto a
       # Timeline that already carries it, so the recovered turn's PARENT (and
-      # therefore its digest) differs between the two attempts even though
-      # the content is identical -- digest equality would never fire and this
-      # whole guard would be dead code.
+      # therefore its digest) differs between the two attempts even though the
+      # content is identical -- digest equality would never fire and this whole
+      # guard would be dead code.
       #
-      # This is also this class's honest reading of the card's stated
-      # "newer than the last committed assistant turn" criterion. A literal
-      # timestamp compare was never wired -- WAL frames carry no comparable
-      # `at` past the Reader (see {Provider::ResponseWal::Entry}) -- and it
-      # would be redundant besides: a frame can only match `digest` at all
-      # when it was spooled for the EXACT conversation prefix that produced
-      # the (single, latest) unanswered request_sent, since the digest hashes
-      # that whole prefix. "Newest" falls out of the digest join for free on
-      # the first pass; this content check is what keeps a SECOND pass, over
-      # the SAME already-applied frame, from reading as newness too.
+      # It is also the honest reading of "newer than the last committed assistant
+      # turn". A literal timestamp compare was never wired (WAL frames carry no
+      # comparable `at` past the Reader) and would be redundant besides: a frame
+      # can only match `digest` at all when it was spooled for the EXACT
+      # conversation prefix that produced the single latest unanswered
+      # request_sent, since the digest hashes that whole prefix. "Newest" falls
+      # out of the digest join for free; this content check is what keeps a
+      # SECOND pass over the SAME frame from reading as newness too.
       def already_committed?(response)
         head = @timeline.head
         !head.nil? && head.role == "assistant" && head.content == response.content
@@ -244,17 +236,15 @@ module Lain
 
       # deliberately absent: {Provider::AnthropicWire}, whose #build_response
       # this shadows. It cannot be INCLUDED here -- `session_record.rb` loads
-      # before `provider.rb` in `lain.rb`'s topological order, so the constant
-      # does not exist yet at class-body time, which is the same reason
+      # before `provider.rb` in `lain.rb`'s topological order, the same reason
       # {Provider::Anthropic::StreamAssembler} is reached lazily above. What
-      # would differ if it could: the shared version runs
-      # `normalize_tool_inputs`, redundant here because the assembler that
-      # produced `assembled` has already parsed every tool input.
+      # would differ: the shared version runs `normalize_tool_inputs`, redundant
+      # here because the assembler has already parsed every tool input.
       #
       # The usage decode is NOT shadowed -- that one is a class method, so it is
-      # reachable at runtime and is the single {Usage.from_anthropic_wire} the
-      # two live providers use. A recovered turn is by definition one a crash
-      # interrupted, so it is the last place a drifted token key should hide.
+      # the single {Usage.from_anthropic_wire} the two live providers use. A
+      # recovered turn is by definition one a crash interrupted, so it is the
+      # last place a drifted token key should hide.
       def build_response(assembled)
         Response.new(id: assembled.id, model: assembled.model, content: assembled.content,
                      stop_reason: assembled.stop_reason,

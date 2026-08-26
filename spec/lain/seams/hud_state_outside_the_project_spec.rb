@@ -5,7 +5,7 @@ require "fileutils"
 require "stringio"
 require "tmpdir"
 
-# F50, end to end: a lain session must not dirty the repository it is pointed at.
+# End to end: a lain session must not dirty the repository it is pointed at.
 #
 # `.lain/state.json` was a project artifact by argument -- "like `.git/`" -- and
 # machine state by behaviour: {Lain::StatusFeed} rewrites it on every turn
@@ -84,7 +84,7 @@ RSpec.describe "a session does not dirty the project it runs in", :seam do
     in_a_clean_repository do |root, base|
       run_a_turn
 
-      # THE FINDING FIRST. These two lines are the whole of F50, and they only
+      # THE FINDING FIRST. These two lines are the whole of it, and they only
       # get to run if nothing above them raises: the block aggregates failures
       # but an ERROR aborts it, and the `File.read` below is an error the
       # moment the fix is reverted and no file is published at all. Ordered so

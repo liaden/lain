@@ -2,7 +2,7 @@
 
 require "async"
 
-# E1's fixtures, kept out of any RSpec block (Lint/ConstantDefinitionInBlock):
+# The fixtures, kept out of any RSpec block (Lint/ConstantDefinitionInBlock):
 # a fake tool for the concurrency probe, plus the full toolset partition as
 # data -- a Hash of builder thunks is what keeps #build_tool a lookup, not a
 # branch, however many tools the toolset grows to.
@@ -49,10 +49,10 @@ module ParallelSafetySpecSupport
   # Every OTHER tool the toolset actually ships (exe/lain's `base_tools` plus
   # the subagent/ask_human/run_skill layered on top, and tool_search, which
   # {Toolset::Disclosure::Deferred} constructs separately): a model-controlled
-  # command string (bash, and core_exec -- C3's approval-gated tier-3
+  # command string (bash, and core_exec -- the approval-gated tier-3
   # comparison arm over the lain-core boundary, constructed explicitly rather
   # than shipped in base_tools), a Session write-set mutation (edit_file,
-  # write_file, todo_write, memory_write), M2's `improvement_write` (NOT a
+  # write_file, todo_write, memory_write), `improvement_write` (NOT a
   # Session write-set mutation -- it never touches Session at all -- but a
   # durable, ORDERED cross-process append via {Improvement::Sink}: concurrent
   # dispatch could interleave two `sink.append` calls' underlying `write(2)`s
@@ -72,7 +72,7 @@ module ParallelSafetySpecSupport
   def self.build_tool(name) = ToolRegistry.build(name)
 end
 
-# E1: widens Tool#parallel_safe? opt-in beyond {Lain::Tools::Subagent} (the only
+# Widens Tool#parallel_safe? opt-in beyond {Lain::Tools::Subagent} (the only
 # prior true) to the tier-1 STRUCTURED READS -- filesystem and structural-AST
 # alike -- whose audit conclusion is "reads only, no Session write-set mutation,
 # no process-global state" (see each tool's own WHY comment for its specific

@@ -3,51 +3,35 @@
 module Lain
   module Frontend
     class Neovim
-      # One anchor's conversation, as the editor's thread pane holds it (T18):
+      # One anchor's conversation, as the editor's thread pane holds it:
       # the Ruby half renders the exchange into buffer lines and posts it; the
       # editor half (`runtime/51_thread.lua`) shows it in the diff pane the
       # cursor is NOT in, swapping the buffer as the cursor moves.
       #
-      # A PROJECTION, not a view with a round trip. {QuestionView} and
-      # {Compose} both hold state because their `:w` comes back to them and has
-      # to be matched against what they opened; the thread's `:w` is
-      # `review_ask`, which {CLI::HumanReplies::Gestures} routes to the review
-      # SESSION -- the object that owns the changeset and the anchors. So there
-      # is nothing here for a write to answer, and nothing here to keep: this
-      # renders and posts, and a spec pins that its only instance variable is
-      # the rail out. That is also what {Review::Surface}'s own doc means by "a
-      # surface holds NO review state"; T19's adapter reaches this object, so
-      # the promise has to be true one layer down too.
+      # A PROJECTION, not a view with a round trip. {QuestionView} and {Compose}
+      # both hold state because their `:w` comes back to them and has to be
+      # matched against what they opened; the thread's `:w` is `review_ask`,
+      # routed to the review SESSION that owns the changeset and the anchors. So
+      # there is nothing here for a write to answer and nothing to keep, and a
+      # spec pins that its only instance variable is the rail out.
       #
-      # == The anchor rides whole, not as a bare id
+      # THE ANCHOR RIDES WHOLE, not as a bare id. Keying on an id rather than a
+      # line is right -- an id is a stamp Ruby minted and can hand back
+      # unchanged, where a line only names a position in the rendering that drew
+      # it -- but it does not supply the one fact the pane cannot work without:
+      # WHERE the anchor sits. The pane is cursor-driven, answering "is there a
+      # thread on the line I am on", and no other entry point on this rail
+      # carries an anchor's position. So the identity that crosses is the id AND
+      # the position, and the editor treats the id as opaque. The keys are
+      # Strings and `side` is a String, because that is what a lua table on the
+      # far side of msgpack reads as.
       #
-      # {RpcThread::RenderQueue::SET_THREAD} names its first argument
-      # `anchor_id`, and T11's reasoning for keying on an id rather than a line
-      # is right and is kept: an id is a stamp Ruby minted and can hand back
-      # unchanged, while a line only names a position in the rendering that drew
-      # it. What that reasoning does not supply is the one fact the pane cannot
-      # work without -- WHERE the anchor sits. The pane is cursor-driven: it
-      # answers "is there a thread on the line I am on", and no other entry
-      # point on this rail carries an anchor's position (T15's `open_changeset`
-      # carries the file, never its notes). Ruby is the only side that knows,
-      # so the identity that crosses is the id AND the position: `id`, `path`,
-      # `side`, `line`. The editor treats the id as opaque and never parses it,
-      # which is the half of T11's rule that actually binds.
-      #
-      # The keys are Strings and `side` is a String, because that is what a lua
-      # table on the far side of msgpack reads as -- {Review::Wire}'s rule for
-      # the same crossing, one layer up.
-      #
-      # == The ONE owner of a `set_thread` post
-      #
-      # {Review::Surface::Neovim} renders `annotate` and `thread` THROUGH this
-      # object rather than beside it, and that is a correction rather than a
-      # preference. Both used to build their own payload and post it directly:
-      # a bare `anchor.id` String, which the editor half refuses by name --
-      # over a NOTIFY, so the refusal reached nobody and every annotation in
-      # production produced no pane at all while Ruby was answered "it landed".
-      # Two objects owning one wire shape is what made that possible, so there
-      # is now exactly one, and the surface supplies {Entry} values.
+      # THE ONE OWNER OF A `set_thread` POST. {Review::Surface::Neovim} renders
+      # `annotate` and `thread` THROUGH this object rather than beside it. Both
+      # used to build their own payload and post it directly -- a bare
+      # `anchor.id` String, which the editor half refuses by name, over a NOTIFY,
+      # so the refusal reached nobody and every annotation in production produced
+      # no pane at all while Ruby was answered "it landed".
       class ThreadView
         # Every thread buffer's name begins here; the anchor's id completes it.
         # A buffer PER ANCHOR rather than one reused pane buffer, because a
@@ -55,13 +39,10 @@ module Lain
         # the pane must not lose it.
         BUFFER_PREFIX = "lain://thread/"
 
-        # No editor took the conversation: none is attached, one died, or one
-        # stopped draining -- one notice for all three
-        # ({QuestionView::DETACHED}'s reason). A LIVE inlet answers
-        # {RpcThread::RenderInlet::THREAD_DETACHED} instead, which is the same
-        # fact in the sentence that door already owned; this is the one the Null
-        # editor below speaks, so an unwired view never reports a thread that
-        # never landed.
+        # No editor took the conversation: none attached, one died, or one
+        # stopped draining -- one notice for all three. A LIVE inlet answers
+        # {RpcThread::RenderInlet::THREAD_DETACHED} instead; this is the one the
+        # Null editor below speaks.
         DETACHED = "showing a review thread needs an attached editor"
 
         # A thread nobody has said anything in yet. Rendered rather than left
@@ -77,26 +58,21 @@ module Lain
                    "into the pane cites that id back, so a blank one would file an answer against " \
                    "whichever thread happened to be open"
 
-        # What opens each message, and it is a CROSS-LANGUAGE vocabulary: the
-        # `]]`/`[[` motions in `runtime/51_thread.lua` recognise a message by
-        # this shape. A static chunk can derive nothing from Ruby, so the two
-        # spellings are pinned by BEHAVIOUR -- `thread_view_spec.rb` renders a
-        # real conversation through a real editor and asserts `]]` lands on the
-        # second speaker -- which is stronger than two constants a spec compares
-        # (41_layout's own note on the only defence such a vocabulary has).
+        # A CROSS-LANGUAGE vocabulary: the `]]`/`[[` motions in
+        # `runtime/51_thread.lua` recognise a message by this shape. A static
+        # chunk can derive nothing from Ruby, so the two spellings are pinned by
+        # BEHAVIOUR -- `thread_view_spec.rb` renders a real conversation through
+        # a real editor and asserts `]]` lands on the second speaker.
         SPEAKER_PREFIX = "## "
 
-        # WHERE this conversation hangs, as its first line. The pane sits
-        # opposite the line the cursor is on, so the position is one glance
-        # away rather than obvious -- and the same rendering is what
-        # {Review::Surface::Neovim} posts for a note, where naming the file and
-        # line is the whole of the context. The spelling is
-        # {Review::Surface::Text#thread}'s, so a reader moving between the two
-        # surfaces reads the same line.
+        # WHERE this conversation hangs, as its first line: the pane sits
+        # opposite the line the cursor is on, so the position is one glance away
+        # rather than obvious. {Review::Surface::Text#thread}'s spelling, so a
+        # reader moving between the two surfaces reads the same line.
         HEADER = "-- thread at %s --"
 
         # One message in the conversation. `speaker` is who said it (the human,
-        # the docent T24 spawns, or lain refusing), `text` is what they said,
+        # the docent the review wires in, or lain refusing), `text` is what they said,
         # newlines and all -- this object cuts it into buffer lines.
         Entry = Data.define(:speaker, :text)
 
@@ -138,8 +114,7 @@ module Lain
         # The id is the whole of a thread's identity -- every `review_ask` cites
         # it back, and `nil == nil` is exactly how a buffer opened under nothing
         # would answer for a thread nobody holds. Refused at the door, by name,
-        # for {QuestionView#named!}'s reason: this is a caller handing over a
-        # value it should not have, and the human has done nothing yet.
+        # because this is a caller handing over a value it should not have.
         def identity(anchor)
           id = anchor.id
           raise ArgumentError, format(BLANK_ID, id) if Blankness.blank?(id)

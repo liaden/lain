@@ -9,10 +9,15 @@
 -- placement sequence and the payload is sorted by it. Extmark order is
 -- POSITIONAL: notes placed on lines 40, 12 and 25 come back from
 -- `nvim_buf_get_extmarks` as 12, 25, 40 -- tidy, plausible, and the wrong
--- answer, which no assertion about a note's content would ever catch. That is
--- also why the per-buffer store is an ARRAY and not the `[buf][id]` map
--- `65_review.lua` uses: `pairs` has no order at all, so that map cannot express
--- this module's central requirement.
+-- answer, which no assertion about a note's content would ever catch.
+--
+-- THE SEQUENCE IS THE ONLY THING THAT EXPRESSES IT, and the per-buffer store is
+-- an array for a smaller reason than it once was. `pairs` has no order, so a
+-- `[buf][id]` map like `65_review.lua`'s could not even be walked repeatably --
+-- but an array is not ordered by `seq` either, and since a pane can reserve its
+-- place long before it writes its note (`reserve`), it is now routinely not.
+-- Every reader sorts. Nothing may read either store's order and call it the
+-- placement order.
 --
 -- DRIFT IS MEASURED HERE, AND IT IS NEVER A QUESTION ABOUT WHETHER A MARK
 -- SURVIVED. A panel measured that a mark inside a rewritten span MOVES
@@ -62,8 +67,10 @@ local review_notes = {
   -- that map, and a second copy here would be free to disagree with it.
   MARKERS = { note = "● note", question = "● question", blocker = "● blocker" },
 
-  -- buf -> the notes placed in it, IN PLACEMENT ORDER, each holding the extmark
-  -- id that tracks its position.
+  -- buf -> the notes placed in it, each holding the extmark id that tracks its
+  -- position. IN NO PARTICULAR ORDER: `seq` is the placement order and a
+  -- reservation may be spent long after a later one (see `reserve`), so every
+  -- reader of this table sorts.
   by_buf = {},
 
   -- Notes whose buffer is gone, already resolved to their last known row. See
@@ -294,6 +301,40 @@ function review_notes.assert_saved()
   end
 end
 
+-- A COMPOSE PANE HOLDING A PLACE IN LINE IT HAS NOT SPENT IS A NOTE THIS SETTLE
+-- CANNOT SEE, and settling around one inverts the very order this module calls
+-- its output. Measured: a pane opened on line 10 (seq 1) and a cmdline note on
+-- line 20 (seq 2) settle to line 20 ALONE -- and the pane's note then reaches
+-- the journal in a LATER batch than the note it was reserved before. Nothing
+-- downstream can repair that: the batches are what the record is made of.
+--
+-- So it refuses, `assert_saved`'s shape and its neighbouring reason -- a settle
+-- that half happened is worse than one that did not, and an unwritten pane is
+-- the same class of "you are not finished yet" as an unsaved buffer.
+--
+-- BOTH REMEDIES, because the human may mean either: `:w` finishes the note,
+-- `:bwipeout` drops it and releases the place. The claim goes LAST -- it is a
+-- buffer name, the unbounded field -- and it is the address `:bwipeout` needs,
+-- which is the same address the pane echoed when it opened.
+--
+-- WHICH RESTS ON EVERY CLAIM NAMING A LIVE BUFFER, stated at `CMDLINE` above and
+-- kept in three places, none of them here: `52_note_compose` makes the buffer
+-- BEFORE it makes the claim, and releases on `BufUnload` and on `BufFilePre`;
+-- `place` never leaves `CMDLINE` outstanding. A claim that outlived its buffer
+-- would make this the one refusal in the runtime whose remedy cannot be taken --
+-- worse than the inversion it exists to prevent, which is why the rule is written
+-- down beside the claim rather than left to be inferred from here.
+--
+-- NO `lain: ` PREFIX, `assert_saved`'s rule: this is caught by
+-- `:LainNoteDone`'s `pcall` and handed to `__lain.review_refused`, which
+-- prepends exactly one. 53 columns with that prefix, before the claim.
+function review_notes.assert_placed()
+  local waiting = review_notes.outstanding()
+  if #waiting > 0 then
+    error("a note pane is unwritten -- :w it, or :bwipeout " .. waiting[1], 0)
+  end
+end
+
 -- Every note the human has placed, in the order they placed them.
 --
 -- `reap` FIRST, and the order is the point: it is what leaves every remaining
@@ -302,6 +343,7 @@ end
 function review_notes.settled()
   review_notes.reap()
   review_notes.assert_saved()
+  review_notes.assert_placed()
 
   local gathered = {}
   for _, note in ipairs(review_notes.harvested) do
@@ -374,28 +416,141 @@ function review_notes.forget()
   review_notes.harvested = {}
 end
 
--- The cursor row is 1-based and extmarks are 0-based, which is the whole of the
--- arithmetic here.
-function review_notes.place(buf, stamp, kind, text)
-  local row = vim.api.nvim_win_get_cursor(0)[1] - 1
-  local id = vim.api.nvim_buf_set_extmark(buf, review_notes.namespace(), row, 0, {
-    virt_text = { { review_notes.MARKERS[kind], "Comment" } },
+-- A PLACE IN LINE, TAKEN BEFORE THERE IS A NOTE TO PUT IN IT.
+--
+-- `placed` is unchanged in every respect that matters -- still one monotonic
+-- session counter, still incremented exactly once per note. What is new is that
+-- the increment can happen EARLIER than the note can be written, which is what
+-- `52_note_compose.lua` needs: a pane the human types a long note into takes its
+-- number when it OPENS, so a quick cmdline note placed while they are still
+-- typing comes back AFTER it, in the order the human actually decided.
+--
+-- THE RESERVATION IS AN OBJECT THE MODULE OWNS, NOT AN INTEGER IT HANDS OUT.
+-- Handing back a bare `seq` lets `anchor` take one from anybody: nothing checks
+-- that a sequence came from `reserve`, was used once, or did not exceed
+-- `placed`. A forged or duplicated sequence has to be UNREPRESENTABLE, so a
+-- caller names a CLAIM, the module holds the placement under it, and `anchor`
+-- can only spend what is there. A pane's claim is its buffer NAME, the one piece
+-- of its identity that survives `:bdelete`.
+--
+-- A RESERVATION IS A DEBT THE SETTLE COLLECTS. `assert_placed` refuses
+-- `:LainNoteDone` while one is outstanding -- see it below for why that is a
+-- correctness rule and not tidiness.
+review_notes.reserved = {}
+
+-- A CLAIM IS A BUFFER NAME. Not a convention -- a requirement, and
+-- `assert_placed` is what makes it one: the only remedy it can offer for an
+-- outstanding claim is `:bwipeout <claim>`, so a claim naming no buffer is a
+-- refusal whose remedy answers E94.
+--
+-- `CMDLINE` IS THE ONE CLAIM THAT IS NOT A BUFFER NAME, and it is therefore the
+-- one claim that may never be outstanding when anybody looks. `place` is its only
+-- user and spends or releases it in the same breath it takes it -- unconditionally,
+-- on both legs of a `pcall` -- so `outstanding` cannot see it. That is the whole
+-- of the enforcement and it is eight lines below. Nothing here skips it: a guard
+-- against a state the code forbids is dead code that would also swallow the only
+-- symptom of the rule having broken.
+review_notes.CMDLINE = ":LainNote"
+
+-- @param claim [String] the caller's name for this gesture
+-- @param placement target, row (0-based), kind, anchor_text, side, revision, path
+function review_notes.reserve(claim, placement)
+  review_notes.placed = review_notes.placed + 1
+  placement.seq = review_notes.placed
+  review_notes.reserved[claim] = placement
+  return placement
+end
+
+-- The placement this claim is holding a place for, or nil. The pane's whole
+-- membership test: it keeps no buffer variable of its own to disagree with this.
+function review_notes.holding(claim)
+  return review_notes.reserved[claim]
+end
+
+-- A place in line given up without a note. Reached when the pane's buffer
+-- UNLOADS -- `:bdelete`, `:bwipeout`, nvim exiting -- which is exactly when the
+-- draft it was holding stops existing.
+--
+-- The number is not returned to the pool and nothing tries to: `settled` sorts
+-- by `seq` and reads it as neither an index nor a count, so an abandoned
+-- reservation costs one integer and no correctness.
+function review_notes.release(claim)
+  review_notes.reserved[claim] = nil
+end
+
+-- Every claim still holding a place in line, sorted -- so which one a refusal
+-- names is not whatever `pairs` chose, `assert_saved`'s rule one screen down.
+function review_notes.outstanding()
+  local claims = {}
+  for claim in pairs(review_notes.reserved) do
+    claims[#claims + 1] = claim
+  end
+  table.sort(claims)
+  return claims
+end
+
+-- Spend a reservation: the note it was taken for, with the words that have
+-- finally arrived.
+--
+-- ONE place builds the entry, because there are two gestures that reach it and
+-- they differ only in how long the words took. A second copy of these fields is
+-- precisely how a member starts being dropped in silence, which is `wired`'s own
+-- reason one screen up.
+--
+-- `by_buf` is untouched in SHAPE: still an array per buffer, still appended to.
+-- What it stops being is sorted by `seq` -- and nothing ever read it that way
+-- (`settled` gathers both stores and sorts; `harvest` and `reap` only move
+-- entries between them). The array's order was never the output. `seq` is.
+function review_notes.anchor(claim, text)
+  local placement = review_notes.reserved[claim]
+  if placement == nil then
+    error("no place in line is reserved for " .. tostring(claim), 0)
+  end
+  local id = vim.api.nvim_buf_set_extmark(placement.target, review_notes.namespace(), placement.row, 0, {
+    virt_text = { { review_notes.MARKERS[placement.kind], "Comment" } },
     virt_text_pos = "right_align",
   })
-  review_notes.placed = review_notes.placed + 1
-  review_notes.by_buf[buf] = review_notes.by_buf[buf] or {}
-  local notes = review_notes.by_buf[buf]
+  review_notes.reserved[claim] = nil
+  review_notes.by_buf[placement.target] = review_notes.by_buf[placement.target] or {}
+  local notes = review_notes.by_buf[placement.target]
   notes[#notes + 1] = {
     id = id,
-    row = row,
-    seq = review_notes.placed,
-    kind = kind,
+    row = placement.row,
+    seq = placement.seq,
+    kind = placement.kind,
     text = text,
+    anchor_text = placement.anchor_text,
+    side = placement.side,
+    revision = placement.revision,
+    path = placement.path,
+  }
+end
+
+-- The cursor row is 1-based and extmarks are 0-based, which is the whole of the
+-- arithmetic here.
+--
+-- RESERVE AND SPEND IN ONE BREATH, and the `release` is what keeps that true
+-- under a raise. `nvim_buf_set_extmark` can fail, and a reservation left behind
+-- by a failed `:LainNote` would refuse every later `:LainNoteDone` naming a
+-- gesture the human already saw fail. Releasing after the `pcall` costs nothing
+-- on the path that worked -- `anchor` has already cleared the claim -- and is
+-- the whole of the guarantee on the path that did not.
+function review_notes.place(buf, stamp, kind, text)
+  local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+  review_notes.reserve(review_notes.CMDLINE, {
+    target = buf,
+    row = row,
+    kind = kind,
     anchor_text = vim.api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or "",
     side = stamp.side,
     revision = stamp.revision,
     path = stamp.path,
-  }
+  })
+  local placed, failure = pcall(review_notes.anchor, review_notes.CMDLINE, text)
+  review_notes.release(review_notes.CMDLINE)
+  if not placed then
+    error(failure, 0)
+  end
 end
 
 -- How many live notes this module is tracking for a buffer, or nil for one it is
@@ -432,20 +587,38 @@ end
 -- put the placement SEQUENCE at the mercy of how fast the human types into two
 -- overlapping prompts, and the sequence is this card's whole output.
 -- ALL THREE REFUSALS RIDE `__lain.review_refused` AND RETURN, which is
--- `:LainNoteDone`'s rail one function down and F72's fix. They used to
--- `error()`, and nvim appends its own `stack traceback:` to anything escaping a
--- `define`d callback -- `error(msg, 0)` included, because the traceback is
--- nvim's outer wrapper's doing -- then raises a hit-enter prompt behind which
--- every non-fast RPC request queues. That is F30's shape at a second site: the
--- editor answers nothing at all, including the `:messages` the refusal tells
--- them to read, until a human presses a key. NONE OF THE THREE SPELLS `lain: `
--- any more, for `assert_saved`'s reason above: the rail prepends one.
+-- `:LainNoteDone`'s rail one function down, and the fix that put it there. They
+-- used to `error()`, and nvim appends its own `stack traceback:` to anything
+-- escaping a `define`d callback -- `error(msg, 0)` included, because the
+-- traceback is nvim's outer wrapper's doing -- then raises a hit-enter prompt
+-- behind which every non-fast RPC request queues. That is the hit-enter
+-- deadlock at a second site: the editor answers nothing at all, including the
+-- `:messages` the refusal tells them to read, until a human presses a key.
+-- NONE OF THE THREE SPELLS `lain: ` any more, for `assert_saved`'s reason
+-- above: the rail prepends one.
 -- `spec/refusal_delivery_discipline_spec.rb` is the gate.
 define("LainNote", function(opts)
   local buf = vim.api.nvim_get_current_buf()
   local stamp = review_notes.stamp(buf)
   if stamp == nil then
-    _G.__lain.review_refused(":LainNote needs a buffer lain has open for review")
+    -- THE REMEDY IS THE TAIL, and it is what the entry-time stamp re-acquisition
+    -- leaves this refusal owing. A buffer the round already opened re-acquires
+    -- its stamp on entry now, so the human who reaches this sentence is in a file
+    -- no row has opened -- a `gf` into a neighbour, most likely.
+    --
+    -- IT NAMES A GESTURE THAT WORKS FROM WHERE THEY ARE, which is why it is not
+    -- the sidebar's `<CR>`. `gf` replaces the buffer in the window it was pressed
+    -- in, so out of the navigator it takes the sidebar off the screen and out of
+    -- the file pane it takes the diff: a refusal naming a surface this very
+    -- gesture can have hidden is a remedy the human cannot take. `<C-o>` is
+    -- nvim's own way back from a jump, it needs no window they can still see, and
+    -- landing is what re-acquires the stamp -- so the sentence and the fix are
+    -- one keystroke. Measured against a real `gf` in `neovim_runtime_spec.rb`.
+    --
+    -- 74 columns with the rail's prefix, against
+    -- `refusal_delivery_discipline_spec.rb`'s 80 -- which measures this literal
+    -- mechanically, on every run, rather than leaving it to a reader's eye.
+    _G.__lain.review_refused(":LainNote needs a buffer lain has open for review -- <C-o> goes back")
     return
   end
   local kind = opts.fargs[1]
@@ -502,16 +675,13 @@ end, {
 -- is cleared until lain says it took them, which is what the early RETURN
 -- below preserves.
 --
--- THE REFUSAL IS ANSWERED, NOT RE-RAISED, and this comment used to say the
--- opposite for a true reason wrongly applied. It is true that nvim appends its
--- own `stack traceback:` to anything escaping a `define`d callback however it
--- was raised, `error(msg, 0)` and a `pcall`-then-reraise alike; the traceback
--- is nvim's outer wrapper's doing. That is a limit on RAISING, not on
--- refusing. Sending it out on `__lain.review_refused` instead costs the human
--- no traceback, which is what `65_review.lua`'s `:LainReviewDone` already does
--- and what `46_sidebar.lua`'s `:LainReviewVerdict` now does too. It does NOT
--- promise no hit-enter prompt -- a message longer than the window still pages;
--- `46_sidebar.lua`'s comment carries the measurement.
+-- THE REFUSAL IS ANSWERED, NOT RE-RAISED. nvim appends its own
+-- `stack traceback:` to anything escaping a `define`d callback however it was
+-- raised, `error(msg, 0)` and a `pcall`-then-reraise alike, because the
+-- traceback is nvim's outer wrapper's doing -- a limit on RAISING, not on
+-- refusing. Sending it out on `__lain.review_refused` costs the human no
+-- traceback. It does NOT promise no hit-enter prompt: a message longer than the
+-- window still pages, and `46_sidebar.lua` carries that measurement.
 --
 -- TWO `pcall`s, because there are two refusals and only one of them has been
 -- anywhere. `settled` runs `assert_saved`, which refuses a modified buffer
@@ -521,8 +691,8 @@ end, {
 -- above says it would -- wearing a `stack traceback:`, and, with a UI attached,
 -- raising the hit-enter prompt that leaves the editor answering no RPC at all.
 -- `:messages` and `:LainApprove` were then unavailable exactly while a refusal
--- was on screen, which is to say the recovery it named could not be taken (F30,
--- the shape F25 measured on the sidebar's rail).
+-- was on screen, which is to say the recovery it named could not be taken -- the
+-- same shape QA measured on the sidebar's rail.
 --
 -- THREE LEGS ANSWER AND ONE HANDS OVER, and the emptiness check sits between
 -- the two `pcall`s rather than before them. NOT because an earlier count would
@@ -562,8 +732,7 @@ end, {
 -- to reason about than one that treats it as total in all three. So: total, and
 -- the near-nil path stays loud. That the rail is unguarded is a measured fact
 -- rather than an assumption -- `review_refused` does not `pcall` its own
--- `nvim_echo` (`65_review.lua:245`, `:256`, `:261`); only `recorded()` at `:186`
--- does.
+-- `nvim_echo`; only `recorded()` does.
 define("LainNoteDone", function()
   -- `pcall`'s second return is the VALUE or the ERROR, so `batch` is the
   -- refusal on one leg and the payload on the other. Lua's convention, spelled
@@ -613,6 +782,14 @@ vim.api.nvim_create_autocmd("BufUnload", {
 -- refuses teaches the human that notes are broken, where a key that is absent
 -- teaches them they are somewhere else.
 --
+-- AND IT FOLLOWS BOTH WAYS: entering a buffer is also the moment a withdrawn
+-- stamp can become true again -- and the moment a stamp that has left the
+-- review's tabpage stops being true. `review_diff.entered` decides both, and
+-- it is called here rather than from a second `BufEnter` of its own so the order
+-- is written down instead of inherited from module load order. It is not a
+-- second membership test: it may put a stamp back or take one away, and the line
+-- below still asks `review_notes.stamp` the one question that decides the keys.
+--
 -- THE CMDLINE IS PRE-FILLED, NOT EXECUTED -- no `<CR>`, no `vim.ui.input`. The
 -- prompt version is the obvious one and it is wrong here for the reason stated
 -- above `:LainNote`: `vim.ui.input` is asynchronous under the dressing plugins
@@ -629,15 +806,24 @@ vim.api.nvim_create_autocmd("BufUnload", {
 -- ONE table, read by both halves, so a key added to the bind list cannot be
 -- forgotten by the unbind list -- which is the drift that would leave exactly
 -- the stale, refusing key this whole autocmd exists to remove.
+--
+-- `c` IS THE LONG PATH AND IT IS PRE-FILLED TOO, not executed -- one key rather
+-- than one per kind, because the kind is what the human types on the cmdline
+-- and `:LainNoteCompose`'s completion offers the same closed set the three keys
+-- above spell out. A fourth, fifth and sixth prefixed letter for `question` and
+-- `blocker` panes would cost the human's `<leader>L` namespace three more
+-- letters to buy nothing the cmdline does not already give them.
 local NOTE_KEYS = {
   { "n", ":LainNote note ", "note on this line (finish the sentence, then <CR>)" },
   { "q", ":LainNote question ", "question on this line (finish it, then <CR>)" },
   { "b", ":LainNote blocker ", "blocker on this line (finish it, then <CR>)" },
+  { "c", ":LainNoteCompose ", "compose a long note on this line in a pane (kind, then <CR>)" },
   { "N", "<Cmd>LainNoteDone<CR>", "hand every note back" },
   { "t", "<Cmd>LainThread<CR>", "open the thread on this line" },
 }
 
 local function bind_note_keys(buf)
+  review_diff.entered(buf)
   local stamped = review_notes.stamp(buf) ~= nil
   for _, key in ipairs(NOTE_KEYS) do
     if stamped then
@@ -648,7 +834,14 @@ local function bind_note_keys(buf)
   end
 end
 
-vim.api.nvim_create_autocmd("BufEnter", {
+-- `WinEnter` BESIDE `BufEnter`, because the rule `review_diff.entered` keeps is
+-- about the TABPAGE, and `BufEnter` cannot see a tabpage change that does not
+-- change the buffer. The same file shown in the review's pane and in a window of
+-- another tabpage is ONE buffer, so crossing between them with `gt` moves the
+-- human over the boundary twice while nvim reports no buffer entry at all -- and
+-- the keys would be whatever the last buffer switch left them. Entering a
+-- tabpage always enters a window, so this is the event that closes it.
+vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
   group = vim.api.nvim_create_augroup("lain_review_note_keys", { clear = true }),
   callback = function(ev) bind_note_keys(ev.buf) end,
 })

@@ -18,7 +18,7 @@ RSpec.describe Lain::Event::Projection do
     end
   end
 
-  # TL-4: projections are pure folds over Store events plus injected data; a
+  # Projections are pure folds over Store events plus injected data; a
   # projection holds no state, so folding the same log twice yields the same
   # answer and never mutates the log.
   describe "purity" do
@@ -67,7 +67,7 @@ RSpec.describe Lain::Event::Projection do
     end
   end
 
-  # Decision 2 / TL-4: "pending" is DERIVED, never a consumed queue. A :message
+  # Decision 2: "pending" is DERIVED, never a consumed queue. A :message
   # is pending iff no committed :turn in the log names it a causal parent -- so
   # render and commit, folding the same log, cannot disagree about what a turn
   # consumed. Pure: the same log yields the same set every time.

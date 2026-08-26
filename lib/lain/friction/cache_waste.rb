@@ -12,109 +12,74 @@ module Lain
     #
     # == Waste is a cache write that a BREAK preceded
     #
-    # Not every `cache_creation_input_tokens` is waste. The first call of a
-    # session buys a cache nobody had; a growing conversation buys the new
-    # tail. What this counts is narrower: the cache creation billed on the call
-    # whose prefix chain diverged from the previous call's ON THE SAME MODEL --
-    # bytes that were already bought once and had to be bought again. Summing
-    # every cache write instead would report a healthy session as a wasteful
-    # one.
+    # Not every `cache_creation_input_tokens` is waste: the first call of a
+    # session buys a cache nobody had, and a growing conversation buys the new
+    # tail. What this counts is the cache creation billed on the call whose
+    # prefix chain diverged from the previous call's ON THE SAME MODEL. Summing
+    # every cache write instead would report a healthy session as a wasteful one.
     #
     # == Segmentation is per MODEL, not per consecutive run
     #
-    # `Request#prefix_digests` folds `model` into every chain entry (via
-    # `fixed_prefix_digest`'s `{model, tools, system}` seed), so a `/model`
-    # switch disagrees at every shared position and {Bench::Rewrites} reads it
-    # as one rewrite at the earliest -- "indistinguishable from a real prefix
-    # edit" (rewrites.rb:34-42, which tells callers to segment **per arm**).
+    # `Request#prefix_digests` folds `model` into every chain entry, so a
+    # `/model` switch disagrees at every shared position and {Bench::Rewrites}
+    # reads it as one rewrite at the earliest (`rewrites.rb:34-42`, which tells
+    # callers to segment per arm).
     #
     # Per ARM, and deliberately not per consecutive RUN. The prompt cache is
-    # keyed per `(model, prefix)`, so an intervening haiku call does not touch
-    # the opus cache: two opus calls with a haiku call between them genuinely
-    # share a cache and genuinely re-bill when the opus prefix breaks. Chunking
-    # into maximal consecutive runs would put every call of an alternating
-    # session in a run of length 1 and make this meter structurally incapable
-    # of ever reporting anything -- silently, and on the sessions where `/model`
-    # is used most. So calls are grouped by model (`group_by`, first-appearance
-    # order) and compared within a group, while `model_switches` is counted
-    # from consecutive boundaries because that is what a switch IS.
-    #
-    # The model is read from the request's `payload["model"]`: the payload IS
-    # `Request#cache_payload`, so that field is the very byte the chain folds
-    # in, and segmenting on it segments on exactly what made the chains
-    # disagree.
+    # keyed `(model, prefix)`, so an intervening haiku call does not touch the
+    # opus cache. Chunking into maximal consecutive runs would put every call of
+    # an alternating session in a run of length 1 and make this meter
+    # structurally incapable of ever reporting anything -- silently, and on the
+    # sessions where `/model` is used most. So calls are grouped by model, while
+    # `model_switches` is counted from consecutive boundaries because that is
+    # what a switch IS. The model is read from the request's `payload["model"]`,
+    # which IS the byte the chain folds in.
     #
     # == Pairing, and the usage that belongs to somebody else
     #
-    # `request_sent` lands before dispatch and `turn_usage` after, so the two
-    # interleave one pair per turn. {Telemetry::TurnUsage} carries no
-    # `request_digest`, so positional pairing is the only join the Journal
-    # offers -- and it is not safe on its own. `Tools::Subagent` hands a child
-    # the SESSION's journal, and its long-lived actor "outlives the parent's
-    # asks", so a child's `turn_usage` can land between the parent's request
-    # and the parent's own. Taken positionally that record is charged to the
-    # parent and the parent's real usage is discarded.
+    # {Telemetry::TurnUsage} carries no `request_digest`, so positional pairing
+    # is the only join the Journal offers -- and it is not safe on its own.
+    # `Tools::Subagent` hands a child the SESSION's journal and its long-lived
+    # actor outlives the parent's asks, so a child's `turn_usage` can land
+    # between the parent's request and the parent's own.
     #
-    # So a pair whose two models disagree OUTRIGHT is REFUSED, the request
-    # stays pending for the record that is really its own, and the refusal is
-    # counted ({#refused_usages}). Containment rather than equality, because
-    # the fields legitimately differ in specificity -- a request may name an
-    # alias where the usage reports the resolved snapshot. The residual is
-    # therefore wider than "the same model": a child whose name CONTAINS, or is
-    # CONTAINED BY, its parent's is also indistinguishable -- measured, a
-    # `qwen3:8b` parent and a `qwen3:8b-instruct` child attribute 777,777 tokens
-    # against a truth of 2,000, and ollama tag variants and alias/snapshot pairs
-    # share that shape. Containment is still the right test, because equality
-    # would refuse the ordinary alias/snapshot pair and make a normal session
-    # noisy; this is a real residual limit of a journal with no request/usage
-    # join key, not a fixable one.
+    # A pair whose two models disagree OUTRIGHT is REFUSED, the request stays
+    # pending for the record that is really its own, and the refusal is counted
+    # ({#refused_usages}). Containment rather than equality, because the fields
+    # legitimately differ in specificity -- a request may name an alias where the
+    # usage reports the resolved snapshot. The residual is therefore wider than
+    # "the same model": measured, a `qwen3:8b` parent and a `qwen3:8b-instruct`
+    # child attribute 777,777 tokens against a truth of 2,000. Equality would
+    # refuse the ordinary alias/snapshot pair and make a normal session noisy, so
+    # this is a real residual limit of a journal with no request/usage join key,
+    # not a fixable one.
     #
-    # == Two stated limits, so neither is later mistaken for a defect
+    # == Three stated limits, so none is later mistaken for a defect
     #
-    # The re-billed figure is an UPPER BOUND, which is why the report says "at
-    # most". A break's depth is a message POSITION, and the billed
-    # `cache_creation_input_tokens` is a token count covering the whole write --
-    # so a call that both broke its prefix AND appended new messages has its
-    # entire cache write attributed here, including the tail it would have paid
-    # for anyway. Splitting the two would need per-message token accounting the
-    # Journal does not record.
+    # 1. The re-billed figure is an UPPER BOUND, which is why the report says "at
+    #    most". A break's depth is a message POSITION while the billed
+    #    `cache_creation_input_tokens` covers the whole write, so a call that both
+    #    broke its prefix AND appended new messages has its entire cache write
+    #    attributed here. Splitting them needs per-message token accounting the
+    #    Journal does not record.
+    # 2. TTL EXPIRY over-attributes the same way. Comparison groups are per MODEL
+    #    over the whole session, so two calls of one model are compared however
+    #    many turns apart they sit, and a prefix that broke only because the cache
+    #    had already EXPIRED counts as waste. This class does not read the clock
+    #    to exclude it -- does not, rather than cannot: {Journal#record} stamps
+    #    `ts` on every record, so the gap is already in the bytes walked here.
+    # 3. Only the MAIN agent's calls are covered. {Middleware::JournalRequests} is
+    #    wired into the main Agent's `model_middleware` alone, so a subagent's
+    #    `turn_usage` has no `request_sent` to pair with. Every figure is scoped
+    #    to "priced main-agent calls", and the render says so.
     #
-    # TTL EXPIRY is the second over-attribution, and it is why "at most" carries
-    # more than the paragraph above. Comparison groups are per MODEL over the
-    # whole session, not per consecutive run, because the prompt cache is keyed
-    # `(model, prefix)` -- so two calls of one model are compared however many
-    # turns apart they sit. A prefix that broke only because the cache had
-    # already EXPIRED is counted here as waste. This class does not read the
-    # clock to exclude it; note it does not read it rather than cannot --
-    # {Journal#record} stamps `ts` on every record, so the wall-clock gap
-    # between any pair is already in the bytes walked here. Gating a comparison
-    # on it is a follow-up, not a limit of the record.
+    # == Two things the figures do not say for themselves
     #
-    # Only the MAIN agent's calls are covered. {Middleware::JournalRequests} is
-    # wired into the main Agent's `model_middleware` alone (see
-    # `CLI::Chronicle.instrumentation`), so a subagent's `turn_usage` has no
-    # `request_sent` of its own to pair with. Every figure here is therefore
-    # scoped to "priced main-agent calls", and the render says so.
-    #
-    # == Whether there was a cache AT ALL, which no token count can answer
-    #
-    # Every figure below assumed a prompt cache existed and asked only how well
-    # it was used. A provider without one reports both cache fields as 0 on
-    # every call, so the same fold reports zero waste, zero tokens served and a
-    # confident zero saved -- three true numbers that together read as a healthy
-    # cache. The missing fact is a CAPABILITY, and the Journal already carries
-    # it: {Telemetry::CapabilityDegraded}, which {Bench::Session::Loader#degraded}
-    # reads offline the same way. It is folded in on the same walk (see
-    # {#prompt_cache_degraded?}), and its ABSENCE is deliberately not the
-    # complement -- see that method.
-    #
-    # == What it emits
-    #
-    # Digests, token counts, model names and dollars. `payload` is read for one
-    # field and never retained. That field is not trusted either: a model name
-    # is echoed into a report, and a local model is routinely configured BY
-    # PATH, so names are reduced to a safe token (see {SAFE_MODEL}) before they
-    # can reach a render.
+    # Every figure assumed a prompt cache existed and asked only how well it was
+    # used; a provider without one reports three true numbers that read as a
+    # healthy cache. That missing fact is a CAPABILITY -- see
+    # {#prompt_cache_degraded?}. And a model name is echoed into a report, so it
+    # is reduced to a safe token first -- see {SAFE_MODEL}.
     class CacheWaste
       include Enumerable
 
@@ -197,21 +162,16 @@ module Lain
       end
 
       # The cache sensor's own door: one `turn_usage` record in, one cache fact
-      # out, with no request, no chain and no journal fold.
+      # out, with no request, no chain and no journal fold. Reaching {Call}
+      # through {.from_journal} instead would re-parse every `request_sent`
+      # payload every turn, which {Telemetry::RequestSent} notes is O(n^2) in
+      # bytes across a session -- so the cheap question gets a cheap answer.
       #
-      # ROADMAP.md:221-225's scheduler asks "is the cache cold RIGHT NOW" of
-      # the record it has just observed. Making it reach {Call} through
-      # {.from_journal} would re-parse every `request_sent` payload every turn,
-      # and {Telemetry::RequestSent} notes those are O(n^2) in bytes across a
-      # session -- so the cheap question gets a cheap answer.
-      #
-      # It RAISES on a usage-less record, where {Pairing} one screen down
-      # declines -- deliberately, and the two are not in tension. `Pairing`
-      # walks a whole journal a user handed to `lain friction`, where one torn
-      # record must not destroy the report; this answers about a single record
-      # the caller has just observed itself, where a malformed one is a bug in
-      # the writer and not a fact about the session. A scheduler calling it per
-      # observed record inherits that raise on purpose.
+      # It RAISES on a usage-less record where {Pairing} declines, and the two
+      # are not in tension: `Pairing` walks a whole journal a user handed to
+      # `lain friction`, where one torn record must not destroy the report; this
+      # answers about a single record the caller has just observed, where a
+      # malformed one is a bug in the writer.
       #
       # @param record [Hash] one `turn_usage` journal record
       # @return [Call] whose `chain` is nil: no request was consulted
@@ -257,19 +217,16 @@ module Lain
 
         # Collected on THIS walk: the state machine already visits every
         # record, so a second scan would be a second O(n) pass and a second
-        # place that knows the record type's name. (Both of today's callers
-        # hand in a materialized Array -- {Friction::Report} freezes one -- so
-        # the saving is a pass and not a re-read; but {CacheWaste.from_journal}'s
-        # duck admits a one-shot enumerator, which no second scan could walk at
-        # all.)
+        # place that knows the record type's name -- and {CacheWaste.from_journal}'s
+        # duck admits a one-shot enumerator, which no second scan could walk.
         #
         # Anything that cannot BE a capability name is dropped, which is wider
         # than nil: {Capability::DegradedSet} maps `to_sym` over its members, and
-        # `lain friction` reads whatever journal a user points it at, so a
-        # number or an object there raised straight out of the report. That is
-        # the decline-never-crash doctrine {#call_for} applies to a usage-less
-        # record -- where {Bench::Session::Loader} `fetch`es instead, because a
-        # bench must not replay a half-read degradation.
+        # `lain friction` reads whatever journal a user points it at, so a number
+        # or an object there raised straight out of the report. That is the
+        # decline-never-crash doctrine {#call_for} applies to a usage-less record
+        # -- where {Bench::Session::Loader} `fetch`es instead, because a bench
+        # must not replay a half-read degradation.
         #
         # @return [Capability::DegradedSet]
         def degraded

@@ -4,7 +4,7 @@ require "async"
 require "fileutils"
 require "tmpdir"
 
-# T13's differential: the SAME {Lain::Tools::Grep}, once in process and once
+# The differential: the SAME {Lain::Tools::Grep}, once in process and once
 # with a {Lain::Core::Client} wired, over one corpus per case. The claim under
 # test is NOT that the two paths are interchangeable -- they demonstrably are
 # not -- but that every axis where they CAN agree does, and every axis where
@@ -141,7 +141,7 @@ RSpec.describe Lain::Tools::Grep, :core do
       expect(on_core.content).to eq("shout.txt:1:NEEDLE")
     end
 
-    # T7: no matches is still an ok Result, but no longer a blank one -- see
+    # No matches is still an ok Result, but no longer a blank one -- see
     # {Lain::Tools::Grep#no_matches_message}. That formatting runs client-side
     # in #format_matches, downstream of BOTH search arms (the daemon reply
     # carries no message of its own, just `{matches: [], capped: false}`), so
@@ -268,7 +268,7 @@ RSpec.describe Lain::Tools::Grep, :core do
 
   # ⚠️ EVERY example below asserts a DIFFERENCE. None of them is a parity
   # claim, and none may be "fixed" by relaxing it -- each is an open product
-  # decision escalated by T13 (see .handback-T13.md), pinned here so that
+  # decision escalated during this work, pinned here so that
   # whichever way it is decided, the decision reddens a test instead of
   # silently changing what a user gets back.
   describe "divergences the transport swap carries -- pinned, not smoothed over" do
@@ -303,7 +303,7 @@ RSpec.describe Lain::Tools::Grep, :core do
       expect(core.content).to include("look-around")
     end
 
-    # NOT in T12's inherited divergence list, and found by measurement here:
+    # NOT in the inherited divergence list, and found by measurement here:
     # "binary" means two different things. The daemon quits a file at its
     # first NUL byte (BinaryDetection::quit(0)) and discards the buffer it was
     # in, so a match BEFORE the NUL is lost too; the in-process walk only ever
@@ -317,7 +317,7 @@ RSpec.describe Lain::Tools::Grep, :core do
       expect(core.content).to eq(%(grep: no matches for "needle" in #{tmpdir}))
     end
 
-    # The mirror image of the case above, and the correction to T12's struck
+    # The mirror image of the case above, and the correction to the struck
     # divergence #4: that measurement had no match AFTER the invalid line, so
     # it read as agreement. With one, the paths part -- File.foreach raises on
     # the undecodable line and the rescue ends the FILE, while the wire's
@@ -331,7 +331,7 @@ RSpec.describe Lain::Tools::Grep, :core do
       expect(core.content).to eq("bad.txt:1:needle one\nbad.txt:2:needle two\nbad.txt:4:needle four")
     end
 
-    # Also not in T12's list. Dir.glob's File.file? follows the link, so the
+    # Also not in that list. Dir.glob's File.file? follows the link, so the
     # in-process walk searches the same bytes twice under two labels; the
     # daemon's walker does not follow symlinks and reports the target once.
     it "DIVERGES on symlinks: the in-process walk follows one and reports the bytes twice" do

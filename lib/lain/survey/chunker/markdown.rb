@@ -33,17 +33,13 @@ module Lain
       #
       # Measured, not assumed: a `setext_heading` node exists but opens no
       # section, so a document of two setext headings parses as ONE section
-      # holding both, and takes the paragraph floor. Teaching this chunker a
-      # second boundary rule is exactly the regex the grammar was chosen to
-      # avoid.
+      # holding both and takes the paragraph floor. Teaching this chunker a second
+      # boundary rule is exactly the regex the grammar was chosen to avoid.
       #
-      # A MIXED document -- ATX headings with setext ones under them, which is
-      # an ordinary README -- is the case worth stating: the setext headings
-      # open no section, so their text is absorbed into the enclosing ATX
-      # section. EXTENT stays faithful (every line is still covered exactly
-      # once, and an oversized absorbing section still descends or falls to the
-      # floor); what is lost is only the LABEL, which names the ATX ancestry
-      # and never the setext heading a reader can see in the body.
+      # In a MIXED document -- ATX headings with setext ones under them, an
+      # ordinary README -- the setext text is absorbed into the enclosing ATX
+      # section. EXTENT stays faithful; what is lost is only the LABEL, which
+      # names the ATX ancestry and never the setext heading in the body.
       class Markdown
         LANGUAGE = "markdown"
 

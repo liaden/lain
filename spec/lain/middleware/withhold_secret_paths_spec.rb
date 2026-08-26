@@ -167,8 +167,8 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
     end
   end
 
-  # BLOCKER from the T7 review: an empty `list_files`/`glob` result is no
-  # longer `content == ""` (T7 gave each a named sentence instead), and this
+  # BLOCKER from review: an empty `list_files`/`glob` result is no longer
+  # `content == ""` (each was given a named sentence instead), and this
   # middleware re-reads a guarded tool's WHOLE content as listing rows. A
   # single-row sentence is exactly one row, {Listing#paths_in} reads the
   # whole sentence as a candidate path, and joining it onto a base that is
@@ -177,7 +177,7 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
   # mattered. The result: an ORDINARY, EMPTY subdirectory of `~/Downloads`
   # comes back "1 path withheld (out_of_scope)", asserting hidden content
   # exists where there is none -- a false statement about the security
-  # boundary, worse than the ok("") T7 replaced.
+  # boundary, worse than the ok("") those sentences replaced.
   describe "an empty result under a gated (but ordinary) directory" do
     def mkdir(name) = File.join(dir, name).tap { |path| FileUtils.mkdir_p(path) }
 
@@ -291,7 +291,7 @@ RSpec.describe Lain::Middleware::WithholdSecretPaths, :seam do
     end
   end
 
-  # T6's owed test, and it is owed because the survival is a CLASSIFICATION
+  # The owed test, and it is owed because the survival is a CLASSIFICATION
   # rather than a structural fact. Grep's trailer survives for a structural
   # reason -- {Matches#paths_in} finds no `path:lineno:text` split in it and so
   # offers the classifier nothing. {Listing#paths_in} is `[row]`, so under

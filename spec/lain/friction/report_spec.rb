@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-# T15 (chunk-ollama-cloud-arm.md): characterizes what {Lain::Friction::Report}
-# already does over a session priced on an arm {Lain::PriceBook::DEFAULT} has
-# no row for -- Ollama Cloud is metered by subscription quota, not per-token
-# dollars, and the report must neither fabricate a figure nor crash trying to
-# produce one. Both halves turned out to already be true: {Friction::CacheWaste}
-# rescues {PriceBook::UnknownModel} per model (`cache_waste.rb:502`) and
+# Characterizes what {Lain::Friction::Report} already does over a session
+# priced on an arm {Lain::PriceBook::DEFAULT} has no row for -- Ollama Cloud is
+# metered by subscription quota, not per-token dollars, and the report must
+# neither fabricate a figure nor crash trying to produce one. Both halves turned
+# out to already be true: {Friction::CacheWaste} rescues
+# {PriceBook::UnknownModel} per model (`cache_waste.rb:502`) and
 # {Friction::Report::CacheWasteSection#figure_phrase} withholds a figure with
 # nothing priceable behind it (`report.rb:317-335`) rather than printing a
 # confident `$0.000000`. This file exists at the mirrored path CLAUDE.md
@@ -23,7 +23,7 @@ RSpec.describe Lain::Friction::Report do
                    "cache_creation_input_tokens" => create, "cache_read_input_tokens" => read } }
   end
 
-  # AC 1. A prefix break followed by a re-billed cache-creation write and a
+  # A prefix break followed by a re-billed cache-creation write and a
   # served cache-read, both against a model PriceBook::DEFAULT has no row for
   # -- the shape that would otherwise raise UnknownModel mid-render.
   describe "a session whose payments name an ollama model" do

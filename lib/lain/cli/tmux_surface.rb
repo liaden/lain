@@ -8,16 +8,16 @@ module Lain
     # (a new tab in an existing session), a `popup` (a transient floating
     # pane -- `display-popup`), and a detached `session` (a wholly separate
     # tmux session, e.g. forking the whole lain session rather than adding a
-    # window to one). Callers (T16 /fork, T17 /btw, T20 fleet windows) never
+    # window to one). Callers (/fork, /btw, fleet windows) never
     # shell out to tmux directly; they ask this object for a Placement.
     #
     # `display-popup` does not render everywhere: under `tmux -CC` (iTerm2's
     # control mode) the popup never appears (verified live against a PTY --
-    # see planning/interface-integration.md:141-161), and it does not exist
-    # at all on a tmux built before 3.2. `#popup` detects BOTH before
-    # touching the server and, when either holds, opens a window instead --
-    # never a half-open dialog the human can't see. The returned Placement
-    # always names whether (and why) that happened, so a caller can say so.
+    # see planning/interface-integration.md), and it does not exist at all on
+    # a tmux built before 3.2. `#popup` detects BOTH before touching the
+    # server and, when either holds, opens a window instead -- never a
+    # half-open dialog the human can't see. The returned Placement always
+    # names whether (and why) that happened, so a caller can say so.
     #
     # Detection is capability-based, not version-string parsing (a "next-3.8"
     # dev build, or a distro's patched tag, would defeat a `tmux -V` regex):
@@ -34,15 +34,14 @@ module Lain
     # {Up}'s `chat_command`) never needs quoting against a shell on our side.
     class TmuxSurface
       # Reused verbatim, not redefined: one exception name for "no tmux" no
-      # matter which CLI object hit it, so a caller can rescue either
-      # {Up::TmuxUnavailable} or {TmuxSurface::TmuxUnavailable} and mean the
-      # same thing -- they ARE the same class.
+      # matter which CLI object hit it, so rescuing {Up::TmuxUnavailable} or
+      # {TmuxSurface::TmuxUnavailable} means the same thing -- they ARE the
+      # same class.
       TmuxUnavailable = Up::TmuxUnavailable
 
-      # kind: :window / :popup / :session -- the surface actually opened.
-      # target: the window/session name the caller asked for (nil if none).
-      # degraded: true only when #popup fell back to a window.
-      # reason: nil, or why it degraded -- "control_mode" / "old_tmux".
+      # The surface actually opened, and the name the caller asked for.
+      # `degraded` is true only when #popup fell back to a window, and
+      # `reason` then says which check forced it: "control_mode" / "old_tmux".
       Placement = Data.define(:kind, :target, :degraded, :reason)
 
       # tmux's OWN `#{...}` format-string syntax (`man tmux` FORMATS), not
@@ -77,6 +76,11 @@ module Lain
         Placement.new(kind: :window, target: name, degraded: false, reason: nil)
       end
 
+      # `-EE`, not `-E`: the popup runs a `lain chat` REPL that can exit
+      # non-zero (a crash), and `-EE` keeps the popup up on a non-zero exit
+      # until a key -- so the human READS the failure instead of watching it
+      # vanish. A clean exit (the reap path) still closes on its own.
+      #
       # @param command [String] shell command tmux runs in the popup
       # @param title [String, nil] popup title (`-T`); doubles as the window
       #   name if this degrades
@@ -89,11 +93,6 @@ module Lain
       #   root so the child resolves the SAME project, exactly as {#window}
       #   does for /fork; nil leaves tmux's own default-path rules in charge
       # @return [Placement]
-      #
-      # `-EE`, not `-E`: the popup runs a `lain chat` REPL that can exit
-      # non-zero (a crash), and `-EE` keeps the popup up on a non-zero exit
-      # until a key -- so the human READS the failure instead of watching it
-      # vanish. A clean exit (the reap path) still closes on its own.
       def popup(command:, title: nil, width: nil, height: nil, target_session: nil, cwd: nil)
         reason = degrade_reason
         return window(command:, name: title, target_session:, cwd:).with(degraded: true, reason:) if reason
@@ -108,12 +107,11 @@ module Lain
         Placement.new(kind: :popup, target: title, degraded: false, reason: nil)
       end
 
-      # Retitle an existing window -- T20's done marker on a fleet window.
-      # Not a Placement: nothing opens, an existing surface is renamed in
-      # place. Same {#act} discipline, so a target that no longer exists (the
-      # human already closed the window) raises {TmuxUnavailable} and the
-      # CALLER decides whether that is fatal -- {FleetWindows} treats it as
-      # already-done.
+      # Retitle an existing window -- the done marker on a fleet window. Not a
+      # Placement: nothing opens. Same {#act} discipline, so a target that no
+      # longer exists (the human already closed the window) raises
+      # {TmuxUnavailable} and the CALLER decides whether that is fatal --
+      # {FleetWindows} treats it as already-done.
       #
       # @param target [String] a tmux target-window; "=name" pins an exact
       #   window-name match (tmux's own `=` syntax, else it prefix-matches)

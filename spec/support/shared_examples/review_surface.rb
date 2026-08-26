@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 # What {Lain::Review::Surface} adapters -- {Surface::Null} here, {Surface::Text}
-# (T9) and {Surface::Neovim} (T19) after it -- are held to in common. Say
-# plainly what this is, because a review-panel pass on this card found the
-# previous doc overclaimed it: this is a SIGNATURE check plus four BEHAVIOURAL
+# and {Surface::Neovim} after it -- are held to in common. Say plainly what
+# this is, because a review-panel pass on this group found the previous doc
+# overclaimed it: this is a SIGNATURE check plus four BEHAVIOURAL
 # families of law, not "the port's contract" in full. It cannot and does not check that
 # an adapter renders a changeset correctly or answers a verdict truthfully --
 # those stay in each adapter's own spec.
@@ -32,21 +32,21 @@
 #    `subject { SOME_CONSTANT }` (one instance shared across every example)
 #    or builds its instance in a `before(:all)`/`let!` (built once, reused
 #    thereafter) silently restores the exact vacuity this group was fixed to
-#    catch, and nothing here would detect it. T9 and T19: use a plain
+#    catch, and nothing here would detect it. Including specs must use a plain
 #    `subject { described_class.new }` (or equivalent per-example
 #    construction), not a shared/memoized-once instance.
 # 3. a surface told to `#annotate`, `#mark`, or `#refuse` can SAY it was --
-#    the law T9 owes this group (see below), HARDENED once by a fix-round
-#    panel past its own first cut. That first cut checked only `#annotate`,
-#    against an OPT-IN key that silently defaulted to "not configured, skip"
-#    -- and the panel broke it two ways: a non-Null surface that drops every
-#    message on the floor and simply never mentions the key passes cleanly
-#    (11 examples, 0 failures, 1 pending -- declining costs nothing but
-#    silence); and a surface that annotates HONESTLY but discards `#mark`'s
-#    `state`, discards `#refuse`'s `message`, and answers `#verdict` at
-#    random is FULLY GREEN (two thirds of the T4 counterexample still walks
-#    through). Both reproduced against this file before the fix below, and
-#    both are now caught.
+#    the law {Surface::Text} owes this group (see below), HARDENED once by a
+#    fix-round panel past its own first cut. That first cut checked only
+#    `#annotate`, against an OPT-IN key that silently defaulted to "not
+#    configured, skip" -- and the panel broke it two ways: a non-Null surface
+#    that drops every message on the floor and simply never mentions the key
+#    passes cleanly (11 examples, 0 failures, 1 pending -- declining costs
+#    nothing but silence); and a surface that annotates HONESTLY but discards
+#    `#mark`'s `state`, discards `#refuse`'s `message`, and answers `#verdict`
+#    at random is FULLY GREEN (two thirds of the panel's counterexample still
+#    walks through). Both reproduced against this file before the fix below,
+#    and both are now caught.
 #
 #    Three changes, together:
 #
@@ -58,10 +58,10 @@
 #       the checks below; every other surface must supply a real callable.
 #    b) whether to skip is decided from that literal, at definition time --
 #       never by calling the configured callable early to see what it
-#       answers. T19's real transcript can legitimately raise before the
-#       first gesture reaches nvim, and a group that invoked it eagerly to
-#       decide "configured or not" would force T19 to fake one just to be
-#       included here.
+#       answers. The nvim surface's real transcript can legitimately raise
+#       before the first gesture reaches nvim, and a group that invoked it
+#       eagerly to decide "configured or not" would force that surface to
+#       fake one just to be included here.
 #    c) the callable is asserted by SIX laws now, across FIVE messages --
 #       `#annotate` carries two of them, one per argument -- and the last three
 #       were added by review panels that broke the ones before them:
@@ -97,10 +97,11 @@
 #    `-> { sink.string }`, reading the same `StringIO` its `subject` was
 #    built with, so each read reflects whatever has accumulated so far.
 #
-# 4. `#present` RENDERS WHAT IT WAS GIVEN, and the flat and grouped scopes render
-#    differently -- T19's law, closing the largest hole #3 left: `#present`
-#    had no evidence check at all, so a surface that drew NOTHING, or that
-#    drew the same rows whatever `scope:` it was handed, was fully green.
+# 4. `#present` RENDERS WHAT IT WAS GIVEN, and the flat and grouped scopes
+#    render differently -- the nvim surface's law, closing the largest hole #3
+#    left: `#present` had no evidence check at all, so a surface that drew
+#    NOTHING, or that drew the same rows whatever `scope:` it was handed, was
+#    fully green.
 #    Checked against the duck {Lain::Review::Surface}'s own class doc states
 #    for `present`'s argument and against nothing else -- at `:cumulative`
 #    every `changeset.files`' `#path` reaches the transcript and no
@@ -109,7 +110,7 @@
 #    a surface ignoring it fails one half or the other, whichever single
 #    rendering it settled on.
 #
-#    TWO MORE HALVES, from the same T19 panel, and both close the gap between
+#    TWO MORE HALVES, from the same review panel, and both close the gap between
 #    what the first three checked and what the doc claimed. They checked only
 #    that an IDENTIFIER appears, never the STATE beside it -- which is the
 #    surface's entire purpose -- so a probe that flattened every tri-state to
@@ -130,10 +131,10 @@
 #    way the `:cumulative` half could read as a failure for a surface that is
 #    behaving. All four are refused by name at resolve time.
 #
-# 5. WHAT A MESSAGE ANSWERS WHEN IT LANDED -- T19's other law, and the port
-#    decision behind it. {Frontend::Neovim::RenderInlet} answers a
-#    refusal SENTENCE rather than raising when no editor is taking the post,
-#    and T19's adapter hands that sentence straight up, so the port's six
+# 5. WHAT A MESSAGE ANSWERS WHEN IT LANDED -- the nvim surface's other law,
+#    and the port decision behind it. {Frontend::Neovim::RenderInlet} answers
+#    a refusal SENTENCE rather than raising when no editor is taking the post,
+#    and that adapter hands that sentence straight up, so the port's six
 #    COMMANDS answer a `String` for "this reached nobody, here is why" and
 #    anything-but-a-String for "taken". `nil` ({Surface::Null}), a byte count
 #    ({Surface::Text}, whose `Sink#write` answers one) and the sentence are
@@ -143,9 +144,9 @@
 #    Only the LANDED half is checkable here: neither Null nor Text has a
 #    detached mode to drive, and a config key every surface without one opts
 #    out of is the silent-default shape a fix-round panel already broke this
-#    group over (#3a). The REFUSING half is pinned in T19's own spec, against
-#    a real {RenderInlet} whose queue has been closed -- which is what RPC
-#    thread death actually leaves behind.
+#    group over (#3a). The REFUSING half is pinned in {Surface::Neovim}'s own
+#    spec, against a real {RenderInlet} whose queue has been closed -- which is
+#    what RPC thread death actually leaves behind.
 #
 #    `#verdict` is exempt, and not for tidiness: `Review::VERDICTS` are
 #    Strings, so a refusal returned from the one message that answers a
@@ -154,7 +155,7 @@
 #    comment records -- still open, and this law states its edge rather than
 #    papering over it.
 #
-#    SAY THE COST OF THIS LAW OUT LOUD, because a T19 review panel found it is
+#    SAY THE COST OF THIS LAW OUT LOUD, because a review panel found it is
 #    the one place nvim shaped the port: "a String means refused" is
 #    {RenderInlet}'s convention promoted to a port law, and Null and Text
 #    satisfy it ACCIDENTALLY -- `nil` and a byte count -- never exercising the
@@ -184,10 +185,11 @@
 # stand-in. Callables, not values, because `config.fetch` below runs where this group
 # is INCLUDED, at example-group DEFINITION time, with `self` bound to the
 # group's CLASS -- a `let`-built fixture is an instance method and does not
-# exist yet at that point (T19's fixtures come from a running nvim and can
-# only exist as a `let`/`before`). `resolve_review_fixture` below resolves
-# each callable later, inside a real example, via `instance_exec` -- the
-# same shape `spec/support/shared_examples/monoid.rb`'s `#monoid_call` uses
+# exist yet at that point (the nvim surface's fixtures come from a running
+# nvim and can only exist as a `let`/`before`). `resolve_review_fixture`
+# below resolves each callable later, inside a real example, via
+# `instance_exec` -- the same shape
+# `spec/support/shared_examples/monoid.rb`'s `#monoid_call` uses
 # for the identical reason (`define_method(:monoid_call) { |callable, *args|
 # instance_exec(*args, &callable) }`).
 RSpec.shared_examples "a review surface" do |config = {}|
@@ -257,7 +259,7 @@ RSpec.shared_examples "a review surface" do |config = {}|
 
   # HOW TO DRIVE EACH MESSAGE, said once. Three laws below need "call every
   # message with valid arguments" and each used to carry its own copy of the
-  # list -- which a T8 review panel broke by planting an EIGHTH message in
+  # list -- which a review panel broke by planting an EIGHTH message in
   # {MESSAGES}: the shape law and `Surface.check!` both failed loudly, and all
   # three of those copies stayed green, because a hand-maintained roster cannot
   # notice what nobody added to it. That is the exact drift {MESSAGES} exists
@@ -357,7 +359,7 @@ RSpec.shared_examples "a review surface" do |config = {}|
     expect(resolve_review_fixture(transcript)).to match(/\b#{Regexp.escape(marked_state.to_s)}\b/)
   end
 
-  # #annotate's OTHER argument. A T19 review panel's probe annotated the text
+  # #annotate's OTHER argument. A review panel's probe annotated the text
   # honestly and dropped `kind:` on the floor -- and `kind` is what tells a
   # blocker from a passing remark, which is the one thing a verdict policy reads.
   it "leaves evidence, in its transcript, that #annotate's kind actually reached it" do
@@ -391,7 +393,7 @@ RSpec.shared_examples "a review surface" do |config = {}|
     expect(resolve_review_fixture(transcript)).to include(reason)
   end
 
-  # #thread had NO evidence law at all until a T19 review panel wrote a probe
+  # #thread had NO evidence law at all until a review panel wrote a probe
   # whose `#thread` wrote nothing and stayed green. It is a query with no
   # argument to echo except the position itself, so the position is what is
   # checked -- both halves, since a surface naming the file and losing the line
@@ -493,7 +495,7 @@ RSpec.shared_examples "a review surface" do |config = {}|
     expect(presented.partitions.map(&:label)).to all(satisfy { |line| !rendered.include?(line) })
   end
 
-  # #4d, and the half a T19 review panel proved missing: the three halves above
+  # #4d, and the half a review panel proved missing: the three halves above
   # check only that an identifier APPEARS, never the STATE beside it -- which is
   # the entire purpose of the surface. A probe that flattened every tri-state to
   # one marker was green on all three. Checked as a DISTINCTION rather than

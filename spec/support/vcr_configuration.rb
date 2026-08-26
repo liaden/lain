@@ -85,7 +85,7 @@ module VcrRecording
   # remaining way to open unscoped egress with no flag set at all: a bare
   # `vcr: { record: :all }` records against whatever host it names, on an
   # ordinary `bundle exec rspec`, with no credential in front of it. That is the
-  # same hole B1 closed for the global default, and leaving it open in the
+  # same hole that was closed for the global default, and leaving it open in the
   # per-example path would have made the global fix a formality.
   def self.cassette_options(metadata, requested = self.requested)
     declared = metadata[:vcr]

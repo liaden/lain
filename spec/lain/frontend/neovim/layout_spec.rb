@@ -6,7 +6,7 @@ require "socket"
 require "timeout"
 require "tmpdir"
 
-# T26: `runtime/41_layout.lua` -- the review's own tabpage, the two entry points
+# `runtime/41_layout.lua` -- the review's own tabpage, the two entry points
 # every later review capability renders through, and the repair that runs before
 # each of those renders.
 #
@@ -120,7 +120,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(windows(review_tab)).to eq([panes["sidebar"], panes["old"], panes["new"]])
     end
 
-    # The whole contract T14, T15 and T18 render through, and the one an
+    # The whole contract every review module renders through, and the one an
     # implementation that ignored `slot` entirely would still satisfy every
     # OTHER example here: two empty placeholders diff against each other
     # perfectly well, and the sidebar is the window everything falls back to.
@@ -297,7 +297,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(lua("return vim.api.nvim_buf_is_valid(...)", [placeholder])).to be(false)
     end
 
-    # A remembered bufnr is a bufnr the review no longer controls: T15's diff
+    # A remembered bufnr is a bufnr the review no longer controls: the review's diff
     # buffers are wiped and re-made per file, so restoring one blind hands
     # nvim_open_win an invalid buffer and the whole render raises. What a slot
     # remembers is a HINT, checked before it is believed.
@@ -380,7 +380,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T11. The slot VOCABULARY is fixed at three; what a round OPENS is not. A
+  # The slot VOCABULARY is fixed at three; what a round OPENS is not. A
   # survey of files as they stand has no old side for anything it will ever
   # hold, so the window and its buffer would be a third of the screen given to
   # something structurally guaranteed empty -- and `set_review` is where the
@@ -420,9 +420,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # side, so `:LainThread` computes the OPPOSITE slot and the thread pane IS
     # `old` -- a slot this round did not open. Removing it from the vocabulary
     # would make `review_place` refuse it by name inside a `define`d command:
-    # an `error()`, a traceback and a blocking hit-enter prompt, which is round
-    # 7's F31 shape on the surface this chunk exists to repair. It is in the
-    # vocabulary, so it opens on demand instead.
+    # an `error()`, a traceback and a blocking hit-enter prompt, which is the
+    # round-7 hit-enter shape on the surface this chunk exists to repair. It is
+    # in the vocabulary, so it opens on demand instead.
     it "opens a slot this round did not, rather than raising, when a render asks for it" do
       set_review(%w[one], 1, ["new"])
       buf = scratch(["a conversation"])

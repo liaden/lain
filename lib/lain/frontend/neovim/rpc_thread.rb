@@ -32,28 +32,25 @@ module Lain
         end
       end
 
-      # The outbound half of {RpcThread}'s work, split into its own object: the
-      # backlog of not-yet-sent render commands and ITS backpressure (the
-      # bounded queue below). {RpcThread} owns attach, the select loop, and
-      # inbound dispatch; this owns nothing nvim-shaped except turning one
-      # queued command into the right `nvim_exec_lua` call -- two
-      # responsibilities that were, before the split, one class doing both.
+      # The outbound half of {RpcThread}'s work: the backlog of not-yet-sent
+      # render commands and ITS backpressure. {RpcThread} owns attach, the
+      # select loop and inbound dispatch; this owns nothing nvim-shaped except
+      # turning one queued command into the right `nvim_exec_lua` call.
       class RenderQueue
         # Append already-rendered plain lines to the journal. Guarded on
         # `_G.__lain` so a render that races a not-yet-injected runtime is a
         # harmless no-op rather than an error notification.
         APPEND = "local lines = ...; if _G.__lain then _G.__lain.render(lines) end"
 
-        # Whole-buffer replace for a named state view (4-2.2). Same
+        # Whole-buffer replace for a named read-only state view. Same
         # not-yet-injected guard as {APPEND}. The third argument is OPTIONAL and
-        # is the rendering stamp: the one view that carries one is
-        # lain://inbox, whose gesture has to name the rendering it came from,
-        # and every other view calls this with two arguments exactly as before.
+        # is the rendering stamp: only lain://inbox carries one, because only its
+        # gesture has to name the rendering it came from.
         SET_VIEW = "local name, lines, gen = ...; if _G.__lain then _G.__lain.set_view(name, lines, gen) end"
 
-        # Whole-buffer replace for the ONE editable view, lain://request (4-2.3).
-        # Distinct from {SET_VIEW} only in the lua entry point it calls (which
-        # skips the nomodifiable flip); same not-yet-injected guard.
+        # Whole-buffer replace for the ONE editable view, lain://request.
+        # Distinct from {SET_VIEW} only in the lua entry point it calls, which
+        # skips the nomodifiable flip.
         SET_REQUEST = "local name, lines = ...; if _G.__lain then _G.__lain.set_request(name, lines) end"
 
         # Open lain://compose on the human's draft. A third entry point
@@ -74,22 +71,17 @@ module Lain
 
         REVIEW_REFUSED = "local message = ...; if _G.__lain then _G.__lain.review_refused(message) end"
 
-        # Whole-buffer replace for the changeset review's sidebar. No
-        # buffer NAME argument, which is the one difference from {SET_VIEW}:
-        # that entry point serves five buffers and has to be told which, while
-        # the sidebar is a singleton in the review's own tabpage, so the lua half
-        # names its own. The stamp is REQUIRED here rather than optional as
-        # {SET_VIEW}'s is -- a sidebar row moves the moment the scope toggles,
-        # which is exactly the aliasing protocol 8 replaced the line count to
-        # fix.
+        # No buffer NAME argument, the one difference from {SET_VIEW}: that entry
+        # point serves five buffers and has to be told which, while the sidebar
+        # is a singleton in the review's own tabpage. The stamp is REQUIRED
+        # rather than optional -- a sidebar row moves the moment the scope
+        # toggles, and a line count cannot tell the two renderings apart.
         #
         # `sides` is a FACT about the round -- which of {Review::SIDES} it
-        # presents at all -- and never a layout instruction; see
-        # {RenderQueue#post_review_sidebar}. It rides THIS rail rather than
-        # {OPEN_CHANGESET} because this one precedes the layout: the editor
-        # builds its panes on the first sidebar render, before any row is
-        # opened, so a fact sent with the open arrives after the window it would
-        # have prevented already exists.
+        # presents at all -- never a layout instruction. It rides THIS rail
+        # rather than {OPEN_CHANGESET} because this one precedes the layout: the
+        # editor builds its panes on the first sidebar render, so a fact sent
+        # with the open arrives after the window it would have prevented.
         SET_REVIEW = "local lines, gen, sides = ...; " \
                      "if _G.__lain then _G.__lain.set_review(lines, gen, sides) end"
 
@@ -101,19 +93,25 @@ module Lain
         # last called the render.
         REVIEW_FOCUS = "if _G.__lain then _G.__lain.review_layout() end"
 
-        # Open one changed file as the diff PAIR: the new side is the real
-        # file on disk, the old side a scratch buffer whose content rides in
-        # this argument list. Ruby runs git, never the editor -- `old_lines` is
-        # `git show <base>:<path>` already read, because the changeset source is
-        # a Ruby port and an injected chunk shelling out would put half the
-        # review model in the editor.
+        # The round is over. NO ARGUMENTS, {REVIEW_FOCUS}'s reason: what a
+        # settled round leaves on screen is the editor's own question.
         #
-        # `revisions` is a map rather than two more positionals: the pair is two
-        # commit-ish Strings that look alike, adjacent, and mean opposite sides,
-        # and named keys are what a lua table gives for free on the far side of
-        # msgpack. They are here at all because only Ruby knows them, and
-        # `47_diff.lua` stamps each buffer with its own so a note records which
-        # diff it was authored against.
+        # It exists because nothing about a verdict is visible in the editor --
+        # the tabpage, its panes and every buffer survive one -- so the review's
+        # stamps would outlive the review that issued them and a note placed
+        # afterwards would name a review nobody holds (`47_diff.lua`'s
+        # `review_settled` carries the measurement).
+        REVIEW_SETTLED = "if _G.__lain then _G.__lain.review_settled() end"
+
+        # The new side is the real file on disk, the old side a scratch buffer
+        # whose content rides in this argument list. Ruby runs git, never the
+        # editor: an injected chunk shelling out would put half the review model
+        # in the editor.
+        #
+        # `revisions` is a map rather than two more positionals -- the pair is
+        # two commit-ish Strings that look alike, are adjacent, and mean opposite
+        # sides. `47_diff.lua` stamps each buffer with its own so a note records
+        # which diff it was authored against.
         OPEN_CHANGESET = "local path, old_lines, line, revisions = ...; " \
                          "if _G.__lain then _G.__lain.open_changeset(path, old_lines, line, revisions) end"
 
@@ -134,12 +132,9 @@ module Lain
         SET_APPROVAL = "local lines, gen, rows = ...; " \
                        "if _G.__lain then _G.__lain.set_approval(lines, gen, rows) end"
 
-        # One queued command: `args` is exactly what the entry point named by
-        # `lua` takes, already in order -- `[lines]` for the journal append,
-        # `[name, lines]` for a view replace, `[name, lines, generation]` for
-        # the compose open. Holding the argument LIST rather than named fields
-        # is what lets a third entry point with a third arity share one queue
-        # and one sender.
+        # `args` is exactly what the entry point named by `lua` takes, already in
+        # order. Holding the argument LIST rather than named fields is what lets
+        # entry points of different arity share one queue and one sender.
         Command = Data.define(:args, :lua)
         private_constant :Command
 
@@ -148,15 +143,12 @@ module Lain
         NEWLINE = "\n"
         private_constant :NEWLINE
 
-        # Default cap on outstanding commands (journal appends AND view
-        # replacements share this one queue). The queue used to be an unbounded
-        # Thread::Queue, so a producer outpacing nvim could pile up an
-        # unbounded backlog -- an adversarial probe hit ~800K entries, and
-        # draining it (which runs BEFORE the RPC thread's select gets a turn)
-        # took 6.4s, starving inbound acks. A SizedQueue fixes both at once:
-        # {#post_render}/{#post_view} now BLOCK the producer once the queue is
-        # full, so the backlog literally cannot exceed this cap, and {#drain}'s
-        # per-tick batch is capped the same way for free.
+        # Default cap on outstanding commands; every rail shares this one queue.
+        # Unbounded, a producer outpacing nvim piled up a backlog an adversarial
+        # probe took to ~800K entries, and draining it -- which runs BEFORE the
+        # RPC thread's select gets a turn -- took 6.4s, starving inbound acks. A
+        # SizedQueue fixes both: the blocking posts cannot exceed this cap, and
+        # {#drain}'s per-tick batch is capped the same way for free.
         DEFAULT_CAPACITY = 1024
 
         def initialize(capacity: DEFAULT_CAPACITY)
@@ -171,11 +163,10 @@ module Lain
           @queue.push(Command.new(args: [lines], lua: APPEND))
         end
 
-        # Queue a whole-buffer replace for a named buffer. `editable:` picks the
-        # lua entry point: the read-only state views (4-2.2) get {SET_VIEW}; the
-        # one editable view, lain://request (4-2.3), gets {SET_REQUEST}, which
-        # skips the nomodifiable flip. Same queue, backpressure, and death
-        # behavior either way -- one render pipeline, not two.
+        # `editable:` picks the lua entry point: read-only state views get
+        # {SET_VIEW}, lain://request gets {SET_REQUEST}, which skips the
+        # nomodifiable flip. Same queue, backpressure and death behavior either
+        # way -- one render pipeline, not two.
         # @param name [String] the lain:// buffer name
         # @param lines [Array<String>]
         # @param editable [Boolean]
@@ -227,12 +218,11 @@ module Lain
           @queue.push(Command.new(args: [message], lua: REVIEW_REFUSED), true)
         end
 
-        # The three changeset-review posts, non-blocking for
-        # {#post_question}'s reason rather than {#post_render}'s: every one of
-        # them is queued from the editor-command consumer's own fiber, serving a
-        # gesture the human just made, so a blocking push against a full queue
-        # would park the surface that answers every OTHER verb on that rail --
-        # including the refusal this one owes them.
+        # Non-blocking for {#post_question}'s reason rather than
+        # {#post_render}'s: queued from the editor-command consumer's own fiber,
+        # so a blocking push against a full queue would park the surface that
+        # answers every OTHER verb on that rail -- including the refusal this one
+        # owes them.
         #
         # @param lines [Array<String>] the sidebar's whole buffer
         # @param generation [Integer] the stamp those lines were rendered under
@@ -250,6 +240,11 @@ module Lain
         # is put is the editor's own question, and a Ruby-side answer would be a
         # second opinion about a layout only the editor can see.
         def post_review_focus = @queue.push(Command.new(args: [], lua: REVIEW_FOCUS), true)
+
+        # No arguments either, and non-blocking like its three neighbours: this
+        # is posted from the review session's own verdict path, which is serving
+        # a gesture the human just made.
+        def post_review_settled = @queue.push(Command.new(args: [], lua: REVIEW_SETTLED), true)
 
         def post_changeset(path, old_lines, line, revisions)
           @queue.push(Command.new(args: [path, old_lines, line, revisions], lua: OPEN_CHANGESET), true)
@@ -290,27 +285,24 @@ module Lain
         # newline, and refuses ALL-OR-NOTHING, so one bad line loses the whole
         # buffer's write. Down here that failure is silent -- {#send_command} is
         # `notify`, and nvim discards a notify's error -- and the runtime's
-        # trimmed write (45_views) then makes the loss PERMANENT rather than
+        # trimmed write (45_views) makes the loss PERMANENT rather than
         # intermittent: it writes from the first differing line, so the offending
-        # line can never enter the buffer, `shared` can never advance past it,
-        # and the only line that could unblock the prefix is the one that fails.
-        # That is F17: lain://timeline frozen at the first multi-line model reply
+        # line can never enter the buffer and `shared` can never advance past it.
+        # Measured: lain://timeline frozen at the first multi-line model reply
         # while every sibling view stayed live.
         #
         # REFUSED BY NAME, in place, rather than repaired: a rendering that
         # breaks the one-line-per-record contract is a defect in the VIEW, and
-        # laundering it here would relocate this card's own invisibility from
-        # nvim into Ruby -- the row would read as the view's own work. In place
-        # rather than raised, because every caller is a render thread whose
-        # death takes all five views dark; and per ROW, because two views
-        # resolve a gesture through a line's position, so the count must not
-        # move.
+        # laundering it here would make the row read as the view's own work. In
+        # place rather than raised, because every caller is a render thread whose
+        # death takes all five views dark; and per ROW, because two views resolve
+        # a gesture through a line's position, so the count must not move.
         #
-        # `include?` and not a Regexp or `split`: these bytes reach the views
-        # from disk (a manifest path, a reminder), and both of those RAISE
-        # `ArgumentError` on invalid UTF-8 -- measured, and measured to take
-        # {Surfaces#prime} down at attach. `nil` lines pass through untouched,
-        # which is what keeps the stamp's arity contract testable.
+        # `include?` and not a Regexp or `split`: these bytes reach the views from
+        # disk, and both of those RAISE `ArgumentError` on invalid UTF-8 --
+        # measured, and measured to take {Surfaces#prime} down at attach. `nil`
+        # lines pass through untouched, which keeps the stamp's arity contract
+        # testable.
         def checked_lines(name, lines)
           return lines unless lines.is_a?(Array)
 
@@ -330,17 +322,10 @@ module Lain
 
       # The way IN to the editor, for every producer that is not the RPC thread
       # itself: queue the work, wake the loop, and answer whether it landed.
-      # {RenderQueue} owns the backlog and its backpressure; this owns the
-      # PAIR -- a post that is not followed by a wake is a render that sits
-      # until the next backstop tick -- and the one policy that pair needs,
-      # which is what a refused post answers.
-      #
-      # It exists because {RpcThread} had grown five copies of it: two blocking
-      # posts and three non-blocking opens, each re-stating the queue call, the
-      # wake, and (three times, in two disagreeing ways) what a dead or full
-      # queue means. The RPC thread's own responsibility is attach, the select
-      # loop, and inbound dispatch; being the door every renderer knocks on is
-      # a second one, and this is it.
+      # {RenderQueue} owns the backlog and its backpressure; this owns the PAIR
+      # -- a post not followed by a wake is a render that sits until the next
+      # backstop tick -- and the one policy that pair needs, which is what a
+      # refused post answers.
       class RenderInlet
         # The two surfaces with no view object of their own to keep their
         # sentence in. {Compose::DETACHED} and {QuestionView::DETACHED} live
@@ -348,13 +333,10 @@ module Lain
         # words live here beside the door that speaks them.
         REVIEW_DETACHED = "opening a review in the editor needs an attached editor"
 
-        # The changeset review's three, here for {REVIEW_DETACHED}'s
-        # reason -- the objects that will own these surfaces arrive three waves
-        # later, and the sentence has to exist the moment the door does. Three
-        # sentences and not one shared one, because each names the surface the
-        # human was actually using: being told "opening a review needs an
-        # attached editor" while trying to read a note is the exact defect the
-        # refusal parameter was added to end.
+        # Separate sentences and not one shared one, because each names the
+        # surface the human was actually using: being told "opening a review
+        # needs an attached editor" while trying to read a note is the defect
+        # the refusal parameter was added to end.
         SIDEBAR_DETACHED = "rendering a changeset review needs an attached editor"
         CHANGESET_DETACHED = "opening a changed file for review needs an attached editor"
         THREAD_DETACHED = "showing a review thread needs an attached editor"
@@ -366,10 +348,16 @@ module Lain
         # answers are four facts.
         UNREPORTED = "the editor did not take this notice"
 
-        # The backlog is BUILT here rather than injected: {RpcThread} holding
-        # both the queue and the door to it was how the five copies got there
-        # in the first place. The loop reaches it through {#drain} and
-        # {#close}, which is all the loop ever needed from it.
+        # Its own FACT: a notice that did not land cost the human a sentence,
+        # while an end-of-round that did not land leaves an editor still holding
+        # a review nobody is in -- stamps live, keys bound, and a note placed
+        # afterwards naming a round that is over. Nobody reads this one either,
+        # and it is still named rather than shared, because the two legs fail
+        # differently.
+        SETTLE_UNREPORTED = "the editor did not take the end of this review"
+
+        # The backlog is BUILT here rather than injected: the loop reaches it
+        # through {#drain} and {#close}, which is all the loop ever needed.
         #
         # @param waker [#call] wakes the select loop; never blocks
         # @param capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY}
@@ -395,21 +383,19 @@ module Lain
           deliver { @queue.post_view(name, lines, editable:, generation:) }
         end
 
-        # The NON-BLOCKING opens. All seven are called from a path that cannot
+        # The NON-BLOCKING opens. Every one is called from a path that cannot
         # afford to park -- Reline's input loop, the reply consumer's fiber, or
         # (the question) somebody else's lock -- so a full queue refuses instead
         # of blocking, and a refusal is the answer rather than an exception.
         #
-        # ONE refusal MECHANISM for all seven, because from the caller's side
+        # ONE refusal MECHANISM for all of them, because from the caller's side
         # there is one fact: no editor is taking this. A dead thread (closed
-        # queue) and an editor that stopped draining (full queue) are
-        # indistinguishable from here, and so is never having attached.
+        # queue), an editor that stopped draining (full queue) and never having
+        # attached are indistinguishable from here.
         #
-        # The SENTENCE is the caller's, and the argument is REQUIRED so it
-        # cannot be forgotten. Every refusal here once read "composing needs an
-        # attached editor", which is untrue of a human answering a question; a
-        # default kept that defect alive one caller over the moment the
-        # parameter was added, so there is no default.
+        # The SENTENCE is the caller's, and the argument is REQUIRED so it cannot
+        # be forgotten: a default is how "composing needs an attached editor"
+        # once reached a human answering a question.
         def open_compose(lines, generation)
           refusable(Compose::DETACHED) { @queue.post_compose(Compose::BUFFER, lines, generation) }
         end
@@ -440,6 +426,11 @@ module Lain
 
         def review_focus = refusable(FOCUS_DETACHED) { @queue.post_review_focus }
 
+        # Answers {SETTLE_UNREPORTED} rather than raising, like every other leg:
+        # a detached editor is also an editor with no review tabpage to tear
+        # down, so a refusal here is a fact and never an error.
+        def review_settled = refusable(SETTLE_UNREPORTED) { @queue.post_review_settled }
+
         # lain://approval's, and its refusal is READ rather than reported:
         # {ApprovalView} withholds the stamp of a rendering nothing took, so a
         # keypress citing one is refused instead of resolving against rows nobody
@@ -468,51 +459,37 @@ module Lain
       # what makes "a malformed annotation is not recorded" a fact about the
       # order things happen in rather than a hope about the listener.
       #
-      # It is not a second copy of {Review::AnnotationPlaced}'s guard, and the
-      # difference is the whole reason it exists. That record judges what the
-      # JOURNAL stores; this judges what the EDITOR authored, and it has to
-      # judge it HERE, because a refusal is only worth anything while the
-      # human's words are still in the buffer.
+      # Not a second copy of {Review::AnnotationPlaced}'s guard: that record
+      # judges what the JOURNAL stores, this judges what the EDITOR authored,
+      # and it has to judge it HERE, because a refusal is only worth anything
+      # while the human's words are still in the buffer.
       #
-      # ⚠️ THIS COMMENT ONCE SAID that three of the record's members -- the
-      # anchor's id, the revision it was authored against, and whether it
-      # drifted -- were "Ruby's own measurements that no editor ever sends". Two
-      # thirds of that is now false, and the correction is the point rather than
-      # a tidy-up. Only the anchor's `id` is minted here.
-      #
+      # Of the record's members only the anchor's `id` is minted on this side.
       # `revision` is the EDITOR's, off `47_diff.lua`'s `b:lain_review_revision`
-      # stamp, and it has to be: {Review::AnnotationPlaced} carries a revision
-      # precisely so that an annotation authored against one diff and submitted
-      # against another is DETECTABLE, and that only works if the diff the human
-      # was looking at is on the record rather than implied by whatever is on
-      # screen at submit time. Resolved here it would be the second thing, which
-      # is the live defect in tuicr that member exists to close.
+      # stamp, and it has to be: the member exists so that an annotation
+      # authored against one diff and submitted against another is DETECTABLE,
+      # which only works if the diff the human was LOOKING at is on the record
+      # rather than whatever is on screen at submit time.
       #
       # `drifted` is the EDITOR's for a harder reason: drift is the anchor text
       # against the line the number NOW names, and that line lives in the buffer
       # the human is looking at -- not in the diff a session holds, not on disk,
-      # nowhere Ruby can reach without keeping a copy free to disagree with what
-      # is on screen. For a 'fileformat=dos' file it certainly would disagree:
-      # nvim strips the carriage returns the buffer never shows while git's bytes
-      # carry them, so a Ruby-side comparison reports drift on every line of the
-      # file. The measurement is taken where the buffer is.
-      #
-      # Both were in {KEYS}' blind spot, and a blind spot here is SILENT: this
-      # boundary hands on exactly {KEYS} (see {normalized}), so a member the
-      # editor sent and this list did not name was dropped on the floor with no
-      # refusal and no warning. That is what a missing key costs, from the other
-      # direction.
+      # nowhere Ruby can reach without keeping a copy free to disagree with the
+      # screen. For a 'fileformat=dos' file it certainly would disagree: nvim
+      # strips the carriage returns the buffer never shows while git's bytes
+      # carry them, so a Ruby-side comparison reports drift on every line.
       #
       # THE DROPPED KEY IS THE FAILURE THIS EXISTS FOR, and it is not
-      # hypothetical: a nil value removes its key from a lua table entirely
-      # (`runtime/65_review.lua` says so, having been bitten), and a hole
-      # reaching a listener raises on the RPC thread -- which {RpcThread#answer}
-      # answers and then RE-RAISES, ending the session over one bookkeeping
-      # slip. A refusal costs the human a retype; a raise costs them the editor.
+      # hypothetical: a nil value removes its key from a lua table entirely, and
+      # a hole reaching a listener raises on the RPC thread -- which
+      # {RpcThread#answer} answers and then RE-RAISES, ending the session over
+      # one bookkeeping slip. A refusal costs the human a retype; a raise costs
+      # them the editor. This boundary hands on exactly {KEYS}, so a member the
+      # editor sends and that list does not name is dropped with no refusal and
+      # no warning.
       #
-      # The closed sets are CITED from {Lain::Review}, never restated:
-      # `review/vocabulary.rb` exists precisely so a second declaration cannot
-      # quietly disagree with the first.
+      # The closed sets are CITED from {Lain::Review}, never restated, so a
+      # second declaration cannot quietly disagree with the first.
       class ReviewWrite
         # Every key the editor must carry for Ruby to resolve an anchor and a
         # note out of it. `anchor_text` is checked for the KEY and never for
@@ -535,16 +512,14 @@ module Lain
                         "whether it was authored against the diff it was submitted against"
         }.freeze
 
-        # THE ARGUMENTS THEMSELVES ARE A SHAPE, and checking it is not
-        # paranoia. `runtime/65_review.lua:75-79` records a verb sending FLAT
-        # POSITIONALS and everything after the first being dropped on the floor;
-        # the sidebar, diff and thread rails write their lua halves against this
-        # contract. `args.first` on a bare String answers a CHARACTER and on an
-        # Integer raises NoMethodError -- inside the one guard whose entire
-        # purpose is that the wire can never raise, which {RpcThread#answer}
-        # then answers and re-raises, ending the session over a lua typo. A
-        # flat Hash survived only because `Hash#first` happens to exist, which
-        # is luck rather than defence.
+        # THE ARGUMENTS THEMSELVES ARE A SHAPE. `runtime/65_review.lua` records
+        # a verb sending FLAT POSITIONALS and everything after the first being
+        # dropped on the floor. `args.first` on a bare String answers a CHARACTER
+        # and on an Integer raises NoMethodError -- inside the one guard whose
+        # entire purpose is that the wire can never raise, which
+        # {RpcThread#answer} then answers and re-raises, ending the session over
+        # a lua typo. A flat Hash survived only because `Hash#first` happens to
+        # exist, which is luck rather than defence.
         def self.flat(args)
           "a review write's arguments must arrive as ONE array holding the payload, which is the shape every " \
             "verb on this rail uses -- flat positionals silently drop everything after the first. Got " \
@@ -564,17 +539,13 @@ module Lain
           refused(note) || yield(normalized(note))
         end
 
-        # The batch `:LainNoteDone` settles: one gesture carrying every note
-        # the human placed, across both sides and every file they visited, IN
+        # The batch `:LainNoteDone` settles: one gesture carrying every note the
+        # human placed, across both sides and every file they visited, IN
         # PLACEMENT ORDER -- which is the output, since nothing else records
         # which note they wrote first.
         #
-        # ATOMIC AT THIS BOUNDARY, AND ONLY AT THIS BOUNDARY. Be exact about the
-        # scope, because the natural summary ("the batch is atomic") is false one
-        # step further on.
-        #
-        # What holds: EVERY note is judged before ANY is delivered, so a payload
-        # this object refuses -- a bad kind, a dropped key, an impossible line,
+        # ATOMIC AT THIS BOUNDARY, AND ONLY AT THIS BOUNDARY. EVERY note is
+        # judged before ANY is delivered, so a payload this object refuses --
         # anywhere in the batch -- delivers nothing at all. That ordering is the
         # whole difference between this and a loop over {annotation}, and it
         # matters because half a review recorded with a refusal covering the rest
@@ -585,36 +556,22 @@ module Lain
         # the second leaves the first delivered. This method stops at that
         # refusal and answers it, `48_annotate.lua` keeps every note (its
         # `forget` sits past the `pcall`, deliberately), and the human's retry
-        # therefore delivers the first note a SECOND time. Nothing here can
-        # prevent that -- undoing a delivery is the consumer's to offer.
+        # therefore delivers the first note a SECOND time. Undoing a delivery is
+        # the consumer's to offer, so a consumer bound here must either refuse
+        # UNIFORMLY -- which is why today's do not reach that state -- or take
+        # the batch whole.
         #
-        # It is unreachable today only because both bound reviews refuse
-        # UNIFORMLY ({Neovim::NoReviewWrites} answers every note the same
-        # sentence), so the first note refuses and nothing lands. That is a
-        # property of today's consumers, not of this code, so it is written down
-        # rather than assumed: a consumer bound here must either refuse uniformly
-        # or take the batch whole.
-        #
-        # Delivered note by note to the SAME hand-off {annotation} uses, rather
-        # than as a batch to a listener method of its own. A batch-shaped method
-        # would have to be added to {Listener}, {Listener::Null},
-        # {Neovim::FrontendListener} and {Neovim::NoReviewWrites} before anything
-        # could receive it -- four sites, all of them dead until someone
-        # implements the fifth. This reaches the bound review through wiring that
-        # already exists, and it is per-note downstream anyway. The batch is not
-        # lost by it: one write, one verdict, and the deliveries happen in the
-        # order the payload carried. That trade holds precisely as long as the
-        # paragraph above does.
+        # Delivered note by note to the SAME hand-off {annotation} uses, because
+        # a batch-shaped method would have to be added to four listeners before
+        # anything could receive it, and it is per-note downstream anyway.
         #
         # AN EMPTY BATCH IS TAKEN HERE, AND "NOTHING PENDING" IS NOT THIS
-        # BOUNDARY'S QUESTION. Both readings arrive as the same zero notes: a
-        # review the human had nothing to say about, and one whose notes were
-        # handed back a moment ago. Only the EDITOR can tell them apart, because
-        # only the editor holds the notes -- so `48_annotate.lua` answers it
-        # there and does not call this verb at all when it has nothing, and
-        # {unbatched}'s promise of the array "even when there is one of them or
-        # none" stays true. A refusal written in here would be a guess dressed as
-        # a verdict, and it would refuse the one shape the wire contract names.
+        # BOUNDARY'S QUESTION. A review the human had nothing to say about and
+        # one whose notes were handed back a moment ago arrive as the same zero
+        # notes, and only the EDITOR holds what tells them apart -- so
+        # `48_annotate.lua` answers it there and does not call this verb when it
+        # has nothing. A refusal written in here would refuse the one shape the
+        # wire contract names.
         #
         # @param args [Array, nil] the verb's ONE array of arguments; the batch is
         #   its sole member, an Array of notes
@@ -662,18 +619,16 @@ module Lain
             "Lain::Review::VERDICTS, not by what an editor sends -- got #{args.first.inspect}"
         end
 
-        # The note as the rest of lain will see it: tokens interned and stripped
-        # of the whitespace a wire adds, text interned and NEVER stripped (an
-        # anchored line's indentation is precisely the evidence a drift check
-        # compares). Normalizing HERE is what makes
-        # {Review::AnnotationPlaced}'s own normalization idempotent rather than
-        # the only thing standing between a `" new "` off the wire and a side
-        # nothing recognises -- and it is what the verdict verb has always
-        # done, so the two verbs now answer alike.
+        # Tokens interned and stripped of the whitespace a wire adds; text
+        # interned and NEVER stripped, because an anchored line's indentation is
+        # precisely the evidence a drift check compares. Normalizing HERE is what
+        # keeps {Review::AnnotationPlaced}'s own normalization from being the
+        # only thing standing between a `" new "` off the wire and a side nothing
+        # recognises.
         #
-        # Exactly {KEYS}, never the note as it arrived: an extra key is either
-        # noise or a version skew, and passing one through would let a later
-        # reader act on a field this boundary never judged.
+        # Exactly {KEYS}, never the note as it arrived: an extra key is noise or
+        # a version skew, and passing one through would let a later reader act on
+        # a field this boundary never judged.
         def self.normalized(note)
           { "path" => Lain::Review::Wire.token(note["path"]),
             "side" => Lain::Review::Wire.token(note["side"]),
@@ -682,18 +637,14 @@ module Lain
             "text" => Lain::Review::Wire.text(note["text"]),
             "kind" => Lain::Review::Wire.token(note["kind"]),
             "revision" => Lain::Review::Wire.token(note["revision"]),
-            # NOT normalized, and there is nothing to normalize: it is a boolean,
-            # already refused by {unmeasured} unless it is exactly one.
-            #
-            # What `Wire.token` would do to it is ASYMMETRIC, and the asymmetry
-            # is the whole hazard. It is `value && -value.to_s.strip`, so `false`
-            # SHORT-CIRCUITS on the `&&` and comes back untouched, while `true`
-            # becomes the String `"true"` -- which {Review::AnnotationPlaced}'s
-            # `inclusion: [true, false]` refuses, and which no identity test
-            # matches. Tokenizing here would therefore leave the answer MOST
-            # notes give perfectly intact and corrupt only the DRIFTED ones:
-            # nothing would look wrong until a note actually drifted, which is
-            # the first moment anybody needs this field to be right.
+            # NOT normalized: it is a boolean, already refused by {unmeasured}
+            # unless it is exactly one, and what `Wire.token` would do to it is
+            # ASYMMETRIC. It is `value && -value.to_s.strip`, so `false`
+            # SHORT-CIRCUITS and comes back untouched while `true` becomes the
+            # String `"true"`, which {Review::AnnotationPlaced}'s
+            # `inclusion: [true, false]` refuses. Tokenizing here would leave the
+            # answer MOST notes give intact and corrupt only the DRIFTED ones --
+            # nothing looks wrong until a note actually drifts.
             "drifted" => note["drifted"] }
         end
         private_class_method :normalized
@@ -707,16 +658,11 @@ module Lain
         end
         private_class_method :refused
 
-        # `drifted` is a MEASUREMENT, taken in the editor because that is the only
-        # place the line it compares against exists (see the class comment).
-        #
-        # REFUSED, NEVER COERCED, and the difference is the whole reason this is a
-        # method rather than a truthiness test at the call site.
-        # {Review::AnnotationPlaced} gives `drifted` no default precisely so a
-        # caller that never compared cannot journal "did not drift" -- a reading
-        # no later audit can tell from a real one. A truthiness test here would
-        # hand that default straight back: a dropped key is nil is false, which is
-        # the answer most notes give and so the one nobody would ever question.
+        # REFUSED, NEVER COERCED. {Review::AnnotationPlaced} gives `drifted` no
+        # default precisely so a caller that never compared cannot journal "did
+        # not drift" -- a reading no later audit can tell from a real one -- and
+        # a truthiness test here would hand that default straight back, since a
+        # dropped key is nil is false.
         #
         # {dropped} already catches the key going missing; this catches it
         # arriving as something that is not a measurement -- a `"false"` off a
@@ -753,17 +699,14 @@ module Lain
         end
         private_class_method :unknown
 
-        # `line` is the one member with a DOMAIN rather than a vocabulary, and
-        # the domain is {Review::Anchor}'s -- ASKED here, never restated, so
-        # there is one definition of a position that cannot exist. 0 is the
-        # value that actually hurts: hunk arithmetic makes `lines[-1]` out
-        # of it and answers "not drifted" for a position nobody named.
+        # The domain is {Review::Anchor}'s -- ASKED here, never restated. 0 is
+        # the value that actually hurts: hunk arithmetic makes `lines[-1]` out of
+        # it and answers "not drifted" for a position nobody named.
         #
-        # It has to be asked HERE because downstream says the same thing by
-        # RAISING -- `WireInteger.read` on `"abc"` or `0` is an ArgumentError,
-        # and an ArgumentError out of a listener is answered and then re-raised,
-        # ending the session. Same rule, one boundary earlier, where it can
-        # still be a refusal the human can act on.
+        # Asked HERE because downstream says the same thing by RAISING, and an
+        # ArgumentError out of a listener is answered and then re-raised, ending
+        # the session. Same rule, one boundary earlier, where it can still be a
+        # refusal the human can act on.
         def self.impossible_line(note)
           Lain::Review::Anchor.line!(note["line"])
           nil
@@ -783,32 +726,26 @@ module Lain
       end
 
       # Which of the frontend's OWN reactions an inbound editor command
-      # triggers. Split out of {RpcThread} when the compose round trip made it
-      # the third verb it had to know about: routing is a table of verbs, the
-      # RPC thread is a socket and a select loop, and the two only ever met
-      # because both were in the same class.
+      # triggers. Routing is a table of verbs; the RPC thread is a socket and a
+      # select loop.
       #
       # An ACKED command lands in {RpcThread#command_inbox} regardless of what
-      # happens here (a future agent-side consumer may want it), and its route
-      # runs AFTER the ack, so a slow hand-off never delays the editor. A verb
-      # no route claims falls through silently -- the editor's commands are not
-      # this object's to validate.
+      # happens here, and its route runs AFTER the ack, so a slow hand-off never
+      # delays the editor. A verb no route claims falls through silently -- the
+      # editor's commands are not this object's to validate.
       #
-      # An ANSWERED command is the other kind, and there are four: the question
-      # write and the changeset review's three. Its route's RETURN VALUE is what
-      # the editor gets, so it must run BEFORE any ack -- a question `:w` is
-      # refused when the document does not parse, and a refusal that arrived
-      # after a `true` would be a buffer marked saved over text the grammar
-      # rejected. Two tables rather than a flag, because
-      # the two kinds differ in every respect that matters: when the route runs,
-      # what the editor is told, and whether the inbox ever sees it.
+      # An ANSWERED command's route RETURN VALUE is what the editor gets, so it
+      # must run BEFORE any ack: a question `:w` is refused when the document
+      # does not parse, and a refusal arriving after a `true` would be a buffer
+      # marked saved over text the grammar rejected. Two tables rather than a
+      # flag, because the kinds differ in when the route runs, what the editor is
+      # told, and whether the inbox ever sees it.
       #
-      # The three are exactly the gestures lain can REFUSE. A review's five
-      # verbs split on that one question and on nothing else: opening a row,
-      # marking a hunk and asking a docent are hand-offs nothing here can turn
-      # down, so they take the acked path to the command inbox like `reply` and
-      # `open` before them, while an annotation and a verdict are WRITES whose
-      # `:w` has to fail with the human's text still in front of them.
+      # The answered ones are exactly the gestures lain can REFUSE. A review's
+      # verbs split on that question alone: opening a row, marking a hunk and
+      # asking a docent are hand-offs nothing here can turn down, while an
+      # annotation and a verdict are WRITES whose `:w` has to fail with the
+      # human's text still in front of them.
       class Router
         # Each route is handed the WHOLE command and destructures it itself,
         # because the verbs genuinely differ in what they carry: resend sends
@@ -856,21 +793,18 @@ module Lain
             .merge(review_writes(listener)).freeze
         end
 
-        # The review writes, which share one thing the question verb does not:
-        # each reads its payload through {ReviewWrite} FIRST, so a malformed
+        # Each reads its payload through {ReviewWrite} FIRST, so a malformed
         # write never reaches the listener at all and "the annotation is not
         # recorded" is the shape of the code rather than a promise about it.
         #
         # `review_notes` is the note rail's `:LainNoteDone` -- the whole settled
-        # batch, answered once. It is kept BESIDE `review_annotate` rather than
-        # replacing it (a critique prefill may want the per-note form), and the
-        # two land on the SAME hand-off, so a review binds one object and answers
-        # both rails.
+        # batch, answered once -- kept BESIDE `review_annotate` rather than
+        # replacing it, landing on the SAME hand-off, so a review binds one
+        # object and answers both rails.
         def review_writes(listener)
-          # Named once because it IS one hand-off: a note reaching lain alone and
-          # a note reaching it inside a settled batch are the same note, and a
-          # review that answered them differently would be answering the gesture
-          # rather than the note.
+          # One hand-off: a note reaching lain alone and a note reaching it
+          # inside a settled batch are the same note, and a review that answered
+          # them differently would be answering the gesture, not the note.
           annotated = ->(note) { listener.review_annotated(note) }
           { "review_annotate" => ->(args) { ReviewWrite.annotation(args[1], &annotated) },
             "review_notes" => ->(args) { ReviewWrite.notes(args[1], &annotated) },
@@ -880,13 +814,13 @@ module Lain
         end
       end
 
-      # The single thread that owns the nvim RPC session -- exactly one, because the
-      # neovim gem's {::Neovim::Session} is single-threaded by construction
+      # The single thread that owns the nvim RPC session -- exactly one, because
+      # the neovim gem's {::Neovim::Session} is single-threaded by construction
       # (`main_thread_only` raises off-thread). It attaches over a unix socket,
-      # injects the runtime once ({RuntimeLoader}), then runs ONE select loop that both serves
-      # inbound requests from the editor and drains queued render work outbound --
-      # the two directions the gem forces onto one thread (ROADMAP § Interface,
-      # verified in planning/rpc_direction_probe.rb).
+      # injects the runtime once ({RuntimeLoader}), then runs ONE select loop
+      # that both serves inbound requests from the editor and drains queued
+      # render work outbound -- the two directions the gem forces onto one
+      # thread.
       #
       # The load-bearing gem traps this is built around:
       #
@@ -907,19 +841,15 @@ module Lain
       class RpcThread
         extend Forwardable
 
-        # The four hand-offs this thread makes back to its owner: RPC-thread
-        # death, an edited lain://request, and lain://compose being written or
-        # abandoned. One object with four named methods rather than four
-        # positional callbacks -- a caller states its reaction to each as a
-        # method instead of a hand-defaulted lambda, and gets {Null} for free
-        # when it wants none of them (the {Sink::Null} shape).
+        # The hand-offs this thread makes back to its owner. One object with
+        # named methods rather than positional callbacks -- a caller states its
+        # reaction to each as a method instead of a hand-defaulted lambda, and
+        # gets {Null} for free when it wants none of them.
         #
-        # `compose_written`/`compose_abandoned` are deliberately two methods,
-        # not one taking a verb argument: they are two different things that
-        # happened -- a write and an abandon carry different data (lines
-        # plus a generation, vs. just a generation) -- and a caller forced to
-        # branch on a symbol would only be re-deriving what {Router} already
-        # knows from the wire.
+        # `compose_written`/`compose_abandoned` are deliberately two methods, not
+        # one taking a verb argument: they carry different data, and a caller
+        # forced to branch on a symbol would only be re-deriving what {Router}
+        # already knows from the wire.
         class Listener
           # RPC-thread death, after {RpcThread#start} has returned. An attach
           # failure rides {#start}'s own return instead (see
@@ -944,12 +874,11 @@ module Lain
             raise NotImplementedError, "#{self.class} must implement #compose_abandoned"
           end
 
-          # The ONE hand-off whose RETURN VALUE the editor waits on: the
-          # human wrote lain://question, and this answers whether the document
-          # parsed. It runs before the ack and inside nvim's own `:w`, so it
-          # must not block for the usual reason AND must not raise -- a raise
-          # here would kill the session over a mistyped line, which is why
-          # {QuestionView#wrote} returns its failure instead.
+          # The human wrote lain://question, and this answers whether the
+          # document parsed. It runs before the ack and inside nvim's own `:w`,
+          # so it must not block AND must not raise -- a raise here would kill
+          # the session over a mistyped line, which is why {QuestionView#wrote}
+          # returns its failure instead.
           #
           # @param lines [Array<String>] the buffer as the human left it
           # @param digest [String] the set this buffer was opened for
@@ -963,12 +892,11 @@ module Lain
             raise NotImplementedError, "#{self.class} must implement #question_abandoned"
           end
 
-          # The changeset review's two ANSWERING hand-offs, under
-          # {#question_written}'s whole contract: each runs before the ack and
-          # inside nvim's own `:w`, so neither may block and neither may raise --
-          # the refusal is a value. The note has already been read for SHAPE by
-          # {ReviewWrite}; what is left to judge is whether this review can take
-          # it, which only the session that owns the changeset knows.
+          # Under {#question_written}'s whole contract: runs before the ack and
+          # inside nvim's own `:w`, so it may neither block nor raise. The note
+          # has already been read for SHAPE by {ReviewWrite}; what is left is
+          # whether this review can take it, which only the session that owns the
+          # changeset knows.
           #
           # @param note [Hash] the annotation as it crossed the wire, String-keyed
           # @return [String, nil] the failure the write must fail with, or nil
@@ -987,23 +915,20 @@ module Lain
             raise NotImplementedError, "#{self.class} must implement #review_verdict_given"
           end
 
-          # The no-op Listener, mirroring {Sink::Null}: satisfies the same duck
-          # so an {RpcThread} (or {Router}) built with none of these reactions
-          # wired never needs an `if listener` guard. The default for both.
+          # The no-op Listener, so an {RpcThread} (or {Router}) built with none
+          # of these reactions wired never needs an `if listener` guard.
           class Null < Listener
-            # The ONE hand-off a Null must not answer with silence. nil means
+            # The ONE hand-off a Null must not answer with silence: nil means
             # "taken" to the editor, which clears 'modified' and reports the
             # human's text saved -- and `bufhidden = "hide"` means a
-            # lain://question buffer OUTLIVES the attach that made it, so a
-            # write really can arrive at a frontend wiring no view. Every other
-            # answer here is a no-op because nothing downstream reads it.
+            # lain://question buffer OUTLIVES the attach that made it, so a write
+            # really can arrive at a frontend wiring no view.
             UNANSWERABLE = "no question surface is wired -- nothing submitted, your text is untouched"
 
-            # {UNANSWERABLE}'s reason for the review pair, and it reaches
-            # further: a `nofile` review buffer outlives its attach just as a
-            # question buffer does, and both review writes ANSWER -- so nil here
-            # would clear 'modified' and report a note recorded by a frontend
-            # with nowhere on earth to put it. One sentence for the two because
+            # {UNANSWERABLE}'s reason for the review pair: a `nofile` review
+            # buffer outlives its attach just as a question buffer does, so nil
+            # here would clear 'modified' and report a note recorded by a
+            # frontend with nowhere to put it. One sentence for the two because
             # it is one fact: nothing here holds a review.
             UNREVIEWABLE = "no review surface is wired -- nothing submitted, your text is untouched"
 
@@ -1034,14 +959,12 @@ module Lain
         # @param socket_path [String] a listening nvim's unix socket
         # @param version [String] the gem version, surfaced by :LainVersion
         # @param protocol [String] the runtime.lua handshake token (see {PROTOCOL})
-        # @param listener [Listener] this thread's four hand-offs, bundled into
-        #   one object (see {Listener}'s own comment for why). Every method
-        #   MUST NOT block this thread: each runs inline after the microsecond
-        #   ack, so a listener that needs to do real work hands off to a
-        #   worker via a non-blocking queue (never straight onto a bounded
-        #   Channel, which could wedge this thread against a full render
-        #   queue). Defaults to {Listener::Null}, so a caller that wants none
-        #   of the four reactions wires nothing.
+        # @param listener [Listener] this thread's hand-offs, bundled into one
+        #   object. Every method MUST NOT block this thread: each runs inline
+        #   after the microsecond ack, so a listener that needs to do real work
+        #   hands off to a worker via a non-blocking queue -- never straight onto
+        #   a bounded Channel, which could wedge this thread against a full
+        #   render queue. Defaults to {Listener::Null}.
         # @param render_capacity [Integer] see {RenderQueue::DEFAULT_CAPACITY};
         #   overridable so a spec can saturate the queue at a scale that runs fast
         def initialize(socket_path:, version: Lain::VERSION, protocol: PROTOCOL,
@@ -1085,8 +1008,8 @@ module Lain
         # from any thread: they touch only the {RenderQueue} and the wake pipe,
         # never nvim.
         def_delegators :@inlet, :post_render, :post_view, :open_compose, :open_question, :open_review,
-                       :review_refused, :set_review, :review_focus, :open_changeset, :set_thread,
-                       :set_approval
+                       :review_refused, :set_review, :review_focus, :review_settled, :open_changeset,
+                       :set_thread, :set_approval
 
         # Stop the loop, wake it out of its select, join, and close the fds this
         # thread owns. Idempotent enough for a defensive double call.
@@ -1138,23 +1061,18 @@ module Lain
           @announced ? @listener.died : @ready.push(error)
         end
 
-        # Build the client by hand rather than via {::Neovim.attach_unix} so we keep
-        # the socket (to `IO.select` on) and the connection (to flush by hand). This
-        # is the public seam {::Neovim.attach} itself uses -- one blocking
+        # Built by hand rather than via {::Neovim.attach_unix} so we keep the
+        # socket (to `IO.select` on) and the connection (to flush by hand). The
+        # same public seam {::Neovim.attach} uses -- one blocking
         # `nvim_get_api_info` request that self-flushes -- minus the optional
-        # client-info notify we do not need.
+        # client-info notify.
         #
         # THE INJECTION ANSWERS, and a non-nil answer is a refusal: the runtime
-        # declines to load into an editor a live lain already owns (see
-        # {SocketOwned}, and runtime.lua's head for the check). It is the chunk's
-        # return value rather than a probe of our own because the decision has to
-        # be taken INSIDE the injection -- anything asked beforehand is a
-        # check-then-act with a whole round trip in the gap, and the thing it
-        # would race is a second lain doing the same.
-        #
-        # The raise lands on this thread inside {#life}, so it rides
-        # {#record_death}'s pre-announcement path and re-raises on the caller's
-        # thread out of {#start} -- the same way a missing socket already does.
+        # declines to load into an editor a live lain already owns. It is the
+        # chunk's RETURN VALUE rather than a probe of our own because the
+        # decision has to be taken INSIDE the injection -- anything asked
+        # beforehand is a check-then-act with a whole round trip in the gap, and
+        # what it would race is a second lain doing the same.
         def attach
           @socket = Socket.unix(@socket_path)
           @connection = ::Neovim::Connection.new(@socket, @socket)
@@ -1191,22 +1109,17 @@ module Lain
         end
 
         # Every editor command reaches this thread as an ordinary `lain_command`
-        # rpcREQUEST -- the compose and question round trips' return legs
-        # included -- so nothing here handles notifications and this thread's
+        # rpcREQUEST, so nothing here handles notifications and this thread's
         # single-owner discipline is untouched. What differs is WHEN the route
         # runs relative to the ack, and {Router} owns that distinction.
         #
         # NO `lain: ` PREFIX ON ANY REFUSAL THIS THREAD ANSWERS WITH, and it is a
-        # rule about the whole rail rather than a detail of one string. An
-        # answered verb's refusal comes back as the rpcrequest's ERROR, the lua
-        # caller catches it with `pcall` and hands it to
-        # `__lain.review_refused`, and that function prepends `"lain: "` itself
-        # (`65_review.lua`). Spelling it here too reached the human as
-        # `lain: lain: unknown request ...` -- measured against a faithful
-        # msgpack peer, on this site and on {#answer}'s below, and it survived a
-        # whole card about the prefix because nothing asserted its absence.
-        # `spec/lain/frontend/neovim/annotate_spec.rb` and `thread_view_spec.rb`
-        # now do.
+        # rule about the whole rail. An answered verb's refusal comes back as the
+        # rpcrequest's ERROR, the lua caller catches it with `pcall` and hands it
+        # to `__lain.review_refused`, and that function prepends `"lain: "`
+        # itself (`65_review.lua`). Spelling it here too reached the human as
+        # `lain: lain: unknown request ...`, measured against a faithful msgpack
+        # peer.
         def dispatch(request)
           return respond(request.id, nil, "unknown request #{request.method_name}") unless
             request.method_name == "lain_command"
@@ -1222,40 +1135,31 @@ module Lain
           @router.call(request.arguments)
         end
 
-        # The answered path, and the ONLY place a route runs before the
-        # ack. A question `:w` is the one editor gesture lain can refuse, so its
-        # answer IS the response: a failure comes back as the request's error,
-        # which is what makes the write fail and leaves the buffer modified with
-        # the human's text. It stays OUT of the command inbox on purpose -- what
-        # a consumer wants is the parsed answer set, which the view hands on
-        # itself once the document is taken, not the raw lines it refused.
+        # The ONLY place a route runs before the ack. The answer IS the
+        # response: a failure comes back as the request's error, which is what
+        # makes the write fail and leaves the buffer modified with the human's
+        # text. It stays OUT of the command inbox on purpose -- what a consumer
+        # wants is the parsed answer set the view hands on once the document is
+        # taken, not the raw lines it refused.
         #
         # THE RESCUE IS THE ORDERING'S PRICE. {#acknowledge} is structurally
         # immune to a raising listener -- the editor already has its answer --
         # and inverting that order inherits the obligation to answer anyway.
-        # Measured without it: a listener raising NoMethodError left nvim
-        # blocked in `vim.rpcrequest` for over 20 seconds, main loop frozen and
-        # the human unable to type, unblocking only when the whole session tore
-        # down. {Listener#question_written}'s doc has always said "must not
-        # raise"; a comment is not a guard, least of all on the one path where a
-        # Ruby exception freezes the editor.
+        # Measured without it: a listener raising left nvim blocked in
+        # `vim.rpcrequest` for over 20 seconds, main loop frozen and the human
+        # unable to type, unblocking only when the session tore down.
         #
-        # It answers a REFUSAL naming the internal error rather than an ack: a
-        # frozen editor and a silently-swallowed bug are both worse than a
-        # visible failure, and an ack here would clear 'modified' over text
-        # nothing consumed. The raise then continues, so the death is still
-        # recorded and still loud ({#record_death}).
-        # `StandardError` ALONE WAS NOT THE WHOLE OBLIGATION, and the gap was
-        # the one class most likely to arrive: `NotImplementedError` is a
-        # `ScriptError`, so a listener that has not implemented a hand-off --
-        # which is exactly what {Listener}'s abstract base raises, on three
-        # methods now -- walked straight past this rescue and the editor was
-        # never answered AT ALL. That is the >20-second frozen nvim measured
-        # below, reached by the one exception the guard could not see.
-        # `ScriptError` rather than `NotImplementedError` because `LoadError`
-        # from an autoload inside a listener freezes the editor identically,
-        # and `Exception` is still refused: `Interrupt` and `SignalException`
-        # must keep climbing.
+        # It answers a REFUSAL naming the internal error rather than an ack: an
+        # ack would clear 'modified' over text nothing consumed. The raise then
+        # continues, so the death is still recorded and still loud.
+        #
+        # `ScriptError` as well as `StandardError`, because `NotImplementedError`
+        # is a ScriptError -- which is exactly what {Listener}'s abstract base
+        # raises, so an unimplemented hand-off walked past a StandardError-only
+        # rescue and the editor was never answered AT ALL -- and because a
+        # `LoadError` from an autoload inside a listener freezes the editor
+        # identically. `Exception` is still refused: `Interrupt` and
+        # `SignalException` must keep climbing.
         #
         # No `lain: ` prefix, for {#dispatch}'s reason: the rail prepends one.
         def answer(request)

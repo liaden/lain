@@ -162,14 +162,14 @@ RSpec.describe Lain::Ledger do
     end
   end
 
-  # T15 (chunk-ollama-cloud-arm.md), AC 2: the counterweight to Friction::Report's
-  # graceful withholding (spec/lain/friction/report_spec.rb) -- PriceBook::DEFAULT
-  # itself must still refuse an unpriceable arm loudly, naming the model, when a
-  # caller other than that report asks it to price one directly. An ollama model
-  # id carries no family token PriceBook::DEFAULT recognizes (`opus`/`sonnet`/
-  # `haiku`), so it takes the same UnknownModel path "gpt-42" above does -- reached
-  # through a Ledger payment is already pinned there at :158-162, so this stays a
-  # single direct-call example rather than a duplicate of that mechanism.
+  # The counterweight to Friction::Report's graceful withholding
+  # (spec/lain/friction/report_spec.rb) -- PriceBook::DEFAULT itself must still
+  # refuse an unpriceable arm loudly, naming the model, when a caller other than
+  # that report asks it to price one directly. An ollama model id carries no
+  # family token PriceBook::DEFAULT recognizes (`opus`/`sonnet`/`haiku`), so it
+  # takes the same UnknownModel path "gpt-42" above does -- reached through a
+  # Ledger payment is already pinned there at :158-162, so this stays a single
+  # direct-call example rather than a duplicate of that mechanism.
   describe "an ollama model, asked of PriceBook::DEFAULT directly" do
     it "raises UnknownModel naming the model" do
       expect { Lain::PriceBook::DEFAULT.price("qwen3:4b") }

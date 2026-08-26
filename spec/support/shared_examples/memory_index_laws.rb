@@ -2,7 +2,7 @@
 
 # The cross-impl retrieval contract every memory search index must obey,
 # whatever its scoring: Memory::Manifest (the always-runs floor, references/
-# memory-and-retrieval.md #2) and Memory::Bm25 (T9, a boosting arm over the
+# memory-and-retrieval.md #2) and Memory::Bm25 (a boosting arm over the
 # same floor) both ride this ONE set of laws, so a richer index can never
 # regress what consumers (Context::Recall, the manifest tools) depend on.
 #

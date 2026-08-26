@@ -6,7 +6,7 @@ require "ripper"
 # Every fixture here is a REAL {Lain::Review::Changeset} over a hand-built diff
 # String, never a double of one. The subject is arithmetic on counts, so a
 # generated git repository would buy nothing and cost the suite a new wall-time
-# floor (T30's table); but a double of `Changeset` would let the fixture answer
+# floor; but a double of `Changeset` would let the fixture answer
 # counts the real parser never produces, which is exactly how a bound spec
 # passes without the bound working. A synthetic diff String is both: real
 # parser, no subprocess.
@@ -80,7 +80,7 @@ RSpec.describe Lain::Review::Bounds do
 
   # A changeset described commit by commit, each commit a list of per-file
   # body-line counts: `[[2, 2], [400]]` is two small files in c0 and one large
-  # one in c1. Every path belongs to exactly one commit's numstat, so T7's
+  # one in c1. Every path belongs to exactly one commit's numstat, so the
   # attribution is unambiguous and no scope is blanked.
   def named_files(spec)
     spec.each_with_index.map do |sizes, ci|
@@ -97,7 +97,7 @@ RSpec.describe Lain::Review::Bounds do
     Lain::Review::Changeset.new(source: fake_source(diff:, commits:))
   end
 
-  # `commit_count` commits, each naming a DISJOINT slice of the paths, so T7's
+  # `commit_count` commits, each naming a DISJOINT slice of the paths, so the
   # last-writer-wins attribution gives every commit a non-empty scope. The
   # merge case -- where it does not -- is built separately and on purpose.
   def changeset_of(file_count:, commit_count: 1, body_lines: 2)
@@ -108,7 +108,7 @@ RSpec.describe Lain::Review::Bounds do
     Lain::Review::Changeset.new(source: fake_source(diff:, commits:))
   end
 
-  # The measured merge shape, reproduced through T7's REAL attribution rather
+  # The measured merge shape, reproduced through the REAL attribution rather
   # than asserted about: `--diff-merges=first-parent` re-reports everything the
   # merge brought in, so the merge's numstat names the side branch's files too
   # and last-writer-wins hands them ALL to it. Two of three scopes come back
@@ -158,19 +158,19 @@ RSpec.describe Lain::Review::Bounds do
 
   describe "the defaults, and the evidence for each" do
     # The one literal kept as a literal, because the number is not ours to
-    # retune: GitHub stops SERVING a combined diff past 300 files (research
-    # S3.7), so for {Source::GithubPr} it is an API fact, and tuicr#475
-    # independently settled on the same ceiling (S4.2). A pin against an
-    # external constant is what a pin is for.
+    # retune: GitHub stops SERVING a combined diff past 300 files, so for
+    # {Source::GithubPr} it is an API fact, and tuicr#475 independently settled
+    # on the same ceiling. A pin against an external constant is what a pin is
+    # for.
     it "sets the file ceiling where two independent sources put it" do
       expect(described_class::DEFAULT_MAX_FILES).to eq(300)
     end
 
     # DERIVED, so the derivation is what gets asserted rather than the digits:
-    # S3.7 measured 80,800 rendered lines over 800 files -- 101 lines per file --
-    # and the invariant the doc states is that both ceilings fire at the same
-    # changeset SIZE (a line ceiling far above the implied one is dead code, one
-    # far below makes the file ceiling unreachable).
+    # the research measured 80,800 rendered lines over 800 files -- 101 lines
+    # per file -- and the invariant the doc states is that both ceilings fire at
+    # the same changeset SIZE (a line ceiling far above the implied one is dead
+    # code, one far below makes the file ceiling unreachable).
     #
     # The tolerance is 2%, not a comfortable 10%. With DEFAULT_MAX_FILES pinned
     # as a literal four lines up, this relation has one fixed end, so a loose
@@ -185,7 +185,7 @@ RSpec.describe Lain::Review::Bounds do
     end
 
     # Anchored on the constraint the doc names -- a context window -- and NOT
-    # on S3.7's 2,727, which is the mean of a synthetic uniform generator
+    # on the research's 2,727, which is the mean of a synthetic uniform generator
     # (`bigdiff_stacked` emits identical commits) and so has no tail to sit
     # above. A ceiling at mean + 47% refuses the tail of every real changeset.
     #
@@ -243,7 +243,7 @@ RSpec.describe Lain::Review::Bounds do
     end
   end
 
-  # A4's own registry: every strategy a cumulative refusal may recommend
+  # This class's own registry: every strategy a cumulative refusal may recommend
   # narrowing to, minus the strategy that IS the cumulative view.
   describe "the candidates a cumulative refusal may narrow to" do
     it "holds every registered strategy except the whole-changeset one" do
@@ -303,7 +303,7 @@ RSpec.describe Lain::Review::Bounds do
     end
   end
 
-  # AC 1. Both sides of both ceilings, and "just" means off by one.
+  # Both sides of both ceilings, and "just" means off by one.
   describe "#check_presentation! at scope: :cumulative" do
     it "passes a changeset exactly at the file ceiling" do
       bounds = described_class.new(max_files: 4, max_lines: 10_000)
@@ -368,7 +368,7 @@ RSpec.describe Lain::Review::Bounds do
         .to raise_error(described_class::TooLarge, /no scope that presents/)
     end
 
-    # AC 1 (A4): the axis is real once a SECOND strategy can be the one a
+    # The axis is real once a SECOND strategy can be the one a
     # refusal recommends. One commit owns every file, so grouping by commit
     # cannot narrow anything -- the walk is one group, the whole changeset
     # again -- while grouping by directory splits it into two that both fit.
@@ -383,7 +383,7 @@ RSpec.describe Lain::Review::Bounds do
         }
     end
 
-    # The property A3 and A4 each assumed the other owned. A4 defers the
+    # The property each side assumed the other owned. This walk defers the
     # `#supports?` filter to {Session#present} -- but that filters the RESOLVED
     # scope, and this walk runs on the CUMULATIVE path, where the resolved
     # scope is `:cumulative` and every candidate is consulted regardless.
@@ -442,7 +442,7 @@ RSpec.describe Lain::Review::Bounds do
       end
     end
 
-    # AC 2 (A4): the measured-advice property one level up from a single
+    # The measured-advice property one level up from a single
     # strategy -- when EVERY candidate refuses, not just the commit walk, the
     # refusal still offers no narrowing rather than a strategy-specific one
     # that would also refuse.
@@ -581,7 +581,7 @@ RSpec.describe Lain::Review::Bounds do
     end
   end
 
-  # AC 5 and 6. The ceiling that is not a number, and the one that is by default.
+  # The ceiling that is not a number, and the one that is by default.
   describe "an unbounded ceiling" do
     it "is infinity, which answers the whole comparison duck a number does" do
       expect(described_class::UNBOUNDED).to eq(Float::INFINITY)
@@ -634,7 +634,7 @@ RSpec.describe Lain::Review::Bounds do
     end
   end
 
-  # AC 2, and the reason it needs more than "nothing raised".
+  # Why this needs more than "nothing raised".
   describe "#check_presentation! at scope: :commits" do
     subject(:changeset) { changeset_of(file_count: 800, commit_count: 30) }
 
@@ -693,7 +693,6 @@ RSpec.describe Lain::Review::Bounds do
     end
   end
 
-  # AC 3.
   describe "#each_critique_chunk" do
     subject(:changeset) { changeset_of(file_count: 90, commit_count: 30) }
 
@@ -813,7 +812,7 @@ RSpec.describe Lain::Review::Bounds do
       expect(seen).to be_empty
     end
 
-    # AC 3 at the card's literal scale, which the first cut never ran: 810
+    # The same claim at work scale, which the first cut never ran: 810
     # files, 81,810 rendered lines, 30 commits, at the DEFAULT bounds.
     it "chunks the work-scale changeset one chunk per commit, dropping nothing" do
       work = changeset_of(file_count: 810, commit_count: 30, body_lines: 100)
@@ -832,7 +831,7 @@ RSpec.describe Lain::Review::Bounds do
     end
   end
 
-  # AC 4, as a sweep rather than one case: nothing is ever truncated.
+  # A sweep rather than one case: nothing is ever truncated.
   describe "nothing is silently truncated" do
     it "refuses every presentation it cannot show whole, at every scope" do
       bounds = described_class.new(max_files: 4, max_lines: 12, max_critique_lines: 8)
@@ -879,17 +878,17 @@ RSpec.describe Lain::Review::Bounds do
     end
   end
 
-  # T31c's actual deliverable is a COUNT, and a count is the one thing prose
-  # cannot hold: this guard used to be called from {Lain::CLI::Review#present}
-  # and was moved onto {Lain::Review::Session#present} so that every surface is
-  # bounded by one caller rather than by whichever command remembered to ask. A
-  # second caller added later would restore the two-places-enforce-one-ceiling
-  # shape and nothing anywhere would go red.
+  # The deliverable here is a COUNT, and a count is the one thing prose cannot
+  # hold: this guard used to be called from {Lain::CLI::Review#present} and was
+  # moved onto {Lain::Review::Session#present} so that every surface is bounded
+  # by one caller rather than by whichever command remembered to ask. A second
+  # caller added later would restore the two-places-enforce-one-ceiling shape
+  # and nothing anywhere would go red.
   #
   # Pinned mechanically, `spec/output_discipline_spec.rb`'s way: Ripper over the
   # syntax tree, never a grep, because the files that discuss this guard discuss
   # it at length in comments -- {Lain::CLI::Review}'s class doc still names it,
-  # and must, since that is where the follow-up this card discharged was written.
+  # and must, since that is where the follow-up this move discharged was written.
   describe "how many places in lib/ enforce a presentation ceiling" do
     guard = "check_presentation!"
 

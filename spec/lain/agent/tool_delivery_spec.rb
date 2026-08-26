@@ -23,7 +23,7 @@ module ToolDeliverySpecSupport
 end
 
 # Where ONE tool-calling turn's results land on the Timeline: settled, or torn
-# by an interrupt mid-dispatch (F46). The REAL tear -- a live `Async` cancel
+# by an interrupt mid-dispatch. The REAL tear -- a live `Async` cancel
 # arriving while a tool is genuinely parked -- is
 # spec/lain/seams/tool_cancellation_spec.rb; what is pinned here is this
 # object's own contract, driven with a handler that raises the stop directly so

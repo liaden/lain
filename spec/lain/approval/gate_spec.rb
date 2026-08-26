@@ -9,8 +9,8 @@ require "stringio"
 # deny, journal a gate_decision attributed to the answering surface, and
 # remember the approved digest so ensure_approved! refuses loudly otherwise.
 #
-# T5 ships only the asker-delegating path; `policy:` is carried onto the record
-# as a label so a later card's policies (hands_off, deferred) wrap this one
+# Only the asker-delegating path ships today; `policy:` is carried onto the
+# record as a label so later policies (hands_off, deferred) wrap this one
 # without ever widening the durable wire shape.
 RSpec.describe Lain::Approval::Gate do
   # An ask_human-shaped duck: #ask returns a Promise the injected block may
@@ -58,7 +58,6 @@ RSpec.describe Lain::Approval::Gate do
     Sync { gate.call(plan, asker:, stage:, epic_slug:, **overrides) }
   end
 
-  # AC1
   describe "an unapproved digest refuses to pass" do
     it "raises NotApproved naming the digest when the gate holds no decisions" do
       expect { gate.ensure_approved!(plan) }
@@ -84,7 +83,6 @@ RSpec.describe Lain::Approval::Gate do
     end
   end
 
-  # AC2
   describe "a timeout denies and attributes itself" do
     it "journals approved false, answered_by timeout, and the partition keys it was called with" do
       subject_gate = gate(timeout: 0.02)
@@ -108,7 +106,6 @@ RSpec.describe Lain::Approval::Gate do
     end
   end
 
-  # AC3
   describe "approval is monotonic" do
     it "keeps approved? true through approve -> deny while both decisions are journaled" do
       subject_gate = gate(timeout: 0.02)
@@ -183,7 +180,7 @@ RSpec.describe Lain::Approval::Gate do
     end
   end
 
-  # T3: a day-two process rebuilds the registry from what day-one already
+  # A day-two process rebuilds the registry from what day-one already
   # journaled, rather than starting empty and re-litigating every digest.
   describe ".from_journal -- approvals survive a restart" do
     it "registers an approved digest and skips a denied one, so ensure_approved! still works" do

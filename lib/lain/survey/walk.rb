@@ -22,62 +22,54 @@ module Lain
     # == A SYMBOLIC link is two names for one file, and both are classified
     #
     # {Sensitivity} is LEXICAL by contract and makes no syscall, so it can only
-    # ever judge the name it is handed -- and a walk that handed it the name it
+    # judge the name it is handed -- and a walk that handed it the name it
     # discovered would let `notes.txt -> ~/.netrc` into a corpus with a verbatim
     # password in it. `read_file` is not exposed the same way, because a model
-    # has to NAME a path to read it; a survey DISCOVERS every link in a tree and
-    # follows it unasked, which is what makes resolution this object's job.
+    # has to NAME a path to read it; a survey DISCOVERS every link and follows it
+    # unasked, which makes resolution this object's job.
     #
-    # So a symbolic link is resolved with `File.realpath` and judged by BOTH
-    # names, strictest verdict winning, before anything is opened. The
-    # classifier keeps its no-IO contract; the walk, which already stats and
-    # sniffs, does the resolving. Then, and only then, containment: a link
-    # resolving out of the surveyed tree is withheld as `:outside`, because the
-    # human pointed at a directory and reviewing what a link reaches beyond it
-    # is a scope nobody agreed to. DENIAL IS TESTED FIRST, so a link out of the
-    # tree to a private key is disclosed as the private key it is rather than as
-    # a scope note. A broken link is skipped, exactly as a file that vanished
-    # mid-walk is.
+    # So a link is resolved with `File.realpath` and judged by BOTH names,
+    # strictest verdict winning, before anything is opened -- the classifier
+    # keeps its no-IO contract and the walk, which already stats and sniffs, does
+    # the resolving. Then containment: a link resolving out of the surveyed tree
+    # is withheld as `:outside`, because the human pointed at a directory. DENIAL
+    # IS TESTED FIRST, so a link out of the tree to a private key is disclosed as
+    # the private key it is rather than as a scope note. A broken link is skipped,
+    # as a file that vanished mid-walk is.
     #
     # SYMBOLIC is the word that matters. A HARD link is also two names for one
     # file, and only the in-tree one is classified -- there is no target path to
-    # resolve, `lstat` cannot tell it from an ordinary file, and it genuinely IS
-    # a file in the tree. It is therefore the same case as a plain copy of a
-    # secret, which `read_file` passes through identically, and it falls to
-    # {Projection}'s stated residual rather than to the classifier.
+    # resolve, `lstat` cannot tell it from an ordinary file, and it genuinely IS a
+    # file in the tree. So it is the same case as a plain copy of a secret, which
+    # `read_file` passes through identically, and it falls to {Projection}'s
+    # stated residual.
     #
-    # Resolution settles WHICH FILE this was at the moment it was asked, and no
-    # more than that: a link swapped afterwards points the later read somewhere
-    # else. The window is not the microseconds inside {#linked} -- it is the
-    # whole gap between this walk and the corpus reading the file, and closing
-    # it means carrying the RESOLVED target on the {Listing} so the read follows
-    # the path that was classified. Not done here because it needs write access
-    # to the tree being surveyed, at which point pasting the secret into a file
-    # is simpler, and `read_file` has the identical property.
+    # Resolution settles WHICH FILE this was at the moment it was asked, no more:
+    # a link swapped afterwards points the later read somewhere else. The window
+    # is the whole gap between this walk and the corpus reading the file, and
+    # closing it means carrying the RESOLVED target on the {Listing}. Not done
+    # here because it needs write access to the tree being surveyed, at which
+    # point pasting the secret into a file is simpler, and `read_file` has the
+    # identical property.
     #
     # == Two rules that would otherwise be invented four times
     #
     # BINARY is a NUL byte in the first {SNIFF} bytes. A bounded sniff is
-    # permitted and a full read is not -- a survey that read every blob to
-    # decide whether to list it has already paid the cost the laziness exists to
-    # avoid. This deliberately diverges from grep's semantics, which read on;
-    # `crates/lain-core/src/grep.rs`'s `BinaryDetection::quit(0)` note already
-    # records that the Ruby and Rust arms are not subsets of each other.
+    # permitted and a full read is not -- a survey that read every blob to decide
+    # whether to list it has already paid the cost the laziness exists to avoid.
+    # This diverges from grep's semantics, which read on.
     #
-    # IGNORES are git's answer, never ours. When the root is a repository the
-    # walk asks `ls-files` once, so `tmp/`, a compiled `*.so` and vendored trees
-    # never enter; a non-repository root walks everything, which is what a LaTeX
-    # directory or a folder of prose wants. Re-implementing gitignore in Ruby is
-    # exactly what the crate-survey rule exists to prevent, and an ignored path
-    # is NOT withheld -- it is simply not listed (see {Withheld}).
+    # IGNORES are git's answer, never ours: when the root is a repository the walk
+    # asks `ls-files` once, and a non-repository root walks everything, which is
+    # what a LaTeX directory or a folder of prose wants. An ignored path is NOT
+    # withheld -- it is simply not listed (see {Withheld}).
     #
     # == The size is a stat, and that is all it is
     #
-    # `Bounds` needs a cheap size per path before anything is parsed, and
-    # re-reading every file to count lines defeats the purpose. So a listing
-    # carries BYTES, from the same `stat` that answered "is this a file at
-    # all"; line counts arrive later, harvested by the identity pass that has
-    # to read each file once anyway.
+    # `Bounds` needs a cheap size per path before anything is parsed, so a listing
+    # carries BYTES from the same `stat` that answered "is this a file at all".
+    # Line counts arrive later, from the identity pass that reads each file
+    # anyway.
     class Walk
       # A root that is not a directory to walk. Subclasses {Lain::Error} next to
       # the owner that raises it, per the error-taxonomy convention, so a
@@ -91,18 +83,16 @@ module Lain
       # git's paths with. Both are "the byte no text holds".
       NUL = "\0"
 
-      # `--cached` and `--others` together are the working tree as it stands --
-      # tracked files plus untracked ones -- and `--exclude-standard` is what
-      # applies `.gitignore`, `.git/info/exclude` and the user's global excludes
-      # without us knowing any of their rules. `-z` because git QUOTES an
-      # unusual name otherwise, and a newline in a name splits a line-delimited
-      # reading into two paths that name nothing ({Project::Dotfiles}' lesson).
+      # `--cached` and `--others` together are the working tree as it stands, and
+      # `--exclude-standard` applies `.gitignore`, `.git/info/exclude` and the
+      # user's global excludes without us knowing any of their rules. `-z` because
+      # git QUOTES an unusual name otherwise, and a newline in a name splits a
+      # line-delimited reading into two paths that name nothing.
       LS_FILES = %w[ls-files -z --cached --others --exclude-standard].freeze
 
       # Seconds one `git` may take. {Project::Dotfiles::GIT_TIMEOUT}'s figure and
-      # its reasoning: this runs while a human waits for a survey to open, and a
-      # convenience that hangs on a wedged filesystem costs more than it is
-      # worth. A child that outlives it reads as "no repository".
+      # reasoning: this runs while a human waits for a survey to open. A child
+      # that outlives it reads as "no repository".
       GIT_TIMEOUT = 10
 
       # `**` with `FNM_DOTMATCH` visits every dotfile -- which a survey wants --
@@ -120,16 +110,13 @@ module Lain
       # is, and what the classifier made of it.
       #
       # `size` is the file's own bytes, PRE-PROJECTION -- what `stat` said, not
-      # what the corpus will hold. The two differ wherever a region is masked
-      # (a placeholder is shorter than most secrets), so a ceiling computed from
-      # this sizes the tree rather than the corpus. Deliberate: the ceiling has
-      # to answer before anything is read, which is the point of taking it from
-      # `stat`.
+      # what the corpus will hold. The two differ wherever a region is masked, so
+      # a ceiling computed from this sizes the tree rather than the corpus.
+      # Deliberate: the ceiling has to answer before anything is read.
       #
       # The verdict RIDES ALONG rather than being re-derived downstream, so a
-      # disclosure can say a file arrived masked because its name is
-      # credential-shaped without classifying it a second time and risking a
-      # second answer.
+      # disclosure can say why a file arrived masked without classifying it a
+      # second time and risking a second answer.
       class Listing
         def initialize(path:, absolute:, size:, verdict:)
           super(path: path.dup.freeze, absolute: absolute.dup.freeze, size: Integer(size), verdict:)
@@ -140,15 +127,13 @@ module Lain
       end
 
       # Whether `path` IS the tree at `root` or sits below it -- a whole SEGMENT
-      # comparison, so `/repo` never swallows `/repo-backup`
-      # ({Sensitivity::Rule#descends?}' rule, for its reason).
+      # comparison, so `/repo` never swallows `/repo-backup`.
       #
       # `File.join(root, "")` and not `"#{root}/"`, because the filesystem root
       # already ends in the separator: the interpolation builds `//`, which no
       # path starts with, and every link in the tree would then be withheld as
-      # outside it. Public because it is the one expression here worth pinning
-      # directly -- the case that decides it is a survey rooted at `/`, which
-      # cannot be built as a fixture without walking the filesystem.
+      # outside it. Public because the case that decides it is a survey rooted at
+      # `/`, which cannot be built as a fixture without walking the filesystem.
       #
       # @param root [String] a resolved, absolute directory
       # @param path [String] a resolved, absolute path
@@ -166,10 +151,10 @@ module Lain
       attr_reader :withheld
 
       # Walked EAGERLY, then frozen: the walk is the cheap half (one `git`, one
-      # `stat` and one bounded sniff per path) and every later card asks it the
-      # same two questions repeatedly. {Sensitivity::Policy}'s posture -- build
-      # in `initialize`, before the freeze, because a lazy memo on a frozen
-      # object raises at its first caller, mid-run.
+      # `stat` and one bounded sniff per path) and every later caller asks it the
+      # same two questions repeatedly. {Sensitivity::Policy}'s posture -- built in
+      # `initialize`, before the freeze, because a lazy memo on a frozen object
+      # raises at its first caller, mid-run.
       #
       # @param root [String, Pathname] the directory to survey
       # @param sensitivity [Sensitivity] the run's classifier, INJECTED: it
@@ -198,12 +183,10 @@ module Lain
       private
 
       # Sorted and de-duplicated here and nowhere else, so both arms answer one
-      # order. Neither is falsifiable on its own -- `Dir.glob` has sorted since
-      # Ruby 3.0 and `git ls-files` merge-sorts its tracked and untracked
-      # halves, and no arm produces a duplicate (an unmerged index would) -- but
-      # `.reverse` in either position does fail a spec, so the ORDER is pinned
-      # even where the call that establishes it is redundant. Kept because the
-      # guarantee is this method's to make, not its sources' to keep making.
+      # order. Neither call is falsifiable on its own -- `Dir.glob` has sorted
+      # since Ruby 3.0, `git ls-files` merge-sorts its two halves, and no arm
+      # produces a duplicate -- but the guarantee is this method's to make, not
+      # its sources' to keep making.
       def candidates = (tracked || globbed).uniq.sort
 
       # nil means "git has no answer here", which covers both a directory that
@@ -227,9 +210,9 @@ module Lain
 
       # BYTES, and the path BELOW the root. Bytes because `String#split` raises
       # `ArgumentError` on a name that is not valid UTF-8 -- `café.tex` in a
-      # latin-1 documents tree took the whole survey down with a backtrace --
-      # and below the root because a root whose own path holds a `.git`
-      # component would otherwise skip every candidate under it.
+      # latin-1 documents tree took the whole survey down -- and below the root
+      # because a root whose own path holds a `.git` component would otherwise
+      # skip every candidate under it.
       def skipped?(relative) = relative.b.split(File::SEPARATOR).intersect?(SKIPPED)
 
       def sift(relatives)

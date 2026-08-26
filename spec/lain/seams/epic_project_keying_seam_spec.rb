@@ -5,9 +5,9 @@ require "stringio"
 require "tmpdir"
 
 # The epic tier answers "which project am I in?" on TWO axes, and they are keyed
-# DIFFERENTLY on purpose. Nothing states that anywhere else, and until T5 nothing
-# could tell: both answers resolved to the working directory, so the two
-# spellings agreed by accident.
+# DIFFERENTLY on purpose. Nothing states that anywhere else, and until the
+# project resolver landed nothing could tell: both answers resolved to the
+# working directory, so the two spellings agreed by accident.
 #
 #   * the epic CONTAINER -- where the documents live -- is keyed on the resolved
 #     PROJECT ROOT ({Lain::Project::Resolver.default_project}), so a chat and every
@@ -25,9 +25,9 @@ require "tmpdir"
 #
 # == Why this file exists, and why it is a seam
 #
-# T5 threaded a resolved project root through the chat and the epic subcommands.
-# It did not edit either of the two journal-directory lines -- it changed what
-# `@root` MEANS, and two sites keyed on `project_hash(@root)`
+# The project resolver threaded a resolved project root through the chat and the
+# epic subcommands. It did not edit either of the two journal-directory lines --
+# it changed what `@root` MEANS, and two sites keyed on `project_hash(@root)`
 # ({Lain::CLI::Epic::Journals}, {Lain::CLI::EpicMount#prior_claims}) silently
 # stopped agreeing with the four that take the `sessions_dir` default. From a
 # subdirectory, `lain epic submit` wrote its verdict where `lain epic status`

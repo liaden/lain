@@ -34,7 +34,7 @@ RSpec.describe Lain::Forge::Promotion, :seam do
                         journaled: journaling(records), shell_out_factory: factory)
   end
 
-  # The seam T17's {Forge::Journaled#attempt} exposes, stood up here as a double:
+  # The seam {Forge::Journaled#attempt} exposes, stood up here as a double:
   # it takes the effect's ADDRESS, brackets the block with an intent and an
   # outcome, and hands the block's answer back unchanged. Promotion depends on
   # that message, never on the wrapper's type.
@@ -456,7 +456,7 @@ RSpec.describe Lain::Forge::Promotion, :seam do
     # from a promotion that never reached the remote.
     #
     # The invariant is held by CONSTRUCTION, not by this file: the answer is the
-    # guarded {Gh::Answer}, whose {Gh::Guards::Answer} refuses the pair outright.
+    # guarded {Gh::Answer}, whose {Gh::Contracts::Answer} refuses the pair outright.
     # A value of our own that merely never happened to be built wrong would put
     # the same guarantee back in the hands of whoever edits `#answer` next.
     it "answers the guarded Gh::Answer rather than a twin of its own" do

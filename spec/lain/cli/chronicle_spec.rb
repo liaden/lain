@@ -4,7 +4,7 @@ require "json"
 require "stringio"
 require "tmpdir"
 
-# T13 integration round: the journal+scribe lifecycle, lifted out of the thin
+# Integration round: the journal+scribe lifecycle, lifted out of the thin
 # Thor executable the way CLI::Backend lifted provider resolution. The exe
 # wires; the Chronicle owns WHEN the journal opens, what the scribe's header
 # pins (the finished toolset -- hence the two-phase start), which journal
@@ -46,7 +46,7 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(described_class.for(enabled: nil)).to be_a(described_class::Null)
     end
 
-    # T16: /fork composes `<session>@<head>` from this reader, so the opened
+    # /fork composes `<session>@<head>` from this reader, so the opened
     # chronicle must name the very file `.for` put on disk.
     it "exposes the opened journal's path -- the session identity /fork forks" do
       Dir.mktmpdir do |dir|
@@ -63,7 +63,7 @@ RSpec.describe Lain::CLI::Chronicle do
     expect(chronicle.journal_path).to be_nil
   end
 
-  # T17's last obligation: chat must actually write a `.wal` when journaling
+  # The last obligation: chat must actually write a `.wal` when journaling
   # is on. #spool derives the sibling path from the SAME Journal.default_path
   # `.for` opened -- proven here by writing one frame and checking it landed
   # beside the NDJSON, not by trusting a stubbed path.
@@ -134,7 +134,7 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
-  # T3 fix round: the ephemeral (--btw) lifecycle end-to-end through the
+  # The ephemeral (--btw) lifecycle end-to-end through the
   # Chronicle. `.for(btw: true)` journals to the marked filename; a clean
   # `:exit` close reaps an UNPROMOTED ephemeral (journal + wal); every other
   # close reason leaves both for salvage, as does a hard kill (no code runs).
@@ -271,8 +271,8 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
-  # T19: a resumed chat opens a NEW chained journal -- the header names the
-  # prior file (T14's resumed_from shape), and the scribe treats the resumed
+  # A resumed chat opens a NEW chained journal -- the header names the
+  # prior file (the resumed_from shape), and the scribe treats the resumed
   # chain's turns as already written, so catch_up records only what is new
   # and anchors its extends-check on the resumed head.
   describe "a resumed #start" do
@@ -306,7 +306,7 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(of_type("message").first).to include("digest" => event.digest)
     end
 
-    # I6: with --nvim's tee wrapped, Q/A message records ride it to the live
+    # With --nvim's tee wrapped, Q/A message records ride it to the live
     # views (lain://inbox, StatusFeed) -- routed, never duplicated: the tee's
     # journal leg is this session's own journal, so the file still gets each
     # record exactly once.
@@ -340,7 +340,7 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
-  # T22: one {Lain::Agent::Instrumentation} value, not a keyword Hash three
+  # One {Lain::Agent::Instrumentation} value, not a keyword Hash three
   # callers poked at with `.fetch`/`.slice`/`.merge`.
   describe "#instrumentation" do
     it "lands telemetry in the session journal, JournalRequests included" do
@@ -403,7 +403,7 @@ RSpec.describe Lain::CLI::Chronicle do
     end
   end
 
-  # T16 fix round: the write-side wiring for Session run-state. The chronicle
+  # The write-side wiring for Session run-state. The chronicle
   # owns the decoration so the exe stays a one-line wire and Session itself
   # stays journal-ignorant (Session::Journaled's whole point).
   describe "#wrap_session" do
@@ -458,9 +458,9 @@ RSpec.describe Lain::CLI::Chronicle do
   describe "lifecycle delegation" do
     before { chronicle.start(context:, toolset:) }
 
-    # The fluent return the three scribe forwards keep, and the reason T22
-    # declined to replace them with `delegate ... to: :scribe`: that would answer
-    # the SCRIBE. {Lain::CLI::Command::Env#checkpoint} is documented as answering
+    # The fluent return the three scribe forwards keep, and the reason they are
+    # not written as `delegate ... to: :scribe`: that would answer the SCRIBE.
+    # {Lain::CLI::Command::Env#checkpoint} is documented as answering
     # the Chronicle so a caller can chain off it, and its own spec cannot defend
     # that -- `env_spec` builds the chronicle as an `instance_double` with
     # `catch_up` stubbed, so it stays green either way. This is where the promise
@@ -620,8 +620,9 @@ RSpec.describe Lain::CLI::Chronicle do
       expect(instrumentation.model_middleware.to_a.first).to be_a(Lain::Middleware::JournalRequests)
     end
 
-    # --no-journal's half of T17: no chronicle, no spool, no `.wal` file --
-    # ever. Provider::Spool::Null never touches a filesystem by construction.
+    # --no-journal's half of the same obligation: no chronicle, no spool, no
+    # `.wal` file -- ever. Provider::Spool::Null never touches a filesystem by
+    # construction.
     it "answers Spool::Null so --no-journal creates no file" do
       expect(null.spool).to be_a(Lain::Provider::Spool::Null)
     end

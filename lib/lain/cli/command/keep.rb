@@ -3,12 +3,12 @@
 module Lain
   module CLI
     module Command
-      # `/keep` (T17): promote this ephemeral (--btw) session in place --
+      # `/keep`: promote this ephemeral (--btw) session in place --
       # {Chronicle#promote!} renames journal+WAL off the `.btw` mark, so the
       # clean-exit reap skips it and it survives as an ordinary chained fork
       # (`lain sessions` lists it).
       #
-      # WHEN it may run is the load-bearing half (T3 panel, binding):
+      # WHEN it may run is the load-bearing half (a binding panel ruling):
       # {Chronicle::RelocatableSpool#relocate} is unsynchronized with the
       # ResponseWal monitor, so promote! must run strictly BETWEEN round
       # trips. Command dispatch IS between the MAIN agent's asks by

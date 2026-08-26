@@ -5,44 +5,37 @@ module Lain
     # The neutral-Request -> Anthropic-kwargs encoding, shared by both Anthropic
     # backends so it cannot drift between them.
     #
-    # {Provider::AnthropicReference} (the SDK oracle) and {Provider::Anthropic} (the
-    # forked HTTP transport) must send byte-identical payloads -- that is the
-    # whole point of the dry differential `raw.encode(req) == sdk.encode(req)`,
-    # which VCR structurally cannot prove because cassettes match on method+URI,
-    # not body. One implementation, included in both, makes the equality true by
-    # construction and keeps it true when the SDK oracle is eventually retired:
-    # the encoder lives here, not inside the SDK class.
+    # The SDK oracle and the forked HTTP transport must send byte-identical
+    # payloads -- the point of the dry differential `raw.encode(req) ==
+    # sdk.encode(req)`, which VCR structurally cannot prove because cassettes
+    # match on method+URI and not body. One implementation included in both
+    # makes the equality true by construction, which is why the encoder lives
+    # here and not inside the SDK class.
     #
-    # The output uses the SDK's `system_:` keyword (trailing underscore), because
-    # the dry-diff compares against the SDK's kwargs. {Anthropic} rewrites that
-    # to the wire `system` key on the way out; see its `#complete`.
+    # The output uses the SDK's `system_:` keyword (trailing underscore),
+    # because the dry-diff compares against the SDK's kwargs. {AnthropicWire}
+    # rewrites it to the wire `system` key on the way out.
     #
     # The encoder consults the includer's `#supports?` for capability-gated
     # wire fields (today: tools' `strict`), so an includer must be a Provider
     # or supply that duck.
     module AnthropicEncoding
       # Anthropic accepts at most this many cache_control breakpoints per
-      # request; a fifth is a hard 400 at the wire. The default pipeline
-      # (Context::CacheBreakpoints) budgets itself under this cap, but a
-      # non-default pipeline could exceed it -- and this Anthropic-specific
-      # limit does not belong in the neutral Request. So the encoder, which is
-      # the anti-corruption layer that actually emits Anthropic bytes, is where
-      # the ceiling is enforced.
+      # request; a fifth is a hard 400 at the wire. The default pipeline budgets
+      # itself under the cap, but a non-default one could exceed it -- and this
+      # Anthropic-specific limit does not belong in the neutral Request, so the
+      # encoder that emits Anthropic bytes is where it is enforced.
       CACHE_LIMIT = 4
 
-      # More cache breakpoints than Anthropic will accept, caught at encode
-      # time with a named error instead of a cryptic wire 400. Defined here,
-      # beside the encoder, because the limit is the encoder's concern.
+      # More cache breakpoints than Anthropic will accept, caught at encode time
+      # with a named error instead of a cryptic wire 400.
       class TooManyCacheMarkers < Error; end
 
-      # `extra` can carry a raw `tool_choice` (the pre-existing escape-hatch
-      # forwarding path) AND a structured_output marker, which also wants to
-      # force tool_choice. #encode merges structured_fields BEFORE the
-      # generic extra forward, so an unchecked raw `tool_choice` would win
-      # silently -- the caller would see no error, just their forced
-      # structured answer quietly not being forced. Same shape as
-      # TooManyCacheMarkers: refuse at encode time with a named error rather
-      # than let one silently clobber the other.
+      # `extra` can carry a raw `tool_choice` AND a structured_output marker,
+      # which also forces tool_choice. #encode merges structured_fields BEFORE
+      # the generic extra forward, so an unchecked raw `tool_choice` would win
+      # silently: no error, just a forced structured answer quietly not being
+      # forced.
       class ConflictingToolChoice < Error; end
 
       # `cache_control` in Anthropic's only currently offered flavor. Named once
@@ -53,23 +46,18 @@ module Lain
       # wire field, so it must be stripped from every emitted payload.
       CACHE_MARKER = "cache"
 
-      # T1: the neutral key a Request uses to carry a forced typed-answer
-      # format on #extra (see Ollama::Encoding::STRUCTURED_OUTPUT_KEY, the
-      # same string, defined separately -- these are two leaf files that
-      # carry no internal requires of each other). The value is
-      # `{"schema" => <json schema>, "tool" => <name>}`; Anthropic has no
-      # native "format" concept, so it reads only "tool" and forces
-      # tool_choice at that name instead -- the schema half is Ollama's.
-      # Never a wire field itself, so #encode must strip it the same way it
-      # strips CACHE_MARKER, or an unknown param would leak to the SDK.
+      # The neutral key a Request uses to carry a forced typed-answer format on
+      # #extra. The same string as Ollama::Encoding::STRUCTURED_OUTPUT_KEY,
+      # defined separately because these are two leaf files carrying no internal
+      # requires of each other. Anthropic has no native "format" concept, so it
+      # reads only the "tool" half and forces tool_choice at that name. Never a
+      # wire field, so #encode must strip it or an unknown param leaks to the
+      # SDK.
       STRUCTURED_OUTPUT_KEY = "structured_output"
 
-      # The pre-existing raw escape-hatch key a caller may already put on
-      # #extra to force tool_choice directly (see "forwards provider-specific
-      # params from #extra as symbol keys" in the spec). Named here only so
-      # #check_tool_choice_conflict! can detect it colliding with
-      # STRUCTURED_OUTPUT_KEY -- this module has no opinion on raw tool_choice
-      # otherwise, it just forwards it.
+      # The raw escape-hatch key a caller may put on #extra to force tool_choice
+      # directly. Named here only so #check_tool_choice_conflict! can see it
+      # collide with STRUCTURED_OUTPUT_KEY; otherwise it is simply forwarded.
       TOOL_CHOICE_KEY = "tool_choice"
 
       # The exact kwargs Hash the SDK would receive. Pure and deterministic: no
@@ -104,18 +92,13 @@ module Lain
               "marker, which also forces tool_choice -- remove one"
       end
 
-      # A Request with no structured-answer format contributes nothing here,
-      # which is what keeps #encode byte-identical to before this feature
-      # existed. When present, Anthropic has no server-side schema-forcing
-      # concept (unlike Ollama's `format`), so the schema half is ignored and
-      # only the named tool is forced via tool_choice.
+      # A Request with no structured-answer format contributes nothing, which is
+      # what keeps #encode byte-identical to before the feature existed.
       #
-      # A marker carrying no "tool" is treated as an absent one for the same
-      # reason Ollama::Encoding#structured_format treats a marker with no
-      # "schema" that way: half a marker is what a caller with only the other
-      # half builds, and an {Oracle::Model} is exactly that caller -- it has an
-      # answer schema and no tools at all. `name: nil` is a payload the API
-      # rejects, so it must never be emitted.
+      # A marker carrying no "tool" counts as absent: half a marker is what a
+      # caller with only the other half builds, and an {Oracle::Model} is
+      # exactly that caller -- an answer schema and no tools at all. `name: nil`
+      # is a payload the API rejects, so it must never be emitted.
       def structured_fields(extra)
         format = extra[STRUCTURED_OUTPUT_KEY]
         tool = format && format["tool"]
@@ -180,10 +163,9 @@ module Lain
         tool.except("strict")
       end
 
-      # Pure translation: every block's neutral marker, wherever
-      # Context::CacheBreakpoints placed it, becomes cache_control. This
-      # module adds no placement of its own -- the budget and the tail-
-      # clustering are entirely the Context layer's policy (CE-1).
+      # Pure translation: a block's neutral marker becomes cache_control
+      # wherever the Context layer placed it. This module adds no placement of
+      # its own.
       def encode_messages(messages)
         messages.map do |message|
           { "role" => message["role"], "content" => encode_content(message["content"]) }

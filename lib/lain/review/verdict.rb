@@ -12,24 +12,23 @@ module Lain
     module Verdict
       # The verdict a session has not been given yet.
       #
-      # A Null Object rather than `nil`, and the tension it settles is recorded
-      # at `Surface::Null#verdict`: {Sink::Null#write} returns the byte count
-      # precisely so no caller nil-checks it, and a verdict is a QUERY, so `nil`
-      # from one reintroduces the `if verdict` guard the pattern exists to
-      # delete. {Session#verdict} therefore never answers nil.
+      # The verdict a session has not been given yet.
+      #
+      # A Null Object rather than `nil`: a verdict is a QUERY, so `nil` from one
+      # reintroduces the `if verdict` guard the pattern exists to delete.
+      # {Session#verdict} therefore never answers nil.
       #
       # The duck it satisfies is a String's, because a recorded verdict IS a
-      # String -- a member of {Review::VERDICTS}. `#empty?` is the one predicate
-      # both sides answer, so `session.verdict.empty?` reads "nothing has been
-      # concluded" without a type test, and `#to_s` is "" so an interpolating
-      # surface renders nothing rather than a placeholder nobody chose.
+      # String. `#empty?` is the one predicate both sides answer, so
+      # `session.verdict.empty?` reads "nothing has been concluded" without a type
+      # test, and `#to_s` is "" so an interpolating surface renders nothing.
       #
       # Deliberately NOT `#to_str`. Answering that would make it implicitly a
-      # String -- `"verdict: " + None` would concatenate -- and absence would
-      # then be indistinguishable from a real empty verdict at exactly the sites
-      # that most need to tell them apart. It is also not a member of
+      # String -- `"verdict: " + None` would concatenate -- and absence would then
+      # be indistinguishable from a real empty verdict at exactly the sites that
+      # most need to tell them apart. It is also not a member of
       # {Review::VERDICTS}, which is what keeps it from being journaled by
-      # accident: {ReviewVerdict}'s own guard refuses it.
+      # accident.
       module None
         # @return [String]
         def self.to_s = ""

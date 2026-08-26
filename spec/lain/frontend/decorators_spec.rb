@@ -45,7 +45,7 @@ RSpec.describe Lain::Frontend::Decorators::ToolOutput do
     expect(rendered).not_to include(Pastel.new(enabled: true).red("plain\n"))
   end
 
-  # F58: a chunk is whatever the tool had written when the reader last woke
+  # A chunk is whatever the tool had written when the reader last woke
   # ({Sink::IOAdapter#write} passes it through untouched), so it may end
   # mid-line by design and the frontend must not terminate it.
   it "does not call its output line-shaped, since a chunk may end mid-line" do

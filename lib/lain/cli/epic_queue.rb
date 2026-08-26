@@ -7,52 +7,46 @@ module Lain
   module CLI
     # `lain epic queue [SLUG]` / `lain epic approve DIGEST` / `lain epic deny
     # DIGEST`: the morning review. What a {Approval::Gate::Policy::Deferred}
-    # refused and parked -- question, spike evidence, and the model's hesitation
-    # -- read over coffee and decided.
+    # refused and parked, read over coffee and decided. Returns Strings; only the
+    # frontend prints.
     #
     # == Draining is journaling
     #
     # {Approval::SignoffQueue} is a FOLD, not a file: an artifact is parked
     # exactly when a `deferred` decision has no LATER terminal one for the same
-    # `(artifact_digest, epic_slug, stage)`. So `approve`/`deny` do not mutate a
-    # queue -- they APPEND a terminal {Approval::GateDecision} and let the next
-    # fold see the partition drained. Nothing here holds state between commands,
-    # and two readers of the same journals agree by construction.
+    # `(artifact_digest, epic_slug, stage)`. So `approve`/`deny` APPEND a terminal
+    # {Approval::GateDecision} rather than mutating a queue, nothing here holds
+    # state between commands, and two readers of the same journals agree by
+    # construction.
     #
     # == A failed rebuild ABORTS
     #
     # {Approval::SignoffQueue.from_journal} raises on a record it cannot read
-    # whole, and NOTHING in this class rescues that. The ergonomic response --
-    # an empty queue on failure -- is maximally fail-open here: an empty queue
-    # reads as drained, drained opens the next stage, and the stage opens over
-    # work nobody signed off. {Approval::Gate::Policy::Drained} legitimizes "this
-    # caller has no queue", never "this rebuild failed".
+    # whole, and NOTHING here rescues that. The ergonomic response -- an empty
+    # queue on failure -- is maximally fail-open: an empty queue reads as drained,
+    # drained opens the next stage, and the stage opens over work nobody signed
+    # off. {Approval::Gate::Policy::Drained} legitimizes "this caller has no
+    # queue", never "this rebuild failed".
     #
-    # This matters most on THIS surface, because it is the screen a human reads
-    # specifically to decide that nothing is outstanding. A listing that shows
-    # "nothing parked" because the fold blew up is worse than no listing at all,
-    # which is why the empty rendering names the directory it read AND what it
+    # This is the screen a human reads specifically to decide that nothing is
+    # outstanding, so the empty rendering names the directory it read AND what it
     # understood there -- lines seen, records kept, lines it could parse nothing
-    # from. A count of FILES cannot tell "understood it" from "understood none
-    # of it", and an honest empty has to be checkable.
-    #
-    # Returns Strings; only the frontend prints (output discipline,
-    # {CLI::Friction}'s precedent).
+    # from. A count of FILES cannot tell "understood it" from "understood none of
+    # it", and an honest empty has to be checkable.
     class EpicQueue
       # `approve`/`deny` named an address nothing is waiting on. Loud, and it
-      # lists what IS parked -- the digest is 71 characters and the one thing a
-      # reader needs is the near-miss beside what they typed.
+      # lists what IS parked: the digest is 71 characters, so what a reader needs
+      # is the near-miss beside what they typed.
       class UnknownDigest < Error; end
 
-      # A journaled record this surface must read whole and cannot. Held apart
-      # from {UnknownDigest}: that one says "you named the wrong thing", this one
-      # says "the record is damaged", and the remedies are nothing alike.
+      # Held apart from {UnknownDigest}: that one says "you named the wrong
+      # thing", this one says "the record is damaged", and the remedies are
+      # nothing alike.
       class UnreadableRecord < Error; end
 
-      # The two labels a human sign-off wears in the experiment record.
       # `answered_by` names WHO decided, `policy` names HOW the verdict was
-      # reached -- independent axes ({Approval::GateDecision}'s contract), and
-      # this is the one path where both are known without asking anything.
+      # reached -- independent axes ({Approval::GateDecision}'s contract), both
+      # known here without asking anything.
       HUMAN = "human"
       SIGNOFF_POLICY = "signoff"
 
@@ -87,28 +81,26 @@ module Lain
       # @raise [UnknownDigest] naming the digest and listing the parked ones
       def approve(digest, reason: nil) = drain(digest, approved: true, reason:)
 
-      # A denial is terminal too: a refused artifact is not awaiting anyone's
-      # sign-off either, so it drains the partition exactly as an approval does.
+      # A denial is terminal too: a refused artifact awaits nobody's sign-off
+      # either, so it drains the partition exactly as an approval does.
       # @see #approve
       def deny(digest, reason: nil) = drain(digest, approved: false, reason:)
 
       private
 
-      # ONE command per instance. The fold is memoized, so an instance reused
+      # ONE command per instance: the fold is memoized, so an instance reused
       # after its own `approve` would answer from the review it read before that
-      # decision landed. That is exactly right for a one-shot CLI -- the Thor
-      # registration builds a fresh one per invocation, and `unknown_message`
-      # wants the same fold `find` just missed in, not a second read of the
-      # disk -- and it is why nothing here is offered as a long-lived object.
+      # decision landed. Right for a one-shot CLI -- Thor builds a fresh one per
+      # invocation, and `unknown_message` wants the same fold `find` just missed
+      # in -- and why nothing here is offered as a long-lived object.
       def dir = @dir ||= @paths.sessions_dir
       def review = @review ||= Review.new(journals.to_a, now: @clock.call)
 
-      # The journal-discovery contract lives in {SessionJournals}, not here, so
-      # `lain epic status` and this command cannot drift about which files they
-      # read or in what order -- they would disagree about what is parked, and
-      # neither would raise. This class contributes only the two record types it
-      # is about, which is also what bounds the materialization that ordering
-      # forces.
+      # The journal-discovery contract lives in {SessionJournals}, so this
+      # command and `lain epic status` cannot drift about which files they read
+      # or in what order -- they would disagree about what is parked, and neither
+      # would raise. This class contributes only its two record types, which also
+      # bounds the materialization that ordering forces.
       def journals
         @journals ||= SessionJournals.new(dir:, types: [Approval::SignoffQueue::JOURNAL_TYPE, EVIDENCE_TYPE])
       end
@@ -123,10 +115,9 @@ module Lain
         confirmation(digest, decisions)
       end
 
-      # One Journal for the whole command, closed whatever happens. {Journal.open}
-      # creates a fresh file under `sessions_dir`, which is deliberate: the fold
-      # reads every file there, so a decision journaled from a one-shot CLI lands
-      # in the same truth the next fold sees.
+      # {Journal.open} creates a fresh file under `sessions_dir`, deliberately:
+      # the fold reads every file there, so a decision journaled from a one-shot
+      # CLI lands in the same truth the next fold sees.
       def append(decisions)
         journal = Journal.open(paths: @paths)
         begin
@@ -144,17 +135,12 @@ module Lain
         ["signed off #{digest}", *signed].join("\n")
       end
 
-      # `review.rows(nil)` deliberately widens to every epic rather than the
-      # one the caller may have named -- the near-miss beside what was typed
-      # is the whole point of this listing. That near-miss is also why a slug
-      # reads as self-contradiction: an epic slug like "alpha" IS parked, so
-      # the listing below carries a row naming it, and "no parked sign-off for
-      # alpha" beside a row that names alpha looks like the fold missed a
-      # match it plainly has. It did not -- `approve`/`deny` key on
-      # `artifact_digest`, never `epic_slug`, so a slug could never match no
-      # matter what is parked. {#digest_shaped?} is what tells the two kinds
-      # of miss apart, so only the argument that could never have been right
-      # gets told what kind of thing this verb wants.
+      # `review.rows(nil)` widens to every epic: the near-miss beside what was
+      # typed is the point of this listing. That is also why a SLUG argument gets
+      # a different sentence -- "no parked sign-off for alpha" beside a row
+      # naming alpha reads as the fold missing a match it plainly has, when in
+      # fact `approve`/`deny` key on `artifact_digest` and a slug could never
+      # match. {#digest_shaped?} tells the two kinds of miss apart.
       def unknown_message(digest, approved:)
         parked = review.rows(nil)
         headline = digest_shaped?(digest) ? "no parked sign-off for #{digest.inspect}" : kind_hint(digest, approved:)
@@ -163,10 +149,9 @@ module Lain
         "#{headline} -- parked right now:\n#{parked.map { |row| "  #{row.address}" }.join("\n")}"
       end
 
-      # {Canonical::DIGEST_ALGORITHM} is the one place the "blake3:" scheme is
-      # named, so an argument is judged digest-shaped by the same prefix every
-      # real digest on this surface carries -- not a length or hex check that
-      # a genuinely wrong-but-well-typed digest could still fail.
+      # Judged by {Canonical::DIGEST_ALGORITHM}, the one place the scheme is
+      # named, rather than by a length or hex check that a genuinely
+      # wrong-but-well-typed digest could still fail.
       def digest_shaped?(digest) = digest.start_with?("#{Canonical::DIGEST_ALGORITHM}:")
 
       def kind_hint(digest, approved:)
@@ -177,11 +162,8 @@ module Lain
         "#{rows.size} #{"gate".pluralize(rows.size)} parked for sign-off, ready-to-review first"
       end
 
-      # Names what was UNDERSTOOD, not just how many files were opened.
-      # "Nothing parked" is the answer this surface exists to give, and a count
-      # of files cannot tell "read one journal and understood it" from "read one
-      # journal and understood none of it" -- while a line nobody could parse
-      # might BE the deferral, and a lost deferral reads as drained.
+      # Names what was UNDERSTOOD, not how many files were opened: a line nobody
+      # could parse might BE the deferral, and a lost deferral reads as drained.
       def empty_listing(slug)
         about = slug.to_s.empty? ? "" : " for epic #{slug.to_s.inspect}"
         counts = journals.tally
@@ -189,19 +171,16 @@ module Lain
           "#{counted(counts.lines, "line")}, #{counted(counts.records, "gate record")})"
       end
 
-      # The emptiness above is only as good as the reading under it, so a line
-      # the parser could make nothing of is reported rather than swallowed.
-      #
-      # REPORTED, not refused: {Journal.records}' documented contract is to skip
-      # what it cannot read, because this fd can be shared with other writers,
-      # and refusing would make one damaged byte take the whole surface down.
-      # But silence here is the false all-clear this screen must never give, so
-      # the count rides along on every rendering -- a listing with items can be
-      # missing one just as easily as an empty one can.
+      # REPORTED, not refused: {Journal.records} skips what it cannot read,
+      # because this fd can be shared with other writers, and refusing would make
+      # one damaged byte take the whole surface down. Silence is the false
+      # all-clear this screen must never give, so the count rides along on every
+      # rendering -- a listing with items can be missing one just as easily as an
+      # empty one can.
       #
       # A FOREIGN record does not count: a Rust `tracing` span is valid JSON and
-      # simply is not ours, so counting it would cry wolf on every session that
-      # shared its journal.
+      # simply is not ours, so counting it would cry wolf on every shared
+      # journal.
       def unparsed_warning
         unreadable = journals.tally.unreadable
         return nil unless unreadable.positive?
@@ -213,11 +192,10 @@ module Lain
       def counted(count, noun) = "#{count} #{noun.pluralize(count)}"
 
       # One parked item joined to the two records that explain it: the deferral
-      # that parked it (when, and the model's hesitation) and the spike evidence
-      # (the question that was asked).
+      # that parked it and the spike evidence behind it.
       Row = Data.define(:item, :parked_at, :waited, :reason, :question) do
-        # Seconds as a human reads them. Coarse on purpose -- a morning review
-        # asks "has this been sitting since yesterday", never "how many seconds".
+        # Coarse on purpose: a morning review asks "has this been sitting since
+        # yesterday", never "how many seconds".
         def self.waited_label(seconds)
           return "#{(seconds / 86_400).floor}d" if seconds >= 86_400
           return "#{(seconds / 3_600).floor}h" if seconds >= 3_600
@@ -226,21 +204,16 @@ module Lain
           "#{seconds.floor}s"
         end
 
-        # There is a spike to read, so this one can actually be decided now. An
-        # item parked with no evidence (a researcher spawn that failed -- T7's
-        # fail-closed path) has nothing for a human to weigh yet, so it sorts
-        # behind. That is what "ready-to-review first" means here.
+        # There is a spike to read, so this one can be decided now. An item
+        # parked with no evidence has nothing for a human to weigh yet, so it
+        # sorts behind -- what "ready-to-review first" means here.
         def reviewable? = !item.evidence_digest.nil?
 
-        # Reviewable first, then pipeline order (an earlier stage's partition is
-        # what BLOCKS the later ones -- {Epic::Stage}'s boundary rule -- so
-        # draining it unblocks the most work), then oldest first.
-        #
-        # An unrecognized stage sorts last rather than raising: it is still
-        # rendered, with its stage verbatim, because refusing to ORDER an item is
-        # no reason to hide every other one. That is not the same failure as a
-        # record the fold cannot read -- this one is read perfectly and merely
-        # has no place in the pipeline.
+        # Reviewable first, then pipeline order (an earlier stage's partition
+        # BLOCKS the later ones, so draining it unblocks the most work), then
+        # oldest first. An unrecognized stage sorts last rather than raising: it
+        # is read perfectly and merely has no place in the pipeline, so refusing
+        # to ORDER it is no reason to hide every other item.
         def order_key = [reviewable? ? 0 : 1, stage_index, parked_at]
 
         def address = "#{item.artifact_digest}  (#{item.epic_slug}/#{item.stage})"
@@ -267,8 +240,8 @@ module Lain
       end
 
       # The fold, joined. Held apart from {EpicQueue} because rebuilding the
-      # review is a separate responsibility from the command surface over it --
-      # and because the rebuild must be reachable by a spec without a CLI.
+      # review is a separate responsibility from the command surface over it, and
+      # because the rebuild must be reachable by a spec without a CLI.
       class Review
         def initialize(records, now:)
           @records = records
@@ -285,10 +258,10 @@ module Lain
           wanted.empty? ? ordered : ordered.select { |row| row.item.epic_slug == wanted }
         end
 
-        # Every row at this address. Plural because one artifact CAN be parked in
-        # two partitions (the same bytes gated at two stages), and signing off
-        # "the digest" means signing off each place it waits -- which the
-        # confirmation then names one by one, so nothing is drained silently.
+        # Plural because one artifact CAN be parked in two partitions (the same
+        # bytes gated at two stages), and signing off "the digest" means signing
+        # off each place it waits -- which the confirmation names one by one, so
+        # nothing is drained silently.
         def find(digest) = built.select { |row| row.item.artifact_digest == digest }
 
         private
@@ -302,13 +275,12 @@ module Lain
                   question: evidence.dig(address(item), "question"))
         end
 
-        # A deferral stamped AFTER now is a damaged record, and it is refused
-        # here rather than allowed downstream. Left alone it reached
-        # {Guards::GateDecision} as a negative latency and came back as a bare
-        # `ArgumentError` naming neither this surface nor a remedy -- and the
-        # item could not be drained at all until the wall clock caught up, while
-        # the listing rendered `waiting -3600s`. Clock skew between the machine
-        # that journaled and the one reading is the ordinary cause, so the
+        # A deferral stamped AFTER now is refused here rather than downstream:
+        # left alone it reached {Contracts::GateDecision} as a negative latency
+        # and came back as a bare `ArgumentError` naming neither this surface nor
+        # a remedy, while the listing rendered `waiting -3600s` and the item could
+        # not be drained until the wall clock caught up. Clock skew between the
+        # machine that journaled and the one reading is the ordinary cause, so the
         # message says to check that rather than implying corruption.
         def waited(parked_at, item)
           seconds = @now - parked_at
@@ -320,13 +292,11 @@ module Lain
                 "not journal a latency nobody could have waited. Check the clock on the machine that journaled it."
         end
 
-        # The wait is a MEASUREMENT that gets journaled as the sign-off's
-        # latency, so an unreadable timestamp is refused rather than defaulted.
-        # `to_f` would turn a missing `ts` into 0.0 -- "answered instantly", a
-        # measurement nobody made -- written into the experiment record.
-        # {Journal#record} stamps every line it writes, so no producible record
-        # trips this: it is a truncation canary, the {SignoffQueue::Guards}
-        # idiom.
+        # The wait is journaled as the sign-off's latency, so an unreadable
+        # timestamp is refused rather than defaulted: `to_f` would write a missing
+        # `ts` into the experiment record as 0.0, "answered instantly", a
+        # measurement nobody made. {Journal#record} stamps every line it writes,
+        # so no producible record trips this -- it is a truncation canary.
         def parked_at(deferral, item)
           Time.iso8601(deferral["ts"].to_s)
         rescue ArgumentError, TypeError
@@ -335,9 +305,8 @@ module Lain
                                   "sign-off may not journal a latency nobody measured"
         end
 
-        # Last write wins: an artifact deferred twice is one thing to sign off
-        # ({SignoffQueue#park} is idempotent on the same address), and the most
-        # recent attempt is the one whose hesitation and evidence a reader wants.
+        # Last write wins: an artifact deferred twice is one thing to sign off,
+        # and the most recent attempt carries the hesitation a reader wants.
         def deferrals
           @deferrals ||= of_type(Approval::SignoffQueue::JOURNAL_TYPE)
                          .select { |record| record["policy"].to_s == Approval::SignoffQueue::DEFERRED_POLICY }
@@ -356,9 +325,9 @@ module Lain
           [record["artifact_digest"].to_s, record["epic_slug"].to_s, record["stage"].to_s]
         end
 
-        # Nothing can park without a deferral behind it ({SignoffQueue}'s
-        # one-directional invariant), so reaching this means the records changed
-        # underneath the fold. Refused rather than rendered with a blank age.
+        # Nothing can park without a deferral behind it, so reaching this means
+        # the records changed underneath the fold. Refused rather than rendered
+        # with a blank age.
         def orphan_message(item)
           "#{item.artifact_digest} is parked in #{item.epic_slug}/#{item.stage} with no `deferred` " \
             "gate_decision behind it -- the queue and the journal disagree, and this surface will not guess"
@@ -366,8 +335,7 @@ module Lain
       end
 
       # Machinery, not surface: the three commands above are the whole public
-      # API, and {Progress}'s `Lineage`/`Refold` set the precedent for keeping a
-      # fold's internals out of reach.
+      # API, and {Progress}'s `Lineage`/`Refold` set the precedent.
       private_constant :Row, :Review
     end
   end

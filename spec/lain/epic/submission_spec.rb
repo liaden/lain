@@ -10,7 +10,7 @@ require "stringio"
 # reformatted-but-unchanged plan keeps its standing approval.
 #
 # #digest is (stage, slug, artifact) composed together (Joel's ruling on the
-# T1 review round-2 BLOCKER), not the artifact's content address alone --
+# review round-2 BLOCKER), not the artifact's content address alone --
 # Approval::Gate's registry is keyed on #digest alone, so content-address-only
 # would let epic alpha's approval silently open epic beta's identical plan,
 # or a research sign-off silently open an issue_plan resubmitting the same
@@ -42,7 +42,7 @@ RSpec.describe Lain::Epic::Submission do
       Lain::Journal.records(journal_io.string.lines, type: "gate_decision").to_a
     end
 
-    # AC1, SUPERSEDED wording: the card's literal AC1 says "ensure_approved!
+    # SUPERSEDED wording: the card's literal criterion says "ensure_approved!
     # returns the graph digest". Joel's ruling on the round-2 BLOCKER makes
     # #digest (stage, slug, artifact) composed together, so ensure_approved!
     # now returns the SUBMISSION digest, which equals the graph digest only
@@ -66,12 +66,12 @@ RSpec.describe Lain::Epic::Submission do
     end
   end
 
-  # T1 review round 2, the HELD blocker Joel ruled on: #digest used to answer
+  # Review round 2, the HELD blocker Joel ruled on: #digest used to answer
   # only the artifact's content address, so the Gate's digest-keyed registry
   # (which knows nothing of stage/slug -- that is the whole point of naming
   # them separately on GateDecision) could not tell epic alpha's plan from
   # epic beta's identical one, or a research doc from an issue_plan
-  # resubmitting the same words. Converted from probe_t1.rb P3.
+  # resubmitting the same words. Converted from probe_t1.rb.
   describe "the digest binds stage and slug, not just the artifact" do
     it "differs for the same graph submitted under two different epic slugs" do
       alpha = described_class.epic_plan(graph: three_issue_graph, slug: "alpha")
@@ -120,7 +120,7 @@ RSpec.describe Lain::Epic::Submission do
     end
   end
 
-  # T1 review round 3, fix 3: Gate.from_journal (landed on main while this
+  # Review round 3, fix 3: Gate.from_journal (landed on main while this
   # card was in review) folds journaled gate_decision records back into
   # @approved and compares against a FRESHLY computed artifact.digest -- so
   # #digest is now a cross-session replay key, not merely an in-process one.
@@ -137,7 +137,7 @@ RSpec.describe Lain::Epic::Submission do
   end
 
   describe "epic_plan digest stability" do
-    # AC2: two markdown renderings that PARSE to the same graph share a digest.
+    # Two markdown renderings that PARSE to the same graph share a digest.
     # Constructing the graph twice from independently-ordered issue arrays
     # stands in for "two renderings": Graph itself normalizes id order, so the
     # test exercises exactly the reformatting a re-render performs.
@@ -153,7 +153,7 @@ RSpec.describe Lain::Epic::Submission do
   end
 
   describe "research digest sensitivity" do
-    # AC3: one changed word moves the digest.
+    # One changed word moves the digest.
     it "differs when one word of the research text changes" do
       original = described_class.research(text: "the quick brown fox", slug: "demo")
       edited = described_class.research(text: "the slow brown fox", slug: "demo")
@@ -215,9 +215,9 @@ RSpec.describe Lain::Epic::Submission do
     end
   end
 
-  # Review round 2 (T1 REQUEST-CHANGES), fix 2: a blank issue_id used to sail
+  # Review round 2 (REQUEST-CHANGES), fix 2: a blank issue_id used to sail
   # through into fact ("issue " is non-blank prose), so a human ended up asked
-  # to approve an unnamed issue. Found by probe_t1.rb P4.
+  # to approve an unnamed issue. Found by probe_t1.rb.
   describe "issue_id validation" do
     it "refuses a nil issue_id on issue_plan, naming the field" do
       expect { described_class.issue_plan(text: "x", slug: "demo", issue_id: nil) }
@@ -238,7 +238,7 @@ RSpec.describe Lain::Epic::Submission do
   # Fix 3: nil text raised an unnamed NoMethodError three frames down inside
   # #bytesize; a Hash/Integer/Symbol text passed Canonical.digest (which
   # canonicalizes all three) and was only accidentally stopped by that same
-  # #bytesize call. Found by probe_t1.rb P4.
+  # #bytesize call. Found by probe_t1.rb.
   describe "text and graph refusals" do
     it "refuses nil text on research, naming the field rather than raising NoMethodError" do
       expect { described_class.research(text: nil, slug: "demo") }
@@ -266,7 +266,7 @@ RSpec.describe Lain::Epic::Submission do
     end
   end
 
-  # T1 review round 3, fix 1: #digest canonicalizes slug (see the class
+  # Review round 3, fix 1: #digest canonicalizes slug (see the class
   # header), and Canonical.normalize raises on a String that cannot round-trip
   # to UTF-8. Unchecked, that turned #digest from TOTAL (a stored, validated
   # String, same as every other Submission field) into a method that raises
@@ -294,7 +294,7 @@ RSpec.describe Lain::Epic::Submission do
   # Fix 4: digest only got presence:, so anything answering #dup/#freeze --
   # a Hash, an Array, an Integer -- was accepted. A Hash/Array digest holds
   # mutable Strings inside a shallow freeze, which breaks the Ractor.shareable?
-  # promise this class's header makes. Found by probe_t1.rb P1/P4.
+  # promise this class's header makes. Found by probe_t1.rb.
   describe "digest must be a String" do
     it "refuses a Hash digest on implementation" do
       expect { described_class.implementation(slug: "demo", issue_id: "T7", digest: { "a" => "b" }) }
@@ -366,7 +366,7 @@ RSpec.describe Lain::Epic::Submission do
   # only thing a shareable Submission handed back mutable -- mutating the
   # returned String used to silently succeed with no state leak (Submission
   # itself stayed correct), but a shareable value producing a mutable String
-  # is still the wrong shape to ship. Found by probe_t1.rb P5.
+  # is still the wrong shape to ship. Found by probe_t1.rb.
   describe "gate_question is itself frozen" do
     it "returns a frozen String" do
       submission = described_class.research(text: "hello", slug: "demo")
@@ -386,7 +386,7 @@ RSpec.describe Lain::Epic::Submission do
     end
   end
 
-  # Judgment call (finding 6, argued in .handback-T1.md rather than changed):
+  # Judgment call (finding 6, argued in the handback rather than changed):
   # empty prose and an empty graph both construct. "0 bytes of research" and
   # "0 issues" are honest, degenerate FACTS about a real artifact, not
   # malformed input -- whether either is worth a human's approval is a

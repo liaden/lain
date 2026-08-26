@@ -5,7 +5,7 @@ require "pathname"
 
 # Mechanical, REPORT-ONLY guard against assertion shapes that structurally
 # cannot fail. The suite is largely LLM-written and keeps growing that way, so
-# a one-time prune (T16) only fixes today's instances -- this spec is what
+# a one-time prune only fixes today's instances -- this spec is what
 # makes tomorrow's mechanically visible, the way `output_discipline_spec.rb`
 # makes a stray `puts` visible.
 #
@@ -25,9 +25,9 @@ require "pathname"
 #      raise_error`, no second assertion beside it -- it does NOT escape this
 #      rule by having a real assertion next to it). The card judges that one
 #      worth keeping anyway -- cheap coverage that the whole port survives one
-#      pass -- so it is flagged AND kept, not evidence the rule mis-fired;
-#      see `.handback-T18-report.md`'s "card-named keeps" section, since this
-#      guard builds no allowlist to encode that judgment in code. The report
+#      pass -- so it is flagged AND kept, not evidence the rule mis-fired. That
+#      judgment lives in prose because this guard builds no allowlist to encode
+#      it in code. The report
 #      also finds this shape's precision to be well under 100% generally (see
 #      its own banner) -- FLAGGED is a claim about the assertion, never a
 #      verdict on the check it wraps.
@@ -77,15 +77,15 @@ require "pathname"
 # looked like sole assertions -- this AST scan lands close to that (see the
 # report's calibration line). A guard that FAILS the suite on day one would
 # need an allowlist sized to that count, which is a disabled guard wearing a
-# spec's name -- so this spec prints the report and passes. T16 consumes the
-# report and, per its own AC, fixes, deletes, or documents-with-a-reason each
-# entry -- NOT "delete everything on the list" (see the report's own banner:
+# spec's name -- so this spec prints the report and passes. A prune consumes
+# the report and fixes, deletes, or documents-with-a-reason each entry --
+# NOT "delete everything on the list" (see the report's own banner:
 # a 25-entry manual spot-check found most `sole_raise_error` instances assert
 # something real). The intended follow-up, once the count is down, is a
 # RATCHET (`count <= <ceiling>`) so a new instance costs an old one -- not a
 # hard failure now, and not built here.
 module SpecDiscipline
-  # A single flagged example, with enough context for T16 to find and judge it.
+  # A single flagged example, with enough context to find and judge it.
   # `bang_call` and `raise_sibling` are only meaningful for `:sole_raise_error`
   # (nil for `:nested_expect`) -- see the Scanner doc for what each measures.
   # Neither is a verdict: both are cheap, imperfect READING signals, not a
@@ -192,7 +192,7 @@ module SpecDiscipline
 
   # Walks one file's syntax tree collecting violations. A violation is always
   # reported at its EXAMPLE's line (the `it`/`specify` line), never a
-  # containing `describe`'s -- that is the line a reader, and T16, needs.
+  # containing `describe`'s -- that is the line a reader needs.
   class Scanner
     # One example-group's (`describe`/`context`) direct children, collected
     # so a vacuous example's report can name whether a SIBLING in the SAME
@@ -366,7 +366,7 @@ module SpecDiscipline
   REPORT_PATH = Pathname(__dir__).join("../tmp/spec_discipline_report.txt").expand_path
 end
 
-# Turns a violation list into the human-readable report T16 consumes. A
+# Turns a violation list into the human-readable report a prune consumes. A
 # module separate from SpecDiscipline on purpose: scanning/detection and
 # report FORMATTING are different responsibilities -- folding the second
 # into the first is what pushed SpecDiscipline over Metrics/ModuleLength.
@@ -518,7 +518,7 @@ module SpecDisciplineCuratedNotes
   # filter on truth -- a manual 26-entry read of "unclear" found roughly
   # 25-30% genuinely vacuous, against ~12% for the flat list. Better odds,
   # not proof. These specific entries were read and confirmed NOT vacuous;
-  # T16 must not delete them on the "neither signal detected" label alone.
+  # A prune must not delete them on the "neither signal detected" label alone.
   FALSE_UNCLEARS_NOTE = <<~TEXT
     "Neither signal detected" means less pre-sorted, not "safe to delete"
     (keep reading each one before deleting -- see the label above, which
@@ -550,7 +550,7 @@ module SpecDisciplineCuratedNotes
   TEXT
 end
 
-# Mechanical, REPORT-ONLY guard against a SECOND shape, added by T12: a public
+# Mechanical, REPORT-ONLY guard against a SECOND shape: a public
 # method in `lib/` that no other `lib/` code ever names, and that `spec/` does.
 #
 # CLAUDE.md says a spec drives design and that a tripped `Metrics/*` cop means
@@ -571,7 +571,7 @@ end
 # object it sits on. Measured on this tree at the time of writing: 145 whole-
 # tree / 7 under `lib/lain/review/**` carry that shape, against 70 / 9 for the
 # shape below. Reading "0 lib_public_spec_only" as "no methods are public only
-# for a test" is therefore wrong, and T14's `repo_as_fixture_spec.rb` paid for
+# for a test" is therefore wrong, and `repo_as_fixture_spec.rb` paid for
 # that lesson first (its first cut missed the likeliest spelling of its own
 # motivating case). Seeing that second shape needs class-scoped name
 # resolution, not the flat file-scoped index below; it is deliberately left
@@ -582,7 +582,7 @@ end
 #
 # == Why report-only, and why the finding is never "make it private"
 #
-# T12's own audit of `lib/lain/review/**` narrowed NOTHING, and the reason is
+# An audit of `lib/lain/review/**` narrowed NOTHING, and the reason is
 # structural rather than local: a method with zero `lib/` callers that is made
 # private becomes unreachable, so `private` here is a deletion wearing a
 # smaller word. What the shape actually finds is four different things with
@@ -605,12 +605,12 @@ end
 #     to any static index.
 #   * Non-Ruby callers. The nvim plugin and `crates/lain-core` speak over RPC;
 #     a method they call is spelled in Lua or Rust, not here. Verified for
-#     T12's nine review-subtree flags (none is), NOT in general.
+#     the nine review-subtree flags (none is), NOT in general.
 #   * A method NAME is the key, so two methods sharing a name share their
 #     references: any reference to either suppresses the flag on both. That is
-#     deliberate -- it under-reports, and T14's rule states the same
-#     preference, since a false positive is a permanent tax on every
-#     contributor while a miss costs one line of a report.
+#     deliberate -- it under-reports, and `repo_as_fixture_spec.rb`'s rule
+#     states the same preference, since a false positive is a permanent tax
+#     on every contributor while a miss costs one line of a report.
 #   * {IMPLICIT} is a hand-written list of names Ruby, RSpec or a gem invokes
 #     without ever spelling them. It is certainly incomplete.
 #   * `attr_reader`/`Data.define` members are not `def`s and are not scanned.
@@ -641,7 +641,7 @@ module LibReach
   # approvingly: `Sink::Null`, `Provider::Mock`, `Effect::Handler::Mock`,
   # `Surface::Null`. An inspection method on one of these is reached from
   # `spec/` and nowhere else BY DESIGN, so a flag on it would be this rule's
-  # error rather than a finding -- T12's card says exactly that, and
+  # error rather than a finding -- that is exactly the intent, and
   # `Provider::Mock#last_request`/`#call_count` were the two it caught.
   # Matched on the owner's last constant segment, which is a convention this
   # codebase keeps rather than a path allowlist. The cost is not hypothetical
@@ -829,7 +829,7 @@ module LibReach
   # (`foo`, `x.foo`) or by a Symbol (`send(:foo)`, `def_delegators ... :foo`,
   # `method(:foo)`) -- both count, generously, because an over-counted
   # reference costs a missing report line while an under-counted one costs a
-  # false positive, and T14's rule made the same trade.
+  # false positive, and `repo_as_fixture_spec.rb`'s rule made the same trade.
   class Index
     METHOD_NAME = /\A[A-Za-z_][A-Za-z0-9_]*[?!=]?\z/
 
@@ -1243,7 +1243,7 @@ RSpec.describe "spec discipline" do
     # COUNT. A prior draft asserted `be_between(63, 254)` and `not_to
     # be_empty` over `SpecDiscipline.violations.size` -- both a ratchet AND
     # an anti-ratchet on a number whose entire purpose is to move, which
-    # trips the instant T16 succeeds (pruning brings the count under 63) or
+    # trips the instant a prune succeeds (bringing the count under 63) or
     # the suite grows past double (over 254). The card is explicit that a
     # ratchet, if wanted, is a SEPARATE follow-up (`count <= <ceiling>`) once
     # the count is down -- not built here. Calibration against the

@@ -10,13 +10,11 @@ module Lain
     #
     # == Two consumers, two policies
     #
-    # Losslessness used to live in {Lain::Channel}'s backpressure, justified by
-    # "the channel feeds the Journal." It no longer does. The {Lain::Journal}
-    # writes synchronously to its own fd under a mutex, so durability lives THERE.
-    # That frees the consumer that never needed losslessness -- the render loop --
-    # from the strictest policy. Conflating the two forced blocking `push` onto
-    # the frontend path, where a drain thread that raised would deadlock every
-    # producer. Splitting them is the resolution: this channel is the frontend's,
+    # The {Lain::Journal} writes synchronously to its own fd under a mutex, so
+    # durability lives THERE, not in a channel's backpressure. That frees the
+    # consumer that never needed losslessness -- the render loop. Conflating the
+    # two forced blocking `push` onto the frontend path, where a drain thread
+    # that raised would deadlock every producer. This channel is the frontend's,
     # and the frontend may freely drop.
     #
     # Dropping is never silent. Each overflow bumps a counter; the next {#drain}
@@ -32,19 +30,13 @@ module Lain
     # removes. One lock covers the whole compound so two producers cannot race the
     # eviction.
     #
-    # Why not a library instead of hand-rolling this? The design plan's
-    # Concurrency section already ruled `concurrent-ruby-edge` out entirely --
-    # its `Channel`/`Actor`/`Cancellation` sit behind an explicitly unstable API,
-    # and M1 has no chosen concurrency model to build a dependency against yet.
-    # Stable `concurrent-ruby` has no evict-oldest queue either; its bounded
-    # queues share `SizedQueue`'s blocking-push limitation. So there was no
-    # off-the-shelf structure that already expressed "evict, then enqueue,
-    # atomically" -- the Mutex/ConditionVariable is the smallest thing that
-    # does, not a shortcut around a library. Revisit once M5 picks fibers via
-    # `async` (the plan's likely answer): `Async::LimitedQueue` is a
-    # scheduler-aware bounded queue and could replace this Thread-based
-    # implementation outright, at the same point the rest of the concurrency
-    # model gets chosen with the bench in hand.
+    # No library expresses that either: the design plan rules out
+    # `concurrent-ruby-edge` (its `Channel`/`Actor` sit behind an explicitly
+    # unstable API, against no chosen concurrency model), and stable
+    # `concurrent-ruby`'s bounded queues share `SizedQueue`'s blocking push.
+    # Revisit once the concurrency model picks fibers via `async`:
+    # `Async::LimitedQueue` is a scheduler-aware bounded queue and could replace
+    # this Thread-based implementation outright.
     class DropOldest
       # The same two-mode `drain` as {Lain::Channel} -- see {Channel::Draining}
       # for the contract and the drain-not-each WHY. The block form yields any
@@ -54,7 +46,7 @@ module Lain
       # @param capacity [Integer] maximum buffered events before the oldest is
       #   evicted (>= 1)
       def initialize(capacity: Channel::DEFAULT_CAPACITY)
-        Channel::Guard.check!(capacity:)
+        Channel::Capacity.check!(capacity:)
 
         @capacity = capacity
         @buffer = []
@@ -64,9 +56,8 @@ module Lain
         @available = ConditionVariable.new
       end
 
-      # Enqueue an event without ever blocking. When the buffer is full the oldest
-      # event is evicted and the drop counter bumped, so a runaway producer costs
-      # bounded memory and a visible dropped-count, never a stalled thread.
+      # Never blocks: a runaway producer costs bounded memory and a visible
+      # dropped-count, never a stalled thread.
       #
       # @param event [Object]
       # @return [self]
@@ -86,9 +77,8 @@ module Lain
       end
       alias << push
 
-      # Remove and return the next event, blocking until one is available. A
-      # pending drop surfaces first as a {Lain::Telemetry::Dropped} marker; once the
-      # channel is closed and drained, returns `nil`.
+      # Blocks until an event is available. A pending drop surfaces FIRST as a
+      # {Lain::Telemetry::Dropped} marker; `nil` once closed and drained.
       #
       # @return [Object, nil]
       def pop
@@ -100,8 +90,8 @@ module Lain
         end
       end
 
-      # Close the channel. Future producers raise `ClosedQueueError`; blocked
-      # consumers wake and drain the remainder, then receive `nil`. Idempotent.
+      # Blocked consumers wake and drain the remainder, then receive `nil`.
+      # Idempotent.
       #
       # @return [self]
       def close
@@ -128,9 +118,9 @@ module Lain
 
       private
 
-      # The non-blocking mode's mechanics: every buffered event in FIFO order,
-      # led by a single {Lain::Telemetry::Dropped} marker if any were dropped since
-      # the last surface; `[]` when nothing is queued and nothing was dropped.
+      # Every buffered event in FIFO order, led by a single
+      # {Lain::Telemetry::Dropped} marker if any were dropped since the last
+      # surface; `[]` when nothing is queued and nothing was dropped.
       def drain_buffered
         @mutex.synchronize do
           drained = @dropped.positive? ? [dropped_marker] : []

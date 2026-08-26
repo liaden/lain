@@ -5,28 +5,23 @@ require "tty-color"
 
 module Lain
   module Frontend
-    # A named style vocabulary over Pastel. Renderers name a TOKEN -- `:error`,
-    # `:response`, `:tool_error` -- and the theme is the only object that knows
-    # which colour a token resolves to. That indirection is what lets a value
-    # outside `lib/lain/frontend/` (a command's renderable) describe how it wants
-    # to read without importing colour knowledge into non-frontend code, which
-    # output discipline keeps out.
+    # A named style vocabulary over Pastel: renderers name a TOKEN and the theme
+    # is the only object that knows which colour it resolves to. That
+    # indirection is what lets a value outside `lib/lain/frontend/` describe how
+    # it wants to read without importing colour knowledge into non-frontend
+    # code, which output discipline keeps out.
     #
     # Every token names INTENT, never a mechanism: `:error` is the harness's own
-    # error line, `:tool_error` is a subprocess's fd-2 bytes. They are two ideas
-    # that happen to share a colour family, and neither is named `:stderr` --
-    # keying the vocabulary off `Telemetry::ToolOutput`'s stream enum would make
-    # this class break whenever that enum grew. The stream -> token mapping lives
-    # with the decorator that knows about streams.
+    # error line, `:tool_error` a subprocess's fd-2 bytes. Neither is named
+    # `:stderr` -- keying the vocabulary off `Telemetry::ToolOutput`'s stream
+    # enum would break this class whenever that enum grew, so the stream ->
+    # token mapping lives with the decorator that knows about streams.
     #
-    # **What `#enabled?` and `#depth` each promise.** `enabled?` is the ONLY test
-    # for "will this emit escape sequences": it is the palette's own switch, and
-    # it is what a caller checks before assuming plain bytes. `depth` is
-    # advisory. It reports what the terminal claims to support, and a terminal
-    # can claim 0 while the palette is still enabled (`TERM=dumb` on a real tty:
+    # `enabled?` is the ONLY test for "will this emit escape sequences"; `depth`
+    # is ADVISORY, reporting what the terminal claims to support. A terminal can
+    # claim 0 while the palette is still enabled (`TERM=dumb` on a real tty:
     # `enabled? == true`, `depth == 0`, and `paint` still emits `\e[36m`). Depth
-    # changes exactly one thing about rendering -- the bright downgrade below --
-    # and nothing else should be predicted from it.
+    # changes exactly one thing -- the bright downgrade below.
     #
     # Pastel 0.8 offers 16 named colours and their bright variants -- no hex, no
     # 256, no `38;2` -- so there is deliberately no SGR quantizer here. A token
@@ -48,16 +43,15 @@ module Lain
       # plain: silent plain text is a styling bug that survives to production.
       class UnknownToken < KeyError; end
 
-      # The vocabulary, and the literal Pastel call each token replaced. Deeply
-      # frozen: this is public, callers `merge` into it, and a mutable value
-      # array would let one caller permanently restyle every theme in the
-      # process. The deep freeze is also what makes it `Ractor.shareable?`.
+      # Deeply frozen: this is public and callers `merge` into it, so a mutable
+      # value array would let one caller permanently restyle every theme in the
+      # process.
+      #
       # `:tool_output` and `:plain` are registered with NO style on purpose --
-      # their renderer names a token either way, so both branches go through the
-      # vocabulary instead of one naming red and the other naming nothing, and a
-      # misspelled token still raises rather than quietly rendering as prose.
-      # `:warm`/`:cold` are the cache's own two states ({CLI::Command::Status},
-      # {TTY::Warmth}), a single intent with two values -- not a colour pair.
+      # their renderer names a token either way, so a misspelled token still
+      # raises rather than quietly rendering as prose. `:warm`/`:cold` are the
+      # cache's own two states, a single intent with two values -- not a colour
+      # pair.
       DEFAULT_TOKENS = {
         response: %i[cyan],              # TTY#render_response
         rule: %i[dim],                   # TTY#rule
@@ -75,13 +69,10 @@ module Lain
         match: %i[green bold]            # the characters a query matched (Completion::Menu)
       }.transform_values(&:freeze).freeze
 
-      # Colour is off unless the stream is a real terminal, matching {TTY}'s own
-      # default palette rule.
-      #
-      # A caller may pass `pastel:` through, and it wins over the tty-derived
-      # palette. That is the intended override seam -- forcing colour on for a
-      # pipe (`--color=always`) or off for a terminal is a real request, and
-      # this is the one place to make it.
+      # Colour is off unless the stream is a real terminal. A caller's own
+      # `pastel:` passes through and wins: forcing colour on for a pipe
+      # (`--color=always`) or off for a terminal is a real request, and this is
+      # the one place to make it.
       #
       # @param stream [#tty?] the stream this theme will be styling for
       def self.for(stream, **)

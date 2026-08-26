@@ -6,40 +6,31 @@ module Lain
       # ONE ask, and what the human is owed when it does not finish. The
       # conversation owns reading lines and delivering answers; this owns the
       # narrower question of what an ask PRODUCED -- a response, or a refusal
-      # that has to be journaled and said in one line.
-      #
-      # It exists because {Repl#respond} could not carry it. `Metrics/ClassLength`
-      # tripped at 119/110 the moment the refusal grew a value path, and the
-      # class doc on {Repl} records the same cop making the same point one level
-      # up ("extract, do not loosen"). The two halves below are genuinely one
-      # responsibility -- the refusal is carried out of the ask as a value by
-      # {#attempt} precisely so that {#settle} can be the single place that
-      # decides between a response and a refusal, whichever frame produced it.
+      # that has to be journaled and said in one line. The refusal is carried
+      # out of the ask as a value by {#attempt} precisely so {#settle} can be
+      # the single place deciding between the two, whichever frame produced it.
       #
       # THE VALUE PATH IS THE WHOLE POINT, and it is not a style preference.
       # {Conductor#supervise} runs the ask inside an `Async::Task`, and
       # `Async::Task#run` rescues its block and logs `Task may have ended with
-      # unhandled exception.` plus the full backtrace `unless
-      # @promise.waiting?` (async-2.42.0, `lib/async/task.rb:224-228`). The
-      # supervisor spawns with `task.async`, which resumes the fiber EAGERLY,
-      # and only reaches `run.wait` after building the shutdown and spawning the
-      # coordinator and the ticker -- so a refusal raised in that window is
-      # reported as a crash. Measured on every budget ceiling (0, 2, 4, and the
-      # token ceiling): ~2.6KB of stderr in front of the correct one-line
-      # refusal, deterministically, 5 runs out of 5.
+      # unhandled exception.` plus the full backtrace `unless @promise.waiting?`
+      # (async-2.42.0, `lib/async/task.rb:224-228`). The supervisor spawns with
+      # `task.async`, which resumes the fiber EAGERLY and only reaches
+      # `run.wait` after building the shutdown and spawning the coordinator and
+      # the ticker -- so a refusal raised in that window is reported as a crash.
+      # Measured on every budget ceiling (0, 2, 4, and the token ceiling):
+      # ~2.6KB of stderr in front of the correct one-line refusal,
+      # deterministically, 5 runs out of 5.
       #
       # ONLY {Lain::Error} COMES BACK AS A VALUE. Quietening Async instead would
       # also hide a genuine crash inside an ask, which is strictly worse than
-      # over-reporting -- so anything outside the harness's own vocabulary still
-      # raises inside the task, still gets its report, and still leaves the
-      # conversation. `spec/lain/cli/repl_spec.rb` pins both directions through
-      # the real Repl; `ask_spec.rb` pins them on this object.
+      # over-reporting, so anything outside the harness's own vocabulary still
+      # raises inside the task and still leaves the conversation.
       #
       # A TOOL CANNOT REACH THAT SECOND DIRECTION, which is worth knowing before
       # writing a spec for it: `Effect::Handler::Live#dispatch` contains every
-      # tool raise as a `Tool::Result.error` (correctness gate 3). The nearest
-      # real bug that reaches an ask is a PROVIDER that raises, which is what
-      # those specs use.
+      # tool raise as a `Tool::Result.error`. The nearest real bug that reaches
+      # an ask is a PROVIDER that raises, which is what those specs use.
       class Ask
         # @param agent [Lain::Agent] asked, and the Timeline an interrupt anchors from
         # @param tty [#render_error] the one boundary a refusal is said at
@@ -61,8 +52,7 @@ module Lain
 
         # {Repl#settle_command}'s shape, and the same reason for asking `is_a?`
         # of a returned value rather than sending it a message: two genuinely
-        # different kinds of answer arrive on one return, and which one this is
-        # decides whether the human is owed a response or a refusal.
+        # different kinds of answer arrive on one return.
         #
         # @param outcome [Lain::Response, Lain::Error, nil]
         # @return [Lain::Response, nil] nil for a refusal, which is already said
@@ -78,29 +68,27 @@ module Lain
           nil
         end
 
-        # B5 (panel amendment): catch_up FIRST -- a raise can land AFTER commits
-        # (the ask tore mid-loop), so the committed turns are journaled before
-        # the stop is recorded, and interrupted then names the true last commit.
+        # catch_up FIRST: a raise can land AFTER commits (the ask tore
+        # mid-loop), so the committed turns are journaled before the stop is
+        # recorded and `interrupted` then names the true last commit.
         def record_interruption(reason)
           @chronicle.catch_up(@agent.timeline)
           @chronicle.interrupted(head: @agent.timeline.head_digest, reason:)
         end
 
-        # This is the catch-all frame, so it is the only place that can tell the
-        # record WHICH failure tore the ask -- and the one distinction the record
-        # owed a reader is whether the MODEL went quiet or the HARNESS stopped
-        # (round 6's F26, which was untriageable from the file because both
-        # landed as the same bare run_interrupted).
+        # The catch-all frame, so the only place that can tell the record WHICH
+        # failure tore the ask -- and the distinction it owed a reader is
+        # whether the MODEL went quiet or the HARNESS stopped. Both used to land
+        # as the same bare run_interrupted, untriageable from the file.
         def reason_for(error) = stalled?(error) ? :stalled_stream : :torn
 
         # By the cause chain, because a stall never arrives as itself:
         # {Provider::HTTP::Streaming::StalledStreamError} is not a {Lain::Error}
-        # -- deliberately, so the vendored retry allowlist cannot match it -- and
-        # `ErrorWrapping#wrapping_errors` re-raises it as the backend's own
-        # APIError. `raise` inside a rescue records the original as the cause, so
-        # the stall survives there and nowhere else. Matching on the message
-        # string was the alternative and it is not one: the text is the
-        # provider's to change.
+        # -- deliberately, so the vendored retry allowlist cannot match it --
+        # and `ErrorWrapping#wrapping_errors` re-raises it as the backend's own
+        # APIError. `raise` inside a rescue records the original as the cause,
+        # so the stall survives there and nowhere else. Matching on the message
+        # string is not an alternative: the text is the provider's to change.
         def stalled?(error)
           causes(error).any?(Provider::HTTP::Streaming::StalledStreamError)
         end

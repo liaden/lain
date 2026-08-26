@@ -81,8 +81,8 @@ RSpec.describe "Lain::Approval::Gate.from_journal" do
   # needed the publicity (#call registers directly; nothing folds one live
   # decision at a time here). Both are fixed together: the fold moved private
   # (reached only from .from_journal, via #absorb) and gained
-  # Guards::RegistryEntry, the same TRUNCATION CANARY reasoning
-  # SignoffQueue::Guards::Decision already applies to this wire shape.
+  # Contracts::RegistryEntry, the same TRUNCATION CANARY reasoning
+  # SignoffQueue::Contracts::Decision already applies to this wire shape.
   describe "the fold is private and guards the two fields it reads" do
     it "has no public #apply a live Gate could be tricked into registering an unjournaled approval through" do
       expect(gate).not_to respond_to(:apply)

@@ -7,14 +7,13 @@ module Lain
     # A read-only view over a single canonical message hash -- the string-keyed
     # `{ "role" => ..., "content" => [...] }` shape that IS the pipeline
     # primitive. `Canonical`, digests, and render purity all depend on that
-    # shape, so the hash stays the value; this is only a lens onto it. A
-    # combinator wraps at its body's boundary and unwraps via {#to_h}; the
-    # envelope answers questions, never rewrites, so equality and digest keep
-    # routing through `Canonical` on the raw hash, never through here.
+    # shape, so the hash stays the value and this is only a lens onto it: the
+    # envelope answers questions and never rewrites, so equality and digest keep
+    # routing through `Canonical` on the raw hash.
     #
-    # Same wrap/`to_h` idiom as {Middleware::Env} -- one boundary shape for both
-    # whole values: idempotent {.wrap}, and {#to_h} hands back the ORIGINAL
-    # object so identity (and therefore the digest) is stable by construction.
+    # {Middleware::Env}'s wrap/`to_h` idiom -- idempotent {.wrap}, and {#to_h}
+    # hands back the ORIGINAL object so identity, and therefore the digest, is
+    # stable by construction.
     class MessageEnvelope
       # Idempotent: an envelope passes through untouched, a hash is adopted.
       def self.wrap(message) = message.is_a?(self) ? message : new(message)
@@ -32,7 +31,7 @@ module Lain
       # Delegated, never inherited: an un-delegated lens serializes as the
       # `to_s` of its own object header -- VALID JSON carrying a debug string,
       # which the NDJSON Journal accepts in silence where a raise would be
-      # caught. See {Response::ToolUse#to_json}, which states it at length.
+      # caught. {Response::ToolUse#to_json} states it at length.
       def to_json(...) = @hash.to_json(...)
 
       def user? = @hash["role"] == "user"
@@ -50,11 +49,11 @@ module Lain
         texts.join("\n") unless texts.empty?
       end
 
-      # Provenance is the block's structural marker (R.2, resolved), not its
-      # visible text -- mirrors how AnthropicEncoding keys a cache breakpoint
-      # off "cache" rather than off any wire-shaped hint. A genuine user
-      # message that happens to start with the literal "<workspace>" tag
-      # carries no WORKSPACE_MARKER and is real query material, not swallowed.
+      # Provenance is the block's structural marker, not its visible text --
+      # the way AnthropicEncoding keys a cache breakpoint off "cache" rather
+      # than off any wire-shaped hint. A genuine user message that happens to
+      # start with the literal "<workspace>" tag carries no WORKSPACE_MARKER and
+      # is real query material, not swallowed.
       def workspace_tagged?(block)
         block[Workspace::WORKSPACE_MARKER] == true
       end

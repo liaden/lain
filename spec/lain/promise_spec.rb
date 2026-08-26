@@ -2,7 +2,7 @@
 
 require "async"
 
-# The process-local coordination primitive ask_human (OM-4) resolves: a thin,
+# The process-local coordination primitive ask_human resolves: a thin,
 # domain-named wrapper over Async::Variable. Awaiting parks the FIBER, not the
 # reactor -- the property the whole promise model rests on -- and a second
 # resolve fails LOUDLY in our own vocabulary rather than with Async::Variable's

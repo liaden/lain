@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# Extracted out of `cli/command/survey.rb` and `cli/command/review.rb` (T5
-# fix round), where the banner was duplicated byte-for-byte -- the shape F4
-# found already drifted from the protocol once, silently, because two files
-# carried one instruction string about two different surfaces.
+# Extracted out of `cli/command/survey.rb` and `cli/command/review.rb`, where
+# the banner was duplicated byte-for-byte -- the shape QA found already drifted
+# from the protocol once, silently, because two files carried one instruction
+# string about two different surfaces.
 RSpec.describe Lain::Review::OpenedBanner do
   # The two rounds this banner is ever rendered for, named from the sets the
   # SOURCES answer with rather than from `%w[new]` and `%w[old new]` written
@@ -13,7 +13,7 @@ RSpec.describe Lain::Review::OpenedBanner do
   let(:survey) { Lain::Review::Source::HEAD_SIDE_ONLY }
   let(:changeset) { Lain::Review::Source::BOTH_SIDES }
 
-  # THE F4 PIN: the banner names the command a survey or a changeset review
+  # THE PIN: the banner names the command a survey or a changeset review
   # can actually answer, never the protocol-5 EPIC command whose guard
   # (`runtime/65_review.lua:93-98`) neither surface can ever satisfy.
   it "names :LainReviewVerdict with a verdict a human can copy, and never LainReviewDone" do
@@ -41,7 +41,7 @@ RSpec.describe Lain::Review::OpenedBanner do
     expect(banner).to include("lain://review")
   end
 
-  # AC3: the two facts that do NOT vary with the round. Asked of both rounds in
+  # The two facts that do NOT vary with the round. Asked of both rounds in
   # one example, because "still" is the whole claim -- a per-round motion that
   # took the sidebar's name or the hand-back gesture with it would pass either
   # half of this checked alone.
@@ -54,7 +54,7 @@ RSpec.describe Lain::Review::OpenedBanner do
     end
   end
 
-  # AC1. A survey draws `sidebar | file`, so ONE motion lands on the file and a
+  # A survey draws `sidebar | file`, so ONE motion lands on the file and a
   # second would carry the human out of the layout into whatever else the
   # tabpage holds -- which is the failure this example exists for: the banner is
   # the DOCUMENTED way in (`planning/survey-dogfood-2026-08-25.md:68`), so a
@@ -74,7 +74,7 @@ RSpec.describe Lain::Review::OpenedBanner do
     expect(banner).not_to include("<C-w>l<C-w>l")
   end
 
-  # AC2, pinned as the WHOLE sentence rather than as a substring. "Unchanged"
+  # Pinned as the WHOLE sentence rather than as a substring. "Unchanged"
   # is a claim about the byte string a human has already been taught, and only
   # an equality can carry it: every substring assertion in this file would go
   # on passing if a word moved or a clause were dropped around it. The VERDICT

@@ -648,7 +648,22 @@ RSpec.describe Lain::Epic::Intake do
       expect do
         Lain::Epic::Intake::Delta.new(written_digest: "blake3:x", disk_digest: "blake3:y", account:,
                                       lossy: true, error: "boom", error_kind: "Lain::Error")
-      end.to raise_error(Lain::Epic::MalformedDelta, /nothing was compared/)
+      end.to raise_error(Lain::Epic::MalformedDelta,
+                         /\Aaccount must be empty on a delta that names a parse error -- nothing was compared/)
+    end
+
+    # The message has to read as the RULE, because `Declarative` puts the
+    # attribute in front of it and the value after it: a wording like "account
+    # is not carried by a delta that names a parse error" states, of a delta
+    # that manifestly is carrying one, that it is not -- a false sentence
+    # wrapped around a true refusal. Pinned from the front for that reason.
+    it "states the rule rather than denying the state it just found" do
+      account = Lain::Epic::Intake::Account.between(graph(issue("a")), graph)
+
+      expect do
+        Lain::Epic::Intake::Delta.new(written_digest: "blake3:x", disk_digest: "blake3:y", account:,
+                                      lossy: true, error: "boom", error_kind: "Lain::Error")
+      end.to raise_error(Lain::Epic::MalformedDelta, /must be empty on a delta that names a parse error/)
     end
 
     it "refuses an error without its kind" do

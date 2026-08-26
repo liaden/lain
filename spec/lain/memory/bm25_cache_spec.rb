@@ -3,7 +3,7 @@
 # Memory::Bm25Cache memoizes a built Memory::Bm25 by Index#root -- equal
 # roots are the same corpus by construction (content addressing), so a
 # repeat root is served from the cache instead of paying Bm25's O(corpus)
-# build again. See planning/specs/memory-read-path.md T3.
+# build again. See planning/specs/memory-read-path.md.
 RSpec.describe Lain::Memory::Bm25Cache do
   def item(id, description, body: "body of #{id}")
     Lain::Memory::Item.new(id:, description:, body:)

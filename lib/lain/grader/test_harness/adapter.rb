@@ -10,11 +10,10 @@ module Lain
       #   command(out_path:) -> argv     # writes the machine-readable result to a FILE
       #   parse(document, exit_status)   # -> {passed:, failed:, errors:} name lists
       #
-      # Writing to a file (rspec: `--format json --out`) is the load-bearing
-      # choice: a child project's own stdout warnings and deprecations therefore
-      # never interleave with the result TestHarness parses. `Rspec` is the first
-      # real runtime; `Command` proves the duck with an explicit argv and regexes,
-      # needing no second language installed.
+      # Writing to a FILE is the load-bearing choice: a child project's own
+      # stdout warnings and deprecations then never interleave with the result
+      # TestHarness parses. `Command` proves the duck with an explicit argv and
+      # regexes, needing no second language installed.
       module Adapter
         # Detection could not single out a framework: nothing matched, more than
         # one did, or the one that matched has no adapter written yet. It names
@@ -86,9 +85,8 @@ module Lain
           PROBES.map { |probe| "#{probe.framework} (#{probe.looks_for})" }.join("; ")
         end
 
-        # RSpec via its JSON formatter written to a file. The counts come from the
-        # document's own `status` fields; a failing example is named by its
-        # `full_description` so `#why` reads.
+        # RSpec via its JSON formatter written to a file. A failing example is
+        # named by its `full_description` so `#why` reads.
         class Rspec
           def command(out_path:)
             ["rspec", "--format", "json", "--out", out_path]
@@ -111,11 +109,10 @@ module Lain
                     .map { |example| example.fetch("full_description") }
           end
 
-          # A load crash (SyntaxError, missing require) is counted in the summary
-          # AND described in the document's `messages` -- rspec routes it through
-          # the formatter, so it lands in the FILE, not on stderr. Surface those
-          # messages as the error names (the real diagnostic); fall back to a
-          # generic label only if the count is set but the text is absent.
+          # A load crash is counted in the summary AND described in the
+          # document's `messages` -- rspec routes it through the formatter, so
+          # it lands in the FILE, not on stderr. Those messages are the real
+          # diagnostic; the generic label is a fallback for a count with no text.
           def errors_of(report)
             count = report.dig("summary", "errors_outside_of_examples_count").to_i
             return [] if count.zero?
@@ -125,12 +122,11 @@ module Lain
           end
         end
 
-        # A runtime-free adapter: an explicit argv built around the out-file path,
-        # plus regexes that name the passed/failed/errored cases in that file. Any
-        # tool that can be told to write its results to a path fits the duck here,
-        # which is how the seam is proven without a second language runtime. A
-        # regex's first capture group names the case; absent a group, the whole
-        # match names it.
+        # A runtime-free adapter: an explicit argv built around the out-file
+        # path, plus regexes naming the cases in that file. Any tool that can be
+        # told to write its results to a path fits, which is how the seam is
+        # proven without a second language runtime. A regex's first capture
+        # group names the case; absent a group, the whole match names it.
         class Command
           MATCHES_NOTHING = /(?!)/
 

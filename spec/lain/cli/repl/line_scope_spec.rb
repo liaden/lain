@@ -37,7 +37,7 @@ module LineScopeSpecSupport
   end
 end
 
-# T1's answer to "which object owns the reply and approval fibers' lifetime".
+# The answer to "which object owns the reply and approval fibers' lifetime".
 # It is one DISPATCHED LINE, because a human question can be raised from any
 # frame that line reaches -- a command running lib-side, or the subagent a
 # `@role[/skill]` line spawns -- and not only from the ask {Repl#respond} makes.
@@ -97,7 +97,7 @@ RSpec.describe Lain::CLI::Repl::LineScope do
     end
   end
 
-  # T1 review, SHOULD-FIX 1 (probe 3). The two halves used to be one array
+  # Review probe 3. The two halves used to be one array
   # literal, so a raise from the SECOND left the first's fibers unassigned and
   # the ensure stopped nothing -- a reply fiber parked on the terminal outliving
   # its line, which holds the Sync open forever. That is a HANG, not an error,

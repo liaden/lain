@@ -43,7 +43,7 @@ RSpec.describe Lain::Agent::RequestOverride do
   end
 
   describe "thread safety (panel probe 1)" do
-    # T18's ResendBridge queues from the frontend thread while the loop runs in
+    # The ResendBridge queues from the frontend thread while the loop runs in
     # its reactor, so a #queue racing the consume is the shipped topology. The
     # consume boundary is `@request.tap { @request = nil }` inside the slot --
     # this spec hooks the queued object's #tap to stand exactly in that window
@@ -138,7 +138,7 @@ RSpec.describe Lain::Agent::RequestOverride do
 
   describe "mid-turn interposition: permitted here, refused at the resend bridge" do
     # Orchestrator decision: this seam PERMITS a mid-turn queue -- refusing a
-    # mid-flight resend is T18's ResendBridge's mandate, not the slot's. This
+    # mid-flight resend is the ResendBridge's mandate, not the slot's. This
     # spec pins the splice so the permitted behavior is a documented contract:
     # an edit queued during tool execution applies to the very next dispatch of
     # the SAME run (the one that would have delivered the tool_results), so the
@@ -212,7 +212,7 @@ RSpec.describe Lain::Agent::RequestOverride do
       expect(agent.timeline.head_digest).to eq(control.timeline.head_digest)
       # No new telemetry, at PAYLOAD depth (panel probe 5): class-level equality
       # would miss an override flag smuggled into TurnUsage or a digest drift.
-      # Journaling an overridden dispatch is T18's scope.
+      # Journaling an overridden dispatch is the bridge's scope.
       expect(events).to eq(control_events)
     end
   end

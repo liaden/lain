@@ -2,23 +2,19 @@
 
 module Lain
   class Event
-    # The one home for message-writing and correlation. Before this, both the
-    # `head && (head.correlation || head_digest)` identity derivation and the
-    # payload-then-envelope write lived as three separate copies: Timeline's
-    # `next_correlation`, {Tools::Subagent::Lineage}'s `put`/`identity`, and
-    # {Tools::AskHuman}'s `write_message`/`identity`. All three now delegate
-    # here, and the digests they produce are unchanged -- this is an
+    # The one home for message-writing and correlation: Timeline's
+    # `next_correlation`, {Tools::Subagent::Lineage} and {Tools::AskHuman} all
+    # delegate here, and the digests they produce are unchanged -- an
     # extraction, not a new derivation.
     #
     # Every :message/:spawn event a caller writes passes through {#put}, which
-    # makes it the one funnel {#observer} sees -- the seam a future session
-    # scribe (T13) folds, since causal edges point BACKWARD (a message names
-    # what it answers, never the reverse) and the shared Store has no
-    # enumerator of its own to walk forward from.
+    # makes it the one funnel {#observer} sees: causal edges point BACKWARD (a
+    # message names what it answers, never the reverse) and the shared Store has
+    # no enumerator of its own to walk forward from.
     class ChainWriter
-      # Swallows every write. Satisfies the observer duck (`#call`) but sends
-      # events nowhere -- {Sink::Null}'s idiom, so a caller with nothing
-      # watching never writes an `if observer` guard.
+      # Satisfies the observer duck (`#call`) and sends events nowhere --
+      # {Sink::Null}'s idiom, so a caller with nothing watching never writes an
+      # `if observer` guard.
       class Null
         # @return [self]
         def call(_event)
@@ -26,12 +22,11 @@ module Lain
         end
       end
 
-      # TL-2 (pinned): a chain is named by its root event's digest, no
-      # separate id machinery. The root cannot contain its own address, so it
-      # carries no correlation and falls back to its own digest; every
-      # descendant already carries the root digest, inherited unchanged. The
-      # `head &&` guard is what makes this total over the empty chain (`head`
-      # nil) without a separate `empty?` check.
+      # A chain is named by its root event's digest, no separate id machinery.
+      # The root cannot contain its own address, so it carries no correlation
+      # and falls back to its own digest; every descendant already carries the
+      # root digest, inherited unchanged. The `head &&` guard is what makes this
+      # total over the empty chain without a separate `empty?` check.
       #
       # @param timeline [Timeline]
       # @return [String, nil]
@@ -40,9 +35,8 @@ module Lain
         head && (head.correlation || timeline.head_digest)
       end
 
-      # @param observer [#call] invoked with every event {#put} writes, once
-      #   each, in write order. Never consulted for identity or digest math --
-      #   it observes, it never participates.
+      # @param observer [#call] invoked with every event {#put} writes, once each,
+      #   in write order. Never consulted for identity or digest math.
       def initialize(observer: Null.new)
         @observer = observer
       end
@@ -55,12 +49,11 @@ module Lain
       # {Timeline#commit} follows for :turn events.
       #
       # A raising observer raises OUT of this method, deliberately: the write
-      # has already landed (payload and envelope are durably in the Store
-      # before the observer runs), so a raise means the OBSERVATION failed --
-      # e.g. the session record could not be written -- and swallowing that
-      # would be silent record loss, the failure class this seam exists to
-      # close. Callers may re-put idempotently: content addressing makes the
-      # retry a no-op on the Store side.
+      # has already landed, so a raise means the OBSERVATION failed -- the
+      # session record could not be written -- and swallowing that would be
+      # silent record loss, the failure class this seam exists to close.
+      # Callers may re-put idempotently: content addressing makes the retry a
+      # no-op on the Store side.
       #
       # @return [Event] the event just written
       def put(parent, kind:, from:, to:, causal_parents:, body:)

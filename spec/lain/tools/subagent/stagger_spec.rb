@@ -70,7 +70,6 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
     end
   end
 
-  # AC1 (Gherkin): "release one, await, release the rest"
   describe "release one, await, release the rest" do
     it "dispatches child 1 alone, releases 2-4 only after child 1's stream_started, and journals dispatch order" do
       log = []
@@ -100,7 +99,6 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
     end
   end
 
-  # AC3 (Gherkin): "no stream_started degrades safely"
   describe "no stream_started degrades safely" do
     it "releases all children when the provider never signals, journaling the degradation" do
       log = []
@@ -129,7 +127,7 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
       expect(journal.grep(described_class::Released).first.reason).to eq(:degraded)
     end
 
-    # FIX 1 (review round 1, BLOCKER): the async gem itself, not Lain, writes
+    # From review round 1: the async gem itself, not Lain, writes
     # "Task may have ended with unhandled exception." straight to STDERR
     # whenever an eagerly-run `.async` block raises before its own first
     # yield and nobody has called `.wait` on it YET -- regardless of whether
@@ -156,7 +154,6 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
     end
   end
 
-  # AC2 (Gherkin): "the measurement shows the point"
   describe "the measurement shows the point" do
     let(:template) { "Shared sibling brief, the bulk every worker reads first. " * 80 }
     let(:factory_context) { Lain::Context.new(model: "child-model", max_tokens: 512) }
@@ -169,7 +166,7 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
     # one per-child task riding in messages -- built the same way
     # {Subagent#spawn_agent} shapes a child's Context and {Context#render}s
     # it, without driving a whole Agent loop: this card measures dispatch
-    # ORDERING, not the subagent tool itself (C2's own spec already proves
+    # ORDERING, not the subagent tool itself (its own spec already proves
     # the byte-identity of the prefix end to end).
     def sibling_requests(tasks)
       shaped = strategy.child_context(factory_context)
@@ -206,11 +203,11 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
 
     # A dispatch is a READ of its prefix iff an EARLIER dispatch shares the
     # same byte-identical prefix digest and had already reached
-    # `stream_started` (CE-5: the earliest point its cache write becomes
+    # `stream_started` (the earliest point its cache write becomes
     # probe-able) by the time THIS one started -- otherwise it is a WRITE.
     # Purely a function of the observed chronological log, so the SAME
     # classifier reads both runs below; only the observed order differs.
-    # This is the demo table CE-5's acceptance criterion asks for.
+    # This is the demo table the acceptance criterion asks for.
     def demo_table(log)
       opened = Set.new
       log.each_with_object([]) do |(event, index, digest), rows|
@@ -239,7 +236,7 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
 
     # The control's task shape deliberately does NOT gate on Stagger, or on
     # anything about a sibling's stream_started -- true simultaneous dispatch
-    # (CE-5's premise: "fan out N siblings simultaneously and all N pay full
+    # (the premise: "fan out N siblings simultaneously and all N pay full
     # prefill"). The barrier below (`release`) only holds every sibling at
     # "dispatched, not yet streaming" until ALL FOUR have reached that point,
     # which is what makes "simultaneous" a guarantee rather than a hopeful

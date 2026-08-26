@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# OR-5: the adaptive-router arm. One agent, like {Arm::SingleThread}, but WHICH
+# The adaptive-router arm. One agent, like {Arm::SingleThread}, but WHICH
 # model (and shared sibling template) it runs under is chosen by
 # {Oracle::Router} from the task's own text, BEFORE the child exists -- and
 # that routing decision is journaled at the spawn boundary, never re-asked
@@ -63,7 +63,7 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
     # monotonic clock, so `Float` and `>= 0` are both true by construction. The
     # injected-clock example below pins the number instead.
     #
-    # T24: the same injected instrument every other arm measures with -- one
+    # The same injected instrument every other arm measures with -- one
     # substrate, so wall-time means the same thing across topologies.
     it "takes elapsed off the injected instrument's clock" do
       ticks = 0.0
@@ -93,7 +93,7 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
     end
   end
 
-  # ---- AC1: each routing decision is journaled at the spawn boundary --------
+  # ---- Each routing decision is journaled at the spawn boundary -------------
 
   describe "the routing decision is journaled as an oracle_answer" do
     it "journals a Telemetry::OracleAnswer naming the router's own oracle_digest, on the run's own journal" do
@@ -117,7 +117,7 @@ RSpec.describe Lain::Arm::AdaptiveRouter do
     end
   end
 
-  # ---- AC2: re-routing mid-session is structurally impossible ---------------
+  # ---- Re-routing mid-session is structurally impossible --------------------
 
   describe "re-routing mid-session is structurally impossible" do
     it "never hands the router to the spawned Agent -- nothing returned from #run can reach it" do

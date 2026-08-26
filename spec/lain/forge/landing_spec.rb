@@ -142,7 +142,7 @@ RSpec.describe Lain::Forge::Landing do
     expect(landing.call.value).to eq(7)
   end
 
-  # S3: `observed` is the tier's honesty flag -- true means the effect was found
+  # `observed` is the tier's honesty flag -- true means the effect was found
   # already in place rather than performed.
   it "does not claim to have observed effects it performed" do
     expect(landing.call).not_to be_observed
@@ -225,7 +225,7 @@ RSpec.describe Lain::Forge::Landing do
     expect(scribe).not_to have_received(:issue_moved)
   end
 
-  # B4's second half: a MERGED pull request's mergeStateStatus is not CLEAN, so
+  # A MERGED pull request's mergeStateStatus is not CLEAN, so
   # a completed landing that re-asked would report itself conflicted forever.
   # The merge step does not ask, because it does not run.
   it "asks for no merge state on a resume whose merge the journal already settled" do
@@ -250,7 +250,7 @@ RSpec.describe Lain::Forge::Landing do
     expect(scribe).not_to have_received(:issue_moved)
   end
 
-  # S5: {Lain::Forge::Gh::Poll} answers UNKNOWN when its own bound runs out --
+  # {Lain::Forge::Gh::Poll} answers UNKNOWN when its own bound runs out --
   # "GitHub has not finished computing mergeability", usually CI still running.
   # Calling that a merge conflict sends a human to resolve nothing.
   it "does not call an UNKNOWN merge state a conflict" do
@@ -273,7 +273,7 @@ RSpec.describe Lain::Forge::Landing do
   end
 
   # =========================================================================
-  # B1: every step's verdict is READ, and any of them can stop the run
+  # Every step's verdict is READ, and any of them can stop the run
   # =========================================================================
 
   it "stops on a promotion that refused, without opening a pull request" do
@@ -317,7 +317,7 @@ RSpec.describe Lain::Forge::Landing do
   end
 
   # =========================================================================
-  # B1b: settled-ness folds on `ok`
+  # Settled-ness folds on `ok`
   # =========================================================================
 
   it "re-promotes when the journal settled the promote with a NOT-ok outcome" do
@@ -348,7 +348,7 @@ RSpec.describe Lain::Forge::Landing do
   end
 
   # =========================================================================
-  # S4/S5a: a stop is a structured outcome, never a raise and never a Report
+  # A stop is a structured outcome, never a raise and never a Report
   # =========================================================================
 
   it "answers a not-ok Answer, not a Report, when an outcome answers no intent the journal holds" do
@@ -373,9 +373,9 @@ RSpec.describe Lain::Forge::Landing do
     expect(journal).to be_empty
   end
 
-  # B5a: {Lain::Forge::Reconcile} catches Unobservable only inside the questions
-  # IT asks. The head-ref lookup is asked outside that fold, and the first
-  # version of this class let the exception escape `resume`.
+  # {Lain::Forge::Reconcile} catches Unobservable only inside the questions IT
+  # asks. The head-ref lookup is asked outside that fold, and the first version
+  # of this class let the exception escape `resume`.
   it "escalates instead of raising when the world cannot say which pull request the head ref carries" do
     unreadable = world(refs: pushed)
     allow(unreadable).to receive(:pr_for).and_raise(Lain::Forge::Unobservable, "GitHub returned 2 matches")
@@ -387,7 +387,7 @@ RSpec.describe Lain::Forge::Landing do
     expect(journal).to be_empty
   end
 
-  # S2: three speculative arms and a fallback put a raw Hash into `gh pr merge`'s
+  # Three speculative arms and a fallback put a raw Hash into `gh pr merge`'s
   # argv. A record with no number is named and refused.
   it "refuses a pull request record carrying no number rather than passing it along" do
     numberless = { ForgeLandingSpecSupport::HEAD => { "url" => "https://example.invalid/pull/7" } }
@@ -401,7 +401,7 @@ RSpec.describe Lain::Forge::Landing do
   end
 
   # =========================================================================
-  # S6: one executor collaborator, not two
+  # One executor collaborator, not two
   # =========================================================================
 
   it "takes no separate gh executor -- observations ride the journaled bracket" do

@@ -1,4 +1,4 @@
--- lain://question (T12): compose_buf's shape exactly -- `acwrite` so `:w` can
+-- lain://question: compose_buf's shape exactly -- `acwrite` so `:w` can
 -- be intercepted at all, a name so `:write` does not answer E32, "hide" so
 -- BufUnload means the human closed it rather than merely looked away, markdown
 -- because the document IS markdown -- plus the two indent options, which are
@@ -15,13 +15,11 @@
 -- is not redundant, because with 'softtabstop' unset a Tab keypress inserts
 -- 'tabstop' (8) spaces no matter what 'shiftwidth' says.
 --
--- WHERE THIS DIVERGES FROM COMPOSE, and why it had to. `:wall` and autosave
--- plugins fire BufWriteCmd on text the human did not finish, which compose
--- accepts as a known limitation. The blast radius here is LARGER, not smaller,
--- and an earlier version of this comment claimed the opposite: a half-answered
--- document does not fail the grammar. It parses perfectly -- Question::AnswerSet
--- fills an untouched question in as an explicitly unanswered Answer, by design,
--- and `parse_markdown(to_markdown(a), set) == a` is the unit's stated law. So a
+-- WHERE THIS DIVERGES FROM COMPOSE. `:wall` and autosave plugins fire
+-- BufWriteCmd on text the human did not finish, which compose accepts as a
+-- known limitation. The blast radius here is LARGER: a half-answered document
+-- does not fail the grammar, it parses perfectly -- Question::AnswerSet fills an
+-- untouched question in as an explicitly unanswered Answer, by design. So a
 -- stock `:wall` over the document as lain rendered it told the model the human
 -- had DECLINED EVERY QUESTION, closed the view, and answered their real `:w`
 -- with STALE.
@@ -56,16 +54,14 @@ local function question_buf(name)
   return buf
 end
 
--- Open lain://question on a pending set's rendered document (T12), taking the
+-- Open lain://question on a pending set's rendered document, taking the
 -- cursor for set_compose's reason: lain is handing the human something and
 -- asking them to answer it.
 --
--- FOCUSING an already-shown buffer is this function's job and not Ruby's, and
--- that division is deliberate. QuestionView REFUSES to open a set while one is
--- open, so nothing above ever re-renders over a half-ticked document -- which
--- means the only window-already-there case that reaches here is a fresh set
--- landing in a window the human left open, and putting them back in it is
--- exactly right. set_compose merely declines to stack a second split; this one
+-- FOCUSING an already-shown buffer is this function's job and not Ruby's.
+-- QuestionView REFUSES to open a set while one is open, so the only
+-- window-already-there case reaching here is a fresh set landing in a window the
+-- human left open. set_compose merely declines to stack a second split; this one
 -- also moves the cursor, because a document that appears off-screen reads as
 -- nothing having happened.
 --
@@ -98,7 +94,7 @@ function _G.__lain.set_question(name, lines, digest)
   announce_render(name, buf)
 end
 
--- The question round trip's return leg (T12). Same gesture as compose -- `:w`
+-- The question round trip's return leg. Same gesture as compose -- `:w`
 -- is "I am done with this text" -- and the same order, rpcrequest FIRST and
 -- 'modified' cleared only once it returns.
 --
@@ -111,13 +107,11 @@ end
 -- and "lain was not there" are both a `:w` that did not save, and the message
 -- carries which one it was.
 --
--- The message rides the ERROR rather than an nvim_echo, and that is a choice
--- worth recording: nvim 0.12 appends a lua stack traceback under it (naming a
--- byte offset in an injected string, which is noise no human can act on), and
--- `error(msg, 0)` does not suppress that. The dodge -- echo the sentence, then
--- `error("", 0)` -- would move the one thing a human needs off the failure and
--- into `:messages`, where a scripted `:w` and a pcall cannot see it at all. The
--- sentence belongs to the write that failed.
+-- The message rides the ERROR rather than an nvim_echo. nvim 0.12 appends a lua
+-- stack traceback under it -- naming a byte offset in an injected string, noise
+-- no human can act on -- and `error(msg, 0)` does not suppress that. The dodge,
+-- echoing the sentence then `error("", 0)`, would move the one thing a human
+-- needs into `:messages`, where a scripted `:w` and a pcall cannot see it.
 local question_group = vim.api.nvim_create_augroup("lain_question", { clear = true })
 
 -- The write nobody typed. `vim.v.cmdbang` is what `:w!` sets, and it is the
@@ -167,7 +161,7 @@ vim.api.nvim_create_autocmd("BufUnload", {
   end,
 })
 
--- Ticking a box (T13), and it sends NOTHING: the human ticks, writes, and `:w`
+-- Ticking a box, and it sends NOTHING: the human ticks, writes, and `:w`
 -- once. What makes a local keymap possible at all is that the ARITY RIDES IN
 -- THE HEADING, so a question's boundary and whether it takes one tick or many
 -- are recoverable from buffer TEXT -- no rpcrequest, no state kept beside the
@@ -266,14 +260,12 @@ local function tick_targets(lines, row)
   return writes
 end
 
--- The tick itself, reachable as an 'operatorfunc' (hence global, hence on the
--- __lain table -- it is NOT a render entry point and nothing about it crosses
--- the RPC rail, so it is no part of the protocol). It re-decides from the
--- buffer rather than trusting the map that scheduled it, because `.` replays
--- `g@l` DIRECTLY: the map does not run again, so this is the only guard a
--- repeat passes through. A repeat over a line with nothing to tick therefore
--- does nothing, which is what repeating "tick this" means -- notably NOT vim's
--- `x`, which would make `.` destructive on the human's prose.
+-- The tick itself, reachable as an 'operatorfunc' -- hence global, hence on the
+-- __lain table, though it is no part of the RPC protocol. It re-decides from the
+-- BUFFER rather than trusting the map that scheduled it, because `.` replays
+-- `g@l` directly: the map does not run again, so this is the only guard a repeat
+-- passes through. A repeat over a line with nothing to tick therefore does
+-- nothing -- notably NOT vim's `x`, which would make `.` destructive on prose.
 --
 -- The count and the register are dropped on this path, deliberately: `3x` ticks
 -- once (an operator invocation is one call, whatever region `3l` covered) and
@@ -291,10 +283,10 @@ function _G.__lain.tick()
   end
 end
 
--- Ruling 11, and the half that is not optional: lain://question is `acwrite`
--- and the human types PROSE into it, so `x` off an option line must be vim's
--- `x`. (`p` in lain://timeline could be shadowed outright because a
--- NOMODIFIABLE buffer has no use for paste; this buffer is the opposite case.)
+-- lain://question is `acwrite` and the human types PROSE into it, so `x` off an
+-- option line must be vim's `x`. (`p` in lain://timeline could be shadowed
+-- outright because a NOMODIFIABLE buffer has no use for paste; this buffer is
+-- the opposite case.)
 --
 -- AN EXPR MAP, AND `g@` -- because of `.`, which is the most reflexive key a
 -- vim user has. Both branches are dot-repeatable only in this shape:

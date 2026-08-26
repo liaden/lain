@@ -6,22 +6,19 @@ module Lain
   module Memory
     # The one mutable holder of a live {Memory::Index}, single-threaded like
     # {Agent::Accounting}. `Index#write` is pure -- it returns a new Index and
-    # leaves its receiver untouched -- so something has to hold "the current
-    # one" for a session's tools to share. That something is the Recorder.
+    # leaves its receiver untouched -- so something has to hold "the current one"
+    # for a session's tools to share.
     #
-    # #fetch delegates to the current snapshot, which means a Recorder
-    # satisfies the same duck a bare Index does: {Tools::MemoryRead.new(index:
-    # recorder)} works with no constructor contract change, and a read
-    # constructed against the Recorder always sees the most recent write.
+    # #fetch delegates to the current snapshot, so a Recorder satisfies the same
+    # duck a bare Index does: {Tools::MemoryRead.new(index: recorder)} needs no
+    # constructor change, and a read constructed against the Recorder always sees
+    # the most recent write.
     #
-    # Deliberately NOT a singleton, and nothing here enforces one-Recorder-
-    # per-Store: two Recorders sharing an underlying Store is a legitimate
-    # bench arm (e.g. comparing a tool that writes through one Recorder
-    # against a read-only view held by another). The actual invariant --
-    # "the Agent wires exactly one Recorder into a session's tools" -- is a
-    # wiring fact the caller is responsible for, not something this class
-    # could check without also deciding who else is allowed to hold a
-    # reference, which is not its business.
+    # Deliberately NOT a singleton: two Recorders sharing an underlying Store is
+    # a legitimate bench arm. The real invariant -- "the Agent wires exactly one
+    # Recorder into a session's tools" -- is a wiring fact the caller owns, not
+    # something this class could check without also deciding who else is allowed
+    # to hold a reference.
     class Recorder
       def initialize(index: Index.empty)
         @index = index

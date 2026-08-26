@@ -2,29 +2,22 @@
 
 module Lain
   module Memory
-    # A Manifest::Hit-duck search index (T14) fusing two ALREADY-BUILT arms
-    # by Reciprocal Rank Fusion (RRF) -- the fourth boosting arm over the
-    # Manifest floor (references/memory-and-retrieval.md #2), and the first
-    # one that combines two OTHER arms' rankings rather than scoring the
-    # corpus itself.
+    # A Manifest::Hit-duck search index fusing two ALREADY-BUILT arms by
+    # Reciprocal Rank Fusion (RRF) -- the fourth boosting arm over the Manifest
+    # floor (references/memory-and-retrieval.md #2), and the first that combines
+    # two OTHER arms' rankings rather than scoring the corpus itself.
     #
-    # @bm25 and @vector are INJECTED, not constructed: Hybrid owns fusion,
-    # not corpus indexing, so it depends on the two `#search`-duck
-    # collaborators exactly the way Context::Recall depends on an
-    # already-built index instead of building one (CLAUDE.md: "inject
-    # collaborators rather than construct them"). Any Manifest::Hit-duck
-    # index can stand in for either arm -- nothing here names Bm25 or
-    # Vector's classes, only the labels `:bm25`/`:vector` in #why.
+    # `@bm25` and `@vector` are INJECTED, not constructed: Hybrid owns fusion,
+    # not corpus indexing (CLAUDE.md: "inject collaborators rather than construct
+    # them"). Any Manifest::Hit-duck index can stand in for either arm -- nothing
+    # here names Bm25 or Vector's classes, only the labels in #why.
     #
     # RRF reads only each arm's RANK POSITION, never the arm's own #score:
-    # Bm25's token-fraction-ish scale and Vector's cosine scale are
-    # deliberately not comparable (the shared law group's own note, spec/
-    # support/shared_examples/memory_index_laws.rb), and RRF's whole design
-    # point is that rank position is the one thing every ranking already
-    # agrees how to compare. A document ranking consistently mid-table in
-    # both arms can therefore outrank a document that tops one arm and
-    # trails badly in the other -- fusion resolving a disagreement neither
-    # arm could resolve alone.
+    # Bm25's token-fraction-ish scale and Vector's cosine scale are deliberately
+    # not comparable, and RRF's whole design point is that rank position is the
+    # one thing every ranking already agrees how to compare. A document ranking
+    # consistently mid-table in both arms can therefore outrank one that tops a
+    # single arm -- fusion resolving a disagreement neither arm could resolve.
     class Hybrid
       # Cormack, Clarke & Buettcher, SIGIR 2009 ("Reciprocal Rank Fusion
       # Outperforms Condorcet and Individual Rank Learning Methods"): k=60

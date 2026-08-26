@@ -3,17 +3,15 @@
 module Lain
   # Token accounting for one model call, provider-neutral.
   #
-  # Usage is a commutative monoid under +#++ with {.zero} as the identity. That
-  # is not decoration: aggregating a branched Timeline means summing over a set
-  # of turns in no particular order, and the laws are what make the result
-  # independent of the order you happen to walk them in. The specs assert them.
+  # A commutative monoid under +#++ with {.zero} as the identity, and not as
+  # decoration: aggregating a branched Timeline sums over a set of turns in no
+  # particular order, and the laws are what make the result independent of the
+  # walk order. Correct aggregation also needs *unique* turn digests -- a
+  # branched timeline shares its prefix, so adding up every reachable turn
+  # double-counts it.
   #
-  # Correct aggregation also requires summing over *unique* turn digests. A
-  # branched timeline shares its prefix, so naively adding up every reachable
-  # turn double-counts it.
-  #
-  # Cache fields are nullable on the wire; they are normalized to 0 here so the
-  # monoid is total and callers never guard against nil.
+  # Cache fields are nullable on the wire and normalized to 0 here, so the monoid
+  # is total and callers never guard against nil.
   Usage = Data.define(
     :input_tokens,
     :output_tokens,
@@ -65,8 +63,7 @@ module Lain
   class Usage
     include Algebra::CommutativeMonoid
 
-    # The monoid identity as a frozen shared value. A constant, not a memoized
-    # class ivar (`@zero ||=`), so there is no first-call race to reason about --
+    # A constant, not a memoized class ivar, so there is no first-call race --
     # and defined by REOPENING the class, because a constant set inside the
     # `Data.define` block above would scope to `Lain`, not `Usage` (CLAUDE.md).
     ZERO = new.freeze
@@ -78,20 +75,15 @@ module Lain
     # {Provider::Bedrock}, and {SessionRecord::Salvage}, which decodes bytes
     # replayed from the response WAL. A key that drifted in the third would
     # under-report spend on exactly the turn nobody was watching, since a
-    # salvaged turn is by definition one a crash interrupted.
+    # salvaged turn is by definition one a crash interrupted. It sits in this
+    # reopened body beside `ZERO`; a `def self.` inside `Data.define` would have
+    # worked, as CLAUDE.md's trap covers constants and nested classes only.
     #
-    # It lives in this reopened body because that is where `ZERO` and `.zero`
-    # live, not because a `def self.` would have failed inside the `Data.define`
-    # block -- CLAUDE.md's trap is about CONSTANTS and nested classes, and a
-    # class method defined in that block works fine.
-    #
-    # Absent usage is zero, not an error: an assembled stream that carried no
-    # usage event hands over `{}`, and the sync path's `body["usage"]` can be
-    # nil outright. Both are the absence of billing information, and #initialize
-    # already normalizes each nullable field to 0. `nil` is the one widening
-    # against the three inline copies it replaces, which raised NoMethodError on
-    # it; no call site reaches that, since all three feed `body["usage"] || {}`
-    # or the assembler's `{}` default.
+    # Absent usage is zero, not an error: an assembled stream carrying no usage
+    # event hands over `{}`, and the sync path's `body["usage"]` can be nil
+    # outright. Both are the absence of billing information, and #initialize
+    # normalizes each nullable field to 0. Accepting `nil` is the one widening
+    # over the three inline copies, which raised NoMethodError on it.
     #
     # @param wire [Hash, nil] parsed JSON -- STRING keys, as it comes off the
     #   wire. A symbol-keyed Hash yields an all-zero Usage rather than raising,
@@ -104,8 +96,8 @@ module Lain
           cache_read_input_tokens: wire["cache_read_input_tokens"])
     end
 
-    # The doc comment above, made enumerable. One line files both the monoid
-    # and the commutative-monoid claim, so a walk holds `#+` to identity,
+    # The claim above, made enumerable: one line files both the monoid and the
+    # commutative-monoid law group, so a walk holds `#+` to identity,
     # associativity and commutativity without knowing which contains which.
     commutative_monoid on: :+, identity: ZERO
   end

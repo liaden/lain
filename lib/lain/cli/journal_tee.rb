@@ -3,12 +3,7 @@
 module Lain
   module CLI
     # A `#<<` adapter that fans one event onto the durable Journal record and
-    # any number of live-view sinks (the frontend's Channel, {StatusFeed}, ...),
-    # extracted from exe/lain (see {Lain::CLI::Backend} for the same extraction
-    # rationale) so it carries a spec the way lib/ does. Started as a fixed
-    # journal+channel pair; generalized to 1->N sinks once {StatusFeed} needed
-    # the same fan-out with the same swallow discipline, rather than a second,
-    # near-duplicate tee class.
+    # any number of live-view sinks (the frontend's Channel, {StatusFeed}, ...).
     #
     # A live-view sink is the one that dies: quitting nvim closes its
     # {Channel::DropOldest} (Frontend::Neovim's own teardown contract), and a

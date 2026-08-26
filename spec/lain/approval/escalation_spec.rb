@@ -11,10 +11,10 @@ module EscalationSpecSupport
   Ruling = Lain::Approval::Escalation::Ruling
 
   # The surface nobody remembered to classify -- a machine judge added after
-  # `Surfaces::AUTOMATIC` was last read, which is exactly how T17 arrived. It
-  # exists so the generating-rule guard can be shown to FIRE, rather than
-  # merely to pass; deliberately outside the `Lain::` namespace so it is not
-  # itself mistaken for a surface the harness ships.
+  # `Surfaces::AUTOMATIC` was last read, which is exactly how the secret oracle
+  # surface arrived. It exists so the generating-rule guard can be shown to
+  # FIRE, rather than merely to pass; deliberately outside the `Lain::`
+  # namespace so it is not itself mistaken for a surface the harness ships.
   class UnclassifiedSurface < Lain::Approval::QueueSurface
     SURFACE = "unclassified_spec_surface"
 
@@ -398,7 +398,7 @@ RSpec.describe Lain::Approval::Escalation do
       expect(built.call(effect, nil)).to be(true)
     end
 
-    # B2. The card's own illustration, one level below the rung: a Rule that owns
+    # The illustrating case, one level below the rung: a Rule that owns
     # an inner chain. Closing this at the rung only was not closing it.
     it "does not launder a fault through a rule that owns an inner chain" do
       inner = Lain::Approval::RuleChain.new([EscalationSpecSupport::Raiser.new, EscalationSpecSupport::Allower.new])
@@ -408,7 +408,7 @@ RSpec.describe Lain::Approval::Escalation do
       expect(rulings.first).to include("rung" => "rules", "faulted" => true)
     end
 
-    # S4. A deny reached after a fault is still a deny -- and the stream must say
+    # A deny reached after a fault is still a deny -- and the stream must say
     # a fault happened, or a reader sees a clean denial that was not one.
     it "marks a post-fault deny as faulted in the record" do
       ladder(rules_rung(EscalationSpecSupport::Raiser.new, EscalationSpecSupport::Denier.new)).call(effect, nil)
@@ -417,7 +417,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
   end
 
-  # B1. Poison propagates across the DETERMINISTIC rungs and stops at the asking
+  # Poison propagates across the DETERMINISTIC rungs and stops at the asking
   # rung. A human is not a later rule -- they are the authority the whole ladder
   # exists to escalate to, and suppressing their answer inverts it.
   describe "a fault, and who is entitled to answer over one" do
@@ -452,7 +452,7 @@ RSpec.describe Lain::Approval::Escalation do
       expect(rulings.last).to include("rung" => "rules", "verdict" => "deny")
     end
 
-    # T17. `AUTOMATIC`'s own comment predicted this exactly -- "an unlisted
+    # `AUTOMATIC`'s own comment predicted this exactly -- "an unlisted
     # automatic surface's allow survives a fault, and that one fails visibly in
     # a review of a file whose whole subject is adjudication" -- and one card
     # later a LOCAL 4B MODEL releasing credential-bearing files was that
@@ -467,7 +467,7 @@ RSpec.describe Lain::Approval::Escalation do
     # this guard listed the decider names by hand -- which re-stated exactly
     # what AUTOMATIC already said, so a NEW machine surface was accounted for by
     # a literal that did not know about it, and the guard stayed green while the
-    # ladder called it human. That is B1 verbatim, one surface later.
+    # ladder called it human. That is the same defect, one surface later.
     #
     # {Approval::QueueSurface}'s subclass list is the generator, and it covers
     # precisely the risky class: a surface that is a MACHINE judge. Descended
@@ -487,7 +487,7 @@ RSpec.describe Lain::Approval::Escalation do
 
     def descended(klass) = klass.subclasses.flat_map { |sub| [sub, *descended(sub)] }
 
-    # T15 added a fourth name to this list and it is the one that does NOT
+    # A fourth name was added to this list, and it is the one that does NOT
     # describe a person: `tty_fault` signs the fail-closed denial
     # {Frontend::ApprovalPolicy#answered} writes when the prompt itself raised,
     # so nobody answered it. Its true home is `Surfaces::AUTOMATIC`, beside
@@ -544,7 +544,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
   end
 
-  # The MEASURED table in T21: Rule::Call.for is not total, and a rescue list is
+  # The MEASURED table: Rule::Call.for is not total, and a rescue list is
   # not a substitute for a total classifier.
   describe "the rules rung, over inputs Rule::Call.for cannot vouch for" do
     def judged(input)
@@ -579,7 +579,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
   end
 
-  # T16's verdict is three-valued and its allow claims only "literal and fully
+  # Shell::Verdict is three-valued and its allow claims only "literal and fully
   # understood", never "safe".
   describe "the triage rung, over Shell::Verdict" do
     def triaged(command, capability_set: Lain::Shell::Verdict::AnyProgram.new)
@@ -630,7 +630,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
   end
 
-  # T20. The one arm that refuses on its own without a capability set: a command
+  # The one arm that refuses on its own without a capability set: a command
   # whose ARGV names a path {Lain::Sensitivity} denies. It hangs off the allow
   # branch because that is the only decision carrying a term to read.
   describe "the triage rung's argv path check" do
@@ -841,7 +841,7 @@ RSpec.describe Lain::Approval::Escalation do
       expect(faults.first).to include("rule" => "raiser", "tool" => "bash", "tool_use_id" => "tu_1")
     end
 
-    # B3/S2. The triage rung's DENY arm is unreachable as this repo wires it --
+    # The triage rung's DENY arm is unreachable as this repo wires it --
     # the default capability set permits every program and nothing in lib/ builds
     # a restricting one. This is the seam that makes it reachable, and this
     # example is the one that exercises the arm through the real construction

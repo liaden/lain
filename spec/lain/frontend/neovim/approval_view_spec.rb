@@ -35,7 +35,7 @@ module ApprovalViewSpecSupport
   end
 end
 
-# T36: lain://approval, the editor's own surface on {Lain::Approval::Queue}.
+# lain://approval, the editor's own surface on {Lain::Approval::Queue}.
 #
 # EVERY EXAMPLE THAT MATTERS DRIVES A REAL QUEUE AND A REAL PARKED FIBER. The
 # claim under test is not "a buffer gets some lines" -- an implementation that
@@ -69,7 +69,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
   # fails in words instead of hanging: under parallel_rspec a hung worker
   # reports as "fewer examples, zero failures".
   # Who a call is asked on behalf of, riding the context the gate's policy seam
-  # threads (T9) -- one per call, because separating a fleet's rows is exactly
+  # threads -- one per call, because separating a fleet's rows is exactly
   # the claim, and a fixture that could only name them all at once could not
   # state it.
   def asked_by(requester) = Lain::Approval::PolicySwitch::Requested.new(nil, requester)
@@ -312,7 +312,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(rpc.last[:lines].first).to include("bash", { "command" => "pwd" }.inspect)
     end
 
-    # T9: the literal this example used to assert -- "agent" for every row --
+    # The literal this example used to assert -- "agent" for every row --
     # was the defect, not the contract. What the row has to carry is the ACTOR,
     # so two calls parked by two actors render two distinguishable rows.
     it "names who is asking, so a fleet's rows are separable" do
@@ -325,7 +325,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
         .to contain_exactly(a_string_starting_with("agent  "), a_string_starting_with("researcher  "))
     end
 
-    # T16. `y` on a row is a FULL approval signing surface "nvim", so a row that
+    # `y` on a row is a FULL approval signing surface "nvim", so a row that
     # said nothing about the file's secrets would let a human release them from
     # the editor having been shown no warning at all -- the terminal's warning
     # and this one are the same sentence for exactly that reason.
@@ -347,7 +347,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
         expect(row.index("sensitive region")).to be < row.index("bash(")
       end
 
-      # T9: the ACTOR leads, whichever one it is -- asserted against a requester
+      # The ACTOR leads, whichever one it is -- asserted against a requester
       # that is not the queue's default, so the example cannot pass on a row
       # that names everybody the same.
       it "still leads with the requester, so a fleet's rows stay separable" do
@@ -411,7 +411,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
   end
 
-  # T9. An approval's command is UNBOUNDED, and one `input.inspect` line is how
+  # An approval's command is UNBOUNDED, and one `input.inspect` line is how
   # a human ends up approving a command they never read: past the right edge of
   # a narrow window there is nothing to scroll to, because the row IS the
   # buffer line. So an item is a RECORD now -- a summary line the list stays
@@ -521,15 +521,15 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(result[:verdicts]).to eq([false, true, false])
     end
 
-    # THE CUT MUST NOT EAT THE WARNING, and this is the one way this card could
-    # have made the surface WORSE than it found it. Before T9 the row was one
-    # unwrapped line, so {Approval::Queue::Outstanding#preamble}'s sentence was
-    # always in the buffer somewhere; an elided summary whose body carried only
-    # the CALL puts a long enough path's warning nowhere at all. `y` here is a
-    # full approval signing surface "nvim", and this is the surface whose whole
-    # premise is that a human reads what they approve -- so the item carries the
-    # WHOLE row, and the summary is a cut prefix OF it rather than a separate
-    # sentence that can lose a clause the body never had.
+    # THE CUT MUST NOT EAT THE WARNING, and this is the one way the record
+    # rendering could have made the surface WORSE than it found it. The row used
+    # to be one unwrapped line, so {Approval::Queue::Outstanding#preamble}'s
+    # sentence was always in the buffer somewhere; an elided summary whose body
+    # carried only the CALL puts a long enough path's warning nowhere at all.
+    # `y` here is a full approval signing surface "nvim", and this is the
+    # surface whose whole premise is that a human reads what they approve -- so
+    # the item carries the WHOLE row, and the summary is a cut prefix OF it
+    # rather than a separate sentence that can lose a clause the body never had.
     describe "a cut that lands inside the sensitive-region warning" do
       # Deep enough that `requester + preamble` alone overruns WIDTH, so the
       # elision falls INSIDE the warning rather than after it -- which is the
@@ -597,7 +597,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
   end
 
-  # F25's width bar, on this view's OWN sentences. Every refusal here comes back
+  # The width bar, on this view's OWN sentences. Every refusal here comes back
   # as a {Decided#report} and is echoed by {Lain::CLI::HumanReplies::Gestures}
   # through `review_refused`, which is one `nvim_echo` into the MESSAGE AREA --
   # `&columns` wide over `&cmdheight` lines, never the window a cockpit split
@@ -667,7 +667,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     end
   end
 
-  # UX4. The buffer a gated agent is waiting on was the one lain:// surface that
+  # The buffer a gated agent is waiting on was the one lain:// surface that
   # did not exist until the first pending, so a human looking for it at rest
   # found nothing -- and `:buffer lain://approval` answered `E94`.
   describe "#prime" do
@@ -982,7 +982,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       LUA
     end
 
-    # T10: `foldtext()`'s general statement (10_folds.lua:208-217) padding
+    # `foldtext()`'s general statement (10_folds.lua:208-217) padding
     # every closed fold, not only a blank one, needs a fold whose closed
     # summary is SHORTER than the window -- and lain://approval's own WIDTH
     # (96) always cuts a wrapped summary past this harness's 80-column
@@ -1031,7 +1031,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
     def item_rows(lines) = lines.take_while { |line| !line.empty? }
 
-    # F42. lain://approval is a FORM, not a log: the call a human is being
+    # lain://approval is a FORM, not a log: the call a human is being
     # asked about is the FIRST record, and the at-rest re-open used to land on
     # the LAST line -- the key hints -- leaving the pending call folded behind
     # a summary cut at {ApprovalView::WIDTH}. A command longer than the summary
@@ -1045,7 +1045,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(reassembled(item)).to include(long_command)
     end
 
-    # The other half of F42, and the reason the trailer must still be its OWN
+    # The other half of that, and the reason the trailer must still be its OWN
     # record (`05_records.lua`'s measurement): the hints get a fold of their
     # own, so they can neither steal the at-rest open nor swallow the item
     # above them into a fold that opens with them.
@@ -1057,7 +1057,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(screen[:folds].first).to eq(-1)
     end
 
-    # F43. A closed fold displays 'foldtext' and then FILLS the rest of the
+    # A closed fold displays 'foldtext' and then FILLS the rest of the
     # line with the 'fold' fillchar, so a blank trailer whose foldtext is the
     # empty string renders as a full-width bar of dots -- a line the human
     # reads as damage. Measured through `foldtextresult()` rather than by
@@ -1071,7 +1071,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(screen[:blank]["text"].length).to be >= screen[:blank]["width"]
     end
 
-    # T10, scenario 1 (F52's general statement). The key-hint line's own
+    # The general statement, scenario 1. The key-hint line's own
     # one-line fold is the blank trailer's defect with the special case
     # removed: non-blank text, still with nothing left over for nvim to fill,
     # so it wore a trail of fold fillchars before this fix padded every
@@ -1084,7 +1084,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(screen[:hint]["text"].length).to be >= screen[:hint]["width"]
     end
 
-    # T10, scenario 2. The `span > 1` branch appends "  (+N lines)" to the
+    # Scenario 2. The `span > 1` branch appends "  (+N lines)" to the
     # summary and never padded at all -- invisible only because a record row
     # is open at rest today (the round's own measurement). Padding has to
     # account for the SUFFIXED line's display width, not the raw line's, or a
@@ -1127,7 +1127,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(screen[:folds].first(second - 1)).to eq(screen[:before].first(second - 1))
     end
 
-    # F44. The window is opened BECAUSE a call was parked (`set_approval`'s
+    # The window is opened BECAUSE a call was parked (`set_approval`'s
     # `rows > 0`), so it has to go when there is nothing left to answer --
     # otherwise every session that was ever gated ends up with a pane showing
     # "(no approvals pending)" for the rest of its life. `parked` is read first
@@ -1139,7 +1139,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(surface[:emptied]["showing"]).to eq(0)
     end
 
-    # The other side of F44, and the one a mark on the WINDOW is what makes
+    # The other side of that, and the one a mark on the WINDOW is what makes
     # possible: a human who split lain's window to keep the list in view owns
     # that window, and an emptied queue must not take it.
     it "leaves a window the human opened themselves, which carries none of lain's marks" do

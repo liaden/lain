@@ -3,7 +3,7 @@
 require "json"
 require "tempfile"
 
-# Bench::Sweep is the M6 retrieval eval (6-2.4): a deterministic, offline
+# Bench::Sweep is the retrieval eval: a deterministic, offline
 # comparison of the five retrieval arms (manifest, bm25, vector, hybrid, graph)
 # over the committed gold corpus, ranked by recall@k with a tokens-on-recall
 # column. Zero network -- the vector arm reads committed fixture embeddings, so

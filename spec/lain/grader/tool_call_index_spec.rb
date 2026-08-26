@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
-# T8: the shared substrate GR-2 (T10, selection frequency) and GR-3 (T11,
-# outcome-lineage walks) both read from -- an offline projection over a
-# Journal's turn records pairing each tool_use with its outcome. No
-# production writer emits a standalone `tool_result` RECORD (only
-# `tool_use`/`tool_result` content BLOCKS inside `turn` records), so this
-# generalizes {Lain::Bench::Session::MemoryReplay#outcomes}'s pairing recipe
-# from "memory_write, is_error only" to "any tool, full outcome".
+# The shared substrate selection-frequency grading and outcome-lineage walks
+# both read from -- an offline projection over a Journal's turn records
+# pairing each tool_use with its outcome. No production writer emits a
+# standalone `tool_result` RECORD (only `tool_use`/`tool_result` content
+# BLOCKS inside `turn` records), so this generalizes
+# {Lain::Bench::Session::MemoryReplay#outcomes}'s pairing recipe from
+# "memory_write, is_error only" to "any tool, full outcome".
 RSpec.describe Lain::Grader::ToolCallIndex do
   let(:store) { Lain::Store.new }
 
@@ -196,9 +196,9 @@ RSpec.describe Lain::Grader::ToolCallIndex do
 
   # Orchestrator decision: a dangling predecessor RAISES loudly rather than
   # silently reading as a shorter-but-real root -- {Bench::Session::Corrupt}'s
-  # precedent, applied to lineage instead of the digest chain. GR-3 (T11) needs
-  # to trust that a nil predecessor means "genuine root," never "the journal
-  # slice this index was built from is missing a record."
+  # precedent, applied to lineage instead of the digest chain. An outcome-lineage
+  # walk needs to trust that a nil predecessor means "genuine root," never "the
+  # journal slice this index was built from is missing a record."
   describe "a dangling predecessor (partial or corrupted journal slice)" do
     it "resolves a clean, complete chain to its root without raising" do
       chain = Lain::Timeline.empty(store:)

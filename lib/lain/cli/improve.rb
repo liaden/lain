@@ -2,58 +2,54 @@
 
 module Lain
   module CLI
-    # `lain improve <session> [--dry-run]`: the harness-improver pass (M6).
-    # Offline, it resolves a session file through {CLI::SessionFile} -- the one
-    # resolver {CLI::Friction} and {CLI::Consolidate} also read through, so all
-    # three accept the same shorthands and raise the same refusal -- renders
-    # that session's {Friction::Report} plus a
-    # per-turn digest summary into the `harness_improver` role scaffold, and
-    # spawns the role ONCE (a one-shot, not one-per-lineage like the court
-    # clerk). The improver's notes land in M2's cross-project {Improvement::Sink},
-    # NOT in user-facing memory. Returns a String; only the frontend prints
-    # (output discipline, {CLI::Friction}'s precedent).
+    # `lain improve <session> [--dry-run]`: the harness-improver pass. It
+    # resolves a session file through {CLI::SessionFile} -- the one resolver
+    # {CLI::Friction} and {CLI::Consolidate} also read through, so all three
+    # accept the same shorthands and raise the same refusal -- renders that
+    # session's {Friction::Report} plus a per-turn digest summary into the
+    # `harness_improver` role scaffold, and spawns the role ONCE. The notes
+    # land in the cross-project {Improvement::Sink}, NOT in user-facing memory.
+    # Returns a String; only the frontend prints.
     #
     # == Distinct from {CLI::Friction} by AUDIENCE
     #
     # {Friction::Report} tells the USER which existing knob to turn; this pass
-    # tells the lain DEV what lain should GROW -- a knob that was missing, a tool
-    # that fought the model, a doc that lied. Same mechanical signals feed both;
-    # the report is the evidence this pass reasons from, framed for a different
-    # reader by the role persona.
+    # tells the lain DEV what lain should GROW -- a knob that was missing, a
+    # tool that fought the model, a doc that lied. Same mechanical signals feed
+    # both, framed for a different reader by the role persona.
     #
-    # == The guard is self-built (Consolidation's precedent)
+    # == The guard is self-built
     #
-    # The role-spawn seam builds a child's dispatch WITHOUT tool middleware, so an
-    # `improvement_write` whose input looked like a credential would reach the
-    # sink unguarded -- and the improvements file is durable and cross-project.
-    # This class therefore builds the improver's OWN dispatch chain and mounts
-    # {Middleware::RefuseSecretWrites} in its tool phase, exactly as
-    # {Lain::Consolidation} does for the clerk (RoleSpawn has no tool_middleware
-    # seam of its own). A refusal is contained: the improver's loop continues on
-    # the error result.
+    # The role-spawn seam builds a child's dispatch WITHOUT tool middleware, so
+    # an `improvement_write` whose input looked like a credential would reach
+    # the sink unguarded -- and the improvements file is durable and
+    # cross-project. This class therefore builds the improver's OWN dispatch
+    # chain and mounts {Middleware::RefuseSecretWrites} in its tool phase,
+    # exactly as {Lain::Consolidation} does for the clerk, RoleSpawn having no
+    # tool_middleware seam of its own. A refusal is contained: the improver's
+    # loop continues on the error result.
     #
     # == Fresh-root
     #
-    # The improver READS the session's record; it must never INHERIT the parent's
-    # prompt, so it spawns over a FRESH Timeline root ({Role#spawn_policy}'s
-    # default `:fresh` prefix), the same non-negotiable the clerk holds.
+    # The improver READS the session's record; it must never INHERIT the
+    # parent's prompt, so it spawns over a FRESH Timeline root
+    # ({Role#spawn_policy}'s default `:fresh` prefix).
     #
     # == Two methods, not one boolean
     #
-    # {#report} spawns the improver; {#dry_report} renders the scaffold it WOULD
-    # have seen. Separate methods, because `report_for(dry_run: true)` was a flag
-    # that changed what the method MEANT. Both read the session ONCE, through the
-    # same private {Review}.
+    # {#report} spawns the improver; {#dry_report} renders the scaffold it
+    # WOULD have seen. Separate methods, because `report_for(dry_run: true)`
+    # was a flag that changed what the method MEANT. Both read the session
+    # ONCE, through the same private {Review}.
     class Improve
-      # The role every session is handed to (shipped: read_file/list_files/glob/
-      # grep/improvement_write -- no memory tools, by design).
+      # The role every session is handed to: read_file/list_files/glob/grep/
+      # improvement_write, and no memory tools, by design.
       ROLE = :harness_improver
 
-      # The one-shot record the improver reads: the session's {Friction::Report}
-      # (the mechanical evidence) beside a per-turn digest summary (the digests a
-      # note cites). A pure function of the journal records -- no provider is
-      # touched -- so the dry-run surface and the live spawn render the SAME
-      # scaffold, and "what it would see" cannot disagree with "what it saw".
+      # The session's {Friction::Report} beside a per-turn digest summary. A
+      # pure function of the journal records -- no provider is touched -- so
+      # the dry-run surface and the live spawn render the SAME scaffold, and
+      # "what it would see" cannot disagree with "what it saw".
       Scaffold = Data.define(:records) do
         def render
           <<~PROMPT
@@ -74,8 +70,8 @@ module Lain
 
         private
 
-        # Fully qualified: bare `Friction` would resolve to {CLI::Friction} (the
-        # USER-facing report command) in this lexical scope, not the domain
+        # Fully qualified: a bare `Friction` resolves in this lexical scope to
+        # {CLI::Friction}, the USER-facing report command, not the domain
         # {Lain::Friction::Report} this pass reasons from.
         def friction = Lain::Friction::Report.new(records).render
 
@@ -101,18 +97,18 @@ module Lain
         end
       end
 
-      # The session under review: the id every improvement record is stamped with,
-      # and the one-shot scaffold. One object rather than a pair, so {#report}
-      # and {#dry_report} each read the journal once and cannot disagree about
-      # which session they are describing.
+      # One object rather than a pair, so {#report} and {#dry_report} each read
+      # the journal once and cannot disagree about which session they describe.
       Review = Data.define(:session, :scaffold)
 
-      # The exe's assembly seam: build the pass from Thor options via {Backend}.
-      # Under `--dry-run` the provider is {Provider::Unreachable} instead of
-      # {Backend#provider}, so no API key is fetched and nothing can quietly
-      # reach a model -- which is what lets every collaborator below be required.
-      # Mirrors {CLI::Consolidate.from_options}; the assembly lives here (not in
-      # the exe) so it carries specs.
+      # The exe's assembly seam. Under `--dry-run` the provider is
+      # {Provider::Unreachable}, so no API key is fetched and nothing can
+      # quietly reach a model -- which is what lets every collaborator below be
+      # required. The assembly lives here, not in the exe, so it carries specs.
+      #
+      # @param options [Hash] the invoked command's parsed flags
+      # @option options [Boolean] :dry_run swaps the provider for an unreachable one
+      # @return [Improve]
       def self.from_options(options)
         backend = Backend.new(options)
         new(provider: options[:dry_run] ? Provider::Unreachable.new : backend.provider,
@@ -120,8 +116,8 @@ module Lain
       end
 
       # The spawn collaborators are REQUIRED: a forgotten one is a loud
-      # ArgumentError here rather than a nil checked at the spawn, and a dry run
-      # has a real thing to pass ({Provider::Unreachable}).
+      # ArgumentError here rather than a nil checked at the spawn, and a dry
+      # run has a real thing to pass ({Provider::Unreachable}).
       #
       # @param provider [Lain::Provider] the improver's model;
       #   {Provider::Unreachable} for a `--dry-run`, which touches no provider
@@ -167,17 +163,15 @@ module Lain
       private
 
       # A pure function of the journal -- no provider touched -- so the dry
-      # surface and the live spawn read the SAME session id and the SAME
-      # scaffold.
+      # surface and the live spawn read the SAME session id and scaffold.
       def review_of(selector)
         path = SessionFile.resolve(selector, paths: @paths)
         Review.new(session: File.basename(path, ".ndjson"),
                    scaffold: Scaffold.new(Journal.records(File.foreach(path)).to_a))
       end
 
-      # The improver's own Agent: a fresh root, the role persona for a system, the
-      # attenuated toolset, and -- the point of this class -- a tool-phase
-      # {Middleware::RefuseSecretWrites} the spawn seam would not have supplied.
+      # The point of this class: a tool-phase {Middleware::RefuseSecretWrites}
+      # the spawn seam would not have supplied.
       def build_improver(session)
         allowed = role.attenuate(improver_union(session))
         Agent.new(
@@ -188,24 +182,20 @@ module Lain
       end
 
       # The union the role attenuates FROM: it must hold every tool the role's
-      # `only`-set names, or {Toolset#only} fails loudly. The `improvement_write`
-      # tool is wired to a per-session {Improvement::Sink}, which already knows
-      # WHERE the file lives and WHO (project_hash/session) is writing.
+      # `only`-set names, or {Toolset#only} fails loudly.
       def improver_union(session)
         Toolset.new([Tools::ReadFile.new, Tools::ListFiles.new, Tools::Glob.new, Tools::Grep.new,
                      Tools::ImprovementWrite.new(sink: Improvement::Sink.new(session:, paths: @paths))])
       end
 
-      # Fresh-root over a NEW Store: the improver reads the record, never inherits
-      # a parent's prompt. Routed through the role's own policy so the fresh-root
-      # decision has one owner ({Role#spawn_policy}'s default), not a bare
-      # `Timeline.empty` that could drift from it.
+      # Routed through the role's own policy so the fresh-root decision has one
+      # owner ({Role#spawn_policy}'s default), not a bare `Timeline.empty` that
+      # could drift from it.
       def fresh_root = role.spawn_policy(prefix: :fresh).prefix.base_timeline(store: Store.new)
 
       def improver_context = role.child_context(@context, slots: @slots)
 
-      # The point of this class: the tool-phase guard the spawn seam omits. It
-      # journals {Telemetry::WriteRefused} to the raw `@journal`.
+      # Journals {Telemetry::WriteRefused} to the raw `@journal`.
       def guard_stack = Middleware::Stack.new([Middleware::RefuseSecretWrites.new(journal: @journal)])
 
       def role = @role ||= Role::Catalog.fetch(ROLE)

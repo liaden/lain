@@ -5,8 +5,7 @@ require "async"
 module Lain
   module CLI
     # The per-ask supervision glue between {Signals}, {Shutdown}, and the TTY's
-    # countdown, lifted out of the thin exe the way {Backend} and {Chronicle}
-    # were: the exe wires collaborators; this object owns the ask's shutdown
+    # countdown: the exe wires collaborators; this object owns the ask's shutdown
     # lifecycle.
     #
     # One ask is supervised by co-locating THREE fibers in the SAME reactor: the
@@ -18,49 +17,42 @@ module Lain
     #
     # For the ask's duration OS signals are {Signals#route}d to the coordinator;
     # between asks they route back to {Signals::NULL}, because a signal with no
-    # run in flight has nothing to interrupt (the parked-prompt path is the exe's,
-    # not this object's).
+    # run in flight has nothing to interrupt.
     #
     # {#close} is the guarded closer the coordinator's `closer:` duck resolves to
     # AND the one chat's normal-exit ensure calls, so a signal-driven close and a
     # `close(:exit)` never both write session_closed. On an interrupt reason it
-    # preserves {Repl}'s catch_up -> run_interrupted -> session_closed order (the
-    # B5 amendment), which the signal path would otherwise skip.
+    # preserves {Repl}'s catch_up -> run_interrupted -> session_closed order,
+    # which the signal path would otherwise skip.
     class Conductor
-      # What the caller reads back from {#supervise}: the ask's response (nil when
-      # the run was interrupted before it committed one) and whether the session
-      # was closed (the repl loop's exit signal).
+      # `response` is nil when the run was interrupted before it committed one;
+      # `closed` is the repl loop's exit signal.
       Outcome = Data.define(:response, :closed) do
         def closed? = closed
       end
 
-      # The reasons that also owe a run_interrupted record before session_closed.
-      # `:exit` (a clean quit or a wait_responses drain) does not. Every member
-      # is in BOTH {Telemetry::SessionClosed::REASONS} and
-      # {Telemetry::RunInterrupted::REASONS}, which is what lets {#close} spend
-      # the one reason it holds on both records.
+      # The reasons that also owe a run_interrupted record before session_closed;
+      # `:exit` does not. Every member is in BOTH
+      # {Telemetry::SessionClosed::REASONS} and {Telemetry::RunInterrupted::REASONS},
+      # which is what lets {#close} spend one reason on both records.
       INTERRUPT_REASONS = %i[interrupted grace_expired].freeze
 
       DEFAULT_TICK = 1.0
 
-      # The one factory the exe calls: a conductor over a fresh {Signals}
-      # installer it also owns, so the exe carries neither the installer nor its
-      # lifecycle (see {#guard}).
+      # A conductor over a fresh {Signals} installer it also owns, so the exe
+      # carries neither the installer nor its lifecycle (see {#guard}).
       def self.open(tty:, chronicle:, grace: Shutdown::GRACE_DEFAULT, supervisor: Supervisor::Null,
                     run_clock: RunClock.new)
         new(tty:, chronicle:, signals: Signals.new, grace:, supervisor:, run_clock:)
       end
 
       # `supervisor:` answers `#drain(within:)` with an Enumerable of
-      # {Shutdown}'s `#settle` drain duck -- in production the OM-6
-      # {Lain::Supervisor}, whose bounded view settles the fleet within the
-      # window; {Supervisor::Null} (nothing to drain) by default.
+      # {Shutdown}'s `#settle` drain duck; {Supervisor::Null} by default.
       #
-      # `run_clock:` defaults to a fresh, private {RunClock} so a caller that
-      # does not yet care about it (most specs) pays nothing; production
-      # wants ONE shared instance injected here AND handed to whatever also
-      # reads it or feeds it compaction events (T7/T13), never a second
-      # Conductor-local clock the reader could drift from.
+      # `run_clock:` defaults to a fresh private {RunClock} so a caller that does
+      # not care pays nothing. Production wants ONE shared instance injected here
+      # AND handed to whatever else reads it or feeds it compaction events, never
+      # a second Conductor-local clock the reader could drift from.
       def initialize(tty:, chronicle:, signals:, grace: Shutdown::GRACE_DEFAULT,
                      budget: Agent::Budget.new, supervisor: Supervisor::Null, run_clock: RunClock.new,
                      clock: RunClock::MONOTONIC, tick: DEFAULT_TICK)
@@ -76,9 +68,9 @@ module Lain
         seed_ask_state
       end
 
-      # Supervise one ask. `timeline` is a thunk to the agent's live Timeline --
-      # the closer catches it up and anchors an interrupt from it. Yields nothing;
-      # the block performs the ask and its value becomes {Outcome#response}.
+      # `timeline` is a thunk to the agent's live Timeline -- the closer catches
+      # it up and anchors an interrupt from it. The block performs the ask and
+      # its value becomes {Outcome#response}.
       #
       # @param task [Async::Task] the reactor parent the three fibers spawn under
       # @param timeline [#call] -> Lain::Timeline
@@ -95,38 +87,31 @@ module Lain
         teardown(shutdown, coordinator, ticker_task)
       end
 
-      # Read a line at an idle prompt, but route prompt-time signals to a
+      # Read a line at an idle prompt, routing prompt-time signals to a
       # {PromptBreaker} that raises the reader out of Reline's blocking read --
       # there is no run to interrupt while idle, so a terminating signal instead
       # breaks the prompt and closes the session. Reline's own ensure has restored
-      # the terminal by the time the {PromptBreaker::Break} lands; the caller sees
-      # the closed session through {#closed?}.
+      # the terminal by the time the {PromptBreaker::Break} lands.
       #
-      # The cleanup (route NULL + dispose) lives in {#read_breakable}'s OWN ensure,
-      # deliberately WITHOUT a rescue there, so a Break that races the dispose's
-      # `@thread.join` -- landing during teardown rather than during the read --
-      # propagates OUT of that method (past its ensure) into THIS method's rescue,
-      # and still closes cleanly. It never escapes as a stderr backtrace + nonzero
-      # exit at an intended shutdown (the AC: a raise landing outside readline must
-      # not kill the process). Folding the ensure into a flat
-      # `def...rescue...ensure` here would NOT cover the ensure's own raise.
+      # The cleanup (route NULL + dispose) lives in {#read_breakable}'s OWN ensure
+      # and deliberately WITHOUT a rescue there, so a Break that races the
+      # dispose's `@thread.join` -- landing during teardown rather than during the
+      # read -- propagates past that ensure into THIS method's rescue and still
+      # closes cleanly, rather than escaping as a backtrace and a nonzero exit at
+      # an intended shutdown. A flat `def...rescue...ensure` here would NOT cover
+      # the ensure's own raise.
       #
-      # The close reason is `:exit`: signal-at-idle is recorded as :exit because
-      # the reason enum ({Telemetry::SessionClosed::REASONS}) has no signal reason
-      # -- least-wrong of the three, since nothing was interrupted (no run,
-      # therefore no run_interrupted; an idle SIGTERM is the operator's "quit").
-      # Growing the enum is a deliberate follow-up, not this card.
+      # The close reason is `:exit` because the reason enum
+      # ({Telemetry::SessionClosed::REASONS}) has no signal reason, and nothing
+      # was interrupted: an idle SIGTERM is the operator's "quit".
       #
-      # A read line records {RunClock#record_input} -- this IS the one place a
-      # user prompt is answered (the class doc), so it is the clock's one
-      # write site. A `nil` return is EOF, and the rescued {PromptBreaker::Break}
-      # is a signal breaking the prompt -- neither is the user answering
-      # anything, so neither records.
+      # A read line records {RunClock#record_input}, the clock's one write site.
+      # EOF and a rescued Break are not the user answering anything, so neither
+      # records.
       #
       # @param tty [#prompt]
-      # @param text [String] the prompt string rendered before the read; passed straight
-      #   through to {#read_breakable} unchanged -- this method owns the read's signal
-      #   handling, not the prompt's content
+      # @param text [String] the prompt string, passed through to
+      #   {#read_breakable} unchanged
       # @return [String, nil] the line, or nil at EOF or on a signal-close
       def read_prompt(tty, text)
         line = read_breakable(tty, text)
@@ -138,22 +123,18 @@ module Lain
       end
 
       # Read an ask_human reply through the conductor so it KNOWS Reline owns
-      # stdin for the span. Unlike {#read_prompt} there IS a run in flight (the
-      # supervised ask), so signals stay routed at the coordinator and the grace
-      # clock keeps running: a terminating signal still arms, expires, or promotes
-      # exactly as it would with no reply outstanding, and an expiry interrupts the
-      # run through {Agent::Budget} while {Repl::LineScope#serve}'s ensure stops the
-      # replier fiber parked here -- Reline's own ensure restores the terminal on that
-      # fiber-stop (PTY-probed, see the handback), so no breaker is needed.
+      # stdin for the span. Unlike {#read_prompt} there IS a run in flight, so
+      # signals stay routed at the coordinator and the grace clock keeps running;
+      # an expiry interrupts the run while {Repl::LineScope#serve}'s ensure stops
+      # the replier fiber parked here, and Reline's own ensure restores the
+      # terminal on that fiber-stop (PTY-probed), so no breaker is needed.
       #
-      # What DOES change for the span: the countdown ticker is suppressed. It
-      # neither renders its status line (which would smear against Reline's echo)
-      # nor makes its non-blocking key read (which would STEAL a keystroke out of
-      # the operator's answer -- an 'r' silently firing wait_responses). The flag
-      # is conductor-owned (single writer, this fiber) and the ticker checks it
-      # each tick; any status line already on screen is erased once before Reline
-      # draws. When the reply returns and a grace window is still live, the
-      # countdown reappears from the next tick with the live remaining time.
+      # What DOES change: the countdown ticker is suppressed. It would otherwise
+      # smear its status line against Reline's echo and STEAL a keystroke out of
+      # the operator's answer with its non-blocking key read -- an 'r' silently
+      # firing wait_responses. The flag is conductor-owned (single writer, this
+      # fiber) and read each tick, so the countdown reappears on the next tick
+      # once the reply returns.
       def read_reply(tty, text)
         @reply_outstanding = true
         @ticker.stop
@@ -167,9 +148,9 @@ module Lain
       # means the ensure's `close(:exit)` is a no-op.
       #
       # The reason reaches BOTH records: this object is the only place that knows
-      # whether the human interrupted or the grace window expired, and the
-      # run_interrupted used to be written without it -- so the file said a run
-      # stopped and stayed silent about which stop it was.
+      # whether the human interrupted or the grace window expired, and a
+      # run_interrupted written without it said a run stopped while staying silent
+      # about which stop it was.
       #
       # @param reason [Symbol] one of {Telemetry::SessionClosed::REASONS}
       def close(reason:)
@@ -191,36 +172,27 @@ module Lain
       #
       # == The second Break rescue, and why {#read_prompt}'s is not enough
       #
-      # {PromptBreaker} delivers with `Thread#raise`, and the thread it targets
-      # is running an Async reactor while the prompt read happens on a FIBER
-      # inside it. `Thread#raise` against a thread under a fiber scheduler is
-      # delivered at the SCHEDULER's next interrupt checkpoint, not inside the
-      # fiber -- measured on async 2.42.0, where the Break surfaced at
-      # `Repl#run`'s `Sync` boundary with `Async::Scheduler#handle_interrupt` at
-      # the top of the backtrace, sailing clean past {#read_prompt}'s rescue.
+      # {PromptBreaker} delivers with `Thread#raise`, and against a thread under a
+      # fiber scheduler that is delivered at the SCHEDULER's next interrupt
+      # checkpoint rather than inside the fiber -- measured on async 2.42.0, where
+      # the Break surfaced at `Repl#run`'s `Sync` boundary with
+      # `Async::Scheduler#handle_interrupt` atop the backtrace, sailing clean past
+      # {#read_prompt}'s rescue. The process then died OF SIGNAL 2 with a Ruby
+      # backtrace where it had meant to exit 0, so `lain up`'s `remain-on-exit
+      # failed` held the corpse -- and a chat pane that will not go away is a tmux
+      # session that will not go away either.
       #
-      # The consequence was not cosmetic. The process died OF SIGNAL 2 with a
-      # Ruby backtrace where it had meant to exit 0, so `lain up`'s
-      # `remain-on-exit failed` held the corpse -- and a chat pane that will not
-      # go away is a tmux session that will not go away either. The banner is
-      # for a chat that CRASHED; a human pressing Ctrl-C at an idle prompt has
-      # crashed nothing.
-      #
-      # Rescuing here rather than moving the delivery is what the meaning
-      # supports: a Break exists only while {#read_breakable} has the breaker
-      # routed, so one arriving ANYWHERE means the same thing -- the human
-      # interrupted an idle prompt -- and where it lands is a scheduler
-      # implementation detail that has already changed once. {#close} is
-      # idempotent, so the two rescues cannot double-close, and this is the
-      # outermost place that still knows what a Break means: above it the
-      # exception is an Interrupt like any other.
+      # Rescued here rather than relocating the delivery: a Break exists only
+      # while {#read_breakable} has the breaker routed, so one arriving ANYWHERE
+      # means the human interrupted an idle prompt, and where it lands is a
+      # scheduler detail that has already changed once. {#close} is idempotent, so
+      # the two rescues cannot double-close, and this is the outermost place that
+      # still knows what a Break means.
       #
       # Delegates to {Signals#guarding} on the ALREADY-INJECTED @signals rather
-      # than reimplementing install/yield/ensure-uninstall (there is exactly one
-      # such implementation) or calling the {Signals.guarding} class method
-      # (which would construct a fresh instance and discard this one's routing
-      # state -- {#start_shutdown} and {#teardown} both call {Signals#route} on
-      # THIS @signals across the ask).
+      # than the {Signals.guarding} class method, which would construct a fresh
+      # instance and discard this one's routing state -- {#start_shutdown} and
+      # {#teardown} both call {Signals#route} on THIS @signals across the ask.
       def guard(&block)
         @signals.guarding(&block)
       rescue PromptBreaker::Break
@@ -230,20 +202,16 @@ module Lain
 
       private
 
-      # The conversation's mutable state, apart from the injected collaborators
-      # above it -- the Agent `seed_run_state` split. The ticker's suppressed
-      # thunk reads @reply_outstanding at tick time, so seeding after its
-      # construction is safe by construction.
+      # The ticker's suppressed thunk reads @reply_outstanding at tick time, so
+      # seeding after the ticker is constructed is safe.
       def seed_ask_state
         @timeline = nil
         @closed = false
         @reply_outstanding = false
       end
 
-      # The break-able read: route prompt-time signals at the breaker, read, and
-      # ALWAYS undo the routing + dispose the breaker. No rescue here on purpose --
-      # a Break (during the read OR during this ensure's dispose) surfaces to
-      # {#read_prompt}'s rescue.
+      # No rescue here on purpose -- a Break, during the read OR during this
+      # ensure's dispose, surfaces to {#read_prompt}'s rescue.
       def read_breakable(tty, text)
         breaker = PromptBreaker.new(main: Thread.current)
         @signals.route(breaker)
@@ -254,33 +222,27 @@ module Lain
       end
 
       # on_transition is left as Shutdown's no-op: the countdown is POLL-driven
-      # ({CountdownTicker}), not transition-driven, so a cancel's status-line
-      # clear lands on the next tick -- an up-to-@tick (1s) latency, accepted as
-      # the price of one cadence for both the render and the clear.
+      # ({CountdownTicker}), so a cancel's status-line clear lands on the next
+      # tick -- up to @tick (1s) late, the price of one cadence for both.
       #
-      # actors: is the injected supervisor's BOUNDED drain view (OM-6, the
-      # follow-up the old note here promised): a graceful `#drain` settles the
-      # fleet after the run task, so wait_responses means the fleet's
-      # in-flight work too -- capped at the same grace window the countdown
-      # uses, because an unbounded fleet settle would wedge the coordinator
-      # fiber with the sigquit escape hatch queued unread behind it. A settle
-      # that hits the cap is journaled (drain_timed_out), never silent.
+      # The supervisor's drain view is BOUNDED, capped at the same grace window
+      # the countdown uses, because an unbounded fleet settle would wedge the
+      # coordinator fiber with the sigquit escape hatch queued unread behind it.
+      # A settle that hits the cap is journaled (drain_timed_out), never silent.
       def build_shutdown(run)
         Shutdown.new(run_task: run, closer: self, budget: @budget, clock: @clock, grace: @grace,
                      actors: @supervisor.drain(within: @grace))
       end
 
-      # Route signals at the coordinator, then spawn it and the countdown ticker
-      # as siblings of the run. Returned as a pair so {#supervise}'s ensure can
-      # tear both down even if this raises (they are nil then).
+      # Returned as a pair so {#supervise}'s ensure can tear both down even if
+      # this raises (they are nil then).
       def start_shutdown(task, shutdown)
         @signals.route(shutdown)
         [task.async { shutdown.coordinate }, task.async { @ticker.run(shutdown, task) }]
       end
 
-      # The run has returned. When a terminating signal has closed (or is closing)
-      # the session, let the coordinator finish its close; otherwise the ask ended
-      # with no such signal, so retire the parked coordinator via its pipe.
+      # When a terminating signal has closed or is closing the session, let the
+      # coordinator finish; otherwise retire it through its pipe.
       def settle(shutdown, coordinator)
         shutdown.dispose unless closing?(shutdown)
         coordinator.wait
@@ -288,10 +250,9 @@ module Lain
 
       def closing?(shutdown) = %i[draining closed].include?(shutdown.state)
 
-      # Route signals away FIRST (no new input to a coordinator about to retire),
-      # stop the ticker fiber so no render outlives the window, erase the status
-      # line, then dispose the pipe and stop the coordinator fiber -- the per-ask
-      # analogue of the session teardown's "restore traps before dispose".
+      # Ordered: signals away FIRST (no new input to a coordinator about to
+      # retire), then the ticker so no render outlives the window, then the pipe
+      # -- the per-ask analogue of "restore traps before dispose".
       def teardown(shutdown, coordinator, ticker_task)
         @signals.route(Signals::NULL)
         ticker_task&.stop
@@ -306,34 +267,26 @@ module Lain
     end
 
     class Conductor
-      # Reopened rather than nested in Conductor's own class body -- the shutdown.rb
-      # idiom: the ticker is its own responsibility (driving the TTY countdown from
-      # the coordinator's state), and the split keeps each body within
-      # Metrics/ClassLength instead of loosening it.
+      # Reopened rather than nested, the shutdown.rb idiom: the split keeps each
+      # body within Metrics/ClassLength instead of loosening it.
 
-      # The countdown ticker: renders the TTY's grace-window UI from the
-      # coordinator's state on a fixed cadence. Poll-driven, not transition-driven
-      # (see {Conductor#build_shutdown}), so ONE cadence serves both the render and
-      # the erase.
+      # Renders the TTY's grace-window UI from the coordinator's state on a fixed
+      # cadence. Poll-driven, not transition-driven (see
+      # {Conductor#build_shutdown}), so ONE cadence serves render and erase.
       class CountdownTicker
-        # @param tty [#render_countdown, #stop_countdown] the terminal surface the grace-window
+        # @param tty [#render_countdown, #stop_countdown] the terminal surface the
         #   countdown renders to and erases from ({Frontend::TTY})
-        # @param tick [Numeric] the poll cadence, in seconds -- how often {#run} sleeps
-        #   between renders (or erasures) of the status line
-        # @param suppressed [#call] -> Boolean, the conductor-owned flag that is
-        #   true while an ask_human reply owns stdin ({Conductor#read_reply}); a
-        #   suppressed tick renders nothing and reads no key, so Reline alone owns
-        #   the terminal for the reply's span. Defaults to never-suppressed.
+        # @param tick [Numeric] the poll cadence, in seconds
+        # @param suppressed [#call] -> Boolean, true while an ask_human reply owns
+        #   stdin ({Conductor#read_reply}); a suppressed tick renders nothing and
+        #   reads no key. Defaults to never-suppressed.
         def initialize(tty:, tick:, suppressed: -> { false })
           @tty = tty
           @tick = tick
           @suppressed = suppressed
         end
 
-        # One tick per @tick until the fiber is stopped: render the grace window
-        # while the coordinator counts down (the countdown reads its own keys and
-        # feeds them back to the coordinator -- T21), erase it otherwise. The
-        # `loop` needs no break because `Async::Task#stop` unwinds it when
+        # The `loop` needs no break: `Async::Task#stop` unwinds it when
         # {Conductor#teardown} stops the fiber.
         def run(shutdown, task)
           loop do
@@ -342,17 +295,15 @@ module Lain
           end
         end
 
-        # Erase the status line: called each non-grace tick AND once from
-        # {Conductor#teardown}, so no render outlives the window. Idempotent
-        # ({Frontend::TTY#stop_countdown}).
+        # Called each non-grace tick AND once from {Conductor#teardown}, so no
+        # render outlives the window. Idempotent ({Frontend::TTY#stop_countdown}).
         def stop = @tty.stop_countdown
 
         private
 
-        # A suppressed tick touches nothing: no render, no key read, and no erase
-        # -- Reline owns the terminal for the reply span (the status line was
-        # erased once at {Conductor#read_reply} entry), so the ticker steps fully
-        # aside until the reply returns.
+        # A suppressed tick touches nothing, not even the erase: Reline owns the
+        # terminal for the reply span, and the status line was already erased at
+        # {Conductor#read_reply} entry.
         def tick(shutdown)
           return if @suppressed.call
 

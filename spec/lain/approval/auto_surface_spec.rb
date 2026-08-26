@@ -115,7 +115,6 @@ RSpec.describe Lain::Approval::AutoSurface do
     expect(prompt).to include("edit_file").and include("/etc/passwd")
   end
 
-  # AC1
   it "attributes an approval to the auto surface while the human surface still sees the arrival" do
     spawn = AutoSurfaceSpecSupport::ScriptedRoleSpawn.new { Lain::Tool::Result.ok("APPROVE") }
     queue = Lain::Approval::Queue.new(journal:, timeout: 5)
@@ -134,7 +133,6 @@ RSpec.describe Lain::Approval::AutoSurface do
       .to eq([%w[auto_approver approve]])
   end
 
-  # AC2
   it "leaves the human in charge on defer and on an unparseable answer, both denied by the clock" do
     spawn = AutoSurfaceSpecSupport::ScriptedRoleSpawn.new do |prompt|
       Lain::Tool::Result.ok(prompt.include?("gated_a") ? "DEFER" : "what even is this")
@@ -157,7 +155,6 @@ RSpec.describe Lain::Approval::AutoSurface do
       )
   end
 
-  # AC3
   it "loses the race safely: a human decision that lands during the spawn stands, with no second journal write" do
     queue = Lain::Approval::Queue.new(journal:, timeout: 5)
 
@@ -199,7 +196,7 @@ RSpec.describe Lain::Approval::AutoSurface do
     expect(spawn.calls.size).to eq(1)
   end
 
-  # AC2 (seen-set growth): sweep delegates eviction to the injected pruning
+  # Seen-set growth: sweep delegates eviction to the injected pruning
   # seam every pass, over the SAME @adjudicated hash it just grew -- the
   # release itself is {Pruning}'s own spec (pruning_spec.rb); this pins only
   # that AutoSurface actually calls the seam it was handed, each sweep.
@@ -247,7 +244,7 @@ RSpec.describe Lain::Approval::AutoSurface do
     end
   end
 
-  # T17 ruling. This surface prunes ORDINARY approvals: its role catalog and
+  # This surface prunes ORDINARY approvals: its role catalog and
   # its one-word prompt were built for those, and neither is told that a file's
   # sensitive regions are what a yes would release. So an approve on a
   # region-carrying pending would release secrets with NO human in the loop at
@@ -288,7 +285,7 @@ RSpec.describe Lain::Approval::AutoSurface do
     end
   end
 
-  # T13/F63. What this surface will and will not judge, over a `bash` argv --
+  # What this surface will and will not judge, over a `bash` argv --
   # pinned from both sides, because the two halves mean nothing apart.
   #
   # {#judges?} asks about a pending's outstanding sensitive REGIONS, and regions
@@ -370,8 +367,8 @@ RSpec.describe Lain::Approval::AutoSurface do
     # once, derives `rules:`/`sensitivity:`/`classifiers:` from it and delegates
     # to {Switchboard.for}; this composes the first two exactly as it does and
     # lets the third default to {Triage::AnyPath}, which protects nothing and is
-    # what every board had before F63 was wired. Same entry point, one layer
-    # down, one argument changed.
+    # what every board had before classifiers were wired in. Same entry point,
+    # one layer down, one argument changed.
     def disarmed_board(root, home)
       project = project_at(root)
       table = Lain::CLI::Wiring::BoardBuild.rules(project:)
@@ -465,8 +462,8 @@ RSpec.describe Lain::Approval::AutoSurface do
     end
   end
 
-  # T11 gated subagents, which put this surface one step from a stall that
-  # would corrupt its own record. {#sweep} blocks INSIDE `@role_spawn.call`:
+  # Gating subagents put this surface one step from a stall that would corrupt
+  # its own record. {#sweep} blocks INSIDE `@role_spawn.call`:
   # one fiber, sequential. So if the adjudicating child ever parked on a gated
   # call, it would park on the SAME queue this surface is sweeping -- and the
   # only surface that could answer it is the one waiting for it. Not permanent

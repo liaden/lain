@@ -5,82 +5,70 @@ module Lain
     # A critique's findings, offered to the human as suggestions rather than as
     # notes he already made.
     #
-    # == The sidecar is NDJSON, beside the prose
-    #
-    # A critique writes prose for a human; NOTHING parses it. The findings the
-    # review surface can act on travel in a second file beside it -- one JSON
-    # object per line, at {Sidecar.beside}'s path -- so the prose stays free to be
-    # written for its reader, and the machine-readable half never becomes a
-    # format the author has to keep valid mid-sentence.
+    # THE SIDECAR IS NDJSON, BESIDE THE PROSE. A critique writes prose for a
+    # human and NOTHING parses it; the findings the review surface can act on
+    # travel in a second file beside it, one JSON object per line, so the prose
+    # stays free to be written for its reader and the machine-readable half never
+    # becomes a format the author has to keep valid mid-sentence.
     #
     # == One line, never a range -- FOR NOW
     #
     # A finding names ONE line: the one the problem starts on, with its extent in
-    # its own words ("lines 170-182 ..."), which is the form the human reads
-    # anyway. The reason is narrower than it looks, so read it as dated rather
-    # than as architecture: no carrier this sidecar feeds holds a range YET
-    # ({Anchor#line}, {AnnotationPlaced}, the anchor extmark and a diagnostic's
-    # single `lnum` are each one position), so an `end_line` would be dropped at
-    # the first hop while reading, in the sidecar, as though it had been honoured.
+    # its own words, which is the form the human reads anyway. The reason is
+    # narrower than it looks, so read it as dated rather than as architecture: no
+    # carrier this sidecar feeds holds a range YET ({Anchor#line},
+    # {AnnotationPlaced}, the anchor extmark and a diagnostic's single `lnum` are
+    # each one position), so an `end_line` would be dropped at the first hop while
+    # reading, in the sidecar, as though it had been honoured.
     #
-    # T23 ships `start_line`/`start_side` and a range annotation whose ends fall
-    # in different hunks. The moment it lands, this is the one place in the
-    # pipeline that cannot express a range GitHub accepts, and THAT is where the
-    # decision gets revisited -- not by a later reader discovering the paragraph
-    # above went stale.
+    # A later card ships `start_line`/`start_side` and a range annotation whose
+    # ends fall in different hunks. The moment it lands, this is the one place in
+    # the pipeline that cannot express a range GitHub accepts, and THAT is where
+    # the decision gets revisited.
     #
     # == A finding renders in its OWN diagnostic namespace
     #
     # {PROJECTION} carries {NAMESPACE} and {SOURCE}, both different from the
-    # human's ({Projection::Diagnostics::DEFAULT_NAMESPACE}), so the two RECORDS
-    # are separate: clearing one diagnostic namespace never touches the other,
-    # and every entry says which door it came in by.
+    # human's, so the two RECORDS are separate: clearing one diagnostic namespace
+    # never touches the other, and every entry says which door it came in by.
     #
     # What that does NOT yet buy is a visible difference on screen: nvim 0.12.4
     # draws the same sign for a finding, for a human's blocker and for an LSP's
     # error, and the anchors namespace is shared, so clearing THAT drops both
-    # records' positions at once. Both belong to `49_diagnostics.lua`
-    # (per-namespace `vim.diagnostic.config` is the fix), are ticketed against
-    # T17, and are latent until something wires findings into a buffer.
+    # records' positions at once. Both belong to `49_diagnostics.lua`, and are
+    # latent until something wires findings into a buffer.
     #
     # == Promotion is per-finding, and the gesture is an EDIT
     #
-    # Joel's ruling: a posted comment is his responsibility and triaging it is
-    # his obligation, so there is no bulk accept. {#edit} makes one finding the
-    # human's; ignoring it drops it, since only {#submittable} is offered for
-    # submission and an unedited finding is never in it. An edit to the finding's
-    # own words still promotes -- agreeing verbatim is a gesture the human made,
-    # and refusing it would leave a finding he deliberately kept with no way to
-    # keep it.
+    # A posted comment is the human's responsibility and triaging it is his
+    # obligation, so there is no bulk accept. {#edit} makes one finding his;
+    # ignoring it drops it, since only {#submittable} is offered for submission.
+    # An edit to the finding's own words still promotes -- agreeing verbatim is a
+    # gesture the human made, and refusing it would leave a finding he
+    # deliberately kept with no way to keep it.
     #
     # Promotion state is not a vocabulary and is not stored as one: it IS the
     # human's text, held under the finding's address, so there is no state field
     # free to disagree with the words. The one closed set here -- the critique's
     # BLOCKER/SHOULD-FIX/NIT ranks -- is not restated either; {KINDS} DERIVES it
-    # from the two maps T17 already ships. Neither belongs in
-    # `review/vocabulary.rb`, for {Placement}'s reason and one of its own: no
-    # record journals a rank or a promotion, and a set in that file would have to
-    # be edited to delete this capability.
-    #
-    # == Deletable
+    # from the two maps {Projection::Diagnostics} already ships. Neither belongs
+    # in `review/vocabulary.rb`: no record journals a rank or a promotion, and a
+    # set in that file would have to be edited to delete this capability.
     #
     # Removable by deleting this file and its `prefill/` directory, its spec, its
     # unit-index line in `lib/lain/review.rb`,
     # `prompt/templates/skill/critique/sidecar.md`, and the two lines of that
-    # skill's `skill.md` that declare and render the hole.
-    # Nothing outside those names {Prefill}. Deleting T17's
-    # {Projection::Diagnostics} forces deleting this too: {KINDS} derives from
-    # its maps while this class body runs.
+    # skill's `skill.md` that declare and render the hole. Deleting
+    # {Projection::Diagnostics} forces deleting this too.
     class Prefill
       include Enumerable
 
       # A sidecar line that cannot be read as a finding, or a finding written
       # twice. ALWAYS names WHERE -- the line number for a line that could not be
       # read, BOTH line numbers for a repeat -- because skipping is the defect
-      # octo shipped (`gh/init.lua:170-182` turned a crash into a quietly
-      # truncated list) and a refusal that cannot say where sends the human
-      # grepping a 200-line file for the difference between two identical
-      # sentences.
+      # octo shipped (a crash turned into a quietly truncated list) and a refusal
+      # that cannot say where sends the human grepping a 200-line file for the
+      # difference between two identical sentences.
       class Malformed < Error; end
 
       # A rank outside the three the critique skill ranks by.
@@ -162,8 +150,8 @@ module Lain
         # The one refusal with two callers, so there is one message rather than
         # two free to disagree: {Sidecar} knows which LINES a finding was written
         # on and says both, {.index} catches the same condition for findings a
-        # caller built in memory, where there are no line numbers to give.
-        # {Malformed}'s "always names where", at whatever resolution the input has.
+        # caller built in memory. {Malformed}'s "always names where", at whatever
+        # resolution the input has.
         #
         # @raise [Malformed]
         def repeated!(finding, first = nil, second = nil)
@@ -225,23 +213,20 @@ module Lain
       end
 
       # The rank a critique writes, to the annotation kind a human's note would
-      # carry -- DERIVED through the two maps T17 already ships rather than
-      # restated as a third. A rank keeps its tier: whatever severity
-      # {Projection::Diagnostics::RANKS} puts BLOCKER on, this hands back the
-      # kind {Projection::Diagnostics::SEVERITIES} puts there.
+      # carry -- DERIVED through the two maps {Projection::Diagnostics} already
+      # ships rather than restated as a third. A rank keeps its tier: whatever
+      # severity {Projection::Diagnostics::RANKS} puts BLOCKER on, this hands back
+      # the kind {Projection::Diagnostics::SEVERITIES} puts there. Restating it
+      # would be the trap `review/vocabulary.rb` documents, and the disagreement
+      # would be invisible -- a promoted finding rendering at a different severity
+      # than it did as a suggestion.
       #
-      # Restating it would be the trap `review/vocabulary.rb` documents: two
-      # independent declarations of one correspondence are free to disagree, and
-      # the disagreement is invisible -- a promoted finding would simply render
-      # at a different severity than it did as a suggestion.
-      #
-      # What the derivation actually catches, stated precisely because the loose
-      # version ("any new rank fails loudly") is half false: a kind DROPPED,
-      # RENAMED or added to {Review::ANNOTATION_KINDS}, and a rank on a tier no
-      # kind holds, each raise while this class body runs. A fourth RANK on an
-      # existing tier loads clean and takes that tier's kind -- which is the
-      # intended answer, not an escape: the tier is the correspondence, and a
-      # rank that names one is ranked.
+      # What the derivation catches, stated precisely because the loose version
+      # ("any new rank fails loudly") is half false: a kind DROPPED, RENAMED or
+      # added to {Review::ANNOTATION_KINDS}, and a rank on a tier no kind holds,
+      # each raise while this class body runs. A fourth RANK on an existing tier
+      # loads clean and takes that tier's kind -- the intended answer, not an
+      # escape: the tier is the correspondence.
       KINDS_BY_SEVERITY = invert(Projection::Diagnostics::SEVERITIES)
       private_constant :KINDS_BY_SEVERITY
 

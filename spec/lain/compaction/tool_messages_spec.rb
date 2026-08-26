@@ -35,8 +35,8 @@ RSpec.describe Lain::Compaction::ToolMessages do
     # gap {Compaction::Derivation} retains verbatim rather than collapsing.
     # That "modulo the lone runs" clause is not slack in the property: it is
     # the exact shape `.select { |run| run.size > 1 }` (ported from
-    # composed_spec.rb:76-79) produces, and AC4 below pins the reason for it.
-    # What genuinely must hold unconditionally -- because it is the one
+    # composed_spec.rb:76-79) produces, and the examples below pin the reason
+    # for it. What genuinely must hold unconditionally -- because it is the one
     # thing that makes {Strategy::Composed} not raise `Overlap` -- is that no
     # index is EVER claimed by both.
     def contiguous_runs(span, messages)

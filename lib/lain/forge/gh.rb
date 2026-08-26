@@ -29,10 +29,9 @@ module Lain
     #
     # == Observed, never forced
     #
-    # {#pr_create} reads gh's "already exists" refusal as an OBSERVED success
-    # when it can recover the existing number -- the `Handback#preserve` /
-    # `Salvage#already_committed?` doctrine that idempotency is asked of the
-    # remote rather than remembered locally. Nothing here ever forces.
+    # {#pr_create} reads gh's "already exists" refusal as an OBSERVED success when
+    # it can recover the existing number -- the doctrine that idempotency is asked
+    # of the remote rather than remembered locally. Nothing here ever forces.
     #
     # Written against **gh 2.96.0**, which answers every field used below.
     class Gh
@@ -51,26 +50,21 @@ module Lain
       # not blame one.
       VERIFIED_GH = "2.96.0"
 
-      # gh refuses a non-interactive `pr merge` without a merge method, so one
-      # has to be pinned.
+      # gh refuses a non-interactive `pr merge` without a merge method, so one has
+      # to be pinned.
       #
-      # A merge commit rather than a squash or a rebase, and the reason is
-      # ARCHAEOLOGY, not a mechanism anything reads today: promotion (T18) pushes
-      # an ANCHORED sha, the journal names that sha, and `--merge` is the only
-      # one of gh's three methods that leaves it reachable in the repository
-      # afterwards. Squash and rebase-merge both rewrite it, so a journal line
-      # naming a sha that no longer exists is all a later reader gets.
+      # A merge commit rather than a squash or a rebase, for ARCHAEOLOGY rather
+      # than any mechanism read today: promotion pushes an ANCHORED sha and the
+      # journal names it, and `--merge` is the only one of gh's three methods that
+      # leaves it reachable afterwards. Squash and rebase-merge rewrite it, so a
+      # journal line naming a sha that no longer exists is all a later reader
+      # gets. {Reconcile} does not read main, so the choice buys a readable
+      # history, not a working fold.
       #
-      # To be clear about what this does NOT do: {Reconcile} does not read main.
-      # `promoted?` asks about the epic branch ref and its sha, and `merged?`
-      # asks a pull request's state -- neither changes with the merge method. The
-      # choice buys a readable history, not a working fold.
-      #
-      # THE OTHER WAY THIS FAILS: a repository configured squash-only (or
-      # rebase-only) refuses every `--merge`. That degrades correctly -- a
-      # structured refusal carrying GitHub's own message about the setting, never
-      # an exception -- but the landing then simply never completes, and nothing
-      # in that message names this constant. A landing that stalls on every merge
+      # THE OTHER WAY THIS FAILS: a repository configured squash-only refuses
+      # every `--merge`. That degrades correctly -- a structured refusal carrying
+      # GitHub's own message -- but the landing never completes and nothing in
+      # that message names this constant. A landing that stalls on every merge
       # with a repo-policy refusal is pointing HERE.
       MERGE_METHOD = "--merge"
 
@@ -93,28 +87,42 @@ module Lain
       # Extracted because "how many times, and how long between" is a policy of
       # its own, separate from what gh answers -- and it is the ONE place the
       # injected sleeper is used, so a spec builds a Poll whose sleeper records
-      # instead of sleeping and no example ever waits a real second
-      # ({CLI::Watch}'s sleeper seam, same shape).
+      # instead of sleeping and no example waits a real second.
       class Poll
+        include Declarative
+
         DEFAULT_BOUND = 5
         DEFAULT_INTERVAL = 2
         DEFAULT_SLEEPER = ->(seconds) { sleep(seconds) }
 
-        def initialize(bound: DEFAULT_BOUND, interval: DEFAULT_INTERVAL, sleeper: DEFAULT_SLEEPER)
-          raise ArgumentError, "a poll must run at least once, got bound #{bound.inspect}" unless bound.to_i.positive?
+        # `check!` and not `settle!`: `sleeper` is a live collaborator and
+        # `interval` is nobody's business but the sleeper's, so the declaration
+        # covers the one member with a rule. `bound.to_i` stays the reading,
+        # rather than a strict type, because it is what the refusal is written
+        # against.
+        declare do
+          attribute :bound
+          validate :must_run_at_least_once
 
+          def must_run_at_least_once
+            return if bound.to_i.positive?
+
+            errors.add(:bound, "is what makes a poll run at least once, got #{bound.inspect}")
+          end
+        end
+
+        def initialize(bound: DEFAULT_BOUND, interval: DEFAULT_INTERVAL, sleeper: DEFAULT_SLEEPER)
+          self.class.check!(bound:)
           @bound = bound.to_i
           @interval = interval
           @sleeper = sleeper
           freeze
         end
 
-        # Run `attempt` until `settled` accepts its result or the bound runs out,
-        # waiting between attempts.
-        #
-        # `inject` over the REMAINING attempts, seeded with the first one, is
-        # what keeps this free of a `break`: once a result settles it is simply
-        # carried forward and the block is never called again.
+        # Run `attempt` until `settled` accepts its result or the bound runs out.
+        # `inject` over the REMAINING attempts, seeded with the first, keeps this
+        # free of a `break`: a settled result is carried forward and the block is
+        # never called again.
         #
         # @param settled [#call] answers true for a result worth stopping on
         # @return the first settled result, or the last one taken
@@ -138,22 +146,24 @@ module Lain
 
       # What one verb answered.
       #
-      # `detail` is the whole journalable payload and `value` is a READER over
-      # it, not a second member -- which is what makes a replay exact: {Recorded}
-      # rebuilds an Answer from a journaled {Outcome}'s detail and cannot
-      # disagree with the live one about what the call returned. A separate
-      # member would have to be re-derived, and re-derivation is where two
-      # readings of one record drift apart.
+      # `detail` is the whole journalable payload and `value` is a READER over it,
+      # not a second member -- which is what makes a replay exact: {Recorded}
+      # rebuilds an Answer from a journaled {Outcome}'s detail and cannot disagree
+      # with the live one about what the call returned.
       Answer = Data.define(:ok, :observed, :detail) do
-        # rubocop:disable Naming/MethodParameterName -- `ok` is {Outcome}'s
-        # journaled field name, which this value is folded into verbatim; a
-        # longer parameter would have to be renamed back on the way to the wire.
-        def initialize(ok:, observed: false, detail: {})
-          Guards::Answer.check!(ok:, observed:)
-
-          super(ok:, observed:, detail: Canonical.normalize(detail.to_h))
+        # `settle!` rather than `check!`: the boolean default and the
+        # canonicalization both live in the declaration, and settling hands them
+        # to the value.
+        #
+        # `detail.to_h` stays HERE rather than being folded into the declaration.
+        # It is a TOLERANCE, not a rule: nil means "no detail" and a verb may hand
+        # over anything answering `#to_h`, but a declared `default:` fires only
+        # for an ABSENT key, so an explicit nil would sail past it into the value.
+        # {#value} and two CLI readers subscript `detail`, so its being a Hash is
+        # this value's public contract rather than a habit of today's verbs.
+        def initialize(detail: {}, **flags)
+          super(**Contracts::Answer.settle!(**flags, detail: detail.to_h))
         end
-        # rubocop:enable Naming/MethodParameterName
 
         def ok? = ok
 
@@ -166,26 +176,36 @@ module Lain
       end
 
       # This class's construction contract, in the house validate-then-freeze
-      # convention. Named {Guards} like {Forge::Guards} and shadowing it inside
-      # this lexical scope, which is harmless because nothing here reaches for
-      # the record guards -- {Journaled} owns that.
-      module Guards
+      # convention. Named {Contracts} like {Forge::Contracts} and shadowing it in
+      # this lexical scope, which is harmless because nothing here reaches for the
+      # record contracts -- {Journaled} owns that.
+      module Contracts
         # Both flags are FOLDED on downstream and both go on the wire through
-        # {Outcome}, whose own guard refuses a non-boolean for the same reason:
-        # a missing field reads as `false`, and `false` here is a verdict nobody
-        # reached.
+        # {Outcome}: a missing field reads as `false`, and `false` here is a
+        # verdict nobody reached.
         #
-        # The PAIR is checked too, not just each flag alone. `observed` means the
-        # effect was found already in place and confirmed, which entails success,
-        # so `ok: false, observed: true` is a verdict nobody can mean. Left
-        # representable it would be reachable two ways: a future verb building
-        # one by hand, and -- the real one -- {Recorded#replay}, which copies both
-        # flags straight out of a journaled {Outcome}, so a truncated or
-        # hand-edited journal would replay a contradiction as though somebody had
-        # decided it.
-        class Answer < Guard
+        # The PAIR is checked too. `observed` means the effect was found already
+        # in place, which entails success, so `ok: false, observed: true` is a
+        # verdict nobody can mean. Left representable it is reachable through
+        # {Recorded#replay}, which copies both flags straight out of a journaled
+        # {Outcome} -- so a truncated or hand-edited journal would replay a
+        # contradiction as though somebody had decided it.
+        class Answer < Declarative::Carrier
           attribute :ok
-          attribute :observed
+          # The one default with no coercion in front of it, declared rather than
+          # written into a signature: {Answer} settles through this carrier.
+          attribute :observed, default: false
+          # `Canonical.normalize` as a declared type: the payload journals
+          # deterministically, addresses the same whichever key flavour a verb
+          # passed, and arrives deeply frozen, which is what lets `settle!` hand
+          # it straight to a `Ractor.shareable?` value.
+          #
+          # No `default:` here on purpose -- {Answer}'s constructor runs `#to_h`
+          # before this type sees the payload, so it defaults `detail` itself and
+          # a second default here would be config nothing can reach. The
+          # canonicalization still runs per construction, so two answers omitting
+          # `detail` do not share a Hash.
+          attribute :detail, :lain_canonical
           validates :ok, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
           validates :observed, inclusion: { in: [true, false], message: "must be true or false, got %<value>s" }
           validate :observed_entails_ok
@@ -231,23 +251,19 @@ module Lain
 
       # @return [Answer] `value` is every OPEN pull request from `head`
       #
-      # `--state open`, and the narrowing is a decision rather than a default.
-      # The one caller is {Reconcile::World#pr_for}, whose duck is documented as
-      # "the PR **opened** from that head ref", and both of ITS callers ask the
-      # same question: is there a live pull request here, so that opening
-      # another would be a duplicate. `--state all` answered that question with
-      # a pull request a human deliberately CLOSED -- a resumed landing then
-      # read the close as "pr_create already completed", skipped the step, and
-      # went on to merge a pull request somebody had shut. That is false
-      # idempotency, which is the failure this whole tier exists to prevent.
+      # `--state open`, a decision rather than a default. The one caller is
+      # {Reconcile::World#pr_for}, and its callers ask: is there a live pull
+      # request here, so that opening another would be a duplicate. `--state all`
+      # answered that with a pull request a human deliberately CLOSED -- a resumed
+      # landing read the close as "pr_create already completed", skipped the step,
+      # and merged a pull request somebody had shut. That is false idempotency,
+      # the failure this whole tier exists to prevent.
       #
       # Nothing loses the merged case: `merged?` asks {#pr_view} through
-      # `pr_state(number)`, which reads every state, so the fold never needs
-      # this verb to see a merged pull request. What DOES narrow is the window
-      # where an unsettled pr_create's pull request was already merged by
-      # something outside this serial protocol -- it now reads as needing a
-      # retry, and `gh pr create` from a head with no commits ahead of base
-      # refuses loudly. A refusal is the right end for that.
+      # `pr_state(number)`, which reads every state. What DOES narrow is the
+      # window where an unsettled pr_create's pull request was already merged
+      # outside this serial protocol -- it now reads as needing a retry, and `gh
+      # pr create` from a head with no commits ahead of base refuses loudly.
       def pr_list(head:)
         argv = ["pr", "list", "--head", head.to_s, "--state", "open", "--json", "number"]
         invoke(argv) { |shell| parsed(argv, shell) }
@@ -280,14 +296,12 @@ module Lain
       #
       # A review body is a human's prose and an agent's findings. On an argv it
       # would be one more string somebody eventually builds; `--input -` puts it
-      # on a pipe, where quoting does not exist. {Canonical.dump} writes it,
-      # which buys determinism for free: the same review serializes to the same
-      # bytes, so the address {Recorded} keys on and the bytes GitHub receives
-      # cannot disagree.
+      # on a pipe, where quoting does not exist. {Canonical.dump} writes it, which
+      # buys determinism: the same review serializes to the same bytes, so the
+      # address {Recorded} keys on and the bytes GitHub receives cannot disagree.
       #
       # No retry, ever. A batched review POST creates a review each time it is
-      # accepted, so a refusal is a value for a caller to decide about -- neither
-      # surveyed project retries either (research §4.6).
+      # accepted, so a refusal is a value for a caller to decide about.
       #
       # @param number [Integer, String] the pull request the review is on
       # @param review [Hash] the whole payload: `commit_id`, `body`, `event` and
@@ -340,17 +354,15 @@ module Lain
         Answer.new(ok: true, detail: { "value" => number, "url" => shell.stdout.strip, "argv" => argv })
       end
 
-      # gh refuses a second pull request for a head ref that already has one, and
-      # names the existing one when it does. That refusal is the world reporting
-      # the effect ALREADY IN PLACE, which is an observed success rather than a
-      # failure -- so a resumed landing carries on instead of retrying a push
-      # that already landed.
+      # gh refuses a second pull request for a head ref that already has one and
+      # names the existing one. That refusal is the world reporting the effect
+      # ALREADY IN PLACE, an observed success rather than a failure, so a resumed
+      # landing carries on.
       #
       # Narrow on purpose: it fires only when the message BOTH says the pull
       # request exists and carries a number to recover. gh's wording is not a
       # documented interface, so anything else falls through to the ordinary
-      # refusal and a caller that needs certainty asks the world
-      # ({Reconcile}'s `pr_for(head:)`), which is the doctrine anyway.
+      # refusal, and a caller needing certainty asks the world.
       def already_open(argv, shell)
         number = number_in(shell.stderr)
         return refusal(argv, shell) if number.nil? || !shell.stderr.match?(ALREADY_EXISTS)
@@ -404,12 +416,11 @@ module Lain
       # settle instantly and a landing would proceed on a mergeability nobody
       # ever established.
       #
-      # The message names the FIELD and the document actually received, and
-      # blames nothing. `mergeStateStatus` has been a `--json` field for many gh
-      # majors, so on any plausible install the likelier causes are a token whose
-      # scopes do not reach mergeability, or a document that answered some other
-      # query -- and an operator sent to upgrade gh gets nowhere. The document is
-      # what tells them apart.
+      # The message names the FIELD and the document received, and blames nothing.
+      # `mergeStateStatus` has been a `--json` field for many gh majors, so the
+      # likelier causes are a token whose scopes do not reach mergeability or a
+      # document that answered some other query -- and an operator sent to upgrade
+      # gh gets nowhere. The document tells them apart.
       def missing_field(number, document)
         failure(["pr", "view", number.to_s], "missing_field",
                 "gh answered no readable #{MERGE_STATE_FIELD} for pull request #{number} -- got " \

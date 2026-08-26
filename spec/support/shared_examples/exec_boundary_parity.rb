@@ -39,7 +39,7 @@ RSpec.shared_examples "an exec boundary matching bash" do
   end
 
   # The ONE case here that is metacharacter-free, and therefore the only one
-  # that exercises what T17 built: Shell::Verdict allows it, so the bash arm
+  # that exercises the term arm: Shell::Verdict allows it, so the bash arm
   # runs reconstructed argv through Open3 while core still runs `sh -c`. Every
   # other case in this group contains `;`, a quote or `${}` and so abstains,
   # which compares `sh -c` against `sh -c` exactly as before the term arm
@@ -61,7 +61,7 @@ RSpec.shared_examples "an exec boundary matching bash" do
     expect(core.content.b).to include("\xFF\x00\xFE".b, "\xFD".b)
   end
 
-  # T5's output ceiling, and the one case that pins it across a REAL wire.
+  # The output ceiling, and the one case that pins it across a REAL wire.
   # Tools::Bash::OUTPUT_BOUND is applied inside Bash.render_output, which is
   # the single rendering both arms go through -- but "both arms share a method"
   # is a claim about lib/, and only a differential over a live daemon shows the

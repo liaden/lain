@@ -98,7 +98,7 @@ RSpec.describe Lain::Tool::SpawnPolicy do
                           stream: false, extra: { "temperature" => 0 })
       end
 
-      # Isolation is half the arm's pitch (CE-4: isolation AND amortized
+      # Isolation is half the arm's pitch (isolation AND amortized
       # bootstrap): like Fresh, the child starts from a new empty root over the
       # shared Store, so meet(child, parent) stays bottom.
       it "bases the child on an empty Timeline over the shared Store, like fresh" do
@@ -140,7 +140,7 @@ RSpec.describe Lain::Tool::SpawnPolicy do
           expect(strategy.child_context(bare).system).to eq([{ "type" => "text", "text" => template }])
         end
 
-        # The T24 trap, pinned at the source: Context#cache_marked marks the
+        # The double-mark trap, pinned at the source: Context#cache_marked marks the
         # final system block UNCONDITIONALLY, so a strategy that pre-marked the
         # template would put TWO marks in system -- and CacheBreakpoints budgets
         # its message markers assuming system spends exactly one slot, so the
@@ -249,7 +249,7 @@ RSpec.describe Lain::Tool::SpawnPolicy do
       subject(:posture) { described_class.new }
 
       # handler_union: the model sees the SHARED UNION's schema (sibling spawns
-      # render byte-identical tools blocks -- the CE-4 win; the union need not
+      # render byte-identical tools blocks -- the amortization win; the union need not
       # equal the spawning parent's own toolset), and the Handler is what
       # enforces the attenuation.
       it "renders the shared union and refuses disallowed calls in the Handler" do

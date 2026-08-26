@@ -13,3 +13,11 @@
 # naming the commit and its date. A short SHA or a revision that is not a valid
 # object makes git fail the WHOLE blame, so append only after the commit exists
 # on main and verify with a blame afterwards.
+
+# comments: the ticket citations go, the reasons stay -- 2026-08-26
+# 3,197 plan-ticket citations rewritten across 765 files; no code line changed.
+061d5c210a16c800711f91795db1cc9f8121764c
+
+# comments: keep the reasons, cut the retelling -- 2026-08-26
+# ~12,000 prose lines pruned across 607 files; no code line changed.
+34ee0c42c8919b0446fc2e7904b1df0b7515db7b

@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-# PC-5: folds `closure_record` journal pointers (Plan::Closure#record, P2) --
-# the pointer that survives the Store's process, so calibration works from the
-# Journal alone across sessions -- into per-size-class turn/token
-# distributions. `#median_turns(size_class)` is P4's `calibration:` input; a
-# class with no history answers nil, the annotation-only fallback.
+# Folds `closure_record` journal pointers (Plan::Closure#record) -- the pointer
+# that survives the Store's process, so calibration works from the Journal alone
+# across sessions -- into per-size-class turn/token distributions.
+# `#median_turns(size_class)` is the seam policy's `calibration:` input; a class
+# with no history answers nil, the annotation-only fallback.
 RSpec.describe Lain::Plan::Calibration do
   # A closure_record line as Plan::Closure#record actually journals it (see
   # spec/lain/plan/closure_spec.rb) -- raw Hash, the Journal.records duck,
@@ -156,8 +156,8 @@ RSpec.describe Lain::Plan::Calibration do
 
       expect(report).to include("S")
       expect(report).to include("M")
-      # M3 measured 4 turns against the M class's median of 3 -- a visible
-      # drift line, not a silent average.
+      # The third M-class chunk measured 4 turns against that class's median of
+      # 3 -- a visible drift line, not a silent average.
       expect(report).to match(/M3.*M.*4.*3\.0/)
     end
   end

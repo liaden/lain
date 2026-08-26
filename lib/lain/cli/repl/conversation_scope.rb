@@ -3,30 +3,22 @@
 module Lain
   module CLI
     class Repl
-      # What a CONVERSATION holds open, as against what one ask does -- lifted
-      # out of {Repl} for {ApprovalSurfaces}' reason, and named by the question
-      # T33 turned out to be about: which scope owns this fiber, and who stops
-      # it. Two things live here, and they are one fact: the OM-6 supervisor's
-      # reactor, which must outlive every per-ask Sync so the fleet has a home
-      # across asks, and the reply surfaces whose rail a human uses BETWEEN
-      # asks -- the editor's gesture consumer ({HumanReplies#session_surfaces}).
+      # What a CONVERSATION holds open, as against what one ask does: which
+      # scope owns this fiber, and who stops it. Two things live here and they
+      # are one fact -- the supervisor's reactor, which must outlive every
+      # per-ask Sync so the fleet has a home across asks, and the editor's
+      # gesture consumer, whose rail a human uses BETWEEN asks.
       #
-      # Deliberately NOT {Lain::Session}, which is the run's record and is what
-      # {Repl#run}'s `session:` keyword carries. This is a lifetime, not a
-      # record.
+      # Deliberately NOT {Lain::Session}, which is the run's record and what
+      # {Repl#run}'s session keyword carries. This is a lifetime, not a record.
       #
-      # {#close} owes every one of them a stop on EVERY exit from the
-      # conversation -- a clean quit, a raise climbing out of the ask, an
-      # interrupt at the prompt -- because a parked fiber holds the Sync that
-      # owns it open forever. That is the same reason {LineScope#serve}'s ensure
-      # stops what IT started, and this object exists so the two are told apart
-      # by name rather than by reading two ensures.
+      # {#close} owes every one of them a stop on EVERY exit -- a clean quit, a
+      # raise climbing out of the ask, an interrupt at the prompt -- because a
+      # parked fiber holds the Sync that owns it open forever.
       #
-      # The counterpart lifetime is one DISPATCHED LINE, not one ask (T1): a
-      # question can be raised from a command or from a skill spawn's short
-      # circuit, neither of which reaches {Repl#respond}. It still is not THIS
-      # one, and the reason is the terminal: the TTY reply read parks on the
-      # stdin the next `you>` prompt needs back, so a conversation-scoped
+      # The counterpart lifetime is one DISPATCHED LINE ({LineScope}), and the
+      # reason it is not THIS one is the terminal: the TTY reply read parks on
+      # the stdin the next `you>` prompt needs back, so a conversation-scoped
       # answer_loop would race every prompt for it. The editor's rail is scoped
       # here precisely because it polls a socket and touches no terminal.
       class ConversationScope
@@ -47,7 +39,7 @@ module Lain
         # the first thing gone -- and the supervisor's farewell in an `ensure`,
         # so a surface whose stop misbehaves cannot cost the fleet its
         # drain-on-shutdown. `@surfaces` is nil when {#open} raised before it
-        # got that far, which is exactly the path a bad reactor takes.
+        # got that far, the path a bad reactor takes.
         def close
           @surfaces&.each(&:stop)
         ensure

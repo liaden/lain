@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T26: where a review's surface opens. The value exists so the SECOND placement
+# Where a review's surface opens. The value exists so the SECOND placement
 # is additive, and today it has exactly one legal member -- so the examples that
 # matter most here are the refusals, which are the whole reason the object is
 # not just a Symbol passed around.

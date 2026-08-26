@@ -5,9 +5,9 @@ require "shellwords"
 module Lain
   module CLI
     module Command
-      # `/btw <question>` (T17): an ephemeral side-question in a tmux popup.
+      # `/btw <question>`: an ephemeral side-question in a tmux popup.
       # Composes `lain chat --btw --fork <this-session>@<head> --prompt
-      # <question>` -- T3's ephemeral lifecycle end to end: the child journals
+      # <question>` -- the ephemeral lifecycle end to end: the child journals
       # to a `.btw.ndjson` twin reaped on its own clean exit unless /keep
       # promotes it -- and opens it through {TmuxSurface#popup}, whose
       # Placement names the degrade (window instead of popup) under control
@@ -20,7 +20,7 @@ module Lain
         WIDTH = "80%"
         HEIGHT = "70%"
 
-        # T2's Placement reasons, rendered as sentences; an unknown reason
+        # The Placement reasons, rendered as sentences; an unknown reason
         # (a later TmuxSurface) falls through verbatim rather than lying.
         DEGRADE_REASONS = {
           "control_mode" => "the attached tmux client is in control mode (-CC), where a popup never renders",
@@ -43,7 +43,8 @@ module Lain
         # stays the bare `lain chat` line. `cwd: Dir.pwd` pins the parent's
         # project root so the child's session dir resolves the SAME project,
         # exactly as /fork pins its window. The rescue is scoped to this method
-        # (mirroring /fork's F5) so it never reads a local that a raise skipped.
+        # (mirroring /fork's own rescue) so it never reads a local that a raise
+        # skipped.
         def call(args, env)
           question = args.strip
           raise Error, "usage: #{usage}" if question.empty?

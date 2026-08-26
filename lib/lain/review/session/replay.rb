@@ -4,66 +4,52 @@ module Lain
   module Review
     class Session
       # The fold that rebuilds one review round from journaled records --
-      # {Epic::Review::Replay}'s shape, and its discipline: every record is
-      # reconstructed through the SAME guard the write side used, so a record
-      # that PARSES but cannot be read whole aborts the rebuild rather than
-      # being skipped.
+      # {Epic::Review::Replay}'s shape and discipline: every record is
+      # reconstructed through the SAME guard the write side used, so a record that
+      # PARSES but cannot be read whole aborts the rebuild rather than being
+      # skipped.
       #
-      # == It fails OPEN for a torn line, which the guard does not cover
-      #
-      # This paragraph replaces a claim that was false, and the distinction it
-      # draws is the whole of what a reader can rely on. A guard here only ever
-      # sees a record {Journal.parse} already turned into a Hash;
+      # IT FAILS OPEN FOR A TORN LINE, which the guard does not cover, and the
+      # distinction is the whole of what a reader can rely on. A guard here only
+      # ever sees a record {Journal.parse} already turned into a Hash;
       # {Journal.records} answers nil for a line that is not JSON at all and
       # filters it away, which is its CONTRACT rather than a lapse -- the fd is
-      # shared with Rust tracing spans, so a reader skips somebody else's bytes
-      # instead of raising over them. A `hunk_marked` line torn by a crash is
-      # therefore never seen by the guard below: it is simply gone, and that
-      # hunk quietly reads unreviewed again.
+      # shared with Rust tracing spans. A `hunk_marked` line torn by a crash is
+      # therefore never seen by the guard below: it is simply gone, and that hunk
+      # quietly reads unreviewed again.
       #
-      # So two failures that sound alike are refused differently, and only one
-      # is refused at all. A record that ARRIVES malformed -- a blank
-      # `hunk_key`, a `line` of 0, a `kind` outside the vocabulary -- aborts the
-      # whole rebuild, because a skipped mark is exactly the silent wrong answer
-      # this chunk keeps finding. A line that never arrives cannot be refused by
-      # anything at this tier; {Epic::Review.from_journal} records the same
-      # limitation about its own baton for the same reason. Both halves have
-      # specs, so neither can quietly become the other.
+      # So two failures that sound alike are refused differently, and only one is
+      # refused at all. A record that ARRIVES malformed aborts the whole rebuild,
+      # because a skipped mark is exactly the silent wrong answer this chunk keeps
+      # finding. A line that never arrives cannot be refused by anything at this
+      # tier. Both halves have specs, so neither can quietly become the other.
       #
-      # == A round is POSITIONAL, and that is forced
+      # A ROUND IS POSITIONAL, and that is forced. {ChangesetOpened} carries a
+      # digest; {HunkMarked} and {AnnotationPlaced} deliberately do not, so
+      # nothing but ORDER can say which round a mark belongs to, and the round is
+      # "everything after the LAST `changeset_opened`". {CorpusExtended} carries a
+      # digest too and is no exception: its digest addresses the WIDENED corpus
+      # and says nothing about which round it sits in. That gives three behaviours
+      # without a further field on two records:
       #
-      # {ChangesetOpened} carries a digest; {HunkMarked} and {AnnotationPlaced}
-      # deliberately do not. So nothing but ORDER can say which round a mark
-      # belongs to, and the round is "everything after the LAST
-      # `changeset_opened`". {CorpusExtended} carries one too and is no exception
-      # to this: its digest addresses the WIDENED corpus, which is what
-      # {Session#regenerated?} reads, and says nothing about which round it sits
-      # in. That gives the three behaviours the card asks for without a further
-      # field on two records:
-      #
-      # - a restart resumes, because reopening was never journaled and the last
-      #   round is still the live one;
+      # - a restart resumes, because reopening was never journaled;
       # - opening a new round over rewritten commits inherits nothing, because
-      #   `#open` writes a new `changeset_opened` and the fold stops there --
-      #   annotations are round-scoped, produced then consumed then historical,
-      #   and nothing re-anchors them forward;
+      #   `#open` writes a new `changeset_opened` and the fold stops there;
       # - the prior round stays readable, because nothing was deleted.
       #
-      # It reads the journal and writes NOTHING. {Session.from_journal} builds
-      # one of these before it builds a session, so a resume cannot double the
-      # record it is reading.
+      # It reads the journal and writes NOTHING. {Session.from_journal} builds one
+      # of these before it builds a session, so a resume cannot double the record
+      # it is reading.
       class Replay
         # The five record types a round is made of.
         #
         # This filter is NOT what makes a foreign record harmless -- {#fold}'s
-        # three independent type tests already ignore anything that is not one
-        # of these, and a mutation pass proved it by deleting the filter with
-        # every example still green. Claiming it as a defence would be claiming
-        # a defence the code does not need, so here is what it actually buys:
-        # the round has to be found by POSITION, `#rindex` needs an Array, and
-        # `.to_a` on an unfiltered lazy walk would materialize every Rust
-        # tracing span in a long session's journal alongside our four. It is a
-        # bound on what is held, not a correctness guard.
+        # independent type tests already ignore anything else, and a mutation pass
+        # proved it by deleting the filter with every example still green. What it
+        # actually buys: the round has to be found by POSITION, `#rindex` needs an
+        # Array, and `.to_a` on an unfiltered lazy walk would materialize every
+        # Rust tracing span in a long session's journal. A bound on what is held,
+        # not a correctness guard.
         TYPES = [ChangesetOpened::JOURNAL_TYPE, CorpusExtended::JOURNAL_TYPE, HunkMarked::JOURNAL_TYPE,
                  AnnotationPlaced::JOURNAL_TYPE, ReviewVerdict::JOURNAL_TYPE].freeze
 
@@ -141,28 +127,21 @@ module Lain
         end
 
         # Independent tests rather than a `case`, so there is no branch a further
-        # type could fall through into, and any record that is none of them is
-        # ignored here rather than upstream. The round cannot contain a second
+        # type could fall through into. The round cannot contain a second
         # `changeset_opened` -- it begins at the LAST one -- so no case is
         # unhandled.
         #
-        # == The FIRST verdict wins, and that is not a preference
+        # THE FIRST VERDICT WINS, and that is not a preference. It was last-wins,
+        # a rule this fold INVENTED: {Session#submit} refuses a second verdict
+        # outright, so a live session's state after two submissions is its first
+        # one. Last-wins let replay reach a state the live session would have
+        # refused. Two verdicts in one round need two writers on one journal,
+        # which `#submit` cannot produce alone but two Sessions over one file can.
         #
-        # It was last-wins, which was a rule this fold INVENTED: {Session#submit}
-        # refuses a second verdict outright ({AlreadySettled}), so a live
-        # session's state after two submissions is its first one and the second
-        # never happened. Last-wins let replay reach a state the live session
-        # would have refused -- this card's own escalation trigger about replay
-        # diverging from live, arriving in the verdict instead of the mark set.
-        # Two verdicts in one round need two writers on one journal, which
-        # `#submit` cannot produce alone but two Sessions over one file can.
-        #
-        # Ignoring the second rather than RAISING on it is {Epic::Review::Replay#park}'s
-        # hard-won rule: a fold aborts where it raises, so a refusal is judged
-        # against a prefix of the journal and the round becomes permanently
-        # un-rebuildable -- the wedge, arriving through the guard meant to
-        # prevent it. Agreeing with the live session costs nothing here; raising
-        # would cost the resume this whole class exists for.
+        # Ignoring the second rather than RAISING on it is
+        # {Epic::Review::Replay#park}'s hard-won rule: a fold aborts where it
+        # raises, so a refusal is judged against a prefix of the journal and the
+        # round becomes permanently un-rebuildable.
         def fold(record)
           type = record["type"].to_s
           @pairs << mark_pair(record) if type == HunkMarked::JOURNAL_TYPE

@@ -6,18 +6,17 @@ module Lain
       # What is already true before this run does anything: what this issue's
       # journal settled, and what the world says regardless.
       #
-      # Gathered ONCE, at the top, and every {Unobservable} the gathering meets
-      # is folded into a refusal HERE. {Reconcile} catches that exception only
-      # inside the questions it asks itself ({Reconcile::Observer}'s `ask`), and
-      # the head-ref lookup below is asked outside that fold -- a crashed
-      # pr_create's outcome never recorded the number, so the head ref is the
-      # only address that survives. Asking it deeper in the fold is how the
-      # first version of this class let an exception escape `resume`.
+      # Gathered ONCE, at the top, and every {Unobservable} the gathering meets is
+      # folded into a refusal HERE. {Reconcile} catches that exception only inside
+      # the questions it asks itself, and the head-ref lookup below is asked
+      # outside that fold -- a crashed pr_create's outcome never recorded the
+      # number, so the head ref is the only address that survives. Asking it
+      # deeper in the fold is how the first version let an exception escape
+      # `resume`.
       #
-      # Pure, in {SessionRecord::Salvage}'s sense: it touches no file and opens
-      # no socket of its own. It reads the two ducks it was handed -- entries and
-      # a world -- and answers. Deciding what to DO about an answer is the
-      # {Step}'s, and writing anything at all is the {Journaled} bracket's.
+      # It touches no file and opens no socket of its own: it reads the two ducks
+      # it was handed and answers. Deciding what to DO is the {Step}'s, and
+      # writing anything is the {Journaled} bracket's.
       class Evidence
         # The `--json` field a pull request record carries its number in.
         NUMBER = "number"
@@ -56,7 +55,7 @@ module Lain
         end
         private_class_method :located
 
-        # S2: `fetch` that raises and NAMES the record beats three speculative
+        # A `fetch` that raises and NAMES the record beats three speculative
         # arms over `respond_to?(:value)` and a fallback that put a raw Hash into
         # `gh pr merge`'s argv. {Reconcile::World#pr_for} already promises a
         # document, so the type assertion is a canary for a `world` duck that
@@ -102,24 +101,21 @@ module Lain
         end
 
         # Nothing is known: no journal to fold and no world to ask. {Landing#call}
-        # folds against this, which is what makes a fresh landing and a resumed
-        # one ONE expression over one plan (CLAUDE.md's Null Object rule;
-        # `Sink::Null` is the exemplar).
+        # folds against this, which is what makes a fresh landing and a resumed one
+        # ONE expression over one plan.
         #
-        # Answering {Missing} to everything is the ABSENCE of evidence, not a
-        # claim that nothing has happened -- and every performer in the plan is
-        # idempotent by OBSERVATION rather than by memory ({Promotion}'s
-        # already_promoted, {Gh#pr_create}'s already-exists refusal), so a fresh
-        # run that meets an effect already in place still declines to duplicate
-        # it.
+        # Answering {Missing} to everything is the ABSENCE of evidence, not a claim
+        # that nothing has happened -- every performer in the plan is idempotent by
+        # OBSERVATION rather than by memory, so a fresh run that meets an effect
+        # already in place still declines to duplicate it.
         NONE = new(report: Reconcile::Report.new(settled: [], unsettled: [], orphans: [], unaddressable: []))
 
         private
 
-        # B1b: settled-ness FOLDS ON `ok`. A settled-but-failed promote is a
-        # promote that did not happen, and reading it as "already done" is what
-        # let a resume open and merge a branch the promotion had refused to
-        # write -- somebody else's commit landed as this issue's approved work.
+        # Settled-ness FOLDS ON `ok`. A settled-but-failed promote is a promote
+        # that did not happen, and reading it as "already done" is what let a
+        # resume open and merge a branch the promotion had refused to write --
+        # somebody else's commit landed as this issue's approved work.
         def settled_ok(action)
           @report.settled.select { |item| item.intent.action == action && item.outcome.ok? }
         end
@@ -138,7 +134,7 @@ module Lain
             @report.unaddressable.map(&:reason) + @unreadable
         end
 
-        # S4: every exit from a landing answers the same duck. A raw
+        # Every exit from a landing answers the same duck. A raw
         # {Reconcile::Report} handed back here is a Data inspect dump to the
         # human and a NoMethodError to a caller that sends `ok?`.
         def inconsistent(refusals)

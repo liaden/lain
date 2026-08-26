@@ -112,9 +112,10 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     # The third vocabulary on this board, and the one that had no wiring at all
-    # until F63: `sensitivity:` is the run's PATH BOUNDARY (a policy, asked
-    # `gates?`), and `classifiers:` is a FACTORY the triage rung calls per
-    # gated command to anchor the argv it reads on the cwd THAT call named.
+    # until this board grew it: `sensitivity:` is the run's PATH BOUNDARY (a
+    # policy, asked `gates?`), and `classifiers:` is a FACTORY the triage rung
+    # calls per gated command to anchor the argv it reads on the cwd THAT call
+    # named.
     describe "the triage rung's classifier factory" do
       def factory_of(board) = board.ladder.first.instance_variable_get(:@sensitivity)
 

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T9: /help answers a {Lain::Renderable} now. The WORDS are unchanged -- the
+# /help answers a {Lain::Renderable} now. The WORDS are unchanged -- the
 # section headers name a token so the listing under them reads as content
 # rather than as one flat colour.
 RSpec.describe Lain::CLI::Command::Help do

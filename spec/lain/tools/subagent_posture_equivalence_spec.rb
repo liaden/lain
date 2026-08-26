@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# CE-4 compares :schema and :handler_union on cache economics. That comparison
+# The cache-economics arm compares :schema and :handler_union. That comparison
 # is honest only if the two postures agree on everything but the refusal
 # shape -- so this file runs ONE scripted child conversation under each
 # posture and pins where they must agree (allowed-call delivery, rendered
@@ -107,7 +107,7 @@ RSpec.describe "Subagent posture equivalence" do
     union_provider = mock(text_response("done"))
     build_subagent(provider: union_provider, posture: :handler_union).call({ "prompt" => "go" }, invocation)
 
-    # T10 grants every child an `ask_human` of its own, on TOP of whichever
+    # Every child is granted an `ask_human` of its own, on TOP of whichever
     # set the posture declares -- so both blocks carry it, and what this
     # example is about (schema renders the allowed set, handler_union renders
     # the whole union) is the rest of each list.

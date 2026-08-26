@@ -6,53 +6,38 @@ module Lain
     # {Telemetry::ContextDerived} records back, re-derive each one over the
     # source it names, and say whether the same derived head comes out.
     #
-    # The ruling is only trustworthy if something checks it, and this is that
-    # something. It is also the record's READER: nothing reads a `compaction`
-    # record back today (Grounding F7), and a write-only trace is this
-    # subsystem's default failure mode -- a field nobody consumes drifts from
-    # what it claims to mean without a single spec going red.
+    # It is also the record's READER. Nothing else reads a `compaction` record
+    # back, and a write-only trace is this subsystem's default failure mode --
+    # a field nobody consumes drifts from what it claims to mean without a
+    # single spec going red.
     #
     # == It re-derives; it does not replay
     #
-    # The derived EVENTS are deliberately not journalled ({Telemetry::ContextDerived}'s
-    # own doc says why), so there is nothing here to compare event-by-event.
-    # What the edge holds is enough to REBUILD: a deterministic strategy is a
-    # pure function of its source, and a model-backed one answers through
-    # {Oracle::Recorded}, whose answers were journalled separately. So this
-    # object is handed the source's Store and a strategy builder per name, and
-    # it does the derivation again -- {Bench::Session::ChainFold}'s discipline
-    # (`chain_fold.rb:13-19`) one level up: a digest is vouched for exactly when
-    # a rebuild reproduced it, so {#agreed?} can never answer true for bytes
-    # nothing re-derived.
+    # The derived EVENTS are deliberately not journalled, so there is nothing
+    # here to compare event by event. The edge holds enough to REBUILD: a
+    # deterministic strategy is a pure function of its source, and a
+    # model-backed one answers through {Oracle::Recorded}, whose answers were
+    # journalled separately. So a digest is vouched for exactly when a rebuild
+    # reproduced it ({Bench::Session::ChainFold}'s discipline), and {#agreed?}
+    # can never answer true for bytes nothing re-derived.
     #
-    # That discipline is why a record is CHECKED BEFORE IT IS BELIEVED. A
-    # `context_derived` line carrying no heads at all would re-derive the empty
-    # timeline to the empty timeline, and `nil == nil` would report an agreement
-    # about nothing -- the inversion of the whole posture. Every record
-    # therefore goes through {Telemetry::Guards::ContextDerived}, the record
-    # type's own WRITE-side guard, plus a check that the keys it does not cover
-    # are present at all; anything else is {Finding::Unverifiable}. This is not
-    # defensiveness: `journal.rb:93-97` says the fd is shared with foreign
-    # writers, and the record type is still growing, so a reader WILL meet a
-    # line it did not write. Unknown fields are ignored, which is what keeps
-    # that forward-compatible.
-    #
+    # That is why a record is CHECKED BEFORE IT IS BELIEVED. A
+    # `context_derived` line carrying no heads would re-derive the empty
+    # timeline to the empty timeline, and `nil == nil` would report an
+    # agreement about nothing -- the inversion of the whole posture. Every
+    # record therefore goes through {Telemetry::Guards::ContextDerived}, the
+    # record type's own WRITE-side guard, plus a presence check on the keys it
+    # does not cover; anything else is {Finding::Unverifiable}. Not
+    # defensiveness: the Journal's fd is shared with foreign writers and the
+    # record type is still growing, so a reader WILL meet a line it did not
+    # write. Unknown fields are ignored, which keeps that forward-compatible.
     # A genuine empty-source edge is {Finding::Vacuous} rather than an
-    # agreement, for the same reason: it vouches for no bytes, so a journal of
-    # nothing but those is {#nothing_to_check?}.
+    # agreement, for the same reason -- it vouches for no bytes.
     #
-    # == Offline, and it opens nothing
+    # Offline, and it opens nothing: a pure function of the ducks it is handed,
+    # touching no file, holding no session, on no render path.
     #
-    # {SessionRecord::Salvage}'s posture (`salvage.rb:56-63`): a pure function of
-    # the ducks it is handed -- `entries` ({Journal.records}'s duck: parsed
-    # Hashes or raw NDJSON lines), a Store, a name => builder map and an
-    # {Algebra::Registry}. It touches no file, holds no session, and is on no
-    # render path. Foreign and unparseable lines are skipped by {Journal.records}
-    # because that is the contract and not a convenience -- the Journal's fd can
-    # be shared with other writers, and a reader that raised over somebody
-    # else's bytes would make the audit the fragile thing in the room.
-    #
-    # == IT GROWS THE STORE IT IS HANDED, IN PROPORTION TO THE DRIFT IT FINDS
+    # == It grows the Store it is handed, in proportion to the drift it finds
     #
     # A re-derivation commits into the source's own Store, because a
     # replacement's causal edges name source digests and {Derivation} refuses
@@ -61,87 +46,48 @@ module Lain
     # A DISAGREEING one is not: each such record leaves a dead chain behind
     # (measured 30 -> 37 -> 45 for two disagreeing audits of one record), and
     # nothing collects it, because the Store is append-only and a Timeline is a
-    # handle rather than an owner.
-    #
-    # Each chain is bounded by `keep_last` plus the number of ranges, never by
-    # history length, so this is bounded garbage rather than a leak -- and it is
-    # unreachable from the session timeline, so {Ledger#unique_turns} (which
-    # walks render ancestry) prices none of it. But a caller hunting drift over
-    # a long journal should hand this a Store it is willing to have grown, or
-    # re-load one from the session record afterwards. A copy-on-write Store
-    # would make the question go away, and is a Store-level design decision
-    # rather than this reader's to take.
+    # handle rather than an owner. Each chain is bounded by `keep_last` plus
+    # the number of ranges, never by history length, so this is bounded garbage
+    # rather than a leak, and it is unreachable from the session timeline, so
+    # {Ledger#unique_turns} prices none of it. Still: hand this a Store you are
+    # willing to have grown, or re-load one from the session record afterwards.
     #
     # == Why `keep_last` is a parameter, and why the spans are compared anyway
     #
-    # The record does not carry the window. {Telemetry::ContextDerived} names the
-    # source, the derived head, the strategy, the spans, the cut and the
-    # distance walked -- not the window the {Boundary} was built with. So the
-    # caller supplies it.
+    # The record does not carry the window, so the caller supplies it -- which
+    # means the auditor's own configuration can produce a disagreement, and a
+    # guard that cries "derivation bug" at its own misconfiguration is a guard
+    # that gets muted. So the re-derivation is asked for ITS OWN edge and the
+    # two edges are compared before any verdict is reached. (The record has
+    # since gained a `keep_last` field; this reader still prefers its
+    # parameter. The comparison stays either way: the field says which window
+    # was CONFIGURED, while comparing re-derived spans proves the boundary
+    # LANDED where the record says.)
     #
-    # Which means the auditor's own configuration can produce a disagreement,
-    # and a guard that cries "derivation bug" at its own misconfiguration is a
-    # guard that gets muted -- F7's write-only trace with extra steps. So the
-    # re-derivation is asked for ITS OWN edge ({Derivation} takes any `#<<` duck
-    # as `journal:`) and the two edges are compared before any verdict is
-    # reached.
-    #
-    # T9 has since added `keep_last` to the record. This reader still prefers
-    # its parameter and ignores that field; switching the precedence -- record
-    # first, parameter as the fallback for older journals -- is a filed
-    # follow-up. The comparison stays either way, and this is why: the field
-    # says which window was CONFIGURED, while comparing re-derived spans proves
-    # the boundary LANDED where the record says.
-    #
-    # THE COMPARISON IS SOUND RATHER THAN HEURISTIC, and this is the property
-    # that makes it so. {Derivation}'s `Plan#writes` retains every turn outside
-    # a proposed range whatever the boundary index was, so the derived chain is
-    # a function of (source turns, ranges) and the window reaches the head ONLY
-    # through the ranges. Equal ranges therefore imply an equal head. Two
-    # consequences, both load-bearing: a real window error for a deterministic
-    # strategy CANNOT be missed by this comparison (a window that moved the
-    # ranges moved the head, and one that did not is not an error), and a window
-    # difference that changes no range correctly reports {Finding::Agreement} at
-    # both windows rather than a drift nobody made.
+    # The comparison is SOUND rather than heuristic. {Derivation}'s
+    # `Plan#writes` retains every turn outside a proposed range whatever the
+    # boundary index was, so the derived chain is a function of (source turns,
+    # ranges) and the window reaches the head ONLY through the ranges. Equal
+    # ranges therefore imply an equal head: a real window error for a
+    # deterministic strategy CANNOT be missed, and a window difference that
+    # changes no range correctly reports {Finding::Agreement} at both windows
+    # rather than a drift nobody made.
     #
     # == The diagnosis, and the authorities it asks
     #
-    # In order, because each question is only meaningful once the one before it
-    # is settled:
-    #
-    #   :window_disagrees   -- the ranges differ, and either the BOUNDARY itself
-    #     differs (`cut` and `moved` are its own outputs and consult no
-    #     strategy) or the strategy is DECLARED pure, in which case it is a
-    #     function of the span it was offered and could only have been offered a
-    #     different one.
-    #   :window_or_replay   -- the boundary did not move, the ranges did, and
-    #     the strategy answers from outside the source. Both causes stay open,
-    #     because a wrong window changes the span, hence the question, hence the
-    #     content address -- so a question-keyed {Oracle::Recorded} misses on it
-    #     exactly as a short recording does, and proposes no range either way.
-    #     Naming one cause here would be the same guess {#purity} refuses to
-    #     make.
-    #   :derivation_bug     -- the ranges agree and the strategy is declared
-    #     pure, so the same source must give the same head; or `cut` is not
-    #     `:offered`, meaning the strategy was never asked and its purity cannot
-    #     be what a drift is about.
-    #   :incomplete_replay  -- the ranges agree, and the strategy is REFUTED
-    #     pure: it reaches outside the source, and the same span answering
-    #     differently says the replay was handed different answers.
-    #   :unclaimed_purity   -- the registry makes no claim either way, so the
-    #     drift cannot be attributed. Loud, per CLAUDE.md's premise: the wrong
-    #     answer here is to guess "not pure", which reads as a positive claim
-    #     about a class the registry has said nothing about -- and for a
-    #     SUBCLASS of a pure strategy ({Algebra::Registry#declares?} matches the
-    #     exact subject) it would be a claim the registry contradicts.
-    #
-    # `moved` is read ONLY as half of the boundary comparison, never as a
-    # verdict: it is a distance whose meaning depends on the `cut` beside it.
+    # {DIAGNOSES} states each verdict in the finding's own voice, and
+    # {Diagnosis} asks them in the order it does because each question is only
+    # meaningful once the one before it is settled. Two things that live
+    # nowhere else: `:derivation_bug` also covers a `cut` that is not
+    # `:offered`, where the strategy was never asked and its purity cannot be
+    # what a drift is about; and `moved` is read ONLY as half of the boundary
+    # comparison, never as a verdict, since it is a distance whose meaning
+    # depends on the `cut` beside it.
     #
     # Purity is asked of an injected {Algebra::Registry} rather than answered
-    # here. {Algebra::Pure}'s doc says it in as many words -- `is_a?` is not the
-    # classification, the registry is -- and a second notion of purity living in
-    # an audit is precisely the drift this class exists to catch.
+    # here -- `is_a?` is not the classification, the registry is -- because a
+    # second notion of purity living in an audit is precisely the drift this
+    # class exists to catch.
     class DerivationAudit
       include Enumerable
 
@@ -152,14 +98,12 @@ module Lain
       # naming neither the record nor the journalled name.
       class NotAStrategy < Error; end
 
-      # {Telemetry::ContextDerived}'s discriminator ({Telemetry::Journalable#journal_type}).
+      # {Telemetry::ContextDerived}'s discriminator.
       TYPE = "context_derived"
 
-      # The one `cut` under which a strategy was actually asked something. The
-      # other two are `:empty` and `:declined`; no journal anywhere carries a
-      # `:declined` (the record type ships with this chunk and a derivation
-      # cannot reach one), so nothing here waits for one -- it falls in with
-      # `:empty` under "the strategy was never asked", which is what both mean.
+      # The one `cut` under which a strategy was actually asked something.
+      # `:declined` needs no case of its own -- no derivation can reach one --
+      # so it falls in with `:empty` under "the strategy was never asked".
       OFFERED = "offered"
 
       # The operation a purity claim is about. {Strategy::Base#blocks} is what
@@ -167,10 +111,8 @@ module Lain
       # {Strategy::Replacement}, not a monoid element).
       BLOCKS = :blocks
 
-      # What a record must carry to be the thing it says it is. `strategy`,
-      # `spans` and `cut` are checked for CONTENT by the write-side guard as
-      # well; these five are checked for PRESENCE, because a missing key and a
-      # nil value are different bugs and an absent `spans` passes that guard.
+      # Checked for PRESENCE, because a missing key and a nil value are
+      # different bugs and an absent `spans` passes the write-side guard.
       REQUIRED = %w[source_head derived_head strategy spans cut].freeze
 
       # The two fields that name content addresses, checked for shape as well as
@@ -212,21 +154,16 @@ module Lain
       #
       #   A builder rather than an instance because a replay strategy is
       #   STATEFUL BY DESIGN: {Strategy::Summarizing} memoizes per content
-      #   address and may not be frozen, and {Oracle::Recorded} consumes a FIFO
-      #   queue per question. One instance across a journal therefore couples
-      #   records to one another -- a record this audit SKIPS (an absent source,
-      #   a malformed line) leaves that state unconsumed, and every later record
-      #   for the same strategy replays against it. Building per record makes
-      #   each judgement independent of the ones before it, which is the only
-      #   reading under which a single finding means anything on its own.
-      #
-      #   So a builder must CONSTRUCT its strategy, never close over one: a
-      #   builder answering the same instance every time satisfies this duck and
-      #   restores exactly the coupling it exists to remove, silently, because
-      #   the shared memo is invisible from here.
+      #   address, and {Oracle::Recorded} consumes a FIFO queue per question.
+      #   One instance across a journal couples records to one another -- a
+      #   record this audit SKIPS leaves that state unconsumed, and every later
+      #   record for the same strategy replays against it. So a builder must
+      #   CONSTRUCT its strategy, never close over one: a builder answering the
+      #   same instance every time satisfies this duck and silently restores
+      #   exactly the coupling it exists to remove.
       # @param registry [Algebra::Registry] where the purity claim is read; the
       #   process-wide one by default, injectable because that is the {Algebra}
-      #   module's own contract for every verb it offers.
+      #   module's contract for every verb it offers.
       def initialize(entries:, store:, keep_last:, strategies: {}, registry: Algebra.registry)
         @entries = entries
         @store = store
@@ -235,14 +172,13 @@ module Lain
         @registry = registry
       end
 
-      # Memoized like {Bench::Session::ChainFold#timeline}: a re-derivation may
-      # ask an oracle, and {Enumerable} would otherwise pay for one per message
-      # sent to this object.
+      # Memoized: a re-derivation may ask an oracle, and {Enumerable} would
+      # otherwise pay for one per message sent to this object.
       #
       # `to_a` is what makes that memo real. {Journal.records} is lazy so a
-      # reader can stream a file, and a lazy `map` held in an ivar is a RECIPE:
-      # it re-derives on every walk, and `#empty?` -- which {Enumerator::Lazy}
-      # does not answer at all -- is how that announced itself here.
+      # reader can stream a file, and a lazy `map` held in an ivar is a RECIPE
+      # that re-derives on every walk -- `#empty?`, which {Enumerator::Lazy}
+      # does not answer at all, is how that announced itself here.
       #
       # @return [Array<Finding>] one per derivation edge, in journal order
       def findings
@@ -264,9 +200,9 @@ module Lain
 
       private
 
-      # Ordered by what each answer costs and by what it would otherwise hide: a
-      # malformed record is judged by nobody, an empty one vouches for nothing,
-      # and neither is worth building a strategy for.
+      # Ordered by what each answer costs: a malformed record is judged by
+      # nobody, an empty one vouches for nothing, and neither is worth building
+      # a strategy for.
       def judged(edge)
         return malformed(edge) unless edge.complete?
         return Finding::Vacuous.new(strategy: edge.strategy, source_head: edge.source_head) if edge.vacuous?
@@ -333,10 +269,10 @@ module Lain
                            rederived: head, diagnosis: Diagnosis.new(recorded: edge, rebuilt:, purity:).name)
       end
 
-      # Three-valued, because {Algebra::Registry} distinguishes three states and
-      # collapsing "refuted" with "never claimed" turns silence into a positive
-      # claim. Asked of the EXACT class, as the registry files it: a subclass
-      # inherits its parent's `#blocks` but not its parent's declaration.
+      # Three-valued, because collapsing "refuted" with "never claimed" turns
+      # silence into a positive claim. Asked of the EXACT class, as the
+      # registry files it: a subclass inherits its parent's `#blocks` but not
+      # its parent's declaration.
       def purity(subject)
         return :pure if @registry.declares?(subject:, operation: BLOCKS, structure: :pure)
 
@@ -362,10 +298,9 @@ module Lain
       end
 
       # A {Derivation} can legitimately refuse -- an invalid chain, a proposal
-      # that is not a partition, a causal edge the store never saw. An audit is a
-      # reader over bytes that can be wrong, so a refusal is REPORTED (naming the
-      # class, which is the diagnosis) rather than allowed to abort the rest of
-      # the journal. It is not a drift: no second head was produced to disagree.
+      # that is not a partition, a causal edge the store never saw. A refusal is
+      # REPORTED rather than allowed to abort the rest of the journal, and it is
+      # not a drift: no second head was produced to disagree.
       def refused(edge, error)
         unverifiable(edge, "re-deriving it raises #{error.class}: #{error.message}")
       end
@@ -378,8 +313,7 @@ module Lain
 end
 
 # All three reopen the class above -- and read its constants, and are marked
-# `private_constant` on it -- so they load after the class body, the same order
-# `effect/handler.rb` loads its subclasses in.
+# `private_constant` on it -- so they load after the class body.
 require_relative "derivation_audit/edge"
 require_relative "derivation_audit/diagnosis"
 require_relative "derivation_audit/finding"

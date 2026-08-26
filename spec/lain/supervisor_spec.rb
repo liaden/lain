@@ -9,7 +9,7 @@ require "mixlib/shellout"
 require "stringio"
 require "tmpdir"
 
-# OM-6 core: the orchestration reactor ABOVE the Agent. Actor#launch spawns its
+# The orchestration reactor ABOVE the Agent. Actor#launch spawns its
 # fiber on Async::Task.current, and Agent#ask's per-call Sync owns any fiber a
 # tool dispatch spawns -- so until now actors were programmatic-only, launched
 # by a caller holding its own reactor. The Supervisor IS that caller as an
@@ -37,7 +37,7 @@ RSpec.describe Lain::Supervisor do
 
   # A child provider that announces entry and parks; a :raise release fails
   # the in-flight call instead of answering it -- deterministic sequencing for
-  # every "mid-turn" window below (the W3 review probes' idiom).
+  # every "mid-turn" window below (the review probes' idiom).
   before do
     stub_const("SupervisorParkProvider", Class.new(Lain::Provider::Mock) do
       def initialize(entered:, release:, **rest)
@@ -117,7 +117,7 @@ RSpec.describe Lain::Supervisor do
       expect(supervisor.running?).to be(false)
     end
 
-    # FIX 2 (review): registration must happen INSIDE the adopted task. The
+    # Registration must happen INSIDE the adopted task. The
     # append used to run on the CALLER's fiber after `.wait` -- a launch block
     # that awaits plus an adopter cancelled in that window left a live actor
     # the registry never heard of: invisible to the HUD, skipped by the drain,
@@ -152,7 +152,7 @@ RSpec.describe Lain::Supervisor do
     end
   end
 
-  # ---- Scenario: actor registry is queryable (AC2) ---------------------------
+  # ---- Scenario: actor registry is queryable ---------------------------------
 
   describe "the registry" do
     it "enumerates adoptions with role, state, address, and head digest" do
@@ -204,7 +204,7 @@ RSpec.describe Lain::Supervisor do
       end
     end
 
-    # FIX 1 (review BLOCKER): the dead-skip alone was check-then-wait -- an
+    # The review BLOCKER: the dead-skip alone was check-then-wait -- an
     # actor LIVE at the check that fails DURING the await re-raised out of
     # Shutdown#drain's each(&:settle), killed the coordinator fiber, and
     # close(:exit) was never journaled. Registration#settle must absorb the
@@ -230,7 +230,7 @@ RSpec.describe Lain::Supervisor do
     end
   end
 
-  # ---- FIX 3 (review): the drain is bounded by the grace window --------------
+  # ---- The drain is bounded by the grace window ------------------------------
   #
   # Grace used to bound only the countdown: once draining, a hung actor wedged
   # wait_responses forever and a queued sigquit sat unread behind the blocked
@@ -276,7 +276,7 @@ RSpec.describe Lain::Supervisor do
     end
   end
 
-  # ---- Scenario: the render seam receives per-turn snapshots (AC3) -----------
+  # ---- Scenario: the render seam receives per-turn snapshots -----------------
 
   describe Lain::Supervisor::TurnMailbox do
     let(:recipient) { Lain::Event::ChainWriter.correlation_of(parent_timeline) }
@@ -307,7 +307,7 @@ RSpec.describe Lain::Supervisor do
       request.messages.last["content"].filter_map { |block| block["text"] }.join("\n")
     end
 
-    # The recorded OM-6 residual (chunk-fixes T6): a Mailbox combinator binds
+    # The recorded orchestration residual: a Mailbox combinator binds
     # its snapshot at pipeline construction, so turn 2 would re-fold turn 1's
     # stale snapshot and never see what arrived in between.
     it "folds each turn's OWN frozen snapshot -- no stale pipeline-construction binding" do
@@ -337,7 +337,7 @@ RSpec.describe Lain::Supervisor do
     end
   end
 
-  # ---- Scenario: actor lifecycle is journaled in the state-feed shape (AC5) --
+  # ---- Scenario: actor lifecycle is journaled in the state-feed shape --------
 
   describe "actor lifecycle journaling" do
     def journaled_lifecycle(journal)
@@ -353,7 +353,7 @@ RSpec.describe Lain::Supervisor do
       actor
     end
 
-    # FIX 4 (review): lifecycle transitions carry a machine-readable
+    # Lifecycle transitions carry a machine-readable
     # body-level "lifecycle" discriminator (launched/settled/stopped) --
     # events are content-addressed, so the marker lands NOW, not after
     # recorded journals exist. A tell is conversation, not a transition, and
@@ -450,7 +450,7 @@ RSpec.describe Lain::Supervisor do
       end
     end
 
-    # Conductor asks the supervisor for its BOUNDED drain view (FIX 3), with
+    # Conductor asks the supervisor for its BOUNDED drain view, with
     # the ask's own grace as the window -- the fake records the handoff.
     it "wait_responses settles the supervisor's bounded drain view, capped by grace" do
       settled = []
@@ -486,7 +486,7 @@ RSpec.describe Lain::Supervisor do
     end
   end
 
-  # ---- Scenario: isolation lease lifecycle (B5) ------------------------------
+  # ---- Scenario: isolation lease lifecycle -----------------------------------
   #
   # A worker leases an isolated WorkerEnv on adopt, its tools run under that
   # leased cwd/env, and the lease is released on #stop. The default backend is
@@ -498,7 +498,7 @@ RSpec.describe Lain::Supervisor do
     # RecordingIsolation is the Isolation duck: it hands out real
     # {Isolation::Lease}s over a fixed WorkerEnv and records every acquire and
     # release by worker key, so a spec asserts the lifecycle without a git
-    # checkout (the real Worktree backend is B2's, tested there). EnvProbe's
+    # checkout (the real Worktree backend is tested in its own spec). EnvProbe's
     # child tool records the WorkerEnv its Session lends it -- the honest "the
     # worker's tools ran under its leased WorkerEnv" assertion.
     before do
@@ -1248,7 +1248,7 @@ RSpec.describe Lain::Supervisor do
         .to raise_error(Lain::Supervisor::NotRunning)
     end
 
-    # THE LIFETIME PAIR, missing until T35 -- which made "the whole duck" above
+    # THE LIFETIME PAIR, once missing -- which made "the whole duck" above
     # untrue of the two messages every conversation sends FIRST
     # ({Repl::ConversationScope}), so a {CLI::Repl} taking this module as its
     # default died on NoMethodError at the top of `#run`.

@@ -5,78 +5,59 @@ module Lain
     # A file in a changeset that has not been chunked yet, and is chunked once,
     # when something finally asks for its hunks.
     #
-    # It answers {Source::ChangedFile}'s messages -- `old_path`, `new_path`,
-    # `path`, `binary?`, `status`, `rendered_lines`, `hunks` -- and every one of
-    # them but the last without chunking, which is what lets {Bounds} size a
-    # whole view over these. It is what a corpus source hands a {Changeset} in
-    # place of one. A survey opens over a directory, not a diff: chunking every
-    # file up front is the cost the corpus arm exists to avoid, and the file
-    # whose hunks nobody reads should never have been read.
+    # It answers {Source::ChangedFile}'s messages, and every one of them but
+    # `hunks` without chunking, which is what lets {Bounds} size a whole view over
+    # these. A survey opens over a directory, not a diff: chunking every file up
+    # front is the cost the corpus arm exists to avoid.
     #
     # == Why this is NOT a Data, when everything shaped like it is
     #
-    # Because a memo is reachable mutable state, and in this codebase a `Data`
-    # is the claim that there is none: `spec/value_object_shareability_spec.rb`
+    # Because a memo is reachable mutable state, and in this codebase a `Data` is
+    # the claim that there is none: `spec/value_object_shareability_spec.rb`
     # builds one of every `Data` subclass under `Lain` and asserts
-    # `Ractor.shareable?` on all of them. A `Data` here memoises fine -- an ivar
-    # box set BEFORE `super` survives the freeze `super` applies (verified under
-    # 4.0.6; assignment after `super`, and `instance_variable_set`, both raise
-    # `FrozenError`) -- and it fails that sweep, correctly. So this is a plain
-    # class that writes its own value equality, which is the honest spelling of
-    # "defined by its attributes, but not a value object".
+    # `Ractor.shareable?`. A `Data` here memoises fine -- an ivar box set BEFORE
+    # `super` survives the freeze `super` applies (verified under 4.0.6;
+    # assignment after `super`, and `instance_variable_set`, both raise
+    # `FrozenError`) -- and it fails that sweep, correctly.
     #
-    # The other shape that fits -- a `ChangedFile` whose `hunks` member is a
-    # lazy collection answering `to_ary` (which `flat_map` flattens), needing no
-    # parallel duck at all -- was rejected on EQUALITY. `Data#hash` hashes every
-    # member, so `ChangedFile`'s identity would run through that collection.
-    # Deriving the collection's hash from its contents chunks the file to answer
-    # `#hash`, and {Session::MarkedChangeset.of}'s `files.to_h` hashes every
-    # file, so building the row table would chunk the whole corpus. Deriving it
-    # from anything else gives one class two equality semantics, value-flavoured
-    # for a diff file and identity-flavoured for a surveyed one.
+    # The other shape that fits -- a `ChangedFile` whose `hunks` member is a lazy
+    # collection answering `to_ary` -- was rejected on EQUALITY. `Data#hash`
+    # hashes every member, so deriving the collection's hash from its contents
+    # chunks the file to answer `#hash`, and {Session::MarkedChangeset.of}'s
+    # `files.to_h` hashes every file, so building the row table would chunk the
+    # whole corpus. Deriving it from anything else gives one class two equality
+    # semantics.
     #
     # == What it is honest about
     #
-    # `Ractor.shareable?` is **false**, where a {Source::ChangedFile} is
-    # deeply frozen and true. Twice over: the memo Hash is mutable, and a
-    # callable is never shareable. That is the price of memoising anything at
-    # all, and it reaches further than this object. TWO existing pins are
-    # therefore DIFF-source laws, not universal ones, and both are spec'd next
-    # to this class rather than left to be discovered:
-    #
-    #   - `changeset_spec.rb`'s deep-immutability group, over `changeset.files`;
-    #   - `session_spec.rb`'s "the values this card adds are shareable", which
-    #     asserts the whole {Session::MarkedChangeset} graph -- a {FileRow}
-    #     holds its file, so one lazy leaf makes the graph unshareable.
+    # `Ractor.shareable?` is **false**, where a {Source::ChangedFile} is deeply
+    # frozen and true -- twice over: the memo Hash is mutable, and a callable is
+    # never shareable. That reaches further than this object, so TWO existing
+    # pins are DIFF-source laws rather than universal ones, and both are spec'd
+    # next to this class: `changeset_spec.rb`'s deep-immutability group, and
+    # `session_spec.rb`'s "the values this card adds are shareable", which
+    # asserts the whole {Session::MarkedChangeset} graph.
     #
     # Equality is by value over `(old_path, new_path, binary, chunker)`, and the
     # memo is deliberately outside it: a file that has chunked still fetches the
-    # row its unchunked twin keyed, which is what {Session::MarkedChangeset}'s
-    # no-default `rows.fetch(file)` needs. `rendered_lines` is outside it for a
-    # different reason -- it is DERIVED from the same content the chunker stands
-    # for, so two sources disagreeing about it is a bug in one of them rather
-    # than two files, and inside the value that bug would surface as a `KeyError`
-    # three objects away naming the path it could not name the size of. The
-    # chunker IS in the value, because
-    # it stands in for the content -- two files over one path that would produce
-    # different hunks are different files.
+    # row its unchunked twin keyed, which is what
+    # {Session::MarkedChangeset}'s no-default `rows.fetch(file)` needs.
+    # `rendered_lines` is outside it for a different reason -- it is DERIVED from
+    # the same content the chunker stands for, so two sources disagreeing about it
+    # is a bug in one of them rather than two files. The chunker IS in the value,
+    # because it stands in for the content.
     #
     # Equality over the chunker is the chunker's OWN, which decides how a caller
     # keeps two derivations of one corpus comparing equal. A rebuilt lambda never
     # compares equal, so a caller building lambdas must thread the same instances
-    # through; a chunker shaped as a VALUE -- a frozen `Data` answering `#call`
-    # -- compares equal across derivations and needs no threading at all. The
-    # second is the cheaper half and is the one to prefer when the chunker is
-    # being designed rather than inherited.
+    # through; a chunker shaped as a VALUE -- a frozen `Data` answering `#call` --
+    # compares equal across derivations and needs no threading at all.
     class LazyFile
-      # The vocabulary itself, not a copy of it -- {Source::ChangedFile}
-      # declares it and this is the same object, so a member dropped there
-      # raises here too. Resolvable at class-body time because `review.rb`
-      # requires `source` before this file, and {Source::ChangedFile} is defined
-      # in `source.rb`'s own module body rather than in one of its children --
-      # so it exists as soon as that line has run. `changeset` between the two
-      # is incidental: this constant stopped coming from there when the file
-      # value moved onto the port.
+      # The vocabulary itself, not a copy -- {Source::ChangedFile} declares it and
+      # this is the same object, so a member dropped there raises here too.
+      # Resolvable at class-body time because `review.rb` requires `source` before
+      # this file, and {Source::ChangedFile} is defined in `source.rb`'s own
+      # module body rather than in one of its children.
       STATUSES = Source::ChangedFile::STATUSES
 
       attr_reader :old_path, :new_path, :binary, :chunker, :rendered_lines
@@ -183,22 +164,21 @@ module Lain
       private
 
       # An asserted size is one a source can get WRONG, and this is the only
-      # place the mistake can still be caught. {Bounds} sums what it is told, so
-      # a single file reporting a negative cancels its neighbours: 250,000
-      # rendered lines pass a 30,000-line ceiling and go on to a `/critique`
-      # chunk 35x the context ceiling, which is precisely the
-      # success-that-isn't-one {Bounds} exists to refuse -- produced by {Bounds}
-      # itself, in silence. Downstream cannot check it without the walk this
-      # message exists to avoid, so the check is here or it is nowhere.
+      # place the mistake can still be caught. {Bounds} sums what it is told, so a
+      # single file reporting a negative cancels its neighbours: 250,000 rendered
+      # lines pass a 30,000-line ceiling and go on to a `/critique` chunk 35x the
+      # context ceiling -- the success-that-isn't-one {Bounds} exists to refuse,
+      # produced by {Bounds} itself, in silence. Downstream cannot check it
+      # without the walk this message avoids, so the check is here or nowhere.
       #
-      # There is no honest negative. Zero IS honest and is left alone: it is
-      # what a binary file, a mode-only change and an unrendered file all cost.
+      # There is no honest negative. Zero IS honest and is left alone: it is what
+      # a binary file, a mode-only change and an unrendered file all cost.
       #
-      # `Integer()` first, for {Bounds}' own reason -- a ceiling compared
-      # against a String is a `nil`-shaped failure with an `ArgumentError`'s
-      # cure. A decimal String is deliberately not blessed by any spec:
-      # `Integer("010")` is 8, and a line count that reads as octal is a defect
-      # nobody would look for.
+      # `Integer()` first, for {Bounds}' own reason -- a ceiling compared against
+      # a String is a `nil`-shaped failure with an `ArgumentError`'s cure. A
+      # decimal String is deliberately not blessed by any spec: `Integer("010")`
+      # is 8, and a line count that reads as octal is a defect nobody would look
+      # for.
       def sized(value)
         lines = Integer(value)
         raise ArgumentError, "a file cannot render #{lines} lines" if lines.negative?

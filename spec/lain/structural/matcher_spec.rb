@@ -5,8 +5,8 @@
 # would pass vacuously.
 require "English"
 
-# Lain::Structural::Matcher is THE single Ruby seam over Lain::Ext::AstGrep
-# (T1): no other unit calls the ext directly, so it alone would need to change
+# Lain::Structural::Matcher is THE single Ruby seam over Lain::Ext::AstGrep:
+# no other unit calls the ext directly, so it alone would need to change
 # on a breaking ext bump. It owns byte -> 1-based line conversion and the
 # supported-language allowlist -- both deliberately absent from the ext's own
 # byte-offsets-only contract (see ext/lain/src/astgrep.rs's module doc).

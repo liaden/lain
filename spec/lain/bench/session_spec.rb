@@ -69,11 +69,11 @@ RSpec.describe Lain::Bench::Session do
     it "records every Context constructor input, so a new kwarg cannot be dropped in silence" do
       header = parsed_records.find { |record| record["type"] == "session" }
       # `ts` is the Journal's own stamp on every record, not part of the header.
-      # `provider` is deliberately NOT a Context constructor input (RES2) -- the
+      # `provider` is deliberately NOT a Context constructor input -- the
       # provider choice lives beside the context, never inside it.
       recorded = header.keys - %w[type context_class head tools reminders ts provider]
       # `pipeline` is a live CODE collaborator (a Combinator or ->(workspace)
-      # provider), not serializable data (T21) -- like a `self.pipeline`-
+      # provider), not serializable data -- like a `self.pipeline`-
       # overriding subclass, it is reconstructed by the Loader's injectable
       # context_factory beside the recorded `context_class`, never journaled, so
       # it is excluded from the constructor inputs the header must carry.
@@ -81,7 +81,7 @@ RSpec.describe Lain::Bench::Session do
       expect(recorded.map(&:to_sym)).to match_array(expected)
     end
 
-    # RES2: the header names its provider, as pure data beside the model --
+    # The header names its provider, as pure data beside the model --
     # never constantized, the same idiom `context_class` already sets. The
     # kwarg is optional so every EXISTING caller (RunRecorder, VarianceFixtures)
     # keeps writing valid headers without threading a new argument through.
@@ -112,7 +112,7 @@ RSpec.describe Lain::Bench::Session do
     end
   end
 
-  # C2/AC4: this writer and SessionRecord.turn are byte-compatible twins -- one
+  # This writer and SessionRecord.turn are byte-compatible twins -- one
   # Loader reads both -- so a field one of them grows and the other does not is
   # a live session and a recorded one silently ceasing to share a format. The
   # keys are compared turn for turn, with and without a causal edge.

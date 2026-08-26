@@ -778,9 +778,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # The marker lives on the WINDOW and the buffer inside it is the human's to
     # change: `gf` on a sidebar row, a `:b#`, a quickfix jump or the plain
     # `:edit` used here all leave the window still marked `sidebar` while it
-    # displays a real, writable file. Focusing it by its marker is F34 returning
-    # under the sidebar's own name, and every other example in this block stays
-    # green while it does.
+    # displays a real, writable file. Focusing it by its marker lands the
+    # review in a real file again, under the sidebar's own name, and every
+    # other example in this block stays green while it does.
     it "does not land in a real file the human left in the sidebar's window" do
       open_changeset("docs/guide.txt", guide_old_lines)
       lua(<<~LUA, [slots["sidebar"], File.join(project, "docs/counter.txt")])
@@ -799,8 +799,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # BufWriteCmd that performs real file operations -- it is what oil.nvim,
     # fugitive and netrw put in a window -- so a stray keystroke there reaches
     # the filesystem exactly as it would in a `buftype = ""` buffer. Narrower
-    # than F34 (it needs a wandered sidebar window AND a `<CR>` fired from
-    # somewhere else), and narrow is how F34 itself survived a full round.
+    # than the plain wandered-window case (it needs a wandered sidebar window
+    # AND a `<CR>` fired from somewhere else), and narrow is how that defect
+    # survived a full round.
     it "does not land in a write-capable plugin buffer left in the sidebar's window" do
       open_changeset("docs/guide.txt", guide_old_lines)
       wandered = lua(<<~LUA, [slots["sidebar"]])
@@ -937,10 +938,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # SHOULD-FIX 6, and the ruling one language out: git hands the old side its
-  # CRs, nvim strips them from a `fileformat=dos` new side, so left alone every
-  # single line differs from its twin -- the diff calls the whole file changed
-  # and `foldmethod=diff` folds nothing at all.
+  # A panel should-fix, and the ruling one language out: git hands the old side
+  # its CRs, nvim strips them from a `fileformat=dos` new side, so left alone
+  # every single line differs from its twin -- the diff calls the whole file
+  # changed and `foldmethod=diff` folds nothing at all.
   describe "a file with CRLF line endings" do
     def crlf_old_lines = (1..40).map { |i| i == 20 ? "was line 20\r" : "line #{i}\r" }
 
@@ -962,11 +963,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # SHOULD-FIX 7. A stamp is a claim that this buffer IS the review. The new side
-  # is a real file buffer that is never wiped, stays listed and outlives the
-  # review, so a stamp left behind tells the note and diagnostic rails to anchor
-  # into a file nobody
-  # is reviewing -- a wrong answer rather than a missing one.
+  # A stamp is a claim that this buffer IS the review. The new side is a real
+  # file buffer that is never wiped, stays listed and outlives the review, so a
+  # stamp left behind tells the note and diagnostic rails to anchor into a file
+  # nobody is reviewing -- a wrong answer rather than a missing one.
   describe "stamps as the review moves on" do
     it "withdraws the stamps from the file the human has left" do
       open_changeset("docs/guide.txt", guide_old_lines)
@@ -998,7 +998,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # SHOULD-FIX 9. `drop_stale` matches on the `lain://review/OLD/` prefix, and
+  # `drop_stale` matches on the `lain://review/OLD/` prefix, and
   # every other lain buffer begins `lain://` too -- widening it by one path
   # segment wipes the human's session out from under them.
   describe "what the per-file wipe may not touch" do
@@ -1023,7 +1023,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # SHOULD-FIX 8. `vim.fn.bufnr(name)` -- how `named_buf` finds an existing
+  # `vim.fn.bufnr(name)` -- how `named_buf` finds an existing
   # buffer -- treats its argument as a PATTERN: measured, `…/weird/a[1].rb`
   # answers `…/weird/a1.rb`'s buffer even once the literal one exists. This
   # module is that function's first caller passing a path a human chose, and
@@ -1097,7 +1097,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T11. A survey of files as they stand presents ONE side, and Ruby says so on
+  # A survey of files as they stand presents ONE side, and Ruby says so on
   # the sidebar rail before any row is opened ({RpcThread::SET_REVIEW}'s third
   # argument). The old side is then not a window with an empty buffer in it --
   # it is not built at all, and neither is the buffer.
@@ -1170,10 +1170,10 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # which is why this one exists. `landing` prefers the navigator and REJECTS
     # it when it is not inert: a `gf` on a row, a `:b#`, a quickfix jump or a
     # plain `:edit` all leave the window still marked `sidebar` while it displays
-    # a real, writable file, which is F34 wearing the navigator's name. On a
-    # two-sided round the chain then ends on the old side, the one window that
-    # cannot be a file. A survey has no such window, so a fallback of `old_win`
-    # alone hands `nvim_set_current_win` a nil and the render raises
+    # a real, writable file, which is the same defect wearing the navigator's
+    # name. On a two-sided round the chain then ends on the old side, the one
+    # window that cannot be a file. A survey has no such window, so a fallback of
+    # `old_win` alone hands `nvim_set_current_win` a nil and the render raises
     # (`Invalid 'win': Expected Lua number`) AFTER it has already drawn the file
     # correctly -- the worst shape a refusal can take.
     it "lands on the file when the navigator is unsafe and the round has no old side" do

@@ -1,78 +1,60 @@
 -- The review's own TABPAGE, and the two entry points every review capability
--- renders through (T26). An epic already in flight has the journal, timeline,
--- inbox and request buffers laid out; a review needs room and must not fight
--- that, so it opens beside the session layout rather than over it -- `tabnew`
--- inside the same nvim, sidebar plus the diff pair, `gt` back to the session.
--- octo and diffview both do this, and `plugin/nvim/lua/lain/init.lua`'s
--- open_layout is the same `tabnew` + full-height-vsplit idiom, one tab over.
+-- renders through. An epic in flight already has the journal, timeline, inbox
+-- and request buffers laid out, so a review opens BESIDE the session layout
+-- rather than over it: `tabnew` inside the same nvim, sidebar plus the diff
+-- pair, `gt` back to the session.
 --
--- What the session layout is guaranteed is its window IDS AND BUFFERS, stated
--- that precisely because it is not quite "untouched": opening a tabpage raises
--- the tabline at the default 'showtabline', which costs every session window one
--- row (22 -> 21). Ids, buffers, window-local options, cursor position, alternate
+-- The session layout is guaranteed its window IDS AND BUFFERS, stated that
+-- precisely because it is not quite "untouched": opening a tabpage raises the
+-- tabline at the default 'showtabline', costing every session window one row
+-- (22 -> 21). Ids, buffers, window-local options, cursor position, alternate
 -- file and 'laststatus' are all measured identical either side.
 --
--- THE RULE FOR CALLERS, and it is the one T14/T15/T18 need: a window id from
--- {_G.__lain.review_layout} is a SNAPSHOT, correct when handed over and stale
--- after the human's next gesture. Do not cache one across renders. Ids do not
--- recycle in this editor and a stale one raises `Invalid window id` rather than
--- quietly hitting some other window, so the failure is loud rather than a render
--- landing in the wrong place -- but loud is not free, and the fix is to render
+-- THE RULE FOR CALLERS: a window id from {_G.__lain.review_layout} is a
+-- SNAPSHOT, correct when handed over and stale after the human's next gesture.
+-- Do not cache one across renders. Ids do not recycle in this editor and a stale
+-- one raises `Invalid window id` rather than quietly hitting some other window,
+-- so the failure is loud -- but loud is not free, and the fix is to render
 -- through {_G.__lain.review_place}, which re-ensures the layout and answers a
 -- freshly resolved id every time.
 --
 -- 41, the lowest free number in the capability band: this is a FOUNDATION the
--- later review modules (sidebar, diff, annotate, diagnostics, thread) render
--- through, and a module sees only the locals declared above it, so it has to
--- concatenate before all of them.
+-- later review modules render through, and a module sees only the locals
+-- declared above it.
 --
--- ONE new top-level name -- `review_panes`, the private helpers -- rather than
--- five: the chunk shares one scope and the binding cap is 60 UPVALUES per
--- function, so each top-level local is a name every later module pays for. The
--- two public entry points go on `_G.__lain`, which is where the runtime's
--- public surface lives.
+-- ONE new top-level name rather than five: the chunk shares one scope and the
+-- binding cap is 60 UPVALUES per function, so each top-level local is a name
+-- every later module pays for.
 --
--- The layout's own bookkeeping lives in VIM VARIABLES, not in a lua table, and
--- that choice is what keeps the repair honest: `vim.t[tab].lain_review` dies with
--- the tabpage and `vim.w[win].lain_review_slot` dies with the window, so there is
--- no registry to leave stale (octo's thread registry grows unboundedly for
--- exactly the opposite reason). It also survives the one thing a lua table would
--- get wrong: `:vsplit` copies window OPTIONS and NOT window variables (measured
--- -- the same fact 10_folds rides), so a human splitting the sidebar gets an
--- ordinary window, never a second window claiming to BE the sidebar.
---
--- The one piece of state that DOES outlive its window is what each slot last
--- held, and it is a hint rather than a record: see `buf_for`.
+-- The layout's own bookkeeping lives in VIM VARIABLES, not a lua table, which is
+-- what keeps the repair honest: `vim.t[tab].lain_review` dies with the tabpage
+-- and `vim.w[win].lain_review_slot` dies with the window, so there is no
+-- registry to leave stale. It also survives the one thing a lua table would get
+-- wrong: `:vsplit` copies window OPTIONS and NOT window variables (measured), so
+-- a human splitting the sidebar gets an ordinary window rather than a second
+-- window claiming to BE the sidebar.
 --
 -- "old" and "new" are {Lain::Review::SIDES}, restated here because a static
 -- chunk can derive nothing from Ruby. `layout_spec.rb` pins the two spellings
--- equal by reading this file, which is the only defence a cross-language
--- vocabulary has.
+-- equal by reading this file, the only defence a cross-language vocabulary has.
 --
--- SLOTS IS THE VOCABULARY, NOT THE ROUND. What a round OPENS is a subset of it
+-- SLOTS IS THE VOCABULARY, NOT THE ROUND. What a round OPENS is a subset
 -- (`opens`), because a survey of files as they stand presents only a new side --
--- but `old` stays spelled here, ordered here, and refusable by name here. That
--- distinction is what keeps four things working at once: `index_of` still gives
--- `anchor` a total order, `review_place` can still tell a MISSPELLED slot from
--- one this round did not open, `layout_spec.rb`'s cross-language pin still reads
--- this literal, and -- the one that matters -- `:LainThread` on a survey still
--- has an `old` slot to put the docent's conversation in, opened on demand
--- instead of refused inside a `define`d command.
+-- but `old` stays spelled, ordered and refusable BY NAME here. That keeps four
+-- things working at once: `index_of` still gives `anchor` a total order,
+-- `review_place` can still tell a MISSPELLED slot from one this round did not
+-- open, the cross-language pin still reads this literal, and `:LainThread` on a
+-- survey still has an `old` slot to put the docent's conversation in.
 local review_panes = { SLOTS = { "sidebar", "old", "new" } }
 
--- THE ROUND'S SIDES, IN TRANSIT ONLY. `set_review` carries {Review::SIDES} for
--- the round here, and `ensure` writes them through to `vim.t[tab]` -- because on
--- the FIRST sidebar paint there is no review tabpage yet to write them to
--- (`review_place("sidebar")` is what creates it), so there is one hop with
--- nowhere durable to stand.
+-- THE ROUND'S SIDES, IN TRANSIT ONLY. `set_review` carries {Review::SIDES} here
+-- and `ensure` writes them through to `vim.t[tab]`, because on the FIRST sidebar
+-- paint there is no review tabpage yet to write them to.
 --
--- This is not the registry the header rules out, and the difference is what it
--- holds: no window id, no bufnr, no tabpage -- nothing that can dangle, and
--- nothing anything reads to decide where a render goes. The durable home is the
--- tabpage variable, which dies with the tabpage exactly as `lain_review` does.
--- `rpc_thread.rb` states the other half: `set_review` lands on EVERY redraw, so
--- this is re-posted every paint and a value left here cannot drift from the
--- round the human is looking at.
+-- Not the registry the header rules out: no window id, no bufnr, no tabpage --
+-- nothing that can dangle. The durable home is the tabpage variable, which dies
+-- with the tabpage. `set_review` lands on EVERY redraw, so this is re-posted
+-- every paint and a value left here cannot drift from the round on screen.
 review_panes.sides = nil
 
 -- Slot order IS left-to-right window order, which is what makes "put the
@@ -99,14 +81,14 @@ end
 -- The sides off the wire, or nil for a round that said nothing.
 --
 -- THE TYPE TEST DOES REAL WORK: a Ruby nil crosses msgpack as `vim.NIL`, which
--- is USERDATA and therefore truthy, so a truthiness check would take "this
+-- is USERDATA and therefore TRUTHY, so a truthiness check would take "this
 -- caller sends no sides" for a list of them. Filtered against the vocabulary as
--- well, and the navigator dropped from it -- `sides` names {Review::SIDES}, and
--- a round is not allowed to say the sidebar is optional.
+-- well, with the navigator dropped: a round is not allowed to say the sidebar is
+-- optional.
 --
 -- An empty result answers nil rather than "a round with no sides at all": Ruby's
 -- contract is that the list is never empty, and a layout with no file in it is
--- not a better answer to a wire that broke than the whole vocabulary is.
+-- not a better answer to a broken wire than the whole vocabulary is.
 function review_panes.carried(sides)
   if type(sides) ~= "table" then
     return nil
@@ -147,16 +129,12 @@ function review_panes.opens(tab)
 end
 
 -- Whether this round opens a slot at all, asked without a tabpage in hand --
--- `47_diff` needs it before it decides whether to BUILD an old side, and a
--- buffer nothing will ever show is the waste this card is about.
+-- `47_diff` needs it before deciding whether to BUILD an old side.
 --
 -- IT FINDS ITS OWN TABPAGE where `opens` is handed one, and the split is the
--- question each answers rather than an inconsistency. `opens` is asked BY the
--- layout, mid-`ensure`, where the tabpage is already resolved and re-resolving
--- it would be a second answer to a question one line up. `holds` is asked by a
--- module that has no tabpage and no business acquiring one: threading `tab`
--- through `open_changeset` purely to ask about the round would make every
--- caller of a render entry point carry the layout's own bookkeeping.
+-- question each answers: `opens` is asked BY the layout mid-`ensure`, where the
+-- tabpage is already resolved, while `holds` is asked by a module that has no
+-- tabpage and no business acquiring one.
 function review_panes.holds(slot)
   local tab = review_panes.tab()
   local opens = tab ~= nil and review_panes.opens(tab) or review_panes.SLOTS
@@ -168,21 +146,16 @@ function review_panes.holds(slot)
   return false
 end
 
--- The hand-off: what `set_review` carried, written onto the tabpage the moment
--- there is one. Answers whether the round CHANGED, which is the only moment a
--- window may be shed -- a round re-posting the same fact on its next redraw must
--- not take away a pane opened since (the docent's, on a survey).
+-- What `set_review` carried, written onto the tabpage the moment there is one.
+-- Answers whether the round CHANGED, which is the only moment a window may be
+-- shed -- a round re-posting the same fact on its next redraw must not take away
+-- a pane opened since. A tabpage that held nothing is not a change: calling it
+-- one would make the first paint of every round a repair.
 --
--- A tabpage that held nothing is not a change: there is nothing open to shed,
--- and calling it one would make the first paint of every round a repair.
---
--- THE ONE ASYMMETRY, stated so a reader does not have to find it: a round that
--- sends NO sides writes nothing, so it inherits whatever the tabpage already
--- held rather than resetting it to the whole vocabulary. That is deliberate --
--- "the wire said nothing" is not "the round has both sides", and clobbering a
--- known fact with an absent one is the worse of the two guesses -- and it is
--- unreachable today: `review/surface/neovim.rb` sends `changeset.sides` on
--- every sidebar render, and {Review::Source#sides} is never empty.
+-- THE ONE ASYMMETRY: a round that sends NO sides writes nothing, inheriting
+-- whatever the tabpage held rather than resetting it to the whole vocabulary.
+-- "The wire said nothing" is not "the round has both sides", and clobbering a
+-- known fact with an absent one is the worse guess.
 function review_panes.carry(tab)
   local sides = review_panes.sides
   if sides == nil then
@@ -236,11 +209,9 @@ function review_panes.remember(tab, slot, buf)
 end
 
 -- The remembered buffer if it is STILL a buffer, else a fresh scratch
--- placeholder. The validity check is not defensive habit: a slot remembers a
--- bufnr the review no longer controls, and the diff pair's buffers are wiped and
--- re-made per file -- so restoring one blind hands `nvim_open_win` an invalid
--- buffer and the whole render raises. What a slot remembers is a hint, checked
--- before it is believed.
+-- placeholder. Not defensive habit: the diff pair's buffers are wiped and
+-- re-made per file, so restoring one blind hands `nvim_open_win` an invalid
+-- buffer and the whole render raises. What a slot remembers is a HINT.
 --
 -- `bufhidden = "wipe"` on the placeholder is what keeps repeated repairs from
 -- littering the buffer list: the moment a real render replaces it, it is gone.
@@ -310,13 +281,11 @@ end
 -- API for creating a tabpage without entering it. Both callers put the human
 -- back where they were, so nothing above this function moves them.
 --
--- `created` is answered by the two places that actually create a window, and NOT
--- by re-reading `map()` afterwards. That read is the version that shipped and it
--- was dead code: the build branch claims the sidebar's slot marker before
--- `map()` runs, so "is the sidebar new" came back false on the one path where it
--- is always true, and a first open got an equal-third sidebar at 26 columns with
--- no 'winfixwidth' -- while every later repair got the 40 the reader would have
--- assumed all along.
+-- `created` is answered by the two places that actually create a window, NOT by
+-- re-reading `map()` afterwards: the build branch claims the sidebar's slot
+-- marker before `map()` runs, so "is the sidebar new" came back false on the one
+-- path where it is always true, and a first open got an equal-third sidebar at
+-- 26 columns with no 'winfixwidth'.
 function review_panes.ensure()
   local tab = review_panes.tab()
   local created = {}
@@ -363,10 +332,9 @@ end
 
 -- Present the review: ensure the layout and go there. The ONLY entry point that
 -- takes focus, because a review is something lain handed the human and asked
--- them to work on -- the same reasoning as set_compose and open_review.
+-- them to work on.
 --
--- Its answer is a SNAPSHOT and must not be cached across renders: the ids are
--- right when they are handed over and go stale on the human's next gesture. Use
+-- Its answer is a SNAPSHOT and must not be cached across renders. Use
 -- {review_place}, which re-ensures and answers a fresh id, as the seam.
 --
 -- @return slot -> window id, for every slot THIS ROUND OPENS -- which is the
@@ -386,27 +354,22 @@ end
 -- returned is that render's, freshly resolved.
 --
 -- MOVES NOBODY, ever -- including when it has to build the tabpage from nothing.
--- Closing the review tabpage is the human's dismiss gesture, and rebuilding it
--- for a render that arrives afterwards is right (the review is still open, and
--- dropping the render would lose it), but a render is not a presentation: an
--- async one that yanked them out of the session tab to watch it land is the
--- card's own "session layout untouched" defect one level up. `tabnew` inside
--- `ensure` cannot help entering the new tabpage, so the entry that was NOT a
--- presentation puts them back.
+-- Closing the review tabpage is the human's dismiss gesture and rebuilding it
+-- for a later render is right, but a render is not a presentation: an async one
+-- that yanked them out of the session tab to watch it land is the "session
+-- layout untouched" defect one level up. `tabnew` inside `ensure` cannot help
+-- entering the new tabpage, so this puts them back.
 --
--- An unknown slot is an ERROR naming both it and the slots that exist: a
--- misspelled slot would otherwise render into nothing at all, and present as a
--- view that draws nothing rather than as the typo it is.
+-- An unknown slot is an ERROR naming both it and the slots that exist: it would
+-- otherwise render into nothing at all and present as a view that draws nothing
+-- rather than as the typo it is.
 --
--- A slot THIS ROUND DID NOT OPEN is the other case entirely, and it OPENS. On a
--- survey the human stands in the new side, so `:LainThread` asks for
--- `OPPOSITE["new"]` and the thread pane IS the `old` slot -- a slot the round
--- had no reason to build in advance and every reason to build now that
--- something is asking. Without this the placement would hand
+-- A slot THIS ROUND DID NOT OPEN is the other case, and it OPENS. On a survey the
+-- human stands in the new side, so `:LainThread` asks for `OPPOSITE["new"]` and
+-- the thread pane IS the `old` slot. Without this the placement would hand
 -- `nvim_win_set_buf` a nil window inside a `define`d command: an `error()`, a
--- traceback and a blocking hit-enter prompt, which is the shape this whole
--- surface exists to keep out. The third window appears when there is something
--- to put in it, and `ensure` closes nothing, so it stays.
+-- traceback and a blocking hit-enter prompt, the shape this whole surface exists
+-- to keep out.
 --
 -- @return the window id the buffer landed in
 function _G.__lain.review_place(slot, buf)

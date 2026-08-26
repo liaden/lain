@@ -5,9 +5,8 @@ require "async"
 module Lain
   module Exec
     # The out-of-process backend: the same `sh -c` command shape, executed by
-    # the lain-core daemon over msgpack-RPC ({Lain::Core::Client#call}). One RPC
-    # round trip per command; the caller owns the daemon's lifecycle and the
-    # Async reactor it runs in.
+    # the lain-core daemon over msgpack-RPC. One RPC round trip per command; the
+    # caller owns the daemon's lifecycle and the Async reactor it runs in.
     #
     # ⚠️ This class SHADOWS {Lain::Core} for everything lexically inside
     # `Lain::Exec` -- a bare `Core::Client` here resolves to
@@ -23,11 +22,10 @@ module Lain
     # remove-the-key marker) takes it away.
     class Core
       # Seconds past the command's own timeout before this side stops believing
-      # the daemon will enforce it. The caller owns its deadline: pre-3b8c047,
-      # pipe-holding grandchildren held a 0.5s server timeout for 5.0s, and a
-      # boundary that misses its own deadline must fail rather than park the
-      # loop. Generous, because on a healthy daemon it covers only
-      # kill+reap+reply latency.
+      # the daemon will enforce it. Pre-3b8c047, pipe-holding grandchildren held
+      # a 0.5s server timeout for 5.0s, and a boundary that misses its own
+      # deadline must fail rather than park the loop. Generous, because on a
+      # healthy daemon it covers only kill+reap+reply latency.
       GRACE = 5.0
 
       # @param client [#call] a started {Lain::Core::Client}

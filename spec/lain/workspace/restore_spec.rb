@@ -188,7 +188,7 @@ RSpec.describe Lain::Workspace::Restore do
     end
   end
 
-  # Fix round (FIX 2, from panel probe 6): apply is delete-then-write with no
+  # Fix round (from panel probe 6): apply is delete-then-write with no
   # rollback, so a mid-apply IO failure leaves disk in a state no snapshot
   # recorded. What the fix owes is not atomicity but TRUTH: the raised error
   # names what landed, and the in-force ledger advances per successful
@@ -249,7 +249,7 @@ RSpec.describe Lain::Workspace::Restore do
     end
   end
 
-  # W1 froze the payload format for exactly this: keys are root-relative, so
+  # The payload format was frozen for exactly this: keys are root-relative, so
   # the injected restore root -- not the recorded one -- says where they land.
   describe "relocated restore" do
     it "restores into a different root than the snapshot recorded, creating directories" do
@@ -262,7 +262,7 @@ RSpec.describe Lain::Workspace::Restore do
     end
   end
 
-  # A total-deletion snapshot is an EMPTY file map (W1 FIX 1); restoring it
+  # A total-deletion snapshot is an EMPTY file map; restoring it
   # means deleting the write-set files, never resurrecting them.
   describe "total-deletion snapshot" do
     it "restores the empty map by deleting the write-set files" do
@@ -329,7 +329,7 @@ RSpec.describe Lain::Workspace::Restore do
       expect(File.binread(outside)).to eq("edited since")
     end
 
-    # Fix round (FIX 1, from panel probe 8): the lexical key check cannot see a
+    # Fix round (from panel probe 8): the lexical key check cannot see a
     # symlink AT the path -- File.binwrite follows links, so a link planted at
     # a managed path would carry recorded bytes wherever it points, including
     # outside the root. A symlink at any managed path refuses like an escaping

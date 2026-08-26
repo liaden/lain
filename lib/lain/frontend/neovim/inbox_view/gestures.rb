@@ -7,10 +7,8 @@ module Lain
         # A keypress turned into an open set, or into the sentence saying why
         # none opened. {InboxView} PROJECTS the record stream onto rows; this
         # RESOLVES a gesture against the rows it drew -- which rendering the
-        # editor is holding, which set that line named in it, whether that set
-        # is still pending, and whether it can be rebuilt at all. Four
-        # questions, four different answers, and none of them is the
-        # projection's business; the class carried both until `Metrics` said so.
+        # editor is holding, which set that line named in it, whether that set is
+        # still pending, and whether it can be rebuilt at all.
         #
         # It holds {InboxView}'s own `@pending` Hash, live rather than copied:
         # the arrival that mutates it and the gesture that reads it are the
@@ -35,28 +33,23 @@ module Lain
           # since been answered or withdrawn; or the record on it is no question
           # set at all.
           #
-          # Written to `spec/refusal_width_discipline_spec.rb`'s bar, which is
-          # what took {UNSHOWN} from 194 rendered characters to here. Each keeps
-          # its condition and its remedy and gives up the explanation between
-          # them; this comment is where that explanation now lives.
+          # Written to `spec/refusal_width_discipline_spec.rb`'s bar, which took
+          # {UNSHOWN} from 194 rendered characters to this. Each keeps its
+          # condition and its remedy and gives up the explanation between them.
           UNSHOWN = "#{NAME} re-rendered since %<generation>s -- press again on the row you want".freeze
           NO_SET = "no question set on #{NAME} line %d".freeze
           RETIRED = "#{NAME} line %d is not pending -- press again on a listed row".freeze
           UNREADABLE = "the question set on #{NAME} line %d cannot be read -- %s".freeze
 
-          # A fifth, and it is the row that is hardest to explain: the set on it
-          # HAS been answered, and it is still listed because a row clears only
-          # when the agent's committed turn cites the answer -- a whole model
-          # round trip later. Re-rendering it would hand the human a fresh
-          # UNANSWERED document over the ticks they just made, so the gesture is
-          # refused and the sentence says which of the two states this is.
-          # It says CLEARS rather than warning that reopening would blank the
-          # document, because only one of those fits the rail and only one is an
-          # instruction: "wait" is what the human has to do, and the blanking is
-          # why -- which is what this comment is for.
+          # A fifth: the set HAS been answered and is still listed, because a row
+          # clears only when the agent's committed turn cites the answer -- a
+          # whole model round trip later. Re-rendering it would hand the human a
+          # fresh UNANSWERED document over the ticks they just made. The sentence
+          # says CLEARS rather than warning about the blanking, because "wait" is
+          # what the human has to do and the blanking is only why.
           ANSWERED = "#{NAME} line %d is answered -- it clears once the agent takes it".freeze
 
-          # The two the ADVANCE answers with (T16). No line number in either:
+          # The two the ADVANCE answers with. No line number in either:
           # that gesture is not a cursor, it is "the human just submitted a set,
           # show them the next one", so the sentences name the surface instead.
           NOTHING_NEXT = "nothing further is pending -- #{NAME} lists no more question sets".freeze
@@ -79,26 +72,16 @@ module Lain
           # The `<CR>`/`r` gesture, once the buffer it came from is identified.
           #
           # KNOWN, OPEN, AND NOT WHAT THE STAMP CATCHES -- the stationary cursor.
-          # The stamp answers "which rendering is this line a line OF", and it
-          # cannot answer "is this still the set the human AIMED at". Cursor on
-          # item B; a consuming turn retires A; the list re-renders under a cursor
-          # that did not move; `<CR>` carries the CURRENT stamp, every check here
-          # passes, and whichever set took those lines opens. Everything is
-          # behaving as specified, which is why no check in this method can see it.
-          #
-          # T12 WIDENED IT AND DID NOT CREATE IT, exactly as multi-line items did
-          # on lain://approval: while every item was one line a shifted cursor often
-          # landed on a line the editor could tell was no row and swallowed; a
-          # four-line item makes the same shift land inside another ANSWERABLE one.
-          # Opening the wrong question set is cheaper than approving the wrong
-          # command and is still wrong.
-          #
-          # {Frontend::Neovim::ApprovalView#decide} carries the full analysis --
-          # every mitigation assessed, all blocked or contradicting a pinned
-          # contract, and the cheap-looking fifth route refuted -- and it is carried
-          # as a follow-up card for both surfaces rather than restated here. What
-          # belongs here is that it applies to THIS gesture too, because this is
-          # the method a reader will be standing in when they wonder.
+          # The stamp answers "which rendering is this line a line OF", never "is
+          # this still the set the human AIMED at". Cursor on item B; a consuming
+          # turn retires A; the list re-renders under a cursor that did not move;
+          # `<CR>` carries the CURRENT stamp, every check here passes, and
+          # whichever set took those lines opens. Multi-line rendering WIDENED it
+          # rather than creating it: a shifted cursor used to land on a line the
+          # editor could tell was no row, where a four-line item makes the same
+          # shift land inside another ANSWERABLE one.
+          # {Frontend::Neovim::ApprovalView#decide} carries the full analysis;
+          # what belongs here is that it applies to THIS gesture too.
           # @return [Opened]
           def open(line, generation)
             return unopened(format(UNSHOWN, generation: generation.inspect)) unless
@@ -107,21 +90,18 @@ module Lain
             listed(@renderings.digest_at(line, generation), line)
           end
 
-          # The :LainReply gesture, which is {#open}'s question asked for an
-          # ANSWER: the same four checks against the same rendering, answering
-          # WHICH SET the human aimed at rather than opening a document for it.
-          # Two gestures, one resolution, so an answer and an open can never
+          # {#open}'s question asked for an ANSWER: the same checks against the
+          # same rendering, answering WHICH SET the human aimed at rather than
+          # opening a document for it, so an answer and an open can never
           # disagree about the row under one cursor.
           #
-          # It stops before {#offer} and that is the whole of the difference:
+          # It stops before {#offer}, and that is the whole of the difference:
           # opening rebuilds the set into a fresh document, which is precisely
           # what an answer must not do to the words the human just typed.
           #
-          # Each refusal it can give is one a bare digest cannot carry, and
-          # every one of them was reaching the human as "the inbox line
-          # offering it is stale: nothing you type here is recorded" -- said
-          # about a LIVE row, by the directory, because a nil digest is all it
-          # was given to explain.
+          # Each refusal it gives is one a bare digest cannot carry: told only a
+          # nil digest, the directory reported every one of them to the human as
+          # "the inbox line offering it is stale", about a LIVE row.
           # @return [Opened]
           def answering(line, generation)
             return unopened(format(UNSHOWN, generation: generation.inspect)) unless
@@ -132,17 +112,14 @@ module Lain
 
           # The advance: the first listed set the human has NOT answered. A Hash
           # answers `find` in insertion order, which is the order the rows were
-          # rendered in, so "the one the inbox lists first" needs no second walk
-          # to agree with the lines.
+          # rendered in, so this needs no second walk to agree with the lines.
           #
-          # It skips EVERY answered set, not the one most recently answered, and
-          # that is the whole of the difference: a row is retired by a committed
-          # turn citing it, which is a model round trip away and, for a set
-          # another agent asked, does not land until THAT agent commits. Told
-          # only the last digest, the advance walked A -> B -> A -> B forever,
-          # re-opening answered sets as blank documents and leaving C
-          # unreachable -- silently, because a second answer to a resolved set
-          # is dropped as {Promise::AlreadyResolved}.
+          # It skips EVERY answered set, not the one most recently answered: a row
+          # is retired by a committed turn citing it, a model round trip away.
+          # Told only the last digest, the advance walked A -> B -> A -> B
+          # forever, re-opening answered sets as blank documents and leaving C
+          # unreachable -- silently, because a second answer to a resolved set is
+          # dropped as {Promise::AlreadyResolved}.
           # @return [Opened]
           def open_next
             digest, item = @pending.find { |listed_digest, _| !@answered.include?(listed_digest) }
@@ -178,16 +155,14 @@ module Lain
             Opened.new(digest:, report: "answering #{digest}")
           end
 
-          # The open itself, shared by the gesture and the advance. The rebuild
-          # is {Question::Set.from_body}, which reads only the keys it owns, so
-          # the same body that rendered the one-line summary rebuilds exactly
-          # the set that was asked. A body that is no set at all (a bare
-          # `{"question" => ...}` from before sets existed) is REPORTED rather
-          # than raised: this answers a keystroke, and a gesture that cannot be
-          # honoured owes the human a sentence, not an exception on somebody
-          # else's thread. The WORDING of that sentence is the caller's -- one
-          # names a line, the other names the surface -- which is why it rides
-          # as a block.
+          # Shared by the gesture and the advance. {Question::Set.from_body}
+          # reads only the keys it owns, so the same body that rendered the
+          # one-line summary rebuilds exactly the set that was asked. A body that
+          # is no set at all is REPORTED rather than raised: this answers a
+          # keystroke, and a gesture that cannot be honoured owes the human a
+          # sentence, not an exception on somebody else's thread. The WORDING is
+          # the caller's -- one names a line, the other names the surface --
+          # which is why it rides as a block.
           def offer(digest, item)
             refusal = @questions.open(rebuilt(item), digest)
             refusal.nil? ? Opened.new(digest:, report: "opened #{digest}") : unopened(refusal)

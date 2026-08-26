@@ -6,23 +6,20 @@ module Lain
   module Bench
     class PlanSweep
       # Loads the one fixed multi-step plan and its scripted runs from committed
-      # files (explicit paths, no lib->spec fixture coupling -- the {ArmSweep}
-      # discipline). One authored {Plan::Document} drives all three seam
-      # densities: the file carries the "author-thinned" seams, and #document_for
-      # DERIVES `every` and `none` from it with P1's `insert_seam`/`remove_seam`,
-      # so a single plan spans the density axis and switching density changes zero
-      # plan CONTENT -- only where the seams sit.
+      # files. One authored {Plan::Document} drives all three seam densities:
+      # the file carries the author-thinned seams, and {#document_for} DERIVES
+      # `every` and `none` from it with the document's own `insert_seam` and
+      # `remove_seam` -- so a single plan spans the density axis and switching
+      # density changes zero plan CONTENT, only where the seams sit.
       class Fixture
-        # A missing fixture file -- a checkout or packaging mistake, never user
-        # input to refuse. Named and path-bearing like {ArmSweep::MissingFixture}.
+        # A checkout or packaging mistake, never user input to refuse.
         class MissingFixture < Lain::Error; end
 
         # A fixture that loaded but is structurally broken -- a plan that parsed
-        # no steps, or a scripted run missing a plan-required step. Distinct from
-        # {MissingFixture} (the file is absent): here the file is present and
-        # wrong, and a silent pass would yield a plausible-looking VACUOUS report
-        # (grader populated, every cost column zero, no signal). The named,
-        # path/run/step-bearing sibling {ArmTasks::MalformedTask} is the precedent.
+        # no steps, or a scripted run missing a plan-required step. Distinct
+        # from {MissingFixture}, where the file is absent: here it is present
+        # and wrong, and a silent pass would yield a plausible-looking VACUOUS
+        # report with the grader populated, every cost column zero, no signal.
         class MalformedFixture < Lain::Error; end
 
         # The three seam densities the sweep sweeps. `thinned` is the plan as its
@@ -31,10 +28,9 @@ module Lain
         # one chunk -- the reactive baseline's shape (no plan seam ever fires).
         DENSITIES = %i[every thinned none].freeze
 
-        # One scripted run: the file each step produced, `step_id => {file,
-        # content}`. What a step wrote depends only on the run, never on the arm
-        # -- so the produced-work grade is arm-invariant and the shape signal
-        # lives entirely in tokens and cache-writes.
+        # What a step wrote depends only on the run, never on the arm, so the
+        # produced-work grade is arm-invariant and the shape signal lives
+        # entirely in tokens and cache-writes.
         ScriptedRun = Data.define(:id, :steps) do
           def file_for(step_id) = step(step_id).fetch("file")
           def content_for(step_id) = step(step_id).fetch("content")

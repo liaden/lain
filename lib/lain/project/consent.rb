@@ -9,31 +9,30 @@ module Lain
     # Whether this project's `[approval]` table may GRANT authority.
     #
     # `.lain/config.toml` is a file a repository CARRIES, and {Config::Answers}
-    # lets it name call shapes to pre-approve. Honoured unconditionally that
-    # makes `git clone && lain up ./thing` hand a stranger the first
-    # deterministic rung of {Approval::Escalation} -- ahead of the queue, ahead
-    # of any human, and composed with {Resolver}'s rung 3, where the nearest
-    # ancestor `.lain/` wins. So the pre-approval table is honoured only from a
-    # root the user has consented to. Every OTHER table loads as it always did;
-    # this one is gated because it is the only one that can grant authority.
+    # lets it name call shapes to pre-approve. Honoured unconditionally that makes
+    # `git clone && lain up ./thing` hand a stranger the first deterministic rung
+    # of {Approval::Escalation} -- ahead of the queue, ahead of any human, and
+    # composed with {Resolver}'s rung 3, where the nearest ancestor `.lain/` wins.
+    # So the pre-approval table is honoured only from a root the user has
+    # consented to. Every OTHER table loads as it always did; this one is gated
+    # because it alone can grant authority.
     #
     # == Restricting needs no consent. Granting does.
     #
     # The asymmetry runs ONE way and it is the whole design: an unconsented
     # root's `[[approval.deny]]` and `[[approval.deny_tool]]` are honoured in
     # full, and only `[[approval.allow]]` is dropped. A refusal grants nothing,
-    # so gating it would block the SAFE direction -- a cloned repository could
-    # no longer say "never run bash here" -- which is the failure this class
-    # would be introducing rather than the one it exists to prevent. The
-    # strictest remembered answer still wins inside {Approval::Remembered}, so
-    # a consented root that both allows and denies one shape denies it.
+    # so gating it would block the SAFE direction -- a cloned repository could no
+    # longer say "never run bash here". The strictest remembered answer still
+    # wins inside {Approval::Remembered}, so a consented root that both allows
+    # and denies one shape denies it.
     #
     # == What consent is
     #
     # A per-root mark in XDG state ({Record}), keyed by a full-width digest of
     # the ROOT -- so two checkouts carrying byte-identical configs are two
-    # decisions, and a decision survives into every later session. It is
-    # granted by exactly two things:
+    # decisions, and a decision survives into every later session. Exactly two
+    # things grant it:
     #
     # * an explicit `--root`/`--cwd`, which {Project#detected_by} reports as
     #   `:flag` -- naming a directory on the command line IS the intent, and
@@ -43,16 +42,16 @@ module Lain
     #   frontend may hold a terminal.
     #
     # The default `confirm:` is {Unattended}, which answers `false`. A headless
-    # run -- cron, a pipe, a supervisor -- is therefore NOT consented, and the
-    # ordering is deliberate: no path here turns "nobody could be asked" into
-    # "yes". Nobody is asked at all unless the file actually carries an `allow`
-    # entry, so a project with nothing to grant never sees a prompt.
+    # run -- cron, a pipe, a supervisor -- is therefore NOT consented: no path
+    # here turns "nobody could be asked" into "yes". Nobody is asked at all
+    # unless the file carries an `allow` entry, so a project with nothing to
+    # grant never sees a prompt.
     #
     # == Exact shapes only
     #
-    # This class widens nothing about matching. {Approval::Remembered} compares
-    # a whole call shape by value, never a prefix, which is why consent can be
-    # a coarse per-root yes at all: `approval/rule.rb`'s MA-1 hazard (a
+    # This class widens nothing about matching. {Approval::Remembered} compares a
+    # whole call shape by value, never a prefix, which is why consent can be a
+    # coarse per-root yes at all: `approval/rule.rb`'s hazard (a
     # `command.start_with?("git ")` rule allowing `git -c core.fsmonitor=id
     # status`) needs a partial match, and there is none to be had here.
     #
@@ -61,8 +60,8 @@ module Lain
     # {.for} answers a consent that grants nothing when the file will not load,
     # and reports it once through `notice:` -- {CLI::EpicMount.for}'s posture,
     # including its trap: Ruby evaluates default arguments BEFORE the body's
-    # rescue is armed, so every default that can raise lives on {.resolve}
-    # inside the guarded region rather than in this method's signature.
+    # rescue is armed, so every default that can raise lives on {.resolve} inside
+    # the guarded region rather than in this method's signature.
     class Consent
       # Where the marks live under {Paths#state_home}.
       DIR = "consent"
@@ -71,20 +70,16 @@ module Lain
       SILENT = ->(_message) {}
 
       # The rung an explicit `--root`/`--cwd` produces, read from
-      # {Project::DETECTED_BY} rather than spelled again, so a rename of the
-      # rung breaks loudly here instead of silently ceasing to grant.
+      # {Project::DETECTED_BY} rather than spelled again, so a rename of the rung
+      # breaks loudly here instead of silently ceasing to grant.
       FLAG = :flag
 
       IGNORED = "this project's remembered approvals are not in force: %<reason>s"
-      # `--root` ALONE, and that is read off T6's own wiring rather than
-      # guessed: `exe/lain`'s `project_override` builds
-      # `resolved_project(root:, cwd: cwd || root)`, so `--cwd` defaults to the
-      # root and naming the project is one flag. A remedy that told the user to
-      # pass both would be teaching them a longer command than the binary needs.
-      #
-      # Shell-escaped because the line's whole value is that it can be pasted:
-      # a root with a space in it otherwise renders a command that runs
-      # somewhere else.
+      # `--root` ALONE, read off the binary's own wiring rather than guessed:
+      # `exe/lain`'s `project_override` builds `resolved_project(root:, cwd: cwd
+      # || root)`, so naming the project is one flag. Shell-escaped because the
+      # line's whole value is that it can be pasted -- a root with a space in it
+      # otherwise renders a command that runs somewhere else.
       UNCONSENTED = "%<path>s pre-approves %<count>d call shape(s); they are ignored, because this project root " \
                     "has not been consented to. Every one of those calls will be put to you as it happens. " \
                     "To consent to this root, re-open it with: lain chat --root %<root>s"
@@ -92,8 +87,6 @@ module Lain
       # The confirmer of a run nobody is watching, and the reason it is a Null
       # Object rather than a nil check: every branch below asks the same
       # question, and the one answer this default may give is the refusal.
-      # A run that cannot surface a prompt is not consented -- never consented
-      # by default.
       class Unattended
         def call(_project) = false
       end
@@ -105,20 +98,17 @@ module Lain
       # == Presence is NOT the test
       #
       # A directory, a dangling symlink and a half-written file all EXIST, and
-      # every one of them would grant if existence were the question. So a mark
-      # counts when it is a REGULAR FILE whose contents are exactly the root
-      # being asked about. That also makes a digest collision inert -- a
-      # colliding root's mark names the other root and grants nothing -- which
-      # is defence in depth behind the full-width key below.
+      # every one would grant if existence were the question. So a mark counts
+      # when it is a REGULAR FILE whose contents are exactly the root being asked
+      # about, which also makes a digest collision inert.
       #
       # The REGULAR-FILE half is what refuses a FIFO, and the rescue would not
       # have: reading a FIFO with no writer blocks forever, so existence alone
       # would let anyone able to create a file in the state home wedge every
-      # launch. It is a check-then-use, and that residual is accepted rather
-      # than missed -- the path can be swapped between `File.file?` and
-      # `File.read` -- but it narrows the attack from "plant it once and every
-      # launch hangs" to "win a race on each one, with the same write access
-      # either way".
+      # launch. It is a check-then-use, and that residual is accepted rather than
+      # missed -- but it narrows the attack from "plant it once and every launch
+      # hangs" to "win a race on each one, with the same write access either
+      # way".
       #
       # == Full-width, unlike {Paths#project_hash}
       #
@@ -134,12 +124,10 @@ module Lain
 
         # Every `root` below is ALREADY RESOLVED, and this class depends on that
         # rather than re-establishing it: {Project#initialize} realpaths both of
-        # its paths, so a `Project#root` cannot carry an unresolved spelling.
-        # This class kept a private copy of {Paths#resolved}'s expand-then-
-        # realpath recipe until the T18 panel proved it dead -- replacing it
-        # with a bare `File.expand_path` changed no behaviour anywhere -- so
-        # what stands here is the precondition, stated, instead of a second
-        # implementation of it that no caller can exercise.
+        # its paths, so a `Project#root` cannot carry an unresolved spelling. The
+        # private copy of {Paths#resolved}'s recipe that used to stand here was
+        # proved dead -- replacing it with a bare `File.expand_path` changed no
+        # behaviour anywhere -- so what stands is the precondition, stated.
         #
         # @param paths [Paths] supplies the state home the marks live under
         def initialize(paths: Paths.new)
@@ -180,13 +168,12 @@ module Lain
 
         def mark_for(root) = "#{root}\n"
 
-        # nil for anything that is not a regular file, because every one of
-        # those is "no mark here" and the caller's question is a Boolean. An
-        # unreadable regular file is NOT rescued here and deliberately: it
-        # raises into {Consent.for}'s own rescue, which answers not-consented
-        # AND names the file through `notice:`. A local rescue would answer
-        # not-consented in silence and then let the flag rung try to rewrite a
-        # mark it just failed to read.
+        # nil for anything that is not a regular file, because every one of those
+        # is "no mark here". An unreadable regular file is NOT rescued here and
+        # deliberately: it raises into {Consent.for}'s own rescue, which answers
+        # not-consented AND names the file through `notice:`. A local rescue would
+        # answer not-consented in silence and then let the flag rung try to
+        # rewrite a mark it just failed to read.
         def recorded(path) = File.file?(path) ? File.read(path, LIMIT) : nil
 
         def resolved_target(path) = File.exist?(path) ? File.realpath(path) : path
@@ -235,12 +222,11 @@ module Lain
       #
       # NOTHING TO GRANT IS NOTHING TO RECORD, and that guard comes FIRST, ahead
       # of the flag rung, because getting it wrong is silent: one `--root` at a
-      # project with no `[[approval.allow]]` would otherwise mark that
-      # repository permanently trusted, a consented root prints no line by
-      # design, and an `[[approval.allow]]` added to it six months later would
-      # then be honoured with nobody asked and nothing said. Naming a directory
-      # is an intent about THIS session, not a standing decision about that
-      # repository's future contents.
+      # project with no `[[approval.allow]]` would otherwise mark that repository
+      # permanently trusted, a consented root prints no line by design, and an
+      # `[[approval.allow]]` added six months later would then be honoured with
+      # nobody asked and nothing said. Naming a directory is an intent about THIS
+      # session, not a standing decision about that repository's future contents.
       def self.grant?(project:, answers:, record:, confirm:)
         return false if answers.allow.empty?
         return true if record.granted?(project.root)
@@ -256,11 +242,11 @@ module Lain
       # surface that answers itself, has not said yes. {Frontend::ApprovalPolicy}
       # fails closed on the same line for the same reason.
       #
-      # A confirmer that RAISES is a prompt that could not be surfaced -- a
-      # closed stream is the ordinary headless shape -- and the only answer to
-      # that is the answer {Unattended} gives. Never a crash, and never a yes.
-      # It is not swallowed silently either: a refusal here leaves `granted`
-      # false, so {.report} still names the file whose table is being ignored.
+      # A confirmer that RAISES is a prompt that could not be surfaced -- a closed
+      # stream is the ordinary headless shape -- and the only answer to that is
+      # the answer {Unattended} gives. Never a crash, and never a yes. Not
+      # swallowed silently either: a refusal here leaves `granted` false, so
+      # {.report} still names the file whose table is being ignored.
       def self.offered?(project, confirm)
         return true if project.detected_by == FLAG
 
@@ -294,13 +280,13 @@ module Lain
       end
 
       # The remembered answers this root is allowed to contribute, as a rule.
-      # Never nil -- an unconsented root with nothing to refuse answers an
-      # empty {Approval::Remembered}, which is its own Null Object.
+      # Never nil -- an unconsented root with nothing to refuse answers an empty
+      # {Approval::Remembered}, which is its own Null Object.
       attr_reader :remembered
 
-      # What {Approval::Escalation.for} takes as `rules:`. EMPTY when nothing
-      # is remembered, so a project with no `[approval]` table wires the rung
-      # exactly as it was wired before this class existed.
+      # What {Approval::Escalation.for} takes as `rules:`. EMPTY when nothing is
+      # remembered, so a project with no `[approval]` table wires the rung exactly
+      # as it was wired before this class existed.
       attr_reader :rules
 
       def granted? = @granted

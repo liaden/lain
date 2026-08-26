@@ -5,7 +5,7 @@ require "stringio"
 require "tmpdir"
 
 # A reviews duck that says yes to whatever it was told to hold, and nothing
-# else. Deliberately NOT {Lain::Epic::Review} (T15): what the decorator depends
+# else. Deliberately NOT {Lain::Epic::Review}: what the decorator depends
 # on is the `#open?(path)` message, not that class.
 class FakeReviews
   def initialize(*open_paths)

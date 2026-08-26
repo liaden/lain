@@ -44,7 +44,7 @@ RSpec.describe Lain::PriceBook do
       expect(cost).to eq(BigDecimal("3"))
     end
 
-    # T1: the table was quoting 15/75 for Opus against the current published
+    # The table was quoting 15/75 for Opus against the current published
     # 5/25 -- a 3x overstatement that inflated every derived cost figure.
     it "prices an Opus model at the current published rate" do
       input_cost = book.cost("claude-opus-5", usage(input: 1_000_000))
@@ -53,13 +53,13 @@ RSpec.describe Lain::PriceBook do
       expect(output_cost).to eq(BigDecimal("25"))
     end
 
-    # T1: Haiku was quoting 0.8/4 against the current published 1/5.
+    # Haiku was quoting 0.8/4 against the current published 1/5.
     it "prices a Haiku model at the current published rate" do
       cost = book.cost("claude-haiku-4-5", usage(input: 1_000_000))
       expect(cost).to eq(BigDecimal("1"))
     end
 
-    # T1: the cache rows are DERIVED from the input rate (cache-write is
+    # The cache rows are DERIVED from the input rate (cache-write is
     # Anthropic's 1.25x input, cache-read its 0.1x), so correcting input alone
     # must correct them too -- this pins that the derivation still holds
     # against the corrected Opus row.
@@ -115,7 +115,7 @@ RSpec.describe Lain::PriceBook do
   end
 end
 
-# T2: `bin/lint-price-freshness` is a repo lint (`pre-commit run --all-files`), not
+# `bin/lint-price-freshness` is a repo lint (`pre-commit run --all-files`), not
 # application code -- DEFAULTS gains no runtime freshness check. Its logic is spec'd
 # here, against the actual card file, rather than in a new lib/ unit, because the
 # card's scope is `bin/lint-price-freshness` plus this spec, nothing under `lib/`.
@@ -134,7 +134,7 @@ RSpec.describe "bin/lint-price-freshness" do
     RUBY
   end
 
-  # Gherkin AC 1 (T2): a price table older than its review horizon fails the lint.
+  # A price table older than its review horizon fails the lint.
   it "fails a marker dated more than 90 days before the injected clock, naming the marker and the file" do
     result = PriceFreshnessLinter.check(
       source: source_with_marker("2026-01-01"),
@@ -147,7 +147,7 @@ RSpec.describe "bin/lint-price-freshness" do
     expect(result.message).to include("lib/lain/price_book.rb")
   end
 
-  # Gherkin AC 2 (T2): a current table passes silently.
+  # A current table passes silently.
   it "passes with no message when the marker is dated at the injected clock" do
     result = PriceFreshnessLinter.check(
       source: source_with_marker("2026-08-18"),

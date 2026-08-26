@@ -9,7 +9,7 @@ RSpec.describe Lain::Provider::Mock do
   include_examples "a Lain::Provider",
                    provider_factory: ->(responses) { described_class.new(responses:) }
 
-  # CE-5: Mock fires `on_stream_started` so a fan-out driven through it exercises
+  # Mock fires `on_stream_started` so a fan-out driven through it exercises
   # {Tools::Subagent::Stagger}'s stream-start release. The observer is a
   # caller-supplied ORCHESTRATION hook, not part of the round trip's own
   # contract, so a bug in it must not cost #complete a response it already has --

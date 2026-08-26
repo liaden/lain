@@ -2,7 +2,7 @@
 
 require "open3"
 
-# T2: TmuxSurface -- one object opening windows, popups, and detached
+# TmuxSurface -- one object opening windows, popups, and detached
 # sessions. Two kinds of examples, mirroring up_spec.rb:
 #
 # * "against a real tmux server" shells out to an ACTUAL tmux on a scratch
@@ -106,7 +106,7 @@ RSpec.describe Lain::CLI::TmuxSurface do
     end
   end
 
-  # T16 F3: /fork's child must resolve the SAME project regardless of the
+  # /fork's child must resolve the SAME project regardless of the
   # session's pane-cwd conventions, so #window can pin the new pane's start
   # directory with tmux's own `-c`.
   describe "#window cwd: (FakeTmuxShellOut)" do
@@ -137,7 +137,7 @@ RSpec.describe Lain::CLI::TmuxSurface do
     end
   end
 
-  # T17 F1/F2: /btw's popup runs a `lain chat` REPL whose child may exit with a
+  # /btw's popup runs a `lain chat` REPL whose child may exit with a
   # non-zero status (a crash the human must SEE, not a popup that vanished), and
   # it must resolve the same project the parent is in -- so #popup pins the start
   # dir with `-d` and stays up on failure with `-EE`.

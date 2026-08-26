@@ -69,7 +69,7 @@ RSpec.describe Lain::Review::Verdict::Policy do
       expect(Lain::Review::ANNOTATION_KINDS).to include(described_class::BLOCKER).and include(described_class::ANSWER)
     end
 
-    # P3, stated where a reader looks for the vocabulary rather than left to be
+    # Stated where a reader looks for the vocabulary rather than left to be
     # inferred from a fold: the third kind answers nothing.
     it "reads `question` as neither an objection nor an answer" do
       expect(Lain::Review::ANNOTATION_KINDS - [described_class::BLOCKER, described_class::ANSWER]).to eq(["question"])
@@ -100,7 +100,7 @@ RSpec.describe Lain::Review::Verdict::Policy do
       expect(described_class.unresolved([blocker, annotation(kind: "note")])).to be_empty
     end
 
-    # G4, and the reason identity is the id rather than the position: a diff
+    # The reason identity is the id rather than the position: a diff
     # moves, two objections drift onto one line, and a fold keyed by position
     # collapses them into one -- so the earlier one vanishes from the refusal
     # while the surface goes on drawing both, by id. The two must not be able to
@@ -125,7 +125,7 @@ RSpec.describe Lain::Review::Verdict::Policy do
       expect(described_class.unresolved([blocker, second, *answers])).to be_empty
     end
 
-    # P3, decided rather than left to fall out of the fold: asking about
+    # Decided rather than left to fall out of the fold: asking about
     # something is not answering it, so a `question` neither resolves a blocker
     # nor becomes one.
     it "does not let a question answer a blocker, because asking is not answering" do

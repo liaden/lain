@@ -103,11 +103,10 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
       end
     end
 
-    # The reviewer's false-positive probe (.probe-T7-patterns.rb): "sk-"
-    # embedded in a hyphenated word ("ask-someone...") satisfied the unanchored
-    # key regex, so benign prose was refused under a pattern name it never
-    # honestly matched. The key shape must stand alone -- nothing word-like or
-    # hyphenated may run into the "sk-".
+    # The reviewer's false-positive probe: "sk-" embedded in a hyphenated word
+    # ("ask-someone...") satisfied the unanchored key regex, so benign prose was
+    # refused under a pattern name it never honestly matched. The key shape must
+    # stand alone -- nothing word-like or hyphenated may run into the "sk-".
     ["the ski trip was great, we should do it again ask-someone-to-help-with-planning-next-year",
      "this-is-just-a-long-hyphenated-slug-ask-for-directions-please-thanks-a-lot"].each do |prose|
       it "does not mistake #{prose[0, 44].inspect}... for an api key" do
@@ -154,7 +153,7 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
     end
   end
 
-  # B2: a regex hit means "this looks like a credential"; an oracle decline
+  # A regex hit means "this looks like a credential"; an oracle decline
   # means "this is not worth remembering". They used to journal under the same
   # grammar, which recorded a judgment call as a security finding.
   describe "an oracle's decline is not a credential match" do
@@ -220,7 +219,7 @@ RSpec.describe Lain::Middleware::RefuseSecretWrites do
       gate = Lain::Oracle::MemorySave::Gate.new
       guarded = described_class.new(journal:, oracle: gate)
       # Contentless, not opaque: the gate declines a body with nothing in it
-      # to save. An earlier vehicle here was a 40-char blob, which B3's
+      # to save. An earlier vehicle here was a 40-char blob, which a later
       # recalibration correctly rules WORTH saving -- an opaque identifier is
       # still content, and a credential-shaped one is PATTERNS' job, not the
       # oracle's. What this example needs is only a body no regex names and

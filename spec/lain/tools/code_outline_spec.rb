@@ -26,7 +26,7 @@ RSpec.describe Lain::Tools::CodeOutline do
     # `:method_def` templates are "def $NAME($$$A)" / "def self.$NAME($$$A)",
     # which -- like ast-grep generally -- match the concrete parenthesized
     # node only; a paren-less `def total` is a distinct CST shape the current
-    # catalog does not cover. That is a pre-existing T2 catalog limitation,
+    # catalog does not cover. That is a pre-existing catalog limitation,
     # not something this tool works around.
     path = write("outline_me.rb", <<~RUBY)
       module Outer
@@ -149,7 +149,7 @@ RSpec.describe Lain::Tools::CodeOutline do
 
     it "resolves a relative path under the injected WorkerEnv cwd" do
       # Parens deliberately: the `:method_def` catalog templates match the
-      # parenthesized node only -- see the pre-existing T2 note above.
+      # parenthesized node only -- see the pre-existing catalog note above.
       write("thing.rb", "class Thing\n  def call()\n  end\nend\n")
 
       result = tool.call({ path: "thing.rb", language: "ruby" }, invocation_with(session_at(tmpdir)))

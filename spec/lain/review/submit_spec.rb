@@ -327,8 +327,8 @@ RSpec.describe Lain::Review::Submit do
     end
 
     # The live defect §4.6 found in tuicr: comments validated against the
-    # full-range diff and submitted against a narrowed commit_id. T13 put the
-    # revision ON the annotation precisely so this is detectable rather than
+    # full-range diff and submitted against a narrowed commit_id. The revision
+    # rides ON the annotation precisely so this is detectable rather than
     # implied by whatever is on screen at submit time.
     it "moves a note authored against another revision, naming that revision" do
       annotate(revision: "d" * 40)

@@ -262,7 +262,8 @@ RSpec.describe Lain::Review::LazyFile do
     # values this card adds are shareable" asserts `Ractor.shareable?` of the
     # WHOLE marked-changeset graph, whose `FileRow`s hold the file. A lazy leaf
     # propagates straight up, so that pin is a DIFF-source law too -- stated
-    # here, where B8's author will find it, rather than discovered by a red run.
+    # here, where a diff-source author will find it, rather than discovered by a
+    # red run.
     it "makes the whole marked-changeset graph unshareable, where an eager file leaves it shareable" do
       expect(Ractor.shareable?(marked_over(changed_file))).to be(true)
       expect(Ractor.shareable?(marked_over(lazy))).to be(false)

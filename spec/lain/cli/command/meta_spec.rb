@@ -4,7 +4,7 @@ require "tmpdir"
 require "fileutils"
 require "open3"
 
-# T23: /meta generates a customized harness script from a prompt and, ONLY on an
+# /meta generates a customized harness script from a prompt and, ONLY on an
 # explicit `/meta run <slug>`, launches it in a tmux window. Generation writes a
 # reviewable file and NEVER executes generated code -- the generate/run split is
 # the safety line, so these specs pin that a bare /meta opens no window and runs
@@ -158,7 +158,7 @@ RSpec.describe Lain::CLI::Command::Meta do
     end
   end
 
-  # A4: the SAME generate-then-review discipline, aimed at a summarizer
+  # The SAME generate-then-review discipline, aimed at a summarizer
   # declaration instead of a harness script. The declaration is data for
   # {Lain::Summarizer::Builder} to load after a human has read it -- never a
   # script, and never reachable from the run verb.
@@ -228,9 +228,9 @@ RSpec.describe Lain::CLI::Command::Meta do
       end
 
       # The AC's "exactly one Summarizer::Base subclass", asserted in the terms
-      # A2 can actually consume: the DSL verb builds one anonymous Base subclass
-      # per declaration, so loading the file through the real Builder is what
-      # says "exactly one", and it says it about a file A2 can load.
+      # the Builder can actually consume: the DSL verb builds one anonymous Base
+      # subclass per declaration, so loading the file through the real Builder is
+      # what says "exactly one", and it says it about a file the Builder loads.
       it "defines exactly one Summarizer::Base subclass, loadable by the real Builder" do
         built = Lain::Summarizer::Builder.build(contents, path)
 
@@ -424,7 +424,7 @@ RSpec.describe Lain::CLI::Command::Meta do
   end
 
   # The same honesty guarantee for the summarizer role: the example the model is
-  # shown must itself be a declaration A2's Builder loads, or /meta summarizer
+  # shown must itself be a declaration the Builder loads, or /meta summarizer
   # ships a lie.
   describe "the shipped meta-summarizer template skeleton" do
     let(:template) { Lain::Prompt::Slots.shipped_role_templates.fetch("meta-summarizer") }

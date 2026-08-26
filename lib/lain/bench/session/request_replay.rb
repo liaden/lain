@@ -3,17 +3,13 @@
 module Lain
   module Bench
     class Session
-      # Rebuilds the recorded baseline from `request_sent` records: the proven
-      # rebuild idiom (see {Telemetry::RequestSent} and its spec) applied as
-      # its own collaborator, the same separation {MemoryReplay} and
-      # {MessageReplay} give their record types. The payload's keys are
-      # exactly {Request.new}'s content keywords, and the record carries the
-      # digest-excluded transport fields alongside. Each rebuild must land on
-      # the record's own digest -- RequestSent carries it precisely so a
-      # forged PAYLOAD cannot load clean and book as harness variance
-      # downstream. The transport fields (stream, extra) ride alongside
-      # unverified: the digest deliberately excludes them, so tampering there
-      # is invisible to this check.
+      # Rebuilds the recorded baseline from `request_sent` records. The
+      # payload's keys are exactly {Request.new}'s content keywords, and each
+      # rebuild must land on the record's own digest -- {Telemetry::RequestSent}
+      # carries it precisely so a forged PAYLOAD cannot load clean and book as
+      # harness variance downstream. The transport fields ride alongside
+      # unverified: the digest deliberately excludes them, so tampering there is
+      # invisible to this check.
       class RequestReplay
         def initialize(records:)
           @records = records

@@ -6,35 +6,30 @@ module Lain
     # middleware phases, the tool observer, the transition listener, and the
     # per-turn Context source.
     #
-    # Those seven travelled as seven keywords on {Agent#initialize} and as three
-    # Hash reifications above it -- {CLI::CompactionMount}'s, {CLI::Chronicle}'s
-    # and {CLI::ToolGuard}'s -- each poking at the Hash by key
-    # (`.fetch(:journal) { Null }`, `.slice(:journal)`, `.merge(journal:)`). A
-    # Hash three objects reach into by key is the state of an object nobody has
-    # named; named, those pokes become readers and {Data#with}.
+    # Those seven travelled as seven keywords plus three Hash reifications above
+    # them, each poking at the Hash by key. A Hash three objects reach into by
+    # key is the state of an object nobody has named; named, those pokes become
+    # readers and {Data#with}.
     #
-    # It is NOT the `Wiring` value object {Agent#initialize} considered and
-    # rejected. That one would have grouped the collaborators the loop DRIVES --
-    # a different set, answering "what does this run talk to". This groups what
-    # the run REPORTS to, which is the clump that was already being handed
-    # around whole.
+    # It is NOT the `Wiring` value {Agent#initialize} considered and rejected:
+    # that would have grouped the collaborators the loop DRIVES, a different set
+    # answering "what does this run talk to".
     #
     # Frozen (it is a Data), which is the mechanical statement that a run's
     # observability cannot be re-wired mid-run. NOT deeply frozen, and it must
     # not pretend to be: a journal is a live sink and {Middleware::Stack} is
-    # deliberately mutable (middleware.rb: ordering is Rack's footgun, so the
-    # order stays readable and adjustable). So `Ractor.shareable?` is false here
-    # BY CONSTRUCTION -- unlike {Event}, whose deep freeze is a spec'd invariant
-    # -- and for the same reason equality is member identity: two separately
-    # built default values are not `==`, because their stacks are not.
+    # deliberately mutable, because ordering is Rack's footgun and the order has
+    # to stay adjustable. So `Ractor.shareable?` is false here BY CONSTRUCTION
+    # -- unlike {Event}, whose deep freeze is a spec'd invariant -- and for the
+    # same reason equality is member identity: two separately built defaults are
+    # not `==`, because their stacks are not.
     #
     # That is safe because none of this crosses a Ractor and none of it reaches
     # {Canonical}: one value belongs to one Agent for that Agent's life, an
     # Agent is driven from one fiber reactor, and nothing here is ever an
-    # argument to a digest ({Arm::Instrument} carries the same caveat for the
-    # same reason). A Ractor-parallel loop would have to make the journal and
-    # the stacks shareable first, and that is the change that would have to
-    # revisit this comment.
+    # argument to a digest ({Arm::Instrument} carries the same caveat). A
+    # Ractor-parallel loop would have to make the journal and the stacks
+    # shareable first, and that is the change that would revisit this comment.
     Instrumentation = Data.define(:journal, :model_middleware, :tool_middleware, :turn_middleware,
                                   :tool_observer, :transition_listener, :pipeline_source) do
       # Every member's Null, named once, here -- so nothing downstream ever
@@ -79,12 +74,11 @@ module Lain
       # caller can paste back into the call that caused it.
       def self.labelled(keywords) = keywords.map { |keyword| "#{keyword}:" }.join(", ")
 
-      # {Agent}'s two construction styles, reconciled once. A caller hands one
+      # {Agent}'s two construction styles, reconciled once: a caller hands one
       # of these over WHOLE, or writes the individual keywords and gets one
-      # built -- which is what every call site did before this object existed.
-      # Saying both is refused rather than merged, because a merge would have to
-      # pick a winner for the member both name, and quietly picking is how a
-      # bench arm measures a run nobody configured.
+      # built. Saying both is refused rather than merged, because a merge would
+      # have to pick a winner for the member both name, and quietly picking is
+      # how a bench arm measures a run nobody configured.
       #
       # The rule is FLAT -- any legacy keyword beside a handed-over value is a
       # clash -- because the value carries all seven members and a Data cannot
@@ -103,14 +97,12 @@ module Lain
       end
 
       # The vocabulary refusal, and the FIRST question asked -- a typo makes
-      # every later one meaningless, which is the order {Collaborators} already
-      # keeps. It also has to be asked here rather than left to `Data`'s own
-      # `unknown keyword:`, because {Agent} names its collaborator keywords on
-      # the signature and sweeps everything else into this resolver: Ruby's bare
-      # message would tell an operator that `providr:` is unknown without ever
-      # naming `provider:`, and {Collaborators#refuse_unknown}'s list is
-      # unreachable from `Agent.new` for the same reason. So the whole wiring
-      # vocabulary is spelled out once, here, where the typo actually lands.
+      # every later one meaningless. It is asked here rather than left to
+      # `Data`'s own `unknown keyword:` because {Agent} names its collaborator
+      # keywords on the signature and sweeps everything else into this resolver:
+      # Ruby's bare message would report `providr:` unknown without ever naming
+      # `provider:`, and {Collaborators#refuse_unknown}'s list is unreachable
+      # from `Agent.new` for the same reason.
       def self.refuse_unknown(keywords)
         unknown = keywords - members
         return if unknown.empty?
@@ -119,9 +111,8 @@ module Lain
                                              collaborators: labelled(collaborator_keywords))
       end
 
-      # The wiring keywords this resolver does NOT own: the three collaborators
-      # and the two ingredients that are not also members. Subtracted rather
-      # than listed, so a keyword can never appear in both halves of the message.
+      # The wiring keywords this resolver does NOT own. Subtracted rather than
+      # listed, so a keyword can never appear in both halves of the message.
       def self.collaborator_keywords
         (Collaborators::INGREDIENTS.keys + Collaborators::KEYWORDS) - members
       end
@@ -133,8 +124,6 @@ module Lain
       # reading is worse -- `pipeline_source: nil` used to be accepted here and
       # crash on the first render, and `journal: nil` would discard the
       # experiment record a caller thought they had asked for.
-      # {Collaborators#refuse_explicit_nil} takes the same position on the same
-      # shape one layer down.
       def refuse_explicit_nil(members)
         nils = members.select { |_member, value| value.nil? }.keys
         return if nils.empty?

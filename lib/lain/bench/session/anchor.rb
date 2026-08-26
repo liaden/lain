@@ -3,29 +3,25 @@
 module Lain
   module Bench
     class Session
-      # Classifies and verifies a file's own anchor (T14): OPEN, CLOSED, or
-      # this class's own always-anchored (offline recorder) shape. A separate
-      # responsibility from {Loader}'s chain-following and turn-rebuilding --
-      # this only ever looks at the header and the `session_closed` records,
-      # never at a Timeline until {#verify} is actually asked to check one.
+      # Classifies and verifies a file's own anchor: OPEN, CLOSED, or the
+      # offline recorder's always-anchored shape. It looks only at the header
+      # and the `session_closed` records, never at a Timeline until {#verify} is
+      # asked to check one.
       #
-      # An OPEN session is a live header (`head: nil`, {SessionRecord}'s
-      # write-first shape) with no closer yet -- the SIGKILL case a reader
-      # must recognize, not reject; it verifies only its own PREFIX, the
-      # documented anti-truncation limit ({SessionRecord}'s class comment): a
-      # write-first header cannot anchor a chain that does not exist yet.
-      # Every other shape -- this class's own always-anchored header, or a
-      # live session {#sole_session_closed} closed -- is checked against its
-      # own recorded anchor: EITHER the header itself carries it (always
-      # head-anchored, because it is written after the run) OR a
-      # `session_closed` record does (the live scribe's header is written
-      # open and never rewritten).
+      # An OPEN session is a live header (`head: nil`) with no closer yet -- the
+      # SIGKILL case a reader must recognize rather than reject. It verifies
+      # only its own PREFIX, the documented anti-truncation limit, because a
+      # write-first header cannot anchor a chain that does not exist yet. Every
+      # other shape is checked against its own recorded anchor: EITHER the
+      # header carries it, being written after the run, OR a `session_closed`
+      # record does, the live scribe's header being written open and never
+      # rewritten.
       #
-      # A `run_interrupted` record never changes this classification: it
-      # marks one ASK a stop beat, not the whole session, and its own `head`
-      # is JOIN-OPTIONAL (a committed turn can outrun its turn record on a
-      # kill between the Agent's commit and the journal write) -- tolerated
-      # by never being consulted here at all.
+      # A `run_interrupted` record never changes this classification: it marks
+      # one ASK a stop beat, not the whole session, and its own `head` is
+      # JOIN-OPTIONAL, since a committed turn can outrun its turn record on a
+      # kill between the Agent's commit and the journal write. Tolerated by
+      # never being consulted here at all.
       class Anchor
         # @param header [Hash] the sole session header record
         # @param session_closed_records [Array<Hash>] every `session_closed`
@@ -61,9 +57,8 @@ module Lain
           @closed.fetch("head")
         end
 
-        # Same discipline as {Loader#sole_header}: a session closes once, so a
-        # second record would make "which close?" an accident of file order.
-        # Nil (no record at all) means still open.
+        # A session closes once, so a second record would make "which close?"
+        # an accident of file order. No record at all means still open.
         def sole_closed(records)
           return records.first if records.size <= 1
 

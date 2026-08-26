@@ -4,103 +4,34 @@ module Lain
   class Sensitivity
     # Which sensitive regions this RUN has released, and the one question that
     # follows: given the regions this file holds NOW, which has nobody agreed to
-    # send yet?
+    # send yet? The (path, digest) keying argument, the absolute-path rule and
+    # the reconcile-on-read containment are all in ARCHITECTURE.md's "The secret
+    # boundary"; what stays here is what binds a caller.
     #
-    # NOT {Lain::Ledger}, which is the COST ledger (tokens -> dollars, joined off
-    # the Journal), and not {Workspace::Restore::Ledger}, which records what a
-    # restore wrote. Three ledgers now, meeting only in the English word --
-    # {Arm::LedgerState}'s note is the precedent for saying so here.
-    #
-    # {Sensitivity::Regions} addresses a region by its own bytes, so a release
-    # survives an edit somewhere else in the file. The masking arm re-runs the
-    # detector on every read and diffs the result against this ledger, which is
-    # what makes a key added a minute after the file was approved prompt anyway,
-    # while the two keys already approved stay quiet.
-    #
-    # == Keyed by (path, digest), and the path half is the containment
-    #
-    # A region is the VALUE alone, so two identical values in one file share a
-    # digest and one decision covers both -- accepted, because identical bytes
-    # are the same secret. Across files it is not the same secret, and content
-    # addressing cannot tell them apart on its own: the header of every HS256 JWT
-    # is the identical byte string `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9`, so
-    # keying on the digest alone would let one released token pre-release that
-    # segment everywhere. The path is what keeps a release where it was made.
-    #
-    # The trade is real and was taken deliberately: a lockfile hash approved in
-    # one crate of a monorepo is asked about again in the next. That is the
-    # direction the gated half of this boundary errs in everywhere else -- a
-    # spurious match costs one prompt, and a release that travels costs a secret.
-    #
-    # == The path must be ABSOLUTE, and that is enforced rather than normalized
+    # NOT {Lain::Ledger}, which is the COST ledger, and not
+    # {Workspace::Restore::Ledger}, which records what a restore wrote. Three
+    # ledgers now, meeting only in the English word -- {Arm::LedgerState}'s note
+    # is the precedent for saying so.
     #
     # Nothing here opens, stats or normalizes anything, for {Sensitivity}'s own
-    # reason: this must be free to call from any arm, in any order. But "any
-    # spelling is merely its own key" is FALSE for a relative one. `config/.env`
-    # under a parent's cwd and under a child worktree's cwd are two different
-    # files behind one key -- a release that travels between them, which is the
-    # one direction this boundary must never fail in. So a relative path raises.
-    #
-    # Normalizing instead would not fix it. This ledger is per-RUN and reaches
-    # every child through the board thunk, so there is no single cwd to normalize
-    # against: a cwd injected at construction is the PARENT's, and the child's
-    # reads are exactly the colliding case. A per-call cwd would put a second
-    # contract on every caller. Raising needs no cwd at all, and the arm that
-    # holds the effect and the worker cwd can resolve before it calls -- the
-    # raise is how it finds out it forgot.
-    #
-    # The same guard takes the blank String, which is a String and would
-    # otherwise sail into the shared bucket the type check exists to prevent --
-    # {Session#named!}'s refusal, for {Session#named!}'s reason.
-    #
-    # Among ABSOLUTE spellings the original claim does hold, and those splits are
-    # all fail-closed: `/repo/./.env` and `/repo/.env` are two keys, as are the
-    # same bytes tagged in two encodings. Each costs one extra prompt and none
-    # can merge two files.
-    #
-    # == Reading reconciles, and that is one call on purpose
-    #
-    # {#outstanding} drops the releases for digests the file no longer holds.
-    # Command-query separation would put that in its own method, and the failure
-    # mode of the second call being forgotten is that a secret deleted and later
-    # restored is sent without anyone being asked -- a silent regression at a
-    # call site no spec of THIS class could see. One call is the containment.
-    #
-    # Reconciling is sound only over a COMPLETE detection, though, so that is a
-    # stated precondition with its own keyword rather than an assumption: see
-    # `complete:` on {#outstanding}.
-    #
-    # `complete: false` therefore OPTS OUT of the containment above: under it a
-    # deleted region stays released, so delete-then-restore at that path is
-    # re-sent unasked. That is unavoidable -- nothing can reconcile what it did
-    # not look at -- but it compounds, and the caller who sets a size cap is the
-    # one who decides how far. A file read ONLY ever under a cap never reconciles
-    # at all, and its releases live as long as the run.
-    #
-    # == Nothing detects here
-    #
-    # The regions arrive already detected. Detection is ~0.22ms/KB and linear, so
-    # whatever size cap that cost eventually needs belongs to the arm holding the
-    # bytes -- and a capped detection is by construction a SUBSET, so it must
-    # come back through `complete: false` or every read past the cap forgets its
-    # releases and prompts again, forever.
+    # reason: this must be free to call from any arm, in any order. That is why
+    # a relative path RAISES rather than being resolved.
     #
     # == Fiber-safe, not thread-safe
     #
-    # {Tools::ReadFile#parallel_safe?} makes sibling reads concurrent FIBERS, and
-    # this is safe for them by the same audit its own note makes of `record_read`:
-    # every method here is pure Ruby with no IO and no yield point between a read
-    # and its mutate. It is NOT thread-safe, and deliberately unguarded --
+    # {Tools::ReadFile#parallel_safe?} makes sibling reads concurrent FIBERS,
+    # and every method here is pure Ruby with no IO and no yield point between a
+    # read and its mutate. It is deliberately unguarded against threads --
     # `held(key) | digests` and {#reconcile}'s delete-then-set are both
     # read-modify-writes, and nothing in this harness runs tools on threads.
     #
     # == Run-scoped, mutable, and owned by the Switchboard
     #
-    # Deliberately not a value object and deliberately not frozen -- {Session}'s
-    # posture, for {Session}'s reason: these are the run's accumulating decisions.
-    # It is not ON the Session, though. It sits beside the run's one
-    # {Approval::Queue} and one {Sensitivity::Policy}, where "ONE, so the two
-    # cannot disagree" is already the rule, and it dies with the process.
+    # Deliberately not a value object and not frozen -- {Session}'s posture, for
+    # {Session}'s reason: these are the run's accumulating decisions. It is not
+    # ON the Session, though. It sits beside the run's one {Approval::Queue} and
+    # one {Sensitivity::Policy}, where "ONE, so the two cannot disagree" is
+    # already the rule, and it dies with the process.
     #
     # There is no persistence path and no Null. Remembering "yes, send
     # `.env.local`" across runs is precisely the answer

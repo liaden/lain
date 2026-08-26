@@ -3,7 +3,7 @@
 require "async"
 require "stringio"
 
-# Gherkin::Approval is the GG-1 fail-closed gate: a Criteria must pass it before
+# Gherkin::Approval is the fail-closed gate: a Criteria must pass it before
 # anything generates tests from its digest. The gate asks through an
 # ask_human-shaped duck, blocks on the promise with a timeout -> deny, journals
 # a gherkin_approval attributed to the answering surface, and remembers the
@@ -51,7 +51,6 @@ RSpec.describe Lain::Gherkin::Approval do
     Lain::Journal.records(journal_io.string.lines, type: "gherkin_approval").to_a
   end
 
-  # AC1
   describe "approval is content-addressed and attributed" do
     it "journals a gherkin_approval with the criteria digest, approved true, and the answering surface" do
       gate = described_class.new(journal:, clock: -> { 0.0 })
@@ -104,7 +103,6 @@ RSpec.describe Lain::Gherkin::Approval do
     end
   end
 
-  # AC2
   describe "silence denies (fail-closed, signed by the clock)" do
     it "denies an unanswered gate, attributes it to timeout, and refuses generation against that digest" do
       gate = described_class.new(journal:, timeout: 0.02)
@@ -123,7 +121,6 @@ RSpec.describe Lain::Gherkin::Approval do
     end
   end
 
-  # AC3
   describe "edited criteria invalidate a prior approval" do
     let(:edited) do
       Lain::Gherkin::Criteria.parse(<<~MD)
@@ -153,7 +150,7 @@ RSpec.describe Lain::Gherkin::Approval do
   end
 
   describe "the registry is monotonic and add-only" do
-    # Orchestrator decision (G2 panel): a denial NEVER revokes a prior approval
+    # Orchestrator decision: a denial NEVER revokes a prior approval
     # of the same digest. The registry is a process-local convenience answering
     # "may this be generated from"; the Journal is the audit record, and it
     # carries ALL the verdicts in order.

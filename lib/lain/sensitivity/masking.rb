@@ -12,16 +12,13 @@ module Lain
     # still disagree about the bytes AROUND the placeholder, the ordinal
     # sequence, or the encoding they hand back. One walk cannot.
     #
-    # It does NOT decide what to mask. That answer is {Sensitivity::Ledger}'s,
+    # It does NOT decide what to mask; that is {Sensitivity::Ledger}'s answer,
     # and a caller passes only what nobody has released -- which is what keeps a
-    # release rendering as real bytes rather than as a placeholder with a
-    # special case.
+    # release rendering as real bytes rather than a special-cased placeholder.
     #
-    # Beside {Regions} rather than inside it, deliberately: `Regions` is the
-    # DETECTOR, its docstring is about thresholds and recall, and rendering is a
-    # different responsibility that happens to share the value type. The
-    # module-length cop naming that split is the reason this file exists, and
-    # the split it named is a real one.
+    # Beside {Regions} rather than inside it: `Regions` is the DETECTOR, and
+    # rendering is a different responsibility that happens to share the value
+    # type. The module-length cop named the split, and it is a real one.
     module Masking
       class << self
         # Regions are byte offsets and {Regions.detect} guarantees them

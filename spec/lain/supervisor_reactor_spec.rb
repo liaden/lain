@@ -55,15 +55,15 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
 
   def mock(*responses) = Lain::Provider::Mock.new(responses:)
 
-  # FIX 4 landed the machine-readable discriminator this helper originally had
-  # to fake with a prose match.
+  # A review fix landed the machine-readable discriminator this helper
+  # originally had to fake with a prose match.
   def farewells(records)
     records.grep(Lain::Telemetry::Message).select { |m| m.payload["lifecycle"] == "stopped" }
   end
 
   # ---- (a) The wedge, half 1: parent ask killed while the actor is mid-turn --
   #
-  # OM-6's point: the actor is a sibling of the ask, not its captive. Kill the
+  # The point: the actor is a sibling of the ask, not its captive. Kill the
   # ask while the actor's first turn is parked at provider IO -- the actor must
   # stay registered, alive, and settleable.
   describe "the wedge" do
@@ -132,7 +132,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
         task.yield          # enqueue only SCHEDULES the adopted fiber; let it run
         launched.settle
 
-        expect(launched).not_to be_dead                  # the actor SURVIVES (OM-6's point)...
+        expect(launched).not_to be_dead                  # the actor SURVIVES, as designed...
         expect(supervisor.map(&:role)).to eq(["ghost"])  # ...and is REGISTERED
 
         supervisor.stop
@@ -161,7 +161,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
       [twin_a, twin_b].each(&:settle)
 
       expect(twin_a.address).to eq(twin_b.address)  # the collision is real
-      expect(supervisor.count).to eq(2)             # both enumerate (AC2 holds)
+      expect(supervisor.count).to eq(2)             # both enumerate
 
       twin_a.stop                                   # routing is by OBJECT -- stops only twin-a
       expect(supervisor.map(&:state)).to eq(%i[stopped running])
@@ -288,8 +288,8 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
         JSON.parse(File.read(path))["fleet"]
       end
       # Appears at :spawn and (still) never retires: StatusFeed is unchanged
-      # in this card BY DESIGN -- its "W3's lifecycle events will later enrich
-      # this" comment is now TRUE rather than stale, because FIX 4 landed the
+      # in this card BY DESIGN -- its "lifecycle events will later enrich this"
+      # comment is now TRUE rather than stale, because a review fix landed the
       # machine-readable body-level discriminator a later enrichment keys on
       # (launched/settled/stopped; tells carry none). Landing it now was the
       # cheap moment: events are content-addressed, so a later marker would
@@ -305,7 +305,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
   # ---- (e) Refusal byte-identity against main (5b077c9) ---------------------
   it "the unwired and not-running refusals are byte-identical to main's" do
     # Literal transcribed from `git show 5b077c9:lib/lain/tools/subagent.rb`
-    # during review -- if this drifts, the AC4 byte-for-byte claim is broken.
+    # during review -- if this drifts, the byte-for-byte claim is broken.
     expected = "actor mode cannot be launched from a tool call: a long-lived actor needs " \
                "the OM-6 supervisor reactor; launch it programmatically via #launch_actor"
 
@@ -336,7 +336,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     # (`supervisor.drain(within: grace)`): a hung fleet costs at most the
     # window, the timeout is journaled (never silently dropped), and the
     # session still closes :exit. (run_task.wait remains unbounded --
-    # pre-existing shape, out of W3's scope.)
+    # pre-existing shape, out of scope here.)
     it "a hung actor no longer wedges wait_responses -- the bounded drain closes within the window" do
       journal = Lain::Channel.new
       Sync do |task|
@@ -402,7 +402,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     end
   end
 
-  # ---- (f, fix round) the FIX 1 x FIX 3 interaction at the parked settle ----
+  # ---- (f, fix round) the two fixes interacting at the parked settle --------
   describe "the bounded drain over a mixed fleet" do
     # The coordinator's hard case: actor 1 settles fast DURING the window,
     # actor 2 hangs. The fast one must be awaited to quiescence before the

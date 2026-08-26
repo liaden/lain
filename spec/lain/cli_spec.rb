@@ -61,7 +61,7 @@ RSpec.describe LainCLI do
   let(:toolset) { Lain::Toolset.new }
   let(:channel) { Lain::Channel.new }
 
-  # T10: `--provider ollama` asks its server which window it is serving before
+  # `--provider ollama` asks its server which window it is serving before
   # the run's book is built ({Lain::CLI::Backend#context_window}). Nothing here
   # is about that number, and "nothing resident" leaves
   # {Lain::ContextWindow::CONSERVATIVE_FALLBACK} in charge exactly as before.
@@ -126,7 +126,7 @@ RSpec.describe LainCLI do
 
     # session: is required on build_agent -- a defaulted fresh Session would
     # let a caller wire a recorder-bearing toolset to an agent whose manifest
-    # can never see that recorder, with no error anywhere (T1 panel fix).
+    # can never see that recorder, with no error anywhere.
     it "requires session: on build_agent so memory cannot be silently mis-wired" do
       backend = LainCLI::Backend.new({ provider: "ollama" })
       expect { wiring.send(:build_agent, toolset:, channel:, backend:) }.to raise_error(ArgumentError, /session/)
@@ -160,15 +160,15 @@ RSpec.describe LainCLI do
     end
   end
 
-  # T1 AC6: the chat toolset closes the memory loop -- the model can read
+  # The chat toolset closes the memory loop -- the model can read
   # back, through memory_read, what it wrote through the SAME toolset's
   # memory_write, because both tools share the one session Recorder.
   describe "the chat toolset" do
     let(:recorder) { Lain::Memory::Recorder.new }
     # The research subagent this toolset wires in builds its own provider
     # eagerly (Anthropic validates ANTHROPIC_API_KEY at construction, unlike
-    # the SDK client it replaced there -- see T17w), so building the toolset
-    # at all needs a key present even though nothing here makes a request.
+    # the SDK client it replaced there), so building the toolset at all needs
+    # a key present even though nothing here makes a request.
     let(:chat_toolset) do
       ask_human = Lain::Tools::AskHuman.new(parent: -> {})
       with_env("ANTHROPIC_API_KEY" => "sk-test") do
@@ -194,18 +194,19 @@ RSpec.describe LainCLI do
     end
   end
 
-  # T13: the session-record lifecycle lives in Lain::CLI::Chronicle (see its
+  # The session-record lifecycle lives in Lain::CLI::Chronicle (see its
   # spec); the chat bracket that opens/closes it lives in Lain::CLI::ChatLaunch
   # (see chat_launch_spec, where the Null default and the --nvim/--journal
   # wiring examples moved). Wiring drives the assembly seams over the Null
   # duck, so build_toolset/build_agent record nothing here.
   describe "the chronicle seam" do
     # `@instrumentation` is fetched, not read with a bare instance_variable_get:
-    # this assertion was `@turn_middleware.to_a == []` before T22, and `nil.to_a`
-    # is `[]` -- so it passed unchanged after the ivar it names stopped existing.
-    # An empty expectation has to prove it measured something first.
+    # this assertion was `@turn_middleware.to_a == []` before the rename,
+    # and `nil.to_a` is `[]` -- so it passed unchanged after the ivar it
+    # names stopped existing. An empty expectation has to prove it measured
+    # something first.
     #
-    # T6 put the run's OWN member ahead of the chronicle's, so the Null
+    # The run's OWN member sits ahead of the chronicle's, so the Null
     # chronicle's contribution is now "nothing after the window refresh" rather
     # than an empty stack. The reading is the same one: what the chronicle
     # added, isolated by dropping the member this wiring always adds.
@@ -226,7 +227,7 @@ RSpec.describe LainCLI do
     end
   end
 
-  # AC2: --temperature 0 --seed 7 reach the Ollama wire payload's options, but
+  # --temperature 0 --seed 7 reach the Ollama wire payload's options, but
   # NOT the Request digest -- temperature is a sampler knob, not a prompt.
   describe "temperature and seed threading" do
     let(:store) { Lain::Store.new }
@@ -278,7 +279,7 @@ RSpec.describe LainCLI do
     end
   end
 
-  # T2. `--exec` names WHERE a shell command becomes a process, and an
+  # `--exec` names WHERE a shell command becomes a process, and an
   # unusable name is the operator's mistake about the box they typed it on.
   # These drive Thor's real `.start`, because what is under test is the ORDER
   # -- the refusal lands ahead of `ChatLaunch.new`, so nothing is resolved,
@@ -802,7 +803,7 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
   # vocabulary like any other -- and the one most easily missed, because a
   # registry that knows about a strategy while Thor does not fails at the flag
   # with the registry never consulted. `lain review --scope by_directory` was
-  # exactly that failure until A3.
+  # exactly that failure until this list was derived from the registry.
   describe "the --scope flag of `lain review open`" do
     def scope_option = LainCLI::Review.commands.fetch("open").options.fetch(:scope)
 

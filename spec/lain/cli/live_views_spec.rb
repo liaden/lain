@@ -52,7 +52,7 @@ RSpec.describe Lain::CLI::LiveViews do
     end
   end
 
-  # T1. Streamed tool bytes are a VIEW, not a record: the durable copy already
+  # Streamed tool bytes are a VIEW, not a record: the durable copy already
   # rides the turn's tool_result (Tools::Bash.render_output), so this fan-out
   # reaches channels only and never the journal.
   describe ".tool_output" do
@@ -79,7 +79,7 @@ RSpec.describe Lain::CLI::LiveViews do
       expect(views[:channel].drain).to eq([hello])
     end
 
-    # AC1's rendered half: the very event that reached the editor's Channel is
+    # The rendered half: the very event that reached the editor's Channel is
     # what the append-only lain://journal buffer turns into text.
     it "reaches the lain://journal buffer as an attributed line" do
       views = attached.views
@@ -90,7 +90,7 @@ RSpec.describe Lain::CLI::LiveViews do
       expect(lines).to eq(["[tu_1 stdout] hello"])
     end
 
-    # AC2: the durable record is unchanged. ToolOutput is Journalable (it would
+    # The durable record is unchanged. ToolOutput is Journalable (it would
     # serialize as "tool_output"), so nothing but the wiring keeps it off the
     # NDJSON -- which is exactly what this asserts.
     it "never puts streamed bytes on the durable record" do
@@ -100,7 +100,7 @@ RSpec.describe Lain::CLI::LiveViews do
       expect(status_feed.events).to be_empty
     end
 
-    # AC3: quitting nvim closes its Channel (Frontend::Neovim's teardown
+    # Quitting nvim closes its Channel (Frontend::Neovim's teardown
     # contract), and a dead viewer must never break a running tool.
     it "keeps the TTY leg landing after the editor quit and closed its Channel" do
       views = attached.views
@@ -117,7 +117,7 @@ RSpec.describe Lain::CLI::LiveViews do
       expect(tty.events).to eq([hello])
     end
 
-    # T1 review, Linus: a closed TTY leg is the one failure that must NOT be
+    # Review, Linus: a closed TTY leg is the one failure that must NOT be
     # swallowed. Swallowing it would make one failure have two behaviours
     # depending on an unrelated flag -- without --nvim the bare Channel raises
     # and Handler::Live's gate 3 turns it into an is_error tool_result, while
@@ -139,7 +139,7 @@ RSpec.describe Lain::CLI::LiveViews do
       expect(views[:channel].drain).to eq([hello])
     end
 
-    # T1 review, Jeremy Evans: raising only `failures.first` discards the other
+    # Review, Jeremy Evans: raising only `failures.first` discards the other
     # causes, which is the exact loss {JournalTee::SinkFailures} was grown to
     # stop. The error class is reused rather than restated.
     it "names every failing leg, not just the first" do

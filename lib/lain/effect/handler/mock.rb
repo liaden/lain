@@ -4,16 +4,13 @@ module Lain
   module Effect
     class Handler
       # Interprets tool-call effects with canned answers instead of running
-      # anything. It exists so specs (and dry replay) can drive the loop without a
-      # live tool, a subprocess, or the network -- the same effects, deterministically
-      # resolved.
+      # anything, so specs (and dry replay) can drive the loop without a live
+      # tool, a subprocess, or the network.
       #
-      # A canned result is looked up by tool name first, then by `tool_use_id`, so a
-      # spec can pin either "every call to `read_file` returns X" or "this one
-      # specific call returns X". A block, if given, wins over the map and receives
-      # the whole effect, for results that depend on the input. Plain Strings and
-      # Arrays are coerced to a successful {Tool::Result}, so the common case stays
-      # terse.
+      # Lookup is by tool name first, then by `tool_use_id`, so a spec can pin
+      # either "every call to `read_file` returns X" or "this one specific call
+      # returns X". Plain Strings and Arrays are coerced to a successful
+      # {Tool::Result}, so the common case stays terse.
       class Mock < Handler
         # @param results [Hash{String=>Tool::Result,String,Array}] name/id => canned answer
         # @param default [Tool::Result, String, Array, nil] used when nothing matches

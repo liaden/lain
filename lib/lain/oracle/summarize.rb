@@ -12,23 +12,20 @@ module Lain
     # reads `.summary` off it -- the two ends of the same wire, kept in one file
     # so neither can drift alone.
     #
-    # The live tier DEFAULTS to a local model ({CLI::Backend::DEFAULT_SUMMARIZER_PROVIDER}
-    # is ollama), because this fires once per large result, off the turn's
-    # critical path, and paying frontier-model tokens to compress a tool result
-    # would cost more than resending it. It is a default and not a law:
-    # `--summarizer-provider` and `--summarizer-model` resolve through the same
-    # PROVIDERS set `--provider` does, so the tier may be pointed at a paid
-    # model -- the chat's own provider included. That is precisely why every
-    # answer it gives is journalled ({Recorded::Journaling}): an unrecorded
-    # model call is spend the bench cannot see.
+    # The live tier DEFAULTS to a local model, because this fires once per large
+    # result, off the turn's critical path, and paying frontier-model tokens to
+    # compress a tool result would cost more than resending it. It is a default
+    # and not a law: `--summarizer-provider`/`--summarizer-model` resolve through
+    # the same PROVIDERS set `--provider` does, so the tier may be pointed at a
+    # paid model. That is why every answer is journalled ({Recorded::Journaling})
+    # -- an unrecorded model call is spend the bench cannot see.
     #
-    # It is also no longer the FIRST tier tried. {Oracle::RoutedSummarizer}
-    # sits above it and offers each result to the project's own declared
-    # summarizers first, falling through to here when none answers.
+    # Not the FIRST tier tried: {Oracle::RoutedSummarizer} sits above it and
+    # offers each result to the project's own declared summarizers first.
     #
-    # A tier that is absent or down is a MISS, not an error -- {Eager#fire}'s
-    # task boundary contains the failure and the compaction renders the honest
-    # elision instead.
+    # A tier that is absent or down is a MISS, not an error -- {Eager#fire}'s task
+    # boundary contains the failure and the compaction renders the honest elision
+    # instead.
     module Summarize
       SCHEMA = Class.new(Tool::Input) do
         field :summary, :string, required: true,

@@ -2,22 +2,19 @@
 
 module Lain
   module Memory
-    # A Manifest::Hit-duck search index (T5) that layers an N-hop
-    # `[[wikilink]]` walk over Manifest, the always-runs lexical floor
-    # (references/memory-and-retrieval.md #2: "signal, never a gate"). The
-    # seed pass IS Manifest#search, unchanged -- Graph never re-implements
+    # A Manifest::Hit-duck search index that layers an N-hop `[[wikilink]]` walk
+    # over Manifest, the always-runs lexical floor
+    # (references/memory-and-retrieval.md #2: "signal, never a gate"). The seed
+    # pass IS Manifest#search, unchanged -- Graph never re-implements
     # tokenization or scoring, it only adds items the seed pass could not see
-    # because the shared query term lives in a *linked* item, not the seed's
-    # own id/description.
+    # because the shared query term lives in a *linked* item.
     #
-    # Link-resolution rule (pinned per the card's escalation trigger): the
-    # text inside `[[name]]` is matched, after stripping surrounding
-    # whitespace, against Memory::Item#id verbatim -- no case-folding, no
-    # Canonical normalization beyond what Item#id already carries. A link
-    # naming an id absent from this index's snapshot is silently unreachable
-    # (never an error): the same graceful-empty posture Bm25 takes for an
-    # empty corpus, because a stale or mistyped wikilink degrading the
-    # boosting arm must never surface as a crash in a tool call.
+    # Link resolution is pinned: the text inside `[[name]]` is matched, after
+    # stripping surrounding whitespace, against Memory::Item#id verbatim -- no
+    # case-folding, no normalization beyond what Item#id carries. A link naming
+    # an absent id is silently unreachable, never an error: a stale or mistyped
+    # wikilink degrading the boosting arm must not surface as a crash in a tool
+    # call.
     class Graph
       # Matches [[name]]; a body with no wikilinks yields no matches, so a
       # plain item -- the common case -- pays nothing beyond one #scan.

@@ -4,22 +4,18 @@ require "bigdecimal"
 
 module Lain
   module Telemetry
-    module Guards
-      # A seam-EV verdict must name a REAL chunk size class it weighed (not just
-      # any non-nil string -- an "XL" reaching this record through the calibrated
-      # estimate path would otherwise journal silently) and land on one of the
-      # two answers the policy reaches. The S/M/L set is {Plan::SIZES}, held
-      # verbatim here rather than referenced: this Guard's class body evaluates
-      # at telemetry load time, before the plan/ unit loads.
+    module Carriers
+      # The S/M/L set is {Plan::SIZES}, held VERBATIM rather than referenced:
+      # this carrier's class body evaluates at telemetry load time, before the
+      # plan/ unit loads.
       #
-      # BOTH cost figures are required, and this record is where they differ from
-      # the sibling {Compaction}'s: a seam decision has no refusal to express.
-      # {#net} does `BigDecimal(payback)` unconditionally and {Plan::SeamDecision}
-      # only ever quotes both sides, so a nil is a caller bug. It is named here
-      # because the shared {Telemetry.fixed_point} is nil-tolerant for
-      # {Compaction}'s sake -- without this validation an unquoted side would
-      # journal `null` into a money field and only surface later, in a reader.
-      class SeamDecision < Guard
+      # BOTH cost figures are required, which is where this differs from the
+      # sibling {Compaction}: a seam decision has no refusal to express, and
+      # {#net} does `BigDecimal(payback)` unconditionally. The shared
+      # {Telemetry.fixed_point} is nil-tolerant for {Compaction}'s sake, so
+      # without this an unquoted side would journal `null` into a money field
+      # and surface only later, in a reader.
+      class SeamDecision < Declarative::Carrier
         attribute :size
         attribute :verdict
         attribute :rewrite_cost
@@ -32,47 +28,26 @@ module Lain
       end
     end
 
-    # Every seam's full EV accounting (PC-4): the size class weighed (`size`),
-    # the turns-remaining estimate it priced payback over (`estimated_turns`)
-    # and whether that estimate came from Journal calibration (`calibrated`,
-    # false when the annotation default stood in), the span a rewrite would
-    # drop (`bytes_removed`) and the shorter prefix it would leave
-    # (`bytes_after`, priced by `rewrite_cost`), and BOTH priced sides --
-    # `rewrite_cost` (one cache write of that shorter prefix) versus `payback`
-    # (resending the dropped span at the provider's per-turn resend rate --
-    # its cache read discount where one exists, full input where it does not --
-    # over the estimated remaining turns) -- so {Compare} can audit the
-    # rewrite-now/defer decision,
-    # AND re-derive each cost from the record alone, against what the chunk
-    # ACTUALLY consumed. Recording both operands (removed AND after)
-    # matches the sibling {Compaction} record, which carries `bytes_before`
-    # and `bytes_after` for the same self-contained-audit reason.
-    # `calibrated: false` on a mis-sized annotation is what keeps the
-    # estimate-vs-actual drift visible rather than silently absorbed.
+    # Every seam's full EV accounting: `rewrite_cost` is one cache write of the
+    # shorter prefix a rewrite would leave, `payback` is resending the dropped
+    # span at the provider's per-turn resend rate over the estimated remaining
+    # turns. BOTH operands are recorded, not just the verdict, so {Compare} can
+    # re-derive each cost from the record alone and check it against what the
+    # chunk actually consumed. `calibrated: false` on a mis-sized annotation is
+    # what keeps estimate-vs-actual drift visible rather than silently absorbed.
     #
-    # Both figures are the compaction subsystem's canonical-BYTE-length proxy,
-    # and they say so because they did not before: the pair was named for tokens
-    # beside provider-measured token counts in the same NDJSON stream, which is
-    # the confusion UX5 named. Renaming only the {Compaction} half would have
-    # relocated it, since this record's own header declares the two a matched
-    # pair. WIRE COMPATIBILITY, as for the sibling: old journals are NOT
-    # migrated and no shim reads them -- a record written before this rename
-    # carries `tokens_removed`/`tokens_after` holding exactly these byte figures
-    # under that misleading name.
+    # `bytes_removed`/`bytes_after` are the compaction subsystem's
+    # canonical-BYTE-length proxy, and they SAY so because the pair was once
+    # named for tokens beside provider-measured token counts in the same NDJSON
+    # stream. WIRE COMPATIBILITY, as for the sibling {Compaction}: old journals
+    # are NOT migrated and no shim reads them -- a record written before that
+    # rename carries these exact figures under `tokens_removed`/`tokens_after`.
     #
-    # `rewrite_cost`/`payback` are held as fixed-point decimal STRINGS, not
-    # `BigDecimal`, for exactly the reason {Compaction}'s `cost_saved`/
-    # `cost_spent` are: `Canonical.normalize` has no canonical wire form for
-    # `BigDecimal`, and every field must be an immutable, JSON-safe value to
-    # keep this record `Ractor.shareable?`. `estimated_turns` is a plain
-    # Integer or Float (a calibrated median may be fractional) -- both JSON-safe
-    # and already immutable. Both figures format through {Telemetry.fixed_point},
-    # the one formatter every priced record quotes through; unlike {Compaction}
-    # this record REQUIRES them (see {Guards::SeamDecision}).
-    #
-    # Emitted by {Plan::SeamDecision#call} -- the same decide-then-journal
-    # pairing {Compaction::Scheduler} makes for its own {Compaction} accounting,
-    # one seam, one durable verdict.
+    # `rewrite_cost`/`payback` are held as fixed-point decimal STRINGS for
+    # exactly {Compaction}'s reason: `Canonical.normalize` has no canonical wire
+    # form for `BigDecimal`, and every field must be immutable and JSON-safe to
+    # keep the record `Ractor.shareable?`. `estimated_turns` may be fractional,
+    # since a calibrated median is.
     SeamDecision = Data.define(:size, :estimated_turns, :calibrated, :bytes_removed, :bytes_after,
                                :rewrite_cost, :payback, :verdict) do
       include Journalable
@@ -83,7 +58,7 @@ module Lain
         verdict = verdict.to_sym
         rewrite_cost = Telemetry.fixed_point(rewrite_cost)
         payback = Telemetry.fixed_point(payback)
-        Guards::SeamDecision.check!(size:, verdict:, rewrite_cost:, payback:)
+        Carriers::SeamDecision.check!(size:, verdict:, rewrite_cost:, payback:)
 
         super(
           size: -size, estimated_turns:, calibrated: calibrated ? true : false,

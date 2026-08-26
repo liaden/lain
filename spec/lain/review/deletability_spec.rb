@@ -22,7 +22,7 @@ require "tmpdir"
 # Booting is not running the suite. The full delete-and-run -- copy the tree,
 # apply the whole row, `rake pspec`, score the example count -- is what actually
 # means what §Intent claims, and it was performed by hand for every row at
-# b3fbada (see `.handback-T25.md` for the counts). It is not shipped HERE
+# b3fbada (see the handback note for the counts). It is not shipped HERE
 # because it costs a full suite per row: measured at ~36s each, ~4 minutes for
 # the six, against a 44s wall for the whole suite. A check that multiplies the
 # suite by five is a check that gets `--tag '~seam'`-ed out within a week, and a
@@ -148,7 +148,8 @@ module DeletionMap
                   "lib/lain/forge/journaled.rb", "lib/lain/forge/reconcile.rb", "spec/lain/forge/gh_spec.rb",
                   "lib/lain/cli/command/surface.rb", "spec/lain/cli/command/review_spec.rb",
                   "spec/lain/cli/command/survey_spec.rb", "spec/lain/seams/survey_subdirectory_spec.rb",
-                  "spec/lain/forge/gh/recorded_spec.rb", "spec/support/shared_examples/gh_parity.rb"],
+                  "spec/lain/forge/gh/recorded_spec.rb", "spec/support/shared_examples/gh_parity.rb",
+                  "spec/lain/cli/command/introspect_spec.rb"],
       edits: {
         "lib/lain/review.rb" => ['require_relative "review/submit"'],
         "lib/lain/forge/gh.rb" => ['require_relative "gh/endpoint"'],
@@ -165,6 +166,13 @@ module DeletionMap
         # talking to it.
         "lib/lain/cli/command/review.rb" => OUTBOX_REACH,
         "lib/lain/cli/command/survey.rb" => OUTBOX_REACH + ["@outbox.open?"],
+        # A THIRD outbox reader, and the only one that neither opens a round nor
+        # posts one: `/introspect` REPORTS the held round at the prompt. It names
+        # no constant of this capability in code, so the sweep is blind to it and
+        # only these literals find it -- `annotation_count` among them, since
+        # that reader exists for this caller and no other.
+        "lib/lain/cli/command/introspect.rb" => %w[outbox: @outbox.open? @outbox.target
+                                                   @outbox.held_source @outbox.annotation_count],
         "spec/lain/cli/command/surface_spec.rb" => ["review-submit"],
         "spec/lain/forge/intent_spec.rb" => ["promote pr_create pr_merge review_submit"],
         "spec/lain/forge/reconcile_spec.rb" => ['blind(action: "review_submit"']
@@ -362,7 +370,7 @@ RSpec.describe "the deletion map", :seam do
                      "the edit somebody has to make."
   end
 
-  # AC 3, and the one most likely to fail: a capability whose constants are
+  # The claim most likely to fail: a capability whose constants are
   # defined somewhere its row does not name cannot be deleted by that row.
   it "puts every file a capability's constants are DEFINED in on that capability's own file list" do
     testable.each do |cap|
@@ -376,7 +384,7 @@ RSpec.describe "the deletion map", :seam do
     end
   end
 
-  # AC 2, and it would have caught the GitHub-submit row's three-that-were-ten.
+  # It would have caught the GitHub-submit row's three-that-were-ten.
   # EXACT equality, not a subset: an unlisted consumer is a site nobody will
   # delete, and a listed one that no longer names the capability is a row
   # claiming a cost it has stopped paying.
@@ -443,7 +451,7 @@ RSpec.describe "the deletion map", :seam do
     end
 
     it "names no path the tree has not got" do
-      # A leading dot is a scratch artifact (`.handback-T25.md`), never a tree path.
+      # A leading dot is a scratch artifact (a handback note), never a tree path.
       cited = section.scan(%r{`(\w[\w./-]*\.(?:rb|lua|md|txt))`}).flatten.uniq
       missing = cited.reject { |path| Dir[DeletionMap::ROOT.join("**", path)].any? }
 
@@ -453,8 +461,8 @@ RSpec.describe "the deletion map", :seam do
     end
   end
 
-  # AC 1, in the affordable form. See this file's header for what this does NOT
-  # prove and where the full delete-and-run lives.
+  # The core claim, in the affordable form. See this file's header for what this
+  # does NOT prove and where the full delete-and-run lives.
   describe "booting without a capability" do
     DeletionMap::TESTABLE.each do |cap|
       it "still loads with #{cap.key} and everything it forces removed" do

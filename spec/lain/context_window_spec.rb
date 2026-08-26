@@ -113,7 +113,7 @@ RSpec.describe Lain::ContextWindow do
     end
   end
 
-  # F3. A window is a denominator, and `:approaching_window` spends it on an
+  # A window is a denominator, and `:approaching_window` spends it on an
   # IRREVERSIBLE lossy rewrite -- so a caller has to be able to ask where the
   # number came from, not just what it is.
   #
@@ -258,7 +258,7 @@ RSpec.describe Lain::ContextWindow do
       end
     end
 
-    # T5. Every id here is one the cloud arm can actually be launched with, so
+    # Every id here is one the cloud arm can actually be launched with, so
     # the numbers are pinned rather than merely the provenance: a PUBLISHED tag
     # on a wrong denominator is the fable/mythos defect wearing a better label.
     describe "the ollama cloud arm keeps its authority" do
@@ -309,7 +309,7 @@ RSpec.describe Lain::ContextWindow do
         expect(resolution).not_to be_authoritative
       end
 
-      # T5's escalation trigger, kept as a live assertion rather than a
+      # An escalation trigger, kept as a live assertion rather than a
       # one-time eyeball: DEFAULTS is ONE table shared with the Anthropic arms
       # and `matched_key` scans it by substring, so a cloud id containing a
       # tier word would quietly take an Anthropic window.
@@ -414,7 +414,7 @@ RSpec.describe Lain::ContextWindow do
       end
     end
 
-    # AC 3, pinned as the whole pre-T5 table rather than a sample: the claim is
+    # Pinned as the whole pre-cloud table rather than a sample: the claim is
     # that NO Anthropic answer moved, and a sample cannot say that.
     describe "the rows that existed before the cloud section" do
       subject(:book) { described_class.default }

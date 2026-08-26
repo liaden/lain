@@ -34,17 +34,16 @@ local function bind_motions(buf, name)
 end
 
 -- b:lain_view names every lain:// buffer -- the contract's one per-buffer
--- variable (protocol 3), what user config dispatches on given the single
--- shared "lain" filetype. It stopped naming a VIEW at protocol 9: the
--- changeset diff's old side is built through this same constructor, so what it
--- claims there is `lain://review/OLD/<path>`, a value that differs per FILE.
--- Inside a review, b:lain_review_side and its pair (47_diff) are what a gesture
--- reads instead. Set on BOTH constructor paths (create and
--- found-by-name), so a buffer surviving from an older runtime's attach gains
--- it on re-attach, not only at creation. On the create path the claim MUST
--- precede the 'filetype' assignment: setting the option fires FileType
--- SYNCHRONOUSLY, and the advertised dispatch pattern (autocmd FileType lain
--- -> read vim.b.lain_view) would otherwise see nil (panel probe G).
+-- variable (protocol 3), what user config dispatches on given the single shared
+-- "lain" filetype. It stopped naming a VIEW at protocol 9: the changeset diff's
+-- old side is built through this same constructor, so it claims
+-- `lain://review/OLD/<path>`, which differs per FILE, and a gesture inside a
+-- review reads b:lain_review_side and its pair (47_diff) instead.
+--
+-- Set on BOTH constructor paths, so a buffer surviving from an older runtime's
+-- attach gains it on re-attach. On the create path the claim MUST precede the
+-- 'filetype' assignment: setting the option fires FileType SYNCHRONOUSLY, so the
+-- advertised dispatch pattern would otherwise see nil.
 local function claim(buf, name)
   vim.b[buf].lain_view = name
   return buf
@@ -67,11 +66,9 @@ local function announce_render(name, buf)
   })
 end
 
--- Every lain:// buffer -- the append-only journal and the read-only state
--- views alike -- is found by name so re-attach reuses it (idempotent) instead
--- of stacking a fresh buffer per reconnect, and stays nomodifiable at rest
--- (4-2.2: "read-only and unobtrusive") so a human's stray keystroke in one
--- can never desync it from the state it presents.
+-- Every lain:// buffer is found BY NAME so re-attach reuses it instead of
+-- stacking a fresh buffer per reconnect, and stays nomodifiable at rest so a
+-- human's stray keystroke can never desync it from the state it presents.
 local function named_buf(name)
   local existing = vim.fn.bufnr(name)
   if existing ~= -1 then
@@ -89,7 +86,7 @@ local function named_buf(name)
   return buf
 end
 
--- I7/T5: the record-shaped buffers' one small syntax -- no treesitter grammar
+-- The record-shaped buffers' one small syntax -- no treesitter grammar
 -- shipped, and every group is lain-prefixed so a human's own syntax plugins
 -- never collide (the same idea every :Lain* command and augroup already
 -- follows). The six documented groups, each anchored to a view's own
@@ -106,20 +103,17 @@ end
 --                  prints (stdout/stderr)
 --   lainAge        {InboxView#age_of}'s "12s"/"3m"/"1h" shape
 --   lainSender     inbox sender attribution: the text leading the
---                  double-space-padded age -- the same both-sides anchor
---                  RECORD_START[INBOX] rides, for the same reason (a
---                  variable-length sender name has no fixed column). A
---                  leading "[" is refused (panel probe F): the syntax is
---                  SHARED across the lain views, and a journal line whose
---                  tool stdout happens to contain "  12s  " would otherwise
---                  paint its "[id stream]" attribution as a sender,
---                  swallowing lainToolName
+--                  double-space-padded age, since a variable-length sender name
+--                  has no fixed column. A leading "[" is REFUSED: the syntax is
+--                  shared across the lain views, and a journal line whose tool
+--                  stdout happens to contain "  12s  " would otherwise paint its
+--                  "[id stream]" attribution as a sender, swallowing
+--                  lainToolName
 --
--- Registered once per attach in a cleared augroup (idempotent re-attach,
--- same convention as `lain_inbox` below); the MATCHES it defines stick to
--- each buffer once applied, so a second attach re-registering the autocmd
--- does not need to (and will not, since FileType only fires on a filetype
--- CHANGE) redraw syntax on a buffer the first attach already set up.
+-- Registered once per attach in a cleared augroup; the MATCHES it defines stick
+-- to each buffer once applied, so a second attach does not need to redraw syntax
+-- on a buffer the first attach set up -- and will not, since FileType only fires
+-- on a filetype CHANGE.
 local syntax_group = vim.api.nvim_create_augroup("lain_syntax", { clear = true })
 vim.api.nvim_create_autocmd("FileType", {
   group = syntax_group,
@@ -155,23 +149,17 @@ local function set_lines(buf, start, stop, lines)
   vim.bo[buf].modifiable = false
 end
 
--- The ONE editable lain:// buffer (4-2.3): same scratch shape as named_buf but
--- left MODIFIABLE at rest, because a human edits the pending request here before
--- :LainResend. Idempotent by name on re-attach, like every other lain:// buffer.
+-- The ONE editable lain:// buffer: named_buf's scratch shape left MODIFIABLE at
+-- rest, because a human edits the pending request here before :LainResend.
 --
--- I7: reuses nvim's built-in "markdown" filetype (READONLY_FILETYPES' comment
--- explains the "just works, no grammar shipped" reasoning; markdown was the
--- deliberate pick here too, not "json"). The payload is pretty-printed JSON,
--- not prose -- worth naming why that is not a format-on-save hazard: `buftype
--- = "nofile"` below is the actual guard. BufWritePre (what every
--- format-on-save plugin rides) never fires on a nofile buffer -- nvim raises
--- E382 on `:write` before autocommands even run -- so no formatter can touch
--- these bytes via save, human `:w` included. Filetype alone would not have
--- been enough; buftype is what makes it safe. Belt-and-suspenders anyway: a
--- formatter that DID reach the buffer through some other trigger and mangled
--- it into invalid JSON still only degrades to a silent, harmless :LainResend
--- no-op (RequestBuffer#parse already treats a malformed edit that way) --
--- the frontend holds no commit path into the Timeline at all.
+-- The payload is pretty-printed JSON under nvim's built-in "markdown" filetype,
+-- and that is not a format-on-save hazard: `buftype = "nofile"` is the guard.
+-- BufWritePre -- what every format-on-save plugin rides -- never fires on a
+-- nofile buffer, because nvim raises E382 on `:write` before autocommands even
+-- run. Filetype alone would not have been enough. A formatter reaching the
+-- buffer through some other trigger and mangling it into invalid JSON still only
+-- degrades to a silent :LainResend no-op: the frontend holds no commit path into
+-- the Timeline at all.
 local function editable_buf(name)
   local existing = vim.fn.bufnr(name)
   if existing ~= -1 then

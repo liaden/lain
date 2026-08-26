@@ -80,7 +80,7 @@ RSpec.describe Lain::Context::Mailbox do
     end
   end
 
-  # Decision 2 / panel B2: the fold is a PURE projection -- no cursor, no
+  # Decision 2: the fold is a PURE projection -- no cursor, no
   # consumed queue. "Pending" is DERIVED from causal edges (a message is pending
   # until a committed turn names it a causal parent), so the same snapshot folds
   # byte-identically however many times render runs, and a dispatch that never
@@ -209,9 +209,9 @@ RSpec.describe Lain::Context::Mailbox do
     end
 
     # Probe-becomes-spec (panel probe #2): a message ARRIVING between render and
-    # commit -- an actor replying during the provider round trip, the OM-3 point.
-    # The commit must claim exactly what the render folded (one shared frozen
-    # snapshot), and the arrival must still be pending at the next turn's
+    # commit -- an actor replying during the provider round trip, which is the
+    # point. The commit must claim exactly what the render folded (one shared
+    # frozen snapshot), and the arrival must still be pending at the next turn's
     # snapshot. Reading the log LIVE at commit claimed m2 as a causal parent of
     # a turn that never rendered it -- marked consumed, never folded again: lost.
     describe "a message arriving mid-dispatch (the render/commit window)" do

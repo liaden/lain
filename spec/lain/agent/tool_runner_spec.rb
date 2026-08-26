@@ -2,7 +2,7 @@
 
 require "async"
 
-# E2's fixtures, kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
+# Shared fixtures, kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module ToolRunnerSpecSupport
   # Null gate: announcing entry goes nowhere and release never parks, so an
   # ungated probe runs straight through -- no probe ever guards on nil.
@@ -46,7 +46,7 @@ module ToolRunnerSpecSupport
     end
   end
 
-  # A7's fixtures. Records what the post-dispatch seam was handed and WHERE it
+  # Post-dispatch fixtures. Records what the seam was handed and WHERE it
   # ran -- the Async task, so a spec can pin the observation to the caller's
   # own scope rather than to a gather child. Shares the dispatch log, so
   # ordering against the tools' own boundaries reads off one ordered list.
@@ -189,7 +189,7 @@ RSpec.describe Lain::Agent::ToolRunner do
     expect(seen[:context]).to eq(:ctx)
   end
 
-  # I6: one user-turn delivery = the tool_result blocks PLUS the consumption
+  # One user-turn delivery = the tool_result blocks PLUS the consumption
   # edges harvested from the toolset -- pinned here at the collaborator's own
   # boundary with consume-once fakes, so the contract does not rest on
   # agent_spec's end-to-end examples alone.
@@ -267,7 +267,7 @@ RSpec.describe Lain::Agent::ToolRunner do
     end
   end
 
-  # T6/F46: what a torn turn commits, asserted at this collaborator's own
+  # What a torn turn commits, asserted at this collaborator's own
   # boundary by driving {Answers} directly -- the states an interrupt can leave
   # it in are reachable here without a clock. The end-to-end tear, a real
   # `Async` cancel landing inside a real parked tool, is
@@ -400,7 +400,7 @@ RSpec.describe Lain::Agent::ToolRunner do
     end
   end
 
-  # E2: barrier semantics for mixed turns. The turn partitions into maximal
+  # Barrier semantics for mixed turns. The turn partitions into maximal
   # CONTIGUOUS runs of parallel-safe tools; each safe run gathers
   # concurrently, and each unsafe tool is a barrier that runs alone --
   # strictly after everything before it, strictly before everything after --
@@ -516,7 +516,7 @@ RSpec.describe Lain::Agent::ToolRunner do
     end
   end
 
-  # A7: the post-dispatch observation seam. An eager summary of a tool result
+  # The post-dispatch observation seam. An eager summary of a tool result
   # must be spawned where the CALLER's reactor is -- the agent loop's, which
   # lives for the whole run -- and never from inside #gather, whose `Sync`
   # spins up and closes its own reactor whenever no reactor is ambient. Every
@@ -652,9 +652,9 @@ RSpec.describe Lain::Agent::ToolRunner do
     # The production observer this seam is built for, pinned at its own
     # boundary: which results earn a summary is policy, and it lives with
     # {Effect::Handler::Summarizing}, the decorator that shares the rule.
-    # These examples are here rather than beside that class because A7 owns
-    # the observer; the chain-mount decorator's own examples are in
-    # spec/lain/oracle/eager_spec.rb.
+    # These examples are here rather than beside that class because the
+    # post-dispatch seam owns the observer; the chain-mount decorator's own
+    # examples are in spec/lain/oracle/eager_spec.rb.
     describe Lain::Effect::Handler::Summarizing::Observer do
       let(:eager) { ToolRunnerSpecSupport::RecordingEager.new }
 
@@ -686,7 +686,7 @@ RSpec.describe Lain::Agent::ToolRunner do
         expect(observing(content, tool_name: "read_file")).to eq([fired_for(content, tool_name: "read_file")])
       end
 
-      # A3's escalation trigger: this method already no-ops silently on a
+      # An escalation trigger: this method already no-ops silently on a
       # Symbol-keyed block (a named follow-up). An observation that cannot say
       # WHICH tool ran must not widen that -- routing every result as nameless
       # would silently disable every tool-keyed summarizer -- so the name is a
@@ -701,7 +701,7 @@ RSpec.describe Lain::Agent::ToolRunner do
         expect(observing("x" * 5000, is_error: true)).to be_empty
       end
 
-      # T4: this seam holds no SIZE policy. It once declined below 4096 bytes,
+      # This seam holds no SIZE policy. It once declined below 4096 bytes,
       # which gated the project's own declared (free, token-less) summarizers
       # behind the MODEL tier's cost threshold and made them dead for every
       # ordinary tool result. The byte rule still exists, one layer down at

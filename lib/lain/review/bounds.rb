@@ -7,115 +7,53 @@ module Lain
     #
     # {Agent::Budget}'s shape, for {Agent::Budget}'s reason: a ceiling the
     # harness enforces is not an outcome the subject produced, so it raises
-    # rather than returning a value a caller can read past. The difference is
-    # what it is protecting. A budget bounds a loop pointed at a shell; this
-    # bounds a VIEW, and the thing it is defending against is not a crash but a
-    # success that isn't one -- octo's fix for its own large-PR bug (research
-    # S4.2, octo#302) turned a crash into a quietly truncated file list, and a
-    # truncated list reads exactly like a short one.
+    # rather than returning a value a caller can read past. What differs is what
+    # it defends. A budget bounds a loop pointed at a shell; this bounds a VIEW,
+    # and the thing it defends against is not a crash but a success that isn't
+    # one -- octo's fix for its own large-PR bug (octo#302) turned a crash into a
+    # quietly truncated file list, and a truncated list reads exactly like a
+    # short one. So this object never truncates, never samples, and never elides:
+    # either the whole changeset is handled or {TooLarge} names the measurement,
+    # the ceiling, and what to do instead.
     #
-    # So: this object never truncates, never samples, and never elides. Either
-    # the whole changeset is handled or {TooLarge} names the measurement, the
-    # ceiling, and what to do instead.
-    #
-    # == Where the bound is NOT
-    #
-    # Not on diff size. Research S3.7 measured the parser at 80,800 rendered
-    # lines in 0.26s and 39MB, so nothing here is defending the parse. The
-    # constraints are downstream of it: a human reading a cumulative view, and
-    # a `/critique` prompt against a context window.
-    #
-    # == Deciding cheaply, and why nothing here reads a hunk
-    #
-    # The file count is the cheapest fact and, at the work scale that motivates
-    # this card, the one that fires first -- 800 files against a ceiling of 300.
-    # {#check_presentation!} therefore asks it FIRST, so the DECISION to refuse
-    # is reached on a file count alone and never costs a walk over the thing it
-    # is refusing to walk over.
-    #
-    # Ordering alone was never the whole of it, and reading it as such is the
-    # trap this paragraph exists to close: a short-circuit fires on the REFUSAL
-    # path, so every SUCCESSFUL presentation went on to sum `file.hunks` over
-    # every file it had just agreed to present. Wrapping the argument in a
-    # lambda fixes nothing -- the ordering was already right and the input was
-    # wrong. So the line ceiling now asks a FILE what it costs
-    # ({Source::ChangedFile#rendered_lines}), and each file answers from what
-    # its own source already knows: a parsed diff from the hunks it parsed, a
-    # corpus from the line counts its identity pass harvested in one streamed
-    # read. Nothing here sends `#hunks`, so a file nobody has chunked survives a
-    # whole bounded presentation unchunked.
-    #
-    # That now covers the MESSAGE as well as the DECISION, which it did not
-    # use to: naming a narrower scope only when that scope actually fits still
-    # means measuring the candidate's groups, but the measurement is the same
-    # per-file arithmetic and it still gives up at the first candidate's first
-    # group whose FILE count is over. {#cumulative_advice} says so again at the
-    # point of use. The promise is nevertheless stated as being about the
-    # DECISION, because that is the one a future strategy cannot quietly break:
-    # composing a sentence is allowed to measure, and a candidate that had to
-    # read content to know whether it fits would be within its rights.
-    #
-    # There is a spec on each half, and both drive files that RAISE when their
-    # hunks are read -- the only proof that a message was not sent, since a
-    # recording double leaves a green run resting on the recorder.
+    # Two arguments live in `docs/review.md` under "Where the review ceilings
+    # come from": where the bound is NOT (never on parse cost), and why nothing
+    # here reads a hunk -- the DECISION to refuse is reached on a file count
+    # alone, and the line ceiling asks a FILE what it costs rather than summing
+    # its hunks.
     class Bounds
       # A view is past a ceiling. Carries the measurement, the ceiling and the
       # alternative in its message, because a bare "too large" leaves the
       # reader to guess which of three bounds fired.
       class TooLarge < Error; end
 
-      # GitHub stops serving a combined diff past 300 files (research S3.7),
-      # and tuicr#475 independently settled on the same hard ceiling, reporting
-      # that "patches large enough to hit the limit also made file and commit
-      # navigation slow" (S4.2). Two unrelated projects, one number -- and for
-      # {Source::GithubPr} it is an API fact rather than a preference.
+      # GitHub stops serving a combined diff past 300 files, and tuicr#475
+      # independently settled on the same hard ceiling, reporting that "patches
+      # large enough to hit the limit also made file and commit navigation
+      # slow". Two unrelated projects, one number -- and for {Source::GithubPr}
+      # it is an API fact rather than a preference.
       DEFAULT_MAX_FILES = 300
 
-      # DERIVED from {DEFAULT_MAX_FILES} rather than chosen beside it: S3.7's
-      # work-scale changeset is 80,800 rendered lines over 800 files, so 101
-      # lines per file, so 300 files is ~30,000 lines. Setting the two ceilings
+      # DERIVED from {DEFAULT_MAX_FILES} rather than chosen beside it: the
+      # measured work-scale changeset is 80,800 rendered lines over 800 files, so
+      # 101 lines per file, so 300 files is ~30,000 lines. Setting both ceilings
       # to fire at the same changeset SIZE is what keeps both alive -- a line
-      # ceiling far above the implied one would be dead code, and one far below
-      # would make the file ceiling unreachable. What it catches that the file
-      # count cannot is the other shape: 40 files of 1,000 lines each.
-      #
-      # For scale, it is 11x the 2,727-line single-commit view S3.7 measured,
-      # so an ordinary review is nowhere near it.
+      # ceiling far above the implied one would be dead code, one far below would
+      # make the file ceiling unreachable. What it catches that a file count
+      # cannot is the other shape: 40 files of 1,000 lines each. For scale, it is
+      # 11x the measured 2,727-line single-commit view.
       DEFAULT_MAX_LINES = 30_000
 
       # The size a `/critique` chunk is packed to, and the only ceiling set
-      # against a context window rather than a reader.
-      #
-      # Set from the WINDOW, which is the constraint this doc argues from.
-      # A rendered diff line measures **49.6 bytes** here (`git diff HEAD~8`,
-      # 6,849 lines, 339,711 bytes / measured), so ~14 tokens/line at ~3.5
-      # bytes/token (an ESTIMATE for code, not a measurement); 7,000 lines is
-      # then ~99k tokens. That is **half** of the smallest window a bench arm
-      # might run (200K, Haiku 4.5) and ~10% of the 1M default, leaving the
-      # prompt, the surrounding code and the reply the other half of the worst
-      # case. The estimate is bounded and the conclusion survives its range: at
-      # 3.0 bytes/token 7,000 lines is 58% of a 200K window, at 4.0 it is 43%.
-      #
-      # The half is a POLICY -- a judgement about how much of a window the diff
-      # should occupy -- while the window and the bytes/line are measured. That
-      # distinction is the correction: the first cut set 4,000 from S3.7's 2,727
-      # rendered lines per commit, which is the mean of a SYNTHETIC UNIFORM
-      # generator (`bigdiff_stacked` emits 30 identical commits) and therefore a
-      # distribution with no tail. A ceiling at mean + 47% refuses the tail of
-      # every real changeset -- concretely, it refused a 5,001-line single-file
-      # commit that is ~71k tokens, 7% of a 1M window, while the doc justified
-      # itself by that same window. The two could not both be true.
-      #
-      # The measured per-commit view now sits at 39% of the ceiling rather than
-      # 68% of it. The same arithmetic is what makes the card's premise true
-      # rather than assumed: 74,400 changed lines is ~80,800 rendered, ~1.1M
-      # tokens, past even a 1M window.
+      # against a context window rather than a reader. ~99k tokens at a measured
+      # 49.6 bytes per rendered line -- half the smallest window a bench arm
+      # might run. The full derivation, and why the first cut at 4,000 was wrong,
+      # is in `docs/review.md` under "Where the review ceilings come from".
       DEFAULT_MAX_CRITIQUE_LINES = 7_000
 
       # The scope vocabulary, read off {Partition::STRATEGIES} rather than
-      # restated -- the standing rule this chunk formed three times, now with
-      # the registry as its one source. Everything below reads out of this one
-      # Hash, so there is no second place a scope is spelled.
+      # restated: everything below reads out of this one Hash, so there is no
+      # second place a scope is spelled.
       SCOPE_NAMES = Partition::STRATEGIES.transform_values(&:name).freeze
 
       # `fetch` is what makes the derivation real: a scope nobody declared
@@ -129,87 +67,63 @@ module Lain
       COMMIT_WALK = SCOPE_NAMES.fetch(:commits)
 
       # The strategy `:commits` means, read out of the registry rather than
-      # constructed here so there is one instance and one spelling. A LATER card
-      # takes the strategy as an argument; today the two scope checks below are
-      # still named for the two groupings the vocabulary declares, so naming the
-      # commit walk here is the rename and nothing more.
+      # constructed here so there is one instance and one spelling.
       COMMIT_STRATEGY = Partition::STRATEGIES.fetch(:commits)
 
       # The directory grouping, read out of the registry for {COMMIT_STRATEGY}'s
       # reason. Named here because {SCOPE_CHECKS} derives a `check_<name>!` per
       # REGISTERED strategy, so a strategy shipping without one is a
-      # `NoMethodError` deep in a refusal path -- `bounds_spec.rb` pins a real
-      # private method behind every derived name, which is where that miss
-      # surfaces instead.
+      # `NoMethodError` deep in a refusal path; `bounds_spec.rb` pins a real
+      # private method behind every derived name, which is where that surfaces.
       DIRECTORY_STRATEGY = Partition::STRATEGIES.fetch(:by_directory)
 
-      # What {#check_corpus_files!} recommends, and the ONE advice in this
-      # object that is a constant rather than a measurement.
+      # What {#check_corpus_files!} recommends, and the ONE advice here that is a
+      # constant rather than a measurement: {Source::Corpus} refuses in its
+      # CONSTRUCTOR off the walk's file count alone, so there is no changeset to
+      # hand {#cumulative_advice}, and building one to compose a sentence would
+      # spend the exact property the early refusal buys.
       #
-      # {Source::Corpus} refuses in its CONSTRUCTOR, off the walk's file count
-      # alone -- which is what keeps an oversized survey cheap to refuse rather
-      # than costing the streamed read of every file it is refusing to show. So
-      # there is no changeset there to hand {#cumulative_advice}, and building
-      # one to compose a sentence would spend the exact property the early
-      # refusal exists to buy. Static, therefore.
-      #
-      # == Why this names no SCOPE, and must not
-      #
-      # Both remedies here change the FILE COUNT, because a file count is the
-      # only thing this ceiling measures. A narrower walk root genuinely holds
-      # fewer files; `--unbounded` genuinely lifts the number. A partition
+      # It names no SCOPE, and must not. Both remedies here change the FILE
+      # COUNT, which is the only thing this ceiling measures: a narrower walk
+      # root holds fewer files, `--unbounded` lifts the number. A partition
       # strategy does NEITHER -- it groups the same file set for display, and
       # this refusal has already fired by the time any scope is applied
-      # ({CLI::Survey#present} builds the corpus before `session.present`). So
-      # `--scope by_directory` cannot lift this ceiling, and a version of this
-      # sentence that recommended it sent the reader to a path that refused
-      # again with byte-identical wording. That is the {NO_PRESENTABLE_SCOPE}
-      # rule one paragraph up, and it applies to advice this object writes as
-      # much as to advice it declines to write.
+      # ({CLI::Survey#present} builds the corpus before `session.present`). A
+      # version of this sentence that recommended `--scope by_directory` sent the
+      # reader to a path that refused again with byte-identical wording.
       #
-      # "a subdirectory" and not a NAMED one: naming which subdirectory would
-      # fit needs the walk this refusal exists to avoid.
+      # "a subdirectory" and not a NAMED one: naming which subdirectory would fit
+      # needs the walk this refusal exists to avoid.
       #
-      # `--unbounded` is LAST, and the pin on that placement is DEFENCE IN
-      # DEPTH rather than a guard over a live path -- said plainly, because a
-      # comment claiming otherwise is one a future reader would trust. This
-      # sentence never reaches the eliding rail: it raises in
-      # {Source::Corpus#initialize}, before any surface is called, and is
-      # rendered whole by `Repl#dispatch` in chat and by Thor's stderr under
-      # `lain survey`. So nothing truncates it today. The placement costs
-      # nothing and is kept for the day something does -- and the reasoning
-      # would hold there, since `elided` (`65_review.lua`) preserves a head AND
-      # a tail, so the token a reader cannot guess is the one that wants an end.
+      # `--unbounded` is LAST as DEFENCE IN DEPTH rather than a guard over a live
+      # path -- said plainly, because a comment claiming otherwise is one a future
+      # reader would trust. This sentence never reaches the eliding rail today:
+      # it raises before any surface is called and is rendered whole by
+      # `Repl#dispatch` and by Thor's stderr. The placement costs nothing and the
+      # reasoning would hold if that changed, since `elided` (`65_review.lua`)
+      # preserves a head AND a tail, so the token a reader cannot guess is the
+      # one that wants an end.
       CORPUS_NARROWING = "survey a subdirectory instead, or raise the ceiling with --unbounded"
 
       # What a corpus refusal calls the thing it is refusing, in {#guard!}'s
       # subject position. A survey is of a TREE and has no revision, so there is
-      # no sha and no scope name to put here the way a group's detail supplies
-      # one -- the corpus is the whole subject there is.
+      # no sha and no scope name to put here -- the corpus is the whole subject.
       CORPUS = "this corpus"
 
       # Every strategy a cumulative refusal may recommend narrowing TO -- every
-      # registered strategy except {Whole} itself, since "narrow to the whole
-      # changeset" recommends nothing. Registry order, so the same candidate
-      # wins whenever a changeset fits more than one: {#cumulative_advice}
-      # takes the FIRST fit, not the best one, and repeat runs must agree.
+      # registered strategy except {Whole}, since "narrow to the whole changeset"
+      # recommends nothing. Registry order, so the same candidate wins whenever a
+      # changeset fits more than one: {#cumulative_advice} takes the FIRST fit,
+      # not the best one, and repeat runs must agree.
       #
       # This is what makes a refusal's advice strategy-neutral: nothing here
       # spells "commit" or "directory", so a fourth strategy is recommended the
-      # moment it registers, with no matching edit to this file -- the
-      # sentence itself comes off the winning candidate's own `#advice`.
+      # moment it registers, with no matching edit here -- the sentence comes off
+      # the winning candidate's own `#advice`.
       #
-      # Tried in this order with NO `#supports?(source)` filtering: `#fits?`
-      # calls straight through to `strategy.partition(view)`, so a source
-      # {ByCommit} cannot walk (no `#commits`) raises `NoMethodError` here
-      # rather than falling through to {ByDirectory}, which would have
-      # accepted it. NOT a regression -- the pre-A4 code only ever consulted
-      # {ByCommit} and failed the same way -- but it means this registry is
-      # only as safe as its FIRST candidate, not as safe as its safest one.
-      # Filtering by source belongs to {Session#present} (A3's Open decision:
-      # "`#supports?` is consulted where the source is in hand"), not here --
-      # adding it in `Bounds` would be the object taking on a resolution
-      # decision the escalation triggers reserve for that card.
+      # Filtering by source belongs to {Session#present} ("`#supports?` is
+      # consulted where the source is in hand"), not here; doing it in `Bounds`
+      # would be this object taking on a resolution decision that is not its own.
       NARROWING_CANDIDATES = Partition::STRATEGIES.except(:cumulative).values.freeze
 
       # What a group's own refusal says: below a {Partition}'s files there is
@@ -228,49 +142,40 @@ module Lain
 
       # The refusal below the FILE, which is where splitting genuinely stops.
       #
-      # The first cut said this of a COMMIT, and it was false: a {Partition}
+      # The first cut said this of a COMMIT and it was false: a {Partition}
       # answers `#files`, so the file is a boundary GIT SUPPLIES below the
-      # commit, and packing by it drops nothing and invents nothing.
-      #
-      # A hunk is a git-supplied boundary too -- {Hunk} answers `#lines` and
-      # `#path`, and {Review::MARK_STATES} is recorded per HUNK, with a file's
-      # tri-state ({Review::FILE_STATES}) the FOLD of them. So the model
-      # addresses hunks perfectly well, and the honest reason this stops at the
-      # file is not impossibility: it is a judgement that a critique of one hunk
-      # without the rest of its file is a DIFFERENT task rather than a smaller
-      # one, because a reviewer judging a change needs its siblings. Stated as a
-      # judgement because that is what it is. If something later wants
-      # hunk-level chunks, that is a decision to take deliberately, not a line
-      # this comment gets to foreclose by calling it impossible.
+      # commit. A hunk is git-supplied too, and {Review::MARK_STATES} is recorded
+      # per HUNK, so the model addresses hunks perfectly well. The honest reason
+      # this stops at the file is not impossibility but a JUDGEMENT: a critique
+      # of one hunk without the rest of its file is a different task rather than
+      # a smaller one, because a reviewer judging a change needs its siblings.
+      # Hunk-level chunks are a decision to take deliberately, not one this
+      # comment forecloses by calling it impossible.
       UNSPLITTABLE = "and a file is the smallest chunk this splits by, because a critique of one " \
                      "hunk without the rest of its file is a different task rather than a smaller one"
 
-      # A ceiling that refuses nothing, for the caller who has said so.
-      #
       # `Float::INFINITY` rather than `nil`, and the difference is the whole
       # reason it is a constant: infinity answers the entire comparison duck a
-      # number does -- `x <= INFINITY` is true, `x > INFINITY` is false -- so
-      # every guard below is untouched and only the coercion has to know. `nil`
-      # would need a branch at each comparison, and, worse, it is what a missed
-      # config lookup hands you. This value cannot arrive by accident.
+      # number does, so every guard below is untouched and only the coercion has
+      # to know. `nil` would need a branch at each comparison and is what a
+      # missed config lookup hands you -- this value cannot arrive by accident.
       #
-      # Nothing DEFAULTS to it, deliberately: an absent ceiling is a number, and
-      # a silently unbounded view is precisely the success-that-isn't-one this
-      # object exists to refuse. It is opt-in, at the command line, by a human
-      # who has said the word.
+      # Nothing DEFAULTS to it: an absent ceiling is a number, and a silently
+      # unbounded view is precisely the success-that-isn't-one this object exists
+      # to refuse. Opt-in, at the command line, by a human who said the word.
       UNBOUNDED = Float::INFINITY
 
       # What a view costs, in the two units the ceilings are set in.
       #
       # ONE line unit, deliberately. `lines` is RENDERED lines -- what a reader
       # scrolls and what a prompt carries -- and never numstat's changed-line
-      # count, which is ~9% lower at work scale (S3.7: 74,400 changed against
-      # 80,800 rendered). Two constructors measuring "lines" off two different
-      # tapes is the same trap {Review::SIDES} records, one level down.
+      # count, which is ~9% lower at work scale (74,400 changed against 80,800
+      # rendered). Two constructors measuring "lines" off two different tapes is
+      # the trap {Review::SIDES} records, one level down.
       #
       # It counts each hunk's body plus its `@@` header, and NOT the four-line
       # `diff --git`/`index`/`---`/`+++` preamble: that is a constant per FILE,
-      # which is the quantity the file ceiling already governs.
+      # the quantity the file ceiling already governs.
       Size = Data.define(:files, :lines) do
         # @param files [Enumerable<#rendered_lines>] a changeset's or a scope's
         #   files. Not `#hunks` -- asking a file its own size instead of
@@ -280,13 +185,10 @@ module Lain
 
         # The measurement without the value object, because the guards below run
         # it per commit and per FILE on the packing walk and never read
-        # {Size#files}. One implementation, two callers -- {.of} is for a caller
-        # that wants both numbers to show a human.
-        #
-        # It ASKS rather than counts, and that is the difference between a
-        # bound a survey can afford and one it cannot. See
-        # {Source::ChangedFile#rendered_lines}, which is where the unit above is
-        # actually implemented for a parsed file.
+        # {Size#files}. It ASKS rather than counts, which is the difference
+        # between a bound a survey can afford and one it cannot -- see
+        # {Source::ChangedFile#rendered_lines}, where the unit above is
+        # implemented for a parsed file.
         def self.lines_in(files) = files.sum(&:rendered_lines)
       end
 
@@ -311,20 +213,15 @@ module Lain
       end
 
       # The file ceiling asked from a FILE COUNT, for the caller who has one and
-      # has no view -- {Source::Corpus}, deciding in its constructor whether to
-      # become one at all.
+      # no view -- {Source::Corpus}, deciding in its constructor whether to
+      # become one at all. Public because that caller is outside this object, and
+      # the alternative is what it replaced: a refusal sentence written out by
+      # hand elsewhere, against the same ceiling, with nothing keeping the two
+      # spellings in step.
       #
-      # Public because that caller is outside this object and the alternative is
-      # what it replaced: a refusal sentence written out by hand somewhere else,
-      # imitating {#guard!}'s wording, against the same ceiling on the same
-      # {Bounds} instance, with no advice and nothing to keep the two spellings
-      # in step. One object owns the ceiling, the refusal type, the wording AND
-      # the alternative it names; a second caller does not get to own a copy.
-      #
-      # Only `max_files`. The line ceiling is not asked here because a line
-      # count is not a fact a walk has -- it is the read this refusal is
-      # avoiding -- and {Session#present} asks it afterwards, of a corpus that
-      # got built.
+      # Only `max_files`. A line count is not a fact a walk has -- it is the read
+      # this refusal is avoiding -- and {Session#present} asks it afterwards, of a
+      # corpus that got built.
       #
       # @param measured [Integer] how many files the walk found
       # @return [nil] when the walk is within the ceiling
@@ -336,31 +233,20 @@ module Lain
       end
 
       # The `/critique` input, chunked by the boundaries git already supplies:
-      # the commit first, and the FILE within a commit that is too big to send
-      # whole. Both are boundaries the changeset hands over -- neither drops
-      # content nor invents a split -- so a chunk is always a {Review::Partition},
-      # carrying its commit's label whether it holds all of that commit's files
-      # or some of them. A caller that cannot tell which of two types it was
-      # handed would have to branch; joining chunks is its business anyway.
+      # the commit first, and the FILE within a commit too big to send whole.
+      # Neither drops content nor invents a split, so a chunk is always a
+      # {Review::Partition}, carrying its commit's label whether it holds all of
+      # that commit's files or some. An empty group still yields -- see
+      # {Partition::ByCommit} for how a merge produces one -- because skipping it
+      # is the silent drop this object exists to refuse.
       #
-      # An empty group still yields -- see {Partition::ByCommit} for how a merge
-      # produces one -- because skipping it is the silent drop this object exists
-      # to refuse.
-      #
-      # == What a SPLIT commit's chunks share, and what that costs a renderer
-      #
-      # N chunks from one commit carry the same `label` AND the same `detail` --
-      # including the commit's OWN, unpartitioned numstat, because that is what
-      # {Partition::ByCommit::Commit} means and partitioning it would invent
-      # per-chunk numbers git never reported. `files` is the only member that
-      # differs.
-      #
-      # The cost lands on a renderer: T14's sidebar renders `numstat`, so a
-      # commit split into three chunks renders that one figure three times, and
-      # the three do not sum to it. A consumer that shows per-chunk totals must
-      # derive them from `files` (what {Size.of} answers) rather than read the
-      # detail's `numstat`, which describes the whole commit however it was
-      # chunked.
+      # N chunks from ONE commit carry the same `label` AND the same `detail`,
+      # including the commit's own unpartitioned numstat, because partitioning it
+      # would invent per-chunk numbers git never reported. `files` is the only
+      # member that differs. The cost lands on a renderer: the sidebar renders
+      # `numstat`, so a commit split into three chunks renders that one figure
+      # three times and the three do not sum to it. A consumer showing per-chunk
+      # totals must derive them from `files` ({Size.of}).
       #
       # Every chunk is packed and measured BEFORE any is yielded. Checking as it
       # goes would hand chunks 1 and 2 to the model and then refuse at chunk 3,
@@ -415,15 +301,12 @@ module Lain
         view.partitions(strategy).each { |group| check_group!(group) }
       end
 
-      # The subject is what the group's DETAIL calls it, which is what replaced
+      # The subject is what the group's DETAIL calls it, which replaced
       # `"commit #{sha}"`: a refusal that says "commit" in prose is one this
       # object cannot make honest for any other grouping, and only the strategy
-      # knows how its own groups are looked up. The commit walk puts the sha
-      # back there; a directory answers its path, which names itself already.
-      #
-      # Asked ONCE and shared by both guards, because the two ceilings refuse
-      # the same group and a reader comparing two messages should not have to
-      # check whether they name one thing.
+      # knows how its own groups are looked up. Asked ONCE and shared by both
+      # guards, so a reader comparing two messages need not check whether they
+      # name one thing.
       def check_group!(group)
         files = group.files
         subject = group.detail.named(group.label)
@@ -431,28 +314,24 @@ module Lain
         guard!(Size.lines_in(files), max_lines, "rendered lines", subject) { NO_NARROWER }
       end
 
-      # Computed only on the refusal path, and only there.
-      #
-      # This is where the short-circuit's promise gets its exact wording: the
-      # DECISION to refuse reads no hunks, and the MESSAGE is allowed to
-      # measure, because deciding whether a narrower scope actually fits means
-      # measuring it. It happens not to cost a hunk either -- the measurement is
-      # {Size.lines_in}, which asks each file its own size -- but that is the
-      # candidates' property rather than this method's promise, and `all?` gives
-      # up at the first candidate's first group whose FILE count is over anyway.
-      # A true sentence is worth the measurement; Schneeman's finding was a
+      # Computed only on the refusal path. This is where the short-circuit's
+      # promise gets its exact wording: the DECISION to refuse reads no hunks,
+      # and the MESSAGE is allowed to measure, because deciding whether a
+      # narrower scope actually fits means measuring it. It happens not to cost a
+      # hunk either ({Size.lines_in} asks each file its own size), but that is
+      # the candidates' property rather than this method's promise. A true
+      # sentence is worth the measurement; the finding this replaced was a
       # message that sent a human down a path which also refuses.
       #
-      # {NARROWING_CANDIDATES} is tried in registry order and the FIRST fit
-      # wins, `#advice` read off that strategy rather than composed here.
+      # {NARROWING_CANDIDATES} in registry order, FIRST fit wins, `#advice` read
+      # off that strategy rather than composed here.
       #
-      # `#supports?` comes FIRST and is what makes the registry as safe as its
+      # `#supports?` comes FIRST, which is what makes the registry as safe as its
       # safest candidate rather than as safe as its first. {Session#present}
-      # filters the RESOLVED scope, which is `:cumulative` on this path -- so
-      # every candidate is consulted here regardless, and {ByCommit} leading
-      # the order meant a source with no walk died in `ownership` with a
+      # filters the RESOLVED scope, which is `:cumulative` on this path, so every
+      # candidate is consulted here regardless -- and {ByCommit} leading the
+      # order meant a source with no walk died in `ownership` with a
       # `NoMethodError` naming neither the scope asked for nor the source.
-      # `lain survey` reaches it on the default scope.
       def cumulative_advice(view)
         candidate = NARROWING_CANDIDATES.find { |strategy| view.supports?(strategy) && fits?(view, strategy) }
         candidate ? candidate.advice : NO_PRESENTABLE_SCOPE
@@ -468,12 +347,11 @@ module Lain
 
       # Packs at most ONCE however many times the Enumerator is asked, while
       # still packing nothing until it is asked at all. A frozen Bounds cannot
-      # memoize on itself, so the memo lives in the closure the Enumerator
-      # holds -- which also scopes it to this one walk rather than growing a
-      # cache keyed by changeset. `enum_for` would re-enter this method per
-      # query, and `#size` followed by `#each` then packed the whole changeset
-      # twice: {Changeset#files} memoizes, but neither the grouping, the packing
-      # walk nor its per-file guard does.
+      # memoize on itself, so the memo lives in the closure the Enumerator holds,
+      # which also scopes it to this one walk. `enum_for` would re-enter this
+      # method per query, and `#size` followed by `#each` then packed the whole
+      # changeset twice: {Changeset#files} memoizes, but neither the grouping,
+      # the packing walk nor its per-file guard does.
       def critique_enumerator(changeset)
         packed = nil
         chunks = -> { packed ||= critique_chunks(changeset) }
@@ -510,11 +388,10 @@ module Lain
         lines
       end
 
-      # `limit` rather than `ceiling`, which is what this argument means and was
-      # called until {#ceiling} became a method: a parameter shadowing a private
-      # method of the same object is one edit away from a collision nobody
-      # reading either half would predict. The MESSAGE still says "ceiling",
-      # because that is the word the reader was refused by.
+      # `limit` rather than `ceiling`: a parameter shadowing a private method of
+      # the same object is one edit away from a collision nobody reading either
+      # half would predict. The MESSAGE still says "ceiling", because that is the
+      # word the reader was refused by.
       def guard!(measured, limit, unit, subject)
         return if measured <= limit
 

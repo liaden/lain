@@ -2,12 +2,12 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A supersession pointer must name the record it points at, the step that
       # reopened, BOTH closure digests the succession connects, and the plan the
       # step belongs to -- the same join keys {ClosureRecord} carries, so a
       # reader groups reopens by step within a plan without fetching anything.
-      class SupersessionRecord < Guard
+      class SupersessionRecord < Declarative::Carrier
         attribute :supersession_digest
         attribute :step_id
         attribute :superseded_digest
@@ -40,17 +40,12 @@ module Lain
                                      :superseding_digest, :plan_digest) do
       include Journalable
 
+      # Every member is a digest the carrier already declares and validates, and
+      # every coercion was the same `dup.freeze`, so `settle!` leaves the
+      # constructor with nothing of its own to say but the names.
       def initialize(supersession_digest:, step_id:, superseded_digest:, superseding_digest:, plan_digest:)
-        Guards::SupersessionRecord.check!(supersession_digest:, step_id:, superseded_digest:,
-                                          superseding_digest:, plan_digest:)
-
-        super(
-          supersession_digest: supersession_digest.dup.freeze,
-          step_id: step_id.dup.freeze,
-          superseded_digest: superseded_digest.dup.freeze,
-          superseding_digest: superseding_digest.dup.freeze,
-          plan_digest: plan_digest.dup.freeze
-        )
+        super(**Carriers::SupersessionRecord.settle!(supersession_digest:, step_id:, superseded_digest:,
+                                                     superseding_digest:, plan_digest:))
       end
     end
   end

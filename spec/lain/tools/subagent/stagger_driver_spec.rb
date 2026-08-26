@@ -3,12 +3,12 @@
 require "open3"
 require "rbconfig"
 
-# FIX 3 (review round 1): "C3 ends with a reproducible driver script the demo
-# can run live" is a plan-contract requirement, not polish -- a demo table
-# that only exists as a private method inside stagger_spec.rb (and a fixture
-# EchoTool that cannot load outside RSpec, see bin/demo-fanout's own comment)
-# is not something Joel can hand anyone or run at a terminal. This spec is
-# the same "spawn a real subprocess, assert on its output" shape
+# "The chunk ends with a reproducible driver script the demo can run live" is
+# a plan-contract requirement, not polish -- a demo table that only exists as
+# a private method inside stagger_spec.rb (and a fixture EchoTool that cannot
+# load outside RSpec, see bin/demo-fanout's own comment) is not something
+# anyone can hand over or run at a terminal. This spec is the same "spawn a
+# real subprocess, assert on its output" shape that
 # spec/lain/seams/prelude_invariant_spec.rb already uses for the same reason:
 # `RbConfig.ruby`, never a bare "ruby", because the shell's default ruby is
 # 3.2.3 (CLAUDE.md) and version skew would present as a confusing failure

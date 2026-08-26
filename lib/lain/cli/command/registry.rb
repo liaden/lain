@@ -3,7 +3,7 @@
 module Lain
   module CLI
     module Command
-      # The `you>` command registry (T9): named lib-side commands the Repl
+      # The `you>` command registry: named lib-side commands the Repl
       # consults BEFORE the skill middleware, so a registered `/word` runs with
       # zero model turns while every other line -- prose, a path, `@role/skill`,
       # an UNREGISTERED `/word` -- falls through to {Middleware::SkillDispatch}
@@ -52,15 +52,11 @@ module Lain
         # opens its own `human> ` read over the pending questions
         # ({Command::Inbox}). {Repl::LineScope} asks BEFORE the line runs, because
         # a reply loop started around such a line reads the same stdin the
-        # command is reading -- see that method for what the human's answer then
-        # does.
+        # command is reading.
         #
         # Sent as a message a command MAY not understand, rather than required of
-        # all twenty-odd: one command in the set has any use for it, and this
-        # asks whether the object answers a message, not what class it is. A
-        # command that grows its own reply read must declare it;
-        # `spec/lain/cli/command/registry_spec.rb` pins the pair to `/inbox` in
-        # both directions.
+        # all twenty-odd: one command in the set has any use for it, and this asks
+        # whether the object answers a message, not what class it is.
         #
         # @param text [String] the line as the human typed it
         # @return [Boolean] false for prose, for a role-bound line, and for every
@@ -73,14 +69,12 @@ module Lain
 
         # The registry curried over the session's one {Env} -- what Wiring hands
         # the Repl, so the Repl dispatches with text alone and never holds (or
-        # reaches into) the Env; later cards extend the Env by editing Wiring
-        # only.
+        # reaches into) the Env.
         Bound = Data.define(:registry, :env) do
           def dispatch(text, &fallthrough) = registry.dispatch(text, env, &fallthrough)
 
           # Env-free, unlike {#dispatch}: whether a line serves replies is a fact
-          # about the COMMAND, decided before anything is called, so nothing here
-          # needs the session's collaborators.
+          # about the COMMAND, decided before anything is called.
           def serves_replies?(text) = registry.serves_replies?(text)
         end
 
@@ -88,13 +82,12 @@ module Lain
 
         private
 
-        # A command blowing up mid-call must not kill the session (panel fix
-        # 2): a returned-garbage command is already recovered loudly at the
-        # Repl boundary, and a RAISING one deserves the same. A non-Lain raise
-        # wraps into an ATTRIBUTED Lain::Error -- named for the command, so the
+        # A command blowing up mid-call must not kill the session: a
+        # returned-garbage command is already recovered loudly at the Repl
+        # boundary, and a RAISING one deserves the same. A non-Lain raise wraps
+        # into an ATTRIBUTED Lain::Error -- named for the command, so the
         # boundary's render says who failed -- while a Lain::Error is already
-        # loud and renderable and passes through untouched (a command's own
-        # refusal keeps its own words).
+        # loud and renderable and passes through untouched.
         def invoke(invocation, env)
           @commands.fetch(invocation.skill).call(invocation.args, env)
         rescue Lain::Error
@@ -107,7 +100,7 @@ module Lain
         # and only the inline `/word` shape can name a command -- a role-bound
         # `@role/skill` never is. A {Skill::Invocation::Malformed} raise
         # propagates exactly as SkillDispatch's own parse of the same line
-        # would: the Repl's dispatch boundary renders it and loops.
+        # would.
         def command_invocation(text)
           invocation = Skill::Invocation.parse(text)
           invocation if invocation&.inline? && @commands.key?(invocation.skill)

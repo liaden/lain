@@ -2,44 +2,30 @@
 
 module Lain
   module CLI
-    # What an `implementation` review needs from the process around it: where its
-    # diff comes from, where it is drawn for a human, and the rendering a
-    # gesture's row number resolves through.
-    #
-    # ITS OWN OBJECT FOR TWO REASONS, and the second is the real one. {Wiring}
-    # was at its `Metrics/ClassLength` budget and its class comment states the
-    # rule -- extract before you add, never loosen. And these three ARE one
-    # decision: they arrive together, they are read together, and two of them
-    # come off the same editor, which is the repeated-parameter tell that names
-    # an object in this codebase.
+    # What an `implementation` review needs from the process around it: where
+    # its diff comes from, where it is drawn for a human, and the rendering a
+    # gesture's row number resolves through. One object because the three are
+    # one decision -- they arrive together, and two come off the same editor.
     #
     # == Why two of them are thunks and one is not
     #
     # The repository is a fact about the process before anything starts. The
     # surface and the view belong to a {Frontend::Neovim} that {Repl#run} builds
     # STRICTLY AFTER the toolset, so a value read here would be the editor that
-    # does not exist yet -- `bindings:`' lateness, one seam over, and the same
-    # answer: a thunk, read at call time by {Tools::RequestReview}.
+    # does not exist yet -- hence a thunk, read at call time by
+    # {Tools::RequestReview}.
     #
     # nil is what an unattached editor answers, and it stays nil: coalescing to
     # {Review::Surface::Null} is {Tools::RequestReview::Implementation::Seams}'
     # job, which is the one place that decision is made.
     module ReviewSeams
-      # No editor to draw a changeset in, and so no rail to answer its writes on
-      # (T31a). {HumanReplies::NoEditor}'s fourth sibling, and a fourth object
-      # for the same reason the third is one: a headless chat, a `--nvim` chat
-      # before its frontend exists, and a chat whose editor died are all this,
-      # and none of them is "no review is open".
-      #
-      # It lives HERE rather than beside its siblings because it is the null of
-      # exactly the duck this module reads -- and because {HumanReplies} is at
-      # its own ClassLength budget, which is the rule this file was extracted
-      # under in the first place.
-      #
-      # Both readers answer nil rather than a null surface: the object that
-      # coalesces those is {Tools::RequestReview::Implementation::Seams}, one
-      # place, which is the rule {HumanReplies#bind_editor} already keeps for
-      # `views:`.
+      # No editor to draw a changeset in, and so no rail to answer its writes
+      # on. {HumanReplies::NoEditor}'s fourth sibling, for the same reason the
+      # third is one: a headless chat, a `--nvim` chat before its frontend
+      # exists, and a chat whose editor died are all this, and none of them is
+      # "no review is open". It lives here because it is the null of exactly
+      # the duck this module reads. Both readers answer nil rather than a null
+      # surface, per the class doc.
       module Unattached
         def self.review_surface = nil
         def self.review_view = nil

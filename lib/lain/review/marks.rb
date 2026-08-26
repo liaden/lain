@@ -7,15 +7,14 @@ module Lain
     # coarser indicator -- a file's, a commit's -- is DERIVED from this set, on
     # demand, against whatever {Hunk} keys a changeset currently produces.
     #
-    # A mark set is pinned to the base revision it was recorded against.
-    # {Hunk}'s span-qualified fallback key is positional (old-side span), and a
-    # BASE-side edit can slide one duplicate hunk onto another's former span
-    # without moving either hunk's own lines -- old and new side shift by the
-    # same amount under a base move, so the span stays internally consistent
-    # while it now names the WRONG hunk. No hunk key can close that (see the
-    # spec's "base revision scoping" group for the literal string collision);
-    # only refusing to reuse a mark set across a base change can, so that is
-    # what {#reconcile}, {#state_for} and {#states} all do first.
+    # A mark set is pinned to the base revision it was recorded against. {Hunk}'s
+    # span-qualified fallback key is positional (old-side span), and a BASE-side
+    # edit can slide one duplicate hunk onto another's former span without moving
+    # either hunk's own lines -- old and new side shift by the same amount under a
+    # base move, so the span stays internally consistent while it now names the
+    # WRONG hunk. No hunk key can close that; only refusing to reuse a mark set
+    # across a base change can, so that is what {#reconcile}, {#state_for} and
+    # {#states} all do first.
     class Marks
       # A mark whose state is not one of {MARK_STATES}.
       class UnknownState < Error; end
@@ -96,49 +95,36 @@ module Lain
       # Prunes marks for hunk keys the given changeset no longer produces.
       # `changeset` must be the WHOLE, unfiltered changeset -- there is no
       # `scope:` parameter to accept a narrower one, on purpose (tuicr#247: a
-      # `preserve_hunks` flag on the wrong side of this call is the bug, not
-      # the fix).
+      # `preserve_hunks` flag on the wrong side of this call is the bug, not the
+      # fix).
       #
-      # == An empty set is pruned without reading anything
+      # AN EMPTY SET IS PRUNED WITHOUT READING ANYTHING. A set with nothing in it
+      # has nothing that could be stale, and over a lazily-chunked corpus the walk
+      # below is the whole chunking cost -- so a review that has marked nothing
+      # would otherwise pay it to prune nothing.
       #
-      # A set with nothing in it has nothing that could be stale, so the walk
-      # below would establish only what the emptiness already says. Over a
-      # lazily-chunked corpus that walk is the whole chunking cost, so a review
-      # that has marked nothing would otherwise pay it to prune nothing.
+      # This is the only eager path a PRESENTATION can reach, which is narrower
+      # than "the only eager path over a corpus" and is the one that is true.
+      # {Verdict::Policy::EveryHunk#admit!} calls {#states}, so `submit` walks the
+      # whole corpus however little of it has been drawn (measured: a 10-file
+      # session that presented with 0 chunked chunks 10 of 10 on approve alone).
+      # Drawing a survey reads nothing at all; what reads a file now is the `<CR>`
+      # that opens it, one file per gesture.
       #
-      # This is the only eager path a PRESENTATION can reach, which is a
-      # narrower claim than "the only eager path over a corpus" and is the one
-      # that is true. {Verdict::Policy::EveryHunk#admit!} calls {#states}, so
-      # `submit` walks the whole corpus however little of it has been drawn
-      # (measured: a 10-file session that presented with 0 chunked chunks 10 of
-      # 10 on approve alone), and that is now the ONLY one left outside this
-      # object: B19 (`b45553e`) removed {Frontend::Neovim::ReviewView}'s forcing
-      # of every file at render, so drawing a survey reads nothing at all. What
-      # reads a file now is the `<CR>` that opens it
-      # ({Frontend::Neovim::ChangesetDiff}), one file per gesture.
+      # The limit is worth stating rather than leaving to be rediscovered: a mark
+      # carries a hunk key and NOTHING else, and a key is a digest no path can be
+      # read back out of. So a mark set cannot name the paths it belongs to, and a
+      # surviving mark is told from a stale one only by walking every path to
+      # prove absence. No per-path derivation can help: pruning against the READ
+      # files alone would drop every mark on a file nobody has reopened. Two
+      # things would close it, neither an execution-time patch -- journalling the
+      # path beside the mark, which is a persisted-record change with a migration
+      # behind it; or DEFERRING the prune, pruning a path the first time its file
+      # is chunked, which trades for a mark set only provisionally clean until
+      # then.
       #
-      # The limit here is worth stating rather than leaving to be
-      # rediscovered: a mark carries a hunk
-      # key and NOTHING else ({Review::HunkMarked}), and a key is a digest no
-      # path can be read back out of ({Hunk#key}). So a mark set cannot name the
-      # paths it belongs to, and a surviving mark is told from a stale one only
-      # by walking every path to prove absence. A non-empty set reads the
-      # changeset whole, and no per-path derivation can help: pruning against
-      # the READ files alone would drop every mark on a file nobody has reopened
-      # yet. Two things would close it and neither is an execution-time patch:
-      # journalling the path beside the mark ({Review::HunkMarked}), which is a
-      # persisted-record change with a migration behind it; or DEFERRING the
-      # prune -- keeping every mark and pruning a path the first time its file
-      # is chunked, which needs no record change and trades for a mark set that
-      # is only provisionally clean until then.
-      #
-      # Opening and PRESENTING no longer pay this, so a resume that marked
-      # nothing is not the whole of what the shortcut is worth any more: a
-      # session opens, presents and re-presents a fifty-file corpus reading none
-      # of it (measured), and only a resume carrying marks reads it whole.
-      #
-      # The base check stays ahead of the shortcut: a base move is refused
-      # whether or not there is a mark to carry across it.
+      # The base check stays ahead of the shortcut: a base move is refused whether
+      # or not there is a mark to carry across it.
       #
       # @param changeset [#base_ref, #hunks] the unfiltered changeset
       # @return [Marks] `self` when there was nothing to prune -- this object is
@@ -190,19 +176,16 @@ module Lain
       # One path's tri-state, from that path's keys and nothing else -- the
       # primitive {#states} is the whole-changeset application of.
       #
-      # It takes KEYS rather than a path and a changeset, and that is what makes
-      # a lazily-chunked corpus affordable: a caller holding one file's keys has
+      # It takes KEYS rather than a path and a changeset, which is what makes a
+      # lazily-chunked corpus affordable: a caller holding one file's keys has
       # already chunked that file, and handing the changeset back would re-derive
-      # every other file's keys to answer about this one. {#state_for} is the
-      # convenience that does exactly that, and says so.
+      # every other file's keys to answer about this one.
       #
-      # There is no base check here, because keys carry no base to check against
-      # -- {#assert_same_base!} is the message for that, and the caller joining a
-      # changeset to a mark set asks it once rather than per path.
-      #
-      # An empty batch answers :unreviewed, which is {Session::MarkedChangeset::
-      # HUNKLESS}'s rule reached rather than restated: no hunk of a binary or
-      # mode-only change is marked reviewed, because it has none.
+      # No base check here, because keys carry no base to check against --
+      # {#assert_same_base!} is the message for that, asked once by the caller
+      # joining a changeset to a mark set. An empty batch answers :unreviewed,
+      # which is {Session::MarkedChangeset::HUNKLESS}'s rule reached rather than
+      # restated.
       #
       # @param keys [Array<String>] one path's hunk keys, from {Hunk.keys}
       # @return [:reviewed, :partial, :unreviewed]
@@ -212,13 +195,12 @@ module Lain
 
       # That `changeset` was recorded against the revision these marks were.
       #
-      # Public because the check outlived the derivation it used to be welded
-      # to. {Session::MarkedChangeset.of} holds a changeset and a mark set and
-      # derives per PATH through {#state_of}, so it never passes the changeset
-      # to a message that would check on its way past -- and mismatching that
-      # pair is precisely the defect this refusal exists for. It reads
-      # `base_ref` and no hunk, which is what lets a lazy derivation ask it
-      # first.
+      # Public because the check outlived the derivation it used to be welded to.
+      # {Session::MarkedChangeset.of} holds a changeset and a mark set and derives
+      # per PATH through {#state_of}, so it never passes the changeset to a
+      # message that would check on its way past -- and mismatching that pair is
+      # precisely the defect this refusal exists for. It reads `base_ref` and no
+      # hunk, which is what lets a lazy derivation ask it first.
       #
       # @param changeset [#base_ref]
       # @return [nil]

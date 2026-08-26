@@ -113,8 +113,9 @@ RSpec.describe Lain::Context::PinnedMessages do
     # canonical-normalized projections. Nothing reaches this through
     # {Compaction::Source} -- an Event's body is normalized at commit, so every
     # Timeline projection is String-keyed -- but `Head.new(messages:)` is public
-    # and A6 uses it, so the contract is written down and pinned here. Checking
-    # it per candidate would cost the per-message dump the head exists to avoid.
+    # and callers use it, so the contract is written down and pinned here.
+    # Checking it per candidate would cost the per-message dump the head exists
+    # to avoid.
     it "is out of contract for a candidate that was never canonical-normalized" do
       pins = described_class.new([messages[0]])
       denormalized = { "role" => "user", "content" => [{ type: "text", text: "a" * 20 }] }

@@ -64,10 +64,10 @@ module Lain
       # UNRELATED to {Anthropic::APIError}: same name, same shape, no shared
       # ancestor besides {Lain::Error} -- verified nothing above the Provider
       # rescues either by name today (Backend can now hand chat either backend
-      # depending on whether journaling is on, see T17w). A future caller that
-      # wants to rescue "an Anthropic API error" regardless of which backend
-      # produced it must handle both explicitly, or a shared marker module must
-      # be introduced first -- do not assume `rescue Anthropic::APIError` catches
+      # depending on whether journaling is on). A future caller that wants to
+      # rescue "an Anthropic API error" regardless of which backend produced it
+      # must handle both explicitly, or a shared marker module must be
+      # introduced first -- do not assume `rescue Anthropic::APIError` catches
       # an {Anthropic} failure, or vice versa.
       class APIError < Lain::Error; end
 
@@ -84,7 +84,7 @@ module Lain
 
       # @param client [Anthropic::Client, nil] injected in specs; a real client
       #   reading ANTHROPIC_API_KEY from the environment otherwise.
-      # @param channel [Lain::Channel] where CE-5's stream_started event lands
+      # @param channel [Lain::Channel] where the stream_started event lands
       # @param client_options [Hash] passed straight to `Anthropic::Client.new`
       #   when no `client:` is injected; ignored entirely when one is
       def initialize(client: nil, channel: Channel::Null.instance, **client_options)
@@ -110,7 +110,7 @@ module Lain
       # The oracle's cache economics -- every other Anthropic-shaped backend
       # (Anthropic, Bedrock, Bedrock) answers with this exact object,
       # promoted off what used to be a per-provider `CACHE_PROFILE` Hash
-      # constant here (CAC-2/F1) into {Lain::CacheProfile}, the neutral home.
+      # constant here into {Lain::CacheProfile}, the neutral home.
       def cache_profile = CacheProfile::ANTHROPIC
 
       # #encode is supplied by {AnthropicEncoding}, shared verbatim with
@@ -119,8 +119,8 @@ module Lain
       # One round trip into a neutral Response. Streaming by default; both paths
       # converge on parsed tool inputs and the FULL block list (text, thinking,
       # tool_use), because dropping thinking or tool_use blocks corrupts the very
-      # next turn (correctness gate 1). `on_stream_started` is CE-5's signal --
-      # see {StreamStartedSignal}.
+      # next turn (correctness gate 1). `on_stream_started` is the stream-started
+      # signal -- see {StreamStartedSignal}.
       def complete(request, on_stream_started: nil)
         build_response(dispatch(request, on_stream_started))
       rescue ::Anthropic::Errors::APIStatusError => e
@@ -146,8 +146,8 @@ module Lain
       # closed over the Enumerator itself, so calling `#each` again (inside
       # `accumulated_message`, right after) is a documented-safe no-op that
       # just returns the snapshot our pass already built, then applies
-      # `parse_content_blocks!` -- the ordinary, blessed way to finish. CE-5
-      # needs to see the moment the first event arrives (`message_start`,
+      # `parse_content_blocks!` -- the ordinary, blessed way to finish. The
+      # signal needs to see the moment the first event arrives (`message_start`,
       # BEFORE any content_block event), and this is the only pass allowed,
       # so it is also where the signal has to fire.
       def stream_dispatch(stream, request, on_stream_started)

@@ -87,7 +87,7 @@ RSpec.describe Lain::Oracle::SecretRead do
       expect(provider_built).to be_a(Lain::Provider::Ollama)
     end
 
-    # F28. The wrap is INSIDE `.tier`, never injected -- see the parameter
+    # The wrap is INSIDE `.tier`, never injected -- see the parameter
     # pin below, which is the security half of the same claim. A decorator built
     # here cannot move the endpoint, because the thing it decorates is still the
     # bare local Ollama constructed one line away.
@@ -185,7 +185,7 @@ RSpec.describe Lain::Oracle::SecretRead do
       expect(question).to include("/repo/Gemfile.lock").and include("read").and include("2")
     end
 
-    # B2. Offline half of the live check below: `Model::JsonDecoder` demands a
+    # Offline half of the live check below: `Model::JsonDecoder` demands a
     # JSON object, and without this sentence the default local model answers
     # with the bare word the rest of the template asked for and every call
     # raises UndecodableAnswer. Deleting the sentence is therefore deleting the
@@ -207,7 +207,7 @@ RSpec.describe Lain::Oracle::SecretRead do
     end
   end
 
-  # B2. `Oracle::Model::JsonDecoder` demands a JSON object, and the template is
+  # `Oracle::Model::JsonDecoder` demands a JSON object, and the template is
   # the only thing that asks for one. Whether a 4B local model actually complies
   # is not a question a double can answer -- with the JSON sentence removed,
   # this arm returned the bare word `deny` and raised UndecodableAnswer on every
@@ -294,7 +294,7 @@ RSpec.describe Lain::Oracle::SecretRead do
 
     before { allow(Lain::Provider::Ollama).to receive(:new).and_return(provider) }
 
-    # F28. The verdict was already recorded; the QUESTION's own round trip
+    # The verdict was already recorded; the QUESTION's own round trip
     # was not, so a round of QA left zero request_sent records for the arm.
     it "records the round trip on the journal it was handed, digest and all" do
       described_class.tier(journal:).ask(**inputs).await

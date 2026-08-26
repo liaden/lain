@@ -52,7 +52,7 @@ RSpec.describe Lain::CLI::Backend do
       expect(provider).to be_a(Lain::Provider::Bedrock)
     end
 
-    # The whole point of the extraction (AC2): an unknown name is a Lain error,
+    # The whole point of the extraction: an unknown name is a Lain error,
     # NOT Thor::Error -- the exe maps it. chat and record both resolve through
     # this one method, so they reject an unknown provider identically.
     it "fails loudly on an unknown provider with a named Lain error, not Thor::Error" do
@@ -348,7 +348,7 @@ RSpec.describe Lain::CLI::Backend do
       expect(provider.instance_variable_get(:@retries).instance_variable_get(:@spool)).to be(spool)
     end
 
-    # T6 INVERTED THIS. Ollama used to be listed here as a provider whose
+    # This was INVERTED. Ollama used to be listed here as a provider whose
     # constructor took no spool, and "not_to raise_error" was the whole
     # assertion -- which is also what a silently DISCARDED spool looks like.
     # Now the ollama arm is metered and must actually receive it, so the
@@ -372,7 +372,7 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
-  # CE-5: the RAW provider emits retry and stream_started events onto its
+  # The RAW provider emits retry and stream_started events onto its
   # `channel:`. Chat's live TTY Channel must be that channel or the frontend
   # never sees a stream start; the headless/bench paths (no channel given)
   # keep the Null channel default, so nothing is emitted where nothing drains.
@@ -392,9 +392,9 @@ RSpec.describe Lain::CLI::Backend do
       expect(provider.instance_variable_get(:@channel)).to be(Lain::Channel::Null.instance)
     end
 
-    # F7, and the assertion the other two in this group cannot make: those
-    # read an ivar, which stays green whether or not the keyword was ever
-    # threaded HERE. This drives the whole production chain instead -- Backend
+    # The unwired-in-production check, and the assertion the other two in this
+    # group cannot make: those read an ivar, which stays green whether or not
+    # the keyword was ever threaded HERE. It drives the production chain -- Backend
     # -> Provider::Ollama -> #build_config's retry_block -> faraday-retry ->
     # the run's channel -- because a keyword accepted with a safe default and
     # never wired ships nothing, greenly. Ollama used to be the one arm whose
@@ -452,7 +452,7 @@ RSpec.describe Lain::CLI::Backend do
 
     def ollama_backend(**overrides) = backend_for(provider: "ollama", model:, max_tokens: 64, **overrides)
 
-    # AC1, with the POC's own numerator. 7,079 tokens is 86.4% of 8,192 and
+    # Measured with the POC's own numerator. 7,079 tokens is 86.4% of 8,192 and
     # 21.6% of the window actually being served -- the whole defect, as one
     # number.
     it "measures a turn against the window the server says it is serving" do
@@ -461,7 +461,7 @@ RSpec.describe Lain::CLI::Backend do
       expect(ollama_backend.context_window.occupancy(7_079, model:).ratio).to eq(7_079.fdiv(32_768))
     end
 
-    # AC2. nil is the ORDINARY answer here (nothing resident yet, or no server
+    # nil is the ORDINARY answer here (nothing resident yet, or no server
     # at all), so the fallback has to stand rather than degrade further.
     it "keeps the conservative fallback when the provider reports no window" do
       serving
@@ -912,7 +912,7 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
-  # RES4: the exe's research subagent used to hand-assemble a SpawnPolicy
+  # The exe's research subagent used to hand-assemble a SpawnPolicy
   # inline (exe/lain:293-297) instead of naming a catalog role, so the child's
   # capability set could drift from {Lain::Role::Catalog}'s own idea of what
   # "researcher" means. #spawn_policy resolves through the catalog instead --
@@ -952,7 +952,7 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
-  # RES4's escalation trigger: Context#cache_marked always marks the LAST
+  # An escalation trigger: Context#cache_marked always marks the LAST
   # system block, and CacheBreakpoints budgets exactly ONE system cache slot --
   # Anthropic's cache_control cap is 4 breakpoints, so a second system mark here
   # is a live 400 risk, not a style nit. A role's
@@ -1033,7 +1033,7 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
-  # A8: everything the live-wiring chunk built converges here. `lain chat`
+  # Everything the live-wiring chunk built converges here. `lain chat`
   # compacts by DEFAULT -- eager summaries when the local tier answers, honest
   # elision when it does not -- so these pin the factories the exe's flags
   # resolve through, including the memoization that makes them RUN state rather
@@ -1042,7 +1042,7 @@ RSpec.describe Lain::CLI::Backend do
   describe "compaction wiring" do
     let(:journal) { RecordingChannel.new }
     # `pinned?` too: the per-turn path asks the Session which turns compaction
-    # may not elide (B2), and a verifying double answers only what it declares.
+    # may not elide, and a verifying double answers only what it declares.
     let(:session) { instance_double(Lain::Session, plan_step_completed?: false, pinned?: false) }
     let(:profile) { Lain::CacheProfile::ANTHROPIC }
     let(:toolset) { Lain::Toolset.new([]) }
@@ -1092,7 +1092,7 @@ RSpec.describe Lain::CLI::Backend do
       expect(source_for(compact: false)).to be(Lain::Agent::PipelineSource::Null)
     end
 
-    # AC2's second half: with compaction off, the turn's Context is the base
+    # The other half: with compaction off, the turn's Context is the base
     # ITSELF, so the Request is byte-identical to one rendered with no source
     # wired at all -- not merely equivalent.
     it "renders byte-identically to an unwired Context under --no-compact" do
@@ -1125,7 +1125,7 @@ RSpec.describe Lain::CLI::Backend do
       expect(compacting_backend(compact: false).tool_observer).to be_a(Lain::Agent::ToolRunner::Observer::Null)
     end
 
-    # AC6. Cold's accumulated warmth and the Eager's fired summaries are run
+    # Cold's accumulated warmth and the Eager's fired summaries are run
     # state: a factory rebuilt per call resets both, silently, every turn.
     it "builds the source, the eager, and the observer once per run" do
       backend = compacting_backend
@@ -1175,13 +1175,13 @@ RSpec.describe Lain::CLI::Backend do
       end
     end
 
-    # AC4. `--provider ollama` and `--provider bedrock` name models no
+    # `--provider ollama` and `--provider bedrock` name models no
     # Anthropic-shaped window table can carry, so ContextWindow.default falls
     # back rather than raising -- an unsupported provider must still START.
     # 7_500 used tokens is under 0.9 of every real entry and over 0.9 of the
     # 8_192 fallback, so this turn DOES cross the trigger ratio -- and the
     # trigger is withheld anyway, because a fallback is a guess and a guess may
-    # not authorise an irreversible rewrite. That is the whole of F3: the QA run
+    # not authorise an irreversible rewrite. That is the whole finding: the QA run
     # compacted three times at 75-78% of a real 32_768 window.
     #
     # The denominator and the provenance are both asserted rather than inferred
@@ -1231,7 +1231,7 @@ RSpec.describe Lain::CLI::Backend do
     # ContextWindow says so loudly (context_window.rb:104-108) rather than
     # degrading to a fallback that would silently never fire.
     #
-    # C1 moved the lookup off construction and onto the render, so the raise
+    # The lookup moved off construction and onto the render, so the raise
     # lands on the first TURN rather than at startup -- later, but no quieter,
     # which is the ruling. The Source is built here without incident; the turn
     # is what refuses.
@@ -1246,7 +1246,6 @@ RSpec.describe Lain::CLI::Backend do
         .to raise_error(Lain::ContextWindow::UnknownModel, /wiring bug/)
     end
 
-    # AC5.
     it "schedules against an overridden byte threshold" do
       decide(history(6), compact_bytes: 200, compact_keep: 1)
 
@@ -1273,7 +1272,7 @@ RSpec.describe Lain::CLI::Backend do
 
     # `--compact-strategy` is DECLARED by exe/lain and RESOLVED by
     # CLI::CompactionStrategy; this is the seam that reads it. Without this call
-    # site the flag ships parsed and consumed by nobody -- F7's "unwired in
+    # site the flag ships parsed and consumed by nobody -- the "unwired in
     # production" pattern, and the exact direction `chat_flags_spec.rb` cannot
     # see (it fails on read-but-undeclared, never on declared-but-unread).
     describe "--compact-strategy" do
@@ -1355,7 +1354,7 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
-  # A1. The eager summarizer is a SELECTABLE tier now, not a hardcoded local
+  # The eager summarizer is a SELECTABLE tier now, not a hardcoded local
   # one, and its spend lands on the record. Before this, #summary_oracle built a
   # bare Oracle::Model over Ollama and wrapped nothing, so eager summary Q&A
   # produced no Telemetry::OracleAnswer at all on the live chat path -- pointing
@@ -1372,7 +1371,7 @@ RSpec.describe Lain::CLI::Backend do
 
     def summarizer_for(**overrides) = backend_for(provider: "ollama", max_tokens: 64, **overrides)
 
-    # The journaling wrap is OUTERMOST (A3 slots a router above it), so the live
+    # The journaling wrap is OUTERMOST (a router slots above it), so the live
     # tier that actually pays is one layer in.
     # The nesting the run is wired in: RoutedSummarizer(Journaling(Model)).
     def journaling_of(backend) = backend.send(:summary_oracle).instance_variable_get(:@inner)
@@ -1408,7 +1407,7 @@ RSpec.describe Lain::CLI::Backend do
       expect(tier.model).to eq(Lain::Provider::Ollama::DEFAULT_MODEL)
     end
 
-    # A3: the router goes ABOVE the journaling wrap, not below it. Below, a
+    # The router goes ABOVE the journaling wrap, not below it. Below, a
     # custom answer would be journaled as an oracle call some model was billed
     # for; above, it never reaches the record at all and a fallthrough is
     # journaled exactly once. The order is forced besides -- Recorded::Journaling

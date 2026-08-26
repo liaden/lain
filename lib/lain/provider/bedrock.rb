@@ -5,57 +5,44 @@ require_relative "bedrock/transport"
 module Lain
   class Provider
     # The SHIPPED Bedrock provider: Lain's own HTTP transport over the Mantle
-    # endpoint, which is what `--provider bedrock` builds. It is to
-    # {Provider::BedrockReference} exactly what {Provider::Anthropic} is to
-    # {Provider::AnthropicReference} -- same {AnthropicEncoding}, same
-    # block-preserving reassembly, so `#encode` is byte-identical to the oracle
-    # (the dry differential proves it) and the response keeps the FULL, ordered
-    # block list with every extended-thinking signature intact (gate 1).
+    # endpoint. It is to {Provider::BedrockReference} exactly what
+    # {Provider::Anthropic} is to {Provider::AnthropicReference} -- same
+    # {AnthropicEncoding}, same block-preserving reassembly, so `#encode` is
+    # byte-identical to the oracle and the response keeps the FULL, ordered block
+    # list with every extended-thinking signature intact.
     #
-    # Mantle speaks the plain Anthropic Messages API over SSE, so the streaming
-    # parse is Anthropic-shaped: this reuses {Anthropic::StreamAssembler} and
-    # {Anthropic::RetryTap} by explicit reference rather than promoting them to a
-    # shared namespace. The threshold that line named -- "a third such arm is
-    # what would earn that move, not the second" -- HAS NOW BEEN CROSSED:
-    # {Provider::Ollama::RetryTap} (T2/F7) is a third retry tap and is largely
-    # this one's shape, differing only in having no spool to rotate. The
-    # extraction is therefore OWED, and is deliberately deferred rather than
-    # forgotten: T10 and T11 both build on retry and assembler behaviour, and
-    # relocating the class while they are in flight buys a merge conflict on the
-    # critical path for no behaviour change. What it does NOT share is
-    # {Anthropic::Transport}, which is bound by inheritance to the
-    # direct-Anthropic backend; see {Transport}.
+    # Mantle speaks the plain Anthropic Messages API over SSE, so
+    # {Anthropic::StreamAssembler} and {Anthropic::RetryTap} are reused by
+    # explicit reference. Promoting them to a shared namespace is OWED --
+    # {Provider::Ollama::RetryTap} is a third arm of largely this shape -- and
+    # deliberately deferred rather than forgotten. What is NOT shared is
+    # {Anthropic::Transport}, bound by inheritance to the direct-Anthropic
+    # backend.
     #
     # == What Bedrock deliberately does not have
     #
-    # deliberately absent: a `spool:` -- there is no Bedrock response WAL, so
-    # {Transport} threads no frame and nothing can be salvaged from a crash on
-    # this arm. The {Anthropic::RetryTap} it borrows is nil-safe about the
-    # missing frame, so adopting the tap costs nothing and means the day a spool
-    # lands the attempt-boundary rule arrives with it.
+    # No `spool:`: there is no Bedrock response WAL, so nothing can be salvaged
+    # from a crash on this arm. The {Anthropic::RetryTap} it borrows is nil-safe
+    # about the missing frame, so the attempt-boundary rule arrives the day a
+    # spool lands.
     #
-    # deliberately absent: `on_stream_started` (CE-5). {StreamStartedSignal} is
-    # not included, so a stagger scheduler cannot pace this arm; #complete takes
-    # no such keyword rather than accepting and ignoring one.
+    # No `on_stream_started`, so a stagger scheduler cannot pace this arm --
+    # #complete takes no such keyword rather than accepting and ignoring one.
     #
-    # deliberately absent: a timeout/retry envelope of its own. Unlike
-    # {Anthropic#build_config}, this leaves HTTP::Configuration's vendored
-    # ruby_llm defaults (300s, 3 retries) in place -- Mantle has no documented
-    # client default to mirror.
+    # No timeout/retry envelope of its own: HTTP::Configuration's vendored
+    # ruby_llm defaults stand, because Mantle has no documented client default
+    # to mirror.
     class Bedrock < Provider
       include AnthropicEncoding
-      # The wire body, the wire response, and the rate-limit backoff -- shared
-      # with {Provider::Anthropic}, which speaks the same Messages API.
       include AnthropicWire
-      # APIError / APIStatusError, nested here and rooted at Lain::Error.
       include ErrorWrapping.under(Lain::Error)
 
       # Bedrock model ids carry the `anthropic.` vendor prefix; PriceBook's
       # family-substring matching resolves them unchanged.
       DEFAULT_MODEL = "anthropic.claude-opus-4-8"
-      # No :strict_tools -- Mantle 400s on the tools' `strict` field; see
-      # {Provider::BedrockReference::CAPABILITIES}, which this mask must mirror (the
-      # dry differential proves both arms emit identical bytes).
+      # No :strict_tools -- Mantle 400s on the tools' `strict` field. Must
+      # mirror {Provider::BedrockReference::CAPABILITIES}, which the dry
+      # differential proves.
       CAPABILITIES = %i[streaming prompt_caching thinking parallel_tool_use].freeze
 
       # @param transport [#sync_post, #stream] injected in specs; a real
@@ -90,10 +77,6 @@ module Lain
       # One round trip into a neutral Response. Streaming by default (Context
       # renders `stream: true`); both paths converge on the full block list and
       # parsed tool inputs.
-      #
-      # Both error arms come from {ErrorWrapping#wrapping_errors}. This backend
-      # was missing the connection-level one while both siblings had it, which is
-      # why the arms are no longer written out per backend.
       def complete(request)
         wrapping_errors { build_response(dispatch(request)) }
       end

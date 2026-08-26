@@ -227,11 +227,11 @@ RSpec.describe Lain::Question::Document do
   end
 
   # The review panel's fuzzer, ported in as a bounded deterministic case: it is
-  # what found B1 (a label ending in a space, emitted at end-of-line, refused by
-  # the parse that strips it), and an emit-then-parse identity property is the
-  # guard that keeps that whole class out. The 30-case population above varies
-  # comments only; this varies labels, bodies, arities, option counts and
-  # selections too.
+  # what found the trailing-space defect (a label ending in a space, emitted at
+  # end-of-line, refused by the parse that strips it), and an emit-then-parse
+  # identity property is the guard that keeps that whole class out. The 30-case
+  # population above varies comments only; this varies labels, bodies, arities,
+  # option counts and selections too.
   #
   # Seeded per iteration rather than per run, so a failure names one reproducible
   # case. The trailing-whitespace fragments are kept in the alphabet ON PURPOSE:
@@ -312,9 +312,9 @@ RSpec.describe Lain::Question::Document do
 
   # AC: arity is recoverable from the text alone.
   #
-  # This is T13's keymap in the small: `x` must know an option's siblings and
-  # its question's arity with no RPC, so everything below reads the buffer text
-  # and nothing else.
+  # This is the editor's keymap in the small: `x` must know an option's
+  # siblings and its question's arity with no RPC, so everything below reads
+  # the buffer text and nothing else.
   describe "what the editor can recover from the buffer alone" do
     # The question the line at +index+ belongs to: from the nearest heading at
     # or above it, to the one below it.

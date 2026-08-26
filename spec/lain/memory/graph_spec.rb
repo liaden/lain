@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Memory::Graph is a Manifest::Hit-duck search index (T5): the seed layer is
+# Memory::Graph is a Manifest::Hit-duck search index: the seed layer is
 # plain lexical matching (delegated to Memory::Manifest, the always-runs
 # floor), then an optional N-hop walk across `[[wikilink]]` targets in item
 # bodies pulls in items the seed pass never scored, each explaining itself

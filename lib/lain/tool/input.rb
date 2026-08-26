@@ -241,7 +241,7 @@ module Lain
     #      sensitive rows out of a listing and reports the count. Both sit in the
     #      tool phase, above the tool, so no tool gains a check of its own.
     #   4. OS confinement -- landlock, seccomp, namespaces, cgroups -- in the
-    #      out-of-process Rust exec boundary (M5/M6). A forked child is a process
+    #      out-of-process Rust exec boundary. A forked child is a process
     #      boundary, not a security boundary: it inherits our uid, filesystem, and
     #      network.
     #

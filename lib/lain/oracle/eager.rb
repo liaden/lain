@@ -9,34 +9,28 @@ module Lain
     # produced the source. An immutable source can never go stale, so the digest
     # is the right key: the same result content always addresses the same summary.
     #
-    # It is deliberately tier-agnostic. `oracle` is any tier answering the
-    # `#ask(inputs) -> Promise` message {Model} and {Heuristic} do -- Ollama-backed
-    # {Model} in live use, {Mock}/{Heuristic} in specs. Journaling is NOT this
-    # object's job: wrap the injected tier in {Recorded::Journaling} and every Q&A
-    # rides the existing {Telemetry::OracleAnswer} path, so a {Recorded} tier
-    # replays a fired summary with no live call and `#held` answers the recorded
-    # one -- the same record/replay discipline the rest of the tier speaks.
+    # Deliberately tier-agnostic -- `oracle` is anything answering
+    # `#ask(inputs) -> Promise`. Journaling is NOT this object's job: wrap the
+    # injected tier in {Recorded::Journaling} and every Q&A rides the existing
+    # {Telemetry::OracleAnswer} path.
     #
     # CONTAINMENT is the point of the task boundary. A fire that raises dies with
     # its task: it holds nothing and never surfaces at the reactor. Oracles have
-    # no rejection channel, so there is nowhere for the failure to go but away --
-    # and a seam that later reads {#held} treats an absent summary as a miss and
-    # falls back to the deterministic record alone, never a blocking summarize.
+    # no rejection channel, so there is nowhere for the failure to go -- and a
+    # seam that later reads {#held} treats an absent summary as a miss, falling
+    # back to the deterministic record rather than a blocking summarize.
     #
-    # It does NOT follow that a failed fire journals nothing, and this comment
-    # said so until F28. {Provider::Journaled} records the outbound request
-    # BEFORE dispatch, and the capacity gate sits INSIDE `Ollama#complete`
-    # (`ollama.rb:188`) -- so a summary the endpoint refuses leaves a
-    # {Telemetry::RequestSent} with no {Telemetry::OracleAnswer} following it.
-    # That pair IS the skip, and it is the shape to read the journal for: the
-    # answer's absence is the signal, not the record's. Only a fire that dies
-    # before the provider is reached -- a half-written `.lain/summarizers.rb`,
-    # say -- journals nothing at all.
+    # A failed fire does NOT therefore journal nothing.
+    # {Provider::Journaled} records the outbound request BEFORE dispatch and the
+    # capacity gate sits INSIDE `Ollama#complete`, so a summary the endpoint
+    # refuses leaves a {Telemetry::RequestSent} with no {Telemetry::OracleAnswer}
+    # after it. That PAIR is the skip, and the shape to read the journal for: the
+    # answer's absence is the signal. Only a fire that dies before the provider is
+    # reached -- a half-written `.lain/summarizers.rb` -- journals nothing.
     class Eager
-      # The slot the summarizer template reads its source text from. The injected
-      # oracle's {Definition} names the same slot; fixing it here keeps `#fire`'s
-      # two arguments -- a digest to key on and the text to summarize -- free of
-      # the question's shape.
+      # The slot the summarizer template reads its source text from. Fixing it
+      # here keeps `#fire`'s two arguments -- a digest to key on and the text to
+      # summarize -- free of the question's shape.
       DEFAULT_SLOT = :source
 
       # The tier this fires into. Readable because callers share ONE Eager and have
@@ -52,25 +46,21 @@ module Lain
         @fired = Set.new
       end
 
-      # Spawn the summary of `text` on its own transient task and return the task
-      # at once -- the turn that produced `text` never waits on the oracle. Fires
-      # at most once per `digest`: a repeat is a cache hit, not a second call.
+      # Spawn the summary of `text` on its own transient task and return at once
+      # -- the turn that produced `text` never waits on the oracle. Fires at most
+      # once per `digest`: a repeat is a cache hit, not a second call.
       #
-      # A fire needs an ambient reactor to spawn into. With NONE, it is a graceful
-      # no-op: no spawn, no hold, the digest stays unconsumed, and it returns nil
-      # -- an absent summary that reads as a miss, exactly like one still in
-      # flight. This is what keeps the handler chain runnable as plain synchronous
-      # Ruby (5-0.2): a dispatch with no surrounding `Async` still completes and
-      # returns its result unchanged; only the summary is skipped.
+      # With NO ambient reactor it is a graceful no-op: no spawn, no hold, the
+      # digest stays unconsumed, nil returned -- an absent summary that reads as a
+      # miss, exactly like one still in flight. That is what keeps the handler
+      # chain runnable as plain synchronous Ruby.
       #
-      # The task is TRANSIENT, so its lifetime is bounded by the ambient reactor's:
-      # it never keeps that reactor alive, and when the scope ends (or is stopped)
-      # an unfinished fire is reaped with it. The agent-loop reactor is long-lived,
-      # so a fire mounted there (ToolRunner post-dispatch) resolves normally; a
-      # DIRECT caller inside a short-lived `Sync` that returns immediately may reap
-      # an in-flight fire before it resolves -- that is a MISS, not an error. The
-      # spawn therefore belongs where a long-lived reactor is already in scope, not
-      # inside an ephemeral gather task that would reap it on return.
+      # The task is TRANSIENT, so its lifetime is bounded by the ambient reactor's
+      # and an unfinished fire is reaped when the scope ends. The agent-loop
+      # reactor is long-lived, so a fire mounted there resolves normally; a DIRECT
+      # caller inside a short-lived `Sync` may reap an in-flight fire, which is a
+      # MISS, not an error. So the spawn belongs where a long-lived reactor is
+      # already in scope, never inside an ephemeral gather task.
       #
       # @return [Async::Task, nil] the fire's task, or nil if this digest already
       #   fired OR no reactor is ambient (a caller wanting determinism -- a spec --
@@ -84,26 +74,22 @@ module Lain
         task.async(transient: true) do
           @held[digest] = @oracle.ask({ @slot => text }).await
         rescue ScriptError, StandardError, SystemStackError
-          # The task boundary is the containment: a failed fire holds nothing.
-          # It may still have journaled its ATTEMPT -- see the class header --
-          # because the record is cut before dispatch and the capacity refusal
-          # happens after it. Async::Stop is not a StandardError, so a stop still
-          # flows past this rescue and cancels the task quietly rather than raising
-          # out at the reactor.
+          # The task boundary is the containment: a failed fire holds nothing. It
+          # may still have journaled its ATTEMPT -- see the class header.
+          # Async::Stop is not a StandardError, so a stop flows past this rescue
+          # and cancels the task quietly.
           #
           # The two families beside StandardError are both a half-written
-          # `.lain/summarizers.rb` reaching here through the tier -- the state
-          # the DSL is in while a user is authoring it, and since every tool
-          # result is offered to the catalog, a state reached often.
-          # NotImplementedError is a ScriptError, which {Summarizer::Base}
-          # raises for a method not written yet; a predicate that calls itself
-          # raises SystemStackError, which descends straight from Exception.
-          # Containment that covered only StandardError would let either kill
-          # the turn that fired the summary.
+          # `.lain/summarizers.rb` reaching here through the tier, the state the
+          # DSL is in while a user is authoring it: {Summarizer::Base} raises
+          # NotImplementedError (a ScriptError) for a method not written yet, and
+          # a predicate that calls itself raises SystemStackError, which descends
+          # straight from Exception. Containment covering only StandardError would
+          # let either kill the turn that fired the summary.
           #
           # A predicate that never RETURNS is the mode no rescue reaches: the
           # spawn runs eagerly to its first yield point and a CPU loop has none,
-          # so it blocks the observing turn. See {Summarizer}'s docs.
+          # so it blocks the observing turn.
         end
       end
 

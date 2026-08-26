@@ -92,7 +92,7 @@ RSpec.describe NetworkAccess do
     # the implementation could get wrong. A refusal that differs from the
     # permitted destination in host AND port proves nothing: it holds equally for
     # a port-only allowance, which would open evil.example.com:11434 the moment
-    # T3 holds Ollama's port. The addresses below are RFC 5737 TEST-NET-1 and
+    # the held port is Ollama's. The addresses below are RFC 5737 TEST-NET-1 and
     # RFC 3849 documentation space -- unroutable, so a regression that let one
     # through still cannot reach anybody.
     it "refuses a NON-LOOPBACK host on the very port that is held" do

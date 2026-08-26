@@ -69,7 +69,7 @@ RSpec.shared_examples "a meet semilattice under ancestry" do |config|
 end
 
 # The population side of the law group, grown a UNION-GRAPH shape for the
-# dominator meet (S3): render chains alone exercise the render meet, but the
+# dominator meet: render chains alone exercise the render meet, but the
 # dominance order lives on render AND causal edges under a virtual root, so
 # its laws need fan-ins and forest roots in the population. A new module
 # rather than a change to the group or to the existing consumers' inline

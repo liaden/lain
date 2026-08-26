@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T2: the model-backed oracle tier. It renders the question, completes it against
+# The model-backed oracle tier. It renders the question, completes it against
 # a provider, decodes the reply, and validates it into the typed answer -- raising
 # on an answer the schema rejects rather than defaulting. Driven here against
 # Provider::Mock so no token is spent.

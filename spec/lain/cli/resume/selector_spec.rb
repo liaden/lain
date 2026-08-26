@@ -7,7 +7,7 @@ require "tmpdir"
 # picks answer only with something the Loader can actually load, because
 # UTC-timestamped names make the newest file the one the bare pick lands on and
 # `sessions_dir` is not a chat's private directory -- `lain epic approve`
-# appends its sign-off decision there too (T13).
+# appends its sign-off decision there too.
 #
 # Naming a file EXACTLY stays honored either way: salvaging a crashed session is
 # deliberate, not an accident of sorting.

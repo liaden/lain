@@ -407,7 +407,7 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
-    # AC2: chat and record resolve providers through the SAME Backend, so an
+    # Chat and record resolve providers through the SAME Backend, so an
     # unknown --provider name raises the one named Lain error from either path,
     # never Thor::Error out of lib/.
     it "raises Lain::CLI::UnknownProvider on an unknown --provider name" do
@@ -417,7 +417,7 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
-    # AC1: an ollama temp-0 arm records. The provider is stubbed (money), but
+    # An ollama temp-0 arm records. The provider is stubbed (money), but
     # the sampler flags ride the Context into Request#extra, so the recorded
     # session HEADER carries them and the recording still replays dry.
     describe "an ollama temp-0 arm" do
@@ -434,9 +434,9 @@ RSpec.describe Lain::Bench::CLI do
       end
     end
 
-    # The orchestrator amendment: bench record owns PS-2 emission. Each recorded
-    # journal carries EXACTLY ONE slot_fills record, built from the slots the
-    # Backend's context rendered, and Loader#slot_fills reads it back.
+    # The orchestrator amendment: bench record owns slot_fills emission. Each
+    # recorded journal carries EXACTLY ONE slot_fills record, built from the
+    # slots the Backend's context rendered, and Loader#slot_fills reads it back.
     describe "slot attribution" do
       def slot_fills_count(path)
         File.readlines(path).map { |line| JSON.parse(line) }.count { |record| record["type"] == "slot_fills" }
@@ -465,7 +465,7 @@ RSpec.describe Lain::Bench::CLI do
 
       # The attribution's one claim is the JOIN: digests["system"] content-
       # addresses the system bytes the request_sent records journal in full
-      # (the T9 join-guard idiom). That must hold under --system too -- an
+      # (the join-guard idiom). That must hold under --system too -- an
       # override renders INSTEAD of the slots, so a record still carrying the
       # untouched slots' digests would be a coherent-looking lie.
       def journaled_system_text(records)

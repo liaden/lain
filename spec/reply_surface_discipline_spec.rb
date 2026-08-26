@@ -3,7 +3,7 @@
 require "ripper"
 require "pathname"
 
-# Mechanical enforcement of T1's terminal rule: A LINE THAT OWNS THE TERMINAL
+# Mechanical enforcement of the terminal rule: A LINE THAT OWNS THE TERMINAL
 # READ GETS NO TERMINAL SURFACE.
 #
 # {Lain::CLI::Repl::LineScope} brackets every dispatched line in the surfaces
@@ -161,7 +161,7 @@ RSpec.describe "reply-surface discipline" do
     }
   end
 
-  # T4, and the reason this example sits HERE rather than beside the reply
+  # The reason this example sits HERE rather than beside the reply
   # prompt: `serves_replies?` now has TWO readers that mean different things by
   # it, and only one of them is written above.
   #

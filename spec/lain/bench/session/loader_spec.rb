@@ -127,7 +127,7 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
   end
 
-  # T18: seven collaborators each ask this Loader for their own record type, so
+  # Seven collaborators each ask this Loader for their own record type, so
   # the discrimination is a partition built once at initialize, not a linear
   # re-scan of the whole record array per caller.
   describe "the record partition" do
@@ -156,10 +156,10 @@ RSpec.describe Lain::Bench::Session::Loader do
     end
   end
 
-  # T14: the live session format's open sessions and resume chains. Built
+  # The live session format's open sessions and resume chains. Built
   # directly from {Lain::SessionRecord} and {Lain::Event::ChainWriter}, not
   # through {Lain::Bench::Session.write} -- these shapes are the live
-  # scribe's (T13), never the offline recorder's, which this describe's
+  # scribe's, never the offline recorder's, which this describe's
   # sibling blocks already cover under "bench files load unchanged".
   describe "open sessions and resume chains" do
     def text(body) = [{ "type" => "text", "text" => body }]
@@ -210,7 +210,7 @@ RSpec.describe Lain::Bench::Session::Loader do
         expect(loaded.timeline.head_digest).to eq(chain.head_digest)
       end
 
-      # T3 sites the cancellation repair on the RESUME door alone, deliberately:
+      # The cancellation repair is sited on the RESUME door alone, deliberately:
       # this class is also the BENCH rebuild path (`bench/variance.rb`,
       # `Compare::Run`), and projecting a tool_result here would change what a
       # recorded session replays as -- and with it every bench number measured
@@ -339,12 +339,12 @@ RSpec.describe Lain::Bench::Session::Loader do
       end
     end
 
-    # T15: a `rewound` record ({from:, to:}) is a fold-position move, folded
+    # A `rewound` record ({from:, to:}) is a fold-position move, folded
     # in FILE order beside the turn records -- the fold checks out `to` and
     # subsequent turns verify as extending it. The turns above the rewind stay
     # in the Store and in fold membership, which is what keeps a child forked
-    # above the rewind loadable (the T3 panel's probe_rewind_membership,
-    # proven end-to-end below).
+    # above the rewind loadable (probe_rewind_membership, proven end-to-end
+    # below).
     describe "a rewound session stays loadable" do
       let(:store) { Lain::Store.new }
       let(:full) do
@@ -427,7 +427,7 @@ RSpec.describe Lain::Bench::Session::Loader do
           .to raise_error(Lain::Bench::Session::Corrupt, /#{Regexp.escape(unverified)}/)
       end
 
-      # T15 panel (Linus): rewind, continue, rewind deeper -- the fold lands
+      # Review panel (Linus): rewind, continue, rewind deeper -- the fold lands
       # on the final head and BOTH abandoned branches stay vouched, because
       # children forked above either rewind depend on it.
       it "folds two rewound records, every abandoned branch still vouched" do
@@ -449,7 +449,7 @@ RSpec.describe Lain::Bench::Session::Loader do
         expect(loader.timeline.store.key?(full.head_digest)).to be(true)
       end
 
-      # T15 panel (Jeremy): the record's edge semantics, pinned.
+      # Review panel (Jeremy): the record's edge semantics, pinned.
       it "folds a first-record rewound ({from: nil, to: nil}) to the empty session" do
         fresh = Lain::Timeline.empty(store:).commit(role: :user, content: text("clean"))
         records = roundtrip([open_header, Lain::SessionRecord.rewound(from: nil, to: nil),
@@ -491,7 +491,7 @@ RSpec.describe Lain::Bench::Session::Loader do
           .to raise_error(Lain::Bench::Session::Corrupt, /never\s+verified/m)
       end
 
-      # T15 panel finding 4, recorded as contract: the Loader ACCEPTS a
+      # Review panel finding 4, recorded as contract: the Loader ACCEPTS a
       # forward "rewound" (a redo onto a branch the fold already verified)
       # that the Scribe refuses to WRITE, because its skip-set pruned the
       # target. Read-tolerance and write-strictness deliberately differ --
@@ -508,7 +508,7 @@ RSpec.describe Lain::Bench::Session::Loader do
         expect(described_class.new(records).recording.timeline.head_digest).to eq(full.head_digest)
       end
 
-      # The T3 panel's probe_rewind_membership, end-to-end with the real fold:
+      # The panel's probe_rewind_membership, end-to-end with the real fold:
       # parent forks child at F, parent rewinds BELOW F and keeps going --
       # the child must stay loadable, and the parent by its own fold too.
       it "keeps a child forked above the rewind loadable after the parent rewinds below the fork point" do

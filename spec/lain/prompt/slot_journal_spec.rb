@@ -4,7 +4,7 @@ require "json"
 require "stringio"
 require "tmpdir"
 
-# PS-2: the session-fixed prompt slots are attributed in the Journal by ONE
+# The session-fixed prompt slots are attributed in the Journal by ONE
 # slot_fills record, written at session start. It carries, per slot, the
 # content address of the RENDERED bytes (the join key onto the system text a
 # request_sent already journals in full) and the raw fill SOURCE (the bytes a

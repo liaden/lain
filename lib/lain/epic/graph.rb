@@ -10,8 +10,8 @@ module Lain
     EDGE_FIELDS = %i[blocks related].freeze
 
     # One wording for "this edge names an id the graph does not hold", shared by
-    # Graph's edge validation and by Blocking's inverse index -- the same
-    # failure reached from two directions, and a message worth not drifting.
+    # Graph's edge validation and by Blocking's inverse index -- the same failure
+    # reached from two directions, and a message worth not drifting.
     DANGLING_EDGE = "unknown issue %<target>s named in the %<field>s edges of issue %<referrer>s -- " \
                     "the epic graph holds no such issue"
     private_constant :DANGLING_EDGE
@@ -19,26 +19,24 @@ module Lain
     class MalformedGraph < Error; end
     class UnknownIssue < Error; end
 
-    # The `blocks` relation over a set of issues, as a DAG: the forward map, its
-    # inverse, the cycle path that would make it not a DAG, and the wave
-    # layering. Held apart from {Graph} because Graph is the VALUE (identity,
-    # digest, statuses) while this is the relation algebra over it, and only one
-    # of the two is content-addressed.
+    # The `blocks` relation over a set of issues, as a DAG. Held apart from
+    # {Graph} because Graph is the VALUE (identity, digest, statuses) while this
+    # is the relation algebra over it, and only one of the two is
+    # content-addressed.
     #
     # Built fresh per query rather than memoized on the Graph: the walk is cheap
     # at epic scale, and an ivar holding these mutable indices would cost
-    # `Ractor.shareable?(graph)`, which is the mechanical statement that a Graph
-    # has no reachable mutable state.
+    # `Ractor.shareable?(graph)`, the mechanical statement that a Graph has no
+    # reachable mutable state.
     #
     # Where totality stops: #cycle_path and #depth both recurse, one frame per
-    # link, so a long enough `blocks` CHAIN raises SystemStackError -- which is
-    # not a Lain::Error and so escapes exe/lain's renderer. Measured on this
-    # build: a 2000-long chain validates, a 2200-long one does not. An epic is
-    # authored by a human in one markdown file, so that is two orders of
-    # magnitude past the shape this serves, and an iterative rewrite would cost
-    # the walk its readability for a case nobody can reach. Said plainly rather
-    # than left implied, because the Graph below claims construction is total
-    # and this is the asterisk on that claim.
+    # link, so a long enough `blocks` CHAIN raises SystemStackError -- not a
+    # Lain::Error, so it escapes exe/lain's renderer. Measured on this build, a
+    # 2000-long chain validates and a 2200-long one does not. An epic is authored
+    # by a human in one markdown file, two orders of magnitude short of that, and
+    # an iterative rewrite would cost the walk its readability for a case nobody
+    # can reach. Said plainly because the Graph below claims construction is
+    # total, and this is the asterisk on that claim.
     class Blocking
       def initialize(issues)
         @blocked = issues.to_h { |issue| [issue.id, issue.blocks] }.freeze
@@ -60,9 +58,9 @@ module Lain
       end
 
       # Self, once the relation is known to be a DAG; otherwise the cycle, named
-      # by its path so the message says which edge to cut. #layers asserts it
-      # too, so the depth recursion cannot be entered on a relation that would
-      # never bottom out.
+      # by its path so the message says which edge to cut. #layers asserts it too,
+      # so the depth recursion cannot be entered on a relation that never bottoms
+      # out.
       def acyclic!
         path = cycle_path
         raise MalformedGraph, "the blocks edges form a cycle: #{path.join(" -> ")}" unless path.empty?
@@ -75,9 +73,9 @@ module Lain
       # caller writes a nil check.
       #
       # The three walk registers are allocated ONCE and threaded through every
-      # starting id. Rebuilding `settled` per start is what turns one linear
-      # walk into one walk per node: a 1600-long chain took over ten seconds to
-      # validate, against milliseconds now.
+      # starting id. Rebuilding `settled` per start turns one linear walk into one
+      # walk per node: a 1600-long chain took over ten seconds to validate,
+      # against milliseconds now.
       def cycle_path
         path = []
         on_path = Set.new
@@ -112,14 +110,12 @@ module Lain
       end
 
       # `path` is the route walked to reach +id+ and `on_path` is its O(1)
-      # membership test, so finding +id+ on it IS the cycle; both are pushed and
+      # membership test, so finding +id+ on it IS the cycle. Both are pushed and
       # popped in place, because copying the path at every hop makes a chain
-      # quadratic. `settled` holds ids whose whole subtree came back clean and
-      # is marked on the way OUT, so an id still on the path never counts as
-      # explored -- and only when `found` is empty, so a member of a discovered
-      # cycle is never recorded as clean now that the set outlives one start id.
-      # Short-circuiting on `found.empty?` rather than `break` keeps the walk
-      # one expression.
+      # quadratic. `settled` is marked on the way OUT, so an id still on the path
+      # never counts as explored -- and only when `found` is empty, so a member of
+      # a discovered cycle is never recorded as clean now that the set outlives
+      # one start id.
       def walk(id, path, on_path, settled)
         return rotate(path.drop(path.index(id))) if on_path.include?(id)
         return [] if settled.include?(id)
@@ -133,9 +129,8 @@ module Lain
         found
       end
 
-      # The path registers, pushed and popped as a named pair so the symmetry is
-      # visible rather than four bare mutations in a row. Both return before the
-      # recursive descent begins, so neither costs the walk any stack depth.
+      # Both return before the recursive descent begins, so neither costs the
+      # walk any stack depth.
       def enter(id, path, on_path)
         path.push(id)
         on_path.add(id)
@@ -162,17 +157,16 @@ module Lain
 
     # One structural edit to an epic's issue set: the issues leaving, the issues
     # arriving in their place, and the edge rewrite that keeps every third party
-    # naming something the graph still holds. Split, merge, and add are all this
+    # naming something the graph still holds. Split, merge and add are all this
     # object with different arguments.
     #
-    # Held apart from {Graph} for the reason {Blocking} is: Graph is the VALUE,
-    # and this is an operation over it. That rewrite is the contract rather than
-    # a courtesy -- skipping it leaves a third party pointing at an id the edit
-    # removed, which surfaces as Graph's dangling-edge error and blames the
-    # author for a graph the operation malformed.
+    # The edge rewrite is the contract rather than a courtesy -- skipping it
+    # leaves a third party pointing at an id the edit removed, which surfaces as
+    # Graph's dangling-edge error and blames the author for a graph the operation
+    # malformed.
     #
     # Nothing here validates. #apply hands its issues back to Graph.new, so
-    # duplicate ids, dangling edges, and cycles are refused by exactly the
+    # duplicate ids, dangling edges and cycles are refused by exactly the
     # construction that refuses them anywhere else.
     class Revision
       def initialize(removed, arriving, **overrides)
@@ -192,11 +186,11 @@ module Lain
       private
 
       # An override naming an edge field would race the rewrite: #rebuild splats
-      # it after the computed edges, so it would win silently -- and swapping
-      # those two splats would make it lose just as silently. No operation passes
-      # one, so neither outcome would ever be caught. Unreachable through Graph's
-      # three operations and refused as a Lain::Error anyway, for the reason
-      # Blocking's #dangling! is: this file constructs the collaborator directly.
+      # it after the computed edges, so it would win silently -- and swapping the
+      # two splats would make it lose just as silently. No operation passes one,
+      # so neither outcome would ever be caught. Refused as a Lain::Error for
+      # Blocking's #dangling! reason: this file constructs the collaborator
+      # directly, past Graph's own three operations.
       def refuse_edge_overrides!(overrides)
         clash = overrides.keys & EDGE_FIELDS
         return if clash.empty?
@@ -205,17 +199,16 @@ module Lain
                               "edge sets come from the rewrite, never from an override"
       end
 
-      # +issue+ with every edge field rebuilt by the block, plus any overrides.
       # The one place the edge kinds are enumerated, so a third kind cannot be
-      # missed by being forgotten at one of the two call sites below.
+      # forgotten at one of the two call sites below.
       def rebuild(issue, **overrides, &edges)
         issue.with(**EDGE_FIELDS.to_h { |field| [field, yield(field)] }, **overrides)
       end
 
-      # An arrival carrying the departing issues' edges alongside its own, which
-      # is what preserves reachability across a split: whoever waited on the
-      # whole waits on every part. Issue's constructor deduplicates and sorts
-      # each edge set, so the union needs no help here.
+      # Carrying the departing issues' edges alongside the arrival's own is what
+      # preserves reachability across a split: whoever waited on the whole waits
+      # on every part. Issue's constructor deduplicates and sorts each edge set,
+      # so the union needs no help here.
       def inherit(arrival)
         rebuild(arrival, **@overrides) do |field|
           arrival.public_send(field) + @removed.flat_map { |issue| issue.public_send(field) }
@@ -238,19 +231,18 @@ module Lain
     private_constant :Revision
 
     # An epic's issues as one deeply frozen, content-addressed value, ordered by
-    # id so that equal issue sets are equal graphs whatever order they were
-    # built in.
+    # id so that equal issue sets are equal graphs whatever order they were built
+    # in.
     #
-    # Construction is total: duplicate ids, edges naming issues the graph does
-    # not hold, and cycles in `blocks` are all refused here, which is what lets
-    # every query below answer without a guard. A cycle is named by its path, so
-    # the message says which edge to cut rather than that one exists.
+    # Construction is total: duplicate ids, edges naming issues the graph does not
+    # hold, and cycles in `blocks` are all refused here, which is what lets every
+    # query below answer without a guard. A cycle is named by its path, so the
+    # message says which edge to cut rather than that one exists.
     #
-    # The queries are pure and deterministically ordered -- a wave plan is a
-    # value an author diffs across runs, not a fresh shuffle each time. Pure
-    # Ruby on purpose: this is per-session work over a handful of issues, so the
-    # Rust binding test fails on rule 3 (hot per-turn) regardless of how graphy
-    # `#waves` looks.
+    # The queries are pure and deterministically ordered -- a wave plan is a value
+    # an author diffs across runs, not a fresh shuffle each time. Pure Ruby on
+    # purpose: this is per-session work over a handful of issues, so the Rust
+    # binding test fails on rule 3 (hot per-turn) however graphy `#waves` looks.
     Graph = Data.define(:issues) do
       include Enumerable
 
@@ -270,11 +262,11 @@ module Lain
         by_id.fetch(id) { raise UnknownIssue, "no issue #{id.inspect} in the epic graph" }
       end
 
-      # Pending, and every blocker done. `ready` is derived here rather than
-      # carried on the Issue -- STORED_STATUSES refuses it by name,
-      # because a status no author may write is a special case waiting to be
-      # forgotten. Note that `abandoned` is not `done`: an abandoned blocker
-      # still blocks, and unblocking is an edge edit, not a status.
+      # Pending, and every blocker done. `ready` is DERIVED here rather than
+      # carried on the Issue -- STORED_STATUSES refuses it by name, because a
+      # status no author may write is a special case waiting to be forgotten.
+      # `abandoned` is not `done`: an abandoned blocker still blocks, and
+      # unblocking is an edge edit, not a status.
       def ready
         relation = Blocking.new(issues)
         finished = issues.select { |issue| issue.status == "done" }.map(&:id)
@@ -293,26 +285,22 @@ module Lain
       # The derived inverse of `blocks`: the ids that must finish before +id+.
       def blocked_by(id) = Blocking.new(issues).blockers_of(fetch(id).id)
 
-      # This graph plus +issue+, carrying +discovered_from+ when one is named and
-      # the issue's own provenance otherwise. An addition removes nothing, so it
-      # is the Revision whose rewrite is empty.
-      #
-      # The block, here and on the two operations below, is offered the
-      # {GraphFiber} describing the edit -- see {#revise}.
+      # This graph plus +issue+. An addition removes nothing, so it is the
+      # Revision whose rewrite is empty. The block, here and on the two
+      # operations below, is offered the {GraphFiber} describing the edit.
       def add(issue, discovered_from: nil, &fiber)
         arrival = clean_issue(issue, "an added issue")
-        # The EFFECTIVE provenance is what the fiber records, not the keyword as
-        # it arrived: a replay passing it explicitly reproduces this graph either
-        # way, and the resolved value is the one a reader auditing lineage wants.
+        # The fiber records the EFFECTIVE provenance, not the keyword as it
+        # arrived: a replay reproduces this graph either way, and the resolved
+        # value is the one a reader auditing lineage wants.
         provenance = discovered_from || arrival.discovered_from
         revise("add", { "issue" => arrival.canonical, "discovered_from" => provenance },
                [], [arrival], discovered_from: provenance, &fiber)
       end
 
-      # +id+ replaced by +into+. Every part inherits the original's outbound
-      # edges and names it as provenance, and every edge anywhere that named the
-      # original comes to name every part -- so whoever waited on the whole of
-      # +id+ now waits on all of it.
+      # +id+ replaced by +into+. Every edge anywhere that named the original comes
+      # to name every part, so whoever waited on the whole of +id+ now waits on
+      # all of it.
       def split(id, into:, &fiber)
         original = fetch(id)
         parts = clean_issues(into, "split parts")
@@ -321,10 +309,10 @@ module Lain
                [original], parts, discovered_from: original.id, &fiber)
       end
 
-      # +left+ and +right+ replaced by +as+, which inherits both their edge sets
-      # on top of its own. Provenance is whatever +as+ declares -- a merge has two
-      # parents and `discovered_from` holds one, so choosing between them here
-      # would be a guess the lineage carries forever.
+      # +left+ and +right+ replaced by +as+, which inherits both their edge sets on
+      # top of its own. Provenance is whatever +as+ declares: a merge has two
+      # parents and `discovered_from` holds one, so choosing here would be a guess
+      # the lineage carries forever.
       def merge(left, right, as:, &fiber)
         refuse_self_merge!(left, right)
         arrival = clean_issue(as, "a merged issue")
@@ -341,10 +329,9 @@ module Lain
       def by_id = issues.to_h { |issue| [issue.id, issue] }
 
       # Array-ness and member type are asserted rather than ducked. A Hash of
-      # id => issue would otherwise reach `sort_by(&:id)` as a NoMethodError
-      # three frames down instead of a rendered Lain::Error, and a lookalike
-      # that answers #canonical differently would hand back a digest that is not
-      # this epic's -- the graph is defined over Issue values specifically.
+      # id => issue would otherwise reach `sort_by(&:id)` as a NoMethodError three
+      # frames down instead of a rendered Lain::Error, and a lookalike answering
+      # #canonical differently would hand back a digest that is not this epic's.
       def clean_issues(issues, what = "epic graph issues")
         unless issues.is_a?(Array)
           raise MalformedGraph,
@@ -377,16 +364,14 @@ module Lain
         raise MalformedGraph, "cannot merge an issue with itself (both sides name #{left.inspect})" if left == right
       end
 
-      # The one place an operation becomes a graph, and the one place it becomes
-      # a fiber. The graph is what comes BACK, always -- a fiber is offered to a
-      # block and never returned in the graph's place, so an operation reads the
-      # same to every caller that does not care.
+      # The graph is what comes BACK, always -- a fiber is offered to a block and
+      # never returned in the graph's place, so an operation reads the same to
+      # every caller that does not care.
       #
-      # Offered only when somebody is listening: the pair of content addresses
-      # below is real work over a revision nobody asked to audit, and the fiber
-      # is built after the new graph exists, so a refused revision (a merge
-      # closing a cycle) yields nothing rather than describing a graph that never
-      # existed.
+      # Offered only when somebody is listening: the pair of content addresses is
+      # real work over a revision nobody asked to audit. Built AFTER the new graph
+      # exists, so a refused revision (a merge closing a cycle) yields nothing
+      # rather than describing a graph that never existed.
       def revise(operation, arguments, removed, arriving, **overrides)
         revised = Graph.new(issues: Revision.new(removed, arriving, **overrides).apply(issues))
         yield GraphFiber.cut(operation:, arguments:, removed:, arriving:, from: self, to: revised) if block_given?

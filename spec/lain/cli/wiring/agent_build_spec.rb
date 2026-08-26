@@ -121,7 +121,7 @@ class AgentBuildSpecBoard
   # take them as required keywords with no default and a double answering nil
   # for any of them would test a construction production cannot reach.
   #
-  # `sensitivity` joined that list at T23, when {CLI::ToolGuard} started
+  # `sensitivity` joined that list when {CLI::ToolGuard} started
   # reading the listing filter off the board's policy instead of passing a
   # Null. It is the slot a real {CLI::Switchboard} has always had; this
   # stand-in simply had no reason to answer it until something asked.
@@ -186,7 +186,7 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
     end
   end
 
-  # T13. Driven directly, which is what the `journal:` keyword buys: the method
+  # Driven directly, which is what the `journal:` keyword buys: the method
   # needs ONE message (`#<<`), so an example hands it a StringIO-backed
   # {Lain::Journal} and reads the bytes, rather than standing up a Chronicle to
   # ask it for one. `.backing` and the seam file cover the wiring; these two
@@ -265,7 +265,7 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
         .not_to be_empty
     end
 
-    # T6 added the run's own member ahead of the chronicle's, so the Null
+    # The run's own member sits ahead of the chronicle's, so the Null
     # chronicle's empty phase is no longer an empty stack -- it is the window
     # refresh alone.
     it "takes the turn phase from the chronicle, ahead of which it puts the window refresh" do
@@ -439,7 +439,7 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
       expect(resolved.policy_switch.current).not_to be_a(Lain::Effect::Handler::Gate::ApproveAll)
     end
 
-    # T11's third axis, over the SAME seam and the SAME thunk. It matters that
+    # The third axis, over the SAME seam and the SAME thunk. It matters that
     # both chains resolve one board rather than two: a `LiveSensitivity` built
     # over a second thunk would answer a different session's policy, and every
     # behavioural check would still agree while nothing was configured.

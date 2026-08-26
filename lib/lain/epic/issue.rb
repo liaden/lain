@@ -9,14 +9,12 @@ module Lain
     # set closed and the derivation discoverable.
     STORED_STATUSES = %w[pending in_flight done abandoned].freeze
     DERIVED_STATUSES = %w[ready].freeze
-    # The one member of that set that means FINISHED, named because three
-    # separate readers already turn on it as a bare literal -- {Graph#ready}
-    # (only a done blocker is satisfied), {Progress#summary}'s tally, and
-    # {Document::STATUS_MARKS}' glyph -- and a fourth arrived with
-    # `lain epic status`, whose whole remaining-work rule is "not done is
-    # remaining". `abandoned` is deliberately NOT this: it is work somebody
-    # stopped, it still blocks, and only an edge edit gets past it. A status the
-    # tier's semantics hinge on deserves a name beside the set it belongs to.
+    # The one member of that set that means FINISHED, named because four
+    # separate readers turn on it as a bare literal: {Graph#ready} (only a done
+    # blocker is satisfied), {Progress#summary}'s tally, {Document::STATUS_MARKS}'
+    # glyph, and `lain epic status`, whose remaining-work rule is "not done is
+    # remaining". `abandoned` is deliberately NOT this -- it is work somebody
+    # stopped, it still blocks, and only an edge edit gets past it.
     DONE = "done"
 
     # The characters an id reserves for the epic-markdown grammar (see
@@ -31,11 +29,10 @@ module Lain
     # loudly instead of mislabelling the new character.
     ID_GRAMMARS = { "`" => "the `id` backtick delimiters", "\r" => "the one-line issue heading",
                     "\n" => "the one-line issue heading" }.freeze
-    # Message-and-predicate pairs, in the order a reader wants to hear them: the
-    # emptiest diagnosis first, so "  " is reported as whitespace rather than as
-    # a trimming problem. An id is the graph's join key and T9's filename, so an
-    # empty one is a duplicate-key collision and an unnamed file, not a cosmetic
-    # defect.
+    # Message-and-predicate pairs, emptiest diagnosis first, so "  " is reported
+    # as whitespace rather than as a trimming problem. An id is the graph's join
+    # key and the issue's filename, so an empty one is a duplicate-key collision
+    # and an unnamed file, not a cosmetic defect.
     ID_RULES = [
       ["cannot be empty", ->(id) { id == "" }],
       ["cannot be only whitespace", ->(id) { id.strip == "" }],
@@ -66,10 +63,9 @@ module Lain
 
     class MalformedIssue < Error; end
 
-    # One issue in an epic. `status` is one of STORED_STATUSES; `blocks` and
-    # `related` are edge SETS naming other issue ids; `discovered_from` names
-    # the issue a split, merge, or mid-flight discovery grew this one out of,
-    # and `nil` is its only spelling of absent.
+    # One issue in an epic. `blocks` and `related` are edge SETS naming other
+    # issue ids; `discovered_from` names the issue a split, merge, or mid-flight
+    # discovery grew this one out of, and `nil` is its only spelling of absent.
     #
     # `criteria` holds the Gherkin acceptance criteria as SOURCE TEXT, fence
     # delimiters included, not as a digest: hashing is one-way, so a stored
@@ -77,14 +73,12 @@ module Lain
     # is what makes the markdown round-trip verbatim, and {#criteria_digest}
     # derives the content address from it on demand.
     #
-    # Construction is total in both directions: everything that constructs can
-    # be content-addressed (Canonical normalizes each field, so bytes it cannot
+    # Construction is total in both directions: everything that constructs can be
+    # content-addressed (Canonical normalizes each field, so bytes it cannot
     # encode are refused here rather than raising later out of #digest), and
     # everything refused is refused as a MalformedIssue -- a Lain::Error, so
-    # exe/lain renders it instead of crashing.
-    #
-    # Interned Strings, frozen edge arrays, and nil-or-frozen optionals, so the
-    # whole value is Ractor-shareable.
+    # exe/lain renders it instead of crashing. Interned Strings, frozen edge
+    # arrays, and nil-or-frozen optionals, so the value is Ractor-shareable.
     Issue = Data.define(:id, :title, :description, :status, :criteria, :blocks, :related, :discovered_from) do
       def initialize(id:, title:, description: "", status: "pending", criteria: nil,
                      blocks: [], related: [], discovered_from: nil)
@@ -143,11 +137,9 @@ module Lain
       # Every String entering the value goes through Canonical, because Canonical
       # is what will hash it: a value that constructs but cannot be
       # content-addressed is the same silent failure as criteria that parse to
-      # nothing. Normalizing here rather than restating the UTF-8 rule keeps "it
-      # constructs" and "it has a digest" the same statement, and it settles
-      # encoding before ids are deduplicated, so one id cannot reach the graph
-      # under two spellings. The interning is Canonical's own, and it is free:
-      # the digest path interns these same bytes anyway.
+      # nothing. It also settles encoding before ids are deduplicated, so one id
+      # cannot reach the graph under two spellings. The interning is Canonical's
+      # own, and free: the digest path interns these same bytes anyway.
       def text(value, field)
         raise MalformedIssue, "#{field} cannot be nil" if value.nil?
 

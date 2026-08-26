@@ -4,69 +4,45 @@ require "pathname"
 
 module Lain
   # Is this path ordinary, worth a gate, or off limits entirely -- decided from
-  # the NAME alone.
+  # the NAME alone. It is the first of the secret boundary's three arms: gate on
+  # the effect here, filter the result in {Middleware::WithholdSecretPaths},
+  # mask the content in {Middleware::RedactSecretReads}. The split is forced
+  # rather than chosen -- a path classifier can answer before a file is opened
+  # and a region detector cannot until it has the bytes.
   #
-  # Every arm of the secret boundary needs this answer, and several of them need
-  # it before the file is opened: {Effect::Handler::Sensitivity} refuses a denied
-  # read before any approval, {Sensitivity::Policy} decides whether a tool call
-  # reaches a human, and {Approval::Escalation::Triage} reads it off a parsed
-  # argv. So the classifier does no IO at all -- no `stat`, no `realpath`, no
-  # entropy over the bytes -- and is free to call from any of them, in any order,
-  # as often as they like.
+  # Several callers need the answer BEFORE the file is opened:
+  # {Effect::Handler::Sensitivity} refuses a denied read before any approval,
+  # {Sensitivity::Policy} decides whether a tool call reaches a human, and
+  # {Approval::Escalation::Triage} reads it off a parsed argv. So the classifier
+  # does no IO at all -- no `stat`, no `realpath`, no entropy over the bytes --
+  # and is free to call from any of them, in any order, as often as they like.
+  # {#rooted} and {TILDE_SEGMENT} hold the rewriting that keeps it that way.
   #
-  # == Lexical, and that is a decision
+  # Lexical matching is a decision, not an omission: a symlink named `notes.md`
+  # pointing at `~/.ssh/id_ed25519` classifies ordinary. It is what
+  # {Approval::Risk::OutsideRoot} (`risk.rb:192-232`) already chose so that it
+  # agrees with {Workspace::Restore} about what "outside the root" means, and
+  # resolving links here would both disagree with that and put a syscall in a
+  # classifier whose whole contract is that it makes none. The hole has a name
+  # and a spec rather than a stat.
   #
-  # A symlink named `notes.md` pointing at `~/.ssh/id_ed25519` classifies
-  # ordinary. {Approval::Risk::OutsideRoot} (`risk.rb:192-232`) already chose
-  # lexical matching so it agrees with {Workspace::Restore} about what "outside
-  # the root" means, and resolving links here would both disagree with that and
-  # put a syscall in a classifier whose whole contract is that it makes none. The
-  # hole has a name and a spec rather than a stat.
-  #
-  # == A path is rewritten before it is matched, and only with string work
-  #
-  # Three steps, in order, none of them touching the filesystem. A leading tilde
-  # segment -- `~`, `~/` or even `~someone/` -- is replaced by the INJECTED home
-  # ({TILDE_SEGMENT}); anything still relative is joined to the INJECTED cwd; and
-  # the result goes through `Pathname#cleanpath`, which folds `.` and `..`
-  # lexically. So `~root/.netrc` and `~someone/.ssh/id_rsa` ARE home-anchored and
-  # both deny.
-  #
-  # Nothing is ever handed to `File.expand_path`, and a named tilde is emphatically
-  # not resolved through getpwnam: on an SSSD or LDAP-backed host that is a socket
-  # to nscd, i.e. a network call from a classifier whose contract is that it makes
-  # none (`risk.rb:212-220`). Rewriting every tilde to OUR home rather than
-  # resolving whose it is loses nothing worth having -- another user's
-  # `~/.ssh/id_rsa` is a private key by anybody's reckoning.
-  #
-  # == Which direction each half errs in, and where each rule is anchored
-  #
-  # {Approval::Risk}'s rule -- widen, never sharpen (`risk.rb:66-72`) -- applies
-  # to the GATED half only, where a spurious match costs one prompt. The DENIED
-  # half is the opposite: no policy, no `/mode auto` and no `ApproveAll` lifts a
-  # denial, so a false positive there makes a file permanently unreadable with no
-  # move available to anyone. That is why `id_*` carries a `*.pub` exception.
-  #
-  # It is also why the denied table is split by how AMBIGUOUS a name is, rather
-  # than by where the secret usually lives, and the split is roughly even:
-  #
-  # - Unambiguous, so matched ANYWHERE (`inside`/`name`): `.ssh/id_*`,
-  #   `.gnupg`, `.aws/credentials`, `.password-store`, `.netrc`, `*.kdbx`. An
-  #   absolute path into another user's home or a mounted backup is still a
-  #   private key, and a home-anchored table only ever sees ONE home.
-  # - Ambiguous, so anchored UNDER THE INJECTED HOME (`under`): `Cookies`,
-  #   `Login Data`, `key4.db`, `.kube/config`, `.docker/config.json`,
-  #   `.config/gh/hosts.yml`. Every profile layout holding these puts them under
-  #   `$HOME`, and `config` or `Cookies` is a plausible name in a checkout.
-  #
-  # The anchored ones match a whole path SEGMENT, so `/home/tester` never
-  # swallows `/home/tester2`.
+  # The two halves err in OPPOSITE directions. {Approval::Risk}'s widen-never-
+  # sharpen rule (`risk.rb:66-72`) applies to the GATED half only, where a
+  # spurious match costs one prompt. No policy, no `/mode auto` and no
+  # `ApproveAll` lifts a DENIAL, so a false positive there makes a file
+  # permanently unreadable with no move available to anyone -- which is why
+  # `id_*` carries a `*.pub` exception, and why {DENIED} is split by how
+  # AMBIGUOUS a name is rather than by where the secret usually lives.
   class Sensitivity
+    include Declarative
+
     Verdict = Data.define(:level, :reason)
 
     # What the classifier answers. Frozen and shareable by being a Data of
     # Symbols, so it journals and crosses a Ractor as-is.
     class Verdict
+      include Declarative
+
       # The constants live on this reopen rather than in a `Data.define` block,
       # where they would scope to {Sensitivity} instead (see
       # {Request::SYSTEM_PREFIX}).
@@ -89,11 +65,20 @@ module Lain
       # Checked, not coerced, for the reason {Approval::Risk::Classification}
       # states: a wrong value answering the permissive question in silence is
       # exactly what this boundary must not do.
+      #
+      # Declared HERE, below {LEVELS}/{REASONS}, so both resolve by ordinary
+      # lexical lookup -- {Project}'s reason. One declaration and not two guard
+      # clauses, so a Verdict built with BOTH fields wrong reports both rather
+      # than the first half of the mistake.
+      declare do
+        attribute :level
+        attribute :reason
+        validates :level, inclusion: { in: LEVELS, message: "must be one of #{LEVELS.join(", ")}, got %<value>p" }
+        validates :reason, inclusion: { in: REASONS, message: "must be one of #{REASONS.join(", ")}, got %<value>p" }
+      end
+
       def initialize(level:, reason:)
-        raise ArgumentError, "level must be one of #{LEVELS.join(", ")}, got #{level.inspect}" \
-          unless LEVELS.include?(level)
-        raise ArgumentError, "reason must be one of #{REASONS.join(", ")}, got #{reason.inspect}" \
-          unless REASONS.include?(reason)
+        self.class.check!(level:, reason:)
 
         super
       end
@@ -147,13 +132,15 @@ module Lain
 
       def anchored(home) = under.empty? ? home : "#{home}/#{under}"
 
+      # The trailing separator is the whole guard: a bare `start_with?` would let
+      # `/home/tester` swallow `/home/tester2`.
       def descends?(path, prefix) = path == prefix || path.start_with?("#{prefix}/")
 
       # A whole SEGMENT of the path, so `.gnupg-backup` is not `.gnupg`, and any
       # segment rather than the immediate parent, so `~/.ssh/keys/id_rsa` is as
       # much a private key as `~/.ssh/id_rsa`. The last segment counts too: a
-      # subtree rule that missed the subtree's own root would let T19 list the
-      # directory while withholding everything inside it.
+      # subtree rule that missed the subtree's own root would let a listing show
+      # the directory while withholding everything inside it.
       def inside?(path) = inside.nil? || path.split(File::SEPARATOR).include?(inside)
 
       def named?(base) = called?(base) && !excepted?(base)
@@ -334,8 +321,7 @@ module Lain
     end
 
     # Off limits: not approvable, not liftable, so each entry is as narrow as it
-    # can be while still naming the whole secret. The split is by AMBIGUITY of
-    # the name, not by where the secret usually lives.
+    # can be while still naming the whole secret.
     DENIED = [
       # Unambiguous. Matched wherever they sit, because an absolute path into
       # another user's home -- `/root/.ssh/id_rsa`, a mounted backup -- is still
@@ -346,10 +332,9 @@ module Lain
       Rule.within(".password-store", level: :denied, reason: :protected),
       Rule.named(".netrc", level: :denied, reason: :protected),
       Rule.named("*.kdbx", level: :denied, reason: :protected),
-      # Ambiguous, so anchored under home. `config`, `config.json`, `Cookies`
-      # and `key4.db` are all plausible names in a checkout, and a denial cannot
-      # be lifted by any policy, `/mode auto` or `ApproveAll` -- so a false positive
-      # here makes a source file permanently unreadable with no move available.
+      # Ambiguous, so anchored under home: `config`, `config.json`, `Cookies`
+      # and `key4.db` are all plausible names in a checkout, and every profile
+      # layout holding these puts them under `$HOME`.
       Rule.homed(".config/gh/hosts.yml", level: :denied, reason: :protected),
       Rule.homed(".docker/config.json", level: :denied, reason: :protected),
       Rule.homed(".kube/config", level: :denied, reason: :protected),
@@ -398,16 +383,27 @@ module Lain
       text.encoding.ascii_compatible? && text.valid_encoding? && !text.include?(NUL)
     end
 
+    # A home of "" (HOME unset) or "/" (Docker's default when the uid has no
+    # /etc/passwd entry) builds prefixes like "//.ssh" that match nothing,
+    # silently disabling every home-anchored rule below. A cwd of "/" is fine,
+    # so only `home` is declared.
+    #
+    # Judged on the ANCHORED path rather than the argument as written, exactly
+    # as the guard clause it replaces was -- which is also why the message now
+    # reports the anchored form: `"/./"` and `"/"` are one home, and saying so
+    # is the more useful of the two answers.
+    declare do
+      attribute :home
+      validates :home, exclusion: { in: [ROOT], message: "must not be the filesystem root, got %<value>p" }
+    end
+
     # @param home [String, Pathname] the user's home directory, INJECTED -- never read from ENV here
     # @param cwd [String, Pathname] what a relative path resolves against, also injected
     # @param rules [Rules] what this project added, and what it exempted
     def initialize(home:, cwd:, rules: Rules.empty)
       @home = anchor(:home, home)
       @cwd = anchor(:cwd, cwd)
-      # A home of "" (HOME unset) or "/" (Docker's default when the uid has no
-      # /etc/passwd entry) builds prefixes like "//.ssh" that match nothing,
-      # silently disabling every home-anchored rule below. A cwd of "/" is fine.
-      raise ArgumentError, "home must not be the filesystem root, got #{home.inspect}" if @home == ROOT
+      self.class.check!(home: @home)
 
       @rules = [*DENIED, *rules.denied, *rules.exempt, *GATED, *rules.gated, ORDINARY].freeze
       freeze
@@ -470,9 +466,10 @@ module Lain
 
     # Two rewrites, both pure string work: a leading tilde becomes the injected
     # home ({TILDE_SEGMENT}), and anything still relative resolves against the
-    # injected cwd. T20 classifies bash argv, where relative is the norm, and
-    # leaving each caller to normalize first would be three copies of one rule --
-    # the drift this chunk exists to prevent. Nothing is expanded, nothing stat'ed.
+    # injected cwd. {Approval::Escalation::Triage} classifies bash argv, where
+    # relative is the norm, and leaving each caller to normalize first would be
+    # three copies of one rule -- the drift this chunk exists to prevent. Nothing
+    # is expanded, nothing stat'ed.
     def rooted(path)
       return path.sub(TILDE_SEGMENT) { @home } if path.start_with?(TILDE)
       return path if path.start_with?(ROOT)

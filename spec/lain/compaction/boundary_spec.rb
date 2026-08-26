@@ -22,12 +22,12 @@ RSpec.describe Lain::Compaction::Boundary do
 
   # Scenario: an unconstrained span snaps to exactly the requested keep_last
   #
-  # RE-RULED 2026-07-27 (orchestrator, during T4). This block used to pin TWO
-  # branches -- the naive split when it already began an `assistant` message,
-  # and a walk back to the nearest earlier one otherwise -- because the
-  # replacement was an ASSISTANT message and `summary(assistant) + assistant`
-  # is F1's second 400. T4 fixed the replacement's role at `user`, and T1
-  # separately ruled that adjacent `user` messages are legal production shape
+  # RE-RULED 2026-07-27 (orchestrator). This block used to pin TWO branches --
+  # the naive split when it already began an `assistant` message, and a walk
+  # back to the nearest earlier one otherwise -- because the replacement was an
+  # ASSISTANT message and `summary(assistant) + assistant` is the second
+  # measured API 400. The replacement's role is now fixed at `user`, and
+  # adjacent `user` messages were separately ruled legal production shape
   # (`agent_spec.rb:407-410`) while only adjacent `assistant` is a violation.
   # A `user` replacement can therefore be followed by EITHER role, so the
   # role rule is not merely weaker than it was -- it is vacuous, and its only
@@ -48,7 +48,7 @@ RSpec.describe Lain::Compaction::Boundary do
 
     # The case the old rule moved and this one does not. It is safe for exactly
     # one reason: the replacement is a `user` message, so `user + user` is the
-    # legal adjacency T1 pinned rather than the illegal one F1 measured.
+    # legal adjacency that was pinned rather than the illegal one measured.
     it "equals today's slice when the naive split begins a USER message too" do
       messages = alternating(10)
 
@@ -75,12 +75,12 @@ RSpec.describe Lain::Compaction::Boundary do
 
   # Scenario: a cut that would split a tool pair moves off it.
   #
-  # T2's NIT 7 coming due. Pair safety used to be EMERGENT: "land on assistant"
+  # A review nit coming due. Pair safety used to be EMERGENT: "land on assistant"
   # happened to imply it, because a `tool_result` is always a `user` message
-  # immediately after its `assistant` `tool_use`. Relaxing the role rule (T4,
+  # immediately after its `assistant` `tool_use`. Relaxing the role rule (the
   # orchestrator ruling) removes the thing that was accidentally providing it,
   # so the rule is now written directly -- and tested directly, which is what
-  # T2's own warning said would be needed the day the role rule was relaxed.
+  # that nit's own warning said would be needed the day the role rule was relaxed.
   describe "a cut that would split a tool pair" do
     it "moves so the pair stays whole on one side" do
       messages = [
@@ -151,8 +151,9 @@ RSpec.describe Lain::Compaction::Boundary do
     # it and a `tool_use` answered by the turn after. That is legal on the wire
     # and nothing in `lib/` emits it (`Agent#perform_tools` commits one user
     # message per assistant turn's results), which is exactly why it must be
-    # pinned rather than assumed away. This is T2's NIT 7 one level down: a
-    # branch whose safety was emergent from the fixtures rather than asserted.
+    # pinned rather than assumed away. This is the emergent-safety nit one
+    # level down: a branch whose safety was emergent from the fixtures rather
+    # than asserted.
     it "declines when the move off one pair lands on another" do
       both = { "role" => "assistant",
                "content" => [{ "type" => "tool_result", "tool_use_id" => "a", "content" => "ok" },
@@ -208,12 +209,12 @@ RSpec.describe Lain::Compaction::Boundary do
     end
   end
 
-  # FIX 1 (panel round 1, BLOCKER) -- and the shape that FIX addressed is gone.
+  # A panel round 1 BLOCKER -- and the shape that fix addressed is gone.
   # `land_on_assistant` could walk all the way to index 0 on a history far
   # LONGER than keep_last, so `#declined?` was named to keep that apart from
-  # "nothing was ever droppable". T1 ruled runs of consecutive `user` messages
+  # "nothing was ever droppable". Runs of consecutive `user` messages are ruled
   # legal production shape, so those runs are real -- and under the relaxed rule
-  # (T4) they no longer move the cut at all, which is what dissolved 44 sibling
+  # they no longer move the cut at all, which is what dissolved 44 sibling
   # failures across six spec files that had been asserting compaction over
   # all-user fixtures. `#declined?` STAYS: it is still correct, still
   # mutually exclusive with `#empty?`, and still the only honest answer for the
@@ -239,7 +240,7 @@ RSpec.describe Lain::Compaction::Boundary do
       expect(boundary.index).to eq(1)
     end
 
-    # The near-decline the T2 panel found and handed to T4 as a carry-forward:
+    # The near-decline a review panel found and handed forward:
     # one assistant at index 1, thirty user messages after it, `keep_last: 3`
     # answered index 1 and `moved` 28 -- correct, honest, and a head of ONE
     # message where three were asked, with every predicate reporting normally.
@@ -255,7 +256,7 @@ RSpec.describe Lain::Compaction::Boundary do
     end
   end
 
-  # FIX 2: empty? and declined? must be mutually exclusive across every
+  # `empty?` and `declined?` must be mutually exclusive across every
   # length/keep_last this class accepts, never both true and never
   # ambiguous about which is which.
   describe "empty? and declined? are distinct, never both true" do
@@ -307,7 +308,7 @@ RSpec.describe Lain::Compaction::Boundary do
     end
   end
 
-  # FIX 5, re-pointed at the key this object actually reads. It used to read
+  # Re-pointed at the key this object actually reads. It used to read
   # `"role"`; the relaxed rule reads `"content"` instead, so that is where the
   # precondition now bites. The reasoning is unchanged: `Context::PinnedMessages`
   # documents the same Symbol-vs-String projection hazard
@@ -335,7 +336,7 @@ RSpec.describe Lain::Compaction::Boundary do
     end
   end
 
-  # FIX 6. `Head` and `Compact` are handed the SAME `Boundary` instance (T4)
+  # `Head` and `Compact` are handed the SAME `Boundary` instance
   # and must agree; when they do not, the diagnostic is two integers with no
   # story. `#moved` is that story: 0 when the naive split already landed,
   # the true distance otherwise -- for both a normal landing and a decline.
@@ -403,7 +404,7 @@ RSpec.describe Lain::Compaction::Boundary do
     # What a cut actually produces, taken from the object that DECIDES the
     # replacement rather than restated here. Validity is a property of the
     # rendered array, which is why the sweep builds it and asks
-    # {Lain::Context::Conversation} -- the object T1 wrote for exactly this --
+    # {Lain::Context::Conversation} -- the object written for exactly this --
     # rather than asking what role the tail happens to begin with. That question
     # was a proxy for validity under an assistant replacement, and it is no
     # longer even correlated with it.
@@ -415,8 +416,9 @@ RSpec.describe Lain::Compaction::Boundary do
     # why this object correctly takes no role parameter. A literal here would go
     # on validating a summary nobody emits, so the day anything assigns
     # `assistant` -- the derivation assigns the role, per the Open decisions
-    # ruling, which puts it in T9's hands -- every Boundary-derived cut would
-    # become F1's 400 again with not one example failing. Now it fails here.
+    # ruling, which puts it beyond this object -- every Boundary-derived cut
+    # would become that same API 400 again with not one example failing. Now it
+    # fails here.
     def rendered(messages, keep_last)
       Lain::Context::Compact.new(threshold: 0, keep_last:, summarizer: ->(_) { "summary" }).call(messages)
     end
@@ -552,7 +554,7 @@ RSpec.describe Lain::Compaction::Boundary do
       expect(boundary).to be_deeply_frozen
     end
 
-    # FIX 4: a non-frozen, duck-typed pins collaborator must not break
+    # A non-frozen, duck-typed pins collaborator must not break
     # shareability -- it proves `pins` is genuinely uninvolved in @index,
     # @declined and @moved, not merely absent from the constructor doc.
     it "is Ractor.shareable? even with a non-frozen, duck-typed pins collaborator" do

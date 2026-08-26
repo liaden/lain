@@ -11,7 +11,7 @@ RSpec.describe Lain::Compaction::Cold do
     journal_io.string.each_line.map { |line| JSON.parse(line) }
   end
 
-  # A TTL-bearing profile shaped like Anthropic's real CACHE_PROFILE (T15).
+  # A TTL-bearing profile shaped like Anthropic's real CACHE_PROFILE.
   def ttl_profile(ttl: 300) = { ttl: }
 
   # The raw shape #observe reads internally -- a String-keyed Hash, the same

@@ -203,7 +203,7 @@ RSpec.describe Lain::Config do
     end
   end
 
-  # T23. The `[sensitivity]` table is read on its OWN, by {.sensitivity} rather
+  # The `[sensitivity]` table is read on its OWN, by {.sensitivity} rather
   # than through {.load}, and that separation is the point rather than an
   # accident of load order: this table RESTRICTS, so it must refuse loudly, and
   # every other table TOLERATES a typo at the cost of its own feature. Reading

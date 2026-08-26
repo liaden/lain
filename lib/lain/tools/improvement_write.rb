@@ -6,18 +6,15 @@ module Lain
     # sink via an injected {Improvement::Sink}. Direct Ruby, no subprocess, no
     # model-controlled command string -- the same shape as {Tools::MemoryWrite}.
     #
-    # `sink` already knows WHERE the file lives ({Paths#improvements_path}) and
-    # WHO is writing (`project_hash`/`session`); the model only supplies WHAT
-    # (`note`/`kind`/`evidence_digests`). This is a note about lain ITSELF, for
-    # lain's own maintainers -- distinct from {Tools::MemoryWrite}, which is
-    # user-facing recall.
+    # `sink` already knows WHERE the file lives and WHO is writing; the model
+    # only supplies WHAT. This is a note about lain ITSELF, for lain's own
+    # maintainers -- distinct from {Tools::MemoryWrite}, which is user-facing
+    # recall.
     class ImprovementWrite < Tool
-      # `evidence_digests` is a comma-separated String, not a JSON array:
-      # {Tool::Input}'s field DSL has no array type today (see JSON_TYPES in
-      # tool/input.rb), and adding one is out of this card's scope -- a
-      # shared file no other card in this wave touches. Comma-separated
-      # keeps the schema and validation in the one declarative place the
-      # house style asks for.
+      # `evidence_digests` is a comma-separated String rather than a JSON
+      # array because {Tool::Input}'s field DSL has no array type for scalars
+      # today. Comma-separated keeps the schema and validation in the one
+      # declarative place.
       class Input < Tool::Input
         field :note, :string,
               description: "The improvement note itself: a knob lain's user could turn, a bug, a missing " \

@@ -7,8 +7,8 @@ require "socket"
 # The instrument, driven by a real client over a real socket -- which is the only
 # way to check the one thing it exists for. WebMock hands a stubbed body back as
 # ONE chunk (spec/lain/provider/ollama/streamed_failure_spec.rb:5-9 says so, and
-# it is why T10/T11 could not be written against it), so a spec that proved this
-# harness under WebMock would prove nothing about it.
+# it is why the retry and sever specs could not be written against it), so a
+# spec that proved this harness under WebMock would prove nothing about it.
 #
 # Untagged with `:vcr`, and deliberately: a cassette that is REPLAYING makes
 # NetworkAccess.permit_loopback inert, and the resulting refusal names neither
@@ -40,8 +40,8 @@ RSpec.describe StreamingUpstream, :seam do
   # the quantity a first-byte grace is measured against, and the one a `.pause`
   # ahead of any chunk is supposed to move. A separate reader from `read_stream`
   # because the two want different things off the same socket: the bytes, and
-  # when they showed up. Timing is the entire content of T12's ACs and it is the
-  # one dimension a chunk-collecting reader cannot see.
+  # when they showed up. Timing is the entire content of the first-byte-grace
+  # claims and it is the one dimension a chunk-collecting reader cannot see.
   def time_to_first_chunk(url, path: "/api/chat")
     started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     first_chunk_at(URI(url), path) - started
@@ -117,8 +117,8 @@ RSpec.describe StreamingUpstream, :seam do
       expect(failure).to be_a(Errno::ECONNRESET)
     end
 
-    # The measured half, and the one the retry cards depend on: a RST that also
-    # destroyed the bytes already delivered would make T10/T11 vacuous, because
+    # The measured half, and the one the retry specs depend on: a RST that also
+    # destroyed the bytes already delivered would make them vacuous, because
     # the splice they hunt needs the abandoned attempt to have REACHED the
     # assembler. Linux drains the receive queue before surfacing the reset --
     # 20/20 at a zero settle delay when this was measured.
@@ -165,8 +165,8 @@ RSpec.describe StreamingUpstream, :seam do
     end
 
     # Matching OllamaWire::QueueTransport and Provider::Mock: a script queue that
-    # runs out repeats its last entry, so "severs EVERY connection" (T10's
-    # exhausted-budget scenario, T12's not-retried one) is one script, not four.
+    # runs out repeats its last entry, so "severs EVERY connection" (the
+    # exhausted-budget scenario, the not-retried one) is one script, not four.
     it "repeats the last script once the queue is exhausted" do
       failures = []
       described_class.ndjson(described_class.script.chunk(alpha).sever) do |upstream|
@@ -226,18 +226,18 @@ RSpec.describe StreamingUpstream, :seam do
 
     # The reuse, pinned: one frame per AnthropicSSE event, and the concatenation
     # is byte-identical to the body that helper already builds. That is what lets
-    # T11 script "open two blocks, then sever" as a prefix of a real response.
+    # a spec script "open two blocks, then sever" as a prefix of a real response.
     it "splits a whole Response into one frame per AnthropicSSE event" do
       response = tool_response(["toolu_seam", "echo", { "text" => "hi" }])
 
       expect(wire.sse_frames(response).join).to eq(AnthropicSSE.body(response))
     end
 
-    # The exact prefix T11's phantom-tool-call AC needs, pinned so it cannot
+    # The exact prefix the phantom-tool-call claim needs, pinned so it cannot
     # drift -- and it is easy to get wrong in the direction that passes. Frames
     # are start/delta/stop PER BLOCK, so for a two-block response the prefix that
     # leaves the SECOND block open is SIX frames, not four. Taking four serves
-    # `message_start` plus a block that is fully CLOSED: a T11 example built on
+    # `message_start` plus a block that is fully CLOSED: an example built on
     # that would assert "no orphaned tool_use survived" and pass because no
     # orphan was ever opened.
     it "can serve a prefix that leaves the second block open" do
@@ -261,7 +261,7 @@ RSpec.describe StreamingUpstream, :seam do
     end
   end
 
-  # The three shapes T12 needs that are neither a clean stream nor a sever.
+  # The three shapes that are neither a clean stream nor a sever.
   describe "a stream that stops emitting without closing" do
     it "leaves the client waiting after the chunks it did send" do
       served = nil
@@ -286,8 +286,8 @@ RSpec.describe StreamingUpstream, :seam do
 
     # Without this the pause is unpinned: every other example asserts only that
     # chunks ARRIVE, which they do instantly whether or not `Pause#emit` sleeps.
-    # T12's ACs are entirely about elapsed time, so the clock needs a guard of
-    # its own or the dimension those cards rest on is untested here.
+    # The grace-period claims are entirely about elapsed time, so the clock
+    # needs a guard of its own or the dimension they rest on is untested here.
     it "holds the first chunk back for at least the scripted pause" do
       waited = nil
       described_class.ndjson(described_class.script.pause(0.2).chunks(alpha, done).close) do |upstream|

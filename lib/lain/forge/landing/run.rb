@@ -25,7 +25,7 @@ module Lain
         # out of its "changed nothing" state for good.
         def after(answer) = with(performed: performed || !answer.observed?)
 
-        # S3: `observed` is the tier's honesty flag -- true means the effect was
+        # `observed` is the tier's honesty flag -- true means the effect was
         # found ALREADY in place rather than performed ({Intent}'s doc). A resume
         # that performed three effects and then claimed to have observed them was
         # the old code's word for "I did not have to do anything", which is the

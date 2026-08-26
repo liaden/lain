@@ -2,7 +2,7 @@
 
 require "tmpdir"
 
-# T-D1 / PS-3: a spawned role subagent renders its PERSONA into the child's
+# A spawned role subagent renders its PERSONA into the child's
 # system -- the role prelude as SEGMENTS, segment 0 the role-invariant bulk
 # (cache-marked so heterogeneous siblings share the warm prefix), segment 1 the
 # role tail after the breakpoint -- NOT the parent's bare top-level system slot,
@@ -82,7 +82,7 @@ RSpec.describe "a spawned role's persona" do
     end
   end
 
-  # The CE-4 win: two DIFFERENT roles share segment 0 (bulk) byte-for-byte and
+  # The cache win: two DIFFERENT roles share segment 0 (bulk) byte-for-byte and
   # the breakpoint sits ON it, so the warm tools+bulk prefix is reused; only the
   # role tail diverges. A fused String cannot deliver this.
   it "marks the shared bulk so heterogeneous siblings share the warm prefix, tails diverging" do
@@ -97,7 +97,7 @@ RSpec.describe "a spawned role's persona" do
     end
   end
 
-  # The explicit fused-String discriminator (the T24 review probe): a single
+  # The explicit fused-String discriminator (a review probe): a single
   # fused block would carry the whole joined prelude and its one mark would land
   # after the role tail -- size 1, segment 0 == the joined prelude. Segments
   # fail that: size 2, segment 0 the bulk ALONE.
@@ -127,7 +127,7 @@ RSpec.describe "a spawned role's persona" do
 
       # The researcher holds read + egress capabilities (web_fetch/web_search
       # are tier-1 structural, no tree mutation) but never edit_file/write_file.
-      # `ask_human` rides beside them because T10 grants every child one of its
+      # `ask_human` rides beside them because every child is granted one of its
       # own, on top of its role's only-set: a question is not a tree mutation,
       # which is the same judgement `plan`'s READ_ONLY already records.
       expect(tools.map { |t| t["name"] })

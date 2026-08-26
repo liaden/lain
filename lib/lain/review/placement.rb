@@ -8,27 +8,24 @@ module Lain
     #
     # One legal member today -- `:tabpage`, the review's own tabpage inside the
     # nvim the session already has -- so this looks like a value object with
-    # nothing to decide. It is here for the REFUSAL, which is the part that
-    # carries information: `:tmux_window` is a placement that was designed,
-    # costed and deliberately left out, and the difference between "not a
-    # placement" and "that placement, blocked on something named" is exactly
-    # what a reader needs in order not to "fix" it by widening the set.
+    # nothing to decide. It is here for the REFUSAL: `:tmux_window` is a
+    # placement that was designed, costed and deliberately left out, and the
+    # difference between "not a placement" and "that placement, blocked on
+    # something named" is exactly what a reader needs in order not to "fix" it by
+    # widening the set.
     #
-    # The set is held here and not in {Review::VOCABULARY}'s file, which is the
-    # one apparent exception to "every closed set in one place". That file is
-    # about the sets a JOURNALED record is judged against -- what NDJSON carries
-    # and what a reader joins on a year later, canonically as Strings. No record
-    # stores a placement: it routes one render and is gone, so it lives with the
-    # object that routes it and is spelled in Symbols, like
-    # {CLI::TmuxSurface::Placement#kind} beside it. That is one set, declared
-    # once and compared nowhere -- not the two-copies-never-reconciled shape the
-    # vocabulary file exists to prevent.
+    # The set is held here and not in `review/vocabulary.rb`, which is the one
+    # apparent exception to "every closed set in one place". That file is about
+    # the sets a JOURNALED record is judged against; no record stores a placement,
+    # so it lives with the object that routes it and is spelled in Symbols. One
+    # set, declared once and compared nowhere -- not the two-copies-never-
+    # reconciled shape that file exists to prevent.
     #
-    # The comparison it is NOT making is worth writing down before somebody
-    # assumes it: the tmux tier spells that same surface `:window`, where this
-    # spells it `:tmux_window` because here the word has to say which EDITOR it
-    # belongs to. When the second placement lands, that is a mapping somebody
-    # writes out, never a correspondence two Symbols are taken to have.
+    # The comparison it is NOT making, before somebody assumes it: the tmux tier
+    # spells that same surface `:window`, where this spells it `:tmux_window`
+    # because here the word has to say which EDITOR it belongs to. When the second
+    # placement lands, that is a mapping somebody writes out, never a
+    # correspondence two Symbols are taken to have.
     class Placement
       # A placement that was asked for and cannot be given.
       class Unsupported < Error; end

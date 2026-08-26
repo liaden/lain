@@ -113,8 +113,9 @@ RSpec.describe Lain::Ext::Prompt do
 
   describe "escape-byte injection" do
     # A DIFFERENT attack from format-syntax injection: that one targets lain's
-    # grammar, this one targets the terminal's. T13 interpolates a cwd, a git
-    # branch and a model id, and a directory name containing an ESC byte is legal.
+    # grammar, this one targets the terminal's. The prompt interpolates a cwd,
+    # a git branch and a model id, and a directory name containing an ESC byte
+    # is legal.
     it "cannot smuggle SGR through an uncolored render" do
       out = described_class.compile("$x").render({ "x" => "\e[31mRED\e[0m" }, color: false)
 
@@ -290,7 +291,7 @@ RSpec.describe Lain::Ext::Prompt do
     end
 
     # ST is two bytes, "\e\\". Consuming only the ESC left the backslash to be
-    # counted, and T13 places a cursor with this number.
+    # counted, and the prompt places a cursor with this number.
     it "consumes both bytes of a string terminator" do
       expect(described_class.width("\e]0;t\e\\x")).to eq(1)
     end

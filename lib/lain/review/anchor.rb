@@ -26,14 +26,10 @@ module Lain
     class Anchor
       include Inspectable
 
-      # An anchor's own `side` domain stays Symbols (every other field here is
-      # a plain Ruby value, not a wire type), but the MEMBERSHIP decision is
-      # made in exactly one place: Review::SIDES, which T5 owns and which is
-      # Strings because the journal is the durable artifact and every record
-      # stores Strings. Two independently-declared literals (`%i[old new]`
-      # here, `%w[old new]` there) is the trap this derivation closes --
-      # `spec/lain/review/anchor_spec.rb`'s "SIDES" example pins the two
-      # spellings equal so they cannot drift apart silently again.
+      # An anchor's own `side` domain stays Symbols, but the MEMBERSHIP decision
+      # is made in exactly one place: {Review::SIDES}, which is Strings because
+      # the journal is the durable artifact. Two independently-declared literals
+      # (`%i[old new]` here, `%w[old new]` there) is the trap this closes.
       SIDES = Review::SIDES.map(&:to_sym).freeze
 
       # An unrecognised side would silently name a diff position that cannot
@@ -56,7 +52,7 @@ module Lain
       end
 
       # A position that cannot exist: 0, negative, or not an Integer at all.
-      # T2's hunk arithmetic (`start + offset - 1`) is exactly where a 0
+      # The hunk arithmetic (`start + offset - 1`) is exactly where a 0
       # would arrive -- without this, `line: 0` read `lines[-1]`, the LAST
       # line, and answered `drifted? == false` for a position that was never
       # named.
@@ -69,7 +65,7 @@ module Lain
       end
 
       # Shape refusal shared by the String-domain fields below: one class, not
-      # one per field, matching {Guardable}'s own rule that a per-rule
+      # one per field, matching {Lain::Declarative}'s own rule that a per-rule
       # exception class moves the translation into the wrong object -- the
       # field name is already in the message.
       class InvalidField < Error; end
@@ -111,13 +107,11 @@ module Lain
               id: -(id || SecureRandom.uuid).to_s)
       end
 
-      # Equal exactly when two anchors of the SAME concrete class name the
-      # same position. `id` is excluded on purpose (see the class comment).
-      # `instance_of?`, not `is_a?`: `is_a?` is direction-sensitive (a
-      # subclass `is_a?` its parent but not the reverse), which made
-      # `parent == sub` true while `sub == parent` stayed false for the same
-      # pair -- exactly what breaks `Set`/`Hash`/`Array#uniq`, the
-      # collections this card's ACs exist to protect.
+      # Equal exactly when two anchors of the SAME concrete class name the same
+      # position. `id` is excluded on purpose (see the class comment).
+      # `instance_of?`, not `is_a?`: `is_a?` is direction-sensitive, which made
+      # `parent == sub` true while `sub == parent` stayed false for the same pair
+      # -- exactly what breaks `Set`/`Hash`/`Array#uniq`.
       def ==(other)
         other.instance_of?(self.class) && to_h.except(:id) == other.to_h.except(:id)
       end
@@ -136,26 +130,19 @@ module Lain
       # This was `document.lines(chomp: true)`, and the failure was total rather
       # than partial. `String#chomp` strips `\r\n` as readily as `\n`, while a
       # unified diff's body carries the line exactly as the file holds it,
-      # carriage return included. Every anchor into a CRLF file therefore
-      # compared `"x\r"` against `"x"` and reported drift on a line nobody had
-      # touched -- a review surface telling a human that every line of a file has
-      # moved.
-      #
-      # Splitting on `\n` alone is git's OWN rule for cutting a file into diff
-      # lines, so the producer and this check now agree by construction rather
-      # than by coincidence.
+      # carriage return included. Every anchor into a CRLF file therefore compared
+      # `"x\r"` against `"x"` and reported drift on a line nobody had touched.
+      # Splitting on `\n` alone is git's OWN rule, so producer and check now agree
+      # by construction.
       #
       # Neither of Ruby's two splits IS that rule, which is why this is three
-      # lines rather than one. `split("\n")` discards EVERY trailing empty field,
-      # so a document ending in blank lines loses them and an anchor on one
-      # reports drift against a line it still has. `split("\n", -1)` keeps one
-      # too many: a trailing newline TERMINATES the last line, it does not begin
-      # another, and the phantom `""` it appends is exactly what an anchored
-      # blank line matches -- so an anchor on the last line of a file that has
-      # since LOST that line answered "not drifted" against a document with no
-      # such line, which is the one case {#drifted?} documents as impossible.
-      # Keep every field, then drop the terminator's: `"a\n"` is one line,
-      # `"a\n\n"` is two, `"\n"` is one blank one, and `""` is none.
+      # lines. `split("\n")` discards EVERY trailing empty field, so a document
+      # ending in blank lines loses them. `split("\n", -1)` keeps one too many: a
+      # trailing newline TERMINATES the last line, and the phantom `""` it appends
+      # is exactly what an anchored blank line matches -- so an anchor on a last
+      # line the file has since LOST answered "not drifted" against a document
+      # with no such line. Keep every field, then drop the terminator's: `"a\n"`
+      # is one line, `"a\n\n"` is two, `"\n"` is one blank one, `""` is none.
       #
       # @param document [String]
       # @return [Array<String>]
@@ -164,23 +151,17 @@ module Lain
         document.end_with?("\n") ? fields[0..-2] : fields
       end
 
-      # Drift is `anchor_text` against the line the number now names -- the
-      # same rule Lain::Epic::Review::Annotations applies to an editor
-      # extmark: the anchor is stale exactly when the document has moved on
-      # without it.
+      # Drift is `anchor_text` against the line the number now names -- the same
+      # rule {Epic::Review::Annotations} applies to an editor extmark.
       #
-      # A line past the document's end, or an empty document, both index to
-      # `nil` (no such line), which can never equal `anchor_text` -- so both
-      # answer `true`, the same as a line whose text merely changed. That
-      # holds for an anchored BLANK line too, and only because {.lines} counts
-      # lines git's way: a rule that appended a phantom empty field for the
-      # trailing newline would answer `false` here for a line the document no
-      # longer has, which is this paragraph's claim quietly becoming false. That
-      # deliberately collapses "moved" and "gone" into one boolean: telling
-      # them apart is the drift-model spike this card's own third escalation
-      # trigger fences off as research open question 1 (`anchor_text` alone
-      # vs. surrounding context). This card answers only "does this position
-      # still say what it said"; both cases answer no.
+      # A line past the document's end, or an empty document, both index to `nil`,
+      # which can never equal `anchor_text`, so both answer `true` -- the same as
+      # a line whose text merely changed. That holds for an anchored BLANK line
+      # too, and only because {.lines} counts lines git's way. It deliberately
+      # collapses "moved" and "gone" into one boolean: telling them apart is the
+      # drift-model spike this fences off as an open research question. The
+      # question answered here is only "does this position still say what it
+      # said"; both cases answer no.
       def drifted?(document)
         self.class.lines(document)[line - 1] != anchor_text
       end

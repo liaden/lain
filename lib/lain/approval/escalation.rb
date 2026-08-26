@@ -17,67 +17,57 @@ module Lain
     #
     # == An abstaining rung does not change the outcome
     #
-    # That is the composability property, and it is what lets rungs be reordered
-    # among the abstaining ones without surprise: a rung with nothing to say
-    # answers nothing, and the ladder consults the next one. A rung is never
-    # asked to invent an answer to stay total, because the bottom of the ladder
-    # is already total -- the surfaces rung parks on {Approval::Queue}, whose
-    # window expires into a denial -- and because a ladder that runs out of
-    # rungs refuses. An unanswered gate refuses; it never wedges.
+    # The composability property, and what lets rungs be reordered among the
+    # abstaining ones without surprise. No rung is ever asked to invent an
+    # answer to stay total, because the BOTTOM of the ladder already is: the
+    # surfaces rung parks on {Approval::Queue}, whose window expires into a
+    # denial, and a ladder that runs out of rungs refuses. An unanswered gate
+    # refuses; it never wedges.
     #
     # == A fault is NOT an abstention, and must not be launderable into one
     #
-    # {RuleChain} poisons the allow side: a rule that raises is recorded as a
-    # {RuleChain::Fault} and a LATER allow is suppressed, so the chain answers a
-    # {RuleChain::Poisoned} rather than a decision. {Rules} passes that through
-    # as a Ruling that SAYS a fault happened, and the ladder applies the same
-    # poisoning one level up -- an allow reached after any rung faulted is
-    # suppressed, and the denial is attributed to the rung that faulted rather
-    # than to the rung that was about to say yes.
+    # An allow reached after ANY rung faulted is suppressed, and the denial is
+    # attributed to the rung that faulted rather than to the rung that was about
+    # to say yes -- {RuleChain}'s poisoning, applied one level up.
     #
     # == ...and the poison STOPS at the asking rung, if a human answered
     #
-    # This is the one place the analogy to {RuleChain} breaks, and it breaks for
-    # a reason worth stating. Poisoning is sound between RULES because a later
-    # rule is the same kind of authority as the one that faulted: suppressing its
-    # allow loses nothing a human was ever asked about. A human is not a later
-    # rule. They are the authority this entire ladder exists to escalate TO, and
-    # `#settle` is lazy, so a fault can only have come from a rung consulted
-    # BEFORE them -- which means the only shape a blanket suppression fires on is
-    # "something broke, we escalated BECAUSE it broke, a person looked at the
-    # call and said yes, and we threw their answer away".
+    # Poisoning is sound between RULES because a later rule is the same kind of
+    # authority as the one that faulted. A human is not a later rule: they are
+    # the authority this ladder exists to escalate TO, and `#settle` is lazy, so
+    # a fault can only have come from a rung consulted BEFORE them. The only
+    # shape a blanket suppression fires on is therefore "something broke, we
+    # escalated BECAUSE it broke, a person looked at the call and said yes, and
+    # we threw their answer away".
     #
     # That is not fail-closed, it is a wedge. A broken rule is a persistent
-    # config fault, so every call in the session denies, {Effect::Handler::Gate}
-    # renders each one as the same `"approval denied for tool ..."` (`gate.rb:70`)
-    # and the operator's only escape is a MORE permissive posture. It also
-    # corrupts the record: the Journal would hold an `approval_decision` reading
-    # `approve` beside an `escalation` reading `deny`, for one call, with nothing
-    # joining them.
+    # config fault, so every call in the session denies, each rendered as the
+    # same `"approval denied for tool ..."`, and the operator's only escape is a
+    # MORE permissive posture. It also corrupts the record: an
+    # `approval_decision` reading `approve` beside an `escalation` reading
+    # `deny`, for one call, with nothing joining them.
     #
-    # So a HUMAN surface's allow is honoured, and journaled `verdict: allow,
-    # faulted: true`, naming the rung that broke -- which gives the bench
-    # everything it needs to exclude those runs without inventing a denial no
-    # authority ever made. An {AutoSurface} allow keeps being suppressed: an LLM
-    # adjudicator IS a later automatic rung wearing a human's clothes, and that
-    # half of the poison is earned. {Ruling#authority} is what tells them apart.
+    # So a HUMAN surface's allow is honoured and journaled `verdict: allow,
+    # faulted: true`, naming the rung that broke -- enough for the bench to
+    # exclude those runs without inventing a denial no authority ever made. An
+    # {AutoSurface} allow keeps being suppressed: an LLM adjudicator IS a later
+    # automatic rung wearing a human's clothes. {Ruling#authority} tells them
+    # apart.
     #
     # == Every rung's ruling is evidence
     #
-    # Each consulted rung's Ruling is journaled, not merely the settled one. On a
-    # study bench "which rungs were consulted and what each said" is the record;
-    # in particular it is the only place {Shell::Verdict}'s answer has ever been
-    # written down, and a verdict nobody records is a layer nobody can measure.
+    # Each consulted rung's Ruling is journaled, not merely the settled one:
+    # this is the only place {Shell::Verdict}'s answer has ever been written
+    # down, and a verdict nobody records is a layer nobody can measure.
     class Escalation
-      # A rung answered something that is not a {Ruling}: the total-predicate
-      # mistake, raised INSIDE the consult so it becomes a fault like any other
-      # broken rung rather than a NoMethodError far from its cause.
+      # Raised INSIDE the consult, so a rung answering a non-Ruling becomes a
+      # fault like any other broken rung rather than a NoMethodError far from
+      # its cause.
       class NotARuling < Error; end
 
       class UnknownVerdict < Error; end
 
-      # The rung a synthesized ruling wears: the ladder itself, deciding because
-      # nothing else would. A name, not a nil, so journal readers never guard.
+      # A name, not a nil, so journal readers never guard.
       LADDER = "ladder"
 
       NOTHING_ANSWERED = "no rung answered, and an unanswered gate refuses"
@@ -94,21 +84,18 @@ module Lain
       class Ruling
         # Reopened rather than written in the `Data.define` block: a constant
         # declared there is lexically scoped to the enclosing module, not to the
-        # Data class (the {Request::SYSTEM_PREFIX} trap).
+        # Data class.
 
-        # Three-valued, and abstention is a MEMBER here rather than the absence
-        # of a Ruling -- which is the one place this file departs from {Rule},
-        # deliberately. A rule abstains by answering nothing because it is a
-        # partial predicate over one call; a rung abstains as a REPORT, because
-        # the ladder journals what each rung said and "said nothing" is a thing
-        # a reader needs to see said.
+        # Abstention is a MEMBER here rather than the absence of a Ruling, which
+        # is where this file departs from {Rule}: a rule abstains by answering
+        # nothing, a rung abstains as a REPORT, because the ladder journals what
+        # each rung said and "said nothing" is something a reader needs to see.
         VERDICTS = %i[allow deny abstain].freeze
 
-        # WHO answered, in the only distinction the ladder acts on: a person, or
-        # something automatic. It is not a synonym for the rung -- the asking
-        # rung produces both, depending on which surface won the race for the
-        # pending -- and it is the whole reason an {AutoSurface}'s allow is
-        # suppressed over a fault where a human's is honoured.
+        # NOT a synonym for the rung: the asking rung produces both, depending
+        # on which surface won the race for the pending, and this is the whole
+        # reason an {AutoSurface}'s allow is suppressed over a fault where a
+        # human's is honoured.
         AUTHORITIES = %i[automatic human].freeze
         class UnknownAuthority < Error; end
 
@@ -116,8 +103,8 @@ module Lain
         def self.deny(rung:, because:, **rest) = new(verdict: :deny, rung:, reason: because, **rest)
         def self.abstain(rung:, because:, **rest) = new(verdict: :abstain, rung:, reason: because, **rest)
 
-        # An abstention that is NOT a plain one: something broke, so no automatic
-        # allow above it may be promoted. See the class comment on laundering.
+        # An abstention that is NOT a plain one: something broke, so no
+        # automatic allow above it may be promoted.
         def self.fault(rung:, because:) = new(verdict: :abstain, rung:, reason: because, fault: true)
 
         def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic)
@@ -134,9 +121,8 @@ module Lain
         def allow? = verdict == :allow
         def deny? = verdict == :deny
 
-        # Asked, never inferred from `!allow?`, which is true of a denial AND of
-        # an abstention -- and this whole layer's premise is that those are
-        # different outcomes.
+        # Asked, never inferred from `!allow?`, which is true of a denial AND
+        # of an abstention -- and this layer's premise is that those differ.
         def abstain? = verdict == :abstain
         def fault? = fault
         def human? = authority == :human
@@ -147,25 +133,15 @@ module Lain
         end
       end
 
-      # How a session wires it (see {CLI::Switchboard}): the deterministic rungs
-      # first, the asking rung last.
+      # The deterministic rungs first, the asking rung last.
       #
-      # BOTH deterministic rungs are inert as this repo wires them TODAY, and
-      # that is a fact about the wiring rather than about the mechanism:
-      #
-      # * `rules:` is empty, because T20's remembered answers need a project root
-      #   the switchboard does not hold. An empty rung abstains on everything,
-      #   which by this class's own composability property changes no outcome.
-      # * `triage:` defaults to a {Shell::Verdict} over
-      #   {Shell::Verdict::AnyProgram}, which permits every program, and to
-      #   {Triage::AnyPath}, which protects no path -- and nothing in `lib/`
-      #   constructs a restricting capability set or knows a home to anchor a
-      #   {Sensitivity} on. So BOTH of {Triage}'s deny arms, the two things in
-      #   this file that refuse anything on their own, wait on a call site.
-      #
-      # Both are seams rather than hardcoded, so wiring either is a call-site
-      # change and not an edit to this file. Until then a gated call gets two
-      # journal lines and parks exactly where it parked before.
+      # BOTH deterministic rungs are inert as this repo wires them TODAY -- a
+      # fact about the wiring, not the mechanism. `rules:` is empty because
+      # remembered answers need a project root the switchboard does not hold,
+      # and `triage:` defaults to a verdict permitting every program over a
+      # classifier protecting no path. So both of {Triage}'s deny arms, the only
+      # things here that refuse on their own, wait on a call site. Both are
+      # seams, so wiring either is a call-site change rather than an edit here.
       def self.for(queue:, tools:, journal:, rules: [], triage: Triage.new)
         new([triage, Rules.new(rules:, tools:, faults: Faults.new(journal)), Surfaces.new(queue)], journal:)
       end
@@ -176,10 +152,10 @@ module Lain
       # @param journal [#record] where every ruling lands as evidence
       def initialize(rungs = [], journal:)
         @rungs = rungs.to_a.freeze
-        # Every rung names itself HERE, while the ladder is BUILT, and the answer
-        # is KEPT -- {RuleChain}'s reasoning exactly: asking a rung for its name
-        # inside the rescue clause, after it has just proved it can raise, is how
-        # a second raise escapes and takes the ladder down.
+        # Every rung names itself HERE, while the ladder is BUILT, and the
+        # answer is KEPT: asking a rung for its name inside the rescue clause,
+        # after it has just proved it can raise, is how a second raise escapes
+        # and takes the ladder down.
         @consulted = @rungs.map { |rung| [rung, -rung.name.to_s].freeze }.freeze
         @journal = journal
         freeze
@@ -206,12 +182,12 @@ module Lain
         # a `@faulted` would be a FrozenError on the first broken rung -- and it
         # would be shared between concurrently gated fibers besides.
         faulted = nil
-        # The FIRST fault is the one that suppresses, and it is remembered rather
-        # than counted: what a suppression has to name is the rung that broke.
+        # The FIRST fault is what suppresses, remembered rather than counted: a
+        # suppression has to name the rung that broke.
         remember = ->(ruling) { faulted ||= ruling }
-        # Lazy, so the rungs past the deciding one are never consulted: parking a
-        # human on a call an earlier rung already settled is the whole thing this
-        # ladder exists to avoid.
+        # Lazy, so rungs past the deciding one are never consulted: parking a
+        # human on a call an earlier rung already settled is what this ladder
+        # exists to avoid.
         decided = @consulted.lazy
                             .filter_map { |rung, name| decisive(consult(rung, name, effect, context), &remember) }
                             .first
@@ -227,8 +203,7 @@ module Lain
         raise NotARuling, "#{name} answered #{ruling.class}; a rung rules or abstains"
       rescue StandardError => e
         # A rung's own failure -- a failed spawn, an unreadable config -- is a
-        # fault and never an approval. Deny-when-unsure is the doctrine
-        # `auto_surface.rb:21-25` states one rung up, and it binds every rung.
+        # fault and never an approval. Deny-when-unsure binds every rung.
         Ruling.fault(rung: name, because: "#{RUNG_BROKE}: #{e.class}: #{e.message}")
       end
 
@@ -249,19 +224,18 @@ module Lain
         record(synthesized(decided, faulted), effect)
       end
 
-      # The three rulings nobody made as such: a human's allow re-stated so the
+      # The three rulings nobody made as such: a human's allow restated so the
       # record carries the fault it was given despite, the suppression of an
-      # automatic allow attributed to the rung that faulted, and the fail-closed
+      # automatic allow attributed to the faulting rung, and the fail-closed
       # bottom.
       def honoured(decided, faulted)
         decided.with(fault: true, reason: "#{decided.reason} -- #{HONOURED} #{faulted.rung}: #{faulted.reason}")
       end
 
-      # The rung stays LADDER when nothing answered, because nothing did -- a
-      # reader tallying denials by rung must not be told a rung that abstained
-      # refused. But the fault still gets named: it is one line up in the stream
-      # either way, and a fail-closed denial that silently omits the reason a
-      # rung had nothing to say is the record being less useful than it can be.
+      # The rung stays LADDER when nothing answered: a reader tallying denials
+      # by rung must not be told a rung that abstained refused. The fault is
+      # still named, because a fail-closed denial that omits the reason a rung
+      # had nothing to say makes the record less useful than it can be.
       def synthesized(decided, faulted)
         return Ruling.deny(rung: faulted.rung, because: "#{LAUNDERED}: #{faulted.reason}") if decided
         return Ruling.deny(rung: LADDER, because: NOTHING_ANSWERED) unless faulted
@@ -270,14 +244,14 @@ module Lain
                     because: "#{NOTHING_ANSWERED} -- and #{faulted.rung} faulted: #{faulted.reason}")
       end
 
-      # Evidence about a turn must never COST the turn: this ladder sits on
-      # Gate's policy seam, ABOVE {Effect::Handler::Live}, so nothing below is
-      # left to turn an exception into a {Tool::Result} and a closed Journal
-      # would hand the user a dead turn instead of the denial an unanswerable
-      # approval is owed. {Approval::Queue#record_evidence} states it at length.
+      # Evidence about a turn must never COST the turn: this ladder sits ABOVE
+      # {Effect::Handler::Live}, so nothing below is left to turn an exception
+      # into a {Tool::Result}, and a closed Journal would hand the user a dead
+      # turn instead of the denial an unanswerable approval is owed.
+      #
       # `tool_use_id` rather than the tool name alone: parallel tool calls put
-      # several gated calls of the SAME tool in flight at once, so the name
-      # cannot attribute a ruling -- or a fault -- to the call it belongs to.
+      # several gated calls of the SAME tool in flight, so the name cannot
+      # attribute a ruling -- or a fault -- to the call it belongs to.
       def record(ruling, effect)
         @journal.record({ "type" => TYPE, "tool" => effect.name,
                           "tool_use_id" => effect.tool_use_id }.merge(ruling.record))
@@ -286,10 +260,9 @@ module Lain
         ruling
       end
 
-      # Where a broken RULE is reported, journal-backed. {RuleChain}'s default is
-      # {RuleChain::Faults::Null}, and under poisoning that silence is dangerous
-      # in a new way -- the chain still refuses to promote an allow past a fault,
-      # but nobody is ever told the rule is broken. A live wiring passes this.
+      # Where a broken RULE is reported. Under {RuleChain}'s Null default the
+      # chain still refuses to promote an allow past a fault, but nobody is ever
+      # told the rule is broken. A live wiring passes this.
       class Faults
         TYPE = "escalation_fault"
 
@@ -298,11 +271,10 @@ module Lain
           freeze
         end
 
-        # `tool_use_id` is the call's, not the fault's: a {RuleChain::Fault} is
-        # built from a {Rule::Call}, which carries the tool and its input and no
-        # identity for the invocation. Without it a reader cannot join a fault to
-        # the ruling it poisoned once parallel tools put two bash calls in
-        # flight -- which is also why {Rules} stamps it per call.
+        # `tool_use_id` is the CALL's, not the fault's: a {RuleChain::Fault} is
+        # built from a {Rule::Call}, which carries no identity for the
+        # invocation. Without it a reader cannot join a fault to the ruling it
+        # poisoned once parallel tools put two bash calls in flight.
         def call(fault, tool_use_id: nil)
           @journal.record({ "type" => TYPE, "tool_use_id" => tool_use_id }
                             .merge(fault.to_h.transform_keys(&:to_s)))
@@ -332,10 +304,10 @@ module Lain
 
         def name = NAME
 
-        # The chain is built PER CALL only because its fault recorder is stamped
-        # with THIS call's `tool_use_id`; the poisoning itself is the chain's own
-        # (it answers a {RuleChain::Poisoned}), so nothing here has to keep a
-        # tally of the fault stream to tell an abstention from a suppression.
+        # Built PER CALL only because its fault recorder is stamped with THIS
+        # call's `tool_use_id`. The poisoning is the chain's own, so nothing
+        # here tallies the fault stream to tell an abstention from a
+        # suppression.
         def call(effect, _context)
           ruling(RuleChain.new(@rules, faults: recorder(effect)).decide(subject(effect)))
         rescue Rule::Call::Undeclared, Tool::InvalidInput, Toolset::UnknownTool => e
@@ -343,12 +315,11 @@ module Lain
           # input the tool itself will refuse, a name this session does not hold.
           Ruling.abstain(rung: NAME, because: "#{NO_SUBJECT}: #{e.class}: #{e.message}")
         rescue StandardError => e
-          # MEASURED (T19's panel): `Rule::Call.for` is not total. Invalid UTF-8
-          # in a required String raises ArgumentError from ActiveSupport's
-          # `String#blank?`, NOT Tool::InvalidInput. And a rescue list is not a
-          # substitute for a total classifier -- a NUL byte and a UTF-16LE value
-          # BUILD cleanly here and detonate later, inside a rule, where the
-          # tally below is what catches them.
+          # MEASURED: `Rule::Call.for` is not total. Invalid UTF-8 in a
+          # required String raises ArgumentError from ActiveSupport's
+          # `String#blank?`, NOT Tool::InvalidInput -- and a rescue list is no
+          # substitute for a total classifier, since a NUL byte and a UTF-16LE
+          # value BUILD cleanly here and detonate later inside a rule.
           Ruling.fault(rung: NAME, because: "#{BROKEN}: #{e.class}: #{e.message}")
         end
 
@@ -356,13 +327,13 @@ module Lain
 
         def subject(effect) = Rule::Call.for(tool: @tools.fetch(effect.name), input: effect.input)
 
-        # Stateless and per call, so two gated fibers never share one: it exists
-        # only to carry this call's identity onto whatever the chain reports.
+        # Stateless and per call, so two gated fibers never share one: it
+        # carries this call's identity onto whatever the chain reports.
         def recorder(effect) = ->(fault) { @faults.call(fault, tool_use_id: effect.tool_use_id) }
 
-        # A deny after a fault still denies and is still attributed -- what
-        # poisoning suppresses is the ALLOW side, and only that -- but the record
-        # says a fault happened, or a reader sees a clean denial that was not one.
+        # A deny after a fault still denies and is still attributed --
+        # poisoning suppresses the ALLOW side and only that -- but the record
+        # says a fault happened, or a reader sees a clean denial that was not.
         def ruling(answer)
           faulted = answer.is_a?(RuleChain::Poisoned)
           return Ruling.deny(rung: NAME, because: attributed(answer), fault: faulted) if answer&.deny?
@@ -387,54 +358,46 @@ module Lain
       # safe?"*.
       #
       # Only its DENY acts. A verdict deny means the session's capability set
-      # excludes a program the command names -- a decision the session already
-      # made -- and until this rung existed nothing enforced it: `Tools::Bash`
-      # routes a non-allow straight to `sh -c` (`bash.rb:103`), so a denied
-      # command ran anyway, silently. Here it refuses at the gate, before the
-      # tool is reached at all.
+      # excludes a program the command names, and until this rung existed
+      # nothing enforced it: `Tools::Bash` routes a non-allow straight to
+      # `sh -c`, so a denied command ran anyway, silently.
       #
       # An ALLOW abstains, and that is the important half. `rm -rf /home/joel`
-      # is literal, fully understood, and covered to the byte; promoting that to
-      # an approval would auto-run it. The verdict's own {Shell::Verdict::CLAIM}
-      # says what it is claiming, this rung takes it at exactly its word, and the
-      # human still sees the call. What the allow DOES buy is one layer down --
-      # `Tools::Bash` runs the reconstructed argv rather than the string once
-      # approved -- and that is a property of the execution, not a licence to
+      # is literal, fully understood and covered to the byte; promoting that to
+      # an approval would auto-run it. What the allow DOES buy is one layer
+      # down -- `Tools::Bash` runs the reconstructed argv rather than the string
+      # once approved -- which is a property of the execution, not a licence to
       # skip the human.
       #
       # == ...with one refusal read off the allowed argv
       #
-      # An allow hands over the PARSED WORDS, and that is the only place in this
-      # ladder where a path a command names can be read without guessing. So the
-      # allow branch asks a {Sensitivity} about each word and refuses when one of
-      # them is a path nothing may read -- a private key, a keyring, a `.netrc`.
+      # An allow hands over the PARSED WORDS, the only place in this ladder
+      # where a path a command names can be read without guessing. So the allow
+      # branch asks a {Sensitivity} about each word and refuses when one is a
+      # path nothing may read.
       #
-      # Three properties hold it in scope, and each is a spec:
+      # Three properties hold it in scope, each with a spec:
       #
-      # * *The argv, never the command string.* `approval/rule.rb:36-52` and
-      #   `risk.rb:74-80` both name the same hole -- a signal read off one flat
-      #   field is confident about text it has not understood -- so a command the
+      # * *The argv, never the command string.* A signal read off one flat field
+      #   is confident about text it has not understood, so a command the
       #   verdict abstained on is not scanned at all. `cat '~/.ssh/id_rsa'`
       #   abstains and reaches a human; it does not deny on a substring.
       # * *Denied only, and only when written as a path.* A GATED path stays an
-      #   abstention, because an abstention already reaches a human and a second
-      #   gating notion here would decide nothing the queue does not already
-      #   decide. A denied name written as a BARE word does too -- it is named in
-      #   the record and nothing more. {PATHLIKE} carries that ruling and the
-      #   measurement behind it.
+      #   abstention -- an abstention already reaches a human, and a second
+      #   gating notion here would decide nothing the queue does not. A denied
+      #   name written as a BARE word is named in the record and nothing more;
+      #   {PATHLIKE} carries that ruling and its measurement.
       # * *Inert until wired.* No home is known where a ladder is built, so the
       #   classifier is injected and defaults to {AnyPath}.
       class Triage
         NAME = "triage"
 
-        # Both tools declare `Bash::Input`, so both hand the model a command
-        # string. Named rather than sniffed: a tool that grows a `command` field
-        # should have to be added here deliberately.
+        # Named rather than sniffed: a tool that grows a `command` field should
+        # have to be added here deliberately.
         COMMAND_TOOLS = %w[bash core_exec].freeze
         FIELD = "command"
-        # Both tools take this from `Bash::Input` too, and `Tools::Bash` runs
-        # every command under it (`bash.rb:137`), so it is where a relative word
-        # in the argv lands.
+        # `Tools::Bash` runs every command under it, so it is where a relative
+        # word in the argv lands.
         CWD_FIELD = "cwd"
 
         NOT_JUDGED = "this rung judges only the tools whose input is a command string"
@@ -445,46 +408,42 @@ module Lain
 
         # A word is evidence about a PATH when it is written as one: it carries
         # a separator, or it names a home. MEASURED, and the reason the refusal
-        # is this narrow: six of the denied rules match a bare basename, four of
-        # them (`.netrc`, `.gnupg`, `.password-store`, `*.kdbx`) from ANY cwd and
-        # two (`Cookies`, `key4.db`) anywhere under `$HOME` -- which is where
+        # is this narrow: six denied rules match a bare BASENAME, four
+        # (`.netrc`, `.gnupg`, `.password-store`, `*.kdbx`) from any cwd and two
+        # (`Cookies`, `key4.db`) anywhere under `$HOME`, which is where
         # checkouts live. Denying on a bare word therefore stops
         # `grep -n Cookies lib/lain/sensitivity.rb` in this very repository, and
-        # NOTHING lifts it: not a policy, not `/mode auto`, not `ApproveAll`, and not
-        # `[sensitivity] exempt`, which subtracts from the gated half only
-        # (`sensitivity.rb:170-175`).
+        # NOTHING lifts it -- not a policy, not `/mode auto`, not `ApproveAll`,
+        # and not `[sensitivity] exempt`, which subtracts from the gated half
+        # only.
         #
-        # The trade is deliberate and it is small. A denied path named as a bare
-        # word DROPS FROM DENY TO ABSTAIN -- it is still named in the record, the
-        # call still reaches a human because {Triage} downgrades every allow
-        # anyway, `Tools::Bash` is gated regardless, and the read boundary proper
+        # The trade is deliberate and small. A denied path named as a bare word
+        # DROPS FROM DENY TO ABSTAIN: still named in the record, the call still
+        # reaches a human because {Triage} downgrades every allow anyway,
+        # `Tools::Bash` is gated regardless, and the read boundary proper
         # ({Sensitivity::Policy}) classifies the RESOLVED path when a tool opens
         # it. This rung is a bonus refusal on unambiguous evidence, and a word
-        # with neither a separator nor a tilde is not unambiguous evidence.
+        # with neither a separator nor a tilde is not that.
         #
-        # The tilde arm earns its place only barely, and it is worth saying how
-        # narrowly. It needs the `verdict:` seam in every case: today's
-        # {Shell::Verdict} abstains on any word matching its `EXPANDING`, which
-        # includes every `~`. Past that, a SLASHLESS tilde word is rewritten by
-        # {Sensitivity} to the home directory ITSELF, so the arm fires when that
-        # directory is denied -- by EITHER a `[sensitivity] denied` rule naming
-        # the home's basename, OR a home that is a denied path in its own right
-        # (`/home/.gnupg`, `/home/x/.netrc`; both verified). No config is needed
-        # for the second. It stays because the two objects agree deliberately
-        # about what a leading `~` means and dropping it would silently
-        # disagree, and because {Shell::Verdict} contemplates widening.
+        # The tilde arm earns its place only barely. It needs the `verdict:`
+        # seam in every case, since today's {Shell::Verdict} abstains on any
+        # word matching its `EXPANDING`. Past that, a SLASHLESS tilde word is
+        # rewritten by {Sensitivity} to the home directory ITSELF, so the arm
+        # fires when that directory is denied -- either by a `[sensitivity]
+        # denied` rule naming the home's basename, or by a home that is a denied
+        # path in its own right (`/home/.gnupg`, `/home/x/.netrc`; both
+        # verified). It stays because the two objects agree deliberately about
+        # what a leading `~` means, and dropping it would silently disagree.
         PATHLIKE = %r{/|\A~}
 
-        # Bounded like {Shell::Verdict}'s own unaccounted-bytes reason: a long
-        # command can name many, and a Journal line wants the shape rather than
-        # the census. Bounds the RENDERING only -- every word is still classified,
-        # or a refusal could hide behind eight harmless ones.
+        # A long command can name many, and a Journal line wants the shape
+        # rather than the census. Bounds the RENDERING only -- every word is
+        # still classified, or a refusal could hide behind eight harmless ones.
         MAX_NAMED = 8
 
-        # The classifier of a session that protects nothing, and the shape of
-        # {Shell::Verdict::AnyProgram} for the same reason: an inert default that
-        # answers the same messages a real one does, so no branch below guards on
-        # nil. It is its own factory, because there is nothing to build.
+        # The classifier of a session that protects nothing: an inert default
+        # answering the same messages a real one does, so no branch below guards
+        # on nil. Its own factory, because there is nothing to build.
         class AnyPath
           ORDINARY = Sensitivity::Verdict.new(level: :ordinary, reason: :none)
 
@@ -493,9 +452,9 @@ module Lain
         end
 
         # `verdict:` defaults at CALL time, not in a constant: `lain.rb` loads
-        # `lain/approval` twenty-odd entries before `lain/shell`, so a
-        # `Shell::Verdict.new` in this class body is a hard NameError at load.
-        # {Sensitivity} loads BEFORE approval, so {AnyPath} may be built here.
+        # `lain/approval` before `lain/shell`, so a `Shell::Verdict.new` in this
+        # class body is a hard NameError at load. {Sensitivity} loads BEFORE
+        # approval, so {AnyPath} may be built here.
         #
         # @param verdict [#call] `String -> Shell::Verdict::Decision`
         # @param tools [Enumerable<String>] the tools whose input is a command
@@ -503,22 +462,21 @@ module Lain
         # @param sensitivity [#call] `cwd -> #classify`, a {Sensitivity} FACTORY
         #   rather than one classifier: a bash call names its own working
         #   directory, so a classifier built once at wiring time would anchor a
-        #   relative word under whatever directory the agent started in -- and
-        #   could refuse a project file for a name it happens to share with a
-        #   browser profile, which no policy can then lift. The cwd is handed
-        #   over AS THE CALL WROTE IT (relative, or nil when it named none),
-        #   because only the wiring knows what it resolves against.
+        #   relative word under whatever directory the agent started in, and
+        #   could refuse a project file for a name it shares with a browser
+        #   profile -- which no policy can then lift. The cwd is handed over AS
+        #   THE CALL WROTE IT, because only the wiring knows what it resolves
+        #   against.
         #
-        #   IT MUST BE TOTAL, and that is a security property rather than
-        #   tidiness. `cwd` is MODEL-CONTROLLED (`bash.rb:50`) and
-        #   `Sensitivity.new` refuses a cwd that is not absolute and readable, so
-        #   a factory that lets those raise hands the model a one-argument
-        #   disarm: the raise becomes a {RUNG_BROKE} fault, the fault turns this
-        #   deny into the abstention it exists to replace, and a human -- whose
-        #   allow is honoured over a fault, by design -- approves the read. A
-        #   factory resolves the cwd itself and falls back to a classifier that
-        #   refuses NOTHING when it cannot, because a wiring error is not
-        #   evidence about a path. {AnyPath} is that fallback.
+        #   IT MUST BE TOTAL, and that is a SECURITY property rather than
+        #   tidiness. `cwd` is MODEL-CONTROLLED and `Sensitivity.new` refuses a
+        #   cwd that is not absolute and readable, so a factory that lets those
+        #   raise hands the model a one-argument disarm: the raise becomes a
+        #   {RUNG_BROKE} fault, the fault turns this deny into the abstention it
+        #   exists to replace, and a human -- whose allow is honoured over a
+        #   fault, by design -- approves the read. A factory resolves the cwd
+        #   itself and falls back to a classifier refusing NOTHING when it
+        #   cannot, because a wiring error is not evidence about a path.
         def initialize(verdict: Shell::Verdict.new, tools: COMMAND_TOOLS, field: FIELD, sensitivity: AnyPath.new)
           @verdict = verdict
           @tools = tools.to_a.map { |name| -name.to_s }.freeze
@@ -547,10 +505,10 @@ module Lain
           Ruling.abstain(rung: NAME, because: because(decision))
         end
 
-        # The allow branch, and the only one with an argv to read: `term` is
-        # {Shell::Verdict::NO_TERM} on a deny and on every abstention
-        # (`shell/verdict.rb:249-253`), so a path check anywhere else would be
-        # interrogating a Null Object about a path nobody wrote.
+        # The only branch with an argv to read: `term` is
+        # {Shell::Verdict::NO_TERM} on a deny and on every abstention, so a path
+        # check anywhere else would interrogate a Null Object about a path
+        # nobody wrote.
         def literal(decision, effect)
           written, bare = refused(decision.term, effect.input[CWD_FIELD]).partition { |word, _| word.match?(PATHLIKE) }
           return Ruling.deny(rung: NAME, because: because(decision, named(PROTECTED, written))) unless written.empty?
@@ -559,11 +517,9 @@ module Lain
           Ruling.abstain(rung: NAME, because: because(decision, NOT_SAFE))
         end
 
-        # EVERY word of every stage, including each argv0: a word is offered as
-        # written, and one that is not a path at all resolves to a name under the
-        # cwd and classifies ordinary. What separates a refusal from a mention is
-        # {PATHLIKE}, applied after the classification rather than before it, so
-        # a bare match can still be named in the record.
+        # EVERY word of every stage, argv0 included. {PATHLIKE} is applied
+        # AFTER classification rather than before, so a bare match can still be
+        # named in the record.
         def refused(term, cwd)
           classifier = @sensitivity.call(cwd)
           term.flatten.uniq.filter_map do |word|
@@ -576,54 +532,48 @@ module Lain
           "#{label}: #{refusals.first(MAX_NAMED).map { |word, why| "#{word.inspect} is #{why}" }.join("; ")}"
         end
 
-        # {Shell::Verdict::CLAIM} rides on every record, so nothing a reader of
-        # the Journal finds here can be read as a claim about safety.
+        # {Shell::Verdict::CLAIM} rides on every record, so nothing a Journal
+        # reader finds here can be read as a claim about safety.
         def because(decision, note = nil)
           ["shell verdict #{decision.name}", note, decision.reason, Shell::Verdict::CLAIM].compact.join(" -- ")
         end
       end
 
       # The asking rung: {Approval::Queue}, where a call parks for whatever
-      # surfaces are watching -- {AutoSurface}'s adjudicating role, the TTY
-      # prompt, a Neovim view -- and where the window expiring is itself a
-      # denial signed by the clock (`queue.rb:218-222`). Total by construction,
-      # which is what makes it the bottom of the ladder.
+      # surfaces are watching, and where the window expiring is itself a denial
+      # signed by the clock. Total by construction, which is what makes it the
+      # bottom of the ladder.
       #
       # The queue journals its own decision with the SURFACE that made it, so
-      # this rung's record says only that the surfaces answered; which surface
-      # is one line over, and not duplicated here.
+      # this rung's record says only that the surfaces answered.
       class Surfaces
         NAME = "surfaces"
 
         # THE GENERATING RULE: a surface belongs here when no person is behind
-        # it. `auto_approver` is an LLM adjudicating; the other two are the clock
-        # and a cancellation. Every surface that decides a {Queue::Pending} today
-        # is accounted for -- the human ones are
-        # `Frontend::ApprovalPolicy::SURFACE` and `Notify::SURFACE`.
+        # it. Every surface that decides a {Queue::Pending} today is accounted
+        # for; the human ones are `Frontend::ApprovalPolicy::SURFACE` and
+        # `Notify::SURFACE`.
         #
         # An unknown name therefore counts as HUMAN. The two failure modes are
-        # structurally symmetric -- one list or the other, one direction of error
-        # each -- so what decides it is WHICH WAY the error runs. Reading an
-        # unlisted surface as automatic would suppress its allow over a fault,
-        # which is exactly the wedge the class comment above exists to refuse,
-        # re-opened at the frontend boundary: the place where an author has least
-        # reason to suspect that the NAME of an approval surface is
-        # security-relevant. Reading it as human costs the other direction --
-        # an unlisted automatic surface's allow survives a fault -- and that one
-        # fails visibly in a review of a file whose whole subject is adjudication.
+        # structurally symmetric, so what decides it is WHICH WAY the error
+        # runs. Reading an unlisted surface as automatic would suppress its
+        # allow over a fault -- the wedge this class's comment refuses, reopened
+        # at the frontend boundary, where an author has least reason to suspect
+        # that the NAME of an approval surface is security-relevant. Reading it
+        # as human costs the other direction, and that one fails visibly in a
+        # review of a file whose whole subject is adjudication.
         #
-        # The deeper defect is not this default. It is that authority is INFERRED
-        # from a surface name one layer down, when the decider always knew what it
-        # was; "identity travels with the decision" is the rule that says so, and
-        # it is why {Ruling} needed an `authority` member at all. The fix is
+        # The deeper defect is that authority is INFERRED from a surface name
+        # one layer down, when the decider always knew what it was -- which is
+        # why {Ruling} needed an `authority` member at all. The fix is
         # `Pending#decide(verdict, surface:, authority:)` with NO default, so a
         # surface that forgot to declare is a loud ArgumentError at one of five
-        # call sites rather than a silent reclassification here. Ticketed.
-        # T17 is what the paragraph above predicted, and it took one card to
-        # arrive: `secret_oracle` is a 4B LOCAL MODEL releasing files the
-        # detector flagged as holding credentials, and an unlisted surface
-        # counts as human -- so the one surface built to release secrets was the
-        # one this ladder trusted most, its allow surviving a fault that
+        # call sites rather than a silent reclassification here.
+        #
+        # `secret_oracle` is what that predicted: a 4B LOCAL MODEL releasing
+        # files the detector flagged as holding credentials, and unlisted it
+        # counted as HUMAN -- so the one surface built to release secrets was
+        # the one this ladder trusted most, its allow surviving a fault that
         # `auto_approver`'s identical judgement does not. Listed here, it is
         # `:automatic` like every other machine.
         AUTOMATIC = [AutoSurface::SURFACE, SecretSurface::SURFACE,
@@ -632,10 +582,9 @@ module Lain
         APPROVED = "a surface approved this call"
         REFUSED = "a surface refused this call, or the window closed and the fail-closed doctrine did"
 
-        # The parked list is the SAME object `/approve` drains and `Wiring`
-        # exposes; readable here so "the gate asks through the session's one
-        # queue" stays an identity a caller can check, not a shape it must
-        # trust. A reader and nothing else -- the rung is frozen.
+        # The SAME object `/approve` drains, readable here so "the gate asks
+        # through the session's one queue" stays an identity a caller can check
+        # rather than a shape it must trust.
         attr_reader :queue
 
         def initialize(queue, automatic: AUTOMATIC)
@@ -646,9 +595,9 @@ module Lain
 
         def name = NAME
 
-        # {Queue#adjudicate} rather than `#call`, because the Boolean cannot
-        # carry WHO answered, and who answered is the one thing the ladder above
-        # needs in order not to throw a person's approval away.
+        # {Queue#adjudicate} rather than `#call`, because a Boolean cannot carry
+        # WHO answered -- the one thing the ladder above needs in order not to
+        # throw a person's approval away.
         def call(effect, context)
           pending = @queue.adjudicate(effect, context)
           authority = @automatic.include?(pending.surface) ? :automatic : :human

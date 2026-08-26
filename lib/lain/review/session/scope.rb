@@ -8,32 +8,26 @@ module Lain
       # A grouping a round may be drawn at: the NAME a caller said, and the
       # strategy that name resolves to, as ONE value.
       #
-      # == The pair is one value, and that is the whole reason this is an object
+      # It was two arguments, and that made a disagreeing pair CONSTRUCTIBLE -- a
+      # name from one scope beside a strategy from another refuses in a sentence
+      # blaming the scope it never tested. That is this repo's "one classifier,
+      # and disagreement is unrepresentable" rule at small scale, and {.resolve}
+      # is the answer: the only way to make one of these, deriving the strategy
+      # from the name.
       #
-      # It was two arguments, and that made a disagreeing pair CONSTRUCTIBLE:
-      # a name from one scope beside a strategy from another refuses in a
-      # sentence blaming the scope it never tested. That is this repo's "one
-      # classifier, and disagreement is unrepresentable" rule at small scale, and
-      # {.resolve} is the answer to it -- the only way to make one of these, and
-      # it derives the strategy from the name.
+      # BOTH constructors are closed, a `Data` detail worth naming because closing
+      # one reads as closing the value: `Data.define` mints `.[]` beside `.new`,
+      # and `private_class_method :new` alone leaves `Scope[name:, strategy:]`
+      # wide open.
       #
-      # BOTH constructors are closed, which is a `Data` detail worth naming
-      # because closing one reads as closing the value: `Data.define` mints `.[]`
-      # beside `.new`, and `private_class_method :new` alone leaves `Scope[name:,
-      # strategy:]` wide open. {Session} needs only `private_class_method :new`
-      # because it is a plain class with no second door.
-      #
-      # == TWO refusals, and keeping them apart is deliberate
-      #
-      # {.resolve} says whether a NAME is a strategy at all; it has no
-      # collaborators, so it cannot say whether THIS source can be grouped that
-      # way. {#support!} asks that second question, where the changeset -- and so
-      # the source -- is in hand. A typo and an inapplicable grouping are
-      # different mistakes and deserve different sentences.
+      # TWO REFUSALS, kept apart deliberately. {.resolve} says whether a NAME is a
+      # strategy at all; it has no collaborators, so it cannot say whether THIS
+      # source can be grouped that way. {#support!} asks that second question,
+      # where the changeset -- and so the source -- is in hand. A typo and an
+      # inapplicable grouping are different mistakes.
       #
       # It lives beside {Session} rather than in it because {Session} was at
-      # `Metrics/ClassLength`, and this is a pair the aggregate's doc already
-      # described as one topic: neither refusal reads a mark, a journal, a
+      # `Metrics/ClassLength`, and neither refusal reads a mark, a journal, a
       # surface or a verdict.
       class Scope
         # Resolve a name against the strategy registry.

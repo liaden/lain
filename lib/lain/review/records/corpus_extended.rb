@@ -16,9 +16,9 @@ module Lain
     # is a digest no path reads back out of ({Hunk#key}).
     CorpusExtended = Data.define(:paths, :digest) do
       include Telemetry::Journalable
-      include Guardable
+      include Declarative
 
-      guard do
+      declare do
         attribute :paths
         attribute :digest
         validates :paths, presence: { message: Wire.refusal("must name what joined the corpus") }

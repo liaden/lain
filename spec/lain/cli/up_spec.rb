@@ -16,10 +16,10 @@ require "time"
 # rspec's ARGV -- the same seam spec/lain/cli_spec.rb and chat_flags_spec use.
 load File.expand_path("../../../exe/lain", __dir__)
 
-# I2: `lain up` -- create/attach the "lain" tmux session, session-scoped so the
+# `lain up` -- create/attach the "lain" tmux session, session-scoped so the
 # global theme is untouched, with a status-right HUD (warmth/fleet/inbox) read
-# from I1's published state file (see lib/lain/status_feed.rb for the exact
-# keys). Two kinds of examples:
+# from the status feed's published state file (see lib/lain/status_feed.rb for
+# the exact keys). Two kinds of examples:
 #
 # * "against a real tmux server" shells out to an ACTUAL tmux on a scratch
 #   socket (`-L lain-spec-...`), never Joel's real session. It skips outright
@@ -494,7 +494,7 @@ RSpec.describe Lain::CLI::Up do
       expect(report(created: false).announcement).to eq("reattaching to 'lain'")
     end
 
-    # F50 moved the state feed to `$XDG_STATE_HOME/lain/status/<12 hex>/state.json`.
+    # The state feed moved to `$XDG_STATE_HOME/lain/status/<12 hex>/state.json`.
     # An operator used to find it with `ls .lain/`; now this line is the only
     # thing in the whole program that names it, and a HUD stuck on "lain: no
     # state yet" is undiagnosable without it.
@@ -557,11 +557,11 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
-  # T29: I1's feed, this HUD and the TTY prompt all default to the project's
+  # The status feed, this HUD and the TTY prompt all default to the project's
   # `.lain/state.json`. Each used to carry its own literal; all three now name
   # the ONE locator, which is a THIRD object none of them owns -- so the
-  # deliberate "I1 and I2 do not depend on each other's private path helper"
-  # decision this file's comment records still holds.
+  # deliberate "the feed and `lain up` do not depend on each other's private
+  # path helper" decision this file's comment records still holds.
   describe "the default state path" do
     # The locator is stubbed to answer a path it would never derive from the
     # working directory, so a default composed HERE cannot produce it -- which
@@ -582,7 +582,7 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
-  # T16 F2: the one pane-command recipe, now a public seam so /fork's window
+  # The one pane-command recipe, now a public seam so /fork's window
   # shares it instead of forking the string -- PATH re-export (tmux panes
   # source no interactive chruby) + exec of the LAUNCHING binary, read at
   # call time ($PROGRAM_NAME is not the lain binary under rspec).
@@ -751,7 +751,7 @@ RSpec.describe Lain::CLI::Up do
       expect(pane_command_class::PANE_ENV).to match_array(declared)
     end
 
-    # T7. The desktop is CONSENT, not a flag default, and that is why it needs
+    # The desktop is CONSENT, not a flag default, and that is why it needs
     # its own list rather than a twelfth entry above: `Notify.consented?`
     # reads LAIN_DESKTOP straight from ENV with a hard three-valued OVERRIDE,
     # no `EnvDefaults` call declares it, and the drift example above is an
@@ -833,7 +833,7 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
-  # T11: `lain up -- ARGS` threads the trailing chat flags into the spawned
+  # `lain up -- ARGS` threads the trailing chat flags into the spawned
   # window's command. `chat` validates its own flags -- Up never parses
   # `chat_args`, only Shellwords-escapes each element, so these examples
   # assert on the composed STRING, never on flag semantics.
@@ -893,7 +893,7 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
-  # T9: a construction refusal reaches the operator's OWN terminal, before a
+  # A construction refusal reaches the operator's OWN terminal, before a
   # session exists to hide it. `lain up` asks `chat` whether it would refuse
   # by running it -- in a child process, with the same argv it would have put
   # in the pane -- and reads the exit status and stderr back.
@@ -960,9 +960,10 @@ RSpec.describe Lain::CLI::Up do
     end
 
     # The one message on this path that lain did not write. A refusal is a
-    # line; a CRASHING child is a backtrace, and AC1 promises the operator
-    # never reads a frame -- so the frames are dropped rather than relayed,
-    # and what is left is capped, since this ends up on a terminal.
+    # line; a CRASHING child is a backtrace, and the acceptance criterion
+    # promises the operator never reads a frame -- so the frames are dropped
+    # rather than relayed, and what is left is capped, since this ends up on a
+    # terminal.
     it "relays what the child said without its backtrace frames, and caps a runaway stderr" do
       crash = +"/x/y.rb:12:in 'boom': something broke (RuntimeError)\n" \
                "\tfrom /x/y.rb:30:in 'block in <main>'\n" \
@@ -1072,7 +1073,7 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
-  # T10. The pre-flight above removes the refusals `up` can PREDICT; this
+  # The pre-flight above removes the refusals `up` can PREDICT; this
   # covers the ones it cannot -- a pathological login shell, an exec that
   # fails, a crash on the way up. All fake-factory, so the verdict `up` draws
   # from each tmux answer is visible on every machine; the live-tmux pair sits
@@ -1090,8 +1091,8 @@ RSpec.describe Lain::CLI::Up do
     # `display-message`, its capture is `capture-pane`, and `has-session`
     # drives the create-vs-reattach branch. `jq --version` falls to the same
     # else-branch as the ordinary tmux calls, which is what it wants (present,
-    # exit 0). The pre-flight is stubbed out entirely -- T9's own group is
-    # where it is exercised, and the real one would spawn rspec.
+    # exit 0). The pre-flight is stubbed out entirely -- the construction-refusal
+    # group above is where it is exercised, and the real one would spawn rspec.
     def launch(calls, dead: "1 1", captured: "boom", probe_exit: 0, session_exists: false, raises: nil, **keywords)
       spy = ->(*a) { calls << a and answer(a[1], dead:, captured:, probe_exit:, session_exists:, raises:) }
       described_class.new(session: "lain", state_path:, shell_out_factory: spy,
@@ -1397,7 +1398,7 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
-  # T19: `lain up --nvim` splits the chat window into a cockpit -- one pane
+  # `lain up --nvim` splits the chat window into a cockpit -- one pane
   # `nvim --listen <socket>`, one pane `lain chat --nvim <socket> ...` -- with
   # the socket computed ONCE, in Ruby, and handed to both panes explicitly, so
   # agreement is by construction rather than by each side re-deriving it. All
@@ -1473,7 +1474,7 @@ RSpec.describe Lain::CLI::Up do
       expect(Lain::CLI::Up::Cockpit::SCRATCH_BUFFER).not_to include("lain://")
     end
 
-    # T2: the gem's own plugin/nvim ships the layout sugar this AC is about --
+    # The gem's own plugin/nvim ships the layout sugar this AC is about --
     # putting it on the pane's runtimepath is what makes :LainStart exist with
     # zero user config, and the `exists()` ternary (asserted above) is what
     # keeps a bare `nvim --listen` unharmed either way.
@@ -1495,7 +1496,7 @@ RSpec.describe Lain::CLI::Up do
         .to include("--cmd #{Shellwords.escape("set rtp+=#{Lain::Paths::NVIM_PLUGIN_ROOT}")} --listen")
     end
 
-    # T2 degrade AC: a shipped plugin directory that cannot be located is a
+    # The degrade AC: a shipped plugin directory that cannot be located is a
     # runtimepath-sugar loss, not a cockpit failure -- the split still
     # happens (mirrors the missing-nvim-binary fallback's "never silent"
     # rule, but the fallback itself differs: THAT one drops to a single
@@ -1570,7 +1571,7 @@ RSpec.describe Lain::CLI::Up do
       expect(report.warnings.join).to include("nvim not found on PATH")
     end
 
-    # T19 panel fix: reattaching with --nvim cannot build the cockpit (the
+    # A panel fix: reattaching with --nvim cannot build the cockpit (the
     # session is already there), and a still-un-split chat window means the
     # request is being ignored -- degraded is never silent, so it warns
     # namedly. A window already carrying the cockpit's two panes has nothing
@@ -1607,7 +1608,7 @@ RSpec.describe Lain::CLI::Up do
       expect(report.warnings).to be_empty
     end
 
-    # T2 escalation trigger: the plugin-root probe must be create-path only --
+    # An escalation trigger: the plugin-root probe must be create-path only --
     # a reattach that finds the cockpit already there must stay silent even
     # when the shipped plugin cannot be located, because #call never rebuilds
     # the pane commands on that path.
@@ -1622,7 +1623,7 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
-  # T7: the HUD's own render, driven straight through `sh` rather than through
+  # The HUD's own render, driven straight through `sh` rather than through
   # a tmux server, so the new StatusFeed fields are pinned on every machine
   # that has jq -- not only on one that also has tmux. The filter under test is
   # the SAME Up::Hud::JQ_FILTER the tmux plugin script embeds byte-for-byte
@@ -1644,7 +1645,7 @@ RSpec.describe Lain::CLI::Up do
       eval_status_job(value)
     end
 
-    # E8's trailing space is the one thing `eval_status_job` (and every other
+    # The HUD's trailing space is the one thing `eval_status_job` (and every other
     # example here) deliberately strips, so the padding gets its own unstripped
     # render rather than a `.strip` removed from the shared helper.
     def render_raw(state)
@@ -1681,7 +1682,7 @@ RSpec.describe Lain::CLI::Up do
     end
 
     # StatusFeed publishes used/window, and a ratio above 1.0 is a NORMAL
-    # published value rather than a defect. Since T10 a live chat divides by the
+    # published value rather than a defect. A live chat now divides by the
     # window its provider says it is serving ({CLI::Backend#context_window}), so
     # this is rarer than it was -- but a model no book carries and no server
     # reports on still falls to {ContextWindow::CONSERVATIVE_FALLBACK}'s 8,192,
@@ -1691,7 +1692,7 @@ RSpec.describe Lain::CLI::Up do
       expect(render(warm_state("occupancy" => 2.44))).to eq("🔥 fleet:2 inbox:3 ctx:100%")
     end
 
-    # T8: the mode. StatusFeed publishes the lighter already composed, so this
+    # The mode. StatusFeed publishes the lighter already composed, so this
     # filter carries no copy of the posture/layer ladder and no comparison
     # against the default posture's NAME -- "silent under accept_edits" is one
     # rule, declared once, in Mode::Posture.
@@ -1707,7 +1708,7 @@ RSpec.describe Lain::CLI::Up do
       expect(render(warm_state("posture" => nil, "mode_lighter" => nil))).to eq("🔥 fleet:2 inbox:3")
     end
 
-    # E7: this session's spend on this key. Labelled `session:` rather than
+    # This session's spend on this key. Labelled `session:` rather than
     # `usage:` on purpose -- the number is what THIS process paid, and another
     # client on the same subscription is invisible to it, so the label may not
     # read as the plan's consumption.
@@ -1725,7 +1726,7 @@ RSpec.describe Lain::CLI::Up do
       expect(render(warm_state("run_tokens" => 0))).to eq("🔥 fleet:2 inbox:3 run:0")
     end
 
-    # E8: the line's last character was the `%` of `ctx:NN%`, hard against the
+    # The line's last character was the `%` of `ctx:NN%`, hard against the
     # right edge of the bar. The pad is the LAST thing the filter concatenates,
     # so it is there whatever the optional segments did -- and it lives inside
     # the jq expression rather than on the tmux option value, where trailing
@@ -1782,7 +1783,7 @@ RSpec.describe Lain::CLI::Up do
   end
 end
 
-# T6: `lain up [PATH]` opens a project OTHER than the shell's own directory.
+# `lain up [PATH]` opens a project OTHER than the shell's own directory.
 #
 # The failure these examples exist for is a PARTIAL one, which is what makes it
 # hard to see by inspection. `up` names a directory in three places -- both
@@ -1848,7 +1849,7 @@ RSpec.describe Lain::CLI::Up, "opening a PATH" do
 
   # The HUD half of the same value. The chat pane publishes its state file from
   # its OWN cwd (StatusFeed#default_path), so a status bar reading the shell's
-  # project polls a path nothing writes -- and since F50 relocated the feed to
+  # project polls a path nothing writes -- and since the feed moved to
   # `$XDG_STATE_HOME/lain/status/<project>/state.json` there is no file at that
   # path at all, so it renders as a HUD that never leaves "no state yet".
   #
@@ -2108,9 +2109,9 @@ RSpec.describe LainCLI, "naming a project on the command line" do
   end
 
   describe "lain chat --root / --cwd" do
-    # These examples lodge in up_spec because T6's Files list gives it as the
-    # card's one spec file, and both halves are the same translation: an argv
-    # answer to "which project", instead of the shell's directory.
+    # These examples lodge in up_spec because the plan named it as the card's
+    # one spec file, and both halves are the same translation: an argv answer
+    # to "which project", instead of the shell's directory.
     #
     # `debug: true` for the reason {#run_up} records: Thor turns a refusal into
     # `exit(1)`, which RSpec does not rescue, so it would end the run rather

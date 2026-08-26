@@ -5,19 +5,14 @@ module Lain
     class ArmSweep
       # Folds the sweep's {Measurement}s into per-arm distributions and renders
       # them, one titled table per metric, under an "all tasks" section and one
-      # per category. This is the Compare-STYLE, ranks-arms-side-by-side shape
-      # {Arm::Driver} and {Bench::Sweep} share, and {Compare::ArmFold} is now
-      # that shape's one implementation: this class declares the axes -- which
-      # arms, which metrics, which cell each metric reads -- and delegates the
-      # fold. It still does not reshape {Compare}'s own run-priced surface,
-      # because ArmFold's axis is the transposed one (see its class comment).
+      # per category. This class declares the axes -- which arms, which metrics,
+      # which cell each metric reads -- and delegates the fold to
+      # {Compare::ArmFold}.
       #
-      # It does NOT subclass {Arm::Driver}: the Driver folds ONE shared seam over
-      # a flat task list into three fixed metrics, whereas this sweep carries
-      # per-arm recordings, two extra process metrics (context-loss,
-      # replans/stalls), and a per-category breakdown the boundary depends on --
-      # so it reuses the Driver's building blocks and its report shape, not its
-      # fixed folding.
+      # It does NOT subclass {Arm::Driver}: the Driver folds ONE shared seam
+      # over a flat task list into three fixed metrics, whereas this sweep
+      # carries per-arm recordings, two extra process metrics, and a
+      # per-category breakdown the boundary depends on.
       class Report
         # metric label => how to pull one value off a {Measurement} and render
         # it. Wall-time is deliberately absent: it has no honest value under a
@@ -91,9 +86,8 @@ module Lain
         # against without scrolling back up.
         def label_for(arm) = arm == ARM_ORDER.first ? "#{arm} (control)" : arm
 
-        # Wall-time as its own section: one row per arm, n = tasks measured, the
-        # four stats ABSENT -- the decider-sweep discipline (mark absent, never
-        # fabricate) for a metric a dry replay cannot honestly produce.
+        # One row per arm, n = tasks measured, the four stats ABSENT: mark
+        # absent, never fabricate, for a metric a dry replay cannot produce.
         def wall_time_section(subset)
           count = subset.count { |measurement| measurement.arm == ARM_ORDER.first }
           fold.absent_section("wall-time (s)", arms: ARM_ORDER, count:, marker: ABSENT)

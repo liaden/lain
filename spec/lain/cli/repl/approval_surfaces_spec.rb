@@ -134,7 +134,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     expect(fan_out(auto: auto_surface)[:watched].size).to eq(3)
   end
 
-  # T1 review round 2, BLOCKER A. Exactly ONE surface here reads stdin, and it
+  # Review BLOCKER A. Exactly ONE surface here reads stdin, and it
   # reads the SAME stdin the ask_human drain does -- so a line that reads the
   # terminal itself (`/inbox`, see {Lain::CLI::Repl::LineScope#serve}) must not
   # have it spawned over the top, or a keystroke meant for an inbox question can
@@ -177,7 +177,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     end
   end
 
-  # T17. The fifth peer, opt-in behind --secret-oracle: a local model triaging
+  # The fifth peer, opt-in behind --secret-oracle: a local model triaging
   # the parked reads that carry sensitive regions, ahead of the human. It is
   # DISJOINT from the auto surface rather than a second opinion on the same
   # pendings -- each takes what the other structurally refuses (auto_surface_spec
@@ -212,7 +212,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     end
   end
 
-  # T36. These two examples and the one above are the closest anything came to
+  # These two examples and the one above are the closest anything came to
   # pinning the editor surface's ABSENCE as correct, and they did not: the
   # counts they assert are counts for the inputs they give, and an unattached
   # editor really is two. What was missing was any example giving the other
@@ -288,7 +288,7 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     expect(built.approval_surface).to be(built.approval_surface)
   end
 
-  # T16. This class builds the SECOND of the three Frontend::ApprovalPolicys a
+  # This class builds the SECOND of the three Frontend::ApprovalPolicys a
   # process can hold (the switchboard's /approve prompt is the first, and
   # Command::Surface's fallback the third), and nothing coordinates them. So
   # "the watch surface shows what a read would release" is a claim about THIS

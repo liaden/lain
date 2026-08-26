@@ -4,7 +4,7 @@ require "json"
 require "open3"
 require "rbconfig"
 
-# CE-3: `Canonical`'s second invariant -- prompt-cache stability -- has never
+# `Canonical`'s second invariant -- prompt-cache stability -- has never
 # had a test. This is that test: render the same committed fixture once IN
 # this process and once in a FRESH ruby process, and assert the canonical
 # Request bytes and prefix_digests come out identical. A silent invalidator

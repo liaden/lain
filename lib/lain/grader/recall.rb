@@ -3,11 +3,9 @@
 module Lain
   module Grader
     # Recall@k over ONE query: what fraction of that query's gold ids the ranked
-    # hits surface within the top k. Scores exactly one query into exactly one
-    # {Grade} -- the scalar shape Fixture already uses -- because folding many
-    # queries' recall scores into a distribution is Compare's job (grader.rb's
-    # module doc: "Compare folds a Grade's #score into its distribution"), not a
-    # responsibility this class should invent ahead of that need.
+    # hits surface within the top k. Exactly one query into exactly one {Grade},
+    # because folding many queries' scores into a distribution is {Compare}'s
+    # job.
     #
     #   Recall.new(gold_ids: %w[a b c]).grade(%w[a x b], k: 3)
     #   #=> Grade(score: 0.666..., why: "recall@k 2/3: missed b, c" ...)

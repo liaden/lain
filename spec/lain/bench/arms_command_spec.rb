@@ -4,11 +4,10 @@ require "prism"
 require "stringio"
 require "tmpdir"
 
-# B3 (chunk-bench-arms-subcommand): the `bench arms` door onto
-# Bench::CLI#arms_report. The command is a FLAG PARSER -- it names no Arm, no
-# Grader and no Provider (exe/lain:80-85) -- so what is under test here is the
-# wiring: which flags are declared, which of them reach the entry point, and
-# what the entry point is handed for a journal.
+# The `bench arms` door onto Bench::CLI#arms_report. The command is a FLAG
+# PARSER -- it names no Arm, no Grader and no Provider (exe/lain:80-85) -- so
+# what is under test here is the wiring: which flags are declared, which of
+# them reach the entry point, and what the entry point is handed for a journal.
 #
 # exe/lain is a script, not a lib file: it ends in `LainCLI.start(ARGV)` guarded
 # by `$PROGRAM_NAME == __FILE__`, so `load` defines the Thor classes WITHOUT
@@ -255,9 +254,9 @@ RSpec.describe "lain bench arms" do
     end
 
     # BOTH directions. A flag in the map that nothing declares is unreachable
-    # (F7's failure); a flag DECLARED that no map forwards and no line reads is
-    # its mirror -- advertised in `bench help arms`, accepted on the command
-    # line, and silently dropped.
+    # (an observed failure); a flag DECLARED that no map forwards and no line
+    # reads is its mirror -- advertised in `bench help arms`, accepted on the
+    # command line, and silently dropped.
     it "declares every flag its map forwards, and forwards or reads every flag it declares" do
       ArmsCommand.maps.each do |name, map|
         options = LainCLI::Bench.commands.fetch(name).options.keys

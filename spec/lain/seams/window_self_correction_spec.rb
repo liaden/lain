@@ -4,7 +4,7 @@ require "json"
 require "stringio"
 require "tmpdir"
 
-# T6, end to end, over the wiring the defect was measured on: a real
+# End to end, over the wiring the defect was measured on: a real
 # {Lain::CLI::Backend} resolves the run's window book from a real `--num-ctx`
 # and a real (stubbed-at-the-socket) ollama, the real turn stack
 # {Lain::CLI::Wiring::AgentBuild} builds re-resolves it, and a real

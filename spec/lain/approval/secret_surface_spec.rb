@@ -71,7 +71,7 @@ module SecretSurfaceSpecSupport
   end
 end
 
-# T17. A queue surface, not a middleware oracle: it adjudicates pendings that
+# A queue surface, not a middleware oracle: it adjudicates pendings that
 # are ALREADY parked and already blocking, racing the human, so nothing here
 # sits on the synchronous tool-dispatch path {Oracle::MemorySave}'s header
 # forbids a model round trip on.
@@ -202,7 +202,7 @@ RSpec.describe Lain::Approval::SecretSurface do
     end
   end
 
-  # S3. A judge that hangs is worse than one that refuses: the sweep asks
+  # A judge that hangs is worse than one that refuses: the sweep asks
   # SEQUENTIALLY, the ollama arm's own envelope is 300s x 3 retries against a
   # 300s queue window, and a hang raises nothing, so without a bound one wedged
   # server turns the whole flag into a silent no-op for the session -- the

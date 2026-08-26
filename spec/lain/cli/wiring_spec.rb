@@ -5,7 +5,7 @@ require "json"
 require "stringio"
 require "tmpdir"
 
-# Stands in for the eager tier's local model (A8 wires an Ollama-backed
+# Stands in for the eager tier's local model (production wires an Ollama-backed
 # {Lain::Oracle::Model}), answering the REAL {Lain::Oracle::Summarize}
 # definition so the schema, the Promise, and `#summary` are the production ones
 # -- only the network edge is stubbed, exactly as {Lain::Provider::Mock} stubs
@@ -19,7 +19,7 @@ class WiringSpecSummarizer
   def ask(_inputs = {}) = @definition.answer("summary" => @text)
 end
 
-# The launch block's stand-in for an adopted actor (D2): it builds the child's
+# The launch block's stand-in for an adopted actor: it builds the child's
 # Session from the LEASED WorkerEnv exactly as
 # {Lain::Tools::Subagent::ChildBuilder#spawn_agent} does, so what a spec reads
 # back is the object the real spawn path constructs.
@@ -121,9 +121,12 @@ RSpec.describe Lain::CLI::Wiring do
   end
   let(:channel) { Lain::Channel.new }
   let(:chronicle) { Lain::CLI::Chronicle::Null.new }
-  # status_feed: is required, not defaulted (the Null placeholder is gone); the
-  # direct-Wiring path only threads it into the Command::Env's status reader.
-  let(:status_feed) { instance_double(Lain::StatusFeed) }
+  # status_feed: is required, not defaulted (the Null placeholder is gone). The
+  # direct-Wiring path threads it into the Command::Env's status reader -- and
+  # #run hands it the run's Store, which is the ONE line that makes the HUD's
+  # inbox_count able to retire anything. Stubbed rather than doubled away
+  # so the #run group below can assert that call actually happened.
+  let(:status_feed) { instance_double(Lain::StatusFeed, bind_store: nil) }
   let(:wiring) { described_class.new(options: { grace: 5 }, chronicle:, status_feed:) }
 
   def wire_agent
@@ -221,7 +224,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(agent.toolset.fetch("subagent").seam.parent.call).to equal(agent.timeline)
     end
 
-    # ---- session_usage: F77's fix, at the seam that made F77 possible --------
+    # ---- session_usage: the fix, at the seam that made the failure possible --
 
     # Asked what its own session had spent, the agent invented a metrics table
     # -- wrong model name, fabricated memory/CPU/RTT/network figures -- while
@@ -254,10 +257,10 @@ RSpec.describe Lain::CLI::Wiring do
     # The reason it is appended by ToolsetBuild rather than added to BaseTools:
     # a child attenuates from the floor, and the floor is built ONCE and shared,
     # so a thunk over the chat's Agent placed there would make every subagent
-    # report its PARENT's spend as its own -- F77's shape again, one level down.
-    # The positive half is not decoration: `not_to include` alone passes for a
-    # child attenuated to nothing, and would also pass while the tool was never
-    # wired at all.
+    # report its PARENT's spend as its own -- the same wrong answer, one
+    # level down. The positive half is not decoration: `not_to include` alone
+    # passes for a child attenuated to nothing, and would also pass while the
+    # tool was never wired at all.
     it "keeps session_usage off the set a child attenuates from, so no child reports its parent's spend" do
       agent = wire_agent
 
@@ -274,9 +277,9 @@ RSpec.describe Lain::CLI::Wiring do
     #   Toolset::UnknownTool at the flip -- the raise-free half.
     # - GRANT: an omission from READ_ONLY is SILENT. The tool simply vanishes
     #   while planning, which is precisely when a human asks what the session
-    #   has cost so far -- and a vanished tool is how F77 happened in the first
-    #   place. Hence the second expectation; the first alone would pass with
-    #   session_usage left out entirely.
+    #   has cost so far -- and a vanished tool is how the fabrication happened
+    #   in the first place. Hence the second expectation; the first alone
+    #   would pass with session_usage left out entirely.
     #
     # It reaches for the board the way `approve_everything` below does, and for
     # the same reason: the board is Wiring's private collaborator, and the flip
@@ -482,7 +485,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
-  # B1: the tool-phase guard was constructed bare (`RefuseSecretWrites.new`
+  # The tool-phase guard was constructed bare (`RefuseSecretWrites.new`
   # with no `journal:`), so a live credential-shaped refusal journaled to
   # `Channel::Null` and left no record while every other mount of this
   # middleware (consolidation.rb, improve.rb, run_recorder.rb) passes one.
@@ -538,13 +541,13 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
-  # B4: the guard's `oracle:` seam sat on its NullOracle in the live chat, so
+  # The guard's `oracle:` seam sat on its NullOracle in the live chat, so
   # the memory-save gate judged nothing there. Wiring it in composes the two
-  # findings B2 separated: a credential is a PATTERN hit, a contentless save is
+  # distinct findings: a credential is a PATTERN hit, a contentless save is
   # the oracle's DECLINE, and they must stay distinguishable in the journal.
   describe "the secret-write guard's oracle wiring" do
     let(:journal) { RecordingChannel.new }
-    # See B1's note above on journal_path: pure string manipulation derives the
+    # See the note above on journal_path: pure string manipulation derives the
     # WAL path, and a Provider::Mock run never writes a frame.
     let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "b4-spec-fake-session.ndjson") }
     let(:backend) do
@@ -618,7 +621,7 @@ RSpec.describe Lain::CLI::Wiring do
         expect(Lain::Middleware::RefuseSecretWrites.decline?(refusals.first.pattern)).to be(true)
         expect(Lain::Middleware::RefuseSecretWrites::PATTERNS).not_to have_key(refusals.first.pattern)
         expect { recorder.fetch("nothing") }.to raise_error(Lain::Memory::Index::UnknownId)
-        # B2's model-facing half: a decline must make no credential claim.
+        # The model-facing half: a decline must make no credential claim.
         expect(tool_results(agent)).to include("not worth writing")
         expect(tool_results(agent)).not_to include("pattern")
       end
@@ -669,7 +672,7 @@ RSpec.describe Lain::CLI::Wiring do
     let(:channel) { RecordingChannel.new }
     let(:view_channel) { Lain::Channel::DropOldest.new }
     let(:journal) { RecordingChannel.new }
-    # See B1's note on journal_path: Chronicle#spool derives the WAL path by
+    # See the note above on journal_path: Chronicle#spool derives the WAL path by
     # pure string manipulation, and a Provider::Mock run never writes a frame.
     let(:chronicle) { Lain::CLI::Chronicle.new(journal:, journal_path: "t1-spec-fake-session.ndjson") }
     let(:views) { { channel: view_channel, socket_path: "/tmp/lain-t1-spec.sock", journal: } }
@@ -735,11 +738,11 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
-  # A8: the assembly, and the point the whole chunk converges on. A plain `lain
+  # The assembly, and the point the whole chunk converges on. A plain `lain
   # chat` compacts, which means the Agent gets three things Wiring never passed
   # before: the run's per-turn Context source, the eager-summary observer its
   # ToolRunner fires through, and a journal that TEES turn_usage to that source
-  # -- `context_for`'s `usage:` is A2's Integer, while {Lain::Compaction::Cold}
+  # -- `context_for`'s `usage:` is a plain Integer, while {Lain::Compaction::Cold}
   # needs a {Lain::Telemetry::TurnUsage}'s cache-read count and the render seam
   # has no route to it.
   describe "the compaction mount" do
@@ -878,7 +881,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(decisions.map(&:compacted)).to include(true)
     end
 
-    # AC3, end to end: the tool result crosses Summarizing's threshold, the
+    # End to end: the tool result crosses Summarizing's threshold, the
     # post-dispatch observer fires a summary into the run's Eager, and the next
     # render -- which compacts, because the cache is cold -- carries the FIRED
     # TEXT where an unwired run would carry an elision line.
@@ -913,7 +916,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(accounting.map(&:cost_saved).uniq).to eq(["0.0"])
     end
 
-    # F51's control arm, on the SAME live path the flagged run below takes. The
+    # The control arm, on the SAME live path the flagged run below takes. The
     # flagged example alone would leave the default run's record free to carry
     # nil -- and nil is the one value {Lain::Telemetry::Compaction} reserves for
     # a journal written before this field existed, so a bench reading it would
@@ -928,7 +931,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(accounting.map(&:collapse_strategy).uniq).to eq([Lain::Telemetry::Compaction::EAGER_CONTROL_ARM])
     end
 
-    # F51 end to end, and the only place the whole thread is real: the flag is
+    # End to end, and the only place the whole thread is real: the flag is
     # parsed here, {Lain::CLI::Backend::SpanSummarizer} resolves it, the Source
     # carries the operator's word, and the Scheduler -- handed a pipeline, able
     # to name no policy behind it -- journals that word on every compaction. It
@@ -961,7 +964,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
-  # D2: `--isolation`, wired at the ONE seam the fleet leases through. The main
+  # `--isolation`, wired at the ONE seam the fleet leases through. The main
   # chat is deliberately NOT leased -- #run_state builds its Session on
   # {Lain::WorkerEnv.default}, because the user's own edits belong in the user's
   # own tree -- so what a leased environment reaches is an ACTOR-mode subagent,
@@ -1081,7 +1084,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    # T2's sibling of the block below, at the seam a COMMAND becomes a process
+    # The sibling of the block below, at the seam a COMMAND becomes a process
     # rather than the one a WORKER leases an environment from, and it keeps the
     # same ordering rule: resolved before the header is pinned.
     context "with an unrecognized exec option" do
@@ -1154,6 +1157,21 @@ RSpec.describe Lain::CLI::Wiring do
       wiring = run_wiring
 
       expect(opened).to eq([wiring.conductor])
+    end
+
+    # The ONE production line the fix rests on. {Lain::StatusFeed} is built
+    # a layer above this class ({Lain::CLI::ChatLaunch}, which must have it
+    # in the live-view tee's sink list before Wiring exists), so it holds no
+    # Store at construction and its inbox_count can retire nothing until this
+    # class hands it one. Nothing else observes that hand-over: deleting it left
+    # every example in this file green while the HUD went back to counting up
+    # forever, which is the defect class this card exists to remove. So the call
+    # is EXPECTED here, and against the run's own Store -- an `instance_of`
+    # would still pass for a second, empty one, which retires exactly nothing.
+    it "hands the StatusFeed the run's own Store, the only thing that lets inbox_count retire" do
+      wiring = run_wiring
+
+      expect(status_feed).to have_received(:bind_store).with(wiring.command_surface.env.agent.timeline.store)
     end
 
     # The Conductor is the ONE place a user prompt is answered, so it is
@@ -1234,7 +1252,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(env.chronicle).to be(chronicle)
     end
 
-    # The load-bearing identity AC1/AC3 stand on (a review panel's probe): a dropped
+    # The load-bearing identity behind it (a review panel's probe): a dropped
     # surface_kwargs would leave this reader on its Null and silently
     # disconnect /model from the Agent's Context.
     it "hands the Env the SAME model switch the Agent's context holds" do
@@ -1384,7 +1402,7 @@ RSpec.describe Lain::CLI::Wiring do
         expect(run_recording.first).to be_a(Lain::Frontend::PromptComposer::Formatted)
       end
 
-      # AC1, through the wiring rather than in isolation: the renderer this
+      # Through the wiring rather than in isolation: the renderer this
       # class built reads the LIVE agent, so the model it names is the one the
       # run is actually talking to.
       it "builds it over the live model slot, the run clock and the status feed" do
@@ -1394,7 +1412,7 @@ RSpec.describe Lain::CLI::Wiring do
         expect(composed.lines.last).to eq("> ")
       end
 
-      # AC3: a project config that does not parse is reported through the same
+      # A project config that does not parse is reported through the same
       # startup-notice seam a resumed chat's notices use, and the chat is still
       # usable -- today's prompt, not a crash.
       def with_project_config(bytes)
@@ -1783,7 +1801,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    # AC4: with nothing injected the default resolves the process's own
+    # With nothing injected the default resolves the process's own
     # project, and a chat started in a directory that IS its own root gets the
     # WorkerEnv it got before this card existed -- byte for byte.
     describe "the default" do
@@ -2020,7 +2038,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    # F2's ruling, at the session: the strict compile is the sensitivity table's
+    # The ruling at the session: the strict compile is the sensitivity table's
     # alone. A typo in a table this boundary never reads costs that table's
     # feature, never the chat -- which is how it was before this card, and how a
     # user mid-task needs it to stay.

@@ -152,7 +152,7 @@ RSpec.describe Lain::Role do
       end
     end
 
-    # The probe-shape from the T24 review: a fused String renders ONE system
+    # The probe-shape from review: a fused String renders ONE system
     # block whose single mark lands after the role tail, so siblings share zero
     # cached bytes. Segments fix it -- the seam marks the bulk as its own block,
     # and the rendered system carries the mark ON the shared bulk.
@@ -238,7 +238,7 @@ RSpec.describe Lain::Role do
 
   # The filename-refusal half of this used to live here (an unknown
   # `.lain/slots/role/chef.md` raising UnknownSlot) -- moved to
-  # `slots_spec.rb` (T-C6), which is where `Prompt::Slots`' OWN filename
+  # `slots_spec.rb`, which is where `Prompt::Slots`' OWN filename
   # check belongs; the assertion is there now, strengthened to check every
   # shipped role name rather than just the offending one.
   describe "a role override rejects impurity the same way a top-level one does" do

@@ -3,7 +3,8 @@
 require "json"
 require "pathname"
 
-# T13: what T12's read-time denials and T15's masking leave in the Journal.
+# What the path gate's read-time denials and the read-masking leave in the
+# Journal.
 # Mirrors turn_stream_spec's per-record describe-block style (the sibling
 # records live in one telemetry_spec.rb; these two are new enough, and
 # specific enough to the secret boundary, to get their own file).
@@ -140,9 +141,9 @@ RSpec.describe "Lain::Telemetry secret boundary records" do
     # The panel's probe: nothing stopped a String, a Hash, a negative count, or
     # nil from reaching this record, and the record whose entire job is to
     # carry COUNTS instead of content would happily carry a Hash of leaked
-    # bytes. Guards::ReadRedacted (the Guards::Dropped shape, twelve lines
+    # bytes. Carriers::ReadRedacted (the Carriers::Dropped shape, twelve lines
     # above WriteRefused in turn_stream.rb) closes all four at once.
-    # ActiveModel's numericality is type-permissive (Guards::Dropped's own
+    # ActiveModel's numericality is type-permissive (Carriers::Dropped's own
     # idiom): a numeric-looking String passes the guard, same as an Integer
     # would. What must NOT survive is the raw String -- the record coerces
     # with `to_i` regardless of the input's class, so the shareability bug

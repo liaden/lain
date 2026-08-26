@@ -55,7 +55,7 @@ RSpec.describe Lain::Agent::Collaborators do
     end
   end
 
-  # T22: the four ingredient keywords that are also {Lain::Agent::Instrumentation}
+  # The four ingredient keywords that are also {Lain::Agent::Instrumentation}
   # members -- `model_middleware`, `tool_middleware`, `tool_observer`, `journal`
   # -- take their DEFAULTS from that value now, so a run has one statement of
   # what it reports through. Pinned HERE and not only through the Agent: the

@@ -34,9 +34,10 @@ RSpec.describe Lain::Review::Prefill do
     end
 
     # The DERIVATION itself, as a law rather than as a second copy of the table
-    # above: whatever tier T17 puts a rank on, this map's kind must land on the
-    # same tier. Change either of T17's maps and this fails, which is the whole
-    # reason the correspondence is computed and not written down twice.
+    # above: whatever tier the projection puts a rank on, this map's kind must
+    # land on the same tier. Change either of those maps and this fails, which
+    # is the whole reason the correspondence is computed and not written down
+    # twice.
     it "puts every rank's kind on the tier the projection already ranks that rank at" do
       severities = Lain::Review::Projection::Diagnostics::SEVERITIES
       Lain::Review::Projection::Diagnostics::RANKS.each do |rank, severity|
@@ -523,8 +524,8 @@ end
 # The extmark namespace is NOT split, and that is deliberate: `49_diagnostics.lua`
 # resolves every entry's mark through ONE anchors namespace, so a finding's
 # position is an extmark beside the human's while its DIAGNOSTIC renders apart
-# from it. Splitting the position store would be a change to T17's lua, which is
-# not this card's to make.
+# from it. Splitting the position store would be a change to the diagnostics
+# lua, which is not this card's to make.
 RSpec.describe "review findings in their own diagnostic namespace", :nvim, :seam do
   around do |example|
     socket = File.join(Dir.tmpdir, "lain-nvim-prefill-spec-#{Process.pid}-#{rand(1_000_000)}.sock")
@@ -601,7 +602,7 @@ RSpec.describe "review findings in their own diagnostic namespace", :nvim, :seam
       .map { |fields| "#{JSON.generate(fields)}\n" }.join
   end
 
-  # The human's own note, as T17's duck: mark, words, kind. Not an
+  # The human's own note, in the duck the prefill takes: mark, words, kind. Not an
   # AnnotationPlaced -- that record carries a line, which must never cross.
   def human(mark) = Data.define(:mark, :text, :kind).new(mark:, text: "my own note", kind: "question")
 

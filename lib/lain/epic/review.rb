@@ -6,83 +6,60 @@ module Lain
     # document, lain does not write it; when they hand it back, exactly one
     # awaiting fiber learns what they did to it.
     #
-    # == One generation, one promise, no shared ivar
-    #
-    # {#open} answers a {Token} carrying a FRESH {Lain::Promise}, and the open
-    # set is keyed by generation. This is the asker {Tools::AskHuman}'s doc has
-    # in mind when it says an asker who asks concurrently must carry its promises
-    # on events rather than on an ivar: two reviews are open whenever two agents
-    # review two artifacts, and one ivar would resolve the wrong one in silence.
-    #
-    # The generation is what makes a LATE answer harmless -- the bargain
-    # {Frontend::Neovim::Compose} strikes with its own counter. The editor stamps
-    # the number on the review buffer and hands it back with `done`, so a buffer
-    # left over from a settled or a dead review names a generation this object
+    # Each {#open} answers a {Token} carrying a FRESH {Lain::Promise}, and the
+    # open set is keyed by generation rather than held on an ivar: two reviews
+    # are open whenever two agents review two artifacts, and one ivar would
+    # resolve the wrong one in silence. The generation is also what makes a LATE
+    # answer harmless -- the editor stamps it on the review buffer, so a buffer
+    # left over from a settled or a dead review names a number this object
     # refuses.
     #
-    # == A generation names a review WITHIN one epic
+    # Identity is the PAIR `(epic_slug, generation)` and a settle route must
+    # carry both: numbers are drawn from this epic's own records, so two Reviews
+    # sharing one journal both hand out 1. There is deliberately no shared
+    # counter to tell them apart -- a counter every construction site must
+    # remember to pass collides quietly, where a route that must name its epic
+    # cannot forget. Within one epic the numbers are unique over the WHOLE
+    # journal, opened and closed alike, so the open and settled sets can never
+    # overlap.
     #
-    # The identity is the PAIR `(epic_slug, generation)`, and a settle route must
-    # carry both. Numbers are drawn from this epic's own records, so two live
-    # Reviews sharing one journal -- one per epic slug, which is what a session
-    # builds -- both hand out 1. A bare integer off the wire cannot say which
-    # review it means, and there is deliberately no shared counter to make it
-    # able to: a counter every construction site must remember to pass is a
-    # collision waiting to happen quietly, where a route that must name its epic
-    # cannot forget.
+    # Paths are ABSOLUTE, because {#open?} is the duck {Home::Journaled} asks
+    # before every write and it asks with {Home::Artifact#path}. {ReviewOpened}
+    # journals the same string: a relative path there would rebuild a baton no
+    # `open?` could match.
     #
-    # Within one epic the numbers are unique over the WHOLE journal, opened and
-    # closed alike, so the open set and the settled set can never overlap and a
-    # `done` gesture is answered rather than misrouted.
-    #
-    # == Paths are ABSOLUTE here, and that is a decision
-    #
-    # {#open?} is the duck {Home::Journaled} asks before every write, and it is
-    # asked with {Home::Artifact#path} -- the absolute path. So the open set is
-    # keyed on absolute paths, and {ReviewOpened} journals the same string: the
-    # record is what {.from_journal} rebuilds the set from, and a relative path
-    # there would rebuild a baton no `open?` could match. {ReviewOpened} says
-    # what that costs and what carries the durable join instead.
-    #
-    # == Nothing here blocks a thread
-    #
-    # {#open} and {#settle} both return at once; the only parking is a caller's
-    # own `token.await`, which parks that FIBER inside its reactor. A review
-    # rebuilt from the journal has no promise at all and says so loudly rather
-    # than parking anyone ({Unpromised}) -- promises are process-local
-    # coordination and deliberately do not survive a restart.
+    # Nothing here blocks a thread -- the only parking is a caller's own
+    # `token.await`, inside that caller's reactor. A review rebuilt from the
+    # journal has no promise and says so loudly ({Unpromised}) rather than
+    # parking anyone: promises are process-local and deliberately do not survive
+    # a restart.
     class Review
-      # The generation is not open: never opened here, or already settled. One
-      # refusal because a caller does the same thing with both -- tell the human
-      # their `done` gesture found nothing -- and one message that says which.
+      # Never opened here, or already settled. One class because a caller does
+      # the same thing with both; {#refuse_stale!} says which in the message.
       class NotOpen < Error; end
 
-      # A second opener for a path someone already holds. Refused rather than
-      # queued: the second generation would shadow the first, and the first's
-      # awaiting fiber would then wait for a settle that can never name it.
+      # Refused rather than queued: a second generation would shadow the first,
+      # leaving its awaiting fiber on a settle that can never name it.
       class AlreadyOpen < Error; end
 
-      # Constructed and handed to {Intake::Delta.malformed}, never raised: it is
-      # the `error_kind` a rebuilt review's settlement wears, so a consumer can
-      # tell "the journal did not keep the bytes" from a grammar or graph refusal
-      # without matching message text -- which is what that member is for.
+      # Never raised: the `error_kind` a rebuilt review's settlement wears, so a
+      # consumer can tell "the journal did not keep the bytes" from a grammar or
+      # graph refusal without matching message text.
       class Unrecoverable < Error; end
 
-      # Constructed and handed to {ReviewClosed}, never raised: it is the
-      # `error_kind` an ABANDONED review closes with, so a reader can tell a
-      # hand-over that never happened from one that came back malformed. See
-      # {#abandon} for when that is the honest record.
+      # Never raised: the `error_kind` an ABANDONED review closes with, so a
+      # reader can tell a hand-over that never happened from one that came back
+      # malformed. {#abandon} says when that is the honest record.
       class Abandoned < Error; end
 
       class NoPromise < Error; end
 
       # The promise a review rebuilt from the journal does not have.
       #
-      # Null on the path that must not care: {#resolve} sends the delta nowhere,
-      # so {Review#settle} never asks whether a promise exists and a restarted
-      # review settles rather than wedging forever. LOUD on the path that has no
-      # honest null: there is no value to await and no fiber to wake, so {#await}
-      # says so instead of parking a caller nothing will ever resolve.
+      # Null where nothing must care -- {#resolve} sends the delta nowhere, so a
+      # restarted review settles rather than wedging forever -- and LOUD where
+      # there is no honest null, since {#await} would otherwise park a caller
+      # nothing will ever resolve.
       module Unpromised
         def self.resolve(_delta) = nil
 
@@ -94,8 +71,8 @@ module Lain
         end
       end
 
-      # What the disk is compared against: the document lain wrote, held whole
-      # so that {Intake} can answer both of its registers over it.
+      # What the disk is compared against: the document lain wrote, held whole so
+      # {Intake} can answer both of its registers over it.
       class Baseline
         def initialize(written)
           @written = written
@@ -105,23 +82,16 @@ module Lain
       end
 
       # The same duck for an artifact that is PROSE -- research and the issue
-      # plan, which are written to be read rather than resolved -- where there
-      # is no graph on either side and so nothing structural to say.
+      # plan -- where there is no graph on either side and so nothing structural
+      # to say. Both byte addresses and the truncation suspicion stay answerable;
+      # the account is empty because no comparison was MADE.
       #
-      # The delta is MEASURED on bytes and UNCOMPARED structurally. Both
-      # addresses and the truncation suspicion are exactly as answerable over
-      # prose as over an epic document, because both are byte measures; the
-      # account is empty because no comparison was MADE.
-      #
-      # It carries NO error, and that is what separates it from {Recalled},
-      # whose account is empty for the same shape of reason. Nothing failed
-      # here. Prose is deliberately never parsed: {Document.parse_markdown} over
-      # a research note refuses it, and reporting a human's ordinary prose as a
-      # malformed epic would be a false alarm about their work rather than a
-      # report of it.
-      #
-      # So an empty account now means one of three things, and `error_kind` --
-      # nil, {Unrecoverable}, or a grammar refusal -- is what tells them apart.
+      # It carries NO error, which is what separates it from {Recalled}, whose
+      # account is empty for a different reason. Prose is deliberately never
+      # parsed: reporting a human's ordinary prose as a malformed epic would be a
+      # false alarm about their work rather than a report of it. So an empty
+      # account means one of three things, and `error_kind` -- nil,
+      # {Unrecoverable}, or a grammar refusal -- is what tells them apart.
       class ProseBaseline
         def initialize(written)
           @written = written
@@ -135,17 +105,13 @@ module Lain
       end
 
       # The same duck for a review rebuilt from the journal, which recorded the
-      # written document's DIGESTS and not its bytes.
-      #
-      # So nothing can be compared, and the honest report of that is the delta
-      # {Intake} builds when a parse fails: both byte addresses on record, and an
-      # account that is empty because no comparison was MADE rather than because
+      # written document's DIGESTS and not its bytes. Nothing can be compared, so
+      # the account is empty because no comparison was MADE rather than because
       # the sides agreed -- `malformed?` is what tells those two apart.
       #
       # It is NOT a corrupt file, and a surface must never render it as one. The
-      # true sentence is "lain restarted and no longer holds what it wrote";
-      # `error_kind` is {Unrecoverable} exactly so a renderer can say that.
-      #
+      # true sentence is "lain restarted and no longer holds what it wrote", and
+      # an `error_kind` of {Unrecoverable} is what lets a renderer say it.
       # `lossy: false` here is UNMEASURED, not measured false: the suspicion is a
       # ratio against the written bytesize, which the record does not carry.
       class Recalled
@@ -164,24 +130,16 @@ module Lain
         end
       end
 
-      # The live half of a `review_opened` record: the generation the editor
-      # stamps on its buffer, the file that is held, what to compare the disk
-      # against, and the promise the asker parks on.
-      #
-      # Mutable, like {Approval::Queue::Pending} and unlike every frozen value in
-      # this unit: a promise exists to be resolved. {Review#open} returns the
-      # same object it keeps, so a caller's promise and settle's are one.
+      # The live half of a `review_opened` record. Mutable, unlike every frozen
+      # value in this unit, because a promise exists to be resolved:
+      # {Review#open} returns the same object it keeps, so a caller's promise and
+      # settle's are one.
       class Token
-        # Both halves of the identity, on one object. A settle route has to name
-        # `(epic_slug, generation)` -- a bare number cannot say which review it
-        # means -- and a token that carried only the number would leave the slug
-        # to be remembered BESIDE it at every construction site, which is the
-        # forget-and-misroute failure the pair exists to rule out.
-        # `written_digest` rides here because it is a field of the very record
-        # this object is the live half OF, and because a token that cannot name
-        # the bytes lain wrote cannot describe its own close -- which is exactly
-        # what {Review#abandon} needs when there is no disk read to describe it
-        # with.
+        # Both halves of the identity on one object: a token carrying only the
+        # number would leave the slug to be remembered BESIDE it at every
+        # construction site, which is the forget-and-misroute failure the pair
+        # exists to rule out. `written_digest` rides here because {Review#abandon}
+        # has to describe its own close with no disk read to describe it with.
         attr_reader :epic_slug, :generation, :path, :written_digest
 
         def initialize(epic_slug:, generation:, path:, written_digest:, baseline:, promise:)
@@ -218,19 +176,17 @@ module Lain
         private
 
         # Over CLOSED claims as well as open ones, so the two sets cannot
-        # overlap. A `review_closed` whose claim is gone -- rotated away, or torn
-        # -- would otherwise leave its number free, and the next open would hand
-        # out a generation that is simultaneously open and settled. This is the
-        # read side of the same hazard {Review#open} closes by bumping its
-        # counter before it journals.
+        # overlap: a `review_closed` whose claim is gone -- rotated away, or torn
+        # -- would otherwise free its number, and the next open would hand out a
+        # generation that is simultaneously open and settled.
         def high_water_of(records)
           [0, *records.map { |record| ReviewClaim.generation(record["generation"]) }].max
         end
 
-        # A record naming ANOTHER epic is not ours and is dropped; one naming NO
-        # epic is KEPT so its own guard refuses it below. {Progress::Refold}'s
-        # rule, and for its reason: a filter that swallowed the unattributable
-        # line would skip exactly the record that most needs refusing.
+        # A record naming ANOTHER epic is dropped; one naming NO epic is KEPT so
+        # its own contract refuses it below ({Progress::Refold}'s rule). A filter
+        # that swallowed the unattributable line would skip exactly the record
+        # that most needs refusing.
         def mine(records)
           records.select { |record| TYPES.include?(record["type"].to_s) && mine?(record) }
         end
@@ -244,40 +200,30 @@ module Lain
           record["type"].to_s == ReviewOpened::JOURNAL_TYPE ? park(record) : release(record)
         end
 
-        # Guarded on the same contract the WRITE side uses, so a record that
-        # cannot be read whole aborts the rebuild rather than being skipped --
-        # {Progress::Refold}'s rule again. Both ways of getting it wrong are
-        # unsafe here: a skipped `review_opened` hands the baton back to lain
-        # while a human still holds the file, and a claim rebuilt with a blank
-        # path holds a baton no `open?` can ever release.
+        # Checked against the same contract the WRITE side uses, so a record that
+        # cannot be read whole aborts the rebuild rather than being skipped. Both
+        # ways of getting it wrong are unsafe: a skipped `review_opened` hands the
+        # baton back to lain while a human still holds the file, and a claim
+        # rebuilt with a blank path holds a baton no `open?` can ever release.
         #
-        # Two claims on ONE path are folded in, not refused. {Review#open}'s
-        # one-per-path rule guards a single live Review; a journal can still show
-        # two, because two Reviews for one epic (a wiring error -- the contract is
-        # one per slug) each guard only their own open set.
+        # Two claims on ONE path are folded in, not refused. Refusing them was a
+        # worse bug than the one it caught: the fold aborts where it raises, so
+        # the refusal was judged against a PREFIX of the journal, went on raising
+        # after both claims had settled, and left the epic permanently
+        # un-rebuildable -- the wedge this class exists to prevent, arriving
+        # through the guard added to prevent it. Carrying the doubled state
+        # instead refuses regeneration for at least as long as any refusal would
+        # have (the safe direction) and heals as the claims settle:
+        # {Review#open_generations} holds the EARLIEST claim on a path, and the
+        # path stays held until every claim on it has released.
         #
-        # Refusing that was a worse bug than the one it caught. The fold aborts
-        # where it raises, so the refusal was judged against a PREFIX of the
-        # journal: it went on raising after both claims had settled, and the
-        # epic became permanently un-rebuildable -- the wedge this whole class
-        # exists to prevent, arriving through the guard added to prevent it.
-        #
-        # So the doubled state is carried instead: {Review#open_generations}
-        # holds the EARLIEST claim on a path and the path stays held until every
-        # claim on it has released. That refuses regeneration for at least as
-        # long as any refusal would have (the safe direction), it heals itself
-        # as the claims settle, and a journal that is no longer inconsistent
-        # rebuilds cleanly.
-        #
-        # The same argument covers a claim on a generation that already CLOSED,
-        # which the same wiring error produces (both Reviews hand out 1, and
-        # either may settle first). The journal's last word on that number is
-        # that a human holds the file, so the fold says so and the baton stays
-        # releasable; leaving it in the settled set as well would tell that human
-        # their live review was already settled. There is no shape of journal
-        # this fold refuses to finish, and that is the property to keep.
+        # The same argument covers a claim on a generation that already CLOSED.
+        # The journal's last word on that number is that a human holds the file,
+        # so the fold says so; leaving it in the settled set as well would tell
+        # that human their live review was already settled. There is no shape of
+        # journal this fold refuses to finish, and that is the property to keep.
         def park(record)
-          Guards::ReviewOpened.check!(**common(record), graph_digest: record["graph_digest"])
+          Contracts::ReviewOpened.check!(**common(record), graph_digest: record["graph_digest"])
           generation = ReviewClaim.generation(record["generation"])
           @settled.delete(generation)
           @open[generation] = token(record, generation)
@@ -290,17 +236,17 @@ module Lain
         end
 
         def release(record)
-          Guards::ReviewClosed.check!(**common(record),
-                                      disk_digest: record["disk_digest"], changes: record["changes"],
-                                      lossy: record["lossy"], error: record["error"],
-                                      error_kind: record["error_kind"])
+          Contracts::ReviewClosed.check!(**common(record),
+                                         disk_digest: record["disk_digest"], changes: record["changes"],
+                                         lossy: record["lossy"], error: record["error"],
+                                         error_kind: record["error_kind"])
           generation = ReviewClaim.generation(record["generation"])
           @open.delete(generation)
           @settled << generation
         end
 
-        # The four members both halves share, which is exactly what
-        # {Guards::ReviewRecord} declares -- each half adds its own on top.
+        # The four members both halves share -- exactly what
+        # {Contracts::ReviewRecord} declares; each half adds its own on top.
         def common(record)
           { epic_slug: record["epic_slug"], path: record["path"],
             generation: ReviewClaim.generation(record["generation"]), written_digest: record["written_digest"] }
@@ -313,20 +259,14 @@ module Lain
       # ({#generation_for}), and therefore that it must not regenerate it. State
       # only: see {Unpromised} for why no promise comes back with it.
       #
-      # == It fails OPEN, and a caller must know that
-      #
-      # {Journal.records} skips any line it cannot parse -- its fd is shared with
-      # Rust tracing spans, so skipping foreign bytes is its contract rather than
-      # a lapse. A `review_opened` line torn by a crash is therefore never seen
-      # by the guard below: it is simply gone, the baton is LOST, and lain will
-      # happily regenerate a file a human is mid-edit in. That is the outcome
-      # this whole class exists to prevent, and the fold cannot close it from
-      # here.
-      #
-      # So `open?(path) == false` is not proof that nobody is holding the file.
-      # It means no readable claim says so. A surface that needs the stronger
-      # statement has to get it from somewhere the journal's skip contract does
-      # not reach.
+      # It fails OPEN, and a caller must know that. {Journal.records} skips any
+      # line it cannot parse -- its fd is shared with Rust tracing spans, so
+      # skipping foreign bytes is its contract rather than a lapse -- and a
+      # `review_opened` torn by a crash is therefore simply gone, the baton LOST,
+      # and lain will happily regenerate a file a human is mid-edit in. So
+      # `open?(path) == false` is not proof that nobody is holding the file; it
+      # means no readable claim says so, and a surface needing the stronger
+      # statement has to get it from outside the journal's skip contract.
       #
       # @param entries [Enumerable<Hash, String>] journal lines or records
       # @param journal [#<<] where {ReviewOpened} and {ReviewClosed} land
@@ -338,9 +278,8 @@ module Lain
       # @param journal [#<<] where {ReviewOpened} and {ReviewClosed} land
       # @param epic_slug [String] the epic whose artifacts this baton is for
       # @param replay [Replay] the open/settled sets and high-water generation
-      #   already folded from journal records; {.from_journal} builds one from
-      #   raw entries, and the default replays nothing so a bare `new` starts
-      #   empty.
+      #   already folded from journal records; the default replays nothing, so a
+      #   bare `new` starts empty
       def initialize(journal:, epic_slug:, replay: Replay.new([], epic_slug:))
         @journal = journal
         @epic_slug = -epic_slug.to_s
@@ -351,10 +290,10 @@ module Lain
 
       # Hand a document to a human and take the baton for it.
       #
-      # Journaled BEFORE the baton is held, which is {Approval::SignoffQueue}'s
-      # order and buys its one-directional invariant: nothing is ever held
-      # without a record behind it, so a crash between the two refuses a write
-      # the record would also have refused. The other order loses the claim.
+      # Journaled BEFORE the baton is held ({Approval::SignoffQueue}'s order):
+      # nothing is ever held without a record behind it, so a crash between the
+      # two refuses a write the record would also have refused. The other order
+      # loses the claim.
       #
       # @param path [String] the artifact's ABSOLUTE path -- the same string
       #   {Home::Journaled} asks {#open?} about
@@ -364,15 +303,14 @@ module Lain
       def open(path:, written:)
         # Through the record's own normalization, so a path held live and the
         # same path rebuilt from the record are one string. They diverged once
-        # (one side stripped, the other did not), and the symptom of that is the
-        # worst one this class has: a guard that silently stops guarding.
+        # (one side stripped, the other did not), and the symptom is the worst
+        # one this class has: a guard that silently stops guarding.
         path = ReviewClaim.path(path)
         refuse_second_opener!(path)
         # The counter advances BEFORE the record, so a journal write that raises
         # burns a generation rather than leaving the next open free to reuse it.
-        # A burned number costs nothing -- it simply never opens; a reused one
-        # settles somebody else's review ({Frontend::Neovim::Compose}'s counter
-        # is bumped before its RPC for the same reason).
+        # A burned number simply never opens; a reused one settles somebody
+        # else's review.
         generation = (@generation += 1)
         @journal << ReviewOpened.new(epic_slug: @epic_slug, path:, generation:,
                                      written_digest: written.byte_digest, graph_digest: written.graph_digest)
@@ -381,26 +319,20 @@ module Lain
                                       baseline: baseline_for(written), promise: Promise.new)
       end
 
-      # Whether anybody holds the baton for this path -- the whole of the duck
-      # {Home::Journaled} depends on. See {.from_journal} for why a `false` from
-      # a rebuilt Review is weaker than it looks.
+      # The whole of the duck {Home::Journaled} depends on. See {.from_journal}
+      # for why a `false` from a rebuilt Review is weaker than it looks.
       def open?(path) = !generation_for(path).nil?
 
-      # WHICH generation releases this path, or nil when nobody holds it.
-      #
-      # The reader a restart needs: without it the rebuilt baton could be
-      # observed ({#open?}) and never released, since {#settle} takes a
-      # generation and the only other way to learn one is to re-fold the journal
-      # by hand.
+      # WHICH generation releases this path, or nil when nobody holds it -- the
+      # reader a restart needs. Without it the rebuilt baton could be observed
+      # ({#open?}) and never released, since {#settle} takes a generation and the
+      # only other way to learn one is to re-fold the journal by hand.
       def generation_for(path) = open_generations[ReviewClaim.path(path)]
 
-      # Everything being held, as `path => generation` -- what a surface renders
-      # when it has to tell a human which files they are still holding, and the
-      # ONE place "who holds this path" is decided, so {#open?} and
-      # {#generation_for} cannot answer it differently.
-      #
-      # `||=` keeps the EARLIEST claim when a rebuilt journal shows two on one
-      # path (see {Replay#park}); a later one shadows nothing and releases
+      # Everything being held, as `path => generation`, and the ONE place "who
+      # holds this path" is decided, so {#open?} and {#generation_for} cannot
+      # answer it differently. `||=` keeps the EARLIEST claim when a rebuilt
+      # journal shows two on one path (see {Replay#park}); a later one releases
       # separately, so the path frees when the last of them settles.
       def open_generations
         @open.each_value.with_object({}) { |token, holders| holders[token.path] ||= token.generation }
@@ -414,10 +346,9 @@ module Lain
       # open set releases, so a journal write that raises leaves the review open,
       # which refuses a regeneration rather than allowing one.
       #
-      # @param generation [Integer, String] the token's generation, as the editor
-      #   hands it back; read through {WireInteger} exactly as the record reads
-      #   it, so the wire's `"3"` and a token's `3` name one review and `"3junk"`
-      #   names none
+      # @param generation [Integer, String] the token's generation as the editor
+      #   hands it back, read through {WireInteger} exactly as the record reads
+      #   it, so the wire's `"3"` and a token's `3` name one review
       # @param disk [String] the bytes found on disk now
       # @param annotations [Array<Hash>] the notes the human left, as the editor
       #   sends them ({Annotations} says what shape that is)
@@ -437,35 +368,26 @@ module Lain
       # Give the baton back without a settlement, because the hand-over never
       # happened.
       #
-      # The case is narrow and it is deliberately NOT a settle: something raised
-      # between {#open} and the human being told the file is theirs, so nobody
-      # was handed anything, no editor buffer exists to send `done` from, and no
-      # route to {#settle} was ever bound. Left open, that claim is DURABLE --
-      # {ReviewOpened} is journaled before the token comes back -- so a restarted
-      # lain would go on refusing every write to this epic with no user-reachable
-      # escape at all.
+      # Deliberately NOT a settle: something raised between {#open} and the human
+      # being told the file is theirs, so nobody was handed anything, no editor
+      # buffer exists to send `done` from, and no route to {#settle} was ever
+      # bound. Left open, that claim is DURABLE -- {ReviewOpened} is journaled
+      # before the token comes back -- so a restarted lain would go on refusing
+      # every write to this epic with no user-reachable escape. Journaled for
+      # that reason: an in-memory release would leave the journal saying open,
+      # and the next {.from_journal} would rebuild the wedge.
       #
-      # Journaled for exactly that reason: an in-memory release would leave the
-      # journal saying open, and the next {.from_journal} would rebuild the wedge
-      # this method exists to prevent.
+      # It closes with {ReviewClosed} rather than a record of its own, because an
+      # abandon IS a close that compared nothing -- the shape that record already
+      # carries -- so {Replay#release} needs no new branch. `disk_digest` is the
+      # WRITTEN digest as a statement rather than a placeholder: nothing came
+      # back because nothing went out. `lossy: false` is UNMEASURED, not measured
+      # false, as in {Recalled}.
       #
-      # It closes with {ReviewClosed} rather than a record of its own, because
-      # {Replay#release} already folds that record and already reads
-      # `error`/`error_kind`. An abandon IS a close that compared nothing, which
-      # is the shape that record already carries, so the fold needs no new
-      # branch and no reader needs teaching.
-      #
-      # `disk_digest` is the WRITTEN digest, and that is a statement rather than
-      # a placeholder: nothing came back because nothing went out, so what is on
-      # disk is what lain wrote. `lossy: false` is UNMEASURED, not measured false
-      # -- {Recalled}'s own distinction, and `error_kind` is what keeps them
-      # apart.
-      #
-      # The promise is deliberately NOT resolved. Nobody reviewed anything, so
-      # there is no delta to hand anyone and a fabricated one would report a
-      # review that never happened. The only caller raises past its own await, so
-      # no fiber is left waiting; a caller that abandons a review it also intends
-      # to await has to answer that for itself.
+      # The promise is deliberately NOT resolved: nobody reviewed anything, so a
+      # fabricated delta would report a review that never happened. The only
+      # caller raises past its own await; one that abandons a review it also
+      # intends to await has to answer that for itself.
       #
       # @param generation [Integer, String] the token's generation, read exactly
       #   as {#settle} reads it
@@ -491,13 +413,11 @@ module Lain
                          error: reason.to_s, error_kind: Abandoned.name)
       end
 
-      # The wire's refusal is a record's refusal (ArgumentError), and this is the
-      # one place that is the wrong exception: the only caller
-      # ({CLI::HumanReplies::Reviews#settle}) rescues {NotOpen} to render the
-      # editor a refusal, and anything else escapes and kills the fiber reading
-      # the editor's replies -- so one stale buffer would take the whole reply
-      # loop down with it. A generation that is not a generation names no open
-      # review, which is exactly what {NotOpen} says.
+      # The wire's refusal is an ArgumentError, and this is the one place that is
+      # the wrong exception: the only caller ({CLI::HumanReplies::Reviews#settle})
+      # rescues {NotOpen} to render the editor a refusal, and anything else
+      # escapes and kills the fiber reading the editor's replies -- so one stale
+      # buffer would take the whole reply loop down with it.
       def read_generation(generation)
         ReviewClaim.generation(generation)
       rescue ArgumentError => e
@@ -509,11 +429,10 @@ module Lain
         @settled << generation
       end
 
-      # Which baseline compares this written side, decided in ONE place because
-      # it is one question. `graph_digest` is where "there is nothing structural
-      # to compare" is already structural rather than conventional: prose has no
-      # way to acquire one ({Intake::Prose}), so nil is a property of the
-      # artifact and not a flag a caller has to remember to pass.
+      # `graph_digest` is where "there is nothing structural to compare" is
+      # already structural rather than conventional: prose has no way to acquire
+      # one ({Intake::Prose}), so nil is a property of the artifact and not a
+      # flag a caller has to remember to pass.
       def baseline_for(written) = written.graph_digest.nil? ? ProseBaseline.new(written) : Baseline.new(written)
 
       def journal_settlement(closed, notes)
@@ -522,11 +441,11 @@ module Lain
       end
 
       # Built BEFORE anything is journaled, which is the whole reason this is its
-      # own method. A note the record refuses -- a human who typed nothing, an
-      # unreadable line -- raises here, where the journal and the baton still
-      # agree that the review is open and the human can hand it back again. Built
-      # after the settlement, the same refusal left the journal saying settled
-      # while the baton was still held and nobody's promise had resolved.
+      # own method: a note the record refuses raises here, where the journal and
+      # the baton still agree that the review is open and the human can hand it
+      # back again. Built after the settlement, the same refusal left the journal
+      # saying settled while the baton was still held and nobody's promise had
+      # resolved.
       def notes_for(token, annotations, disk)
         Annotations.resolve(annotations, disk)
                    .map { |note| Annotation.new(epic_slug: @epic_slug, generation: token.generation, **note) }
@@ -546,10 +465,9 @@ module Lain
                            "generation, leaving whoever awaits it waiting on a settle that cannot name it"
       end
 
-      # Names WHICH way the generation is not open, because the two are different
-      # situations for the human at the other end: a second `done` on a review
-      # they already handed back, versus a buffer left over from a process that
-      # has since restarted.
+      # Names WHICH way the generation is not open: a second `done` on a review
+      # they already handed back is a different situation for the human than a
+      # buffer left over from a process that has since restarted.
       def refuse_stale!(generation)
         raise NotOpen, "review generation #{generation} #{state_of(generation)} for epic " \
                        "#{@epic_slug.inspect}, so there is nothing to settle"

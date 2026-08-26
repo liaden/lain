@@ -6,55 +6,41 @@ module Lain
     # (namespace/class/method/function/interface/type) and reference occurrences
     # -- read structurally from the parsed syntax tree.
     #
-    # This is the raw-tree-sitter counterpart to CodeOutline's ast-grep pattern
-    # catalog: instead of a fixed set of metavariable templates, it runs lain's
-    # OWN hand-authored role query (Structural::Queries) through Ext::TreeSitter,
-    # whose captures bind the identifier node DIRECTLY to a role. That richer
-    # query buys named ROLES (a `definition.interface` vs a `definition.class`)
-    # and REFERENCES (call sites), which the pattern catalog does not model.
+    # The raw-tree-sitter counterpart to {CodeOutline}'s ast-grep pattern
+    # catalog: it runs lain's own role query through Ext::TreeSitter, whose
+    # captures bind the identifier node DIRECTLY to a role. That buys named
+    # ROLES and REFERENCES, which the pattern catalog does not model.
     #
-    # Because matching is structural, an identifier that only APPEARS inside a
-    # comment or a string literal is never reported -- the whole point next to a
-    # regex outline. Nesting is deliberately flat: each entry carries only its
-    # own line, ordered by position; a real scope tree is a separate concern.
+    # Because matching is STRUCTURAL, an identifier that only appears inside a
+    # comment or a string literal is never reported. Nesting is deliberately
+    # flat: each entry carries only its own line, ordered by position.
     class FileSymbols < Tool
-      # A symbol table is an ENUMERATION under {Tool::Bounds}' stated boundary,
-      # and it is the only tool here with TWO of them. DEFINITIONS and
-      # REFERENCES are separate sections with separate true counts, so one
-      # shared bound taken before the partition would let a definition-heavy
-      # file spend the whole budget and return an empty REFERENCES heading --
-      # a partial answer that reads like a complete one, which is precisely the
-      # failure the boundary exists to prevent. Two bounds, two notices, two
-      # counts.
+      # The only tool here with TWO bounds. DEFINITIONS and REFERENCES are
+      # separate sections with separate true counts, so one shared bound taken
+      # before the partition would let a definition-heavy file spend the whole
+      # budget and return an empty REFERENCES heading -- a partial answer that
+      # reads like a complete one.
       #
-      # Definitions take {CodeOutline::BOUND}'s 200: it is the same question
-      # with roles attached. The measurement is this tool's own, not that one's
-      # -- a role query finds more than a pattern catalog does, so the densest
-      # DEFINITIONS section over the repo's 647 `lib/**/*.rb` is **135**
-      # (`lib/lain/review/docent.rb`) where the same file outlines at 80. 200
-      # clears both.
+      # Definitions take {CodeOutline::BOUND}'s 200, the same question with
+      # roles attached, though the measurement is this tool's own: a role query
+      # finds more, so the densest DEFINITIONS section over the repo's 647
+      # `lib/**/*.rb` is 135 where the same file outlines at 80.
       #
       # References get 500 because call sites outnumber definitions, and the
-      # multiple is the number: measured over the 182 `lib/` files with more
-      # than 20 definitions, the reference:definition ratio has a MEDIAN of
-      # **2.45** and a maximum of 4.26. 500/200 is 2.5, so the two sections fill
-      # at about the same rate on real source -- which is the property being
-      # bought. One shared cap would truncate references on ordinary files while
-      # the definition section never filled, making the cap a fact about the
-      # tool rather than about the file.
+      # MULTIPLE is the number: over the 182 `lib/` files with more than 20
+      # definitions, the reference:definition ratio has a median of 2.45 and a
+      # maximum of 4.26. 500/200 is 2.5, so the two sections fill at about the
+      # same rate on real source. One shared cap would truncate references on
+      # ordinary files while the definition section never filled, making the cap
+      # a fact about the TOOL rather than about the file.
       #
-      # The anchor is denominated per OBSERVATION, and this is the only tool
-      # here that emits two sections, so its worst case is the sum: 700 rows at
-      # a measured 22.7 B (110 `lib/` files of over 100 rows) is **~16 KB**,
-      # which is {Grep}'s ~14 KB band rather than a second helping of it.
+      # Worst case is the sum: 700 rows at a measured 22.7 B is ~16 KB, which is
+      # {Grep}'s ~14 KB band rather than a second helping of it.
       DEFINITIONS_BOUND = Tool::Bounds::Enumeration.new(limit: 200, unit: "definitions")
       REFERENCES_BOUND = Tool::Bounds::Enumeration.new(limit: 500, unit: "references")
 
-      # Built from the two bounds rather than written out beside them, so the
-      # numbers the model is told and the numbers enforced cannot drift. It
-      # lives here, next to what it reads, instead of inside {#description}:
-      # two bounds take two clauses, and the sentence is the only part of that
-      # string that is derived rather than prose.
+      # Built FROM the two bounds rather than written out beside them, so the
+      # numbers the model is told and the numbers enforced cannot drift.
       CAP_NOTE = "Each section caps separately, at #{DEFINITIONS_BOUND.limit} definitions and " \
                  "#{REFERENCES_BOUND.limit} references; a capped section says so and names its true count."
                  .freeze
@@ -86,10 +72,9 @@ module Lain
       end
 
       # Audited: reads Session#worker_env.cwd (a value read, not a mutation) to
-      # resolve the path, then one file (File.read), run through
-      # Ext::TreeSitter.query -- documented stateless (treesitter.rs: "Every
-      # call is STATELESS", no ext-side index handle to keep). No Session write,
-      # no chdir, no process-global state.
+      # resolve the path, then one file, run through Ext::TreeSitter.query,
+      # documented stateless. No Session write, no chdir, no process-global
+      # state.
       def parallel_safe? = true
 
       protected
@@ -101,37 +86,31 @@ module Lain
 
         language = input.language.downcase.to_sym
         # `encoding:` is not decoration: a bare File.read tags its result with
-        # Encoding.default_external, which under a C locale (containers, systemd
-        # units) is US-ASCII -- so every ordinary UTF-8 file would come back
-        # mislabelled and the ext would refuse it, truthfully but uselessly.
+        # Encoding.default_external, US-ASCII under a C locale, so every
+        # ordinary UTF-8 file would come back mislabelled and the ext would
+        # refuse it -- truthfully but uselessly.
         source = File.read(path, encoding: Encoding::UTF_8)
         Tool::Result.ok(render(occurrences(source, language)))
       rescue Structural::Queries::Unsupported, Structural::Queries::Missing, Ext::TreeSitter::BadQuery => e
         Tool::Result.error(e.message)
-      # `EncodingError` joins the unreadable-file arm rather than earning its
-      # own: the ext refuses a source it would have to transcode, because the
-      # byte offsets this tool turns into line numbers would then index a copy
-      # the caller never sees (ext/lain/src/read_text.rs). To the model that is
-      # the same answer as any other "this file cannot be read" -- and it must
-      # land here, not escape #call, which no Tool does with a question the
-      # model asked.
+      # `EncodingError` joins the unreadable-file arm: the ext refuses a source
+      # it would have to transcode, because the byte offsets this tool turns
+      # into line numbers would then index a copy the caller never sees. To the
+      # model that is the same answer as any other "this file cannot be read".
       rescue SystemCallError, IOError, EncodingError => e
         Tool::Result.error("could not read #{path}: #{e.message}")
       end
 
       private
 
-      # A relative path resolves against the session's WorkerEnv cwd (Dir.pwd
-      # under the default, so byte-identical to a raw File.read); an absolute
-      # one is honored as given. Same rule, same shape, as {ReadFile}
-      # and {Grep#resolved_path}.
+      # Same rule, same shape, as {ReadFile} and {Grep#resolved_path}.
       def resolved_path(input, invocation)
         File.expand_path(input.path, session_of(invocation).worker_env.cwd)
       end
 
-      # Shared with ReadFile/CodeOutline: a missing path, a directory, or an
-      # unreadable file is a reasonable question the model asked, so it earns an
-      # error Result it can act on rather than a raise.
+      # A missing path, a directory, or an unreadable file is a reasonable
+      # question the model asked, so it earns an error Result rather than a
+      # raise.
       def problem_with(path)
         return "no such file: #{path}" unless File.exist?(path)
         return "is a directory, not a file: #{path}" if File.directory?(path)
@@ -140,11 +119,10 @@ module Lain
         nil
       end
 
-      # One captured symbol: a 1-based line, its kind ("definition"/"reference"),
-      # the role within that kind ("method", "call", ...), and the identifier
-      # text. The capture name Ext::TreeSitter returns is "<kind>.<role>", which
-      # split() turns into exactly these two halves. Named Occurrence, not
-      # Symbol, to avoid shadowing Ruby's core ::Symbol inside this class.
+      # A 1-based line, its kind, the role within that kind, and the identifier
+      # text. Ext::TreeSitter returns a capture name of "<kind>.<role>", which
+      # split() turns into exactly these two halves. Named Occurrence rather
+      # than Symbol, to avoid shadowing Ruby's core ::Symbol in this class.
       Occurrence = Data.define(:line, :kind, :role, :name)
       private_constant :Occurrence
 

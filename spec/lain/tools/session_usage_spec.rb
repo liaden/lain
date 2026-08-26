@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
-# F77: asked what the session had spent, the agent invented a metrics table --
-# a wrong model name and fabricated memory/CPU/RTT figures -- while eight
-# `turn_usage` records carrying the true answer sat in the journal it had just
-# written. The defect was reachability, not honesty: nothing in the toolset
+# THE DEFECT. Asked what the session had spent, the agent invented a metrics
+# table -- a wrong model name and fabricated memory/CPU/RTT figures -- while
+# eight `turn_usage` records carrying the true answer sat in the journal it had
+# just written. It was reachability, not honesty: nothing in the toolset
 # could answer the question, so the model answered it anyway. These examples
 # pin the true answer being reachable, and pin the report to the numbers the
 # run actually accrued rather than to any number this tool could compute.
@@ -12,7 +12,7 @@ RSpec.describe Lain::Tools::SessionUsage do
   # RUN accrued: `Agent#usage` delegates to {Lain::Agent::Accounting}, which
   # folds each Response's usage into the monoid. Stubbing `#usage` would assert
   # the tool formats whatever it is handed and nothing about the seam that made
-  # F77 possible.
+  # the defect possible.
   def agent_over(*responses)
     Lain::Agent.new(provider: Lain::Provider::Mock.new(responses:),
                     toolset: Lain::Toolset.new([]),
@@ -61,7 +61,7 @@ RSpec.describe Lain::Tools::SessionUsage do
 
     # The two derived quantities {Lain::Usage} owns, reported rather than left
     # for the model to add up -- an arithmetic step it takes is an arithmetic
-    # step it can get wrong, which is the same failure class as F77 in miniature.
+    # step it can get wrong, which is the same failure class in miniature.
     it "reports the totals Usage derives, so the model never adds them itself" do
       expect(rows(report_for(agent))).to include("total input" => "117", "total" => "124")
     end
@@ -87,9 +87,9 @@ RSpec.describe Lain::Tools::SessionUsage do
   # ---- Scenario: a fresh run reports zero rather than refusing ---------------
 
   # Zero here is MEASURED, not defaulted: the Accounting of an agent that has
-  # asked nothing really is `Usage.zero`. The distinction is the card's whole
-  # point -- a zero the tool invented because it could not reach the accounting
-  # would be F77 with better formatting, which is why nothing in the
+  # asked nothing really is `Usage.zero`. The distinction is the whole point --
+  # a zero the tool invented because it could not reach the accounting would be
+  # that same invention with better formatting, which is why nothing in the
   # implementation coalesces a missing collaborator to a zero.
   describe "an agent that has observed no responses" do
     it "reports zero tokens" do
@@ -108,7 +108,7 @@ RSpec.describe Lain::Tools::SessionUsage do
   # ledger over a resumed Timeline. This tool therefore reports the RUN, not the
   # session lifetime.
   #
-  # Pinned rather than left implicit because the failure mode is F77's own: a
+  # Pinned rather than left implicit because the failure mode is the same one: a
   # confidently formatted under-report is as wrong as a confidently formatted
   # invention, and the model would present it as lifetime spend on the strength
   # of the description alone. True session-lifetime accounting across a resume
@@ -131,11 +131,11 @@ RSpec.describe Lain::Tools::SessionUsage do
 
   # ---- Scenario: an unwired tool refuses by name, and never answers zero -----
 
-  # Promoted from the nil-agent probe. The card's escalation trigger is a claim
+  # Promoted from the nil-agent probe. The escalation trigger is a claim
   # about this file -- never coalesce a missing thunk to Usage::ZERO -- and
   # until these examples existed it held only because `nil.usage` happens to
   # raise. A later `@usage&.call || Lain::Usage.zero` would have shipped green
-  # with nothing in the suite to stop it, which is precisely the F77 shape the
+  # with nothing in the suite to stop it, which is precisely the shape the
   # tool exists to remove, reintroduced inside the fix.
   describe "an instance with no accounting to read" do
     # SHAPED like the thunk Wiring actually ships -- `-> { @agent&.usage }` over

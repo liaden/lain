@@ -13,22 +13,20 @@ module Lain
     #
     # == Why the memory ceiling lives here rather than only on the read
     #
-    # {Tools::MemoryRead} refuses a body it cannot hand back, and a ceiling on
-    # the read alone would be an asymmetry with no way out: this tool would
-    # accept a body its sibling then refused FOREVER, and the model would be
-    # told to shorten bytes it can no longer see. So the ceiling is on the
-    # write, where the model still holds them and "write less" or "split it
-    # across ids" are moves it can actually make. Bounded no higher than the
-    # read's, it makes that one unreachable through the toolset -- which is
-    # what lets the read's ceiling be described as the runaway guard it is.
+    # A ceiling on the read ALONE would be an asymmetry with no way out: this
+    # tool would accept a body its sibling then refused FOREVER, and the model
+    # would be told to shorten bytes it can no longer see. Here the model still
+    # holds them, so "write less" and "split across ids" are moves it can make.
+    # Bounded no higher than the read's, it makes that one unreachable through
+    # the toolset -- which is what lets it be the runaway guard it claims to be.
     class MemoryWrite < Tool
       # Matched to {Tools::MemoryRead::BOUND}: a write this tool accepts must
-      # be a read that tool can serve, and the pair is asserted rather than
-      # remembered (`spec/lain/tools/memory_write_spec.rb`).
+      # be a read that tool can serve, and the pair is ASSERTED rather than
+      # remembered.
       BOUND = Tool::Bounds::Artifact.new(limit: 256 * 1024)
 
-      # Both are non-destructive and both are available while the bytes are
-      # still in hand, which is the whole reason this ceiling is on the write.
+      # Both are non-destructive and available while the bytes are still in
+      # hand, which is the whole reason this ceiling is on the write.
       NARROWER = [
         "write less -- keep the body to what a later read actually needs",
         "split it across several ids, one subject each, so the manifest can point at the right one"
@@ -64,12 +62,10 @@ module Lain
 
       protected
 
-      # Blank fields never get here: ActiveModel's presence validation
-      # (required: true) rejects them in #validate_input!, with its generic
-      # message. The one Item rejection that reaches this rescue is
-      # #one_line's, for a multi-line id or description -- reported the way
-      # MemoryRead reports an unknown id: as an error Result the model can
-      # act on, not a raise that only Effect::Handler::Live would catch.
+      # Blank fields never get here -- `required: true` rejects them in
+      # #validate_input!. The one {Memory::Item} rejection that reaches this
+      # rescue is a multi-line id or description, reported as an error Result
+      # the model can act on rather than a raise.
       def perform(input, _invocation)
         refusal = too_large(input)
         return refusal if refusal
@@ -84,9 +80,8 @@ module Lain
       private
 
       # Asked BEFORE {Memory::Item}, so an oversized body is never hashed and
-      # never reaches the store -- the refusal costs a `bytesize`, and nothing
-      # it refuses is recorded. Shaped like {Tools::ReadFile}'s `problem_with`:
-      # the reason, or nothing.
+      # never reaches the store: the refusal costs a `bytesize`, and nothing it
+      # refuses is recorded.
       def too_large(input)
         size = input.body.bytesize
         return nil if BOUND.admits?(size)

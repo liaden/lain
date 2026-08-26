@@ -110,6 +110,43 @@ looks, because **ollama's own defaults are wrong for this workload**:
 "How these were measured" section first — the prompt cache fabricates prefill rates, and
 "offloaded N/N layers to GPU" does not mean the model is resident.
 
+## Two context numbers, and only one is a denominator
+
+Ollama publishes two different context lengths, and `Provider::Ollama` keeps them behind two
+separate methods on purpose — `#context_window_tokens` and `#trained_context_tokens` — because
+mistaking one for the other is a silent 8x error.
+
+- **`/api/show`'s `model_info.<arch>.context_length`** is the GGUF's **trained maximum**:
+  262,144 for `qwen3-coder:30b`. It is always available and is **never a denominator**. Divide
+  occupancy by it and occupancy under-reports 8x, so compaction never fires — a worse failure
+  than the crash compaction exists to prevent. Its one legitimate use is refusing a `--num-ctx`
+  no runner could ever serve.
+- **`/api/ps`'s per-runner `context_length`** is what the **loaded runner is actually serving**:
+  `min(trained, OLLAMA_CONTEXT_LENGTH, per-request num_ctx)`, which is 32,768 on this box (see
+  `DEBUGGING_OLLAMA.md`). `/api/ps` states the served figure or nobody does, so `nil` — no
+  resident runner, or an unreachable server — is the **ordinary** answer and leaves
+  `ContextWindow`'s conservative fallback in charge.
+
+**A caller that sends `num_ctx` owns the `min`.** Ollama reloads a runner whose `NumCtx` differs
+from the request's (`sched.go`'s `needsReload`), so a runner left at 32,768 by `ollama run`, by a
+sibling session, or by an earlier turn reports 32,768 while the very next request — carrying an
+explicit `num_ctx` of 8,192 — is served 8,192. The provider cannot see the request, so the
+caller must take the minimum of the reported window and its own flag.
+
+### What the probe costs
+
+Measured 2026-08-17 on loopback: ~0.27 ms warm, ~0.3 ms with the server down. Cheap enough to
+ask **per turn**, which is what staying correct across a reload requires — memoizing it is what
+would make the stale-runner case above permanent rather than momentary.
+
+The case that does bite is a **black-holed host**. `--api-base http://10.255.255.1:11434` spends
+the full `Transport::PROBE_TIMEOUT_SECONDS`, measured **2,002 ms per call**, and
+`Middleware::ResolveWindow` re-asks at the top of every agent-loop iteration for as long as the
+window book stays a guess — measured at **+20 s on a ten-tool-call turn** before it was bounded.
+`CLI::Backend::WindowBook::Live::REASK_LIMIT` bounds it now, at `1 + REASK_LIMIT` probes per
+session. A merely *down* ollama is unaffected: it answers ECONNREFUSED in ~0.3 ms rather than
+dropping packets.
+
 ## Running the integration specs
 
 The `:ollama` specs (`spec/integration/provider/ollama_spec.rb`) are gated exactly

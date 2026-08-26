@@ -7,62 +7,40 @@ module Lain
     # restarted mid-review resumes rather than losing everything a human did
     # (octo#118 and octo#980 are both this problem, unsolved).
     #
-    # It is the only object holding both halves of a review, which is why two
-    # things that look like they belong elsewhere are here and two that look
-    # like they belong here are not.
+    # It is the only object holding both halves, which is why {MarkedChangeset}
+    # is built here: a {Changeset} knows structure and nothing about review
+    # state, and {Marks} knows review state and nothing about files.
     #
-    # == It holds the join no other object can make
+    # THE PRESENTED SCOPE IS VIEW STATE and is not held. {#present} takes it as
+    # an argument and forgets it -- which of {Partition::STRATEGIES} is on screen
+    # belongs to whoever is drawing, and "the surface holds no review state" is
+    # right about annotations and marks and wrong about that. It is still
+    # validated here, because this is the one place every surface is reached
+    # through. Two refusals, kept apart deliberately; {Scope} is where the
+    # reasoning for the split is written.
     #
-    # {MarkedChangeset} is built here because a {Changeset} knows structure and
-    # nothing about review state, and {Marks} knows review state and nothing
-    # about files. See its own doc; every surface's `present` takes one.
+    # ADMISSIBILITY IS A POLICY, injected. {Verdict::Policy} decides whether a
+    # verdict may stand and this object only asks -- a rule you cannot swap is a
+    # rule you cannot experiment with on a bench.
     #
-    # == The presented SCOPE is view state, and is not held
+    # A VERDICT IS PUSHED, NEVER PULLED. Nothing here calls `surface.verdict`; a
+    # decision arrives as a gesture reaching {#submit}, so the `nil` that
+    # {Surface::Null#verdict} answers never reaches this object. {#verdict} in
+    # turn answers {Verdict::None} rather than nil, so no CALLER nil-checks
+    # either.
     #
-    # {#present} takes the scope as an argument and forgets it. Which of
-    # {Partition::STRATEGIES} is on screen belongs to whoever is drawing -- "the
-    # surface holds no review state" is right about annotations and marks and
-    # wrong about that. It is still validated here, because this is the one
-    # place every surface is reached through, and a typo'd scope must fail
-    # loudly rather than fall through to whichever branch a bare `==` left as
-    # default.
+    # ANNOTATIONS ARE ROUND-SCOPED: produced, consumed, then historical. Nothing
+    # re-anchors a note onto a later round, which is what lets lain skip the
+    # cross-round re-anchoring all three surveyed projects punt on.
     #
-    # TWO refusals, and keeping them apart is deliberate. Both live on {Scope},
-    # which is where the reasoning for the split is written; {#present} is what
-    # asks them, in the order that matters.
-    #
-    # == Admissibility is a POLICY, injected
-    #
-    # {Verdict::Policy} decides whether a verdict may stand; this object only
-    # asks. Its interaction with the `deferred` gate is an open question, and a
-    # rule you cannot swap is a rule you cannot experiment with on a bench.
-    #
-    # == A verdict is PUSHED, never PULLED
-    #
-    # Nothing here calls `surface.verdict`. A decision arrives as a gesture
-    # reaching {#submit}, the same way a mark or a note does, so the `nil` that
-    # {Surface::Null#verdict} answers never reaches this object and no guard is
-    # needed for it. {#verdict} in turn answers {Verdict::None} rather than nil,
-    # so no CALLER nil-checks either -- which is what that comment at
-    # `Surface::Null#verdict` asked this card to settle.
-    #
-    # == Annotations are round-scoped
-    #
-    # Produced, consumed, then historical. Nothing re-anchors a note onto a
-    # later round -- which is precisely what lets lain skip the cross-round
-    # re-anchoring all three surveyed projects punt on. {Replay} says how a
-    # round is bounded.
-    #
-    # == Every presentation is size-bounded, because this is where every one passes
-    #
-    # {Bounds} is injected and {#present} is its ONLY caller in the tree
-    # (`spec/lain/review/bounds_spec.rb` pins that count mechanically). It used
-    # to be called from {Lain::CLI::Review#present} instead, which bounded the
-    # one text command that remembered to ask and left every editor surface
-    # unguarded -- `/review` of an 800-file pull request drew all of it. The fix
-    # was not a second caller: the guard belongs at the one place a surface is
-    # reached, so "bounded" is a property of PRESENTING rather than of whichever
-    # command happened to be written with it in mind.
+    # EVERY PRESENTATION IS SIZE-BOUNDED, because this is where every one passes.
+    # {Bounds} is injected and {#present} is its ONLY caller in the tree. It used
+    # to be called from {Lain::CLI::Review#present}, which bounded the one text
+    # command that remembered to ask and left every editor surface unguarded --
+    # `/review` of an 800-file pull request drew all of it. The fix was not a
+    # second caller: the guard belongs at the one place a surface is reached, so
+    # "bounded" is a property of PRESENTING rather than of whichever command
+    # happened to be written with it in mind.
     class Session
       # {.from_journal} was given a journal that opened no review here. Refused
       # rather than answered with an empty session: the two are indistinguishable
@@ -99,20 +77,15 @@ module Lain
 
       # The changeset's content address, and what {ReviewVerdict} judges.
       #
-      # ASKED, not composed. This method used to know what a changeset was made
-      # of -- base, paths, statuses, hunk keys -- which meant one method here had
-      # to know what every KIND of source was made of, and there is exactly one
-      # {Review::Changeset} class, so a second kind could only have been served
-      # by a type test. Now the object that HAS the parts supplies them: the
-      # changeset forwards to its source, and the source answers a
-      # {Source::Identity} carrying its scheme and its parts together. Nothing
-      # anywhere on this path asks what it is holding.
+      # ASKED, not composed. This used to know what a changeset was made of --
+      # base, paths, statuses, hunk keys -- which meant one method here had to
+      # know what every KIND of source was made of, and a second kind could only
+      # have been served by a type test. Now the object that HAS the parts
+      # supplies them, and nothing on this path asks what it is holding.
       #
       # A diff source composes exactly what this method composed, so every
       # `/review` address is bit-identical across the change and every journalled
-      # `changeset_digest` still joins. `session_spec.rb` pins that against a
-      # recomposition built here, independently, from
-      # {MarkedChangeset.keys_by_path}.
+      # `changeset_digest` still joins.
       #
       # @param changeset [Review::Changeset]
       # @return [String] scheme-prefixed hex digest
@@ -192,16 +165,16 @@ module Lain
       # @return [ChangesetOpened] the head of the round, as journaled
       attr_reader :opened
 
-      # The judgement that closed this round, with the changeset it judged on
-      # it -- {ReviewVerdict}, or {Verdict::None} when there is none.
+      # The judgement that closed this round, with the changeset it judged on it
+      # -- {ReviewVerdict}, or {Verdict::None} when there is none.
       #
       # Kept beside {#verdict} rather than folded into it, because they answer
-      # different questions and only one of them is renderable. `#verdict` is
-      # the WORD, and its null renders as nothing; this is the RECORD, and
-      # `changeset_digest` is the field {ReviewVerdict} makes mandatory
-      # precisely so that a verdict read back is never a judgement of nothing.
-      # A resumed session needs it: the diff may have moved on since, so "what
-      # was approved" and "what is on screen" are different addresses.
+      # different questions and only one is renderable. `#verdict` is the WORD,
+      # and its null renders as nothing; this is the RECORD, whose
+      # `changeset_digest` is what keeps a verdict read back from being a
+      # judgement of nothing. A resumed session needs it: the diff may have moved
+      # on, so "what was approved" and "what is on screen" are different
+      # addresses.
       #
       # @return [ReviewVerdict, Verdict::None]
       attr_reader :judgement
@@ -227,25 +200,18 @@ module Lain
       # @return [String] what produced the changeset
       def source = @opened.source
 
-      # Whether the changeset has moved UNDER this round -- which is a different
-      # question from whether it has moved since the round opened, and the
-      # difference is the whole of what accretion needs.
-      #
-      # This is what CONSUMES the digests the journal carried and nothing here
-      # read -- a field with no reader is a field that quietly stops being true.
-      # A resume is the case it exists for: the author goes on working,
-      # {.from_journal} reconciles the marks against the changeset as it stands
-      # NOW, and a surface that says nothing about the difference shows a review
-      # of one diff over another. Both sides are content addresses ({.digest}),
-      # so an amend that changed nothing answers false.
+      # Whether the changeset has moved UNDER this round -- a different question
+      # from whether it has moved since the round opened, and the difference is
+      # the whole of what accretion needs. This is what CONSUMES the digests the
+      # journal carried and nothing here read; a field with no reader is a field
+      # that quietly stops being true. Both sides are content addresses, so an
+      # amend that changed nothing answers false.
       #
       # It reads the LAST digest put on record rather than the opened one, and
       # that is {#widen}'s doing: a widening is something the human asked for, so
       # a survey reporting itself regenerated the moment it grew would say the
       # ground had shifted when nothing had. For a changeset there are no
-      # extension records at all, so last-recorded IS the opened digest and
-      # `/review` reads exactly as it always did -- which `session_spec.rb`'s own
-      # group pins, untouched.
+      # extension records at all, so last-recorded IS the opened digest.
       #
       # @return [Boolean]
       def regenerated? = @recorded_digest != digest
@@ -257,19 +223,17 @@ module Lain
       # miss a field -- but a live review is HELD: {Handover} and
       # {Frontend::Neovim::ReviewView} hold this object, and a widening that
       # swapped the instance would strand them holding the round as it was.
-      # Identity for the holders is the requirement; the inventory below is its
-      # price, and it is exactly three -- `@changeset`, `@marks` and the two
-      # digests, of which only `@digest` is a memo. The memos this method used to
-      # have to invalidate are gone: {#keys_by_path} and {#marked} are both
-      # deliberately un-memoized, for the reason this method would need them to
-      # be ("a stale view is exactly the defect a marker exists to prevent").
+      # Identity for the holders is the requirement; the inventory is its price,
+      # and it is exactly three -- `@changeset`, `@marks` and the two digests, of
+      # which only `@digest` is a memo. The memos this method used to invalidate
+      # are gone: {#keys_by_path} and {#marked} are both deliberately
+      # un-memoized.
       #
       # {Widening} owns the decision, the record and the ordering that keeps a
-      # refusal off the journal; what is left here is the state only this object
-      # can hold. It re-reconciles, and over a lazily chunked corpus that CHUNKS
-      # -- a mark set cannot name the paths it belongs to, so a surviving mark is
-      # told from a stale one only by walking ({Marks#reconcile} states the limit
-      # and what would close it). A round with nothing marked yet pays nothing.
+      # refusal off the journal. It re-reconciles, and over a lazily chunked
+      # corpus that CHUNKS -- a mark set cannot name the paths it belongs to, so
+      # a surviving mark is told from a stale one only by walking. A round with
+      # nothing marked yet pays nothing.
       #
       # @param changeset [Review::Changeset] the whole, unfiltered changeset over
       #   the wider path set -- built by the caller, since a session holds no
@@ -303,29 +267,26 @@ module Lain
       # The GROUPING is an argument because a marked changeset carries its
       # partitions, and a surface picks between the flat table and the grouped
       # one by the scope it is told. Built at one strategy and drawn at another,
-      # `--scope by_directory` rendered the COMMIT walk under a directory
-      # heading -- the grouping has to be the resolved scope's, which is what
-      # {#present} passes.
+      # `--scope by_directory` rendered the COMMIT walk under a directory heading.
       #
       # @param strategy [Partition::Strategy] how the files are grouped
       # @return [MarkedChangeset]
       def marked(strategy: MarkedChangeset::WALK) = MarkedChangeset.of(@changeset, @marks, keys_by_path:, strategy:)
 
-      # {Scope#support!} runs BEFORE the ceiling, and the order is the point
-      # rather than taste: the ceiling walks the partitions, and that walk is the
-      # thing that would die on the missing message.
+      # {Scope#support!} runs BEFORE the ceiling, and the order is the point: the
+      # ceiling walks the partitions, and that walk is what would die on the
+      # missing message.
       #
       # The ceiling is checked on the RESOLVED scope, because `:commits` and
       # `:cumulative` bound differently and the refusal for one recommends the
-      # other; and BEFORE the surface is told, because a refusal that has
-      # already drawn is not one -- for an editor it is worse than none, since
-      # the sidebar is up and the human believes they are looking at the whole
+      # other; and BEFORE the surface is told, because a refusal that has already
+      # drawn is not one -- for an editor it is worse than none, since the
+      # sidebar is up and the human believes they are looking at the whole
       # changeset.
       #
       # It RAISES rather than answering the port's refusal String. A String from
-      # this method means "the surface did not take it" (`spec/support/
-      # shared_examples/review_surface.rb`, law #5), and a ceiling is not that:
-      # {Bounds} exists so that either the whole changeset is handled or nothing
+      # this method means "the surface did not take it", and a ceiling is not
+      # that: {Bounds} exists so either the whole changeset is handled or nothing
       # is, which is a value no caller may read past.
       #
       # @param scope [Symbol, String] one of {SCOPES}
@@ -358,24 +319,16 @@ module Lain
 
       # {#mark}'s batch: every key a whole ROW names, recorded together.
       # Validation, the journal record and the `@marks` merge are identical to
-      # calling {#mark} once per key -- {#mark} is now built ON this method
-      # for exactly that reason -- but the per-key `@surface.mark` notice is
-      # left to the CALLER rather than sent here automatically, which is what
-      # a row-level caller needs and {#mark} does not: a single hunk key
-      # carries no row name to notify with, so a batch that notified per key
-      # would post N separate per-key notices -- each naming a truncated
-      # content hash, because that is all a bare hunk key ever lets
-      # `Surface::Neovim#mark` say -- which is both wrong (a hash is not a
-      # row) and redundant (a human reading a row gesture wants one
-      # acknowledgement, not N). {#mark}'s own block above is what restores
-      # the per-key notice for a single hunk marked in isolation.
+      # calling {#mark} once per key -- {#mark} is built ON this method for that
+      # reason -- but the per-key `@surface.mark` notice is left to the CALLER: a
+      # single hunk key carries no row name, so a batch that notified per key
+      # would post N notices each naming a truncated content hash, which is both
+      # wrong (a hash is not a row) and redundant.
       #
-      # Yields each RECORD as it lands (not merely its key), so a caller can
-      # both count how many landed before an unmarkable one raised and
-      # stopped the rest -- {Handover#mark} reports a row the session took
-      # only half of, and needs that count to say so honestly -- and read
-      # what state each key landed at, which {#mark}'s own block needs to
-      # notify the surface correctly.
+      # Yields each RECORD as it lands (not merely its key), so a caller can both
+      # count how many landed before an unmarkable one raised -- {Handover#mark}
+      # reports a row the session took only half of -- and read what state each
+      # key landed at.
       #
       # @param hunk_keys [Enumerable<String>] every key the row names
       # @param state [String, Symbol] a member of {Review::MARK_STATES}
@@ -399,19 +352,17 @@ module Lain
 
       # Place one note.
       #
-      # `drifted` has no default, and that is {AnnotationPlaced}'s rule rather
-      # than this method's taste: drift is a MEASUREMENT of `anchor_text`
-      # against the document as it now reads, and a measurement nobody took is a
-      # different fact from one that came back false. This object has no
-      # document -- it holds a diff, not a working tree -- so it refuses to
-      # guess and the caller that has the buffer supplies the answer
-      # ({Epic::Review::Annotations.resolve} is that caller's shape).
+      # `drifted` has no default, and that is {AnnotationPlaced}'s rule: drift is
+      # a MEASUREMENT of `anchor_text` against the document as it now reads, and
+      # a measurement nobody took is a different fact from one that came back
+      # false. This object has no document -- it holds a diff, not a working tree
+      # -- so it refuses to guess.
       #
-      # The revision recorded is the ANCHOR's, never the changeset's head: a
-      # note placed while one commit is on screen was authored against that
-      # commit, and an annotation authored against one diff and submitted
-      # against another is a live defect in tuicr that only an on-record
-      # revision makes detectable.
+      # The revision recorded is the ANCHOR's, never the changeset's head: a note
+      # placed while one commit is on screen was authored against that commit,
+      # and an annotation authored against one diff and submitted against another
+      # is a live defect in tuicr that only an on-record revision makes
+      # detectable.
       #
       # @param anchor [Review::Anchor]
       # @param text [String] the human's own words
@@ -430,38 +381,30 @@ module Lain
 
       # Close the round.
       #
-      # The record is built FIRST, so the vocabulary is judged by the object
-      # that owns it ({Review::VERDICTS}); the policy is asked SECOND, so a
-      # refusal leaves no judgement on record; the journal is written LAST.
+      # The record is built FIRST, so the vocabulary is judged by the object that
+      # owns it ({Review::VERDICTS}); the policy is asked SECOND, so a refusal
+      # leaves no judgement on record; the journal is written LAST.
       #
-      # THE SURFACE IS TOLD, and it is told from HERE rather than by whoever
-      # called: this is {#mark}'s rail exactly (journal, then state, then
-      # `@surface`), and it is the one place a verdict that actually landed can
+      # THE SURFACE IS TOLD, from HERE rather than by whoever called: this is
+      # {#mark}'s rail exactly, and it is the one place a verdict that landed can
       # be told from one a policy refused. Before it, the review's one TERMINAL
-      # gesture was the only one that acknowledged nothing -- an editor's
-      # `:LainReviewVerdict approve` journaled correctly and printed nowhere,
-      # which reads to a human exactly like a broken command.
+      # gesture was the only one that acknowledged nothing. It has to be a PUSH
+      # and not a return value, because {Handover#wrote_verdict} answers `nil` for
+      # "taken" -- its answer is what the editor's `:w` succeeds with.
       #
-      # It has to be a PUSH and not a return value: {Handover#wrote_verdict}
-      # answers `nil` for "taken" because its answer is what the editor's `:w`
-      # succeeds with, so there is no room in it for a sentence.
-      #
-      # It goes LAST, after the judgement is on record, and it goes through
-      # {Surface.acknowledge} rather than straight at the surface, because
-      # "last" alone does not make it unable to unmake the verdict -- an
-      # adapter that RAISES still does. That guard lives at the port, beside
-      # {Surface.check!}, because it enforces the port's own promise rather
-      # than anything this round knows; see it for why the enforcement is
-      # needed at exactly this one message. The answer is discarded either way:
-      # it is a fact about the editor, not about the round.
+      # It goes LAST, after the judgement is on record, and through
+      # {Surface.acknowledge} rather than straight at the surface, because "last"
+      # alone does not make it unable to unmake the verdict -- an adapter that
+      # RAISES still does. That guard lives at the port because it enforces the
+      # port's own promise. The answer is discarded either way: a fact about the
+      # editor, not about the round.
       #
       # THE NOTES GO TOO, and they are not decoration on the call: `blocker` is
       # the one {Review::ANNOTATION_KINDS} member documented as readable by a
-      # verdict policy, and until it was passed here no policy could read it --
-      # a human's own "not this" was journaled, drawn as a marker, and refused
-      # nothing. What counts as RESOLVED is the policy's answer, not this
-      # object's ({Verdict::Policy.unresolved}); this round only holds them.
-      #
+      # verdict policy, and until it was passed here no policy could read it -- a
+      # human's own "not this" was journaled, drawn as a marker, and refused
+      # nothing. What counts as RESOLVED is the policy's answer
+      # ({Verdict::Policy.unresolved}); this round only holds them.
       # @param verdict [String, Symbol] a member of {Review::VERDICTS}
       # @return [String] the verdict, in the vocabulary's own spelling
       # @raise [AlreadySettled] if this round already has one
@@ -485,27 +428,21 @@ module Lain
       # itself, because that merge is this object's own state to hold.
       def marking = Marking.new(journal: @journal, known_hunks: hunk_keys)
 
-      # NOT memoized, and the memo that used to be here was the reason
-      # {#present} chunked a corpus it had been handed lazily. The table names
-      # the files something has READ ({MarkedChangeset.keys_by_path}), and a
-      # survey reads more of itself as it is looked at -- so a table built once
-      # answers for the corpus as it stood before anything was opened, and
-      # {#mark} then refuses a key off a row the reader is looking at as a hunk
-      # this changeset does not produce.
+      # NOT memoized, and the memo that used to be here was the reason {#present}
+      # chunked a corpus it had been handed lazily. The table names the files
+      # something has READ, and a survey reads more of itself as it is looked at
+      # -- so a table built once answers for the corpus as it stood before
+      # anything was opened, and {#mark} then refuses a key off a row the reader
+      # is looking at. {#marked}'s rule for {#marked}'s reason: a stale view is
+      # exactly the defect a marker exists to prevent.
       #
-      # It is {#marked}'s rule for {#marked}'s reason: a stale view is exactly
-      # the defect a marker exists to prevent.
-      #
-      # The cost is a blake3 pass over the hunks already in hand, and it grows
-      # with what has been READ rather than with the changeset -- so a survey
-      # pays nothing and a diff pays what the memo used to save. Where that
-      # lands is worth saying precisely, because the average hides it: the FIRST
-      # present is unchanged (3.3ms at 40 files and 400 hunks), and what got
-      # slower is every LATER present (1.3ms -> 3.2ms) and every {#mark} gesture
-      # (free off the memo, 2.5ms now). At {Bounds}' default ceiling that is
-      # 18.4ms per gesture against a 25ms present -- still under anything a
-      # human perceives, which is what makes the table being true the better
-      # trade.
+      # The cost is a blake3 pass over the hunks already in hand, growing with
+      # what has been READ rather than with the changeset. Where it lands is
+      # worth saying precisely, because the average hides it: the FIRST present
+      # is unchanged (3.3ms at 40 files and 400 hunks), and what got slower is
+      # every LATER present (1.3ms -> 3.2ms) and every {#mark} gesture (free off
+      # the memo, 2.5ms now). At {Bounds}' default ceiling that is 18.4ms per
+      # gesture against a 25ms present, still under anything a human perceives.
       def keys_by_path = MarkedChangeset.keys_by_path(@changeset)
 
       def hunk_keys = keys_by_path.values.flatten.to_set

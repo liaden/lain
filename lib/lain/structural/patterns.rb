@@ -2,22 +2,18 @@
 
 module Lain
   module Structural
-    # The ast-grep pattern catalog seeded from Joel's `~/.zsh/ag_helpers`: six
-    # hand-rolled regex helpers (`ragfn`, `ragclass`, `ragisa`, `ragcon`, `ragar`,
-    # `ragiv`, `ragfnc`) are a real-world enumeration of the queries a Ruby dev
-    # reaches for, and each maps to one or more ast-grep pattern TEMPLATES --
-    # written in ast-grep's own metavariable syntax ($NAME, $SUPER, ...), so an
-    # unfilled template is already a valid, general ast-grep pattern in its own
-    # right. #fetch fills a template's metavariable(s) with literal args when
-    # given, and returns the bare template otherwise.
+    # The ast-grep pattern catalog, seeded from the hand-rolled regex helpers in
+    # `~/.zsh/ag_helpers` -- a real-world enumeration of the queries a Ruby dev
+    # reaches for. Each maps to one or more pattern TEMPLATES written in
+    # ast-grep's own metavariable syntax ($NAME, $SUPER, ...), so an unfilled
+    # template is already a valid, general ast-grep pattern in its own right.
     #
     # `ragar` (ActiveRecord subclasses) is not a separate entry: it differs from
     # `ragisa`'s generic superclass match only by WHICH superclass literal fills
-    # $SUPER, so it folds into :subclass_of's `super:` argument rather than
-    # duplicating a query.
+    # $SUPER, so it folds into :subclass_of's `super:` argument.
     module Patterns
-      # An unknown language or query name -- named in the message, per the
-      # project's loud-failure convention: no query ever answers a typo with nil.
+      # An unknown language or query name, named in the message: no query ever
+      # answers a typo with nil.
       class Unknown < Error; end
 
       # One named query: a set of ast-grep pattern templates plus the mapping
@@ -26,8 +22,7 @@ module Lain
       Query = Data.define(:templates, :metavariables) do
         # The template patterns with every metavariable in +args+ replaced by
         # its literal value. A key with no matching metavariable is a caller
-        # bug, not a data problem, so it raises plainly rather than being
-        # silently ignored.
+        # bug, so it raises rather than being silently ignored.
         def render(args)
           templates.map { |template| interpolate(template, args) }
         end
@@ -85,10 +80,9 @@ module Lain
             metavariables: { name: "$VAR" }
           ),
           # ragfnc: a call to a method, with a receiver or bare. Two forms so
-          # the catalog covers both `thing.save` and a bare `save` use --
-          # ast-grep's `save` still matches every identifier use, distinct from
-          # `save!` (a different CST node), giving the caller the granularity
-          # ragfnc's regex could only approximate.
+          # the catalog covers both `thing.save` and a bare `save` -- ast-grep's
+          # `save` matches every identifier use and is distinct from `save!` (a
+          # different CST node), a granularity ragfnc's regex only approximated.
           method_call: Query.new(
             templates: ["$RECV.$NAME", "$NAME"],
             metavariables: { name: "$NAME" }
@@ -100,8 +94,7 @@ module Lain
 
       # The concrete ast-grep pattern string(s) for +query+ in +language+, with
       # any given args substituted into their metavariables. Raises {Unknown},
-      # naming the unrecognized value, for an unknown language OR an unknown
-      # query -- never returns nil.
+      # naming the unrecognized value -- never returns nil.
       #
       # @param language [Symbol]
       # @param query [Symbol]

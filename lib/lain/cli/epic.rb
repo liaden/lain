@@ -4,61 +4,50 @@ require "mixlib/shellout"
 
 module Lain
   module CLI
-    # `lain epic status [SLUG]`: where one epic stands, as text. Returns a
-    # String and prints nothing -- only the frontend touches a stream (output
-    # discipline; {CLI::Friction}'s precedent, and the shape `render` in
-    # exe/lain expects).
-    #
-    # The projection is the document an author wrote with the Journal's runtime
-    # truth folded over it: summary, the ready set, then the remaining issues
-    # by wave. Read-only and deterministic -- the same home and the same session
-    # files render the same bytes, so two runs are diffable.
+    # `lain epic status [SLUG]`: where one epic stands. Returns a String and
+    # prints nothing -- only the frontend touches a stream (output discipline).
+    # Read-only and deterministic, so two runs over the same home and the same
+    # session files are diffable.
     #
     # == The remaining-work rule
     #
     # **Not done is remaining**, where done is {Epic::DONE} and nothing else.
-    # `abandoned` is deliberately not finished: it is work somebody stopped, it
-    # still blocks whatever it blocked ({Epic::Graph#ready} satisfies a blocker
-    # only when it is done), and the only way past it is an edge edit somebody
-    # has to make. An earlier draft treated it as finished; the result named an
-    # abandoned issue in a `blocked by` annotation while showing it nowhere, so
-    # the report explained a blockage with an id the reader could not find. The
-    # one rule keeps every id named in an annotation present in the listing
-    # above it, and a spec pins exactly that.
+    # `abandoned` still blocks whatever it blocked ({Epic::Graph#ready} satisfies
+    # a blocker only when it is done), so treating it as finished -- an earlier
+    # draft did -- named an abandoned issue in a `blocked by` annotation while
+    # showing it nowhere. The rule keeps every id named in an annotation present
+    # in the listing above it.
     #
     # == Every constant from the epic tier is reached at CALL time
     #
     # This unit loads BEFORE `lain/epic` (lib/lain.rb: cli, then plan, then
     # epic), so a `Lain::Epic::...` reference evaluated while this file loads --
-    # a constant assignment, a default argument evaluated at definition -- would
-    # raise NameError at boot. Every such reference below therefore sits inside
-    # a method body.
+    # a constant assignment, a default argument -- raises NameError at boot.
+    # Every such reference below therefore sits inside a method body.
     #
     # And it is spelled `Lain::Epic`, never `Epic`: the lexical scope here is
-    # `Lain::CLI::Epic`, so a bare `Epic` resolves to THIS class (it is a
-    # constant of `Lain::CLI`) and `Epic::Home` would look for
-    # `Lain::CLI::Epic::Home`. The full path is not decoration.
+    # `Lain::CLI::Epic`, so a bare `Epic` resolves to THIS class and
+    # `Epic::Home` would look for `Lain::CLI::Epic::Home`.
     class Epic
       # A slug was given and the home holds no such epic.
       class UnknownEpic < Error; end
 
       # No slug was given and the home holds more than one epic. Loud rather
-      # than a guess: picking the alphabetically-first would report on work the
-      # caller never asked about, in a command whose entire job is telling the
-      # truth about which work is where.
+      # than a guess: the alphabetically-first would report on work the caller
+      # never asked about, in a command whose job is telling the truth about
+      # which work is where.
       class Ambiguous < Error; end
 
       # How an ambiguity refusal spells the way out. The caller supplies the
-      # MIDDLE, not the whole sentence, so every verb's advice is the invocation
-      # that just refused with one slug added -- and keeping the trailing `SLUG`
-      # here is what makes "where the slug goes" structural rather than four
+      # MIDDLE, so every verb's advice is the invocation that just refused with
+      # one slug added, and the trailing `SLUG` stays here rather than in four
       # strings that can drift apart.
       REMEDY = "name one: lain %<command>s SLUG"
 
-      # The container exists but cannot be listed. Its own class, next to the
-      # owner that raises it, for {Epic::Home::UnreadableArtifact}'s reason: an
-      # unreadable directory is not "no epics yet", and answering the empty-home
-      # message here would report a permissions fault as a fresh project.
+      # The container exists but cannot be listed. Its own class for
+      # {Epic::Home::UnreadableArtifact}'s reason: an unreadable directory is not
+      # "no epics yet", and the empty-home message would report a permissions
+      # fault as a fresh project.
       class UnreadableHome < Error
         def initialize(path, cause)
           super("cannot list the epics in #{path}: #{cause.message}")
@@ -66,54 +55,40 @@ module Lain
       end
 
       # A file the session glob matched cannot be read as a journal. The session
-      # directory is a directory the user owns, so a stray `weird.ndjson/`
-      # subdirectory (EISDIR) or a mode-000 file (EACCES) is reachable without
-      # anything being wrong with this tier -- and a raw
-      # `Errno::EISDIR: Is a directory @ io_fillbuf` escapes exe/lain's
+      # directory is one the user owns, so a stray `weird.ndjson/` subdirectory
+      # (EISDIR) or a mode-000 file (EACCES) is reachable without anything being
+      # wrong with this tier -- and a raw `Errno::EISDIR` escapes exe/lain's
       # `rescue Lain::Error` and prints a backtrace at a user who asked for a
       # status report.
       #
       # Named, not skipped: a journal that cannot be read may hold this epic's
-      # transitions, and quietly walking past it reports stale progress as
-      # current. That is the fold's own never-skip rule, applied one layer out
-      # at the file rather than at the record. {Epic::Home::UnreadableArtifact}
-      # is the same idea on the artifact side; this walk was the last read path
-      # without it.
-      # The refusal now belongs to {SessionJournals}, which owns the read. Kept
-      # as a name here because it is this command's documented failure and its
-      # specs rescue it by this constant -- one name, one class, no second
-      # definition to drift.
+      # transitions, and walking past it reports stale progress as current.
+      # The refusal belongs to {SessionJournals}, which owns the read; kept as a
+      # name here because this command's specs rescue it by this constant.
       UnreadableJournal = SessionJournals::Unreadable
 
       # Whether git ignores a path, answered by git itself.
       #
-      # Repo mode exists for exactly one reason -- so a team can review an epic
-      # in a pull request -- and this repository's own .gitignore holds
-      # `/.lain/`, which is where repo mode resolves. A repo home can therefore
-      # be invisible to the tool it was chosen for. {Epic::Home} deliberately
-      # does not detect this: it is a pure path calculator with no Sink and no
-      # subprocess, and a warning there would turn a resolver into an I/O
-      # object. This command already prints the resolved home, so the check
-      # belongs beside that line.
+      # Repo mode exists so a team can review an epic in a pull request, and
+      # this repository's own .gitignore holds `/.lain/`, which is where repo
+      # mode resolves -- so a repo home can be invisible to the tool it was
+      # chosen for. {Epic::Home} does not detect this: it is a pure path
+      # calculator with no Sink and no subprocess, so the check belongs beside
+      # the line that prints the resolved home.
       #
-      # Read-only in both directions. It asks a question and NEVER edits
-      # .gitignore -- what to ignore is the user's policy, not a status
-      # report's.
-      #
-      # Unanswerable is "not ignored", not a failure: no git on PATH, or a root
-      # that is no repository, must not be able to fail a status report over a
+      # It asks and NEVER edits .gitignore -- what to ignore is the user's
+      # policy. Unanswerable is "not ignored", not a failure: no git on PATH, or
+      # a root that is no repository, must not fail a status report over a
       # warning about a setup that may not even be in use.
       class GitIgnores
         # What git says when it will not name the rule. `-v` always prints one,
-        # so this is unreachable in practice -- it exists because the alternative
-        # to a fallback is an empty reason, and an empty reason reads as "not
-        # ignored", which would silently drop a warning that is true.
+        # so this is unreachable in practice; the alternative to a fallback is
+        # an empty reason, which reads as "not ignored" and drops a true warning.
         UNNAMED = "an ignore rule this git would not name"
 
-        # `Mixlib::ShellOut` rather than backticks or Open3: it is already this
+        # `Mixlib::ShellOut` rather than backticks or Open3: already this
         # project's subprocess runner ({Isolation::Worktree}), and it captures
-        # both streams internally, so nothing git says can interleave into a
-        # Journal or a TTY.
+        # both streams, so nothing git says interleaves into a Journal or a TTY.
         def initialize(root, shell_out_factory: Mixlib::ShellOut.public_method(:new))
           @root = root
           @shell_out_factory = shell_out_factory
@@ -121,14 +96,12 @@ module Lain
 
         # The rule that ignores +path+, or "" when nothing does.
         #
-        # A reason and not a predicate, because a warning that says only "this is
-        # ignored" leaves the user to go hunt WHICH pattern did it, across a
-        # repo's .gitignore, .git/info/exclude, and the global core.excludesFile.
-        # `-v` is git answering that for free.
+        # A reason and not a predicate: "this is ignored" leaves the user to hunt
+        # WHICH pattern did it, across a repo's .gitignore, .git/info/exclude and
+        # the global core.excludesFile, and `-v` answers that for free.
         #
         # Exit 0 is ignored, 1 is not, 128 is could-not-answer (no repository
-        # here) -- so only a literal 0 is a yes, and the other two are the same
-        # "" as far as a status report is concerned.
+        # here) -- so only a literal 0 is a yes.
         def reason(path)
           shell = @shell_out_factory.call("git", "-C", @root, "check-ignore", "-v", "--", path)
           shell.run_command
@@ -143,26 +116,24 @@ module Lain
 
         # `-v` prints `<source>:<line>:<pattern>\t<pathname>`. The source field
         # is handed on verbatim rather than parsed apart: a pattern may hold a
-        # colon, so splitting it into prose risks mangling the one string the
-        # user needs to grep for, and `.gitignore:5:/.lain/` is already exactly
-        # what they would search.
+        # colon, and `.gitignore:5:/.lain/` is already exactly what the user
+        # would grep for.
         def rule(stdout)
           field = stdout.to_s.lines.first.to_s.split("\t").first.to_s.strip
           field.empty? ? UNNAMED : field
         end
       end
 
-      # `root:` defaults to the RESOLVED project's, not to `Dir.pwd` (T5). A
+      # `root:` defaults to the RESOLVED project's, not to `Dir.pwd`. A
       # `lain chat` mounts its epic under {Project::Resolver.default_project}'s
-      # root, and this command has to ask the same question of the same object
-      # or the two go blind to each other's epics -- no flag required, because
-      # the resolver WALKS, so anything run under a `.lain/` or a `.git` already
-      # has root != cwd. They agreed before only because both read `Dir.pwd`.
+      # root, and this command must ask the same object or the two go blind to
+      # each other's epics -- the resolver WALKS, so anything under a `.lain/`
+      # already has root != cwd. They agreed before only because both read pwd.
       #
       # @param root [String] the project root; the config file and a repo-mode
       #   home both resolve under it
       # @param paths [Paths] injected, so a spec resolves against a throwaway
-      #   XDG state home instead of the real one
+      #   XDG state home
       # @param config [Config] `.lain/config.toml`, already read
       # @param ignores [#reason] the git question, injected so no spec has to
       #   build a repository to exercise the warning
@@ -191,16 +162,11 @@ module Lain
       # WHICH epic a bare command means: the sole one in the home, or the named
       # one checked against it.
       #
-      # Public because it is the one question every epic verb has to answer the
-      # SAME way. `lain epic submit` gates the artifact this command reports on,
-      # so a second spelling of "the sole epic" would let the two report on
-      # different work -- silently, since neither would raise. The rule lives
-      # here, next to the home listing it reads, and the other verbs ask.
-      #
-      # `command` has no default on purpose. This is the one question every epic
-      # verb asks, so a default would let the NEXT verb inherit advice for a
-      # command its operator never ran -- silently, and that is the defect the
-      # argument exists to close. Spell it as argv does, minus the slug:
+      # Public because every epic verb has to answer it the SAME way -- a second
+      # spelling of "the sole epic" would let two verbs report on different work,
+      # silently, since neither would raise. `command` has no default for the
+      # same reason: it would let the NEXT verb inherit advice for a command its
+      # operator never ran. Spell it as argv does, minus the slug:
       # `"epic submit STAGE"`, `"chat --epic"`.
       #
       # @param slug [String, nil]
@@ -229,11 +195,9 @@ module Lain
 
       def records_for(slug) = journals_for(slug).to_a
 
-      # A directory whose name is a legal slug. Anything else -- a stray file, an
-      # editor's backup, a name the filesystem grammar refuses -- is skipped
-      # rather than refused: no epic can be spelled that way, so there is nothing
-      # here to be loud about, and refusing to report on a real epic because
-      # somebody dropped a `.DS_Store` beside it would be absurd.
+      # A directory whose name is a legal slug. Anything else is skipped rather
+      # than refused: no epic can be spelled that way, so a stray `.DS_Store`
+      # must not stop a real epic being reported.
       def slugs_in(container)
         return [] unless File.directory?(container)
 
@@ -254,9 +218,8 @@ module Lain
       end
 
       # An empty home is reachable only through {#resolve_slug}: {#status}
-      # answers {#unstarted} before it ever chooses. A verb that must NAME an
-      # epic has no such answer, and "holds 0 epics ()" would be a sentence
-      # about nothing -- so the emptiness is said outright.
+      # answers {#unstarted} before it ever chooses. "holds 0 epics ()" would be
+      # a sentence about nothing, so the emptiness is said outright.
       def sole(slugs, container, command:)
         raise UnknownEpic, "no epics yet in #{container} -- there is nothing to name" if slugs.empty?
         return slugs.first if slugs.one?
@@ -267,23 +230,19 @@ module Lain
 
       def listed(slugs) = slugs.map { |slug| "`#{slug}`" }.join(", ")
 
-      # An empty home is a fresh project, not a failure: it returns the guidance
-      # a caller can act on and exits 0, where a raise would print to stderr and
-      # exit nonzero over a state every epic passes through.
+      # An empty home is a fresh project, not a failure: guidance and exit 0,
+      # where a raise would exit nonzero over a state every epic passes through.
       def unstarted(container)
         ["no epics yet in #{container}", untracked_note(container),
          "start one with the research-epic skill -- it interviews you, writes research.md, " \
          "and lands epic.md in a new <slug>/ directory here"].reject(&:empty?).join("\n")
       end
 
-      # Said in the output rather than raised: an ignored repo home is a
-      # misconfiguration, and the status it hides is exactly what the caller
-      # asked for. Only repo mode can have it -- an xdg home is outside the
-      # repository by design, and calling that "untracked" would be noise about
-      # the arrangement working correctly, so git is not even asked.
-      #
-      # The rule is named in the message because the actionable half of this
-      # warning is WHICH pattern to drop, not that one exists.
+      # Said in the output rather than raised: the status an ignored repo home
+      # hides is exactly what the caller asked for. Only repo mode can have it,
+      # so git is not even asked otherwise. The rule is named in the message
+      # because the actionable half is WHICH pattern to drop, not that one
+      # exists.
       def untracked_note(path)
         return "" unless @config.epics_home == :repo
 
@@ -298,11 +257,9 @@ module Lain
       # Every session journal this project has written, narrowed to one epic and
       # ordered by the timestamp each record carries.
       #
-      # Plural on purpose. An epic spans days and sessions, so the
-      # newest-session resolution every other report command uses ({CLI::Friction},
-      # `--resume`) would silently drop last week's transitions -- and a status
-      # report that quietly under-reports progress is worse than one that
-      # refuses.
+      # Plural on purpose: an epic spans days and sessions, so the newest-session
+      # resolution every other report command uses would silently drop last
+      # week's transitions.
       class Journals
         include Enumerable
 
@@ -319,53 +276,40 @@ module Lain
           self
         end
 
-        # Which files, in what order, is {SessionJournals}' contract and no
-        # longer restated here -- `lain epic queue` folds the same directory for
-        # the same reason, and two statements of one rule is how this chunk
-        # already produced a silent bug. What stays here is the part that is
-        # genuinely this command's: WHICH RECORDS ARE THIS EPIC'S.
-        #
-        # The extraction also fixed a real defect this method had: `Dir.glob`
-        # treats the DIRECTORY name as a pattern, so a `$XDG_STATE_HOME`
-        # containing `[` matched nothing -- silently. {SessionJournals} uses
-        # `Dir.children`, the house idiom, and pins the case.
+        # Which files, in what order, is {SessionJournals}' contract; what stays
+        # here is WHICH RECORDS ARE THIS EPIC'S. The extraction also fixed a real
+        # defect: `Dir.glob` treats the DIRECTORY name as a pattern, so a
+        # `$XDG_STATE_HOME` containing `[` matched nothing -- silently.
+        # {SessionJournals} uses `Dir.children` and pins the case.
         def files = walk.files
 
         # WHICH directory this walk folded, forwarded so {Report} can print it.
-        # The epic tier keys its container on the resolved project root and its
-        # journals here on the working directory, so a report that named only
-        # the home would leave two runs with different progress for one epic
-        # indistinguishable.
+        # Journals are keyed on the working directory while the container is
+        # keyed on the resolved root, so a report naming only the home would
+        # leave two runs with different progress for one epic indistinguishable.
         def dir = walk.dir
 
         private
 
         # `sessions_dir`'s OWN default -- the working directory -- and not
-        # `project_hash(@root)`, which this line said until T5. The two used to
-        # be the same string, because `@root` WAS `Dir.pwd`; once `@root` became
-        # the resolved project root this line quietly stopped folding the
-        # directory `lain epic submit` and `lain epic land` write into, and a
-        # verdict submitted from a subdirectory became invisible to `status`.
-        #
-        # The epic tier keys its CONTAINER on the resolved root and its JOURNAL
-        # DIRECTORY on the cwd. Two keyings, each uniform; the alternative is
-        # moving `sessions_dir`, which relocates every resumable session on the
-        # machine. See spec/lain/seams/epic_project_keying_seam_spec.rb.
+        # `project_hash(@root)`, which this line said until the project resolver
+        # landed. The two were one string while `@root` WAS `Dir.pwd`; once
+        # `@root` became the resolved root this quietly stopped folding the
+        # directory `lain epic submit` writes into, and a verdict submitted from
+        # a subdirectory became invisible to `status`. The alternative, moving
+        # `sessions_dir`, relocates every resumable session on the machine.
+        # Pinned by spec/lain/seams/epic_project_keying_seam_spec.rb.
         def walk = @walk ||= SessionJournals.new(dir: @paths.sessions_dir, types: epic_types)
 
         # A method rather than a constant: a constant's value is evaluated when
-        # this file LOADS, and the epic unit loads after the CLI unit (see the
-        # class comment above).
+        # this file LOADS, and the epic unit loads after the CLI unit.
         #
-        # What this list is for, stated accurately because it is easy to
-        # overclaim: it bounds WHAT GETS MATERIALIZED, not what gets believed.
-        # Ordering has to sort, so the kept records become an Array; without this
-        # filter every record of every session this project ever ran -- months of
-        # turns and messages -- lands in one Array to be sorted, for the sake of
-        # a handful of epic records. It is not a correctness guard, and a probe
-        # proved it: opening this filter to everything changes no output, because
-        # the fold dispatches by type itself (`Journal.records(records, type:)`)
-        # and ignores whatever it does not recognize.
+        # The list bounds WHAT GETS MATERIALIZED, not what gets believed.
+        # Ordering has to sort, so without this filter every record of every
+        # session this project ever ran lands in one Array for the sake of a
+        # handful of epic records. It is not a correctness guard, and a probe
+        # proved it: opening it to everything changes no output, because the fold
+        # dispatches by type itself and ignores what it does not recognize.
         def epic_types
           [Lain::Epic::IssueTransition::JOURNAL_TYPE,
            Lain::Epic::StageTransition::JOURNAL_TYPE,
@@ -379,15 +323,13 @@ module Lain
         # Ours, or unattributable.
         #
         # A record naming ANOTHER epic is dropped here rather than handed to the
-        # fold. This walk spans every session the project ever ran, so most epic
-        # records in it belong to other epics -- {Epic::ForeignJournal}, which
-        # protects a caller handing one journal for one epic, would fire on the
-        # normal case and is deliberately unreachable from here.
+        # fold: this walk spans every session the project ever ran, so
+        # {Epic::ForeignJournal} would fire on the normal case and is
+        # deliberately unreachable from here.
         #
         # A record with a BLANK slug is kept, so the fold's own guard refuses it.
-        # It cannot be attributed away, and dropping it would report "nothing
-        # happened" for a record that says something did -- the one answer the
-        # Journal exists to prevent.
+        # Dropping it would report "nothing happened" for a record that says
+        # something did.
         def attributable?(record)
           slug = record["epic_slug"].to_s
           slug.strip.empty? || slug == @epic_slug
@@ -397,23 +339,16 @@ module Lain
 
       # The text projection of one {Epic::Progress}: summary, the ready set, the
       # remaining issues by wave. Its own object because rendering is not
-      # resolving -- this one knows nothing about config, homes, or journals, and
-      # is handed the settled value.
+      # resolving -- it knows nothing about config, homes, or journals.
       #
-      # It is NOT all the text this command emits, and the boundary is the
-      # Progress rather than the prose: the empty-home guidance and the tracking
-      # warning are both produced BEFORE any epic has been chosen, when there is
-      # no Progress to project and possibly no epic at all. Moving them here
-      # would mean constructing a Report with nothing to report on, so they stay
-      # on the command and arrive as the `note` this object simply prints.
+      # The boundary is the Progress rather than the prose: the empty-home
+      # guidance and the tracking warning are produced BEFORE any epic has been
+      # chosen, so moving them here would mean constructing a Report with nothing
+      # to report on. They arrive as the `note` this object simply prints.
       class Report
-        # `sessions:` is the directory the fold came FROM, and it is printed
-        # rather than merely held. The epic tier keys its container on the
-        # resolved project root and its journals on the working directory, so
-        # one epic at one home can fold different records from different
-        # directories and report different progress -- confidently, with nothing
-        # in the output to say why. Naming the directory is what lets a reader
-        # tell two such runs apart in the one place they are already looking.
+        # `sessions:` is printed rather than merely held: one epic at one home
+        # folds different records from different working directories and reports
+        # different progress, with nothing else in the output to say why.
         def initialize(slug:, path:, sessions:, progress:, note:)
           @slug = slug
           @path = path
@@ -431,10 +366,9 @@ module Lain
             .reject(&:empty?).join("\n")
         end
 
-        # First, because it is the one section that answers "what do I do now".
-        # Ready issues appear again below in their wave -- the wave listing is
-        # everything that remains, and hiding the ready ones from it would make
-        # the dependency picture wrong to save two lines.
+        # First, because it answers "what do I do now". Ready issues appear
+        # again below in their wave -- the wave listing is everything that
+        # remains, and hiding them would make the dependency picture wrong.
         def ready
           issues = @progress.ready
           return "ready: nothing#{because}" if issues.empty?
@@ -443,22 +377,19 @@ module Lain
         end
 
         # Why nothing is ready, COUNTED rather than asserted. The first draft
-        # said "every remaining issue is blocked or already moving", which was
-        # false in five shapes -- an abandoned issue is neither, and on a
-        # finished or empty epic it claimed a reason for issues that do not
-        # exist, one line above "remaining: nothing". A summary line that states
-        # a cause it never computed is the first thing a reader hits, so it now
-        # tallies the residual set or says nothing at all.
+        # said "every remaining issue is blocked or already moving", false in
+        # five shapes -- an abandoned issue is neither, and on a finished epic it
+        # claimed a reason for issues that do not exist, one line above
+        # "remaining: nothing". It now tallies the residual set or says nothing.
         def because
           tallies = residual_tally
           tallies.empty? ? "" : " (#{tallies.join(", ")})"
         end
 
-        # `pending` is reported as BLOCKED, and that is a derivation rather than
-        # a guess: ready is pending-with-every-blocker-done, so while the ready
-        # set is empty every pending issue necessarily has an unfinished blocker.
-        # Ordered by the pipeline's own reading, not by count, so two runs of the
-        # same epic read the same way.
+        # `pending` is reported as BLOCKED by derivation: ready is
+        # pending-with-every-blocker-done, so while the ready set is empty every
+        # pending issue necessarily has an unfinished blocker. Ordered by the
+        # pipeline, not by count, so two runs of one epic read the same way.
         def residual_tally
           open = @progress.graph.reject { |issue| issue.status == Lain::Epic::DONE }
           { "blocked" => "pending", "in flight" => "in_flight", "abandoned" => "abandoned" }
@@ -474,13 +405,11 @@ module Lain
           ["remaining, by wave:", *waves.flat_map { |number, issues| wave(number, issues) }].join("\n")
         end
 
-        # {Epic::Graph#waves} is status-blind by design -- a finished first wave
-        # still reports as wave 1, which is correct as a DAG layering and wrong
-        # as a to-do list. So the done issues are dropped here and an emptied
-        # wave disappears, while the surviving waves KEEP their original
-        # numbers: a wave number names a layer of the graph, which does not move
-        # when work lands, and renumbering would make "wave 3" mean something
-        # different every morning.
+        # {Epic::Graph#waves} is status-blind by design, which is correct as a
+        # DAG layering and wrong as a to-do list. Done issues are dropped and an
+        # emptied wave disappears, but the survivors KEEP their numbers: a wave
+        # names a layer of the graph, which does not move when work lands, and
+        # renumbering would make "wave 3" mean something different every morning.
         def residual_waves
           @progress.graph.waves.each_with_index.filter_map do |issues, index|
             open = issues.reject { |issue| issue.status == Lain::Epic::DONE }
@@ -492,9 +421,8 @@ module Lain
           ["  wave #{number}", *issues.map { |issue| "    #{glyph(issue)}#{blockers(issue)}" }]
         end
 
-        # The blockers still HOLDING this issue, which is why it is not in the
-        # ready set -- the same test {Epic::Graph#ready} applies, so the two
-        # cannot disagree about whether an issue is stuck.
+        # The blockers still HOLDING this issue -- the same test
+        # {Epic::Graph#ready} applies, so the two cannot disagree about stuck.
         def blockers(issue)
           holding = @progress.graph.blocked_by(issue.id).reject { |id| @progress.status(id) == Lain::Epic::DONE }
           return "" if holding.empty?
@@ -502,8 +430,8 @@ module Lain
           " (blocked by #{holding.map { |id| "`#{id}`" }.join(", ")})"
         end
 
-        # The document's own marks, so the status a reader sees here is spelled
-        # the way the markdown spells it.
+        # The document's own marks, so a status reads here the way the markdown
+        # spells it.
         def glyph(issue)
           "[#{Lain::Epic::Document::STATUS_MARKS.fetch(issue.status)}] `#{issue.id}` #{issue.title}"
         end

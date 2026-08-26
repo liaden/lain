@@ -81,7 +81,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
-    # The `cwd:` half of the same injection, and the one T8's panel found
+    # The `cwd:` half of the same injection, and the one the panel found
     # mattered: a relative path is joined LEXICALLY to the project's cwd, so a
     # tool call written the way a model writes one still classifies.
     #
@@ -179,8 +179,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
   end
 
-  # F63, and the reason this whole card exists: {Approval::Escalation::Triage}'s
-  # argv check has been implemented and spec'd since T20 and has never once run,
+  # The defect this whole group exists for: {Approval::Escalation::Triage}'s argv
+  # check has been implemented and spec'd from the start and has never once run,
   # because nothing built a board that handed it a classifier. These examples
   # drive the REAL construction path -- `BoardBuild.for` and nothing injected --
   # so a call site that stops passing one goes red here rather than passing

@@ -484,10 +484,10 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
     end
   end
 
-  # FIX 5's whole point: a posture may hand the scope through as an inert
-  # Symbol, and the writer's priming still covers turn 1. Scope.fetch takes a
-  # name and nothing else, so without the prime this path could never see a
-  # first-turn change at all.
+  # The whole point of this fix: a posture may hand the scope through as an
+  # inert Symbol, and the writer's priming still covers turn 1. Scope.fetch
+  # takes a name and nothing else, so without the prime this path could never
+  # see a first-turn change at all.
   describe "named by symbol, end to end through the writer" do
     around do |example|
       original = ENV.to_h.slice("XDG_STATE_HOME")

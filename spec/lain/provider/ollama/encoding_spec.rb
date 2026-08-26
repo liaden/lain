@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T1: structured-answer format, expressed neutrally on Request#extra so the
+# Structured-answer format, expressed neutrally on Request#extra so the
 # Request shape itself never changes (extra is already excluded from
 # Request#cache_payload -- see request.rb -- so this rides the same escape
 # hatch temperature/seed/think already use, and never touches cache identity).
@@ -75,7 +75,7 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
     end
   end
 
-  # T11: the two throughput knobs. `num_batch` is the one with a measured cost
+  # The two throughput knobs. `num_batch` is the one with a measured cost
   # -- ollama passes llama-server `-b 512`, overriding llama.cpp's own 2048, and
   # there is no server-side setting to undo it, so the only place it can be
   # fixed is the request (docs/providers/ollama.md, "Serving performance").

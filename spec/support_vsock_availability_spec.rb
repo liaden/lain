@@ -25,16 +25,16 @@ require "fileutils"
 # with nothing listening, so the ENOTCONN came from the dead port rather than the
 # CID. Re-measured against a live CID_ANY listener, LOCAL(1) and HOST(2) are
 # behaviourally indistinguishable -- ping, binary bytes, 1 MiB and 8-way demux all
-# pass on both; only CID_ANY fails, with ENODEV. Test-local: T5's real
+# pass on both; only CID_ANY fails, with ENODEV. Test-local: the real
 # Transport::Vsock defines its own.
 VSOCK_SPEC_CID_LOCAL = 1
 
-# A stand-in "lain-core" honoring this card's ASSUMED T4 contract (see
+# A stand-in "lain-core" honoring the daemon's ASSUMED contract (see
 # spec/support/vsock_daemon.rb's header for the full contract and why it is only
 # assumed): bind AF_VSOCK per the scheme argv, write the bound port to
 # "<tracing_path>.port", then answer any connection with a fixed reply. This lets
 # the daemon-helper scenario below exercise VsockDaemon's actual mechanics against
-# a REAL AF_VSOCK bind/accept/connect without waiting on T4 to land.
+# a REAL AF_VSOCK bind/accept/connect without waiting on the daemon to land.
 VSOCK_SPEC_FAKE_DAEMON_SOURCE = <<~RUBY
   require "socket"
 
@@ -122,9 +122,9 @@ RSpec.describe "vsock spec harness (spec/support/vsock_availability.rb, spec/sup
 
   # The :vsock tag's gate -- a config.filter_run_excluding(:vsock) plus a
   # config.before(:each, :vsock) hook -- is spec/support/tags.rb's to own
-  # (shared-file wiring, per the plan's Orchestrator contract); T3 hands back
-  # its exact text rather than editing that file. Reproduced BYTE-FOR-BYTE
-  # here (see .handback-T3.md for the diff itself) so the gate's behaviour is
+  # (shared-file wiring, per the plan's Orchestrator contract); its exact text
+  # was handed back rather than edited into that file. Reproduced BYTE-FOR-BYTE
+  # here so the gate's behaviour is
   # proven before the diff lands, not merely asserted. Each example below
   # runs the reproduced gate inside a fresh RSpec::Core::Sandbox -- rspec-core's
   # own supported mechanism for testing a filter/hook against an isolated
@@ -279,7 +279,7 @@ RSpec.describe "vsock spec harness (spec/support/vsock_availability.rb, spec/sup
 
     # Regression for panel finding 3 (Patterson): bare start/.../stop left a
     # daemon running when the caller raised before reaching #stop -- exactly
-    # what the plan's Grounding warns would make T5's "nothing is listening"
+    # what the plan's Grounding warns would make the "nothing is listening"
     # scenario pass for the wrong reason. `.run`'s `ensure daemon&.stop` must
     # fire even though the block never returns normally.
     it "reclaims the daemon even when the block raises", :vsock do

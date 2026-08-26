@@ -79,7 +79,7 @@ module Lain
       # The scheme is HASHED, not merely prefixed. As a bare prefix it leaves a
       # content digest forgeable into a span digest by a body whose first line
       # mimics a span frame. No key is journaled yet, so this costs nothing
-      # today and would be a migration once T8 and T13 write them down.
+      # today and would be a migration once something journals them.
       def key(scheme, *parts)
         -"#{scheme}:#{Ext.blake3_hex(["#{scheme}\n", *parts].map(&:b).join)}"
       end

@@ -72,7 +72,7 @@ RSpec.describe Lain::CLI::Command::Goal do
     end
   end
 
-  # B3, AC1 as amended after the escalation: the objective's turn is pinned
+  # As amended after the escalation: the objective's turn is pinned
   # ONCE IT ENTERS THE TIMELINE, not when `/goal` is dispatched. At dispatch the
   # command runs lib-side with zero commits, so the head still names the
   # PREVIOUS topic's turn -- pinning that would protect noise forever and let

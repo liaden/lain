@@ -84,9 +84,9 @@ module RootDefaultDiscipline
   #
   # An entry here is a place the resolved Project does NOT reach. Removing one
   # (by threading a real root to every caller) is progress; adding one needs an
-  # argument. T5 removed two -- `cli/epic.rb` and `cli/epic_land.rb` now default
-  # to {Lain::CLI::Wiring.default_project}'s root, so `lain epic status` and a
-  # `lain chat` in the same project look in the same epic home.
+  # argument. Two have been removed -- `cli/epic.rb` and `cli/epic_land.rb`
+  # now default to {Lain::CLI::Wiring.default_project}'s root, so `lain epic
+  # status` and a `lain chat` in the same project look in the same epic home.
   #
   # `lain/paths.rb` is the one entry that is a KNOWN DEFECT rather than a
   # library-usability default, and it is listed so it is visible rather than
@@ -386,7 +386,7 @@ module RootDefaultDiscipline
   end
 end
 
-# T5's second acceptance criterion, asserted over the tree rather than trusted
+# The second acceptance criterion, asserted over the tree rather than trusted
 # to review.
 RSpec.describe "root: Dir.pwd defaults" do
   def scan(source) = RootDefaultDiscipline::Scanner.new("fixture.rb").scan(source)
@@ -430,7 +430,7 @@ RSpec.describe "root: Dir.pwd defaults" do
       "a def written without parentheses" => "def initialize root: Dir.pwd\nend",
       "a def nested inside a Data.define block" =>
         "X = Data.define(:a) do\n  def initialize(root: Dir.pwd)\n    super\n  end\nend",
-      # Everything below walked past the first edition of this guard; the T5
+      # Everything below walked past the first edition of this guard; a later
       # review found them, and the positional one is live in lib/.
       "an OPTIONAL POSITIONAL default" => "def project_hash(dir = Dir.pwd); end",
       "a positional default in a keyword-heavy signature" => "def initialize(root = Dir.pwd, journal: nil); end",
@@ -491,7 +491,7 @@ RSpec.describe "root: Dir.pwd defaults" do
     end
   end
 
-  # The COMPARISON half, which until the T5 review was asserted in prose and
+  # The COMPARISON half, which until review was asserted in prose and
   # nowhere else: every example above exercises {Scanner}, so `difference`
   # returning `{}` and `surplus` degrading to `Array#-` -- the exact degradation
   # the allowlist's own comment argues against -- both survived. Literal

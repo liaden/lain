@@ -166,7 +166,7 @@ RSpec.describe Lain::Approval::Gate do
   # The property under test is the GATE's: a verdict resolved on one promise must
   # not approve the other gate's artifact. The asker here is a deliberately
   # unguarded stand-in -- it hands out a promise per call and holds them all.
-  # `Tools::AskHuman` no longer has that shape: since T7 it refuses a second ask
+  # `Tools::AskHuman` no longer has that shape: it now refuses a second ask
   # over an unanswered set, and its replies name the set they answer, so nothing
   # can silently overwrite the promise a parked gate holds. Routing ACROSS askers
   # is a later card; this example keeps pinning the gate side of it.

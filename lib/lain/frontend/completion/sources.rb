@@ -9,10 +9,9 @@ module Lain
       #
       # Built ONCE per sigil and kept: {Lain::Ext::Fuzzy}'s constructor is the
       # expensive half (one crossing of the FFI boundary with the whole batch,
-      # plus a directory walk for paths), while `#match` is the cheap half that
+      # plus a directory walk for paths) where `#match` is the cheap half that
       # runs per keystroke. Building per keystroke would walk the project on
-      # every character typed, which is the difference between a completion
-      # that feels instant and one that does not.
+      # every character typed.
       class Sources
         COMMAND = "/"
         PATH = "@"
@@ -21,7 +20,7 @@ module Lain
         # Directories a build tool owns, pruned by name at every level. Not
         # taste: a populated Rust `target/` is six figures of paths, and the
         # walk is synchronous on the human's first keypress. A `.gitignore`
-        # reader would be the honest general answer and is a ticket, not this.
+        # reader is the honest general answer, and is not this.
         PRUNED = %w[target tmp vendor node_modules].freeze
 
         # @param commands [Enumerable] anything yielding objects that answer
@@ -62,39 +61,33 @@ module Lain
         end
 
         # A plain directory walk, deliberately NOT {Tools::ListFiles} or
-        # {Tools::Glob}: those are Tool subclasses with Tool::Input validation
-        # that flow through the effect/approval machinery, so sourcing a
-        # keystroke's candidates from them would invert the dependency
-        # direction (frontend -> tools) and drag approval into a render loop.
+        # {Tools::Glob}: those flow through the effect/approval machinery, so
+        # sourcing a keystroke's candidates from them would invert the
+        # dependency direction (frontend -> tools) and drag approval into a
+        # render loop.
         #
-        # `Find` and not `Dir.glob` because glob has no exclusion: it would
-        # walk every path in a pruned directory before anything could filter
-        # them, which is the whole cost. Find also lstats each entry once --
-        # the same stat glob's caller had to make separately -- and lstat is
+        # `Find` and not `Dir.glob` because glob has no exclusion: it would walk
+        # every path in a pruned directory before anything could filter them,
+        # which is the whole cost. Find also lstats each entry once, which is
         # why a symlinked directory reads as a symlink and is never descended
         # into a loop.
         #
-        # WHAT SCRUBBING AT THE SOURCE COSTS, stated because choosing it
-        # deliberately means writing down its price. A scrubbed candidate is no
-        # longer the name on disk: accepting `@[2Jevil_tty.rb` yields a token
+        # WHAT SCRUBBING AT THE SOURCE COSTS: a scrubbed candidate is no longer
+        # the name on disk, so accepting `@[2Jevil_tty.rb` yields a token
         # `File.exist?` answers false for, and two files whose names differ only
         # in control bytes collapse to one string drawn twice. NOT a security
         # regression -- a collision with a legitimate name resolves to the
-        # innocent file and leaves the hostile one uncompletable, which is the
-        # safe direction -- but it is a real limitation. Naming a hostile file
-        # is something the human must do by hand.
+        # innocent file and leaves the hostile one uncompletable -- but naming a
+        # hostile file is something the human must then do by hand. A name that
+        # is ENTIRELY control bytes scrubs to "" and is dropped rather than
+        # drawn as a bare sigil nobody can act on.
         #
-        # A name that is ENTIRELY control bytes scrubs to "", which is not a
-        # candidate at all: it would sort first and draw a bare sigil the human
-        # cannot act on. Dropped rather than drawn.
+        # THE CANDIDATE SET IS FIXED FOR THE LIFE OF THE PROCESS: a file written
+        # after the first completion cannot be completed until lain restarts.
+        # Deliberate (see the class comment), with no invalidation hook yet.
         #
-        # THE CANDIDATE SET IS FIXED FOR THE LIFE OF THE PROCESS. A file
-        # written after the first completion cannot be completed until lain
-        # restarts. Deliberate -- see the class comment on why this is built
-        # once -- but it is a real limitation with no invalidation hook yet.
-        #
-        # Sorted because the matcher breaks equal scores by insertion order,
-        # and filesystem order would differ between machines.
+        # Sorted because the matcher breaks equal scores by insertion order, and
+        # filesystem order would differ between machines.
         def paths
           found = []
           Find.find(@root) do |path|
@@ -108,11 +101,10 @@ module Lain
         # human names at a prompt. The root itself is never pruned, or the walk
         # would end before it began.
         #
-        # Matched on the BASENAME, so a plain file named `tmp` or `target` is
-        # pruned too and cannot be completed. Accepted rather than fixed: the
-        # alternative is a `File.directory?` stat per entry to save a filename
-        # nobody has, and the walk's whole point is not paying for entries it
-        # does not want.
+        # Matched on the BASENAME, so a plain FILE named `tmp` or `target` is
+        # pruned too. Accepted rather than fixed: the alternative is a
+        # `File.directory?` stat per entry to save a filename nobody has, and
+        # the walk's whole point is not paying for entries it does not want.
         def pruned?(path)
           return false if path == @root
 

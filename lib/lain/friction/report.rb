@@ -8,18 +8,16 @@ module Lain
     # that churn was BILLED) -- over one session Journal and renders each
     # detected signal beside the KNOB that addresses it. A pure function of the
     # Journal: no provider is touched, so two renders of the same entries are
-    # byte-identical (the class's own spec pins this).
+    # byte-identical.
     #
-    # {Friction::CacheWaste} is the one analyzer that reports even when it
-    # finds nothing: a cache that held is a fact worth stating, where an absent
-    # section reads the same as an analyzer that never ran. Its line therefore
-    # sits BELOW the numbered signals rather than among them when there is no
-    # waste, so a clean session still renders as a clean session.
+    # {Friction::CacheWaste} is the one analyzer that reports even when it finds
+    # nothing: a cache that held is a fact worth stating, where an absent section
+    # reads the same as an analyzer that never ran. Its line therefore sits BELOW
+    # the numbered signals rather than among them when there is no waste.
     #
     # The fuzzy tier behind {Grader::FrustrationRepair}'s injected `oracle:`
-    # stays Null here on purpose (interview decision, 2026-07-21 -- plan
-    # chunk-gherkin-meta-agents-plan-compaction.md, M1's escalation trigger):
-    # this report is the MECHANICAL floor only, never a model call.
+    # stays Null here on purpose: this report is the MECHANICAL floor only, never
+    # a model call.
     #
     #   Friction::Report.new(Journal.records(File.foreach(path))).render
     #   #=> "1 friction signal(s):\n..."
@@ -29,8 +27,8 @@ module Lain
       # Journal carries no tier metadata of its own (a session header's
       # `"tools"` entries are name/description/input_schema/strict only), so
       # this is a NAME heuristic over the two shipped tier-3 tools, not a live
-      # lookup against the toolset that actually ran. A richer signal (the
-      # header recording tier) is a follow-up, not this card's problem.
+      # lookup against the toolset that actually ran. Having the header record
+      # the tier is a follow-up.
       TIER_3_TOOL_NAMES = %w[bash core_exec].freeze
 
       # More than this many prefix rewrites in one session is "high" -- a
@@ -224,7 +222,7 @@ module Lain
           ["cache_waste: #{([rebilled] + context).join("; ")}: #{@knob}"]
         end
 
-        # AC 3's "explicitly": a session whose cache held says so, rather than
+        # Explicit, not implied: a session whose cache held says so, rather than
         # having the section quietly omitted -- an absent section and a clean
         # session are indistinguishable to a reader. A journal with no priced
         # call at all says nothing, because there was nothing to judge.
@@ -238,7 +236,7 @@ module Lain
         private
 
         # A cacheless provider's "none" is not the same finding as a cache that
-        # HELD, and the two rendered identically. AC 5's other half lives in the
+        # HELD, and the two rendered identically. The other half lives in the
         # `false` branch: the journal that recorded no capability keeps the
         # measured wording, because it is still what was measured.
         def headline
@@ -270,7 +268,7 @@ module Lain
 
         # Two withholdings, and they answer different questions.
         #
-        # The first is the card's: for a session the journal says had no cache,
+        # The first: for a session the journal says had no cache,
         # both the served count and the saving go, for the reason
         # {Friction::CacheWaste#saving_on} sets out -- the arithmetic really is
         # zero, and printing it says "your cache saved you nothing" about a
@@ -278,7 +276,7 @@ module Lain
         # fire over calls that did use a cache.
         #
         # The second needs no capability record at all, which is what closes
-        # F49's own sentence for the journals that carry none -- a recorded bench
+        # the gap for the journals that carry none -- a recorded bench
         # session, a strict-policy run. A dollar figure with nothing MEASURED
         # behind it is the same shape as one with nothing PRICEABLE behind it,
         # which {#figure_phrase} already withholds: zero tokens at any rate is

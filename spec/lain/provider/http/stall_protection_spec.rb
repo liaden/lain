@@ -2,12 +2,12 @@
 
 require "faraday"
 
-# F7a, bounded: a model server that stops emitting mid-body and holds the socket
-# open used to cost `request_timeout` per attempt, four attempts deep, printing
-# nothing. Measured here on this branch before the fix, with the 300s budget
-# scaled down to 1.5s so the suite could survive it: **Faraday::TimeoutError
-# after 6.02s across FOUR connections** -- exactly 4 x request_timeout, which at
-# the shipped number is twenty minutes.
+# The silent stall, bounded: a model server that stops emitting mid-body and
+# holds the socket open used to cost `request_timeout` per attempt, four
+# attempts deep, printing nothing. Measured here on this branch before the fix,
+# with the 300s budget scaled down to 1.5s so the suite could survive it:
+# **Faraday::TimeoutError after 6.02s across FOUR connections** -- exactly
+# 4 x request_timeout, which at the shipped number is twenty minutes.
 #
 # Every example drives a REAL socket through {StreamingUpstream}, because the
 # subject is time between TCP reads and WebMock hands a stubbed body over as one
@@ -110,8 +110,8 @@ RSpec.describe "stalled-stream protection", :seam do
 
     # The card's central decision, proved behaviourally: the retry budget is the
     # shipped 3 and `:post` is in `retry_options[:methods]`, so a stall raised as
-    # a listed exception would show four connections here -- F7a multiplied
-    # rather than fixed.
+    # a listed exception would show four connections here -- the stall
+    # multiplied rather than fixed.
     it "makes exactly one connection, because a stall is not retried" do
       connections = nil
       StreamingUpstream.ndjson(stalls_after_two_chunks) do |up|
@@ -260,9 +260,9 @@ RSpec.describe "stalled-stream protection", :seam do
     end
 
     # Not silently OFF, which is the failure this whole class is written against:
-    # a scheduler without the hook keeps the delivery that shipped before F10 was
-    # fixed. It lands badly on a reactor, but it still BOUNDS the stall, and an
-    # unbounded stall is the worse of the two.
+    # a scheduler without the hook keeps the delivery that shipped before the
+    # fiber-aware hand-off landed. It lands badly on a reactor, but it still
+    # BOUNDS the stall, and an unbounded stall is the worse of the two.
     it "falls back to the thread when the scheduler cannot" do
       expect(delivery.here(Thread.current, scheduler: Object.new)).to be_a(delivery::ToThread)
     end

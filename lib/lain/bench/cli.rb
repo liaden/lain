@@ -2,13 +2,12 @@
 
 module Lain
   module Bench
-    # All of `exe/lain bench`'s assembly, behind returned values: the exe
-    # parses flags, calls these methods, and `say`s the Strings -- nothing
-    # here prints (output discipline). Every refused input is a {Lain::Error}
-    # -- {Refusal} with the path context only this layer still holds,
-    # {Session::Corrupt} on a bad file, {MissingAPIKey} from the key gate --
-    # so the exe rescues Lain::Error ALONE (message, nonzero exit, no
-    # backtrace) and a programmer bug's ArgumentError stays a loud crash.
+    # All of `exe/lain bench`'s assembly, behind returned values: the exe parses
+    # flags, calls these methods, and `say`s the Strings -- nothing here prints.
+    # Every refused input is a {Lain::Error} -- {Refusal} with the path context
+    # only this layer still holds, {Session::Corrupt} on a bad file,
+    # {MissingAPIKey} from the key gate -- so the exe rescues Lain::Error ALONE
+    # and a programmer bug's ArgumentError stays a loud crash.
     class CLI
       # The user's own input turned away: a missing file, a directory with no
       # sessions, a zero or fractional run count, an occupied output path, a
@@ -20,14 +19,14 @@ module Lain
       class MissingAPIKey < Error; end
 
       # One source for the record defaults, so the flag help and the library
-      # behavior cannot drift. `runs` is {#record}'s own keyword default;
-      # `max_tokens` is the `bench record` FLAG's declared one -- the ceiling now
-      # arrives already resolved, inside the {Lain::CLI::Backend}, so this is what
-      # the command declares rather than a second default {#record} re-applies.
+      # behavior cannot drift. `max_tokens` is the FLAG's declared default --
+      # the ceiling arrives already resolved inside the {Lain::CLI::Backend},
+      # so this is what the command declares rather than a second default
+      # {#record} re-applies.
       #
-      # There is no `model` here on purpose: `--model` is declared with no default
-      # so that {Lain::CLI::Backend} can resolve the SELECTED provider's own, and
-      # a copy of anthropic's answer sitting in this hash was read by nothing.
+      # No `model` here on purpose: `--model` is declared with no default so
+      # that {Lain::CLI::Backend} resolves the SELECTED provider's own, and a
+      # copy of anthropic's answer sitting in this hash was read by nothing.
       RECORD_DEFAULTS = { runs: 2, max_tokens: 1024 }.freeze
 
       # The three-section {Variance} report over recorded session files.
@@ -44,13 +43,11 @@ module Lain
         build_variance(recordings, paths, price_book).report
       end
 
-      # The five-arm retrieval sweep (6-2.4): a deterministic, offline recall@k
-      # eval over the committed gold corpus, ranked with a tokens-on-recall
-      # column. No provider, no money, no network -- the vector arm reads
-      # committed fixture embeddings -- so unlike {#record} this needs neither a
-      # {Lain::CLI::Backend} nor the key gate. A stale fixture raises
-      # {Sweep::StaleEmbeddings} (a Lain::Error the exe presents); a bad `k` is
-      # user input and refuses like record's run count -- see {#check_k}.
+      # The five-arm retrieval sweep: a deterministic, offline recall@k eval
+      # over the committed gold corpus, ranked with a tokens-on-recall column.
+      # No provider, no money, no network -- the vector arm reads committed
+      # fixture embeddings -- so unlike {#record} this needs neither a
+      # {Lain::CLI::Backend} nor the key gate.
       #
       # @param k [Integer] retrieval depth (recall@k)
       # @return [String] the Compare-style report; never printed here
@@ -59,23 +56,19 @@ module Lain
       def sweep_report(k: Sweep::DEFAULT_K) = Sweep.new(k: check_k(k)).report
       # rubocop:enable Naming/MethodParameterName
 
-      # The B12 arms sweep: the three orchestration arms (single-thread control,
-      # orchestrator-worker, dual-ledger) over the ArmTasks suite, replayed
-      # offline through committed recordings -- no provider, no money, no network,
-      # byte-identical across runs, like {#sweep_report}. The paths are explicit
-      # (no lib->spec fixture coupling): the exe subcommand passes the committed
-      # fixture locations.
+      # The three orchestration arms (single-thread control, orchestrator-worker,
+      # dual-ledger) over the ArmTasks suite, replayed offline through committed
+      # recordings -- no provider, no money, no network, byte-identical across
+      # runs. The paths are explicit rather than a lib-to-spec fixture coupling.
       #
       # @return [String] the Compare-style report; never printed here
       def arm_sweep_report(tasks_path:, recordings_path:)
         ArmSweep.new(tasks_path:, recordings_path:).report
       end
 
-      # The PC-6 shape x density plan sweep: six arms (linear/fork x
+      # The shape x density plan sweep: six arms (linear/fork x
       # every/thinned/none) over one fixed plan and its scripted runs, replayed
-      # offline -- no provider, no money, no network, byte-identical across runs,
-      # like {#arm_sweep_report}. The paths are explicit (no lib->spec fixture
-      # coupling): the exe subcommand passes the committed fixture locations.
+      # offline like {#arm_sweep_report}.
       #
       # @return [String] the Compare-style report; never printed here
       def plan_sweep_report(plan_path:, runs_path:)
@@ -87,28 +80,22 @@ module Lain
       # names -- so the arms are compared under ONE confinement rather than
       # whichever each happened to construct.
       #
-      # `isolation` is the `--isolation` FLAG, not a backend object, the same
-      # name-to-resolve/object-to-inject split {#record} keeps between
-      # `provider_name` and `provider`. It resolves through the ONE
-      # {Lain::CLI::IsolationBackend} chat resolves through, so a name means the
-      # same thing from either command and an unknown one raises the single
-      # named error from both.
+      # `isolation` is the `--isolation` FLAG, not a backend object. It resolves
+      # through the ONE {Lain::CLI::IsolationBackend} chat resolves through, so
+      # a name means the same thing from either command.
       #
-      # AN UNSET FLAG IS NOT `--isolation none`. Unset leaves {Arm::Driver}'s own
-      # default, {Arm::NoIsolation}, whose lease carries no {WorkerEnv} at all;
-      # `none` resolves an {Isolation::Null}, a real backend leasing the shared
-      # process environment. Forwarding the resolver's own nil-means-default
-      # through here would collapse the two, and that distinction is what tells a
-      # report's reader whether a run was isolated by a backend or never leased
-      # anything.
+      # AN UNSET FLAG IS NOT `--isolation none`. Unset leaves {Arm::Driver}'s
+      # own default, {Arm::NoIsolation}, whose lease carries no {WorkerEnv} at
+      # all; `none` resolves an {Isolation::Null}, a real backend leasing the
+      # shared process environment. That distinction is what tells a report's
+      # reader whether a run was isolated by a backend or never leased anything.
       #
       # PASS A REAL `journal:` WITH ANY NAME BUT nil. The resolver decorates by
       # NEED, so a resolve with no journal (or a {Channel::Null}) hands back a
-      # BARE backend that emits no {Telemetry::IsolationLease} record at all --
-      # an isolated run nothing can observe. For chat that is merely quiet; on
-      # the bench, where the record IS the deliverable, an unobservable arm run
-      # is not a run worth reporting. Treat `journal:` as required whenever
-      # `isolation` is set, and wire the exe that way.
+      # BARE backend emitting no {Telemetry::IsolationLease} record at all -- an
+      # isolated run nothing can observe. For chat that is merely quiet; on the
+      # bench, where the record IS the deliverable, it is not a run worth
+      # reporting.
       #
       # @param arms [Array<Arm>] the topologies under comparison
       # @param tasks [Array<String>] the suite each arm runs
@@ -122,30 +109,27 @@ module Lain
       #   the Driver is handed PROMPTS, so this is the only way it can name where
       #   they came from
       # @param model [String, nil] what the arms were configured to ask, for the
-      #   same header; {SpawnSeam#model} is what answers it on the assembled path
+      #   same header; {SpawnSeam#model} answers it on the assembled path
       # @param backend_options [Hash] forwarded verbatim to
-      #   {Lain::CLI::IsolationBackend.resolve} (`root:`, `journal:`, `paths:`,
-      #   `shell_out_factory:`); ITS signature owns those defaults, so restating
-      #   them here would be a second authority to drift from
+      #   {Lain::CLI::IsolationBackend.resolve}; ITS signature owns those
+      #   defaults, so restating them here would be a second authority
       # @return [String] never printed here
       # @raise [Lain::CLI::IsolationBackend::Unknown] on a name outside the
       #   resolver's advertised set
       # @raise [ArgumentError] on backend options with no name to resolve
       def arm_report(arms, tasks:, spawn_seam:, grader:, isolation: nil, fixture: nil, model: nil, **backend_options)
-        # `isolation_name:` is the operator's own word, alongside the resolved
-        # object. Not a second authority on WHICH backend ran -- the object is
-        # that -- but the only thing that can NAME it: every name resolves to
-        # the same {Isolation::Journal} decorator once `--isolation` requires a
-        # journal, so a class name renders `none` and `worktree` identically.
+        # `isolation_name:` is the operator's own word, and the only thing that
+        # can NAME the backend: every name resolves to the same
+        # {Isolation::Journal} decorator once `--isolation` requires a journal,
+        # so a class name renders `none` and `worktree` identically.
         Arm::Driver.new(arms, tasks:, spawn_seam:, grader:, fixture:, model:, isolation_name: isolation,
                               **arm_isolation(isolation, **backend_options)).report
       end
 
       # The live arm comparison, ASSEMBLED: the entry point `bench arms` sits
-      # on. Everything {#arm_report} needs is built here from plain values -- the
-      # three arms, {ArmTasks}' committed suite and its per-task gold graders,
-      # and the live {SpawnSeam} -- so `exe/lain` stays a flag parser and never
-      # names an Arm, a Grader, or a Provider itself (its boundary rule).
+      # on. Everything {#arm_report} needs is built here from plain values, so
+      # `exe/lain` stays a flag parser and never names an Arm, a Grader, or a
+      # Provider itself.
       #
       # THIS SPENDS REAL API MONEY per run: every arm asks a real provider once
       # per task, and the dual-ledger arm asks about
@@ -154,10 +138,8 @@ module Lain
       # `bench arms` at roughly five times the control arm's cost rather than at
       # one ask per task.
       #
-      # `isolation` is the `--isolation` NAME, and nil means UNSET, not "none" --
-      # see {#arm_report} for what that distinction buys and {#lease_options} for
-      # how it survives the call. A SET name REQUIRES `journal:`; B3 is written
-      # against that, and {#lease_options} says why.
+      # `isolation` is the `--isolation` NAME, and nil means UNSET, not "none";
+      # a SET name REQUIRES `journal:`, and {#lease_options} says why.
       #
       # @param fixture_path [String] the committed {ArmTasks} suite the arms run
       # @param backend [Lain::CLI::Backend] the resolved provider-and-Context
@@ -169,11 +151,11 @@ module Lain
       # @param decompose [#call] how the orchestrator arm splits a task up; see
       #   {LiveArms::DEFAULT_DECOMPOSE} for why the arm's own default is wrong here
       # @param price_book [Lain::PriceBook] prices every arm's journal
-      # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam} (`provider:`,
-      #   `system:`, `toolset:`); ITS signature owns those defaults, including the
-      #   unset `system:` that teaches the arms the FILE/END trajectory format the
-      #   gold graders parse -- untaught, every arm scores near zero (floored only
-      #   by one task's vacuously-passing `excludes:`)
+      # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam}; ITS
+      #   signature owns those defaults, including the unset `system:` that
+      #   teaches the arms the FILE/END trajectory format the gold graders
+      #   parse -- untaught, every arm scores near zero, floored only by one
+      #   task's vacuously-passing `excludes:`
       # @return [String] the Driver's report; never printed here
       # @raise [Refusal] on an `isolation` with no journal, or a suite whose
       #   tasks share a prompt
@@ -184,9 +166,9 @@ module Lain
                       decompose: LiveArms::DEFAULT_DECOMPOSE,
                       price_book: PriceBook.default, **spawn_options)
         suite = ArmTasks.new(fixture_path:)
-        # Named rather than inlined into the call, because the header's `model:`
-        # has to be THE seam's own answer -- a second resolution off `backend`
-        # would be a second authority that can disagree with what actually ran.
+        # Named rather than inlined, because the header's `model:` has to be THE
+        # seam's own answer -- a second resolution off `backend` could disagree
+        # with what actually ran.
         spawn_seam = SpawnSeam.new(backend:, **spawn_options)
         arm_report(LiveArms.build(price_book:, decompose:),
                    tasks: suite.map(&:prompt), spawn_seam:, fixture: fixture_path, model: spawn_seam.model,
@@ -199,25 +181,21 @@ module Lain
       #
       # Tools are deliberately absent: the synthetic echo tasks this records
       # need none, and an empty Toolset keeps the recorded schema trivial.
-      # Tool-bearing task files are future work.
       #
-      # Provider and Context come from the SAME {Lain::CLI::Backend} the chat path
-      # is handed, so `--provider`/`--temperature`/`--seed` mean one thing across
-      # commands and an unknown provider name raises the one
-      # {Lain::CLI::UnknownProvider} from either. The sampler flags ride the
-      # Context into Request#extra, and the recorded HEADER carries them.
-      #
-      # ONE OBJECT, NOT SIX FLAGS -- {Lain::CLI::ChatLaunch}'s shape. A sweep
+      # Provider and Context come from the SAME {Lain::CLI::Backend} the chat
+      # path is handed, so `--provider`/`--temperature`/`--seed` mean one thing
+      # across commands. The sampler flags ride the Context into Request#extra,
+      # and the recorded HEADER carries them. ONE OBJECT, NOT SIX FLAGS: a sweep
       # assembled from loose flags is a sweep where two runs can differ by one
       # nobody threaded, and on a bench the record IS the deliverable.
       #
-      # TWO SEAMS, ONE WORD, ONE NESTING LEVEL APART -- and that is worse than the
-      # `provider_name`/`provider` pair it replaced, so it is written down rather
-      # than left to be re-derived: `provider:` HERE is the injected Provider
-      # OBJECT (nil asks the backend for the real, money-gated one), while the
-      # backend's own `:provider` OPTION is the `--provider` NAME to resolve. A
-      # spec reads `record(backend: Backend.new({provider: "gemini"}), provider:)`
-      # on one line, and both are correct.
+      # TWO SEAMS, ONE WORD, ONE NESTING LEVEL APART, so it is written down
+      # rather than left to be re-derived: `provider:` HERE is the injected
+      # Provider OBJECT (nil asks the backend for the real, money-gated one),
+      # while the backend's own `:provider` OPTION is the `--provider` NAME to
+      # resolve. A spec reads
+      # `record(backend: Backend.new({provider: "gemini"}), provider:)` on one
+      # line, and both are correct.
       #
       # @param taskfile [String] path to the task file: prompts one per line,
       #   blank lines skipped
@@ -238,8 +216,8 @@ module Lain
         prompts = prompts_from(taskfile)
         provider ||= recording_provider(backend)
         context = backend.context(system_override: system)
-        # PS-2 must attribute what ACTUALLY rendered: `--system` renders
-        # instead of the slots, and SlotFills.from owns that distinction.
+        # The attribution must name what ACTUALLY rendered: `--system` renders
+        # instead of the slots, and `SlotFills.from` owns that distinction.
         attribution = Telemetry::SlotFills.from(backend.slots, override: system)
         run_recorder = RunRecorder.new(provider:, context:, attribution:, prompts:)
         (1..runs).map { |index| run_recorder.record(File.join(out, "#{index}.ndjson")) }
@@ -247,22 +225,20 @@ module Lain
 
       private
 
-      # The isolation half of the {#arm_report} call, and the one place the unset
-      # name stays unset: nil with nothing to journal passes NO keyword at all,
-      # so {#arm_isolation} sends none either and {Arm::Driver}'s own default
-      # stands.
+      # The isolation half of the {#arm_report} call, and the one place the
+      # unset name stays unset: nil with nothing to journal passes NO keyword at
+      # all, so {Arm::Driver}'s own default stands.
       #
-      # A SET name REQUIRES a journal, and refuses without one.
-      # {Lain::CLI::IsolationBackend} decorates BY NEED, so resolving with no
-      # journal hands back a bare backend emitting no {Telemetry::IsolationLease}
-      # at all -- and manufacturing a Channel here instead would emit the records
-      # into a sink nobody drains, which is the same unobservable run one layer
-      # down. On the bench the record IS the deliverable, so the operator hears
-      # this at the door rather than from an empty result after a paid run.
+      # A SET name REQUIRES a journal. {Lain::CLI::IsolationBackend} decorates
+      # BY NEED, so resolving with none hands back a bare backend emitting no
+      # {Telemetry::IsolationLease} at all -- and manufacturing a Channel here
+      # instead would emit the records into a sink nobody drains, the same
+      # unobservable run one layer down. The operator hears this at the door
+      # rather than from an empty result after a paid run.
       #
       # A journal with NO name goes through UNACCOMPANIED on purpose, so
-      # {#arm_isolation}'s existing refusal is what says the telemetry would
-      # never arrive; a second guard here would be a second authority to drift.
+      # {#arm_isolation}'s refusal is what says the telemetry would never
+      # arrive; a second guard here would be a second authority to drift.
       def lease_options(isolation:, journal:)
         return { journal: }.compact if isolation.nil?
 
@@ -275,12 +251,10 @@ module Lain
       # all when the flag is unset, so the Driver stays the one authority on what
       # "no isolation" means (see {#arm_report}).
       #
-      # Options with no name to resolve CRASH rather than being dropped: with a
-      # name, the resolver's own signature rejects a key it does not know, and a
-      # silent drop here would make that guard depend on an unrelated argument --
-      # `journal:` typo'd next to `--isolation worktree` is loud, while a
-      # `journal:` the run will never use is a report missing the lease telemetry
-      # its caller asked for, with nothing said.
+      # Options with no name to resolve CRASH rather than being dropped: a
+      # silent drop would make the resolver's own unknown-key guard depend on an
+      # unrelated argument, and a `journal:` the run will never use is a report
+      # missing the lease telemetry its caller asked for, with nothing said.
       def arm_isolation(name, **backend_options)
         return { isolation: Lain::CLI::IsolationBackend.resolve(name, **backend_options) } unless name.nil?
         return {} if backend_options.empty?
@@ -315,15 +289,14 @@ module Lain
       end
 
       # Corrupt's own message names a digest, but only this layer still holds
-      # the path -- and an experimenter with a directory of n sessions needs
-      # to know WHICH file to regenerate.
+      # the path -- and an experimenter with a directory of n sessions needs to
+      # know WHICH file to regenerate.
       #
       # The MissingObject arm is DEFENSIVE, and kept: the Loader translates
       # every store refusal it can currently be made to raise, but that property
       # lives in two classes this one cannot see, and it was believed and false
       # once already. Landed as Corrupt rather than carried as itself, so this
-      # command still speaks ONE refusal type whichever arm fires ({CLI::Resume}
-      # and {Supervisor::Restart} take the same pair, for the same reason).
+      # command speaks ONE refusal type whichever arm fires.
       def load_session(path)
         replayable(Session.load(path), path)
       rescue Session::Corrupt, Store::MissingObject => e
@@ -349,9 +322,8 @@ module Lain
       end
 
       # This command spends money per run: a sweep of zero must not read as
-      # instant success, and a fractional count must refuse rather than
-      # truncate (Integer(2.5) quietly books 2). Integer(runs.to_s) accepts
-      # only whole numbers, whatever type the flag parser produced.
+      # instant success, and a fractional count must refuse rather than truncate
+      # -- `Integer(2.5)` quietly books 2, so the parse goes through the String.
       def check_runs(runs)
         count = Integer(runs.to_s, exception: false)
         raise Refusal, "the run count must be a whole number, got #{runs}" if count.nil?
@@ -361,9 +333,8 @@ module Lain
       end
 
       # Refusal parity with {#check_runs}: a fractional k must refuse rather
-      # than truncate (Integer(2.5) quietly scores recall@2), and recall@0
-      # retrieves nothing. Same Integer(value.to_s, exception: false) shape,
-      # whatever type the flag parser produced.
+      # than truncate -- `Integer(2.5)` quietly scores recall@2 -- and recall@0
+      # retrieves nothing.
       # rubocop:disable Naming/MethodParameterName -- pinned recall@k name.
       def check_k(k)
         depth = Integer(k.to_s, exception: false)
@@ -384,15 +355,13 @@ module Lain
       end
 
       # The recording client, asked of the ONE backend chat asks -- so every
-      # `--provider` name means the same thing, resolves to the same RAW
-      # (vendored-transport) client a lossless HTTP recording needs, and an
-      # unknown one raises the single {Lain::CLI::UnknownProvider}.
+      # `--provider` name resolves to the same RAW (vendored-transport) client a
+      # lossless HTTP recording needs.
       #
       # The keyless refusal is RESTATED, not re-implemented: the backend's own
-      # gate fires first and fires here, but it speaks in the chat's voice
-      # ("--provider anthropic needs it to build a client"). `record` is the
+      # gate fires first, but it speaks in the chat's voice. `record` is the
       # command that spends per run, so the operator hears that instead -- one
-      # gate, two audiences, and the sentence a paid sweep deserves.
+      # gate, two audiences.
       def recording_provider(backend)
         backend.provider
       rescue Lain::CLI::Backend::MissingAPIKey
@@ -400,21 +369,18 @@ module Lain
       end
 
       # Grades a run against THE TASK IT WAS GIVEN. {Arm::Driver} threads ONE
-      # `#grade` duck through every arm and every task, while {ArmTasks} carries
-      # a gold {Grader::Fixture} PER TASK -- so something has to dispatch, and a
-      # `grade(timeline)` call carries exactly one usable key: the run's own user
-      # turns, one of which is verbatim the prompt the Driver handed the arm
-      # (every arm asks the task text unchanged -- {Arm::SingleThread} and
-      # {Arm::DualLedger} through `Agent#ask`, {Arm::OrchestratorWorker} as the
-      # lead root the synthesis folds onto).
+      # `#grade` duck through every arm and every task while {ArmTasks} carries
+      # a gold {Grader::Fixture} PER TASK, so something has to dispatch -- and a
+      # `grade(timeline)` call carries exactly one usable key: the run's own
+      # user turns, one of which is verbatim the prompt the Driver handed the
+      # arm, since every arm asks the task text unchanged.
       #
-      # {ArmSweep::GraderAdapter} is the replayed sibling of this object; it
-      # needs no dispatch because that sweep drives the arms itself, one task at
-      # a time, and so can build a per-task adapter per run.
+      # {ArmSweep::GraderAdapter} is the replayed sibling; it needs no dispatch
+      # because that sweep drives the arms itself, one task at a time.
       #
-      # A timeline naming no task in the suite is a WIRING bug, not a zero score:
-      # scored as zero it would look like an arm that failed every task, which is
-      # the one reading a bench must never invent.
+      # A timeline naming no task in the suite is a WIRING bug, not a zero
+      # score: scored as zero it would look like an arm that failed every task,
+      # which is the one reading a bench must never invent.
       class SuiteGrader
         def initialize(suite)
           @suite = unique_prompts!(suite)
@@ -429,10 +395,8 @@ module Lain
         # {ArmTasks} enforces a unique `id`, NOT a unique `prompt`, and the
         # fixture path is user input. Dispatching by prompt across a duplicate
         # resolves BOTH tasks' runs to the first, scoring the second's gold
-        # against the first's trajectory and reporting the difference as a score
-        # -- the invented number this class doc forbids, arriving through the one
-        # door the doc does not guard. Refused in {ArmTasks#unique!}'s shape,
-        # here where the assumption is made and before any arm runs.
+        # against the first's trajectory and reporting the difference as a
+        # score. Refused here, where the assumption is made, before any arm runs.
         def unique_prompts!(suite)
           shared = suite.group_by(&:prompt).values.select { |tasks| tasks.size > 1 }
           return suite if shared.empty?
@@ -457,6 +421,5 @@ module Lain
 end
 
 # After the class body: RunRecorder reopens CLI (and raises CLI::Refusal), and
-# nothing in the body above needs it before runtime -- the same children-after-
-# the-class-body load order effect/handler.rb uses.
+# nothing above needs it before runtime.
 require_relative "cli/run_recorder"

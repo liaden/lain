@@ -13,26 +13,18 @@ module Lain
     # uses for an empty index, though the two are unrelated structures and
     # the nil arises for a different reason in each.
     #
-    # Deliberately carries no usage or cost. {Agent::Accounting} never ran this
-    # turn through the ordinary commit-then-journal atom -- there was no live
-    # Agent, no provider call, that is the entire point of salvage -- so no
-    # {TurnUsage} record exists for it either, and {Ledger} prices a salvaged
-    # turn at zero. That is an accepted, DOCUMENTED gap, not a bug to route
-    # around here: real tokens were genuinely spent the first time around, the
-    # same shape as a silently-retried request (see {ProviderRetry}) where
-    # real spend can exceed what the reported Usage ever shows. Inventing a
-    # {TurnUsage} record after the fact would need a stop_reason and a token
-    # count this class has no independent way to attribute correctly (the
-    # recovered SSE stream's own `usage` field is exactly the number the
-    # ORIGINAL, now-vanished Agent run would have journaled, and re-journaling
-    # it a second time under a different digest would double-count it in any
-    # aggregate that sums TurnUsage records) -- so the honest choice is a zero
-    # line here, not a manufactured one there.
+    # Deliberately carries no usage or cost, and that gap is ACCEPTED rather
+    # than a bug to route around. No {TurnUsage} record exists for a salvaged
+    # turn -- there was no live Agent and no provider call, which is the entire
+    # point -- so {Ledger} prices it at zero even though real tokens were spent
+    # the first time around, the same shape as a silently-retried request.
+    # Manufacturing a {TurnUsage} after the fact would re-journal the ORIGINAL
+    # run's own `usage` number under a different digest, double-counting it in
+    # any aggregate that sums those records.
     #
-    # Emitted by {CLI::Resume}, never by {SessionRecord::Salvage} itself -- that
-    # class is a pure calculation over the ducks it is handed and never touches a
-    # file (see its class comment); writing the record, like every other file
-    # effect of a resume, is the CLI layer's job.
+    # Emitted by {CLI::Resume}, never by {SessionRecord::Salvage} itself, which
+    # is a pure calculation over the ducks it is handed and never touches a
+    # file.
     Salvaged = Data.define(:request_digest, :head_before, :head_after) do
       include Journalable
 

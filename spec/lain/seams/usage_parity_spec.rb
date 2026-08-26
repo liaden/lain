@@ -11,8 +11,8 @@ require "json"
 # ONE call -- `Accounting#observe` rolls the response into `#usage` and journals
 # the record in the same breath -- so the parity below is structural rather than
 # coincidental, and this spec is what says so out loud. Without it, the chunk
-# that closed F76 (two surfaces disagreeing about the inbox count) would have
-# recreated F76 for the token count.
+# that fixed two surfaces disagreeing about the inbox count would have
+# recreated exactly that disagreement for the token count.
 #
 # The subtle half is regeneration. `Usage`'s own doc says correct aggregation
 # sums over UNIQUE turn digests -- but that rule is about content reachable from

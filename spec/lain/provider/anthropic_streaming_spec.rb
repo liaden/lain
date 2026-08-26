@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T11 / F7c. The SSE streaming path, driven over a REAL socket that dies
+# The SSE streaming path, driven over a REAL socket that dies
 # mid-body, because that is the only instrument that can express this defect.
 #
 # `Provider::Anthropic#stream_dispatch` builds ONE {StreamAssembler} per round

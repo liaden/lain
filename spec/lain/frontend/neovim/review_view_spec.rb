@@ -227,7 +227,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     end
   end
 
-  # T7: `partition_header` and `file_row` render the SAME path two different
+  # `partition_header` and `file_row` render the SAME path two different
   # ways for a `by_directory` survey outside the project root -- the header
   # keeps its climb, the file rows beneath it drop theirs. Both must go
   # through the one owner now.
@@ -289,7 +289,7 @@ RSpec.describe Lain::Frontend::Neovim::ReviewView do
     end
   end
 
-  # B19. A survey opens over a directory and reads nothing, and drawing it in
+  # A survey opens over a directory and reads nothing, and drawing it in
   # the cockpit used to read all of it: the heading's `+n -m`, the key table and
   # the open line each walked every file's hunks, in BOTH scopes. Every file
   # here raises when chunked, so each example below asserts work that did not
@@ -1102,7 +1102,7 @@ RSpec.describe "runtime/46_sidebar.lua", :nvim do
       expect(keys.uniq.size).to eq(Lain::Review::MARK_STATES.size)
     end
 
-    # ON THE RAIL RATHER THAN RAISED (F72), and what is asserted about the WIRE
+    # ON THE RAIL RATHER THAN RAISED, and what is asserted about the WIRE
     # is untouched: nothing is sent, which is the rule this example exists for.
     # What changed is `ok`. This used to `error()` out of the callback, and nvim
     # appends its own `stack traceback:` to anything escaping a `define`d one --
@@ -1563,7 +1563,7 @@ RSpec.describe Lain::Frontend::Neovim, "the changeset review's two gestures", :n
 end
 
 # The measurement the doubles above cannot make: a real fifty-file corpus, a
-# real {Lain::Review::Session}, and B8's `chunker:` seam counting at the
+# real {Lain::Review::Session}, and the `chunker:` seam counting at the
 # CHUNKER's own `#call` -- so "the sidebar read nothing" is an observation about
 # work that did not happen rather than a flag the subject set about itself.
 #

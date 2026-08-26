@@ -12,16 +12,12 @@ module Lain
     #
     # The split between the two modules is the split between the neutral kwargs
     # and the actual bytes. `AnthropicEncoding#encode` produces the SDK's
-    # `system_:` kwargs, so the dry differential can byte-compare it against the
-    # official-SDK oracle; that is also why the wire rewrite does NOT live there
-    # -- the oracles include `AnthropicEncoding` and must keep seeing kwargs.
-    # This module owns everything past that line: the wire BODY (`system_` ->
-    # `system`, the top-level `stream` flag the SDK expressed by method choice),
-    # the wire RESPONSE (assembled blocks -> a neutral {Lain::Response}), and
-    # the retry backoff both endpoints' rate-limit headers demand.
+    # `system_:` kwargs so the dry differential can byte-compare it against the
+    # official-SDK oracle, which is why the wire rewrite does NOT live there --
+    # the oracles include that module and must keep seeing kwargs.
     #
     # It deliberately does NOT own `#complete` or `#dispatch`. Those diverge for
-    # real reasons -- Anthropic threads a WAL frame and CE-5's
+    # real reasons -- Anthropic threads a WAL frame and its own
     # `on_stream_started` through its round trip, Bedrock neither -- and a
     # shared `#complete` would have to reconcile which error arms each backend
     # rescues. Those arms are the loud part; they stay written out, per backend,
@@ -32,15 +28,9 @@ module Lain
       # token limits bind first on large agentic prompts, so the tokens reset is
       # the default until a live 429 confirms otherwise.
       #
-      # This was written out twice, and both copies named the SAME header --
-      # verified before collapsing them, because reconciling a behavioural
-      # difference would have been a decision rather than a refactor. One
-      # constant now, so the two cannot drift while the open question is open.
-      # Confirming it against a live 429 remains a named follow-up: Backend
-      # hands this transport live default `--journal` chat traffic and
-      # `--provider bedrock` is the work account's default, so a wrong header
-      # throttles (or fails to throttle) ordinary conversations, not just
-      # `bench record` runs.
+      # Confirming it against a live 429 is still owed: this transport carries
+      # ordinary chat traffic, so a wrong header throttles -- or fails to
+      # throttle -- real conversations rather than only `bench record` runs.
       RATE_LIMIT_RESET_HEADER = "anthropic-ratelimit-tokens-reset"
 
       NUMERIC_SECONDS = /\A\d+(\.\d+)?\z/
@@ -81,7 +71,7 @@ module Lain
       end
 
       # The FULL, ordered block list with every extended-thinking signature
-      # intact (gate 1) -- never the SDK's or RubyLLM's flattened text.
+      # intact -- never the SDK's or RubyLLM's flattened text.
       def build_response(assembled)
         Response.new(id: assembled.id, model: assembled.model,
                      content: normalize_tool_inputs(assembled.content),

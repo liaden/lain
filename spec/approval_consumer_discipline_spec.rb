@@ -19,8 +19,8 @@ require "pathname"
 # one file is not reachable from the file that has to obey it. From the second
 # gated call of a turn onward the notifier took the pending and held it for the
 # whole of dunstify's blocking wait, so the chat pane rendered nothing and read
-# nothing; on `--no-nvim` that is a session with NO approval surface (T15,
-# manual-QA round 4 F18). A live suite of 13690 examples could not see it,
+# nothing; on `--no-nvim` that is a session with NO approval surface (found in
+# manual-QA round 4). A live suite of 13690 examples could not see it,
 # because every spec's stand-in surface was written to observe rather than
 # consume -- so the guard has to be structural, and it has to fail at commit.
 #

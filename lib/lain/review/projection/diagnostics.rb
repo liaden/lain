@@ -3,41 +3,33 @@
 module Lain
   module Review
     module Projection
-      # Annotations and critique findings, projected into nvim's diagnostic
-      # layer -- which buys gutter signs, virtual text, `]d`/`[d`, `setqflist`,
-      # severity filtering and every picker's diagnostics source for the price
-      # of a severity map. `:Telescope diagnostics` becomes a comment browser
-      # at no cost, and none of it is code this repo has to own.
+      # Annotations and critique findings, projected into nvim's diagnostic layer
+      # -- which buys gutter signs, virtual text, `]d`/`[d`, `setqflist`, severity
+      # filtering and every picker's diagnostics source for the price of a
+      # severity map, none of it code this repo has to own.
       #
-      # == Why an entry carries no line
-      #
-      # A DISPLAY layer, never an anchor, and that is a measurement rather than
-      # a preference. On nvim 0.12.4, inserting two lines above a diagnostic:
+      # AN ENTRY CARRIES NO LINE, and that is a measurement rather than a
+      # preference. On nvim 0.12.4, inserting two lines above a diagnostic:
       #
       #     BEFORE  diag.get lnum=2   anchor extmark row=2   rendered rows=[2]
       #     AFTER+2 diag.get lnum=2   anchor extmark row=4   rendered rows=[4]
       #
       # `vim.diagnostic.get` reports the same lnum forever, while the sign and
-      # virtual text the diagnostic layer drew MOVE -- they are extmarks, and
-      # nvim slides them like any other. So the screen keeps looking right
-      # while the record goes stale, and everything that reads the record
-      # (`]d`, `setqflist`, a picker, anything Ruby asks back) answers the old
+      # virtual text the diagnostic layer drew MOVE -- they are extmarks, and nvim
+      # slides them like any other. So the screen keeps looking right while the
+      # record goes stale, and everything that reads the record answers the old
       # line. A visibly wrong answer would be kinder.
       #
       # Extmarks therefore stay the anchor, and an entry names the MARK, not a
       # line: only the editor knows where a mark is now, so only the editor may
       # say. That is why the duck this takes is `#mark`/`#text`/`#kind` and
-      # deliberately not {Review::AnnotationPlaced}, whose `line` is the one
-      # field that must not cross.
+      # deliberately not {Review::AnnotationPlaced}, whose `line` is the one field
+      # that must not cross.
       #
-      # == Deletable
-      #
-      # This capability is removable by deleting this file, its unit-index line
-      # in `lib/lain/review.rb`, `runtime/49_diagnostics.lua` and this spec.
-      # Nothing outside those names {SEVERITIES}, {RANKS} or either namespace,
-      # and the lua half is discovered by a glob rather than a require. What
-      # removal leaves behind: annotations still place and still drift; no
-      # gutter signs, no `]d`, no quickfix, no telescope.
+      # Removable by deleting this file, its unit-index line in
+      # `lib/lain/review.rb`, `runtime/49_diagnostics.lua` and this spec. What
+      # removal leaves behind: annotations still place and still drift; no gutter
+      # signs, no `]d`, no quickfix, no telescope.
       class Diagnostics
         # A kind no vocabulary this projection knows spells.
         class UnknownKind < Error; end
@@ -58,23 +50,20 @@ module Lain
 
         SEVERITIES = ANNOTATION_KINDS.to_h { |kind| [kind, TIERS.fetch(kind)] }.freeze
 
-        # The critique skill's ranks (`skill/critique/skill.md` ranks every
-        # finding BLOCKER / SHOULD-FIX / NIT), on the same three tiers.
-        #
-        # DERIVED from {SEVERITIES} rather than restated beside it, for
-        # {Review::VOCABULARY}'s reason: two independent declarations of one
+        # The critique skill's ranks (BLOCKER / SHOULD-FIX / NIT), on the same
+        # three tiers. DERIVED from {SEVERITIES} rather than restated beside it,
+        # for `review/vocabulary.rb`'s reason: two independent declarations of one
         # correspondence are free to disagree, and the disagreement would be
-        # invisible -- both sides would still render diagnostics, just at
-        # different severities depending on which door a note came in by. The
-        # correspondence itself is a judgement and is stated here once: a
-        # BLOCKER is what `blocker` is, a NIT is what `note` is, and SHOULD-FIX
-        # takes the tier between them, which `question` also takes.
+        # invisible -- both sides still render diagnostics, at different
+        # severities depending on which door a note came in by. The correspondence
+        # itself is a judgement, stated once: a BLOCKER is what `blocker` is, a
+        # NIT is what `note` is, and SHOULD-FIX takes the tier between them.
         RANKS = { "BLOCKER" => SEVERITIES.fetch("blocker"), "SHOULD-FIX" => SEVERITIES.fetch("question"),
                   "NIT" => SEVERITIES.fetch("note") }.freeze
 
         # Where the human's own notes render. A finding renders in its own
-        # namespace (T22 passes one), so a suggestion is visibly a suggestion
-        # and clearing one never touches the other.
+        # namespace (the caller passes one), so a suggestion is visibly a
+        # suggestion and clearing one never touches the other.
         DEFAULT_NAMESPACE = "lain_review_diagnostics"
 
         # What nvim prints beside a message. Says which door a note came in by,

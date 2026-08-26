@@ -10,16 +10,10 @@ module Lain
       # current state, not a log, so an update replaces the whole buffer rather
       # than growing it (see the runtime's `45_views.lua`).
       #
-      # Three views, three collaborators, no Agent reference -- 4-2.2's
-      # "subscribe, don't reach into Agent": {TimelineView} walks an injected
-      # {Store} to answer `lain://timeline` once a
-      # {Telemetry::TurnUsage} names the committed turn; the injected
-      # {Session}'s own `#reminders` answers `lain://workspace`, re-read on
-      # every event and only re-rendered when the text actually moved; and a
-      # remembered previous {Telemetry::RequestSent} payload answers
-      # `lain://diff`. Buffers never touches nvim itself -- like {Neovim} it
-      # turns an event into plain lines and hands them back; {RpcThread} is
-      # still the only nvim-touching object.
+      # Three views, three collaborators, no Agent reference -- each SUBSCRIBES
+      # rather than reaching into the Agent. Buffers never touches nvim itself:
+      # like {Neovim} it turns an event into plain lines and hands them back,
+      # and {RpcThread} stays the only nvim-touching object.
       class Buffers
         TIMELINE = "lain://timeline"
         WORKSPACE = "lain://workspace"
@@ -30,15 +24,14 @@ module Lain
         # embeds the FULL message history -- see its doc) on every turn.
         CONTEXT_LINES = 3
 
-        # The Null store (house rule: Null Object over nil checks): satisfies
-        # the read half of the {Store} duck and resolves NOTHING, so a Buffers
-        # nobody wired a store into renders every timeline as unavailable --
-        # visibly, through the same {Store::MissingObject} path a real store's
-        # genuine miss takes -- instead of what the previous default did.
-        # (`store: Store.new` was a real-but-DISCONNECTED store: valid-looking,
-        # yet it could never hold the live session's turns, so the first
-        # {Telemetry::TurnUsage} crashed the drain thread. A default that can
-        # only ever fail should SAY so, not look plausible.)
+        # The Null store: satisfies the read half of the {Store} duck and
+        # resolves NOTHING, so a Buffers nobody wired a store into renders every
+        # timeline as unavailable -- visibly, through the same
+        # {Store::MissingObject} path a real store's genuine miss takes. The
+        # previous default, a real-but-DISCONNECTED `Store.new`, looked
+        # plausible and crashed the drain thread on the first
+        # {Telemetry::TurnUsage}: a default that can only ever fail should SAY
+        # so.
         class DetachedStore
           # @return [false]
           def key?(_digest)
@@ -58,41 +51,35 @@ module Lain
         end
 
         # lain://timeline as its own view object -- {InboxView}'s shape
-        # (`initial` / `update(event)`, plain lines, never nvim), extracted for
-        # {InboxView}'s reason: this view stopped being a one-line render the
-        # moment it had to answer "which turn is on line N?" for the editor's
-        # pin gesture. Rendering a chain, INDEXING it, and pinning off that
-        # index are one responsibility, and it is not the same one as diffing
-        # request payloads.
+        # (`initial` / `update(event)`, plain lines, never nvim). Rendering a
+        # chain, INDEXING it, and pinning off that index are one
+        # responsibility, and not the same one as diffing request payloads.
         class TimelineView
           NAME = TIMELINE
           EMPTY = ["(no turns yet)"].freeze
 
-          # What a rendered turn line carries once {Session#record_pin} holds its
-          # digest ("compaction may not elide this one"). A SUFFIX, deliberately:
-          # the runtime anchors BOTH the lainRole syntax match (20_buffers.lua) and
-          # lain://timeline's ]]/[[ record boundary at "^%a+:", so a marker in
-          # FRONT of the role would silently cost the buffer its highlighting,
-          # its motions, and its folds at once.
+          # A SUFFIX, deliberately: the runtime anchors BOTH the lainRole syntax
+          # match (20_buffers.lua) and lain://timeline's ]]/[[ record boundary at
+          # "^%a+:", so a marker in FRONT of the role would silently cost the
+          # buffer its highlighting, its motions and its folds at once.
           #
           # A turn whose own preview happens to END with these bytes renders
-          # identically to a pinned one. Cosmetic only, and deliberately not
-          # defended against: nothing ever parses the marker back out -- pins are
-          # resolved through {#digest_at}'s index, never off the rendered text.
+          # identically to a pinned one. Cosmetic, and deliberately undefended:
+          # nothing ever parses the marker back out -- pins resolve through
+          # {#digest_at}'s index, never off the rendered text.
           PIN_MARKER = "  [pinned]"
 
-          # Folded out of a preview so a turn is ONE line. `\R` is wider than
-          # the transport strictly needs -- `nvim_buf_set_lines` rejects only
-          # `\n` and `\r\n`, measured; `\r`, `\v`, `\f`, U+0085 and U+2028 all
-          # pass it -- and wider on purpose, because this is a LEGIBILITY rule
-          # before it is a transport one: a stray CR inside a projection's line
-          # renders as `^M` and reads as corruption. The transport's own,
-          # narrower refusal is {RenderQueue#checked_lines}.
+          # Folded out of a preview so a turn is ONE line. `\R` is wider than the
+          # transport needs -- `nvim_buf_set_lines` rejects only `\n` and `\r\n`,
+          # measured; `\r`, `\v`, `\f`, U+0085 and U+2028 all pass -- and wider
+          # on purpose: a stray CR inside a projection's line renders as `^M` and
+          # reads as corruption. The transport's narrower refusal is
+          # {RenderQueue#checked_lines}.
           NEWLINES = /\R+/
 
-          # The answer to one pin gesture, as a value: this touches neither nvim
-          # nor stdio, so "report the failure" can only mean "hand it back".
-          # `digest` is nil exactly when the line named no turn.
+          # This touches neither nvim nor stdio, so "report the failure" can
+          # only mean "hand it back". `digest` is nil exactly when the line
+          # named no turn.
           Pin = Data.define(:digest, :report) do
             def pinned? = !digest.nil?
           end
@@ -103,22 +90,19 @@ module Lain
             clear_line_index
           end
 
-          # The at-rest projection. A RENDER like any other, so it owns the line
-          # index like any other: the placeholder describes no turn, and a
-          # digest still resolvable behind it would let a pin land on a line the
-          # buffer no longer shows.
+          # A RENDER like any other, so it owns the line index like any other:
+          # the placeholder describes no turn, and a digest still resolvable
+          # behind it would let a pin land on a line the buffer no longer shows.
           # @return [Array<String>]
           def initial
             clear_line_index
             EMPTY.dup
           end
 
-          # A digest the store cannot resolve -- a mis-wired store, or an event
-          # from a Timeline this store never held -- must NOT raise out of here:
-          # this runs on the frontend's sole drain thread, whose death would
-          # silently stop the Channel draining and eventually wedge the agent's
-          # producer against a full queue. The miss renders INTO the buffer
-          # instead, so it is visible where the human is already looking.
+          # A digest the store cannot resolve must NOT raise out of here: this
+          # runs on the frontend's sole drain thread, whose death would silently
+          # stop the Channel draining and eventually wedge the agent's producer
+          # against a full queue. The miss renders INTO the buffer instead.
           # @param event [Object] one Channel event
           # @return [Array<String>, nil] full replacement lines, nil for an
           #   event that names no turn
@@ -130,26 +114,22 @@ module Lain
             unavailable(event.digest)
           end
 
-          # Which turn this view renders on `line` -- the index the editor's pin
-          # gesture resolves its cursor through. Positional guessing is not
-          # available: the line carries no digest, and the
-          # {Store::MissingObject} rescue collapses the whole chain to a single
-          # notice line.
+          # Which turn this view renders on `line`, for the editor's pin
+          # gesture. Positional guessing is not available: the line carries no
+          # digest, and the {Store::MissingObject} rescue collapses the whole
+          # chain to a single notice line.
           #
           # @param line [Integer] 1-based, as nvim's cursor reports it
           # @return [String, nil] that turn's digest; nil when the line names no
           #   turn (line 0, past the end, or a collapsed unavailable chain)
           def digest_at(line)
-            # The guard is the 1-based/0-based seam, not fussiness: line 0 would
-            # index -1, which is the LAST turn -- a cursor nvim never reports
-            # would silently pin the head.
+            # The 1-based/0-based seam: line 0 would index -1, the LAST turn, so
+            # a cursor nvim never reports would silently pin the head.
             @line_digests[line - 1] if line.positive?
           end
 
-          # The `p` gesture from lain://timeline (the runtime's 75_timeline.lua): pin
-          # the turn under the cursor. A line naming no turn must never REACH
-          # {Session#record_pin}, which refuses a blank digest loudly -- so this
-          # reports instead of pinning, and the marker shows on the next render.
+          # A line naming no turn must never REACH {Session#record_pin}, which
+          # refuses a blank digest loudly -- so this reports instead of pinning.
           #
           # @param line [Integer] 1-based cursor line
           # @return [Pin]
@@ -181,9 +161,7 @@ module Lain
             ["[timeline unavailable: #{digest} not in store]"]
           end
 
-          # The one spelling of "this rendering names no turn", shared by every
-          # path that produces such a rendering -- the placeholder, the
-          # unavailable notice, and the not-yet-rendered state at construction.
+          # The one spelling of "this rendering names no turn".
           def clear_line_index
             @line_digests = [].freeze
           end
@@ -198,16 +176,12 @@ module Lain
             @session.pinned?(digest) ? PIN_MARKER : ""
           end
 
-          # Text blocks joined, tool_use/tool_result blocks summarized by type --
-          # a one-line gist per turn, not a full transcript.
-          #
-          # ONE line is a contract here, not a description: {#render_chain}
-          # indexes digests by POSITION, the runtime's ]]/[[ and its folds both
-          # anchor a record at "^%a+:", and a model's prose is routinely
-          # multi-line -- so an un-flattened preview desynchronizes the pin
-          # index from what the human can see even in an editor that took the
-          # write. It also froze the whole view: see {RenderQueue#checked_lines}
-          # for the editor half, and why that half refuses rather than repairs.
+          # ONE line is a CONTRACT, not a description: {#render_chain} indexes
+          # digests by POSITION, the runtime's ]]/[[ and its folds both anchor a
+          # record at "^%a+:", and a model's prose is routinely multi-line -- so
+          # an un-flattened preview desynchronizes the pin index from what the
+          # human can see even in an editor that took the write. It also froze
+          # the whole view; {RenderQueue#checked_lines} is the editor half.
           def preview(content)
             text = Array(content).select { |block| block["type"] == "text" }.map { |block| block["text"] }.join(" ")
             return text.gsub(NEWLINES, " ") unless text.empty?
@@ -222,18 +196,17 @@ module Lain
         #   into, so its ancestors are actually reachable here. Defaults to
         #   {DetachedStore}, which renders every timeline as unavailable.
         # @param session [Lain::Session] the run's live reminders source
-        # @param inbox [InboxView, nil] the fourth view (I6); built over the
+        # @param inbox [InboxView, nil] the fourth view; built over the
         #   same store by default, injectable so a spec pins its clock
         # @param timeline [TimelineView, nil] the chain view and its line ->
-        #   digest index (B4); built over the same store by default, injectable
+        #   digest index; built over the same store by default, injectable
         #   for the same reason `inbox` is
         # @param questions [#open] where a set the human chose in the inbox is
         #   opened for answering ({QuestionView}), threaded through to the view
-        #   that resolves the gesture. It was NOT threaded before T16, so
-        #   production built its inbox over {InboxView::Unwired} and every
-        #   `<CR>` would have been refused however well the consumer was wired
-        #   -- invisible to a spec that injects `inbox:` ready-made, which is
-        #   how it stayed hidden.
+        #   that resolves the gesture. Unthreaded, production builds its inbox
+        #   over {InboxView::Unwired} and every `<CR>` is refused however well
+        #   the consumer is wired -- invisible to a spec that injects `inbox:`
+        #   ready-made.
         def initialize(store: DetachedStore.instance, session: Session::Null.instance, inbox: nil, timeline: nil,
                        questions: InboxView::Unwired)
           @inbox = inbox || InboxView.new(store:, questions:)
@@ -243,33 +216,28 @@ module Lain
           @last_payload = nil
         end
 
-        # See {TimelineView#digest_at}. Delegated because {Buffers} is the one
-        # façade the frontend holds; the index itself belongs to the view that
-        # renders the lines it indexes.
+        # Delegated because {Buffers} is the one façade the frontend holds; the
+        # index belongs to the view that renders the lines it indexes.
         def digest_at(line) = @timeline.digest_at(line)
 
         # See {TimelineView#pin}.
         def pin(line) = @timeline.pin(line)
 
         # See {InboxView#open} -- the `<CR>`/`r` gesture's Ruby end, delegated
-        # here for {#pin}'s reason: {Buffers} is the one façade the frontend
-        # hands to the editor's command consumer, and each index belongs to the
-        # view that renders the lines it indexes.
+        # here for {#digest_at}'s reason.
         def open(line, generation:) = @inbox.open(line, generation:)
 
         # See {InboxView#open_next} -- the advance after a submitted document.
         def open_next = @inbox.open_next
 
-        # See {InboxView#answering} -- :LainReply's Ruby end, delegated here for
-        # {#open}'s reason. It is what makes an ANSWER name its own question:
-        # the editor sends the row it was typed on and {CLI::HumanReplies}
-        # resolves it through the very index `open` resolves through.
+        # :LainReply's Ruby end. It is what makes an ANSWER name its own
+        # question: the editor sends the row it was typed on and
+        # {CLI::HumanReplies} resolves it through the very index `open` uses.
         #
-        # An OUTCOME rather than a bare digest, and that is not ceremony: every
-        # way a row fails to take an answer -- a rendering this view has aged
-        # out, a line naming no set, a set already answered -- collapses to the
-        # same nil, and the human was then told by the DIRECTORY that their
-        # live row was stale. The outcome carries the sentence that is true.
+        # An OUTCOME rather than a bare digest: every way a row fails to take an
+        # answer -- a rendering aged out, a line naming no set, a set already
+        # answered -- collapses to the same nil, and the human was then told by
+        # the DIRECTORY that their live row was stale.
         # @return [InboxView::Opened]
         def answering(line, generation:) = @inbox.answering(line, generation:)
 
@@ -278,21 +246,19 @@ module Lain
         # committed turn that clears it.
         def answered(digest) = @inbox.answered(digest)
 
-        # The stamp a view's post carries into the editor (T16), and only ONE
-        # view has one: lain://inbox is the only projection whose gesture
-        # resolves through a rendering index, so it is the only one that has to
-        # be able to say WHICH rendering a buffer is holding. Every other view
-        # answers nothing, and {RenderQueue#post_view} then sends the argument
-        # not at all rather than sending a nil -- which crosses msgpack as
-        # `vim.NIL`, and `vim.NIL` is TRUTHY in lua.
+        # Only ONE view has a stamp: lain://inbox is the only projection whose
+        # gesture resolves through a rendering index. Every other view answers
+        # nothing, and {RenderQueue#post_view} then omits the argument rather
+        # than sending a nil -- which crosses msgpack as `vim.NIL`, and
+        # `vim.NIL` is TRUTHY in lua.
         # @return [Integer, nil]
         def generation_of(name) = name == InboxView::NAME ? @inbox.generation : nil
 
-        # The at-rest projection, posted once at attach: every view exists (and
-        # says what it awaits) before the first event, so an idle session's
-        # `:buffers` does not read as "broken". Workspace needs no placeholder --
-        # reminders are readable before any event, so it renders real state and
-        # seeds the change tracking, sparing the first event a no-op re-render.
+        # Posted once at attach: every view exists, and says what it awaits,
+        # before the first event, so an idle session's `:buffers` does not read
+        # as "broken". Workspace needs no placeholder -- reminders are readable
+        # before any event, so it renders real state and seeds the change
+        # tracking.
         # @return [Hash{String=>Array<String>}] buffer name => initial lines
         def initial
           { TimelineView::NAME => @timeline.initial, WORKSPACE => workspace_update,
@@ -321,12 +287,10 @@ module Lain
           reminders.empty? ? ["(no reminders)"] : reminders.flat_map { |block| legible(block).split("\n") }
         end
 
-        # A reminder carries bytes off disk (a manifest path, a memory title),
-        # and `String#split` RAISES `ArgumentError` on invalid UTF-8 -- which
-        # nothing above rescues, so it takes {Surfaces#prime}'s whole view set
-        # dark at attach rather than costing one reminder its accents. Same
-        # scrub, same reason, as {Review::Surface::Text#legible} and
-        # {ReviewView#displayed_path}.
+        # A reminder carries bytes off disk, and `String#split` RAISES
+        # `ArgumentError` on invalid UTF-8 -- which nothing above rescues, so it
+        # takes {Surfaces#prime}'s whole view set dark at attach rather than
+        # costing one reminder its accents.
         def legible(block) = block.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?")
 
         def diff_update(event)
@@ -342,10 +306,9 @@ module Lain
         end
 
         # A "boring diff": trim the common prefix and suffix, show the differing
-        # middle in full, and window the (possibly huge, append-only-growing)
-        # context down to {CONTEXT_LINES}. No LCS -- Diff::LCS lives in the test
-        # group only, and a session's own request history is already
-        # prefix/suffix-stable turn to turn, which is exactly what this shape is
+        # middle in full, window the context down to {CONTEXT_LINES}. No LCS --
+        # Diff::LCS is in the test group only, and a session's request history is
+        # already prefix/suffix-stable turn to turn, which is what this shape is
         # cheap and correct for.
         def unified_diff(old_lines, new_lines)
           prefix = common_length(old_lines, new_lines)

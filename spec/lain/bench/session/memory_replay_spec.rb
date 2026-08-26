@@ -87,7 +87,7 @@ RSpec.describe Lain::Bench::Session::MemoryReplay do
       end
     end
 
-    # T18: the write-bearing coverage check and the write fold read the SAME
+    # The write-bearing coverage check and the write fold read the SAME
     # tool_use blocks out of the SAME records, so the selection runs once per
     # record rather than once per reader. Measured on the record's own
     # `content` reads: the outcome pairing needs one, the write selection needs

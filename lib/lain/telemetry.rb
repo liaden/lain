@@ -6,64 +6,54 @@ require "bigdecimal"
 module Lain
   # Structured events that flow through a {Lain::Channel}.
   #
-  # Every event is a small, deeply frozen `Data` value object: two events with
-  # equal attributes are equal (`Regular` in the project's algebra), and nothing
-  # about an event can mutate after construction, so it is safe to share across
-  # threads without copying. Equality, `#hash`, and immutability come from `Data`
-  # itself; {Journalable} adds the one behaviour they share — serializing to a
-  # tagged JSON object for the {Lain::Journal}.
+  # Every event is a small, deeply frozen `Data` value object, so it is safe to
+  # share across threads without copying. Equality, `#hash` and immutability come
+  # from `Data` itself; {Journalable} adds the one behaviour they share —
+  # serializing to a tagged JSON object for the {Lain::Journal}.
   module Telemetry
-    # The NDJSON self-description every event owes the {Lain::Journal}. Mixed into
-    # each `Data` event: its journal form is its attributes plus a `type` tag that
-    # lets a reader discriminate the record without inspecting its shape. The
-    # Journal adds durability and a timestamp; an event only has to describe
-    # itself.
+    # The NDJSON self-description every event owes the {Lain::Journal}: its
+    # attributes plus a `type` tag a reader discriminates on without inspecting
+    # shape. The Journal adds durability and a timestamp; an event only has to
+    # describe itself.
     module Journalable
       # @return [Hash{String=>Object}] the attributes, string-keyed, tagged.
       def to_journal
         { "type" => journal_type }.merge(to_h.transform_keys(&:to_s))
       end
 
-      # The record's discriminator: the class's short name in snake_case, so
-      # {ToolOutput} journals as `"tool_output"`. `String#underscore` produces
-      # the byte-identical string the hand-rolled gsub did for every current
-      # event -- an equivalence the spec pins, because this string is the journal
-      # discriminator and recorded journals replay against it.
+      # The class's short name in snake_case, so {ToolOutput} journals as
+      # `"tool_output"`. `String#underscore` is byte-identical to the hand-rolled
+      # gsub it replaced for every current event -- an equivalence the spec pins,
+      # because recorded journals replay against this discriminator.
       # @return [String]
       def journal_type
         self.class.name.split("::").last.underscore
       end
     end
 
-    # Construction contracts for the events whose hand-rolled guards moved to
-    # validate-then-freeze (Ruling 2). Each is a throwaway {Lain::Guard} carrier
-    # validated BEFORE the (auto-frozen) Data value exists -- see {Lain::Guard}
-    # for why validation must live off the frozen value. Named, so they stay
-    # reachable for introspection and shoulda-matchers.
-    #
-    # Each record group declares its own carriers into this namespace, from its
-    # own file in `telemetry/`.
-    module Guards
+    # The construction contracts of this module's records: one named
+    # {Lain::Declarative::Carrier} subclass each, validated and discarded BEFORE
+    # the auto-frozen Data value exists. Named rather than anonymous
+    # (`declare do ... end`) so they stay reachable for introspection and
+    # shoulda-matchers. Each record group declares its own into this namespace.
+    module Carriers
     end
 
     # A money figure as a fixed-point ("F") decimal String, the form every priced
     # record journals: `BigDecimal`'s default `to_s` emits scientific notation
-    # (`"0.12345e-2"`) that is technically valid JSON but unreadable in an NDJSON
-    # line meant for a human to scan. A String rather than the `BigDecimal` itself
-    # because `Canonical.normalize` has no canonical wire form for one, and every
-    # field of a record must be an immutable, JSON-safe value to keep it
-    # `Ractor.shareable?`.
+    # (`"0.12345e-2"`) that is valid JSON but unreadable in an NDJSON line meant
+    # for a human to scan. A String rather than the `BigDecimal` because
+    # `Canonical.normalize` has no wire form for one, and every field must be an
+    # immutable, JSON-safe value to keep the record `Ractor.shareable?`.
     #
-    # nil passes through as nil -- the REFUSAL a record with no quote it can stand
-    # behind journals ({Compaction} documents what absence means there). `nil?` and
-    # not a truthy test: `value && ...` would wave `false` through as well, storing
-    # a JSON boolean in a money field. Everything that is not nil goes to
-    # `BigDecimal`, which raises on `"false"` as it always did.
+    # nil passes through -- the REFUSAL a record with no quote it can stand
+    # behind journals. `nil?` and not a truthy test: `value && ...` would wave
+    # `false` through too, storing a JSON boolean in a money field.
     #
-    # Tolerating nil here is NOT permission to journal one. A record whose figures
-    # are not optional says so in its own {Guard} ({Guards::SeamDecision} does), so
-    # the loudness lives with the record that holds the contract rather than in a
-    # shared formatter, which cannot know which caller has a refusal to express.
+    # Tolerating nil is NOT permission to journal one. A record whose figures are
+    # not optional says so in its own carrier ({Carriers::SeamDecision} does), so
+    # the loudness lives with the record holding the contract rather than in a
+    # shared formatter that cannot know which caller has a refusal to express.
     #
     # @param value [BigDecimal, Numeric, String, nil]
     # @return [String, nil] frozen fixed-point decimal, or nil

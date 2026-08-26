@@ -2,7 +2,7 @@
 
 require "tmpdir"
 
-# GG-2: approved Criteria -> the `gherkin-tests` skill scaffold, rendered and
+# Approved Criteria -> the `gherkin-tests` skill scaffold, rendered and
 # dispatched through a REAL {Lain::Skill::RoleSpawn} to `test_engineer` over a
 # {Lain::Provider::Mock} -- the role_spawn_spec pattern, so this spec doubles
 # as proof the shipped `gherkin-tests/skill.md` actually loads and renders.

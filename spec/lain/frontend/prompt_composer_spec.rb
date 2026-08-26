@@ -240,7 +240,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
   end
 
-  # T13 -- the renderer that fills the seam above, composing the prompt from
+  # The renderer that fills the seam above, composing the prompt from
   # the run's own state through the Rust formatter ({Lain::Ext::Prompt}).
   #
   # Nothing below sets an environment variable, and nothing below drives a
@@ -265,7 +265,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
       described_class.new(format:, state:, path:, screen:, **)
     end
 
-    # AC1: the shipped default renders the run's state.
+    # The shipped default renders the run's state.
     describe "the shipped default config" do
       it "names the model, the occupancy and the idle time" do
         expect(renderer.call(text: "> ", theme: plain)).to include("claude-opus-4-1", "38%", "12m")
@@ -291,7 +291,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
       end
     end
 
-    # AC2: a user config replaces the shipped one.
+    # A user config replaces the shipped one.
     describe "a user config naming only the model" do
       let(:shipped) { Lain::Ext::Prompt.from_toml(%(format = "$model "\n)) }
 
@@ -303,7 +303,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
       end
     end
 
-    # AC4: colour is resolved by Ruby and handed in.
+    # Colour is resolved by Ruby and handed in.
     describe "colour" do
       it "emits no escape sequences when the theme is not painting" do
         expect(renderer.call(text: "> ", theme: plain)).not_to include("\e")
@@ -314,7 +314,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
       end
     end
 
-    # AC5, and the escalation trigger: a misjudged width wraps the status line
+    # The escalation trigger: a misjudged width wraps the status line
     # and smears the row above the cursor.
     describe ".columns" do
       it "counts a wide glyph as two columns" do
@@ -549,7 +549,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
       expect(state["fleet"]).to be_nil
     end
 
-    # T10/F47. `Compaction::Source::Derived` counts consecutive refused
+    # `Compaction::Source::Derived` counts consecutive refused
     # derivations and journals the streak; the StatusFeed publishes it; this is
     # where it becomes something a human sees. What length of streak IS a stall
     # is the Source's judgement and is asked of it -- the number itself is
@@ -745,9 +745,9 @@ RSpec.describe Lain::Frontend::PromptComposer do
       expect(state.keys).to contain_exactly("model", "occupancy", "fleet", "idle", "mode", "compaction")
     end
 
-    # T7: the posture the human is in must live in chrome they cannot lose,
+    # The posture the human is in must live in chrome they cannot lose,
     # but only when a mode is actually wired -- nobody threads one through
-    # `cli/wiring.rb` until T5/T10 land, so `mode: nil` (the default) must
+    # `cli/wiring.rb` yet, so `mode: nil` (the default) must
     # keep behaving exactly as it always has.
     describe "mode" do
       it "reports nothing when no mode is wired, so the default costs nothing" do
@@ -780,7 +780,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
   end
 
-  # AC2 and AC3's other half: WHICH config a run renders through, and what
+  # The other half: WHICH config a run renders through, and what
   # happens when the one it found does not parse.
   describe ".renderer" do
     require "tmpdir"
@@ -805,7 +805,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
       end
     end
 
-    # AC3: loudly, and still usable.
+    # Loudly, and still usable.
     describe "a config that does not parse" do
       around do |example|
         Dir.mktmpdir do |dir|
@@ -840,7 +840,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
     # rescue does not see it, `Wiring#run` has no net around the renderer, and
     # `exe/lain` rescues only Lain::Error. A single Latin-1 byte in a config
     # therefore aborted the REPL with a backtrace BEFORE a prompt existed,
-    # which is AC3 violated outright.
+    # which is "loudly, and still usable" violated outright.
     describe "a config that is not valid UTF-8" do
       around do |example|
         Dir.mktmpdir do |dir|
@@ -906,10 +906,10 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
   end
 
-  # T7 -- the posture surfaces in chrome the human cannot lose, but only when
+  # The posture surfaces in chrome the human cannot lose, but only when
   # a mode is actually wired: `accept_edits` with no layers is the default,
   # and the default must cost nothing.
-  # `$idle` could always be rendered; since T10 it can also be ABSENT, and that
+  # `$idle` could always be rendered; it can also be ABSENT now, and that
   # makes its GROUPING load-bearing rather than cosmetic. A `( ... )` group
   # elides whole when every variable inside it is empty, so the literal word
   # "idle" leaves with the reading. Ungrouped, it does not -- measured against
@@ -1028,9 +1028,9 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
   end
 
-  # T10 at the line the operator actually reads. The unit examples above pin the
-  # reading; these pin the rendered bytes, because "the word idle must not
-  # appear" is a claim about the LINE, and the shipped format's
+  # The absent idle reading, at the line the operator actually reads. The unit
+  # examples above pin the reading; these pin the rendered bytes, because "the
+  # word idle must not appear" is a claim about the LINE, and the shipped format's
   # `( [idle $idle](dim))` group carries that literal word along with the
   # variable -- so eliding the reading is what elides the word.
   describe "the composed line while an ask_human is parked" do
@@ -1064,7 +1064,7 @@ RSpec.describe Lain::Frontend::PromptComposer do
     end
   end
 
-  # T7's fourth scenario: a mode collaborator that raises must not lose the
+  # The fourth scenario: a mode collaborator that raises must not lose the
   # prompt. No new rescue is added for this -- {Formatted#call} raises
   # straight through `@state.to_h`, and {PromptComposer#compose}'s existing
   # RENDERER_FAULTS net already catches it, exactly as it does today for any

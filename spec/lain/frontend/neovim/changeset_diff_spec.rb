@@ -448,7 +448,7 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
       FileUtils.rm_f(socket)
     end
 
-    # Every buffer the review stamped, as the three facts T16 reads off one plus
+    # Every buffer the review stamped, as the three facts a note reads off one plus
     # its lines -- which is the whole of what `:LainNote` needs to place a note,
     # and the whole of what nothing in the tree produced before this object.
     def stamped_buffers
@@ -630,7 +630,7 @@ RSpec.describe Lain::Frontend::Neovim::ChangesetDiff do
       DIFF
     end
 
-    # The sidebar's own duck, which is T13's to build -- and it is built here
+    # The sidebar's own duck, which the sidebar unit owns -- and it is built here
     # rather than doubled, because that duck has grown twice since (a row's
     # `#hunk_keys`, then its `#chunked?`) and a hand-rolled Struct is a fixture
     # that goes stale without failing until a view finally asks.

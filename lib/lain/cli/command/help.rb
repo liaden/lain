@@ -21,7 +21,7 @@ module Lain
 
         def usage = "/help -- list commands and skills"
 
-        # T9: a {Lain::Renderable}, not a String -- the same words, with each
+        # A {Lain::Renderable}, not a String -- the same words, with each
         # section HEADER naming a token so the listing beneath it reads as
         # content rather than as one flat colour.
         def call(_args, _env)

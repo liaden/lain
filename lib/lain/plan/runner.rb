@@ -2,26 +2,22 @@
 
 module Lain
   module Plan
-    # PC-3's driver: the bench-style loop that runs a {Plan::Document} chunk by
+    # The plan driver: the bench-style loop that runs a {Plan::Document} chunk by
     # chunk behind ONE continuation contract, so a study can swap the execution
-    # SHAPE ({ForkPerStep} vs {LinearRewrite}) without touching plan content. The
-    # same built-for-the-bench posture as {Bench::Arm} and {Compaction::Scheduler}:
-    # Lain owns the loop because the loop is the object of study, and live
-    # +agent.rb+ wiring is a deliberate later follow-up, not this driver.
+    # SHAPE ({ForkPerStep} vs {LinearRewrite}) without touching plan content --
+    # the same built-for-the-bench posture as {Bench::Arm}, since the loop is the
+    # object of study.
     #
-    # The Runner owns the per-chunk pipeline swap -- it takes the caller's
-    # {Context} and rebuilds it with +#with_pipeline(continuation.pipeline)+, so
-    # a seam's pipeline swap takes effect on the very next render while the
-    # caller's model/max_tokens/system reach the provider untouched -- and it
-    # owns seam detection off the document's {Document#chunks}. Everything shape-specific
-    # is behind the injected +policy+'s +at_seam+; the loop itself is identical
-    # for both shapes.
+    # It owns two things and nothing else shape-specific: the per-chunk pipeline
+    # swap (the caller's {Context} rebuilt with
+    # +#with_pipeline(continuation.pipeline)+, so a seam's swap takes effect on
+    # the very next render while model/max_tokens/system reach the provider
+    # untouched), and seam detection off {Document#chunks}.
     #
-    # Each chunk runs on a FORK of the current mainline (+continuation.timeline+):
-    # for {LinearRewrite} that fork simply continues the one linear chain, for
-    # {ForkPerStep} it is a branch the seam abandons. Every step closes into a
-    # deterministic {Closure} (recorded in the Store and journaled), and the
-    # chunk's final closure drives the seam.
+    # Each chunk runs on a FORK of the current mainline: for {LinearRewrite} that
+    # fork simply continues the one linear chain, for {ForkPerStep} it is a
+    # branch the seam abandons. Every step closes into a deterministic {Closure},
+    # and the chunk's final closure drives the seam.
     class Runner
       # A policy that carries its own mainline root (a {ForkPerStep}) was
       # constructed from a DIFFERENT Timeline than the one `#run` starts from --
@@ -46,8 +42,7 @@ module Lain
       # Timelines, which never are -- see {Continuation}): a plain record the
       # bench reads.
       #
-      # * +closures+ -- one {Closure} per step, in order (AC: "closure records
-      #   for every step").
+      # * +closures+ -- one {Closure} per step, in order.
       # * +continuations+ -- the mainline as a chain: the initial continuation
       #   plus the one adopted after each seam. Rendering these is the mainline
       #   prefix-digest chain the churn proof compares.

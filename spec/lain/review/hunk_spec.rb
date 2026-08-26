@@ -180,9 +180,9 @@ RSpec.describe Lain::Review::Hunk do
       expect(digest_of(forged.content_key)).not_to eq(digest_of(target.span_key))
     end
 
-    # THE GOLDEN VECTORS. Added by T13, as a deliberate cross-card fix: the gap
-    # is identical to the one T13 closed in `Review::Keying`, and this side of
-    # it matters more.
+    # THE GOLDEN VECTORS. Added as a deliberate cross-card fix: the gap is
+    # identical to the one closed in `Review::Keying`, and this side of it
+    # matters more.
     #
     # Everything above this line is a property, and every property above is
     # satisfied by infinitely many layouts -- the length frame, its trailing

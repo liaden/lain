@@ -2,48 +2,42 @@
 
 module Lain
   module Bench
-    # B12, the arms bench sweep and the chunk's headline deliverable: the
-    # comparison the orchestration papers assert but rarely produce. Runs the
-    # three arms -- {Arm::SingleThread} (the CONTROL every arm is measured
-    # against), {Arm::OrchestratorWorker}, and {Arm::DualLedger} -- over B0's
-    # {ArmTasks} suite, driven by committed recorded trajectories through
-    # Provider::Mock (deterministic, offline, zero network), and reports grader
-    # score, tokens, wall-time, context-loss, and replans/stalls as
-    # DISTRIBUTIONS per arm, broken out per category so the pre-registered
-    # boundary (procedural favors single-thread; genuinely-parallel work does not
-    # penalize orchestration) stays visible instead of averaged away.
+    # The arms bench sweep: the comparison the orchestration papers assert but
+    # rarely produce. Runs {Arm::SingleThread} (the CONTROL every arm is
+    # measured against), {Arm::OrchestratorWorker} and {Arm::DualLedger} over
+    # the {ArmTasks} suite, driven by committed recorded trajectories through
+    # Provider::Mock, and reports grader score, tokens, wall-time, context-loss
+    # and replans/stalls as DISTRIBUTIONS per arm, broken out per category so
+    # the pre-registered boundary -- procedural favours single-thread;
+    # genuinely-parallel work does not penalize orchestration -- stays visible
+    # instead of averaged away.
     #
     # == What is real and what is replayed
     #
     # The arms run FOR REAL: real Timelines over real Stores, real per-turn
     # journaling priced through a real {Ledger}, the orchestrator's real
     # multi-parent synthesis fan-in, the dual-ledger's real stall/replan
-    # LoopMachine. Only the model's WORDS and TOKEN COUNTS are replayed, from the
-    # committed {Recordings} -- so the topology under study is genuine while the
-    # eval spends nothing and repeats byte-identically. One {Recordings#seam}
-    # object drives all three arms (the base Arm duck), the cross-arm shape the
-    # dual_ledger_spec pins.
+    # LoopMachine. Only the model's WORDS and TOKEN COUNTS are replayed, so the
+    # topology under study is genuine while the eval spends nothing and repeats
+    # byte-identically. One {Recordings#seam} drives all three arms.
     #
     # == The two process metrics, and their honest fidelity
     #
-    # REPLANS/STALLS are sourced exactly as {Arm::DualLedger#run}'s own NOTE
-    # prescribes: the Run drains its journal for pricing and discards the
-    # `ledger_transition` records, so the sweep injects a `journal_factory:` that
-    # TEES every pushed event into a caller-held sink BEFORE that drain, and
-    # counts the `replan` transitions there. The linear arms emit none.
+    # REPLANS/STALLS: the Run drains its journal for pricing and discards the
+    # `ledger_transition` records, so the sweep injects a `journal_factory:`
+    # that TEES every pushed event into a caller-held sink BEFORE that drain,
+    # and counts the `replan` transitions there. The linear arms emit none.
     #
-    # CONTEXT-LOSS would ideally ride the bench-science lineage projection
-    # ({Grader::FrustrationRepair}), but that reads tool-call journals, and these
-    # arms carry an empty toolset -- no tool calls, so nothing for the projection
-    # to attribute. So the sweep falls back to a documented Journal heuristic
-    # (its reduced fidelity stated in the report, not silently dropped): a
-    # context-loss event is a produced file whose content DIVERGES from the
-    # single-thread control's for the same path -- context the decomposing arm
-    # lost by working a slice in isolation. The control never diverges from
-    # itself, which is exactly why it is the control.
+    # CONTEXT-LOSS would ideally ride the lineage projection
+    # ({Grader::FrustrationRepair}), but that reads tool-call journals and these
+    # arms carry an empty toolset, so there is nothing to attribute. The sweep
+    # falls back to a Journal heuristic, its reduced fidelity stated in the
+    # report rather than silently dropped: a context-loss event is a produced
+    # file whose content DIVERGES from the single-thread control's for the same
+    # path -- context the decomposing arm lost by working a slice in isolation.
+    # The control never diverges from itself, which is why it is the control.
     class ArmSweep
-      # A missing recordings fixture -- a checkout or packaging mistake, never
-      # user input to refuse. Named and path-bearing like {DeciderSweep::MissingFixture}.
+      # A checkout or packaging mistake, never user input to refuse.
       class MissingFixture < Lain::Error; end
 
       # A recording that names no task in the suite, is missing a required
@@ -74,15 +68,12 @@ module Lain
         @price_book = price_book
       end
 
-      # The Compare-style report as a String -- never printed (output
-      # discipline). Memoized so "report twice" is byte-identical for free, the
-      # guarantee every sweep gives.
+      # Memoized so that reporting twice is byte-identical for free.
       # @return [String]
       def report = @report ||= Report.new(measurements, order: @recordings.order).to_s
 
       # One {Measurement} per (arm, task), in fixture order. Exposed so the
-      # process-metric invariants are checkable numerically, the way
-      # {DeciderSweep#timelines} exposes its isolation invariant.
+      # process-metric invariants are checkable numerically.
       # @return [Array<Measurement>]
       def measurements
         @measurements ||= @recordings.order.flat_map { |id| measure_task(@recordings.task_for(id)) }.freeze
@@ -126,10 +117,9 @@ module Lain
 
       def spawn_seam = @spawn_seam ||= @recordings.seam
 
-      # One instrument for all three arms: replayed history spends no wall-time
-      # (ZERO_CLOCK), and every arm prices through the sweep's own book -- which
-      # is exactly the cross-arm agreement {Arm::Instrument} exists to make
-      # structural.
+      # One instrument for all three arms: replayed history spends no wall-time,
+      # and every arm prices through the sweep's own book -- the cross-arm
+      # agreement {Arm::Instrument} exists to make structural.
       def instrument = @instrument ||= Arm::Instrument.new(clock: ZERO_CLOCK, price_book: @price_book)
 
       def single_thread
@@ -149,7 +139,7 @@ module Lain
 
       # Grades a Timeline by parsing its produced files into the Trajectory
       # ArmTasks' gold {Grader::Fixture} scores -- the bridge from the Arm seam's
-      # `grade(timeline)` duck to B0's file-shaped grader.
+      # `grade(timeline)` duck to {ArmTasks}' file-shaped grader.
       class GraderAdapter
         def initialize(task) = (@task = task)
 
@@ -158,11 +148,11 @@ module Lain
       private_constant :GraderAdapter
 
       # A Channel that mirrors every pushed event into a caller-held sink before
-      # forwarding it, so the dual-ledger's journaled `ledger_transition` records
-      # are observed BEFORE the Run drains the journal for pricing. Channel's
-      # `alias << push` early-binds to the parent, so `<<` (which the arm's
-      # Journaling listener uses) is re-aliased here to see those writes too --
-      # the recording-journal idiom the dual_ledger_spec pins.
+      # forwarding it, so the dual-ledger's journaled `ledger_transition`
+      # records are observed BEFORE the Run drains the journal for pricing.
+      # Channel's `alias << push` early-binds to the parent, so `<<` -- which
+      # the arm's Journaling listener uses -- is re-aliased here to see those
+      # writes too.
       class Tee < Channel
         def initialize(sink)
           super()
@@ -180,10 +170,9 @@ module Lain
   end
 end
 
-# After the class body: {Recordings} and {Report} reopen ArmSweep (and raise its
-# MissingFixture/MalformedRecording, defined above), and nothing in the body
-# above needs either before runtime -- the children-after-the-class-body load
-# order effect/handler.rb uses. Separate FILES, not nested classes, because
-# Metrics/ClassLength counts a nested class's lines as the enclosing class's own.
+# After the class body: {Recordings} and {Report} reopen ArmSweep and raise its
+# MissingFixture/MalformedRecording, defined above. Separate FILES, not nested
+# classes, because `Metrics/ClassLength` counts a nested class's lines as the
+# enclosing class's own.
 require_relative "arm_sweep/recordings"
 require_relative "arm_sweep/report"

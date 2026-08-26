@@ -4,35 +4,28 @@ require "active_support/core_ext/module/delegation"
 
 module Lain
   module CLI
-    # The human-reply surfaces (I6), lifted out of Repl the way Wiring lifted
-    # chat assembly: answering ask_human is its own responsibility -- the
-    # arrival note, the `/inbox` drain, and the editor's :LainReply leg -- and
-    # the Metrics trip said so.
+    # The human-reply surfaces: the arrival note, the `/inbox` drain, and the
+    # editor's :LainReply leg.
     #
     # Every answer NAMES the set it answers. This class holds the run's
     # {Tools::AskHuman::Directory}, not one asker, and routes by the digest the
-    # arrival carried: which asker holds the named set is the directory's
-    # question, and answering it from "the asker this class happens to hold"
+    # arrival carried -- answering from "the asker this class happens to hold"
     # is how a child's question becomes unanswerable while the parent has
-    # nothing pending. The digest is also what RETIRES the item -- the item an
-    # answer belongs to need not be the one at the head of the list.
+    # nothing pending. The digest is also what RETIRES the item, since the item
+    # an answer belongs to need not be the one at the head of the list.
     class HumanReplies
-      # I6: one pending human question as the drain surface lists it -- who is
-      # stuck (the asker's chain correlation), since when, the question, and
-      # the name an answer must cite to reach it.
+      # One pending human question as the drain surface lists it: who is stuck,
+      # since when, the question, and the name an answer must cite to reach it.
       InboxItem = Struct.new(:question, :from, :digest, :asked_at, keyword_init: true) do
-        # The arrival, built from the Q event that has just been written --
-        # {Wiring::Askers#announce}'s one call, and the only moment BOTH
-        # attributions are true. Read at drain time instead, `from` is
-        # whoever asked most recently and the digest is not recoverable at
-        # all.
-        # `agent` wins over the event's own `from` because `from` is the chain's
-        # ROOT digest, and an `:inherit` child forks its parent -- so the two
-        # share a root and are permanently indistinguishable at every surface
-        # that renders the sender. `:inherit` is the DEFAULT for a @role spawn,
-        # so that is the common case, not an edge one. The asker's name is the
-        # honest identifier and was already carried this far for the desktop
-        # notification; it just stopped there.
+        # Built from the Q event that has just been written, the only moment
+        # BOTH attributions are true -- read at drain time instead, `from` is
+        # whoever asked most recently and the digest is not recoverable at all.
+        #
+        # The asker's name wins over the event's own `from`, which is the
+        # chain's ROOT digest: an `:inherit` child forks its parent, so the two
+        # share a root and are indistinguishable at every surface that renders
+        # the sender. `:inherit` is the DEFAULT for a role spawn, so that is the
+        # common case rather than an edge one.
         def self.asked(question, event, agent: nil)
           named = Blankness.blank?(agent) ? event.from : agent
           new(question:, from: named, digest: event.digest, asked_at: Time.now)
@@ -40,43 +33,38 @@ module Lain
       end
 
       # No item to answer: an editor reply that named nothing, with nothing
-      # listed to mean. It answers the one message a caller asks of an item,
-      # with a name no registered asker can hold -- so the refusal comes back
-      # from the directory, in the words a human at a reply prompt needs,
-      # rather than from a nil check here.
+      # listed to mean. It answers with a name no registered asker can hold, so
+      # the refusal comes back from the directory in the words a human at a
+      # reply prompt needs, rather than from a nil check here.
       module Unlisted
         def self.digest = nil
       end
 
       # How long the editor consumer parks between empty polls. The rail is a
-      # Thread::Queue popped non-blockingly (a blocking pop would freeze the
-      # reactor thread), so the tick is what keeps the fiber cheap. It is paid
-      # for the whole conversation now, not for one ask ({#session_surfaces}),
-      # which is the price of answering a gesture the human makes at `you>` --
-      # a 10Hz `pop(true)` against a queue in this process, and the only
-      # alternative on offer parks the RPC thread.
+      # Thread::Queue popped non-blockingly, since a blocking pop would freeze
+      # the reactor thread, so the tick is what keeps the fiber cheap. Paid for
+      # the whole conversation rather than one ask ({#session_surfaces}), which
+      # is the price of answering a gesture made at `you>`: a 10Hz `pop(true)`
+      # against an in-process queue, where the only alternative parks the RPC
+      # thread.
       IDLE_TICK = 0.1
 
-      # The editor that is not there ({Sink::Null}'s shape): nothing ever
-      # arrives on its rail and a refusal has nowhere to render. It exists so
-      # that neither the consumer loop nor the refusal path asks whether an
-      # editor was bound -- the question is answered once, in {#bind_editor}.
+      # The editor that is not there ({Sink::Null}'s shape), so neither the
+      # consumer loop nor the refusal path asks whether one was bound.
       # `attached?` is the one distinction still worth drawing: a fiber polling
-      # a rail nothing can ever reach is pure cost, so it is never spawned.
+      # a rail nothing can reach is pure cost, so it is never spawned.
       module NoEditor
         def self.pop(*) = nil
         def self.review_refused(_message) = nil
         def self.attached? = false
       end
 
-      # The views nobody wired ({NoEditor}'s other half): no editor means no
-      # inbox rendering to resolve a line against and no timeline to pin a turn
-      # in. Every gesture answers {Nothing}, so the consumer never asks whether
-      # views were bound -- and the sentence it hands back goes to {NoEditor},
-      # which renders it nowhere, so there is no nil to check on that side
-      # either.
+      # The views nobody wired ({NoEditor}'s other half): no inbox rendering to
+      # resolve a line against, no timeline to pin a turn in. Every gesture
+      # answers {Nothing}, and the sentence it hands back goes to {NoEditor},
+      # which renders it nowhere -- so there is no nil to check on either side.
       module NoViews
-        # Nothing happened, and here is why -- the shape both
+        # Nothing happened, and here is why: the shape both
         # {Frontend::Neovim::InboxView::Opened} and
         # {Frontend::Neovim::Buffers::TimelineView::Pin} answer, since the two
         # gestures share one refusal path here.
@@ -86,31 +74,25 @@ module Lain
           def self.report = "no editor is attached, so there is nothing to open or pin"
         end
 
-        # `**` rather than the named keyword ({Frontend::Neovim::Buffers#open}
-        # takes `generation:`): a keyword is its own name, so there is no
-        # underscore spelling that both matches the caller and reads as unused.
+        # `**` rather than the named keyword: a keyword is its own name, so no
+        # underscore spelling both matches the caller and reads as unused.
         def self.open(_line, **) = Nothing
         def self.open_next = Nothing
         def self.pin(_line) = Nothing
         def self.answered(_digest) = nil
 
-        # No rendering was ever handed out, so no line names a set in one --
-        # and {Nothing} is already the sentence for it, which is what keeps the
-        # reply path from asking whether views were bound.
+        # No rendering was ever handed out, so no line names a set in one.
         def self.answering(_line, **) = Nothing
       end
 
-      # The changeset review nobody wired -- {NoEditor} and {NoViews}'
-      # third sibling, and a third object because it is a third fact: the rail,
-      # the views and the review the human is reading are bound at three
-      # different moments by three different callers, and a run can easily have
-      # the first two and not the last.
+      # The changeset review nobody wired: a third object because it is a third
+      # fact -- the rail, the views and the review are bound at three different
+      # moments by three different callers, and a run can easily have the first
+      # two and not the last.
       module NoReview
-        # {NoViews::Nothing}'s shape, kept APART from it rather than shared: the
-        # two say different things, and a human who has an editor open and no
-        # review would otherwise be told the editor is missing -- the same defect
-        # {Frontend::Neovim::RenderInlet}'s three separate sentences exist to
-        # avoid, on the outbound side.
+        # {NoViews::Nothing}'s shape, kept APART rather than shared: the two say
+        # different things, and a human who has an editor open and no review
+        # would otherwise be told the editor is missing.
         module Nothing
           def self.opened? = false
           def self.marked? = false
@@ -124,170 +106,129 @@ module Lain
         def self.ask(_anchor_id, _question) = Nothing
       end
 
-      # `ask_human:` is the ask_human REPLY SEAM -- whatever answers
-      # `#reply(answer, digest)` for the set a digest names. Production hands
-      # over the run's {Tools::AskHuman::Directory} (many askers, one routing
-      # table); a single-asker caller may hand over a lone
-      # {Tools::AskHuman}, which answers the same message with the same two
-      # refusals. Which object it is has stopped mattering here, which is the
-      # point: this class no longer knows or cares WHICH agent is stuck.
+      # `ask_human:` is whatever answers `#reply(answer, digest)` for the set a
+      # digest names: the run's {Tools::AskHuman::Directory} in production, a
+      # lone {Tools::AskHuman} for a single-asker caller. Which object it is has
+      # stopped mattering here, which is the point -- this class no longer knows
+      # WHICH agent is stuck.
       def initialize(tty:, conductor:, ask_human:, questions:)
         @tty = tty
         @ask_human = ask_human
         @questions = questions
         # "Nothing is bound yet" stated as the bind it is, rather than as a
-        # second copy of which Null each surface holds -- the copy that would
-        # be the one to drift when a fourth arrived, which is exactly what
-        # the approval list's did.
+        # second copy of which Null each surface holds -- the copy that drifted
+        # when a fourth arrived, which is what the approval list's did.
         bind_editor(nil)
         @changeset_review = NoReview
         @reviews = Reviews.new
         @inbox = Pending.new
         @reply = Reply.new(tty:, conductor:, inbox: @inbox)
-        # READERS, never the surfaces: every one is bound after this returns, and
-        # {Gestures} resolves each per call so a late bind is seen without
-        # anybody remembering to rebuild anything.
+        # READERS, never the surfaces: every one is bound after this returns, so
+        # resolving each per call is what makes a late bind visible without
+        # anybody remembering to rebuild.
         @gestures = Gestures.new(editor: -> { @editor }, views: -> { @views }, review: -> { @changeset_review },
                                  approvals: -> { @approvals })
       end
 
-      # The editor's command rail -- :LainReply, :LainReviewDone, :LainOpen,
-      # :LainPin -- bound before converse runs so #editor_reply_loop knows
-      # whether to spawn its consumer fiber. The frontend hands over its own
-      # inbox adapter and its view set, or nil for both when no editor is
-      # attached; those are the ONLY nil checks in this class, and they live
-      # here so no other line has to repeat them.
+      # The editor's command rail, bound before converse runs so
+      # #editor_reply_loop knows whether to spawn its consumer fiber. These are
+      # the ONLY nil checks in this class, and they live here so no other line
+      # has to repeat them.
       #
-      # `views` is the frontend's {Frontend::Neovim#buffers}: an `open` or a
-      # `pin` names a LINE, and only the view that rendered that line can say
-      # which set or turn it is. Bound beside the rail because the two are one
-      # conversation -- the gesture arrives on the rail, resolves through the
-      # views, and a refusal goes back out on the rail.
-      #
-      # `approvals` is the frontend's {Frontend::Neovim#approval_view},
-      # bound HERE and not at a second call site for {#bind_changeset_review}'s
-      # recorded reason: the rendering a keypress resolves through and the rail
-      # its refusal goes back out on are one conversation, and two binds are two
-      # chances for them to hold different objects -- which is a wrong-call
-      # approval rather than an error.
+      # The views and the approval list are bound BESIDE the rail, never at a
+      # second call site: a gesture arrives on the rail, resolves through a
+      # rendering, and its refusal goes back out on the rail -- one
+      # conversation, where two binds are two chances to hold different objects.
+      # For an approval that is a wrong-call verdict rather than an error.
       def bind_editor(editor, views: nil, approvals: nil)
         @editor = editor || NoEditor
         @views = views || NoViews
         @approvals = approvals || NoApprovals
       end
 
-      # The `you>` command registry ({Command::Registry::Bound}), so a
-      # registered `/word` typed at `human> ` RUNS instead of being recorded as
-      # the answer to the parked set. It was a bare `/inbox` string literal
-      # until then, which made `/status` at a reply prompt send the model the
-      # text "/status" and show the human nothing.
+      # The `you>` command registry, so a registered `/word` typed at `human> `
+      # RUNS instead of being recorded as the answer to the parked set. A bare
+      # `/inbox` literal stood here once, which made `/status` at a reply prompt
+      # send the model the text "/status" and show the human nothing.
       #
-      # BOUND rather than taken as a keyword, because the registry is built
-      # FROM this object: {Wiring#build_repl} constructs this class first and
-      # hands it to {Command::Surface} as `replies:`, so there is no ordering in
-      # which a constructor could take one. Same shape and same nil rule as
-      # {#bind_editor} -- the registry that is not there is an object
-      # ({Reply::NoSessionCommands}), so nothing downstream asks whether one was wired.
+      # BOUND rather than taken as a keyword, because the registry is built FROM
+      # this object: {Wiring#build_repl} constructs this class first and hands it
+      # to {Command::Surface}, so no constructor ordering could take one.
       def bind_commands(commands) = @reply.bind_commands(commands)
 
       # The editor a changeset is DRAWN in, and the second rail a review's
-      # writes are answered on. The whole frontend, and deliberately not
-      # a piece of it the way {#bind_editor} takes two: what this class needs
-      # from it is one object to bind to and two collaborators to hand on, and
-      # they are one fact -- a review drawn in one editor and answered in
-      # another is not a review.
+      # writes are answered on. The whole frontend rather than a piece of it,
+      # because a review drawn in one editor and answered in another is not a
+      # review.
       #
       # @param editor [Frontend::Neovim, nil] nil is the editor that is not
       #   there, so a headless chat binds like any other -- see {#review_editor},
       #   which is where that nil becomes {ReviewSeams::Unattached}
       def bind_review_editor(editor) = @review_editor = editor
 
-      # Where a changeset is drawn for this human, and the rendering their
-      # gestures resolve through -- what {Wiring} threads into
-      # {Tools::RequestReview} as thunks, because the tool is built before this
-      # is bound. Both answer nil when no editor is attached, and the tool's own
-      # seams coalesce that ({#bind_editor}'s one-nil-check rule, one object
-      # over).
+      # Where a changeset is drawn, and the rendering its gestures resolve
+      # through -- threaded into {Tools::RequestReview} as thunks, because the
+      # tool is built before this is bound.
       delegate :review_surface, :review_view, to: :review_editor
 
       # Hold a review open for the editor's `done` gesture to settle -- see
       # {Reviews#bind}, which is where the keying rule lives.
       def bind_review(review, token:) = @reviews.bind(review, token:)
 
-      # Hold the CHANGESET review the editor is reading, so its gestures --
-      # opening a row, marking a hunk, asking a docent about one -- resolve
+      # Hold the CHANGESET review the editor is reading, so its gestures resolve
       # against the rendering that produced the line they name. Deliberately not
-      # {#bind_review}, which holds an EPIC's prose review keyed by (slug,
-      # generation): the two ride the same rail and share nothing else, and
-      # folding them together would mean one object answering `settle` and
-      # `mark` for two unrelated notions of "review".
+      # {#bind_review}, which holds an EPIC's prose review keyed by slug and
+      # generation: the two ride the same rail and share nothing else, and
+      # folding them would have one object answering `settle` and `mark` for two
+      # unrelated notions of "review".
       #
-      # ONE BIND, BOTH RAILS. The acked gestures resolve here; the two
-      # WRITES -- an annotation and a verdict -- are answered by the editor on
-      # its own RPC thread, through {Frontend::Neovim#bind_changeset_review},
-      # and that method had no caller in the whole tree: notes and verdicts
-      # reached {Frontend::Neovim::NoReviewWrites} and were refused. Forwarded
-      # from here rather than bound a second time by the tool, because the tool
-      # cannot reach a frontend -- and because two binds are two chances for the
-      # rails to hold different reviews, which is a wrong-review write rather
-      # than an error.
+      # ONE BIND, BOTH RAILS. Acked gestures resolve here; the two WRITES are
+      # answered by the editor on its own RPC thread through
+      # {Frontend::Neovim#bind_changeset_review}, which had no caller in the
+      # whole tree -- notes and verdicts reached
+      # {Frontend::Neovim::NoReviewWrites} and were refused. Forwarded from here
+      # rather than bound again by the tool, which cannot reach a frontend, and
+      # because two binds are two chances to hold different reviews.
       def bind_changeset_review(review)
         review_editor.bind_changeset_review(review)
         @changeset_review = review || NoReview
       end
 
-      # A human question is waiting for an answer: an item mid-drain (@inbox) or
-      # one a subagent enqueued while the human sat idle at `you>`, which no
-      # answer_loop fiber is watching between asks. The standing-goal driver
-      # reads this to hold off re-prompting while the fleet is unquiet -- the
-      # inbox half of that guard (the parked-approval half lives in Wiring).
+      # A human question is waiting: an item mid-drain, or one a subagent
+      # enqueued while the human sat idle at `you>` with no answer_loop fiber
+      # watching. The standing-goal driver reads this to hold off re-prompting
+      # while the fleet is unquiet.
       def pending? = !@inbox.empty? || !@questions.empty?
 
-      # `/inbox` at `you>`: the SAME TTY drain UX #answer_loop's
-      # read_drained_answer calls at `human>`, over whatever has piled up in
-      # `@questions` since the last time a fiber was actually watching it.
-      # #answer_loop's fiber only lives for one DISPATCHED LINE
-      # ({Repl::LineScope} starts it before the line is routed, per
-      # {#surfaces}); the OM-6 supervisor's fleet outlives every one of them, so
-      # a subagent's `announce` can enqueue a question while the human sits idle
-      # at `you>` with nothing draining it. This is that second watcher, run on
-      # demand instead of a second background fiber.
+      # `/inbox` at `you>`: the same TTY drain the `human>` path uses, over
+      # whatever piled up since a fiber was last watching. {#surfaces}' fiber
+      # lives for one DISPATCHED LINE, while the supervisor's fleet outlives
+      # every one of them, so a subagent can enqueue a question while the human
+      # sits idle at `you>` with nothing draining it. This is that second
+      # watcher, run on demand rather than as another background fiber.
       #
       # It is therefore the one command that must NOT be bracketed in a reply
-      # loop of its own -- {Command::Inbox} declares that, and
-      # {Repl::LineScope#serve} is what reads the declaration. Two readers on one
-      # stdin is what this method exists to avoid, not a state it may run in.
+      # loop of its own -- {Command::Inbox} declares that and
+      # {Repl::LineScope#serve} reads the declaration. Two readers on one stdin
+      # is what this method exists to avoid, not a state it may run in.
       #
-      # Lists every item (gathered non-blockingly first, so a `you>`-time
-      # `/inbox` shows the WHOLE backlog, not just the head), reads exactly
-      # ONE answer ({Reply}'s own contract), and resolves it through the SAME
-      # reply seam the human> path uses -- never a second answer path. The
-      # listing offers no selection, so what one typed answer answers here is
-      # the OLDEST item listed: nothing is parked on this read, so the first
-      # line the human read is the only thing it can mean. {Reply} hands that
-      # item back beside the answer, so the set that gets the answer, the
-      # document that was printed, and the line that gets retired are one
-      # question rather than three lookups that can disagree.
+      # The listing offers no selection, so one typed answer answers the OLDEST
+      # item listed: nothing is parked on this read, so the first line the human
+      # read is the only thing it can mean. {Reply} hands that item back beside
+      # the answer, so the set answered, the document printed and the line
+      # retired are one question rather than three lookups that can disagree.
       #
       # A blank answer must resolve NOTHING and retire NOTHING, or the item
-      # leaves the human's only view of a still-pending question. The drain
-      # guards that at the source (a line of nothing but whitespace is never
-      # an answer, see {Frontend::TTY::Inbox#settled}); the `strip.empty?`
-      # check keeps the property local to the resolve as well.
+      # leaves the human's only view of a still-pending question.
       #
-      # EOF ends this read as a blank line does, and settles nothing for the
-      # same reason: NOTHING IS PARKED ON IT. The inline prompt refuses a set
-      # on EOF because a run is parked on that set and the only read that could
-      # ever answer it has ended -- and that reason is precisely what this
-      # prompt does not have. Here the questions are listed because the fleet
-      # outlives an ask; a stray Ctrl-D closing the listing says nothing about
-      # whether they can be answered, and they are still answerable at the
-      # editor, at the next `/inbox`, and at the reply prompt of whichever run
-      # is parked on them. Refusing `@inbox.oldest` here destroyed one of them
-      # permanently -- tombstoned in the directory, so a later real answer
-      # raised -- and, with N listed, gave exactly one an unanswered record and
-      # N-1 nothing, which is one doctrine applied to an arbitrary question.
-      # {Reply#at_prompt} is where that is said in code.
+      # EOF ends this read as a blank line does, and for the same reason:
+      # NOTHING IS PARKED ON IT. The inline prompt refuses a set on EOF because
+      # a run is parked on it and the only read that could answer has ended --
+      # the reason this prompt does not have. Refusing `@inbox.oldest` here
+      # destroyed a question permanently, tombstoned in the directory so a later
+      # real answer raised; with N listed it gave exactly one an unanswered
+      # record and N-1 nothing, which is one doctrine applied to an arbitrary
+      # question.
       #
       # @return [String] the answer as it will be delivered -- for a question
       #   carrying a set that is the answer set's rendering, not the line the
@@ -300,98 +241,74 @@ module Lain
         answer
       end
 
-      # The concurrent reply surfaces for one DISPATCHED LINE: the TTY drain
-      # loop, whose fiber must live exactly as long as that line and no longer --
-      # the reply read parks inside it, and the terminal it reads from is the one
-      # the next `you>` prompt needs back. The caller
-      # ({Repl::LineScope#serve}) stops them in its ensure.
+      # The TTY drain loop, whose fiber must live exactly as long as one
+      # DISPATCHED LINE and no longer: the reply read parks inside it, and the
+      # terminal it reads from is the one the next `you>` prompt needs back.
+      # {Repl::LineScope#serve} stops it in its ensure.
       #
-      # The line, and not the ask: a question can be raised from a command
-      # running lib-side or from the subagent a `@role[/skill]` line spawns, and
-      # neither reaches {Repl#respond} -- the fiber that parks on one is the
-      # dispatching fiber, so the surface answering it has to be its sibling.
-      # The rest of the sentence above is unchanged and is the reason it goes no
-      # wider than that.
-      #
-      # The editor's consumer is deliberately NOT here any more, and that
-      # split is the point: see {#session_surfaces}.
+      # The LINE and not the ask, because a question can be raised from a
+      # command running lib-side or from a spawned subagent, and neither reaches
+      # {Repl#respond} -- the fiber that parks on one is the dispatching fiber,
+      # so the surface answering it has to be its sibling. The editor's consumer
+      # is deliberately not here; see {#session_surfaces}.
       def surfaces(task) = [answers.spawn(task)]
 
       # The reply surfaces that live for the whole CONVERSATION, started on the
-      # repl's own Sync ({Repl#run}) instead of on an ask's -- today just the
-      # editor's command rail, and only when an editor is attached.
+      # repl's own Sync rather than on an ask's -- today just the editor's
+      # command rail.
       #
-      # An ask's lifetime is the WRONG one for that rail. This fiber is the
-      # sole consumer of every editor verb, and a human uses the editor
-      # precisely when no ask is in flight: a code review is a long stretch of
-      # reading and marking with no model turns in it at all, and the sidebar
-      # cannot redraw a mark as a glyph ({Review::Surface::Neovim}'s class doc
-      # says why), so the sentence that comes back on this rail is the only
-      # signal a gesture landed. Started per-ask, it was measured (2026-08-05)
-      # answering nothing for 8s at an idle `you>` and then flushing the whole
-      # backlog at once the moment a message was sent.
+      # An ask's lifetime is the WRONG one for that rail. A human uses the
+      # editor precisely when no ask is in flight: a code review is a long
+      # stretch of reading and marking with no model turns in it, and the
+      # sidebar cannot redraw a mark as a glyph, so the sentence coming back on
+      # this rail is the only signal a gesture landed. Started per-ask, it was
+      # measured (2026-08-05) answering nothing for 8s at an idle `you>` and
+      # then flushing the whole backlog the moment a message was sent.
       #
       # The two loops share no queue -- this one polls the editor's rail, the
       # ask's parks on `@questions` -- so the longer lifetime cannot make them
-      # race for an item. Where they do meet is {#deliver}, which is already
-      # the one answer path both use and already drops the loser's duplicate as
-      # `AlreadyResolved`.
+      # race. Where they meet is {#deliver}, already the one answer path both
+      # use, which drops the loser's duplicate as `AlreadyResolved`.
       #
-      # The caller stops these in ITS ensure, on every path, for exactly the
-      # reason {Repl#respond} stops the ask's: a parked fiber holds the Sync
-      # that owns it open forever.
-      #
-      # Only the surfaces that EXIST: "no editor is attached" is a fact this
-      # class already answers with an object ({NoEditor}), so handing back a
-      # nil beside it would be the same fact said a second way, in the form
-      # every caller then has to check.
+      # The caller stops these in ITS ensure on every path, because a parked
+      # fiber holds the Sync that owns it open forever.
       def session_surfaces(task) = [editor_reply_loop(task)].compact
 
       private
 
-      # The TTY arrival surface, built at the one call site that needs it rather
-      # than in the constructor: nothing else in this class asks it anything, and
-      # a session with no reply surface ever spawned never builds one. Memoized
-      # because it REMEMBERS -- which arrivals it has already announced -- and
-      # that memory must span the lines it is spawned for, not one of them.
+      # Built at the one call site that needs it, so a session that never spawns
+      # a reply surface never builds one. Memoized because it REMEMBERS which
+      # arrivals it has announced, and that memory must span the lines it is
+      # spawned for rather than one of them.
       #
-      # `resolve:` is a MESSAGE, not this object: what the loop owes an answer is
+      # `resolve:` is a MESSAGE rather than this object: the loop owes an answer
       # one call, and handing over `self` would let it reach everything.
       def answers
         @answers ||= AnswerLoop.new(questions: @questions, inbox: @inbox, tty: @tty, reply: @reply,
                                     resolve: method(:resolve_reply))
       end
 
-      # The editor a changeset is drawn in, with its null resolved HERE and
-      # nowhere else -- {Tools::RequestReview#bindings}' shape, and the reason
-      # {#bind_review_editor} may take a bare nil. Private because
-      # {#bind_review_editor} is the whole of this collaborator's public
-      # surface: a reader beside a binder is a second way to ask the same
-      # question. `delegate` reaches it (it calls with an implicit receiver),
-      # which is what makes the two seams above one line rather than three.
+      # The null resolved HERE and nowhere else, which is why
+      # {#bind_review_editor} may take a bare nil. Private because a reader
+      # beside a binder is a second way to ask the same question; `delegate`
+      # still reaches it, calling with an implicit receiver.
       def review_editor = @review_editor || ReviewSeams::Unattached
 
-      # The TTY's answer: the refusal is rendered where the human typed. A
-      # digest no asker holds is the live outcome of a stale line (a run
-      # stopped between the note and the answer), and the directory's own
-      # sentence says the line was stale rather than that the answer was
-      # wrong -- so it is passed through, not reworded.
+      # The refusal is rendered where the human typed, and passed through rather
+      # than reworded: a digest no asker holds is a stale line, and the
+      # directory's own sentence says so.
+      #
       # A refusal SETTLES the line, and that half is load-bearing on the
-      # `/inbox` path: `#drain_at_prompt` calls this directly rather than through
-      # {AnswerLoop}, so nothing else here would ever retire the item. Rendering
-      # and returning left the dead question listed, and every later `/inbox`
-      # offered it again -- a line that lists forever and can only ever refuse,
-      # which is exactly what the re-queue rule makes reachable by putting
-      # ghosts where a drain finds them. `NoPendingQuestion` means the set is
-      # gone, so nothing is lost by letting the line go; it is the same
-      # conclusion {AnswerLoop#exchange} already reaches on its own path.
+      # `/inbox` path, which calls this directly rather than through
+      # {AnswerLoop} -- nothing else would ever retire the item. Rendering and
+      # returning left the dead question listed, so every later `/inbox` offered
+      # it again: a line that lists forever and can only refuse.
+      # `NoPendingQuestion` means the set is gone, so nothing is lost.
       #
       # THE SETTLE IS THE DIGEST'S, and a refusal that named none settles
-      # nothing. Everything above is about a line that outlived its SET; a nil
-      # digest is a reply that named no set at all, and telling the views a nil
-      # was answered puts a nil in the answered set while `retire(nil)` deletes
-      # whatever item is listed without a digest. Nothing is lost by the guard:
-      # there is no line to let go of.
+      # nothing: telling the views a nil was answered puts a nil in the answered
+      # set, while `retire(nil)` deletes whatever item is listed without a
+      # digest.
       def resolve_reply(answer, digest)
         deliver(answer, digest)
       rescue Lain::Tools::AskHuman::NoPendingQuestion => e
@@ -399,10 +316,9 @@ module Lain
         settled(digest) unless digest.nil?
       end
 
-      # The ONE answer path both surfaces use. AlreadyResolved: the other
-      # surface beat this one -- normal, per the queue's own doctrine -- so
-      # the duplicate is dropped and the item retired all the same, because
-      # the set it named IS answered.
+      # The ONE answer path both surfaces use. `AlreadyResolved` means the other
+      # surface beat this one, which is normal, so the duplicate is dropped and
+      # the item retired all the same -- the set it named IS answered.
       def deliver(answer, digest)
         @ask_human.reply(answer, digest)
         settled(digest)
@@ -411,55 +327,42 @@ module Lain
       end
 
       # What "this set is DONE" means to everything that lists it, in ONE place
-      # because every way of being done ends the same for a reader: the line
-      # leaves the terminal's own list, and the editor's views stop offering the
-      # set -- whichever surface took the answer, and whether the set was
-      # answered, already answered, or withdrawn under the human. Named for
+      # because every way of being done ends the same for a reader. Named for
       # settled rather than answered because a third of its callers is a
       # refusal. Reported rather than inferred: a row is retired by the agent's
-      # committed turn, a model round trip later, so until then only this knows.
+      # committed turn a model round trip later, so until then only this knows.
       def settled(digest)
         @views.answered(digest)
         @inbox.retire(digest)
       end
 
-      # The editor reply leg (I6): the :LainReply command lands on the frontend's
-      # rail and this fiber resolves the pending ask from it. Spawned only for
-      # an editor that exists -- {NoEditor} answers everything else, so nothing
-      # downstream branches on whether one is attached.
-      #
-      # ONE of these per conversation, on the repl's own Sync ({#session_surfaces}),
-      # never one per ask: it is the sole consumer of every editor verb, so a
-      # second would race it for the same rail and each gesture would land on
-      # whichever popped first.
+      # The :LainReply command lands on the frontend's rail and this fiber
+      # resolves the pending ask from it. ONE per conversation, never one per
+      # ask: it is the sole consumer of every editor verb, so a second would
+      # race it for the rail and each gesture would land on whichever popped
+      # first.
       def editor_reply_loop(task)
         task.async { loop { serve_editor_command } } if @editor.attached?
       end
 
       # ONE editor command, and its own method because NOTHING a command does
-      # may kill this fiber. It is the sole consumer of EVERY editor verb, so a
-      # `review_done` that raises -- the reviewed file gone, an annotation the
-      # wire dropped a key from, a settle that refuses -- would take
-      # :LainReply down with it and the editor would go quiet with no sign why.
-      # The refusal renders back in the editor, which is where the gesture came
-      # from: a `done` that vanishes is the one outcome this surface must never
-      # produce. Verbs nothing here claims are ignored (they rode their own
-      # path to the frontend).
+      # may kill this fiber: it is the sole consumer of EVERY editor verb, so a
+      # `review_done` that raises would take :LainReply down with it and the
+      # editor would go quiet with no sign why. The refusal renders back in the
+      # editor the gesture came from.
       #
-      # There is no `pending?` pre-guard any more, and its absence is the fix:
-      # it asked the object this class holds whether IT had something pending,
-      # which under digest-addressed routing is not the question. "Is this
-      # digest answerable" is the directory's to answer, and it answers it by
-      # replying or refusing -- so a child's question stays answerable from the
-      # editor while the parent holds nothing, and a race the TTY already won
-      # comes back as AlreadyResolved, which {#deliver} drops.
+      # There is no `pending?` pre-guard, and its absence is the fix: it asked
+      # the object this class holds whether IT had something pending, which
+      # under digest-addressed routing is not the question. "Is this digest
+      # answerable" is the directory's to answer, so a child's question stays
+      # answerable from the editor while the parent holds nothing, and a race
+      # the TTY already won comes back as AlreadyResolved for {#deliver} to drop.
+      #
       # `ScriptError` beside `StandardError` because `NotImplementedError` is
-      # NOT a StandardError, and it is the likeliest one to arrive: an abstract
-      # duck raises exactly that ({Frontend::Neovim::RpcThread::Listener}'s base
-      # does), and it walked straight past the guard whose whole paragraph says
-      # nothing may kill this fiber -- :LainReply died with no refusal rendered
-      # at all. `Exception` is still refused, so `Interrupt` and `Async::Stop`
-      # keep climbing.
+      # NOT a StandardError and is the likeliest one to arrive -- an abstract
+      # duck raises exactly that, and it walked past the guard whose whole
+      # paragraph says nothing may kill this fiber. `Exception` is still
+      # refused, so `Interrupt` and `Async::Stop` keep climbing.
       def serve_editor_command
         verb, args = pop_command
         verb.nil? ? sleep(IDLE_TICK) : routes[verb]&.call(args)
@@ -470,28 +373,23 @@ module Lain
       end
 
       # The REFUSAL'S own failure, which had nowhere to go and so went
-      # everywhere: this is the last line of the method above, it reaches the
-      # editor -- the thing that just proved it can fail -- and a raise here
-      # escaped every guard and ended :LainReply permanently, the one outcome
-      # that method's comment forbids. Swallowed rather than re-reported
-      # because there is no third surface to report it to: an editor that
-      # cannot take a refusal cannot take the refusal about the refusal either.
+      # everywhere: it reaches the editor -- the thing that just proved it can
+      # fail -- and a raise here escaped every guard and ended :LainReply
+      # permanently. Swallowed rather than re-reported, because an editor that
+      # cannot take a refusal cannot take the refusal about the refusal.
       def report(message)
         @editor.review_refused(message)
       rescue StandardError, ScriptError
         nil
       end
 
-      # One verb, one reaction -- {Frontend::Neovim::Router}'s shape on the
-      # consumer's side of the same rail, and its `&.` for the same reason: the
-      # editor's commands are not this object's to validate, so a verb no route
-      # claims falls through in silence (it rode its own path to the frontend).
-      # It became a table when `open` and `pin` made five branches of it and
-      # Metrics said what that was, and two tables when the changeset review's
-      # three made eight and Metrics said it again -- this time naming a real
-      # seam rather than mere size. What stays here SUBMITS: an answer for a
-      # parked set, a written document, a settled review, each of which reaches
-      # the Store or a promise and can raise, which is what
+      # One verb, one reaction, and its `&.` because the editor's commands are
+      # not this object's to validate -- a verb no route claims falls through in
+      # silence, having ridden its own path to the frontend.
+      #
+      # Two tables, and the split is a real seam rather than size: what stays
+      # here SUBMITS -- an answer, a written document, a settled review -- each
+      # of which reaches the Store or a promise and can raise, which is what
       # {#serve_editor_command} rescues. What moved to {Gestures} names a
       # position and submits nothing.
       def routes
@@ -502,27 +400,24 @@ module Lain
         }.merge(@gestures.routes).freeze
       end
 
-      # :LainReply: the wire's `["reply", [answer, line, generation]]`. The
-      # ROW rides beside the answer for the reason {Gestures#open_set}'s does
-      # -- an inbox row renders no digest, so a line plus the stamp on the
-      # rendering the human is looking at is what names a set -- and it is
-      # resolved through the very same index, so "which set is this an answer
-      # to" and "which set is this an open of" cannot disagree.
+      # The wire's `["reply", [answer, line, generation]]`. The ROW rides beside
+      # the answer for {Gestures#open_set}'s reason -- an inbox row renders no
+      # digest, so a line plus the stamp on the rendering the human is looking
+      # at is what names a set -- and it resolves through the very same index,
+      # so "which set is this an answer to" and "which set is this an open of"
+      # cannot disagree.
       #
-      # It sent the answer ALONE until T3, and the consumer then guessed: the
-      # oldest item listed. That guess is a set only while one is pending AND
-      # it reached {Pending} at all -- and a question raised from the editor
-      # while the human sits at `you>` never does, so the guess was nil and
-      # the human was told the row in front of them was stale.
+      # Sending the answer alone made the consumer guess the oldest item listed.
+      # That guess is a set only while one is pending AND reached {Pending} at
+      # all, and a question raised from the editor while the human sits at
+      # `you>` never does -- so the guess was nil and the human was told the row
+      # in front of them was stale.
       #
-      # A reply that named NO row keeps the oldest-listed reading, and that is
-      # not a leftover: :Lain* commands are GLOBAL, so :LainReply is typable
-      # from any buffer, and a cursor outside lain://inbox names no row there.
-      # It is the rule the terminal drain reads a typed answer by
-      # ({Reply#at_prompt}), the only other surface that takes an answer
-      # nothing selected. Inside lain://inbox the editor sends no row only when
-      # it has told the human why (`70_inbox.lua`), so the two nils cannot be
-      # confused here.
+      # A reply that named NO row keeps the oldest-listed reading, which is not
+      # a leftover: :Lain* commands are GLOBAL, so :LainReply is typable from
+      # any buffer and a cursor outside lain://inbox names no row. Inside
+      # lain://inbox the editor sends no row only when it has told the human
+      # why, so the two nils cannot be confused.
       def reply(args)
         answer, line, generation = args
         return deliver(answer.to_s, @inbox.oldest.digest) if line.nil?
@@ -530,54 +425,39 @@ module Lain
         replied(answer.to_s, @views.answering(line, generation:))
       end
 
-      # One answer against the row the view resolved -- delivered when that row
-      # names a set, and otherwise the view's OWN sentence about why it does
-      # not, sent back to the editor the answer came from.
-      #
-      # Every one of those sentences used to arrive as a nil digest and be
-      # explained by {Tools::AskHuman::Directory}, which knows only that no
-      # asker holds the name -- so a rendering this view had merely aged out
-      # was reported as "the inbox line offering it is stale: nothing you type
-      # here is recorded", about a row whose asker was still parked on it.
-      # {#report} and not {#gestured}: this route SUBMITS, so it is not one of
-      # {Gestures}' position-namers, but the refusal goes back the same way.
+      # Delivered when the row names a set, and otherwise the view's OWN
+      # sentence about why it does not. Those sentences used to arrive as a nil
+      # digest and be explained by {Tools::AskHuman::Directory}, which knows
+      # only that no asker holds the name -- so a rendering that had merely aged
+      # out was reported as permanently stale, about a row whose asker was still
+      # parked on it.
       def replied(answer, row)
         row.opened? ? deliver(answer, row.digest) : report(row.report)
       end
 
-      # The written question document ({Neovim::QuestionView}): the wire's
-      # `["question_answered", [digest, answer_set]]`. The digest is the
-      # buffer's own stamp, so this answer names its set rather than inheriting
-      # whatever the inbox lists first, and the set RENDERS to the String a
-      # {Tool::Result} carries -- the tool's contract, not this seam's choice.
+      # The wire's `["question_answered", [digest, answer_set]]`. The digest is
+      # the buffer's own stamp, so this answer names its set rather than
+      # inheriting whatever the inbox lists first.
       def answer_document(args)
         digest, answers = args
         deliver(answers.render, digest)
         advance
       end
 
-      # One document submitted, so open the next set the human owes an
-      # answer to -- or tell them there is none and leave them at the inbox.
+      # One document submitted, so open the next set the human owes an answer to.
       #
-      # IT HAPPENS HERE, ON THE CONSUMER, AND IT CANNOT HAPPEN ANYWHERE ELSE.
-      # {Frontend::Neovim::QuestionView} holds a non-reentrant Mutex across the
-      # write and calls its `submit` INSIDE it, so a chain from the submit
-      # callable (or from `#wrote`) re-enters that lock and raises
-      # `ThreadError: deadlock; recursive locking` on the human's `:w`, with
-      # the answer already handed on. This runs after the write returned and
-      # the lock is long gone, which is the whole reason the hand-off is a
-      # queue somebody else pops.
+      # IT CANNOT HAPPEN ANYWHERE ELSE. {Frontend::Neovim::QuestionView} holds a
+      # non-reentrant Mutex across the write and calls its `submit` INSIDE it,
+      # so a chain from the submit callable re-enters that lock and raises
+      # `ThreadError: deadlock; recursive locking` on the human's `:w`, with the
+      # answer already handed on. This runs after the write returned and the
+      # lock is gone, which is the whole reason the hand-off is a queue somebody
+      # else pops.
       #
-      # It needs no argument: {#deliver} has already told the views that this
-      # set was answered, and every set answered before it too, so "the next
-      # one" is a question the views can answer for themselves.
-      #
-      # Its outcome is deliberately NOT echoed, which is the one place this
-      # differs from {#open_set}: the human asked for no particular set here,
-      # and everything the advance could say is already on their screen -- a
-      # document opened, or the inbox with the remaining rows in it. A set it
-      # could not open keeps its row, so pressing enter on it is what asks for
-      # a sentence, and that path gives one.
+      # It needs no argument, because {#deliver} has already told the views
+      # which sets were answered. Its outcome is deliberately NOT echoed: the
+      # human asked for no particular set, and a set it could not open keeps its
+      # row, so pressing enter on that row is what asks for a sentence.
       def advance = @views.open_next
 
       def pop_command
@@ -588,24 +468,18 @@ module Lain
     end
 
     class HumanReplies
-      # Reopened rather than nested in the class body above -- `tty.rb`'s idiom,
-      # for the same reason: each collaborator is its own responsibility, and the
-      # split keeps each body inside Metrics/ClassLength instead of loosening it.
+      # Reopened rather than nested above, `tty.rb`'s idiom: each collaborator
+      # is its own responsibility, and the split keeps each body inside
+      # Metrics/ClassLength instead of loosening it.
 
       # The TTY arrival surface: ONE fiber parked on the queue, serving each
       # arrival from its note to its answer -- and deciding what becomes of the
-      # LINE when that exchange ends.
+      # LINE when that exchange ends. Where {HumanReplies} routes an ANSWER to
+      # the asker that asked, this owns an ITEM's lifetime: from the queue to
+      # the list and, when nobody answered, back.
       #
-      # Its own object for this file's recurring reason ({Gestures}, {Reviews},
-      # {Pending} and {Reply} came out the same way): {HumanReplies} was over
-      # Metrics/ClassLength carrying it, and the cop was naming a real seam.
-      # What is left there routes an ANSWER to the asker that asked; this owns
-      # an ITEM's lifetime, from the queue to the list and -- when nobody
-      # answered -- back.
-      #
-      # `resolve:` is a message rather than the owner: what this owes an answer
-      # is one call ({HumanReplies#resolve_reply}), and holding the owner would
-      # let it reach everything else.
+      # `resolve:` is a message rather than the owner, which would let this
+      # reach everything else.
       class AnswerLoop
         def initialize(questions:, inbox:, tty:, reply:, resolve:)
           @questions = questions
@@ -616,100 +490,75 @@ module Lain
           @announced = Set.new
         end
 
-        # Parks on dequeue (a real scheduler yield -- woken per arrival, never
-        # polling) and serves them one at a time.
+        # Parks on dequeue -- a real scheduler yield, woken per arrival rather
+        # than polling.
         def spawn(task) = task.async { loop { serve(@questions.dequeue) } }
 
         private
 
-        # An item leaves this pair of holdings -- the queue it came off and the
-        # list it was pushed onto -- only when the EXCHANGE ended, and
-        # {#exchange} is what answers that. It ends two ways: the answer reached
-        # the reply seam (or was refused there, which is the same fact about a
-        # stale set said by the object that knows), or something raised and the
-        # human was TOLD. Either way the line is dead and retiring it is right.
+        # An item leaves the queue it came off and the list it was pushed onto
+        # only when the EXCHANGE ended -- either the answer reached the reply
+        # seam (or was refused there), or something raised and the human was
+        # TOLD. Either way the line is dead and retiring it is right.
         #
-        # An UNWIND is not on that list, and that is the change.
-        # `Async::Stop` climbing out of a cancelled read is not the question
-        # being answered, it is the SURFACE being stopped -- and the surface is
-        # now stopped at the end of every dispatched LINE
-        # ({Repl::LineScope}), not of every ask. So a subagent's question
-        # arriving while the human runs `/help` was dequeued, announced to a
-        # human who was not looking, and then retired when the line ended: off
-        # the queue and off the list at once, so `HumanReplies#pending?` read
-        # false, no `/inbox` could ever list it, and the asker stayed parked
-        # forever with no error and no journal line. It goes back on the queue
-        # instead, for the next surface -- or the human's `/inbox` -- to reach.
+        # An UNWIND is not on that list. `Async::Stop` climbing out of a
+        # cancelled read is the SURFACE being stopped, not the question being
+        # answered -- and the surface is stopped at the end of every dispatched
+        # LINE. So a subagent's question arriving while the human ran `/help`
+        # was dequeued, announced to a human who was not looking, then retired
+        # when the line ended: off the queue and off the list at once, so
+        # `HumanReplies#pending?` read false, no `/inbox` could list it, and the
+        # asker stayed parked forever with no error and no journal line. It goes
+        # back on the queue instead.
         #
-        # A set WITHDRAWN under a parked reader (the Ctrl-C shape) is re-queued
-        # too, and that is the priced cost of the rule. The reason is that the
-        # REPLY SEAM does not expose the distinction, not that nobody holds it:
-        # `Directory` routes by name and its `Registration#holds?` answers
-        # whether the NAME is registered, which stays true across a withdrawal --
-        # measured, `holds?` reads true both before and after
-        # `AskHuman#perform`'s unwind, because `Outstanding#abandon` clears the
-        # asker and never touches the registration's map. The object that knows
-        # is {Tools::AskHuman::Outstanding}, one layer under a seam whose whole
-        # public contract is "reply or refuse".
+        # A set WITHDRAWN under a parked reader is re-queued too, which is the
+        # priced cost of the rule. The REPLY SEAM does not expose the
+        # distinction, though somebody holds it: `Registration#holds?` answers
+        # whether the NAME is registered, which stays true across a withdrawal
+        # -- measured true both before and after `AskHuman#perform`'s unwind,
+        # because `Outstanding#abandon` clears the asker and never touches the
+        # registration's map.
         #
         # It is the right default even with that query in hand, because the two
         # mistakes are not symmetric: re-queueing a dead set costs one refusal
         # the human is told about, where retiring a live one parks the asker
-        # forever with `#pending?` false and no surface able to reach it. This
-        # one is also self-limiting -- the next surface serves it once, the
-        # directory refuses it as stale, and it is retired, on the drain's path
-        # ({HumanReplies#resolve_reply}) as much as on this one.
-        #
-        # The digest is this item's own, so nothing here can retire or re-queue
-        # somebody else's.
+        # forever with `#pending?` false and nothing able to reach it. It is
+        # also self-limiting -- the next surface serves it once, the directory
+        # refuses it as stale, and it is retired.
         def serve(item)
           settled = exchange(item)
         ensure
           settled ? @inbox.retire(item.digest) : requeue(item)
         end
 
-        # One arrival, from the note to the answer, answering whether the item
-        # is SETTLED. A question ARRIVES as a one-line note; the reply read stays
-        # fiber-parked (the ask cannot complete without it), but the surface is
-        # the drain. `/inbox` at the reply prompt lists the pending items before
-        # answering; any other line answers directly (the inline path stays the
-        # no-inbox fallback), and it answers THIS item -- the one whose note the
-        # human is looking at -- never whichever is at the head of the list.
+        # One arrival, from the note to the answer, answering whether the item is
+        # SETTLED. It answers THIS item -- the one whose note the human is
+        # looking at -- never whichever is at the head of the list. Both exits
+        # it has of its own are settled; the third, an unwind, does not return
+        # at all and so cannot say so, which is what {#serve}'s ensure reads.
         #
-        # Both exits it has of its own are settled; the third, an unwind, does
-        # not return at all and so cannot say so, which is exactly what
-        # {#serve}'s ensure reads.
+        # EOF is the one thing that is not an answer. It arrives at the same
+        # read as a blank line and was once collapsed into one, but a human
+        # pressing Enter is a decision where a stream ending is nobody left to
+        # make one: the second resolves the set as unanswerable, and no record
+        # claims a human spoke.
         #
-        # EOF is the one thing that is not an answer at all. It arrives at the
-        # same read as a blank line and used to be collapsed into one
-        # ({Reply#read} records the whole of it), and the difference is that a
-        # human pressed Enter where a stream simply ended: the first is a
-        # decision, the second is nobody left to make one. The second resolves
-        # this set as unanswerable instead, and no record claims a human spoke.
+        # A blank line here IS an answer, deliberately unlike the same keystroke
+        # at `you>`: a run is PARKED on this set, so declining still has to
+        # reach the model, and `""` carries that where `Tool::Result.ok(nil)`
+        # would raise. The `/inbox` detour inside the read does not move the
+        # human to the other prompt, so Enter still answers this set.
         #
-        # A blank line here IS an answer, and deliberately not what the same
-        # keystroke means at `you>`: this prompt exists because a run is PARKED
-        # on this set, so declining to answer still has to reach the model, and
-        # `""` is what carries that (`Tool::Result.ok(nil)` would raise). At
-        # `you>` nothing waits on the drain's read, so Enter there means "I
-        # looked, not now" and resolves nothing. The `/inbox` detour inside the
-        # read does not move the human to that other prompt -- the set is still
-        # parked on this fiber -- so Enter still answers it.
-        #
-        # NOTHING here may kill this fiber, for
-        # {HumanReplies#serve_editor_command}'s reason and a sharper one: this is
-        # the TTY answer path, which ruling 7 keeps live whether or not an editor
-        # is attached, and it is ONE fiber for the whole run. The read reaches
-        # Reline and a real terminal; the delivery reaches the Store and the
-        # journal. Either raising un-guarded ended the loop permanently and
-        # silently -- arrivals still landing on the queue with nothing draining
-        # them, and a human watching a run that stopped asking. `StandardError`,
-        # so an `Async::Stop` climbing out of a cancelled read keeps climbing.
+        # NOTHING here may kill this fiber. It is ONE fiber for the whole run,
+        # its read reaches Reline and a real terminal, and its delivery reaches
+        # the Store and the journal -- either raising un-guarded ended the loop
+        # permanently and silently, with arrivals still landing on the queue and
+        # a human watching a run that stopped asking. `StandardError`, so an
+        # `Async::Stop` out of a cancelled read keeps climbing.
         #
         # A REFUSED answer never reaches that rescue: {Reply} refuses and
-        # re-reads, so what comes back is always something the record can carry.
-        # Retiring on a refusal parked the agent forever AND deleted the only
-        # line that could unpark it.
+        # re-reads. Retiring on a refusal parked the agent forever AND deleted
+        # the only line that could unpark it.
         def exchange(item)
           @inbox << item
           announce(item)
@@ -721,56 +570,44 @@ module Lain
           true
         end
 
-        # An ARRIVAL is announced ONCE, however many lines the question outlives.
-        # A re-queued item is dequeued again by the next line's loop, and the
-        # note says "this just arrived" -- which on the third `/fast` line is
-        # simply false, and is noise the human cannot act on either, because the
-        # read it precedes is torn down before they could type into it. The read
-        # still opens on every serve, so a line they do linger on is answerable;
-        # only the claim about arriving is spent.
+        # An ARRIVAL is announced ONCE, however many lines the question
+        # outlives. A re-queued item is dequeued again by the next line's loop,
+        # and "this just arrived" is false by the third line -- noise the human
+        # cannot act on either, since the read it precedes is torn down before
+        # they could type into it. The read still opens on every serve, so a
+        # line they linger on is answerable; only the arrival claim is spent.
         #
-        # Keyed on the digest, so it is per SET and not per fiber, and bounded by
-        # the questions a session asks -- the same bound {Directory}'s tombstones
-        # already carry.
+        # Keyed on the digest, so it is per SET rather than per fiber, and
+        # bounded by the questions a session asks.
         def announce(item)
           @tty.render_arrival(item.question, from: item.from) if @announced.add?(item.digest)
         end
 
         # Back where a later surface can reach it. Off the list FIRST, because
-        # the queue is where it lives again: a copy in both would be listed twice
-        # the moment anything gathered. Deliberately NOT reached after a raise
-        # ({#exchange} answers settled there) -- this loop would dequeue the item
-        # again at once and fail the same way, which is a hot loop rendering one
-        # error forever.
+        # the queue is where it lives again and a copy in both would be listed
+        # twice the moment anything gathered. Deliberately NOT reached after a
+        # raise -- this loop would dequeue the item at once and fail the same
+        # way, which is a hot loop rendering one error forever.
         def requeue(item)
           @inbox.retire(item.digest)
           @questions.enqueue(item)
         end
       end
 
-      # The approval list nobody wired -- {NoEditor}, {NoViews} and
-      # {NoReview}'s fourth sibling, and a fourth object for {NoReview}'s
-      # reason: it is a fourth fact. A run can have an editor, its views and a
-      # changeset review all bound and still have no approval list at all -- an
-      # unattended run (`--non-interactive`) wires no {Approval::Queue} for a
-      # view to render, and a headless chat has no editor to open one in -- so a
-      # human told "no editor is attached" there would be told something false
-      # about the thing in front of them.
+      # The approval list nobody wired, and a fourth object because it is a
+      # fourth fact: a run can have an editor, its views and a changeset review
+      # all bound and still have no approval list -- an unattended run wires no
+      # {Approval::Queue} to render -- so a human told "no editor is attached"
+      # would be told something false about the thing in front of them.
       #
-      # Named for the LIST'S ABSENCE rather than for whatever caused it, exactly
-      # as {Command::Env::NoApprovals} is: which flags leave a run queueless has
+      # Named for the LIST'S ABSENCE rather than whatever caused it, as
+      # {Command::Env::NoApprovals} is: which flags leave a run queueless has
       # already changed once. That sibling is a LISTING over the session queue;
-      # this one is a VERDICT surface over the EDITOR's view, which is why
-      # {Nothing} answers "no approval list is open in this editor".
-      #
-      # It sits in THIS body and not beside its three siblings for the reason
-      # stated directly above: the body above was over Metrics/ClassLength
-      # carrying it, and the split is this file's recorded remedy rather than
-      # loosening the limit.
+      # this one is a VERDICT surface over the EDITOR's view.
       module NoApprovals
-        # {NoReview::Nothing}'s shape, kept apart from it for its reason: the
-        # two say different things, and a human who has an approval list open
-        # and no review must not be told about the review.
+        # {NoReview::Nothing}'s shape, kept apart for its reason: a human who
+        # has an approval list open and no review must not be told about the
+        # review.
         module Nothing
           def self.decided? = false
           def self.report = "no approval list is open in this editor, so there is nothing to answer"
@@ -781,47 +618,32 @@ module Lain
       end
 
       # Every editor verb that names a POSITION and answers only whether it
-      # landed. Six of the nine, and they are one thing: each takes a
-      # LINE or an id off the wire, resolves it through the surface that
-      # rendered it, and ends at {#gestured}, which reports a refusal back in
-      # the editor the gesture came from.
+      # landed: each takes a LINE or an id off the wire, resolves it through the
+      # surface that rendered it, and ends at {#gestured}, which reports a
+      # refusal back in the editor the gesture came from.
       #
-      # Its own object because {HumanReplies} was over `Metrics/ClassLength`
-      # carrying it, and the cop was naming a real seam rather than a size: the
-      # class it left behind routes ANSWERS -- a reply, a written document, a
-      # settled review -- each of which reaches the Store or a promise and can
-      # RAISE, which is what {HumanReplies#serve_editor_command} rescues.
-      #
-      # An approval verdict is the one member here that does reach a promise,
-      # and it belongs on this side anyway, because the cut is the RAISE and not
-      # the promise: {Approval::Queue::Pending#decide} is single-shot and
-      # answers a lost race with `false` rather than with
-      # {Promise::AlreadyResolved}, so a verdict that arrives second is a value
-      # this object reports -- exactly what {#gestured} is for -- and never an
+      # The cut from {HumanReplies} is the RAISE: what stayed there routes
+      # ANSWERS, each reaching the Store or a promise and able to raise. An
+      # approval verdict is the one member here that reaches a promise and
+      # belongs on this side anyway, because {Approval::Queue::Pending#decide}
+      # is single-shot and answers a lost race with `false` rather than with
+      # {Promise::AlreadyResolved} -- a value this object reports, never an
       # exception somebody else's rescue has to catch.
-      #
-      # It holds its three surfaces rather than reaching for them, which is why
-      # {HumanReplies#rebind} rebuilds it: the surfaces are bound after
-      # construction, at two different call sites, by callers that may bind
-      # either one or neither.
       class Gestures
-        # The gesture's own surface broke its outcome contract. A CONSTANT and
-        # not a literal at the call site, which is a width requirement rather
-        # than taste: `spec/refusal_width_discipline_spec.rb` measures what
-        # rides this rail, and a bare literal at a sink has no definition site
-        # to name -- this sentence shipped at 128 columns of lain's own words
-        # for exactly that reason. `%s` is LAST for the rule that spec states:
-        # the embedded message is of a length no bar reaches.
+        # The gesture's own surface broke its outcome contract. A CONSTANT
+        # rather than a literal at the call site, which is a width requirement:
+        # `spec/refusal_width_discipline_spec.rb` measures what rides this rail
+        # and a bare literal at a sink has no definition site to name -- this
+        # sentence shipped at 128 columns of lain's own words for that reason.
+        # `%s` is LAST because the embedded message is of a length no bar
+        # reaches.
         UNANSWERED_OUTCOME = "this gesture's surface could not read its outcome -- nothing happened: %s"
 
-        # All three are READERS, not the surfaces -- the bound-accessor shape
-        # {Frontend::Neovim}'s listener uses, and for the same reason: every one
-        # is bound after this object exists, at its own call site, and a review
-        # is opened mid-run. Holding them instead worked only with a `rebind` at
-        # every binder PLUS an invalidation of the memoized route table, and a
-        # future binder forgetting either would be ignored in SILENCE -- which
-        # is the exact failure the accessor exists to prevent. One answer to one
-        # problem, in both directions.
+        # All four are READERS, not the surfaces: every one is bound after this
+        # object exists, at its own call site, and a review is opened mid-run.
+        # Holding them instead worked only with a `rebind` at every binder PLUS
+        # an invalidation of the memoized route table, and a future binder
+        # forgetting either would be ignored in SILENCE.
         #
         # @param editor [#call] returns where a gesture that did not land is
         #   reported -- {NoEditor} when none was bound
@@ -838,8 +660,7 @@ module Lain
           @approvals = approvals
         end
 
-        # {Frontend::Neovim::Router}'s shape, on the consumer's side of the same
-        # rail: one verb, one reaction, merged into {HumanReplies#routes}.
+        # One verb, one reaction, merged into {HumanReplies#routes}.
         def routes
           {
             "open" => ->(args) { open_set(args) },
@@ -853,101 +674,81 @@ module Lain
 
         private
 
-        # The `y`/`n` gesture from lain://approval: the wire's
-        # `["approval", [line, verdict, generation]]`, which is {#mark_hunk}'s
-        # shape for {#mark_hunk}'s two reasons. The LINE is all the editor can
-        # send, because a row renders no identity for a parked call -- and the
-        # VERDICT rides the wire rather than being toggled, because a decision
-        # computed from a rendering that has since moved answers the
-        # neighbouring call, silently, both values being legal.
+        # The `y`/`n` gesture from lain://approval, in {#mark_hunk}'s shape and
+        # for its reasons: the LINE is all the editor can send, because a row
+        # renders no identity for a parked call, and the VERDICT rides the wire
+        # rather than being toggled, because a decision computed from a
+        # rendering that has since moved answers the neighbouring call silently,
+        # both values being legal.
         #
-        # It runs HERE, on the reactor's editor-command consumer, and it can run
-        # nowhere else: deciding resolves a {Lain::Promise}, and a promise must
-        # be resolved on the reactor -- which is why the verb is acked to this
-        # rail rather than answered on the RPC thread the way a question's `:w`
-        # is.
+        # It runs HERE and nowhere else: deciding resolves a {Lain::Promise},
+        # and a promise must be resolved on the reactor -- which is why the verb
+        # is acked to this rail rather than answered on the RPC thread the way a
+        # question's `:w` is.
         def answer_approval(args)
           line, verdict, generation = args
           gestured(@approvals.call.decide(line, verdict, generation:), &:decided?)
         end
 
-        # The inbox's `<CR>`/`r` gesture: the wire's `["open", [line,
-        # generation]]`. The LINE is all the editor can send -- an inbox row
-        # renders no digest -- and the GENERATION is the stamp on the rendering
-        # the human is looking at, without which a line number names a position
-        # in a buffer whose positions move under it.
+        # The inbox's `<CR>`/`r` gesture. The LINE is all the editor can send,
+        # since an inbox row renders no digest, and the GENERATION is the stamp
+        # on the rendering the human is looking at -- without which a line
+        # number names a position in a buffer whose positions move under it.
         def open_set(args)
           line, generation = args
           gestured(@views.call.open(line, generation:), &:opened?)
         end
 
-        # :LainPin's `["pin", [line]]` (B4), which has been sent and dropped for
-        # as long as `open` was: the timeline only ever grows, so a line names one
-        # turn forever and no stamp is needed.
+        # No stamp is needed here: the timeline only ever grows, so a line names
+        # one turn forever.
         def pin_turn(args) = gestured(@views.call.pin(args.first), &:pinned?)
 
-        # The review sidebar's `<CR>`: the wire's `["review_open", [line,
-        # generation]]`, which is {#open_set}'s shape for {#open_set}'s two
-        # reasons. The LINE is all the editor can send, because a sidebar row
-        # renders no hunk key -- and a hunk key is a DIGEST, which the editor
-        # never sends in either direction. The GENERATION is the stamp on the
-        # rendering the human is looking at, without which a row number names a
-        # position in a buffer whose rows move every time the scope toggles.
+        # The review sidebar's `<CR>`, in {#open_set}'s shape and for its
+        # reasons. A sidebar row renders no hunk key -- a hunk key is a DIGEST,
+        # which the editor never sends in either direction -- and the rows move
+        # every time the scope toggles, which is what the stamp is for.
         def open_hunk(args)
           line, generation = args
           gestured(@review.call.open(line, generation:), &:opened?)
         end
 
-        # `["review_mark", [line, state, generation]]`, stamped for {#open_hunk}'s
-        # reason. The STATE rides the wire rather than being toggled here: what
-        # the human pressed is what they meant, and a toggle computed from a
-        # rendering that has since moved flips the wrong hunk -- silently, since
-        # both values are legal.
+        # Stamped for {#open_hunk}'s reason. The STATE rides the wire rather
+        # than being toggled here: what the human pressed is what they meant,
+        # and a toggle computed from a rendering that has since moved flips the
+        # wrong hunk silently, both values being legal.
         #
-        # `announce: true`, unlike every other gesture on this rail: a mark has
-        # nothing else that tells the human it landed -- opening a row moves the
-        # cursor, answering an approval closes its row, both visible without a
-        # word -- while a mark redraws a sidebar glyph the human is not
-        # necessarily looking at. `outcome.report` is a sentence worth reading
-        # on EVERY path through {Review::Handover#mark} -- success, a stamp or
-        # row the view itself refused, and a batch the session took only half
-        # of all carry one, each in its own words (see
-        # {Frontend::Neovim::ReviewView}'s `NO_STAMP`/`UNISSUED`/`UNSHOWN`/
-        # `NO_HUNK`/`UNREAD` for the refusal legs, {Handover::MARKED_ROW} for
-        # the row name on success). It is NEVER a bare hunk key on any of
-        # them -- that defect lived one layer down, in
-        # `Surface::Neovim#mark`'s per-key notice, and `Session#mark_row` (not
-        # this rail) is what stopped it firing per hunk -- which is the one
-        # property that makes speaking `#report` unconditionally correct
-        # rather than merely convenient.
+        # `announce: true`, unlike every other gesture on this rail, because a
+        # mark has nothing else that tells the human it landed -- opening a row
+        # moves the cursor, answering an approval closes its row, while a mark
+        # redraws a sidebar glyph nobody is necessarily looking at. Speaking
+        # `outcome.report` unconditionally is correct because EVERY path through
+        # {Review::Handover#mark} carries a sentence in its own words, and none
+        # of them is a bare hunk key.
         def mark_hunk(args)
           line, state, generation = args
           gestured(@review.call.mark(line, state, generation:), announce: true)
         end
 
-        # `["review_ask", [anchor_id, question]]` -- the docent question, and the
-        # ONE gesture here carrying no stamp. An anchor id is one Ruby minted and
-        # handed to the editor, so it names the same anchor in every rendering,
-        # while a line only names one in the rendering that drew it.
+        # The docent question, and the ONE gesture here carrying no stamp: an
+        # anchor id is one Ruby minted and handed to the editor, so it names the
+        # same anchor in every rendering, where a line only names one in the
+        # rendering that drew it.
         def ask_docent(args)
           anchor_id, question = args
           gestured(@review.call.ask(anchor_id, question), &:asked?)
         end
 
-        # A gesture that did not land owes the human a sentence, and it belongs in
-        # the editor the gesture came from -- the same rail a refused
-        # :LainReviewDone answers on. The predicate rides as a block because the
-        # gestures name their own success ("opened", "pinned", "marked", "asked")
-        # and none should be renamed to share a word with another.
+        # A gesture that did not land owes the human a sentence, in the editor
+        # it came from. The predicate rides as a block because the gestures name
+        # their own success -- opened, pinned, marked, asked -- and none should
+        # be renamed to share a word with another.
         #
-        # `announce:` is `false` for every gesture but {#mark_hunk}'s, which is
-        # what keeps this method's meaning for the other five: a gesture that
-        # DID land stays silent here, because landing already has a visible
-        # trace (a cursor moved, a row closed) that speaks for it. `announce:
-        # true` skips the predicate entirely rather than inverting it, because
-        # {#mark_hunk} wants `outcome.report` spoken on EVERY path through
-        # {Review::Handover#mark} -- success and refusal read the same field --
-        # not a duplicate of the refusal branch with the sense flipped.
+        # `announce:` is false for every gesture but {#mark_hunk}'s: a gesture
+        # that DID land stays silent, because landing already has a visible
+        # trace that speaks for it. True SKIPS the predicate rather than
+        # inverting it, because {#mark_hunk} wants the report spoken on every
+        # path -- success and refusal read the same field -- not a duplicate of
+        # the refusal branch with the sense flipped.
         def gestured(outcome, announce: false)
           @editor.call.review_refused(outcome.report) if announce || !yield(outcome)
         rescue NoMethodError => e
@@ -955,32 +756,25 @@ module Lain
         end
       end
 
-      # The reviews the editor is holding open, and the ONE rule that keying
-      # them needs. Its own object because "which review does this `done`
-      # gesture mean" is not the business of a class about human replies: it
-      # rides the same rail and shares nothing else, and {HumanReplies} was
-      # over `Metrics/ClassLength` carrying it.
-      #
-      # Keyed on the PAIR the wire carries -- a bare generation cannot say which
-      # epic it means, and two epics both hand out 1 (see {Epic::Review}) -- and
-      # the generation goes through {Epic::WireInteger} on BOTH sides of the
-      # lookup, because a key read two ways is a key that misses: `.to_i` turns
-      # `"7abc"` and `7.9` into 7 and `nil` into 0, so a shallow reading would
-      # name somebody else's review rather than refuse.
+      # The reviews the editor is holding open, keyed on the PAIR the wire
+      # carries: a bare generation cannot say which epic it means, and two epics
+      # both hand out 1. The generation goes through {Epic::WireInteger} on BOTH
+      # sides of the lookup, because a key read two ways is a key that misses --
+      # `.to_i` turns `"7abc"` and `7.9` into 7 and `nil` into 0, so a shallow
+      # reading would name somebody else's review rather than refuse.
       class Reviews
         def initialize = @open = {}
 
         def bind(review, token:) = @open[key(token.epic_slug, token.generation)] = [review, token.path]
 
-        # The wire's `["review_done", [generation, epic_slug, annotations]]` --
         # ONE array of arguments, like every other verb on this rail, because
         # the consumer destructures `verb, args`. Annotations arrive
-        # String-keyed: they crossed msgpack from lua and nothing here re-keys
+        # String-keyed -- they crossed msgpack from lua and nothing here re-keys
         # them, so the journal records what the editor actually sent.
         #
         # A `done` naming no open review RAISES, which is how it reaches the
-        # human: {HumanReplies#serve_editor_command} turns any raise into a
-        # refusal rendered back in the editor the gesture came from.
+        # human: {HumanReplies#serve_editor_command} turns a raise into a
+        # refusal rendered back in the editor.
         def settle(args)
           generation, epic_slug, annotations = args
           named = key(epic_slug, generation)
@@ -999,14 +793,11 @@ module Lain
         end
       end
 
-      # The lines a human can see, and the digest each one is answered by.
-      # Split out because "which items are listed, and which one does a
-      # nameless answer mean" is a responsibility of its own -- {HumanReplies}
-      # was carrying it beside routing an answer to the asker that asked, and
-      # the review panel and Metrics named the same seam.
+      # The lines a human can see, and the digest each one is answered by: which
+      # items are listed, and which one a nameless answer means.
       #
-      # An Array with an opinion, not a wrapper: every method here is one of
-      # the four rules the list actually has.
+      # An Array with an opinion rather than a wrapper -- every method here is
+      # one of the four rules the list actually has.
       class Pending
         include Enumerable
 
@@ -1016,58 +807,47 @@ module Lain
         def <<(item) = @items << item
         def empty? = @items.empty?
 
-        # Non-blocking: every arrival sitting on the queue right now, without
-        # parking a fiber on an empty one. `Enumerator.produce` calling
-        # `dequeue(timeout: 0)` (nil on empty, per Async::Queue) stops pulling
-        # the instant `take_while` sees the first nil -- an infinite producer
-        # is safe because nothing forces it past that point. Each item arrives
-        # carrying its own attribution, so nothing here asks an asker who
-        # asked.
+        # Non-blocking: every arrival on the queue right now, without parking a
+        # fiber on an empty one. `dequeue(timeout: 0)` answers nil on empty, so
+        # `take_while` stops pulling at the first one -- an infinite producer is
+        # safe because nothing forces it past that point.
         def gather(queue)
           @items.concat(Enumerator.produce { queue.dequeue(timeout: 0) }.take_while { |item| !item.nil? })
         end
 
         # By NAME, never by position: the item an answer belongs to need not be
-        # the one at the head, and retiring the head instead drops a question
-        # nobody answered out of the human's only view of it.
+        # the one at the head, and retiring the head drops a question nobody
+        # answered out of the human's only view of it.
         def retire(digest) = @items.delete_if { |item| item.digest == digest }
 
-        # What an answer that names no set of its own means: the oldest item
-        # listed -- the first line the drain printed, and what the editor's
-        # digest-less :LainReply is replying to. {Unlisted} when nothing is
-        # listed, so the refusal is the directory's rather than a nil's.
+        # What an answer naming no set of its own means: the oldest item listed.
+        # {Unlisted} when nothing is, so the refusal is the directory's rather
+        # than a nil's.
         def oldest = @items.first || Unlisted
       end
 
-      # One human answer, read -- and the pairing of that answer with the set
-      # it answers. Holds the terminal it happens on, the conductor that owns
-      # stdin while it does, and the list the `/inbox` detour lists.
+      # One human answer, read, paired with the set it answers. Holds the
+      # terminal it happens on, the conductor that owns stdin while it does, and
+      # the list the `/inbox` detour lists.
       #
-      # Its own object because "read until the human types something the
-      # record can carry" is not {HumanReplies}' business of routing an answer
-      # to an asker: the detour, the refusal-and-retry, and the pairing all
-      # belong to the READ, and the panel's note that the pair should be built
-      # where the knowledge is points at exactly this seam.
+      # Its own object because the detour, the refusal-and-retry and the pairing
+      # all belong to the READ, and the pair is built where the knowledge is.
       class Reply
-        # The session registry nobody bound -- {NoEditor}'s rule one class down,
-        # so {#read} never asks whether one was wired: a single-asker caller
-        # (and every spec that is not about commands) constructs {HumanReplies}
-        # without a registry and still reads answers. It answers the whole
-        # {Command::Registry::Bound} duck, and `dispatch` YIELDS, because the
+        # The session registry nobody bound, so {#read} never asks whether one
+        # was wired: a single-asker caller constructs {HumanReplies} without a
+        # registry and still reads answers. `dispatch` YIELDS, because the
         # fallthrough block IS the unmatched path in the real registry too.
         #
-        # NO SESSION command is registered here -- and `/inbox` is not one.
-        # `/inbox` at this prompt is THIS surface under another name (the
-        # item-scoped drain, {#for}), it predates the registry, and a caller
-        # that wired no commands must not lose it. So the predicate is still put
-        # to the real {Command::Inbox}, which is what makes this a Null Object
-        # rather than the string literal this method used to be.
+        # NO SESSION command is registered here, and `/inbox` is not one:
+        # `/inbox` at this prompt is THIS surface under another name, it
+        # predates the registry, and a caller that wired no commands must not
+        # lose it. So the predicate is still put to the real {Command::Inbox},
+        # which is what makes this a Null Object rather than a string literal.
         #
         # A class holding one instance rather than a module holding none: an
         # ivar set in `#initialize` is neither the class state `ThreadSafety`
         # objects to nor a constant pinning this leaf's load order against
-        # `cli/command.rb`, and it builds the registry once per session instead
-        # of once per typed line.
+        # `cli/command.rb`, and it builds the registry once per session.
         class NoSessionCommands
           def initialize
             @registry = Command::Registry.new([Command::Inbox.new])
@@ -1079,11 +859,11 @@ module Lain
           def dispatch(_text) = yield
         end
 
-        # A `case` over {#classify}'s arms that met a value no arm claims. It is a
-        # programming error and never a typed line, which is why it is the one
-        # raise this surface's guards deliberately let climb: rendered and
-        # re-read like a command's raise, it would swallow every reply instead of
-        # reporting itself once.
+        # A `case` over {#classify}'s arms that met a value no arm claims: a
+        # programming error, never a typed line, and the one raise this
+        # surface's guards deliberately let climb -- rendered and re-read like a
+        # command's raise, it would swallow every reply instead of reporting
+        # itself once.
         class UnknownArm < Error; end
 
         def initialize(tty:, conductor:, inbox:, commands: NoSessionCommands.new)
@@ -1093,22 +873,17 @@ module Lain
           @commands = commands
         end
 
-        # See {HumanReplies#bind_commands}, which is this method's only caller
-        # and where the reason for binding rather than injecting is written.
+        # @see HumanReplies#bind_commands the only caller, and where the reason
+        #   for binding rather than injecting is written
         def bind_commands(commands) = @commands = commands || NoSessionCommands.new
 
         # The reply prompt of a PARKED set. `/inbox` detours to the drain for
-        # THIS item -- the set the run is parked on, whose note the human is
-        # looking at -- so the document they read and the set their reply
-        # answers are one question. It used to drain for whatever was oldest
-        # and hand the answer back to be resolved against this item, which was
-        # invisible while an answer was an opaque line and is not any more:
-        # the prose answer NAMES the questions it answers, so the wrong set
-        # received a reply naming another set's ids and the set the human
-        # actually read stayed pending.
-        #
-        # Any other line answers this item directly, which is the no-inbox
-        # fallback and the common path.
+        # THIS item, so the document the human reads and the set their reply
+        # answers are one question. Draining for whatever was oldest and
+        # resolving the answer against this item was invisible while an answer
+        # was an opaque line, and is not any more: a prose answer NAMES the
+        # questions it answers, so the wrong set received a reply naming another
+        # set's ids while the set the human read stayed pending.
         #
         # @return [Array(String, InboxItem)] the answer -- or the answer nobody
         #   gave, when the stream ended under this read ({#unanswered}) -- and
@@ -1116,36 +891,31 @@ module Lain
         def for(item) = accepted { read(item) }
 
         # `/inbox` at `you>`: nothing is parked on this read, so one typed
-        # answer answers the oldest item listed -- and a read that ENDS answers
-        # nothing at all. `ended: ""` is that said in the one place it differs
-        # from {#for}: the two prompts read EOF identically and dispose of it
-        # differently, because only one of them has a run waiting on the
-        # answer. See {HumanReplies#drain_at_prompt} for what refusing here
-        # destroyed.
+        # answer answers the oldest item listed and a read that ENDS answers
+        # nothing. The two prompts read EOF identically and dispose of it
+        # differently, because only one has a run waiting on the answer -- see
+        # {HumanReplies#drain_at_prompt} for what refusing here destroyed.
         def at_prompt = accepted { drained(answering: @inbox.oldest, ended: "") }
 
         private
 
-        # The read routes through the conductor's #read_reply (not the tty
-        # directly) so the conductor KNOWS Reline owns stdin for the span and
-        # suppresses its countdown ticker's render + key-read.
+        # Routed through the conductor rather than the tty directly, so the
+        # conductor KNOWS Reline owns stdin for the span and suppresses its
+        # countdown ticker's render and key-read.
         #
-        # nil is EOF, and it is NOT `""`. It used to be `.to_s`ed into one,
-        # which is the same value a human who presses Enter types -- and this
-        # prompt delivers that as their answer on purpose (see {#typed}), so a
-        # session whose stdin went away wrote a `message` record `from:
-        # "human"` carrying `{"answer" => ""}`: an utterance in a session with
-        # nobody in it. The two are one keystroke apart at the terminal and
-        # could not be further apart in the record, so this is one of the two
-        # places the difference is drawn and {#unanswered} is the one fact both
-        # of them name.
+        # nil is EOF, and it is NOT `""`. `.to_s`ed into one it is the same
+        # value a human pressing Enter types, which this prompt delivers as
+        # their answer on purpose -- so a session whose stdin went away wrote a
+        # `message` record `from: "human"` carrying an empty answer: an
+        # utterance in a session with nobody in it. One keystroke apart at the
+        # terminal, as far apart as possible in the record.
         #
-        # `legible` runs BEFORE the registry is consulted, not after:
-        # `String#strip` on invalid bytes raises Encoding::CompatibilityError,
-        # which is not the ArgumentError the refusal path rescues, so it would
-        # climb past every guard here to `#serve_question`'s ensure -- retiring
-        # the line while leaving the promise pending, which is the exact end
-        # state `legible` exists to prevent, reached one line above it.
+        # `legible` runs BEFORE the registry is consulted: `String#strip` on
+        # invalid bytes raises Encoding::CompatibilityError, which is not the
+        # ArgumentError the refusal path rescues, so it would climb past every
+        # guard here and retire the line while leaving the promise pending --
+        # the exact end state `legible` exists to prevent, reached one line
+        # above it.
         def read(item)
           line = heard("human> ")
           return [unanswered, item] if line.nil?
@@ -1154,39 +924,33 @@ module Lain
         end
 
         # ONE read, and the one place this class decides a stream is over.
-        # `read_reply` ANSWERS nil at end-of-file -- but a terminal that dies
+        # `read_reply` ANSWERS nil at end-of-file, but a terminal that dies
         # mid-read does not politely return: Reline raises `EOFError`, and a
         # PTY whose far end has gone raises `Errno::EIO`, which is what a
-        # closing tmux pane actually produces. All three are the same fact, and
-        # answering them all as nil is what keeps this class to one reading of
-        # it. Left to climb they were worse than a wrong answer: both are
-        # StandardErrors, so {AnswerLoop#exchange} rendered them and reported
-        # the line SETTLED, retiring the inbox row while the asker stayed
-        # parked forever -- the exact end state {#serve}'s re-queue rule exists
-        # to prevent, reached by the one path that rule does not cover.
+        # closing tmux pane produces. All three are the same fact. Left to climb
+        # they were worse than a wrong answer -- both are StandardErrors, so
+        # {AnswerLoop#exchange} rendered them and reported the line SETTLED,
+        # retiring the inbox row while the asker stayed parked forever, by the
+        # one path {#serve}'s re-queue rule does not cover.
         #
-        # Narrow on purpose, and `IOError` is deliberately NOT here: the
-        # example "keeps answering after the reply read raises" pins a read
-        # that failed for a reason which is not the end of the stream as
-        # rendered-and-re-read, and widening this would turn every transient
-        # terminal fault into a question nobody can ever answer.
+        # Narrow on purpose, and `IOError` is deliberately NOT here: widening it
+        # would turn every transient terminal fault into a question nobody can
+        # ever answer.
         def heard(prompt)
           @conductor.read_reply(@tty, prompt)
         rescue EOFError, Errno::EIO
           nil
         end
 
-        # `:unmatched` answers HERE and refuses in the drain, and that is the one
-        # place the two prompts part company. An unregistered `/word` typed at
-        # this prompt is the settled precedent -- see the sibling example "still
-        # answers the question with an UNREGISTERED slash word" -- while in a
-        # drain it is refused. Unifying it either deletes that precedent or sends
-        # a mistyped command to the model as a considered reply.
-        # No rescue of its own: {#classify} owns the registry guard that used to
-        # live here, which was this rescue's whole documented purpose, and the
-        # `drained` leg is now guarded exactly as {#at_prompt}'s identical call
-        # already was. Keeping one would also have to make an exception for
-        # {UnknownArm}, which is the one raise here that must climb.
+        # `:unmatched` answers HERE and refuses in the drain, which is the one
+        # place the two prompts part company: an unregistered `/word` typed at
+        # this prompt is settled precedent, while in a drain it is refused.
+        # Unifying it either deletes that precedent or sends a mistyped command
+        # to the model as a considered reply.
+        #
+        # No rescue of its own: {#classify} owns the registry guard, and one
+        # here would have to make an exception for {UnknownArm}, the one raise
+        # that must climb.
         def typed(line, item)
           arm = classify(line)
           case arm
@@ -1198,36 +962,27 @@ module Lain
         end
 
         # What the line turned out to be, in the order the registry itself draws
-        # the lines -- asked by BOTH reply prompts ({#typed} and {#replied}) so
-        # the order cannot drift between them. It used to be `line.strip ==
-        # "/inbox"` and nothing else, so every OTHER registered `/word` was
-        # recorded as the human's answer; the drain reached its own reader and
-        # kept that defect one layer in.
+        # the lines -- asked by BOTH reply prompts so the order cannot drift
+        # between them. As `line.strip == "/inbox"` and nothing else, every
+        # OTHER registered `/word` was recorded as the human's answer.
         #
-        # A command that SERVES REPLIES is not a session command at all -- it is
-        # this surface under another name, and `/inbox` is the only one. It keeps
-        # the ITEM-SCOPED drain it has always had, and is deliberately NOT routed
-        # through `dispatch`: {Command::Inbox} drains `@inbox.oldest`, which is
-        # the defect {#for}'s docstring records as fixed. The predicate is the
-        # command's own claim ({Registry#serves_replies?}), so the exception
-        # lives with the command instead of as a literal here.
+        # A command that SERVES REPLIES is not a session command at all: it is
+        # this surface under another name, `/inbox` is the only one, and it is
+        # deliberately NOT routed through `dispatch`, because {Command::Inbox}
+        # drains `@inbox.oldest` -- the defect {#for} records as fixed. The
+        # predicate is the command's own claim, so the exception lives with the
+        # command rather than as a literal here.
         #
-        # `:unmatched` comes from the FALLTHROUGH block because the block is the
-        # only thing that can say a command did NOT claim the line: a command's
-        # outcome may be any value, `nil` included, so reading the return would
-        # take a quiet `/keep` for an unmatched line. This method RUNS the
-        # command it matched -- there is no "was this registered" question the
-        # registry answers without calling -- so only the unmatched arm is left
-        # for a caller to decide, which is exactly the arm they disagree on.
+        # `:unmatched` comes from the FALLTHROUGH block, the only thing that can
+        # say a command did NOT claim the line: a command's outcome may be any
+        # value, `nil` included, so reading the return would take a quiet
+        # `/keep` for an unmatched line.
         #
-        # `StandardError`, not `Lain::Error`, and the difference is a measured
-        # hole rather than caution: {Registry#invoke} wraps a raise from a
-        # command's `#call` into an attributed Lain::Error, and NOTHING wraps
-        # `#serves_replies?`, which is asked first. A command whose predicate
-        # raised took the parked question down exactly as above. `Async::Stop`
-        # is not a StandardError, so a cancelled read still climbs. A rendered
-        # raise reports `:handled` for the same reason a command that ran does:
-        # both prompts owe the line nothing further and simply read again.
+        # `StandardError`, not `Lain::Error`, on a measured hole: {Registry#invoke}
+        # wraps a raise from a command's `#call` into an attributed Lain::Error,
+        # and NOTHING wraps `#serves_replies?`, which is asked first -- a
+        # command whose predicate raised took the parked question down.
+        # `Async::Stop` is not a StandardError, so a cancelled read still climbs.
         #
         # @return [Symbol] :prose, :replies, :handled, or :unmatched
         def classify(line)
@@ -1244,19 +999,18 @@ module Lain
         end
 
         # Whether the line cannot name a command AT ALL, asked before the
-        # registry so that no reply line is ever refused for the grammar's
-        # reasons. Two shapes reach it:
+        # registry so no reply line is refused for the grammar's reasons. Two
+        # shapes reach it:
         #
-        # * a line the grammar cannot parse. {Skill::Invocation.parse} RAISES
-        #   {Skill::Invocation::Malformed} on a leading token that attempts
-        #   `@role/skill` and breaks it, which is right at `you> ` and wrong
-        #   here: this prompt dispatches no skills, so `@bob/` is a typed answer
-        #   exactly as `/not-a-command` is. Left to climb it did worse than
-        #   refuse -- past {#refusable}'s ArgumentError catch into
+        # * a line the grammar cannot parse. {Skill::Invocation.parse} raises
+        #   {Skill::Invocation::Malformed} on a leading token that attempts a
+        #   role-and-skill spelling and breaks it -- right at `you> ` and wrong
+        #   here, since this prompt dispatches no skills. Left to climb it did
+        #   worse than refuse: past {#refusable}'s ArgumentError catch into
         #   {AnswerLoop#exchange}, which settles the line, so the set was
         #   retired unanswered and the next line never reached it either.
-        # * a ROLE-BOUND line, which no command can be: {Registry} matches only
-        #   the inline shape, so this merely says so one call earlier.
+        # * a ROLE-BOUND line, which no command can be, since {Registry} matches
+        #   only the inline shape.
         def prose?(line)
           invocation = Skill::Invocation.parse(line)
           invocation.nil? || !invocation.inline?
@@ -1264,23 +1018,20 @@ module Lain
           true
         end
 
-        # A command's outcome AT THIS PROMPT, and always nil so the prompt comes
+        # A command's outcome AT THIS PROMPT, always nil so the prompt comes
         # round again: the set is still parked, and running a command is not
-        # answering it. {Repl#settle_command}'s contract minus the one case this
-        # surface cannot honour -- a Repl ACTION is handed UP there for
-        # `#converse` to act on, and {AnswerLoop#exchange} hands back an answer
-        # and an item and nothing else. So it is refused BY NAME rather than
-        # dropped: a `/quit` that appears to do nothing reads as a wedged
-        # session, which is worse than being told where it does not run.
+        # answering it. A Repl ACTION cannot be honoured here, since
+        # {AnswerLoop#exchange} hands back an answer and an item and nothing
+        # else -- so it is refused BY NAME rather than dropped, because a
+        # `/quit` that appears to do nothing reads as a wedged session.
         #
-        # ⚠️ The refusal is POST-HOC -- the command has already run. `/quit` is
-        # the only one of the shipped set returning a Symbol and its `#call` is
-        # `= :quit`, so nothing happens before it is refused. A future
-        # action-returning command that DOES something first would fire that
-        # side effect here and then be told it cannot run, which is a lie the
-        # human cannot act on. At that point this needs the registry to answer
-        # "does this command return an action" BEFORE the call, not a wider
-        # rescue.
+        # The refusal is POST-HOC: the command has already run. `/quit` is the
+        # only shipped command returning a Symbol and its `#call` is `= :quit`,
+        # so nothing happens before it is refused. A future action-returning
+        # command that DOES something first would fire that side effect and then
+        # be told it cannot run, which is a lie the human cannot act on -- at
+        # that point this needs the registry to answer "does this command return
+        # an action" BEFORE the call, not a wider rescue.
         def delivered(outcome, line)
           case outcome
           when nil then nil
@@ -1291,13 +1042,13 @@ module Lain
           nil
         end
 
-        # A command's rendered text on the SAME synthetic Response
-        # {Repl#deliver_text} builds, so a command's answer reaches the terminal
-        # through one renderer whichever prompt it was typed at.
+        # The SAME synthetic Response {Repl#deliver_text} builds, so a command's
+        # answer reaches the terminal through one renderer whichever prompt it
+        # was typed at.
         def spoken(text) = Response.new(content: [{ "type" => "text", "text" => text }], stop_reason: :end_turn)
 
-        # Both halves say WHICH command, {Repl#called}'s attribution rule: a
-        # refusal that names no command is one the human cannot act on.
+        # Both halves say WHICH command: a refusal that names none is one the
+        # human cannot act on.
         def refusal(outcome, line)
           return "command #{called(line)} returned something a reply prompt cannot render: #{outcome.inspect}" \
             unless outcome.is_a?(Symbol)
@@ -1306,33 +1057,24 @@ module Lain
         end
 
         # Only a line the registry already matched reaches here, so its leading
-        # word IS the command -- {Repl#called}'s reason for splitting the typed
-        # line rather than parsing it a second time that could disagree.
+        # word IS the command -- split rather than parsed a second time that
+        # could disagree.
         def called(line) = line.to_s.split.first
 
-        # The drain answers the item it was NAMED, and that item is what the
-        # answer is paired with here -- the caller's own object, never one
-        # shipped out to the frontend and back.
+        # The drain answers the item it was NAMED, and pairs the answer with the
+        # caller's own object -- never one shipped out to the frontend and back.
         #
-        # `reader:` is the seam the registry arrives through: it used to
-        # be a bare lambda that consulted nothing, so a `/word` typed into the
-        # drain was recorded as the human's answer -- the very defect {#typed}
-        # had already been fixed for, surviving behind the detour that opens
-        # this. {Frontend::TTY::Inbox} learns nothing about commands; it asks
-        # for a line and gets one.
+        # `reader:` is the seam the registry arrives through. As a bare lambda
+        # consulting nothing, a `/word` typed into the drain was recorded as the
+        # human's answer -- the defect {#typed} had already been fixed for,
+        # surviving behind the detour that opens this. {Frontend::TTY::Inbox}
+        # learns nothing about commands; it asks for a line and gets one.
         #
-        # `ended:` is what a stream that ran out leaves behind, and it is a
-        # PARAMETER because it is the one thing this surface's two prompts
-        # genuinely disagree about. Both read EOF the same way -- one value,
-        # named once ({#unanswered}) -- but only {#for}'s caller has a run
-        # parked on the set, which is what makes "no answer will ever come
-        # back" true there and a guess at `you>`. A type test in the caller
-        # would have been the same branch with the reason left out.
-        #
-        # `answer` starts at `""` for the other way a drain ends with nothing:
-        # a blank line the human typed, which {Frontend::TTY::Inbox#settled}
-        # reads as "nothing typed" and which the inline prompt reads as a
-        # deliberate answer.
+        # `ended:` is a PARAMETER because it is the one thing the two prompts
+        # genuinely disagree about. Both read EOF the same way, but only {#for}'s
+        # caller has a run parked on the set, which is what makes "no answer will
+        # ever come back" true there and a guess at `you>`. A type test in the
+        # caller would be the same branch with the reason left out.
         def drained(answering:, ended:)
           answer = ""
           reading = drain_reader(-> { answer = ended })
@@ -1340,29 +1082,23 @@ module Lain
           [answer, answering]
         end
 
-        # ONE drain's line reader, each line read through {#classify} -- the SAME
-        # classification {#typed} uses, so a command runs at either prompt and
-        # the registry's order is decided in one place.
+        # Each line read through the SAME {#classify} {#typed} uses, so a command
+        # runs at either prompt and the registry's order is decided in one place.
         #
-        # A lambda built per drain rather than the bare `method(:replied)` it
-        # replaces, because a drain ends on the line the human did NOT type and
-        # the two ways of not typing one are different facts. The drain cannot
-        # carry that difference: it `to_s`es whatever this hands back, which
-        # would strip an {Unanswered} back to a plain String and deliver the
-        # refusal sentence as the human's own prose. So the read that saw the
-        # nil is what says so, through `on_eof`, and it lives exactly as long as
-        # the drain it was built for.
+        # A lambda built per drain rather than a bare method reference, because
+        # the drain `to_s`es whatever this hands back -- which would strip an
+        # {Unanswered} to a plain String and deliver the refusal sentence as the
+        # human's own prose. So the read that saw the nil is what says so,
+        # through `on_eof`, living exactly as long as the drain it was built for.
         #
         # Lazy and iterative for {#accepted}'s reasons: a command answers
-        # nothing, so the prompt comes round again, and a human who runs six of
-        # them before replying should not cost six frames.
+        # nothing, so a human who runs six before replying costs no six frames.
         #
-        # ⚠️ A reply that opens with a registered-looking `/word` cannot be
-        # typed here -- `/tmp is fine` is classified, not answered. That is the
-        # cost of the third criterion and it is deliberate: a mistyped command
-        # reaching the model as a considered reply is unrecoverable, while a
-        # refusal is one retype. The inline prompt keeps the opposite rule, and
-        # {#typed} records why.
+        # A reply opening with a registered-looking `/word` cannot be typed here
+        # -- `/tmp is fine` is classified, not answered. That is the deliberate
+        # cost: a mistyped command reaching the model as a considered reply is
+        # unrecoverable, where a refusal is one retype. The inline prompt keeps
+        # the opposite rule, and {#typed} records why.
         def drain_reader(on_eof)
           lambda do |prompt|
             Enumerator.produce { heard(prompt) }
@@ -1370,10 +1106,9 @@ module Lain
           end
         end
 
-        # EOF ends the drain the way a blank line does -- with `""`, which is
-        # what {Frontend::TTY::Inbox} reads as "nothing typed" -- and tells the
-        # caller WHY on the way past, because this read is the only thing that
-        # can still tell the two apart.
+        # EOF ends the drain the way a blank line does, and tells the caller WHY
+        # on the way past, because this read is the only thing that can still
+        # tell the two apart.
         def answerable_or_eof(line, on_eof)
           return answerable(line) unless line.nil?
 
@@ -1382,22 +1117,18 @@ module Lain
         end
 
         # The answer nobody gave, and the one name this class has for EOF. It
-        # rides the ordinary reply seam because it IS a String:
-        # {HumanReplies#deliver} hands it on, the directory routes it by digest
-        # without reading it,
-        # and the asker that wrote the question is the one object that asks
-        # what it is -- so there is no second delivery path to keep in step
-        # with the first, and no surface between here and the record learns a
-        # new word.
+        # rides the ordinary reply seam because it IS a String: the directory
+        # routes it by digest without reading it, and the asker that wrote the
+        # question is the one object that asks what it is -- so there is no
+        # second delivery path to keep in step with the first.
         def unanswered = Lain::Tools::AskHuman::Unanswered.new
 
         # The line if the drain should treat it as the answer, or nil to read
-        # again. Both refusals NAME the word, {Repl#called}'s attribution rule:
-        # a `/word` that appears to do nothing reads as a wedged prompt, and a
-        # drain is the one prompt where the human is already waiting.
+        # again. Both refusals NAME the word, because a `/word` that appears to
+        # do nothing reads as a wedged prompt.
         #
-        # `/inbox` is refused rather than dispatched or re-entered. Dispatched
-        # it would open a SECOND reader over the same stdin, which is what
+        # `/inbox` is refused rather than dispatched or re-entered: dispatched it
+        # would open a SECOND reader over the same stdin, which
         # `spec/reply_surface_discipline_spec.rb` exists to prevent; re-entered
         # it would nest a drain inside the drain it names.
         def answerable(line)
@@ -1414,11 +1145,11 @@ module Lain
         end
 
         # Both `case`es above are CLOSED sets, and this is what closes them. A
-        # fourth arm added to {#classify} and forgotten at one of the two call
-        # sites would otherwise fall out of the `case` as nil, which {#accepted}
-        # reads as "nothing typed yet" and re-reads -- swallowing every reply the
-        # human types while rendering nothing. That is the silent-answer failure
-        # this surface exists to close, reintroduced one refactor later.
+        # fourth arm added to {#classify} and forgotten at one call site would
+        # fall out as nil, which {#accepted} reads as "nothing typed yet" and
+        # re-reads -- swallowing every reply the human types while rendering
+        # nothing, which is this surface's own silent-answer failure
+        # reintroduced one refactor later.
         def unknown_arm(arm) = "the reply prompt classified a line as #{arm.inspect}, which no arm claims"
 
         # Rendered, and nil so the drain reads again.
@@ -1427,17 +1158,16 @@ module Lain
           nil
         end
 
-        # Read until the human types something the record can carry. A refusal
-        # is NOT a dead question -- the set is still pending and a shorter or
-        # legible reply still answers it -- so the reason is rendered where
-        # they typed it and the prompt comes round again. Every other exit
-        # from a served question means the line is dead, which is what lets
-        # {HumanReplies#serve_question}'s `ensure` retire unconditionally.
+        # Read until the human types something the record can carry. A refusal is
+        # NOT a dead question -- the set is still pending and a legible reply
+        # still answers it -- so the reason is rendered where they typed it and
+        # the prompt comes round again. Every other exit from a served question
+        # means the line is dead, which is what lets the serving `ensure` retire
+        # unconditionally.
         #
-        # The drain does this for itself ({Frontend::TTY::Inbox#accepted}), so
-        # in practice this catches the INLINE prompt -- where a line that
-        # cannot be written used to reach the Store, raise there, and take the
-        # `ensure` with it.
+        # The drain does this for itself, so in practice this catches the INLINE
+        # prompt, where a line that cannot be written used to reach the Store,
+        # raise there, and take the `ensure` with it.
         def accepted(&read) = Enumerator.produce { refusable(&read) }.lazy.compact.first
 
         def refusable
@@ -1447,9 +1177,9 @@ module Lain
           nil
         end
 
-        # What the Store can hold, checked where the human can still retype
-        # it: invalid UTF-8 used to reach the event write and raise there,
-        # which is the same dead line by a longer route.
+        # What the Store can hold, checked where the human can still retype it:
+        # invalid UTF-8 used to reach the event write and raise there, which is
+        # the same dead line by a longer route.
         def legible(line) = Question::Rules.prose(line, "a typed reply")
       end
     end

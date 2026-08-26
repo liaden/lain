@@ -2,21 +2,19 @@
 
 module Lain
   module Grader
-    # The "build it once" substrate GR-2 (T10, selection frequency) and GR-3
-    # (T11, outcome-lineage walks) both read from: an offline projection over a
+    # The "build it once" substrate the selection-frequency detector and the
+    # outcome-lineage walks both read from: an offline projection over a
     # Journal's `turn` records pairing every `tool_use` with its outcome.
     #
     # No production writer emits a standalone `tool_result` RECORD -- results
-    # ride as `tool_result` content BLOCKS inside the FOLLOWING turn, the same
-    # shape {Bench::Session::MemoryReplay#outcomes} already pairs for
-    # `memory_write` alone (memory_replay.rb:77). This generalizes that recipe
-    # from "one tool name, is_error only" to "every tool, the full outcome",
-    # without coupling to it -- MemoryReplay stays private and untouched.
+    # ride as `tool_result` content BLOCKS inside the FOLLOWING turn, the shape
+    # {Bench::Session::MemoryReplay#outcomes} already pairs for `memory_write`
+    # alone. This generalizes that recipe from "one tool name, is_error only" to
+    # "every tool, the full outcome", without coupling to it.
     #
     # Pairing keys on `tool_use_id`, never `name`: a turn of parallel_safe?
-    # tools (Agent::ToolRunner#gather) yields two `tool_use` blocks sharing a
-    # name, and only the id is unique, so name-keying would silently merge
-    # them.
+    # tools yields two `tool_use` blocks sharing a name, and only the id is
+    # unique, so name-keying would silently merge them.
     #
     #   ToolCallIndex.new(Journal.records(entries)).calls.fetch(turn_digest)
     #   #=> [Call(tool_use_id: "tu_1", name: "echo", args: {...}, is_error: false, result: "hi")]
@@ -24,27 +22,21 @@ module Lain
       include Enumerable
 
       # A referenced predecessor (a turn's `parent` or root `spawned_from`)
-      # names a digest absent from this index's entry set -- {Bench::Session::Corrupt}'s
-      # precedent, applied to lineage: a partial journal slice must never
-      # read as a shorter-but-genuine chain root, or GR-3 (T11) could not
-      # tell the two apart.
+      # names a digest absent from this index's entry set. Loud, because a
+      # partial journal slice must never read as a shorter-but-genuine chain
+      # root -- the lineage walk could not tell the two apart.
       class DanglingLineage < Error; end
 
-      # One paired call, keyed by the issuing (assistant) turn's digest in
-      # {#calls}. `is_error`/`result` are nil for a `tool_use` with no
-      # recorded outcome -- it never executed, so nothing is fabricated for
-      # it (the `== false` precedent {Bench::Session::MemoryReplay#write_calls}
-      # already established).
+      # One paired call, keyed by the issuing turn's digest in {#calls}.
+      # `is_error`/`result` are nil for a `tool_use` with no recorded outcome:
+      # it never executed, so nothing is fabricated for it.
       #
-      # `tool_use_id`/`name`/`args`/`result` are run through
-      # {Canonical.normalize} regardless of source, so every field is deeply
-      # frozen even when built from plain JSON.parse output (the real
-      # production path, `Journal.records(File.foreach(path))`, freezes
-      # nothing -- unlike an in-memory `Turn#content`, which normalizes on
-      # construction). {#calls} is memoized, so every reader shares these
-      # same Call objects; without this, one caller mutating `call.args` in
-      # place would leak into every later read -- the {Memory::Item}
-      # precedent for "value objects are deeply frozen" applied here.
+      # Every field is run through {Canonical.normalize} regardless of source,
+      # so it is deeply frozen even when built from plain JSON.parse output --
+      # the real production path, `Journal.records(File.foreach(path))`, freezes
+      # nothing, unlike an in-memory `Turn#content`. {#calls} is memoized, so
+      # every reader shares these same Call objects and one caller mutating
+      # `call.args` in place would otherwise leak into every later read.
       Call = Data.define(:tool_use_id, :name, :args, :is_error, :result)
 
       # @param entries [Enumerable<Hash, String>] the {Journal.records} duck
@@ -64,7 +56,7 @@ module Lain
       end
 
       # Every paired call, in turn order then `tool_use` order -- the flat
-      # view a selection-frequency fold (GR-2) wants. `Enumerable` rides this.
+      # view a selection-frequency fold wants. `Enumerable` rides this.
       def each(&block)
         return enum_for(:each) unless block_given?
 
@@ -73,11 +65,9 @@ module Lain
 
       # The causal lineage of `turn_digest`: itself, then each render-parent
       # within its own chain, and -- at a chain root whose meta names
-      # `spawned_from` -- the turn it was spawned from, continuing the walk
-      # into the PARENT chain. This is how GR-3 resolves an outcome back to
-      # its causing turn across a fan-out: the walk follows the content
-      # addresses the records carry (`parent`, `meta.spawned_from`), never
-      # the order entries happen to sit in the journal, so it agrees no
+      # `spawned_from` -- the turn it was spawned from, continuing into the
+      # PARENT chain. The walk follows the content addresses the records carry,
+      # never the order entries happen to sit in the journal, so it agrees no
       # matter how the parent and child chains were interleaved on disk.
       #
       # @param turn_digest [String]
@@ -145,22 +135,15 @@ module Lain
       end
 
       # tool_use_id => its tool_result block, across the WHOLE entry set: a
-      # result answers its tool_use from a later turn (its own chain or a
-      # spawned one), and ids are unique within a run, so one flat map is the
-      # pairing -- {Bench::Session::MemoryReplay#outcomes}'s recipe,
-      # generalized from "is_error only" to the full block. Two tool_result
-      # blocks sharing a tool_use_id should never happen (ids are unique per
-      # run), but `Hash#to_h` resolves it last-write-wins (journal order) if
-      # it ever did, the same silent-tolerance shape `Hash#merge` gives every
-      # other fold in this codebase -- never a raise, since a duplicate id
-      # is a wire anomaly to investigate, not a corrupt-lineage signal.
+      # result answers its tool_use from a later turn, and ids are unique within
+      # a run, so one flat map is the pairing. Two tool_result blocks sharing an
+      # id should never happen, and `Hash#to_h` resolves it last-write-wins
+      # rather than raising -- a duplicate id is a wire anomaly to investigate,
+      # not a corrupt-lineage signal.
       #
-      # The `type` test is a raw key read and stays one for the reason
-      # {#tool_uses} gives, and here it carries weight it did not before: a turn
-      # mixes text blocks in with its results, and every one of them used to key
-      # this map under a nil `tool_use_id` (harmless, since no real id is nil).
-      # Behind the lens they would raise, so the filter is now the thing that
-      # keeps them out rather than a tidiness.
+      # The `type` test is a raw key read for the reason {#tool_uses} gives, and
+      # here it is load-bearing: a turn mixes text blocks in with its results,
+      # and behind the lens those would raise.
       def outcomes
         @outcomes ||= @turns.flat_map { |record| blocks(record) }
                             .select { |block| block["type"] == "tool_result" }

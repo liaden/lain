@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T3: the record a caller queued behind {Lain::Provider::Admission}'s width
+# The record a caller queued behind {Lain::Provider::Admission}'s width
 # leaves in the Journal. The DECORATOR that emits it is spec'd at its own mirror
 # path, `spec/lain/provider/admission/journal_spec.rb`; what is asserted here is
 # the VALUE -- its closed `kind` enum, the guard that keeps a refusal from

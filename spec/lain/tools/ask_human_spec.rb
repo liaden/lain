@@ -2,7 +2,7 @@
 
 require "async"
 
-# OM-4: ask_human is a promise. The tool emits the question as a :message to the
+# ask_human is a promise. The tool emits the question as a :message to the
 # human's inbox and hands back a pending Promise; awaiting it parks the fiber,
 # not the reactor. Both the question (Q) and the answer (A) are replayable
 # :message Store events -- the promise is process-local coordination only, never
@@ -28,7 +28,7 @@ RSpec.describe Lain::Tools::AskHuman do
     described_class.new(parent:)
   end
 
-  # T11: `#reply` NAMES the set it answers -- the transitional default that
+  # `#reply` NAMES the set it answers -- the transitional default that
   # answered "whichever set is outstanding" is gone. An example with exactly
   # one set in flight means "the set this asker just asked", and says it once
   # here rather than at twenty call sites; the examples that are ABOUT naming
@@ -184,7 +184,7 @@ RSpec.describe Lain::Tools::AskHuman do
     end
   end
 
-  # ---- I6: the delivery-commit consumption seam ------------------------------
+  # ---- The delivery-commit consumption seam ----------------------------------
 
   # The sync gate completing means THIS tool_result carries the answer into
   # the conversation -- so the tool remembers Q's digest for the Agent's
@@ -231,11 +231,11 @@ RSpec.describe Lain::Tools::AskHuman do
     end
   end
 
-  # ---- T13 scope expansion: the observer reaches the ChainWriter -------------
+  # ---- Scope expansion: the observer reaches the ChainWriter -----------------
 
   # AskHuman builds its own ChainWriter, so the session scribe can only attach
   # through the tool's constructor -- the same seam Lineage exposes. Q and A are
-  # exactly the events a Timeline walk can never find (panel B1), which is why
+  # exactly the events a Timeline walk can never find, which is why
   # this observer is the ONLY way they reach the session record.
   describe "the injectable observer" do
     it "sees Q and then A, in write order, as the exchange happens" do
@@ -272,7 +272,7 @@ RSpec.describe Lain::Tools::AskHuman do
     end
   end
 
-  # ---- T6: one call carries a question SET ----------------------------------
+  # ---- One call carries a question SET --------------------------------------
 
   # A set exists for cost, not taxonomy (ruling 1): AskHuman is not
   # parallel_safe?, so N questions asked separately are N barriers -- the human
@@ -375,11 +375,11 @@ RSpec.describe Lain::Tools::AskHuman do
     end
 
     # NOT coverage of anything AskHuman owns -- this pins `Tool::Result.ok`'s
-    # String contract (tool.rb:248), and it passes with every T6 line reverted.
-    # It is here to mark the seam a later card lands on: when the answer path
-    # stops resolving with a typed String and starts resolving with a
-    # Question::AnswerSet, `perform`'s last line must call `#render` on it, and
-    # this is what fails if it does not.
+    # String contract (tool.rb:248), and it passes with every question-set line
+    # reverted. It is here to mark the seam a later card lands on: when the
+    # answer path stops resolving with a typed String and starts resolving with
+    # a Question::AnswerSet, `perform`'s last line must call `#render` on it,
+    # and this is what fails if it does not.
     it "pins Tool::Result's String contract, which is where an answer set must be rendered" do
       expect do
         Sync do |task|
@@ -426,7 +426,7 @@ RSpec.describe Lain::Tools::AskHuman do
     # enqueues it for the TTY arrival line ("? #{question}") and drops it into
     # a dunstify ARGV element. Both were String-shaped before sets existed: a
     # Question::Set there renders as a Data inspect and puts a non-String in an
-    # argv. Widening the queue is T11's card, which owns both ends -- until
+    # argv. Widening the queue is a later card's, which owns both ends -- until
     # then this seam stays a String, and it stays one BY CONSTRUCTION.
     it "announces a String at the notify seam when the model asks a set" do
       announced = []
@@ -441,8 +441,8 @@ RSpec.describe Lain::Tools::AskHuman do
       expect(announced.size).to eq(1)
       expect(announced.first).to be_a(String)
       expect(announced.first).to eq(notifying.last_question.body.fetch("question"))
-      # And the set is still reachable off it -- what T11 reads when it widens
-      # the queue to carry the set and its asker.
+      # And the set is still reachable off it -- what that later card reads when
+      # it widens the queue to carry the set and its asker.
       expect(announced.first.set).to eq(set)
     end
 
@@ -450,9 +450,9 @@ RSpec.describe Lain::Tools::AskHuman do
       expect { Sync { tool.ask(set) } }.to raise_error(ArgumentError, /Announcement/)
     end
 
-    # B1. Pre-T6 `perform` announced the model's raw `question` String and all
-    # four human surfaces showed it whole: the TTY arrival line (tty.rb:519),
-    # the /inbox drain's line_for (tty.rb:545), nvim's InboxView
+    # Before question sets, `perform` announced the model's raw `question`
+    # String and all four human surfaces showed it whole: the TTY arrival line
+    # (tty.rb:519), the /inbox drain's line_for (tty.rb:545), nvim's InboxView
     # (inbox_view.rb:104) and the dunstify argv (notify.rb:144). A question cut
     # to its first line is one a human cannot answer -- and the description now
     # invites tables and fenced diffs. So the clamp belongs to the inbox LINE,
@@ -492,7 +492,7 @@ RSpec.describe Lain::Tools::AskHuman do
     # every other example here is free-text, so the two are indistinguishable to
     # the suite without this one. A single question with options did not exist
     # before question sets, so announcing its body in full regresses nothing and
-    # gives the /inbox drain the whole question now rather than at T14.
+    # gives the /inbox drain the whole question now rather than later.
     it "announces a lone question with options verbatim too, not only a free-text one" do
       seen = []
       notifying = Lain::Tools::AskHuman::Notifying.new(notify: seen.method(:push), parent:)
@@ -576,7 +576,7 @@ RSpec.describe Lain::Tools::AskHuman do
     end
   end
 
-  # ---- T7: a reply NAMES the set it answers ----------------------------------
+  # ---- A reply NAMES the set it answers --------------------------------------
 
   # `@last_question` is "the set asked most recently", which is not "the set
   # being answered". Every edge written from it is written against whichever
@@ -600,7 +600,7 @@ RSpec.describe Lain::Tools::AskHuman do
                     causal_parents: answered).head
     end
 
-    # The transitional default is GONE (T11), and this is what "not safe"
+    # The transitional default is GONE, and this is what "not safe"
     # meant: the invariant fixes which set is OUTSTANDING, never which set an
     # answer was written FOR. Withdraw a set, ask another, and a defaulted
     # reply resolves the new one with A's causal edge citing it. A caller that
@@ -742,7 +742,7 @@ RSpec.describe Lain::Tools::AskHuman do
       end
     end
   end
-  # ---- T9: the question no human will ever answer ---------------------------
+  # ---- The question no human will ever answer -------------------------------
 
   # A parked set whose reply surface reached EOF is not a set the human
   # answered with nothing -- nobody is there to answer it at all. It travels
@@ -814,7 +814,7 @@ RSpec.describe Lain::Tools::AskHuman do
       expect(tool.last_unanswered.body).not_to have_key("answer")
     end
 
-    # Review FIX 1. The sentence reaches TWO readers who cannot check it -- the
+    # The sentence reaches TWO readers who cannot check it -- the
     # model, and whoever reads `body["unanswered"]` in the journal -- and the
     # nil it is written from cannot tell a vanished stdin from a human pressing
     # Ctrl-D on an empty line. So it claims only the one thing that is true in

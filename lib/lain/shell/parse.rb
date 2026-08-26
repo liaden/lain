@@ -7,88 +7,21 @@ module Lain
     #
     # This object reports; it never judges. It says "these are the stages, this
     # is the argv, these node kinds are present, these bytes nothing accounted
-    # for". Whether any of that is acceptable is a separate object's question,
+    # for". Whether any of that is acceptable is {Shell::Verdict}'s question,
     # and even that one answers "literal and fully understood", never "safe".
     #
-    # == The three signals, and why there are three
+    # The three signals it carries, what coverage does NOT guarantee (the `time`
+    # sweep), and the four argv caveats an executing layer inherits are argued in
+    # ARCHITECTURE.md's "Triaging a bash command". Two of those consequences are
+    # load-bearing in this file:
     #
-    # 1. *Broken.* An ERROR or a MISSING node. Both, in ONE query --
-    #    tree-sitter's `(ERROR)` pattern does not match MISSING nodes, and
-    #    `has_error()` alone has already been measured letting `")"`, `"def"`,
-    #    `"1 +"` and `"[1,"` through as silent zero-matches
-    #    (`ext/lain/src/astgrep.rs:78-96`).
-    # 2. *Uncovered bytes.* Every non-whitespace byte must sit inside a span this
-    #    parser recognizes. This is the signal that does not depend on the
-    #    grammar admitting a mistake: tree-sitter-bash#315 parses `$FOO/$BAR/`
-    #    into a corrupted `command_name` of `"$FOO/$"` with zero ERROR and zero
-    #    MISSING nodes, and only the swallowed `$` at byte 5 gives it away.
-    # 3. *Kinds and separators.* The vocabulary a verdict allowlists over.
-    #
-    # A refusal -- over the length cap, or anything raising out of the ext -- is
-    # reported as broken AND as not covered. Nothing was parsed, so claiming
-    # coverage would be the vacuous success this whole layer exists to avoid.
-    #
-    # == What coverage does NOT guarantee
-    #
-    # Coverage catches an anonymous keyword only where the grammar *lexes* it as
-    # one. It is NOT a general "compound syntax cannot hide here" guarantee, and
-    # a verdict must not treat a kind allowlist over {KINDS} as total.
-    #
-    # tree-sitter-bash does not model `time` as a keyword. A leading command word
-    # the grammar does not know degrades its whole tail to plain `word` nodes in
-    # an ordinary `command`, and that reaches FULL coverage with the blandest
-    # possible kind set:
-    #
-    #   "time { echo PWNED; }"       => not broken, fully covered, kinds are
-    #                                   program/command/command_name/word only
-    #   "time if true; then ls; fi"  => the same; `if`, `then` and `fi` all
-    #                                   arrive as ordinary words
-    #   "time rm -rf /tmp/x"         => the same, and its argv execs faithfully
-    #
-    # Only `time (echo hi)` is caught, and only because a subshell's parentheses
-    # are still anonymous.
-    #
-    # `time` is not alone. Swept as a leading token, twelve of bash's reserved
-    # words reach covered-and-unbroken: `}`, `coproc`, `do`, `done`, `elif`,
-    # `else`, `esac`, `fi`, `in`, `then`, `time`, `]]`. `coproc` is the other one
-    # worth naming, because bash really does run its argument -- it is benign
-    # here only by accident, since no `coproc` binary exists so a reconstructed
-    # argv dies with ENOENT, whereas `/usr/bin/time` exists and executes.
-    #
-    # And it is not only the LEADING stage. `echo hi; time { rm x; }`,
-    # `ls | time rm x` and `true && time rm -rf /tmp/x` are all fully covered
-    # with `time` as the head of a later stage, so a name check must read
-    # EVERY stage's `argv.first`, never just the first stage's.
-    #
-    # So the residual risk is a *program name*, and a program name is a
-    # judgement -- it belongs to the layer above, as a name denylist alongside
-    # `nice`, `timeout`, `nohup`, `setsid`, `stdbuf` and `watch`. Putting a
-    # "suspicious leading word" heuristic in here would be precisely the
-    # comforting lie {Lain::Tool::Input} argues against.
-    #
-    # == What the argv is, and is not
-    #
-    # It is the tree's word splitting, and none of a shell's interpretation.
-    # Whoever executes it owns these four:
-    #
-    # * *Quotes survive.* `echo 'a b'` reconstructs as `["echo", "'a b'"]`, not
-    #   `["echo", "a b"]` -- the term is the `raw_string`/`string` node's text
-    #   verbatim. Dequoting is interpretation, so it is not done here.
-    # * *A redirection is a term when it sits inside the command node, and is
-    #   dropped when it does not.* `> out echo hi` yields `["> out", "echo",
-    #   "hi"]`, while `echo a >b c` yields `["echo", "a"]` -- `c` belongs to the
-    #   enclosing `redirected_statement` and is GONE from the argv. `kinds`
-    #   reporting `file_redirect` or `redirected_statement` is the only reliable
-    #   tell; there is no reading of the argv alone that recovers it.
-    # * *A heredoc body is blanketed, not tokenised.* `heredoc_redirect` spans
-    #   the delimiter and the body together, so "covered" there means "we saw a
-    #   heredoc", not "we understood these bytes".
-    # * *A NUL byte parses clean* into an ordinary word, and `exec` refuses it.
-    #
-    # A `command` lying inside a terminal span -- the `id` of `FOO=$(id)` -- is
-    # that span's innards, not a stage, and is dropped. That is what keeps
-    # {Stage#argv} from coming back empty on a caller that would then hand `[]`
-    # to `Open3`.
+    # * A refusal -- over the length cap, or anything raising out of the ext --
+    #   is reported as broken AND as not covered. Nothing was parsed, so claiming
+    #   coverage would be the vacuous success this whole layer exists to avoid.
+    # * A `command` lying inside a terminal span -- the `id` of `FOO=$(id)` --
+    #   is that span's innards, not a stage, and is dropped. That is what keeps
+    #   {Stage#argv} from coming back empty on a caller that would then hand `[]`
+    #   to `Open3`.
     class Parse
       LANGUAGE = "bash"
 
@@ -307,14 +240,13 @@ module Lain
           end.freeze
         end
 
-        # A stage is a top-level `command`: one that is neither nested in another
-        # command nor swallowed by a terminal. The second half is what keeps an
-        # argv from coming back EMPTY -- the `id` of `FOO=$(id)` is a command
-        # node sitting inside a `variable_assignment`, and reporting it as a
-        # stage hands `[]` to whatever runs the pipeline.
-        # Containment must be STRICT here: a one-word command shares its exact
-        # range with the `word` that spells it, and `wc` is a stage, not a word
-        # swallowed by a terminal.
+        # A stage is a top-level `command`: one that is neither nested in
+        # another command nor swallowed by a terminal. The second half is what
+        # keeps an argv from coming back EMPTY -- the `id` of `FOO=$(id)` is a
+        # command node inside a `variable_assignment`, and reporting it as a
+        # stage hands `[]` to whatever runs the pipeline. Containment must be
+        # STRICT: a one-word command shares its exact range with the `word` that
+        # spells it, and `wc` is a stage, not a swallowed word.
         def top_level_commands
           nested = covering
           outermost(@spans.fetch(COMMAND, [])).reject do |command|

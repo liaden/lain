@@ -19,43 +19,35 @@ module Lain
       # thousand Hashes across the FFI boundary to show eight of them.
       DEFAULT_LIMIT = 8
 
-      # Draws nowhere. A completion built without a screen still has to do
-      # something with its menu, and the Null Object is what keeps {#draw}
-      # from growing a nil check.
+      # Draws nowhere -- the Null Object that keeps {#draw} from growing a nil
+      # check.
       NOWHERE = ->(_bytes) {}
 
       # Strip Cc -- C0 (U+0000-U+001F), DEL, and C1 (U+0080-U+009F, whose
-      # members are 8-bit CSI introducers on some terminals). Nothing in Cc has
-      # a display meaning in a menu, and a filename is attacker-controlled in
-      # any cloned repo: a file named "ev\e[2Jil.rb" put a live erase-display
-      # sequence on the screen AND into the accepted buffer, and a newline in a
-      # filename broke the row accounting {#clear} relies on. Same value class
-      # as the git branch name Ext::Prompt's `sanitize` exists for, so it is the
-      # same rule.
+      # members are 8-bit CSI introducers on some terminals). A filename is
+      # attacker-controlled in any cloned repo: a file named "ev\e[2Jil.rb" put
+      # a live erase-display sequence on the screen AND into the accepted
+      # buffer, and a newline in a filename broke the row accounting {#clear}
+      # relies on. Ext::Prompt's `sanitize` is the same rule for branch names.
       #
-      # STRIPPED, not rejected, following that precedent and its reasoning:
-      # rejecting hands an availability failure to whoever controls a filename,
-      # while stripping leaves the printable remainder visible -- `\e[2J` reads
-      # as the obvious junk `[2J` instead of being silently deleted or silently
-      # obeyed.
+      # STRIPPED, not rejected, on the same precedent: rejecting hands an
+      # availability failure to whoever controls a filename, while stripping
+      # leaves the printable remainder visible -- `\e[2J` reads as the obvious
+      # junk `[2J` instead of being silently deleted or silently obeyed.
       #
-      # Cf is deliberately NOT covered, also matching the precedent. U+202E
-      # RIGHT-TO-LEFT OVERRIDE survives and can still reorder a candidate
-      # visually; that is confusion, not execution, and stripping Cf would take
-      # the ZWJ sequences the grapheme-cluster highlighting is built to keep
-      # whole.
+      # Cf is deliberately NOT covered. U+202E RIGHT-TO-LEFT OVERRIDE survives
+      # and can still reorder a candidate visually; that is confusion, not
+      # execution, and stripping Cf would take the ZWJ sequences the
+      # grapheme-cluster highlighting is built to keep whole.
       def self.printable(text) = text.gsub(/\p{Cc}/, "")
 
       class << self
         # The completion the key action answers with. One line editor per
-        # process means one live completion per process -- the registry
-        # beneath this is already process-global for exactly that reason -- so
-        # the binding points at a slot rather than closing over whichever
-        # {TTY} happened to be built first.
+        # process means one live completion per process, so the binding points
+        # at a SLOT rather than closing over whichever {TTY} happened to be
+        # built first.
         attr_reader :current
 
-        # Build a completion, make it current, and make sure the key is bound.
-        #
         # The key can fail to become ours in several ways, and NONE may cost the
         # human their prompt -- completion is a convenience, the TTY is not.
         #
@@ -63,18 +55,16 @@ module Lain
         # GUARDED, because {LineEditor.bind} is deliberately not idempotent and
         # `unbind_all` would take another card's key down with it.
         #
-        # Everything else is RESCUED and reported. {LineEditor::KeyTaken} covers
-        # two unrelated causes now -- someone else already owns the key, and the
-        # key was written but does not actually route -- so the message below
-        # forwards Reline's own words rather than asserting either one. Reported
-        # and not swallowed, because both leave the human pressing a key that
-        # does nothing, which is the failure this whole card would otherwise be.
+        # Everything else is RESCUED and REPORTED, never swallowed:
+        # {LineEditor::KeyTaken} covers two unrelated causes -- someone else
+        # already owns the key, and the key was written but does not route -- so
+        # the message forwards Reline's own words, and both leave the human
+        # pressing a key that does nothing.
         #
         # Takes an already-built completion rather than building one: {.new} is
-        # pure and this is the process-global act, and keeping them separate is
-        # what lets a caller construct a {TTY} without silently rebinding the
-        # human's C-x. {TTY} installs when it TAKES the terminal (in `#run`),
-        # never when it is built.
+        # pure and this is the process-global act, which is what lets a caller
+        # construct a {TTY} without silently rebinding the human's C-x. {TTY}
+        # installs when it TAKES the terminal, never when it is built.
         #
         # @param completion [Completion] the built instance to make {.current} and bind the key to
         # @param notify [#call] renders a warning line ({TTY#render_warning})
@@ -116,10 +106,9 @@ module Lain
         token && complete(token)
       end
 
-      # Erase the menu region. Called once the prompt has been answered, from
-      # {TTY#read_line_with_history}: Reline has printed its closing newline by
-      # then, so the cursor sits on the row the menu started on and a single
-      # clear-to-bottom takes the whole thing with it.
+      # Called once the prompt has been answered: Reline has printed its closing
+      # newline by then, so the cursor sits on the row the menu started on and a
+      # single clear-to-bottom takes the whole thing with it.
       def clear
         @screen.call(::TTY::Cursor.clear_screen_down) if @drawn
         @drawn = false
@@ -168,19 +157,17 @@ module Lain
     # is. {#clear} erases the same region once the prompt has been answered,
     # which is what keeps a menu from outliving the prompt it belongs to.
     class Completion
-      # Reopened rather than nested above -- the tty.rb idiom: each collaborator
-      # is its own responsibility, and the split keeps each body inside
-      # Metrics/ClassLength instead of loosening it.
+      # Reopened rather than nested above -- the tty.rb idiom, which keeps each
+      # body inside Metrics/ClassLength instead of loosening it.
 
-      # What is being completed: the run of non-space characters the buffer
-      # ends in. The seam hands over a buffer and never a cursor, so "where the
-      # human is typing" is the end of what they have typed -- which is also
-      # where a completion key is pressed in practice.
+      # What is being completed: the run of non-space characters the buffer ends
+      # in. The seam hands over a buffer and never a cursor, so "where the human
+      # is typing" can only be the end of what they have typed.
       #
       # The sigil is part of the token because `/` and `@` are not word-break
-      # characters. Making them word-break characters would mean setting
-      # `Reline.completer_word_break_characters`, which is process-global and
-      # would change what `/ruby`'s IRB does too.
+      # characters, and making them so means setting
+      # `Reline.completer_word_break_characters` -- process-global, so it would
+      # change what `/ruby`'s IRB does too.
       Token = Data.define(:prefix, :sigil, :query) do
         def self.in_progress(buffer, sources)
           text = buffer.to_s[/\S*\z/]
@@ -227,18 +214,17 @@ module Lain
            lines.join(NEWLINE), ::TTY::Cursor.restore].join
         end
 
-        # Scrubbed again here even though {Sources} already scrubbed: this is
-        # the last gate before the screen, so no source added later can put a
+        # Scrubbed again even though {Sources} already scrubbed: this is the
+        # last gate before the screen, so no source added later can put a
         # control byte on the terminal by forgetting.
         #
-        # On an already-scrubbed candidate it is a NO-OP, and that is the case
-        # it is written for -- a no-op is what keeps the matcher's positions
-        # indexing the very string being drawn. If it ever actually fires, it
-        # shortens the candidate underneath positions computed against the
-        # longer one, and every highlight past the first control byte lands on
-        # the wrong character. That trade is deliberate and one-directional: a
-        # misplaced highlight is a cosmetic bug, a live escape sequence is not.
-        # A source that makes this fire is the defect; fix it there.
+        # On an already-scrubbed candidate it is a NO-OP, which is what keeps
+        # the matcher's positions indexing the very string being drawn. If it
+        # ever actually fires it shortens the candidate underneath positions
+        # computed against the longer one, and every highlight past the first
+        # control byte lands on the wrong character. The trade is deliberate: a
+        # misplaced highlight is cosmetic, a live escape sequence is not. A
+        # source that makes this fire is the defect; fix it there.
         def line(sigil, match)
           candidate = Completion.printable(match.fetch("candidate"))
           "#{sigil}#{highlight(candidate, match.fetch("positions"))}"

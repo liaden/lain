@@ -2,7 +2,7 @@
 
 require "tmpdir"
 
-# M5: the court-clerk consolidation pass. Offline, it walks a session Journal's
+# The court-clerk consolidation pass. Offline, it walks a session Journal's
 # COMPLETED SUBAGENT lineages (turns whose chain root carries `spawned_from`
 # meta, grouped by that root), renders each lineage's transcript into the
 # court-clerk scaffold, and spawns the shipped `court_clerk` role once per
@@ -120,7 +120,7 @@ RSpec.describe Lain::Consolidation do
     end
   end
 
-  # T18: grouping is one walk per turn. chain_root climbs the render-parent edge
+  # Grouping is one walk per turn. chain_root climbs the render-parent edge
   # to the top for EVERY turn, so without a digest=>root memo shared across the
   # one from_records call an N-turn lineage re-reads the root's parent edge N
   # times -- quadratic over an array already in memory. The memo lives for the

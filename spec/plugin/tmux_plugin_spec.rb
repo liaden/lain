@@ -6,7 +6,7 @@ require "open3"
 require "fileutils"
 require "time"
 
-# T6: the in-repo tmux plugin -- a tpm-style install surface over the SAME
+# The in-repo tmux plugin -- a tpm-style install surface over the SAME
 # state feed `lain up` builds inline (lib/lain/cli/up.rb). One
 # `run-shell .../plugin/tmux/lain.tmux` from any tmux.conf must:
 #
@@ -23,11 +23,11 @@ require "time"
 # tmux run against a scratch `-L` server (never Joel's real session) and
 # skip -- never fail -- when tmux or jq is absent from PATH; everything the
 # status script can prove alone runs directly through `sh`, on every
-# machine. The --btw/--fork flags themselves land in T3 -- these examples
+# machine. The --btw/--fork flags themselves land elsewhere -- these examples
 # pin the COMMAND LINES the bindings would run, not the flags' effect.
 #
-# T9 splits the plugin's two shell files by what each is ALLOWED to know.
-# Since F50 the feed lives at `$XDG_STATE_HOME/lain/status/<hash>/state.json`,
+# The plugin's two shell files are split by what each is ALLOWED to know.
+# The feed lives at `$XDG_STATE_HOME/lain/status/<hash>/state.json`,
 # and reproducing `sha256(realpath(dir))[0, 12]` needs a digest binary that
 # POSIX does not mandate -- so `scripts/lain-status` is TOLD a FILE and
 # computes nothing (its whole contract is `[ -s "$state" ]`), while
@@ -104,7 +104,7 @@ RSpec.describe "plugin/tmux" do
       expect(status.exitstatus).to eq(0)
     end
 
-    # T7: the shipped script and Up::Hud move together or not at all -- the
+    # The shipped script and Up::Hud move together or not at all -- the
     # verbatim-embedding example above is the mechanism, this is the effect:
     # the fields StatusFeed gained render identically out of the tmux plugin.
     it "renders the parked-approval count and the context occupancy the state feed now publishes" do
@@ -118,7 +118,7 @@ RSpec.describe "plugin/tmux" do
       expect(status.exitstatus).to eq(0)
     end
 
-    # T8, same discipline: the mode lighter arrives already composed, so the
+    # Same discipline: the mode lighter arrives already composed, so the
     # script renders it without knowing a posture from a layer -- and stays
     # quiet under the silent default, whose lighter is the empty string.
     it "renders the composed mode lighter, and nothing when it is empty" do
@@ -130,9 +130,10 @@ RSpec.describe "plugin/tmux" do
       expect(run_status.first.strip).to eq("❄ fleet:0 inbox:0")
     end
 
-    # E7/E8 ship in the shipped script too, for the same reason the clamp does:
-    # the verbatim-embedding example above is the mechanism, this is the effect.
-    # Chomped rather than stripped, because the trailing pad is the assertion.
+    # The token spend and its pad ship in the shipped script too, for the same
+    # reason the clamp does: the verbatim-embedding example above is the
+    # mechanism, this is the effect. Chomped rather than stripped, because the
+    # trailing pad is the assertion.
     it "renders the session's token spend, and pads the line with one trailing space" do
       skip("jq not found on PATH") unless jq_present?
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0, occupancy: 0.34, run_tokens: 27_997)
@@ -144,8 +145,8 @@ RSpec.describe "plugin/tmux" do
     end
 
     # The clamp ships in the script too, or a status bar reads "ctx:244%". A
-    # live chat now divides by the window its provider reports serving (T10,
-    # Lain::CLI::Backend#context_window), but a model no book carries and no
+    # live chat now divides by the window its provider reports serving
+    # (Lain::CLI::Backend#context_window), but a model no book carries and no
     # server reports on still measures against ContextWindow's 8,192-token
     # conservative fallback -- so a ratio above 1.0 still reaches this renderer.
     it "clamps the occupancy percentage at 100, exactly as Up::Hud does" do
@@ -198,7 +199,7 @@ RSpec.describe "plugin/tmux" do
       expect(status.exitstatus).to eq(0)
     end
 
-    # T9/AC1. The renderer's whole input is a FILE, and it does not care
+    # The renderer's whole input is a FILE, and it does not care
     # whose or where: no `.lain` join, no XDG root, no project hash. This is
     # what lets the two callers that DO know -- `lain up`, which interpolates
     # an absolute path into a session-scoped status-right, and `lain.tmux`,
@@ -216,7 +217,7 @@ RSpec.describe "plugin/tmux" do
       expect(status.exitstatus).to eq(0)
     end
 
-    # T9/AC2, the mechanism: Open decision 4 protects this script from growing
+    # The mechanism: Open decision 4 protects this script from growing
     # a hard dependency on a binary POSIX does not mandate. Asserted by
     # READING it, because a missing-binary runtime check passes vacuously on
     # the day someone adds the call behind a `command -v` guard.
@@ -231,7 +232,7 @@ RSpec.describe "plugin/tmux" do
       expect(code).not_to match(/sha256sum|shasum|openssl|realpath|readlink/)
     end
 
-    # T9/AC2, the effect: strip PATH down to jq alone -- no coreutils, no
+    # The effect: strip PATH down to jq alone -- no coreutils, no
     # digest tool -- and the HUD still renders, because resolving the input
     # was somebody else's job.
     it "renders with nothing but jq on PATH" do
@@ -244,7 +245,7 @@ RSpec.describe "plugin/tmux" do
       expect(status.exitstatus).to eq(0)
     end
 
-    # T9/AC3. "Renders nothing" means renders no HUD: the never-blank contract
+    # "Renders nothing" means renders no HUD: the never-blank contract
     # this script exists for makes the honest sentence the right answer, and
     # the zero-byte and no-state examples above pin the same one.
     it "exits 0 with the honest sentence when the path it was given is not there" do
@@ -294,7 +295,7 @@ RSpec.describe "plugin/tmux" do
     end
   end
 
-  # T9. The half of the plugin that IS allowed to compute. These need no tmux
+  # The half of the plugin that IS allowed to compute. These need no tmux
   # at all: the resolver is an ordinary argument-in, path-out program, and
   # driving it directly is what makes its agreement with Ruby checkable on
   # every machine rather than only where tmux is installed.
@@ -401,7 +402,7 @@ RSpec.describe "plugin/tmux" do
       )
     end
 
-    # T21 put the render path THROUGH this file, so every binary it looks up
+    # The render path now runs THROUGH this file, so every binary it looks up
     # before its own degrade logic runs is a new way to blank the segment --
     # the exact failure the renderer exists to prevent, and one the old job
     # (which called scripts/lain-status directly, looking nothing up) did not
@@ -547,9 +548,9 @@ RSpec.describe "plugin/tmux" do
     end
 
     # The job now calls the PLUGIN, not the renderer, and that is the whole
-    # T9 shape: `#{pane_current_path}` is expanded per pane at render time, so
-    # the directory-to-file step has to run then too -- and it runs in the
-    # bash entry point, never in the POSIX renderer.
+    # shape of the split: `#{pane_current_path}` is expanded per pane at render
+    # time, so the directory-to-file step has to run then too -- and it runs in
+    # the bash entry point, never in the POSIX renderer.
     it "interpolates \#{lain_status} in status-right into a resolver job on the pane's cwd" do
       boot
 
@@ -585,7 +586,7 @@ RSpec.describe "plugin/tmux" do
       # Every metacharacter the status job's shell could act on, not just the
       # quote the original regression used: `$(...)` substitution and a
       # backtick both run at expansion time rather than needing the slot to
-      # close first, and T9 widened this surface by making the job carry a
+      # close first, and the split widened this surface by making the job carry a
       # SUBCOMMAND before the path -- so a cwd that escaped the slot would now
       # land as an argument to a program that dispatches on its first word.
       evil = File.join(@dir, "x'; touch #{canary}; :'y $(touch #{canary}) " \

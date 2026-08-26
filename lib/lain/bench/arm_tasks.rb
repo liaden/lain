@@ -4,53 +4,43 @@ require "yaml"
 
 module Lain
   module Bench
-    # A small suite of graded CODING tasks used to compare orchestration arms
-    # (the chunk-orchestration-arms-isolation plan's B12 sweep) against the
-    # pre-registered boundary orchestration-experiments.md draws: tasks that
-    # are procedural and single-thread-friendly (a later edit depends on an
-    # earlier one, so there is nothing to hand a second worker) versus tasks
-    # that are genuinely independent and parallel (each subtask needs zero
-    # shared context, so N workers could do them concurrently). Every task
-    # grades with a {Grader::Fixture} -- no model in the loop -- against a
-    # {Trajectory}: the files an arm's run produced, `path => content`. B0
-    # only builds and grades the suite; B12 wires a real arm's produced files
-    # into this same shape.
+    # A small suite of graded CODING tasks for comparing orchestration arms
+    # across a pre-registered boundary: tasks that are procedural and
+    # single-thread-friendly (a later edit depends on an earlier one, so there
+    # is nothing to hand a second worker) versus tasks that are genuinely
+    # independent and parallel (each subtask needs zero shared context, so N
+    # workers could do them concurrently). Every task grades with a
+    # {Grader::Fixture} -- no model in the loop -- against a {Trajectory}: the
+    # files an arm's run produced, `path => content`.
     #
     # WRITING YOUR OWN SUITE: `bench arms` takes any fixture path, and the
     # default arms system prompt ({ArmSweep::FileBlocks::CONTRACT}) teaches the
-    # answer format BY EXAMPLE -- so every arm holds that example's path and
-    # body before it reads your task. A `gold_files` entry that collides with it
-    # scores an arm which echoes the format and does no work at all, putting a
-    # floor under the column, and a floor reads as work done where a zero reads
-    # as a broken run. The committed suite is guarded by a spec that scores the
+    # answer format BY EXAMPLE, so every arm holds that example's path and body
+    # before it reads your task. A `gold_files` entry colliding with it scores
+    # an arm that echoes the format and does no work at all, putting a floor
+    # under the column -- and a floor reads as work done where a zero reads as a
+    # broken run. The committed suite is guarded by a spec that scores the
     # taught example against every task; a suite of your own is not.
     class ArmTasks
       include Enumerable
 
-      # Raised when the fixture path does not exist -- a checkout or
-      # packaging mistake, never user input to refuse. Named and path-bearing
-      # like {DisclosureSweep::MissingFixture}.
+      # A checkout or packaging mistake, never user input to refuse.
       class MissingFixture < Lain::Error; end
 
-      # Raised when a fixture task is missing a required field, names a
-      # category outside {CATEGORIES}, an entry isn't a mapping, the
-      # top-level `tasks:` key is absent, or two tasks share an `id` -- a
-      # malformed fixture is a bug in the fixture to surface loudly, never a
-      # task to silently skip, miscategorize, or duplicate.
+      # A malformed fixture is a bug in the fixture to surface loudly, never a
+      # task to silently skip, miscategorize or duplicate.
       class MalformedTask < Lain::Error; end
 
-      # The pre-registered boundary this suite spans
-      # (orchestration-experiments.md): `:procedural` tasks carry a real
-      # ordering dependency (single-thread-friendly); `:parallel` tasks are
-      # genuinely independent subtasks with no shared context.
+      # The pre-registered boundary this suite spans: `:procedural` tasks carry
+      # a real ordering dependency; `:parallel` tasks are genuinely independent
+      # subtasks with no shared context.
       CATEGORIES = %i[procedural parallel].freeze
 
-      # kind => `->(content, value) -> Boolean`. `"contains"` is the default
-      # (a bare String `gold_files` value is shorthand for it); `"excludes"`
-      # and `"starts_with"` exist because a substring-ANYWHERE check cannot
-      # rule out a no-op (the bug's own text still present elsewhere) or an
-      # unanchored paste (the right string, wrong position in the file) --
-      # the two gaps the review panel's adversarial probes found.
+      # kind => `->(content, value) -> Boolean`. `"contains"` is the default, a
+      # bare String `gold_files` value being shorthand for it; `"excludes"` and
+      # `"starts_with"` exist because a substring-ANYWHERE check cannot rule out
+      # a no-op (the bug's own text still present elsewhere) or an unanchored
+      # paste (the right string, wrong position in the file).
       GOLD_KINDS = {
         "contains" => ->(content, value) { content.include?(value) },
         "excludes" => ->(content, value) { !content.include?(value) },
@@ -58,18 +48,16 @@ module Lain
       }.freeze
       private_constant :GOLD_KINDS
 
-      # Which kinds carry the "positive" value a satisfied gold check would
-      # actually look like -- used by {.positive_content} to build a
-      # self-checking Trajectory rather than re-encoding the gold a second
-      # time.
+      # Which kinds carry the value a satisfied gold check would look like, so
+      # {.positive_content} can build a self-checking Trajectory rather than
+      # re-encoding the gold a second time.
       POSITIVE_KINDS = %w[contains starts_with].freeze
       private_constant :POSITIVE_KINDS
 
-      # What a coding task's {Grader::Fixture} scores against: the files an
-      # arm's run produced or touched, `path => content`. Deliberately NOT a
-      # real Workspace or git worktree -- B0 grades the SHAPE of a recorded
-      # outcome, so a spec (or later, B12's sweep) can build one from a real
-      # run's files without this suite depending on an isolation backend.
+      # What a coding task's {Grader::Fixture} scores against. Deliberately NOT
+      # a real Workspace or git worktree: this suite grades the SHAPE of a
+      # recorded outcome, so a live arm sweep can build one from a real run's
+      # files without this suite depending on an isolation backend.
       Trajectory = Data.define(:files) do
         def content_at(path) = files.fetch(path, "")
       end
@@ -81,11 +69,8 @@ module Lain
       Task = Data.define(:id, :category, :prompt, :gold_files, :grader)
 
       class << self
-        # The value that would satisfy a gold spec's positive assertion --
-        # its `"contains"`/`"starts_with"` value, or the spec itself when it
-        # is the bare-String shorthand. Lets a fixture's own spec build a
-        # Trajectory that should pass every one of a task's checks without
-        # re-encoding the gold a second time.
+        # The value that would satisfy a gold spec's positive assertion, or the
+        # spec itself when it is the bare-String shorthand.
         def positive_content(spec)
           return spec unless spec.is_a?(Hash)
 
@@ -127,10 +112,9 @@ module Lain
         raise MalformedTask, "arm fixture at #{@fixture_path} is missing the top-level `tasks:` key"
       end
 
-      # A fixture task's `id`s are used as lookup keys everywhere downstream
-      # (this spec's own `.find { |t| t.id == ... }`, and B12 later) -- a
-      # silent duplicate would mean `.find` always resolves to the first and
-      # the second is unreachable dead weight, never a loud error.
+      # Ids are lookup keys everywhere downstream, so a silent duplicate would
+      # mean `.find` always resolves to the first and the second is unreachable
+      # dead weight, never a loud error.
       def unique!(built)
         duplicates = built.map(&:id).tally.select { |_id, count| count > 1 }.keys
         return built if duplicates.empty?

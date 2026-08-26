@@ -133,7 +133,7 @@ RSpec.describe Lain::Approval::Risk do
       expect(risk.classify(call)).not_to be_risky
     end
 
-    # `pattern` and `args` were the panel's S5 widening, and without these three
+    # `pattern` and `args` were a review panel's widening, and without these three
     # they revert silently: every other example uses a `path` or a `command`.
     it "reads a glob pattern as a path, so one escaping the root is risky" do
       call = call_for(Lain::Tools::Glob.new, { "pattern" => "../../**/*.pem" })
@@ -283,7 +283,7 @@ RSpec.describe Lain::Approval::Risk do
     # ascii_compatible? as well: they are `valid_encoding?`, so a
     # valid_encoding?-only guard passes them straight into a Regexp, which
     # raises Encoding::CompatibilityError -- and that is NOT an ArgumentError,
-    # so no rescue would catch it. On the T20 write path there is no chain to
+    # so no rescue would catch it. On the persister's write path there is no chain to
     # turn that into a fault.
     {
       "invalid UTF-8" => (+"/tmp/\xff").force_encoding(Encoding::UTF_8),
@@ -365,7 +365,7 @@ RSpec.describe Lain::Approval::Risk do
   end
 
   describe "the keepsake, which is what makes forgetting impossible" do
-    # T20's persister takes a Keepsake, not a Call. So a risky answer cannot be
+    # The persister takes a Keepsake, not a Call. So a risky answer cannot be
     # written down by a persister that simply never asked about risk: there is
     # nothing to hand it. That is Emacs' "the code enforces it, it is not a
     # convention" made true rather than quoted.

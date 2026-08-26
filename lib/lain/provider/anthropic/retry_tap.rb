@@ -13,17 +13,14 @@ module Lain
       # has to live on this side of the transport. One frame is live at a time
       # because a Provider is one round trip, never a loop.
       #
-      # T17w now lets the main Agent's Provider and each subagent's share ONE
-      # {Chronicle}-owned spool, so more than one round trip -- each with its own
-      # live frame -- can be in flight through this SAME {RetryTap} instance from
-      # different fibers at once (a {Provider} is constructed once and reused).
-      # The live frame therefore CANNOT live in instance state: a retry firing
-      # for one request would rotate whichever sibling last opened, re-enabling
-      # the very "complete frame that lies about concatenated attempts" the
-      # rotation exists to prevent. Instead the frame is threaded onto the
-      # request's Faraday context at open (see {Transport}), and {#retry_block}
-      # reaches ITS request's frame off the retried env -- reentrant, per-request,
-      # no shared mutable state. ({ResponseWal} itself serializes the bytes.)
+      # The main Agent's Provider and each subagent's share ONE
+      # {Chronicle}-owned spool, so more than one round trip can be in flight
+      # through this SAME tap from different fibers at once. The live frame
+      # therefore CANNOT live in instance state: a retry firing for one request
+      # would rotate whichever sibling last opened, re-enabling the very
+      # concatenated-attempts frame the rotation exists to prevent. It is
+      # threaded onto the request's Faraday context at open instead, and
+      # {#retry_block} reaches ITS request's frame off the retried env.
       class RetryTap
         def initialize(spool:, channel:)
           @spool = spool
@@ -45,7 +42,7 @@ module Lain
         end
 
         # `options.max` is the RETRY count, not the ordinal of the attempt
-        # that just failed -- see the Ollama tap's F16 for the reproduction.
+        # that just failed -- see the Ollama tap for the reproduction.
         # Both taps must move together or the two providers disagree about
         # what "attempt" means.
         def exhausted_block
@@ -57,11 +54,9 @@ module Lain
 
         private
 
-        # The RotatingFrame this request's transport stashed on its Faraday
-        # context at frame-open ({Transport#sync_post}/{#stream}). `env[:request]`
-        # reads the RequestOptions on a real Faraday::Env and on a plain-Hash
-        # test double alike; nil-safe so a request opened over the Null spool (or
-        # one whose context never took) simply does not rotate.
+        # `env[:request]` reads the RequestOptions on a real Faraday::Env and on
+        # a plain-Hash test double alike; nil-safe so a request opened over the
+        # Null spool simply does not rotate.
         def frame_on(env)
           context = env[:request]&.context
           context && context[:wal_frame]

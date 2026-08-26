@@ -48,7 +48,7 @@
 # deliberate: the silent version hands compaction accounting a nil that looks
 # exactly like "no runner resident".
 #
-# T6 added a SECOND endpoint on the same launch path, for the same reason and
+# A SECOND endpoint was added on the same launch path, for the same reason and
 # with the same default. `CLI::Backend` asks `/api/show` for the model's TRAINED
 # maximum at construction, to refuse a `--num-ctx` no runner could ever serve --
 # but only when the flag is actually set, so most examples never reach it. The
@@ -56,7 +56,7 @@
 # discoverable": a provider that cannot state one must not block a launch, so
 # again nothing an example measures moves.
 #
-# HOST-SCOPED, not just path-matched -- found by chunk-ollama-cloud-arm's T9. The
+# HOST-SCOPED, not just path-matched -- found while wiring the Cloud arm. The
 # path-only regex above answered these two probes for ANY host, so a provider
 # wrongly built against a hosted deployment (Ollama Cloud, or any future
 # non-local one) that called `/api/ps` or `/api/show` would get a quiet

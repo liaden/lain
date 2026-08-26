@@ -162,7 +162,6 @@ RSpec.describe Lain::Approval::Gate::Policy do
     end
   end
 
-  # AC1
   describe "hands-off approves audibly" do
     subject(:policy) { described_class::HandsOff.new(queue: drained) }
 
@@ -196,7 +195,6 @@ RSpec.describe Lain::Approval::Gate::Policy do
     end
   end
 
-  # AC2
   describe "deferred parks without approving" do
     subject(:policy) { described_class::Deferred.new(queue:) }
 
@@ -338,7 +336,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
     end
   end
 
-  # AC3. The rule itself, as the ONE object that owns it. It was written twice
+  # The rule itself, as the ONE object that owns it. It was written twice
   # -- here on the policy seam and again inside Gate::Adjudicator, which is not
   # a Policy and never reaches #decide -- and two copies of a safety rule can
   # drift. Every caller now goes through this object, so the rule has a single
@@ -381,7 +379,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
     end
   end
 
-  # T14. The overnight intent, as a policy: try to answer your own question
+  # The overnight intent, as a policy: try to answer your own question
   # before parking it for the morning queue. It is the Adjudicator wearing the
   # seam `[epics.gates]` selects, so `deferred` stays the policy that spends
   # nothing and this is the one that spikes first.
@@ -412,7 +410,6 @@ RSpec.describe Lain::Approval::Gate::Policy do
       )
     end
 
-    # AC1
     it "parks a spiked deferral with the evidence's content address on the item" do
       expect(decide(adjudicated(spawn_stub(verdict: "DEFER")))).to be(false)
 
@@ -425,7 +422,6 @@ RSpec.describe Lain::Approval::Gate::Policy do
       expect(evidence_records.first).to include("text" => evidence_text, "digest" => evidence_digest)
     end
 
-    # AC2
     it "opens the gate on a bare verdict, registering the digest under the adjudicated policy" do
       expect(decide(adjudicated)).to be(true)
 
@@ -440,7 +436,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
       expect(queue.to_a).to be_empty
     end
 
-    # The T9 panel's finding, as a spec that bites for the WRAPPER shape: an
+    # The review panel's finding, as a spec that bites for the WRAPPER shape: an
     # Adjudicated that ran the inherited Policy#decide boundary check AND
     # delegated to an Adjudicator that checks it too asked twice per stage, with
     # the whole suite still green. Counting through the policy is what catches
@@ -462,7 +458,7 @@ RSpec.describe Lain::Approval::Gate::Policy do
       expect(spawn.roles).to be_empty
     end
 
-    # The other half of the T9 panel's finding. The guard reads the journal back,
+    # The other half of that panel's finding. The guard reads the journal back,
     # so it only fires when the stream it reads is the stream the Gate wrote to.
     # Wire the read at a second IO and this passes silently forever.
     it "refuses a second terminal verdict over one address, because it reads back the journal it wrote" do

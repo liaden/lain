@@ -2,27 +2,21 @@
 
 module Lain
   module CLI
-    # The durable session record's lifecycle for one chat run, lifted out of the
-    # thin Thor executable the way {Backend} lifted provider resolution: the exe
-    # wires collaborators together; this object owns WHEN the journal opens,
-    # what the scribe's header pins, which journal telemetry lands in, and how
-    # the record closes.
+    # The durable session record's lifecycle for one chat run: the exe wires
+    # collaborators; this object owns WHEN the journal opens, what the scribe's
+    # header pins, which journal telemetry lands in, and how the record closes.
     #
-    # Two-phase by necessity: the tools need {#observer} at construction, but
-    # the scribe's header pins the FINISHED toolset -- so construction opens
-    # the journal, and {#start} (once the toolset exists) writes the header.
-    # Anything that needs the scribe earlier raises {NotStarted} loudly: the
-    # pre-start window is wiring time, when no event can flow, and a silently
-    # swallowed early event would be record loss.
+    # Two-phase by necessity: the tools need {#observer} at construction, but the
+    # scribe's header pins the FINISHED toolset -- so construction opens the
+    # journal and {#start} writes the header. Anything needing the scribe earlier
+    # raises {NotStarted} loudly, because a silently swallowed early event would
+    # be record loss.
     class Chronicle
       class NotStarted < Error; end
 
-      # The same duck with no record behind it (--no-journal): every message
-      # answers, nothing lands, so the exe carries no nil-checks
-      # ({Sink::Null}'s idiom). `@tee` starts nil and is set only through
-      # {#wrap_tee} -- --nvim's telemetry leg, which exists independently of
-      # the session record. The `(**)` signatures accept the real methods'
-      # keywords without naming arguments a Null never reads.
+      # The same duck with no record behind it (--no-journal), so the exe carries
+      # no nil-checks. The `(**)` signatures accept the real methods' keywords
+      # without naming arguments a Null never reads.
       class Null
         # Nil is the honest answer: --no-journal has no file, and /fork reads
         # this to refuse composing a selector no record backs.
@@ -34,50 +28,43 @@ module Lain
         def turn_middleware(_timeline) = Middleware::Stack.new
         def instrumentation = Chronicle.instrumentation(@tee)
 
-        # No record was ever opened, so there is no journal to hand a switch --
-        # and {Channel::Null} is not one (it answers `#<<`, not `#record`). The
-        # null device is the honest answer: the same duck, discarding.
+        # No record was ever opened, and {Channel::Null} is not a journal (it
+        # answers `#<<`, not `#record`). The null device is the same duck,
+        # discarding.
         def record_journal = @tee || Journal.new(io: File.open(File::NULL, "ab"))
         def catch_up(_timeline) = self
         def rewound(**) = self
         def interrupted(**) = self
         def close(**) = self
 
-        # --no-journal + --nvim: there is no session record to share (no
-        # journal was ever opened), so nvim gets its OWN real journal --
-        # exactly the file it opened before this class carried a #wrap_tee
-        # seam at all. Still returns the journal it opened, the same duck the
-        # real Chronicle's #wrap_tee answers, so the exe's wiring is one line
-        # regardless of which Chronicle it holds.
+        # --no-journal + --nvim: there is no session record to share, so nvim
+        # gets its OWN real journal. Returns it, the same duck the real
+        # {Chronicle#wrap_tee} answers, so the exe's wiring is one line either
+        # way.
         def wrap_tee(channel)
           journal = Journal.open
           @tee = JournalTee.new(journal, channel)
           journal
         end
 
-        # --no-journal's answer to {Chronicle#spool}: the same Null spool
-        # {Provider::Anthropic} already defaults to, so a provider built
-        # with it opens no `.wal` and creates no file -- the Null Object
-        # duck, not a caller-side `if journal`.
+        # The same Null spool {Provider::Anthropic} already defaults to, so a
+        # provider built with it opens no `.wal` and creates no file.
         def spool = Provider::Spool::Null.new
       end
 
-      # The chronicle-owned spool indirection (T3). Providers are constructed
-      # with the spool ONCE, before any promotion can happen, so the object
-      # they hold must survive a mid-session rename. Two cases, split by
-      # whether the wal file exists when {Chronicle#promote!} relocates:
+      # Providers are constructed with the spool ONCE, before any promotion can
+      # happen, so the object they hold must survive a mid-session rename. Two
+      # cases, split by whether the wal file exists when {Chronicle#promote!}
+      # relocates:
       #
-      # - bytes already on disk: {Paths::Ephemeral} renamed the file and the
-      #   inner {Provider::ResponseWal}'s open append fd tracks the inode --
-      #   the SAME inner keeps writing, nothing to do.
-      # - no wal yet (the lazy never-spooled case): the inner would create
-      #   its file at the STALE marked path on the first frame, so it is
-      #   swapped for a fresh one at the promoted path -- it never opened
-      #   anything, so nothing is lost.
+      # - bytes already on disk: the rename is invisible to the inner
+      #   {Provider::ResponseWal}, whose append fd tracks the inode.
+      # - no wal yet: the inner would create its file at the STALE marked path on
+      #   the first frame, so it is swapped for a fresh one at the promoted path.
       #
-      # Recorded limitation: a frame OPEN across the promotion in the no-wal
-      # case still holds the old inner and would land marked; promotion is a
-      # user action between round trips, so the window is not wired to occur.
+      # Known limitation: a frame OPEN across the promotion in the no-wal case
+      # still holds the old inner and lands marked. Promotion is a user action
+      # between round trips, so the window is not wired to occur.
       class RelocatableSpool
         def initialize(path)
           @path = path
@@ -96,40 +83,33 @@ module Lain
       end
 
       class << self
-        # The one factory the exe calls: a recording Chronicle over a
-        # Paths-based fsync journal when journaling is on, the {Null} duck
-        # when --no-journal. Takes no `tee:` -- a caller wanting --nvim's
-        # tee wraps it AFTER construction, through {#wrap_tee}, so the tee's
-        # journal leg can be the ONE journal this method just opened rather
-        # than a second one opened independently (the split-second bug this
-        # seam exists to close: two `Journal.open` calls landing on
-        # different filenames when they straddle a clock tick).
+        # A recording Chronicle over a Paths-based fsync journal, or the {Null}
+        # duck under --no-journal. Takes no `tee:` -- --nvim wraps one AFTER
+        # construction, through {#wrap_tee}, so the tee's journal leg is the ONE
+        # journal this method opened. Two independent `Journal.open` calls
+        # straddling a clock tick land on different filenames.
         #
-        # `btw:` (T3) marks the session ephemeral: the SAME default path
-        # wearing the `.btw` mark ({Paths.ephemeral_for}), so the wal
-        # derivation and the whole record format are untouched -- ephemerality
-        # is the filename, reaped by {#close} on a clean exit unless
+        # `btw:` marks the session ephemeral: the SAME default path wearing the
+        # `.btw` mark, so the wal derivation and the record format are untouched.
+        # Ephemerality is the filename, reaped by {#close} on a clean exit unless
         # {#promote!} ran first.
         def for(enabled:, btw: false, paths: Paths.new)
           return Null.new unless enabled
 
           # Computed here, not left to Journal.open's own default, so THIS path
-          # is the one #spool later derives the sibling `.wal` from -- the
-          # journal and the spool must never be able to name different
-          # sessions.
+          # is the one #spool derives the sibling `.wal` from -- the journal and
+          # the spool must never be able to name different sessions.
           path = Journal.default_path(paths:)
           path = Paths.ephemeral_for(path) if btw
           new(journal: Journal.open(path, fsync: true), journal_path: path)
         end
 
-        # Where TurnUsage (the Agent's journal) and RequestSent (the
-        # {Middleware::JournalRequests} phase) land: the given journal, or
-        # nowhere. Class-level so {Null} shares the selection with the real
-        # thing -- the logic lives once.
+        # Where TurnUsage and RequestSent land: the given journal, or nowhere.
+        # Class-level so {Null} shares the selection with the real thing.
         #
         # A nil journal answers the all-Null {Agent::Instrumentation} rather than
-        # an empty Hash the Agent had to fill in from its own defaults: "reports
-        # nowhere" is a value now, not an absent key.
+        # an empty Hash the Agent fills from its own defaults: "reports nowhere"
+        # is a value, not an absent key.
         def instrumentation(journal)
           return Agent::Instrumentation.new if journal.nil?
 
@@ -138,11 +118,9 @@ module Lain
         end
       end
 
-      # `@tee` starts nil and is set only through {#wrap_tee} -- there is no
-      # production caller left that constructs a Chronicle with a tee
-      # already in hand, now that --nvim wraps one over the journal THIS
-      # opens rather than handing in one built from a second, independent
-      # journal.
+      # `@tee` starts nil and is set only through {#wrap_tee}: --nvim wraps one
+      # over the journal THIS opens, rather than handing in one built over a
+      # second, independent journal.
       def initialize(journal:, journal_path: nil)
         @journal = journal
         @tee = nil
@@ -150,57 +128,46 @@ module Lain
         @recorder = nil
       end
 
-      # The session's on-disk identity, read by /fork (T16) to compose the
-      # child's `--fork <session>@<head>` selector. Nil for an injected-io
-      # chronicle (no file), exactly as {#promote!} already refuses.
+      # Read by /fork to compose the child's `--fork <session>@<head>` selector.
+      # Nil for an injected-io chronicle, exactly as {#promote!} refuses.
       attr_reader :journal_path
 
-      # The tools' observer seam ({Event::ChainWriter}'s `observer:` duck),
-      # late-bound through {#scribe}: an event before {#start} raises rather
+      # Late-bound through {#scribe}: an event before {#start} raises rather
       # than vanishing.
       def observer = ->(event) { scribe.call(event) }
 
       # --nvim shares THIS session's own journal instead of opening a second
-      # one: the tee's journal leg becomes `@journal`, so {#telemetry_kwargs}
-      # (which prefers `@tee` once this has run) routes request_sent/
-      # turn_usage/memory_root into the SAME file the scribe writes turns
-      # into -- one Journal instance, one Monitor, no split-second race
-      # between two independent `Journal.open` calls. Returns the journal
-      # itself: the nvim frontend's OWN `journal:` kwarg (where a hand-edited
-      # resend lands) must be this identical journal, not a second one.
+      # one, so telemetry lands in the SAME file the scribe writes turns into:
+      # one Journal instance, one Monitor, no split-second race between two
+      # independent `Journal.open` calls. Returns the journal itself, because the
+      # nvim frontend's OWN `journal:` kwarg -- where a hand-edited resend lands
+      # -- must be this identical instance.
       def wrap_tee(channel)
         @tee = JournalTee.new(@journal, channel)
         @journal
       end
 
-      # The response WAL beside this session's NDJSON: `<session-stem>.wal`,
-      # lazily opened so a run that never completes a provider round trip
-      # never creates the file (matches {Provider::ResponseWal}'s own lazy
-      # writer). Memoized so every provider construction this run makes --
-      # the main Agent's and each subagent's -- spools into the SAME file.
+      # The response WAL beside this session's NDJSON, lazily opened so a run
+      # that never completes a round trip never creates the file. Memoized so
+      # every provider this run builds -- the main Agent's and each subagent's --
+      # spools into the SAME file.
       #
-      # For T18 (salvage-on-resume): a subagent's round trips land frames here
-      # too, but {Middleware::JournalRequests} -- the thing that journals
-      # `request_sent` -- is wired only into the main Agent's `model_middleware`
-      # (see {.telemetry_kwargs}), so a subagent's frames have no matching
-      # `request_sent` digest in the session record. That is BY DESIGN, not a
-      # gap this card owes: salvage keys off `request_sent`, so subagent frames
-      # simply cannot be salvage targets today, and T18 should not assume every
-      # frame in the file is matchable.
+      # A subagent's frames have no matching `request_sent` digest in the record,
+      # because {Middleware::JournalRequests} is wired only into the main Agent's
+      # `model_middleware`. That is deliberate: salvage keys off `request_sent`,
+      # so subagent frames cannot be salvage targets and salvage must not assume
+      # every frame in the file is matchable.
       #
-      # Answers a {RelocatableSpool} (T3): providers hold this ONE object for
-      # the whole run, so {#promote!} can retarget a not-yet-created wal
-      # without changing the duck they were constructed with.
+      # A {RelocatableSpool}, so {#promote!} can retarget a not-yet-created wal
+      # without changing the duck providers were constructed with.
       def spool
         @spool ||= RelocatableSpool.new(wal_path)
       end
 
-      # T3: promote this session's ephemeral record in place -- the
-      # {Paths::Ephemeral} renames (WAL first), then the chronicle's OWN paths
-      # retarget, because it is the live holder of both: the journal fd
-      # survives the rename untouched (append mode, same inode), and the
-      # spool must not lazily create a wal at the stale marked path on its
-      # first frame (the {RelocatableSpool} seam).
+      # {Paths::Ephemeral} renames (WAL first), then this object's OWN paths
+      # retarget, because it is the live holder of both: the journal fd survives
+      # the rename untouched (append mode, same inode), and the spool must not
+      # lazily create a wal at the stale marked path on its first frame.
       #
       # @return [String] the promoted journal path
       def promote!
@@ -211,56 +178,45 @@ module Lain
         @journal_path
       end
 
-      # Write the OPEN header, pinning exactly what the Agent renders with.
-      # A resumed chat (T19) passes `resumed_from:` (the chained-header shape)
-      # and `written:` (the resumed chain's turn digests) straight through to
-      # the scribe -- see {SessionRecord::Scribe#initialize} for why both.
-      # `message_journal` is the tee when --nvim wrapped one (the exe's
-      # open_chronicle runs {#wrap_tee} before any wiring calls this), so Q/A
-      # message records fan to the live views while the file gets them once --
-      # see {SessionRecord::Scribe#initialize}.
+      # Write the OPEN header, pinning exactly what the Agent renders with. A
+      # resumed chat passes `resumed_from:` and `written:` through to the scribe.
+      # `message_journal` is the tee when --nvim wrapped one, so Q/A message
+      # records fan to the live views while the file gets them once.
+      # @see SessionRecord::Scribe#initialize
       def start(context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [])
         @scribe = SessionRecord::Scribe.new(journal: @journal, context:, toolset:, workspace:,
                                             resumed_from:, written:, message_journal: @tee)
         self
       end
 
-      # Decorate the run's Session so its reads and todo writes ALSO land in
-      # the session record ({Session::Journaled}) -- run-state records go to
-      # the session journal itself, never the tee, because they are record
-      # data like the scribe's turn records, not live-view telemetry. Usable
-      # before {#start}: the decorator writes through the journal directly,
-      # no scribe involved.
+      # Run-state records go to the session journal itself, never the tee: they
+      # are record data like the scribe's turn records, not live-view telemetry.
+      # Usable before {#start}, because the decorator writes through the journal
+      # directly with no scribe involved.
       def wrap_session(session)
         Session::Journaled.new(session:, journal: @journal)
       end
 
-      # Register the run's {Memory::Recorder} so {#telemetry_kwargs} pairs
-      # each turn_usage with the memory root in force at that turn
-      # ({Memory::JournalMemoryRoot} -- until now wired only on the bench
-      # paths, so a live chat's journal carried no memory_root records and a
-      # replay would silently rebuild empty memory). Returns the recorder
-      # UNCHANGED: JournalMemoryRoot decorates the journal, not the recorder,
-      # so Session's `memory:` and the memory tools keep the recorder duck
-      # they already speak.
+      # Registers the recorder so each turn_usage is paired with the memory root
+      # in force at that turn. Wired only on the bench paths before, which left a
+      # live chat's journal with no memory_root records and a replay silently
+      # rebuilding empty memory. Returns the recorder UNCHANGED, because
+      # {Memory::JournalMemoryRoot} decorates the journal, not the recorder.
       def wrap_memory(recorder)
         @recorder = recorder
         recorder
       end
 
       # Per-iteration durability: every committed turn is on disk before the
-      # NEXT model call. The scribe duck handed to {Middleware::JournalTurns}
-      # is `self`, so this stack can be wired before {#start} -- iterations
-      # only run during asks, after the header exists.
+      # NEXT model call. The scribe duck handed on is `self`, so this stack can
+      # be wired before {#start} -- iterations run only during asks.
       def turn_middleware(timeline)
         Middleware::Stack.new([Middleware::JournalTurns.new(scribe: self, timeline:)])
       end
 
-      # Telemetry follows the tee when --nvim fans events to live views too;
-      # otherwise it lands in the session journal itself. With a recorder
-      # wrapped, ONLY the turn_usage leg is decorated with JournalMemoryRoot --
-      # JournalRequests keeps the raw destination, run_recorder's precedent:
-      # request_sent lands unpaired.
+      # Telemetry follows the tee when --nvim fans events to live views, and the
+      # session journal otherwise. With a recorder wrapped, ONLY the turn_usage
+      # leg is decorated: request_sent lands unpaired, run_recorder's precedent.
       def instrumentation
         destination = @tee || @journal
         resolved = self.class.instrumentation(destination)
@@ -269,11 +225,9 @@ module Lain
         resolved.with(journal: Memory::JournalMemoryRoot.new(journal: destination, recorder: @recorder))
       end
 
-      # The journal a run's own switches record into -- the {Switchboard}'s
-      # policy and model flips, the {GoalDriver}'s standing goals. They speak
-      # `#record`, which {Channel::Null} does not, so "there is no record" and
-      # "the record discards" are genuinely different answers and this reader is
-      # what tells them apart ({Null#record_journal} is the discarding half).
+      # The journal a run's own switches record into. They speak `#record`,
+      # which {Channel::Null} does not, so "there is no record" and "the record
+      # discards" are different answers and this reader is what tells them apart.
       # The same destination {#instrumentation} carries, so a flip and a
       # turn_usage cannot land in two different files.
       def record_journal = instrumentation.journal
@@ -283,18 +237,16 @@ module Lain
         self
       end
 
-      # T15: announce a rewind to the scribe -- see {SessionRecord::Scribe#rewound}.
+      # Announce a rewind to the scribe -- see {SessionRecord::Scribe#rewound}.
       def rewound(to:)
         scribe.rewound(to:)
         self
       end
 
-      # The two call paths that reach here classify differently: {Conductor#close}
-      # already holds the signal's own reason, {Repl::Ask#refuse} derives one from
-      # the error that tore the ask. Neither argument defaults -- a caller that
-      # cannot say which stop this was is a caller whose record would be a guess,
-      # and an ArgumentError on its first run is cheaper than a plausible lie in
-      # the file.
+      # The two call paths classify differently: {Conductor#close} holds the
+      # signal's own reason, {Repl::Ask#refuse} derives one from the error that
+      # tore the ask. Neither argument defaults -- an ArgumentError on a caller's
+      # first run is cheaper than a plausible lie in the file.
       #
       # @param head [String, nil] the last committed turn the torn run ran from
       # @param reason [Symbol] one of {Telemetry::RunInterrupted::REASONS}
@@ -304,14 +256,11 @@ module Lain
         self
       end
 
-      # Skips the session_closed record when nothing started: chat's ensure
-      # runs even when wiring raised before the header was written, and a
-      # closer with no header would be an orphan record (while raising here
-      # would mask the original error). `@spool&.close`, not `spool.close`:
-      # the spool is a long-lived append handle that opens its `.wal` lazily
-      # on first frame, and a run that never spooled a frame must still
-      # create no file at teardown -- reading `@spool` directly (rather than
-      # calling {#spool}) is what keeps that lazy open from being forced.
+      # Skips the session_closed record when nothing started: chat's ensure runs
+      # even when wiring raised before the header was written, and a closer with
+      # no header would be an orphan record, while raising here would mask the
+      # original error. `@spool&.close` and not `spool.close`, because calling
+      # {#spool} would force the lazy open a never-spooled run must not create.
       def close(reason: :exit)
         @scribe&.close(reason:)
         @spool&.close
@@ -322,12 +271,10 @@ module Lain
 
       private
 
-      # T3: an UNPROMOTED ephemeral reaps on the one clean close (`:exit`) --
-      # a promoted session's path no longer wears the mark, so it survives by
-      # the same test. Every other reason (`:interrupted`, `:grace_expired`,
-      # `:salvaged`) leaves the pair on disk for salvage, as does a hard kill,
-      # where no close runs at all. After `@journal.close`, so the fd is gone
-      # before the unlink.
+      # An UNPROMOTED ephemeral reaps on the one clean close: a promoted
+      # session's path no longer wears the mark, so it survives the same test,
+      # and every other reason leaves the pair on disk for salvage. Runs after
+      # `@journal.close`, so the fd is gone before the unlink.
       def reap_ephemeral
         return if @journal_path.nil? || !Paths.ephemeral?(@journal_path)
 

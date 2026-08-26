@@ -166,7 +166,7 @@ RSpec.describe Lain::Workspace::Restore do
     end
   end
 
-  # CONVERTED (fix round, FIX 2): the defect this probe pinned -- raw Errno
+  # CONVERTED (fix round): the defect this probe pinned -- raw Errno
   # escaping and a stale in-force ledger after a mid-apply failure -- is fixed;
   # the fixed behavior (PartialApply naming what landed, per-operation ledger,
   # clean unforced retry) is a permanent spec in restore_spec.rb under
@@ -188,7 +188,7 @@ RSpec.describe Lain::Workspace::Restore do
     end
   end
 
-  # CONVERTED (fix round, FIX 1): the hole this probe demonstrated -- restore
+  # CONVERTED (fix round): the hole this probe demonstrated -- restore
   # writing recorded bytes THROUGH an in-root symlink to an outside target --
   # is closed; a symlink at any managed path now refuses as EscapesRoot before
   # any IO, force notwithstanding. Permanent specs live in restore_spec.rb

@@ -7,25 +7,20 @@ module Lain
     module Source
       # A changeset read from a local branch.
       #
-      # == The merge base is resolved, never implied
+      # THE MERGE BASE IS RESOLVED, NEVER IMPLIED. `git diff base..head` reports
+      # the base branch's OWN independent commits as deletions, because it
+      # compares two tips; `base...head` compares against the merge base instead.
+      # Getting this wrong shifts every old-side anchor, so this class does not
+      # spell the three-dot form and hope: it resolves the merge base to a SHA up
+      # front, records it as {#base_ref}, and diffs `merge_base head` two-dot --
+      # the same changeset, and reproducible afterwards. That is the whole reason
+      # `base_ref` exists as a message: a source that kept "main" symbolically
+      # would answer a different diff the next time main moved, and nothing
+      # downstream could tell.
       #
-      # `git diff base..head` reports the base branch's OWN independent commits as
-      # deletions, because it compares two tips. `git diff base...head` compares
-      # against the merge base instead, which is what a review wants. The spike
-      # found that getting this wrong shifts every old-side anchor, so this class
-      # does not spell the three-dot form and hope: it resolves the merge base to
-      # a SHA up front, records it as {#base_ref}, and diffs `merge_base head`
-      # two-dot -- which is the same changeset, and is reproducible afterwards.
-      #
-      # That distinction is the whole reason `base_ref` exists as a message. A
-      # source that kept "main" symbolically would answer a different diff the
-      # next time main moved, and nothing downstream could tell.
-      #
-      # == Every subprocess is an argv array
-      #
-      # The `shell_out_factory` seam {Forge::Gh} and eight siblings use, spelled
-      # the same way: an argv array, never a command string, so there is no place
-      # to put one and no shell to reach.
+      # Every subprocess is an argv array -- the `shell_out_factory` seam
+      # {Forge::Gh} and eight siblings use, so there is no place to put a command
+      # string and no shell to reach.
       class LocalBranch
         # {#files} and {#identity}, over this class's own {#diff}. Included
         # rather than written out, because {GithubPr} owes the same two answers
@@ -96,16 +91,15 @@ module Lain
         #   measured, a `git show` per commit would be the dominant cost.
         def commits = @commits ||= parse_log(log_output).freeze
 
-        # One file, as one revision holds it -- the port's SIXTH message, and
-        # the only one that answers about a single path rather than about the
-        # whole changeset.
+        # One file, as one revision holds it -- the only port message that
+        # answers about a single path rather than the whole changeset.
         #
         # It exists because a diff is not enough to DRAW one: an editor showing
         # the old side against the new needs the whole old file, and a unified
-        # diff carries only the hunks and three lines around them. T32a's diff
-        # opener is the caller, and reading the blob HERE rather than there is
-        # what keeps every git invocation in this repository behind one method
-        # -- the argv form, the config pins and the env scrub included.
+        # diff carries only the hunks and three lines around them. Reading the
+        # blob HERE rather than at the editor's diff opener is what keeps every
+        # git invocation behind one method -- argv form, config pins and env
+        # scrub included.
         #
         # A path the revision does not carry answers nil rather than raising:
         # "this file did not exist yet" is an ordinary fact about an added file,
@@ -125,13 +119,12 @@ module Lain
 
         # The port's fifth message, answered by the source that never asks
         # anyone: the objects are in the local database and nothing fell back to
-        # them, which is exactly what {DiffOrigin.already_local} says.
+        # them.
         #
         # A Null Object, and its point is at the CONSUMER. Without it a renderer
         # asks `respond_to?(:diff_origin)` and branches on WHICH source it holds
-        # -- a type test in duck costume -- and {Source}'s module doc records
-        # what that conditional actually cost.
-        #
+        # -- a type test in duck costume -- and {Source}'s module doc records what
+        # that conditional actually cost.
         # @return [DiffOrigin] always `fell_back? == false`
         def diff_origin = DiffOrigin.already_local
 
@@ -233,10 +226,8 @@ module Lain
         # {Isolation::Worktree}'s pinned scrub set, not a parallel copy: an
         # ambient GIT_DIR (a pre-commit hook sets one) would otherwise point every
         # call below at the hook's repository instead of `repo_root`. Read from a
-        # METHOD body rather than the class body because `lain.rb` loads
-        # isolation after review, so a class-body reference would be a load-time
-        # NameError -- the same reasoning, and the same shape, as
-        # {Forge::Promotion#run}, which carries the fuller note.
+        # METHOD body because `lain.rb` loads isolation after review, so a
+        # class-body reference would be a load-time NameError.
         def git(*)
           shell = @shell_out_factory.call("git", "-C", @repo_root, *CONFIG_PINS, *,
                                           environment: Isolation::Worktree::GIT_CONTEXT_SCRUB)

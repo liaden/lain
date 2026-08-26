@@ -2,13 +2,13 @@
 
 module Lain
   module Telemetry
-    # CE-5's transient scheduling signal and its failure record -- the provider
+    # The transient scheduling signal and its failure record -- the provider
     # round-trip's transient signals, not the durable stream they ride beside.
 
-    module Guards
+    module Carriers
       # A stream-started record must name the request whose response began
       # streaming -- there is no committed turn yet to name instead.
-      class StreamStarted < Guard
+      class StreamStarted < Declarative::Carrier
         attribute :digest
         validates :digest, presence: { message: "must name the request whose response started, got nil" }
       end
@@ -30,24 +30,18 @@ module Lain
     StreamStarted = Data.define(:digest) do
       include Journalable
 
-      def initialize(digest:)
-        Guards::StreamStarted.check!(digest:)
-
-        super(digest: digest.dup.freeze)
-      end
+      # The keyword stays EXPLICIT. A bare `**attrs` hands arity to ActiveModel,
+      # which gives every rule-less attribute a free nil, losing `Data`'s own
+      # "you must name this".
+      def initialize(digest:) = super(**Carriers::StreamStarted.settle!(digest:))
     end
 
-    # An injected observer callback -- so far, only CE-5's `on_stream_started`
-    # -- raised instead of running cleanly. A caller-supplied orchestration
-    # hook is not allowed to cost a round trip its Response just because the
-    # hook itself is buggy (see {StreamStarted}'s doc: the Channel push and
-    # the observer call are deliberately two independent paths). But a
-    # swallowed exception is a lie by omission on a bench whose whole point
-    # is an honest record, so the failure lands here instead of vanishing:
-    # `hook` names which observer failed, `digest` is the request it fired
-    # for (the join key onto the {StreamStarted} it failed alongside),
-    # `message` is the exception's own message, not a full backtrace --
-    # attribution, not diagnostics.
+    # An injected observer callback raised instead of running cleanly. A
+    # caller-supplied hook is not allowed to cost a round trip its Response just
+    # because the hook is buggy -- but a swallowed exception is a lie by
+    # omission on a bench whose whole point is an honest record, so the failure
+    # lands here instead of vanishing. `message` is the exception's own message
+    # and not a backtrace: attribution, not diagnostics.
     ObserverFailed = Data.define(:hook, :digest, :message) do
       include Journalable
 

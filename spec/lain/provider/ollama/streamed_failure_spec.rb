@@ -2,7 +2,7 @@
 
 require "json"
 
-# T38. The unit half of "a failed stream must say what ollama said". The
+# The unit half of "a failed stream must say what ollama said". The
 # provider-level examples in ollama_streaming_spec.rb drive real Faraday over
 # WebMock, which delivers a stubbed body as ONE chunk -- so the two shapes that
 # actually broke in production are only reachable here: an error object split
@@ -41,8 +41,9 @@ RSpec.describe Lain::Provider::Ollama::StreamedFailure do
 
     # The status is the response's own. Carrying the message by relabeling a
     # 404 as a retryable 500 -- what parse_streaming_error's guess does -- is
-    # RES1, and the point of raising from the transport rather than from the
-    # on_data callback is that the real status is right there.
+    # exactly what this refuses, and the point of raising from the transport
+    # rather than from the on_data callback is that the real status is right
+    # there.
     it "keeps the response's real status, and the class the middleware maps it to" do
       subject = failure
       subject.feed(error_body("model is required"))

@@ -5,7 +5,7 @@ require "stringio"
 require "tempfile"
 require "tmpdir"
 
-# T13: the live session scribe writes a LOADABLE session as a chat runs -- the
+# The live session scribe writes a LOADABLE session as a chat runs -- the
 # same on-disk format Bench::Session records, so one Loader reads both, but
 # written turn-by-turn (fsync'd) rather than in one final pass. The header is
 # written OPEN (head: nil); a graceful close anchors the head, and a process
@@ -128,7 +128,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     end
   end
 
-  # T14: the walk is BOUNDED, not merely correct. catch_up used to read the
+  # The walk is BOUNDED, not merely correct. catch_up used to read the
   # whole ancestor chain and filter out what it had already written -- O(n) per
   # commit, so O(n^2) over a session, on the durability path every ask waits on.
   # The records are identical either way, so only the fetch count can tell a
@@ -198,7 +198,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
       expect(journal_io.string).to eq(before)
     end
 
-    # Panel probe P2d (Evans): the reversed seed's LAST entry is the root, which
+    # Panel probe (Evans): the reversed seed's LAST entry is the root, which
     # is genuinely on-chain -- so the extends-check alone passes it, and every
     # turn the prior file already holds gets journaled a second time. That is
     # the doubling the `written:` doc warns about, arriving through the door
@@ -211,7 +211,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
       expect(journal_io.string).to eq(before)
     end
 
-    # Panel probe P2g: a holed seed reads as caught-up, and then #rewound prunes
+    # Panel probe: a holed seed reads as caught-up, and then #rewound prunes
     # it by INSERTION index and keeps a turn above the target -- a later rewind
     # to that turn would be a forward move wearing a rewind's name.
     it "refuses a seed with a hole in it, before a rewind can prune it wrongly" do
@@ -270,7 +270,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
       expect(of_type("run_interrupted").first).to include("head" => digests[1], "reason" => "torn")
     end
 
-    # Panel probe P2e: the legitimate resume. A seed naming a mid-chain head is
+    # Panel probe: the legitimate resume. A seed naming a mid-chain head is
     # a PREFIX, so it stands, and only the tail is journaled.
     it "accepts a seed that is a genuine prefix, journaling only the turns above it" do
       scribe = seeded(digests.first(2))
@@ -300,7 +300,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     end
   end
 
-  # Panel probe P5 (Evans): the append point must track the last record that
+  # Panel probe (Evans): the append point must track the last record that
   # LANDED, not the last one the batch intended to write. A journal that dies
   # partway -- ENOSPC, EIO -- is a live path, not a thought experiment: a
   # {Middleware::JournalTurns} failure tears the ask into {CLI::Repl}'s
@@ -383,7 +383,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
     end
   end
 
-  # T15: {Scribe#rewound} is the ONE sanctioned backward move -- it announces
+  # {Scribe#rewound} is the ONE sanctioned backward move -- it announces
   # the rewind as an additive `rewound` record, so the {Diverged} raise above
   # keeps guarding every divergence that was NOT announced through it.
   describe "#rewound -- the announced backward move" do
@@ -438,7 +438,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
       expect(of_type("turn").size).to eq(8)
     end
 
-    # T15 panel (Aaron): the prune, end to end through Scribe -> Loader,
+    # Panel (Aaron): the prune, end to end through Scribe -> Loader,
     # twice over -- the same digest must re-land after EACH rewound record,
     # and the file must fold.
     it "double rewind with identical re-commits: the digest re-lands after each rewound and the file folds" do
@@ -523,7 +523,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
       expect(of_type("message").first).to include("digest" => spawn.digest, "kind" => "spawn", "to" => nil)
     end
 
-    # I6: the live inbox surfaces (nvim's lain://inbox, StatusFeed) fold Q/A
+    # The live inbox surfaces (nvim's lain://inbox, StatusFeed) fold Q/A
     # records off the telemetry tee, so the scribe routes its message records
     # through an injected sink when one is given -- ROUTED, not duplicated:
     # the tee's journal leg IS the session journal, so the record lands in the
@@ -572,7 +572,7 @@ RSpec.describe Lain::SessionRecord::Scribe do
   end
 end
 
-# T16: the read side of Session::Journaled's write side. A journal that never
+# The read side of Session::Journaled's write side. A journal that never
 # saw a session_read/todo_snapshot/memory_root record (an older recording, or
 # a run with no reads/writes) replays to the corresponding neutral state --
 # the same tolerant zero-record precedent Bench::Session::MemoryReplay itself
@@ -590,7 +590,7 @@ RSpec.describe Lain::SessionRecord::Replay do
     described_class.new(source).session
   end
 
-  # AC1: reads and todos round-trip.
+  # Reads and todos round-trip.
   describe "reads and todos round-trip" do
     it "answers read? true for every recorded path and renders the LAST todo list only" do
       journaled = Lain::Session::Journaled.new(session: Lain::Session.new, journal:)
@@ -624,7 +624,7 @@ RSpec.describe Lain::SessionRecord::Replay do
       expect(replayed_session(lines).read?("/tmp/a.rb")).to be(true)
     end
 
-    # T22: completeness has to survive the round trip, or a resumed run could
+    # Completeness has to survive the round trip, or a resumed run could
     # clobber a file the model only ever saw redacted.
     describe "read completeness round-trips" do
       def journaled = Lain::Session::Journaled.new(session: Lain::Session.new, journal:)
@@ -729,11 +729,12 @@ RSpec.describe Lain::SessionRecord::Replay do
         end
       end
 
-      # A journal written before T22 has no `complete` key. Its absence is
-      # POSITIVE EVIDENCE that the read was whole -- RedactSecretReads (the
-      # only thing that can record a partial read) does not exist yet, so no
-      # writer could have produced a partial read without the key. This is a
-      # historical fact, not a permissive default; do not "fix" it into a raise.
+      # A journal written before partial reads existed has no `complete` key.
+      # Its absence is POSITIVE EVIDENCE that the read was whole --
+      # RedactSecretReads (the only thing that can record a partial read) does
+      # not exist yet, so no writer could have produced a partial read without
+      # the key. This is a historical fact, not a permissive default; do not
+      # "fix" it into a raise.
       it "replays a pre-T22 record with no complete key as a whole read" do
         legacy = [{ "type" => "session_read", "path" => "/tmp/old.rb" }]
 
@@ -760,7 +761,7 @@ RSpec.describe Lain::SessionRecord::Replay do
     end
   end
 
-  # AC2: the manifest pair needs no new record -- reconstructed through the
+  # The manifest pair needs no new record -- reconstructed through the
   # existing Bench::Session::MemoryReplay root, over the SAME turn/memory_root
   # records a memory-bearing run already journals.
   describe "the manifest pair needs no new record" do
@@ -783,7 +784,7 @@ RSpec.describe Lain::SessionRecord::Replay do
   end
 end
 
-# C2: the turn record's causal edge. `causal_parents` is part of the content
+# The turn record's causal edge. `causal_parents` is part of the content
 # address (Event#payload), so a record that drops it cannot be re-committed back
 # to its own digest -- and the empty set writes NO key, `resumed_from`'s idiom,
 # so every turn without a causal edge stays byte-identical to what this writer
@@ -801,7 +802,7 @@ RSpec.describe Lain::SessionRecord do
     end
   end
 
-  # AC2: a turn with no causal parents is unchanged -- proven as BYTES, against
+  # A turn with no causal parents is unchanged -- proven as BYTES, against
   # a COMMITTED fixture recorded before this field existed. Its first turn line
   # is re-committed from its own recorded content and re-journaled under its own
   # recorded timestamp; anything but a byte-for-byte match means the format
@@ -831,7 +832,7 @@ RSpec.describe Lain::SessionRecord do
     end
   end
 
-  # AC1's writer half; the fold back is spec'd in bench/session/chain_fold_spec.
+  # The writer half; the fold back is spec'd in bench/session/chain_fold_spec.
   describe ".turn, for a turn that folded two messages" do
     let(:asked) { message(to: "human", body: "which dose?") }
     let(:answered) { message(to: "agent", body: "81 mg") }

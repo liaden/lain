@@ -7,28 +7,25 @@ module Lain
     # laid side by side as a scannable report, under a header naming what
     # produced it.
     #
-    # This is a Compare-STYLE report, not a {Compare}: Compare folds many runs
-    # across a single axis into one distribution PER METRIC, whereas the Driver
-    # folds each arm's runs into ITS OWN distributions and ranks the arms next to
-    # each other ({Bench::Sweep}'s shape). So -- per this seam's escalation
-    # trigger -- it does NOT reshape Compare's public surface; it reuses the two
-    # pieces that fit verbatim, {Compare::Distribution} (the mean/median/min/max
-    # value object) and {Compare::Table} (the aligned renderer), and renders its
-    # own per-metric tables. Wall-time is a real distribution here because a
+    # A Compare-STYLE report, not a {Compare}: Compare folds many runs across a
+    # single axis into one distribution PER METRIC, whereas the Driver folds
+    # each arm's runs into ITS OWN distributions and ranks the arms next to each
+    # other. It reuses the two pieces that fit verbatim,
+    # {Compare::Distribution} and {Compare::Table}, and renders its own
+    # per-metric tables. Wall-time is a real distribution here because a
     # {Compare::Run} does not model it -- it rides on {Arm::Run} instead.
     class Driver
-      # Each metric: how to pull one value off a {Run}, and how to render it. One
-      # titled table per metric, rows = arms, so "distributions per arm" reads at
-      # a glance and every column comes from one declared source.
-      # `cost (USD)` is a DELIBERATE, SIZED DEBT against ROADMAP item 21, which
+      # Each metric: how to pull one value off a {Run}, and how to render it.
+      # One titled table per metric, rows = arms, so every column comes from one
+      # declared source.
+      #
+      # `cost (USD)` is a DELIBERATE, SIZED DEBT against the roadmap item that
       # owns collapsing the four metric registries in `lib/` (two incompatible
       # shapes: this `{of:, fmt:}` and {Compare::METRICS}' `{label:, reader:,
-      # fmt:}`). It is one entry in the pre-collapse shape -- a line for that
-      # item to move -- rather than the computed-total metric CE-6.3's
-      # `token-cost + $/sec x wall-clock` would need, which neither shape can
-      # express and which item 21 would then have to undo. A chunk about the
-      # cost axis that reports no cost was not worth landing; a second registry
-      # design was not worth building twice.
+      # fmt:}`). It is one entry in the pre-collapse shape rather than the
+      # computed-total metric a `token-cost + $/sec x wall-clock` axis would
+      # need, which neither shape can express and which that item would then
+      # have to undo.
       METRICS = {
         "grader score" => { of: :score, fmt: ->(value) { format("%.3f", value) } },
         "total tokens" => { of: :total_tokens, fmt: ->(value) { format("%.1f", value) } },
@@ -40,11 +37,9 @@ module Lain
       COLUMNS = %w[arm n mean median min max].freeze
       private_constant :COLUMNS
 
-      # What an attribution field prints when the caller did not supply one. A
-      # BLANK field reads as "there was none"; this says the record does not
-      # know, which is the weaker claim and the true one -- and the same
-      # distinction {Compare::Run}'s nil posture draws between "not recorded"
-      # and "no rung".
+      # What an attribution field prints when the caller supplied none. A BLANK
+      # field reads as "there was none"; this says the record does not know,
+      # which is the weaker claim and the true one.
       UNRECORDED = "unrecorded"
       private_constant :UNRECORDED
 
@@ -65,14 +60,12 @@ module Lain
       #   the Driver is handed prompts, so nothing else here can name it
       # @param model [String, nil] what the arms were configured to ask, for the
       #   header. What was ASKED FOR, which is not necessarily what each payment
-      #   RECORDED -- the cost column prices the latter, per payment. In
-      #   production they are one string; under a mock they need not be.
+      #   RECORDED -- the cost column prices the latter, per payment.
       # @param isolation_name [String, nil] the operator's own word for the
       #   backend (the `--isolation` value), used as the header's label. Every
       #   name `bench arms` can resolve comes back wrapped in the SAME
       #   {Isolation::Journal} decorator, so a class name cannot tell `none` from
-      #   `worktree`; this can. A library caller injecting a backend object has
-      #   no such word and falls back to the class name.
+      #   `worktree`; this can.
       # @raise [ArgumentError] on fewer than two tasks or no arms
       def initialize(arms, tasks:, spawn_seam:, grader:, isolation: NoIsolation, isolation_name: nil,
                      fixture: nil, model: nil)
@@ -112,22 +105,20 @@ module Lain
       # One metric across one arm's runs -- or, where the arm's own PriceBook
       # cannot answer, a named refusal instead of a Distribution.
       #
-      # THE RESCUE IS THE WHOLE DEGRADATION, and it is deliberately here rather
-      # than one frame out. `Ledger#cost_of` raises {PriceBook::UnknownModel} for
-      # a model the book has no row for, and `lain bench arms FIXTURE --provider
-      # ollama` reaches that with NO further flags (`qwen3:4b` against a
-      # DEFAULTS of opus/sonnet/haiku); `--model claude-fable-5` is the same
-      # shape, and this bench leaves that model unpriced on purpose. Letting it
-      # out of here took the WHOLE report down -- score, tokens and wall-time
-      # included, none of which ever needed a model -- and did it AFTER every
-      # run was already paid for, with `@report ||=` never memoising on the
-      # raise path, so a retry re-ran and re-paid the suite for no record.
+      # THE RESCUE IS THE WHOLE DEGRADATION, and it belongs here rather than one
+      # frame out. `Ledger#cost_of` raises {PriceBook::UnknownModel} for a model
+      # the book has no row for, and `lain bench arms FIXTURE --provider ollama`
+      # reaches that with NO further flags (`qwen3:4b` against a DEFAULTS of
+      # opus/sonnet/haiku). Letting it out of here took the WHOLE report down --
+      # score, tokens and wall-time included, none of which ever needed a model
+      # -- and did it AFTER every run was already paid for, with `@report ||=`
+      # never memoising on the raise path, so a retry re-ran and re-paid the
+      # suite for no record.
       #
-      # Rescuing to ZERO would be the other error, and the worse one: that is
-      # the lie {PriceBook} and {Ledger#initialize} each refuse in writing. But
-      # refusing to name a PRICE is not the same as destroying the REPORT, so
-      # the cost SECTION degrades to the Ledger's own message (see {#section}),
-      # which already names the fix, and every other section renders.
+      # Rescuing to ZERO would be the worse error: that is the lie {PriceBook}
+      # and {Ledger#initialize} each refuse in writing. But refusing to name a
+      # PRICE is not the same as destroying the REPORT, so the cost SECTION
+      # degrades to the Ledger's own message and every other section renders.
       def fold(runs, spec)
         Compare::Distribution.new(runs.map { |run| run.public_send(spec.fetch(:of)) })
       rescue PriceBook::UnknownModel => e
@@ -140,10 +131,9 @@ module Lain
 
       # An unattributable bench report is a weak experiment record, and a DOLLAR
       # figure on a report naming no model is the lie {PriceBook} refuses to
-      # tell -- so the counts alone are not enough once a cost column exists.
-      # Attribution only: what ran, over what, under what. No credential and no
-      # provider base URL reaches here, and none may -- a report is pasted into
-      # an issue, and `spec/output_discipline_spec.rb` cannot see inside a String.
+      # tell. Attribution ONLY: no credential and no provider base URL reaches
+      # here, and none may -- a report is pasted into an issue, and
+      # `spec/output_discipline_spec.rb` cannot see inside a String.
       def header
         ["Arm driver — #{@arms.size} arms over #{@tasks.size} tasks",
          "  fixture:   #{attributed(@fixture)}",
@@ -159,20 +149,15 @@ module Lain
 
       # THE OPERATOR'S OWN WORD FIRST, and a class name only where there is no
       # word to use. {Bench::CLI#lease_options} requires a journal whenever
-      # `--isolation` is set, so {Lain::CLI::IsolationBackend} always returns the
-      # concrete backend wrapped in {Isolation::Journal} -- which means the class
-      # name renders `none` and `worktree` IDENTICALLY, and cannot answer the one
-      # question this field exists to answer.
-      #
-      # It also would not agree with the lease records under the same report:
-      # {Isolation::Journal} emits `backend:` for the backend it WRAPS, so a
-      # header reading `Isolation::Journal` sits above records reading
-      # `Isolation::Null`. The flag name is what both a reader and the operator
-      # already have in hand.
+      # `--isolation` is set, so the concrete backend always comes back wrapped
+      # in {Isolation::Journal} -- which renders `none` and `worktree`
+      # IDENTICALLY and cannot answer the one question this field exists for. It
+      # would also disagree with the lease records under the same report, since
+      # {Isolation::Journal} emits `backend:` for the backend it WRAPS.
       #
       # {NoIsolation} wins over any name, because it is the object that actually
-      # leased: a bare module (whose `.class` is `Module`), holding nothing. That
-      # a run leased nothing is a fact about the experiment, not a blank field.
+      # leased: a bare module holding nothing. That a run leased nothing is a
+      # fact about the experiment, not a blank field.
       def isolation_label
         return "unset — Arm::NoIsolation leased nothing" if @isolation.equal?(NoIsolation)
 
@@ -198,10 +183,9 @@ module Lain
         "#{label}\n#{Compare::Table.new(headers: COLUMNS, rows:)}"
       end
 
-      # The Ledger's OWN message, verbatim, because it already names the fix
-      # ("configure a fallback to degrade" / "pass a PriceBook with a fallback")
-      # and a second wording here would be a second authority on how to make a
-      # run priceable. No arm is named, per {#section}.
+      # The Ledger's OWN message, verbatim, because it already names the fix and
+      # a second wording here would be a second authority on how to make a run
+      # priceable. No arm is named, per {#section}.
       def refused(label, unpriced)
         "#{label}\n  not priced — #{unpriced.map(&:reason).uniq.join("; ")}"
       end

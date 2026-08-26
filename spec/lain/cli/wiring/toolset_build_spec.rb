@@ -74,7 +74,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   end
 
   describe "#build" do
-    # T2. `--exec` names WHERE a shell command becomes a process, and the bash
+    # `--exec` names WHERE a shell command becomes a process, and the bash
     # tool is the one place in the capability floor that becomes one. The
     # backend is INJECTED down to it rather than resolved here, for
     # {Lain::CLI::Wiring}'s reason: a container mounts the PROJECT's root, and
@@ -94,8 +94,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         expect(bash_backend(toolset)).to be(chosen)
       end
 
-      # The default is the whole of AC5: an unflagged chat runs commands through
-      # the in-process backend exactly as it did before this card.
+      # The default is the whole point: an unflagged chat runs commands through
+      # the in-process backend exactly as it did before `--exec` existed.
       it "defaults to the in-process backend, so an unflagged chat is unchanged" do
         expect(bash_backend(toolset_build.build(recorder, ask_human:))).to be_a(Lain::Exec::Local)
       end

@@ -6,17 +6,12 @@ module Lain
     # well-supported problem, or a false positive? {Verified} calls #refute on
     # every raw finding and keeps only the ones whose Grade passes.
     #
-    # Built entirely on top of {Rubric} rather than duplicating its machinery --
-    # a fresh {Request} from criteria + subject alone (a SEPARATE context
-    # window, never the run-under-study's own Timeline: see {Rubric}'s own
-    # doc), the same JSON-verdict parsing, the same "#why is mandatory, a blank
-    # one is a loud failure" contract. The one thing Refuter adds is a
-    # THRESHOLD: a bare Rubric's own `#pass?` is documented as unreliable for a
-    # continuous judge (its module doc: "an LLM judge almost never returns a
-    # hard 1.0"), but a refutation genuinely IS binary -- a finding either
-    # survives or it does not -- so Refuter reads `#score` and rebuilds the
-    # Grade with an explicit `pass:`, the same idiom {Fixture} uses to set its
-    # own pass criterion rather than lean on Grade's default.
+    # Built on {Rubric} rather than duplicating its machinery, so it inherits
+    # the separate context window and the mandatory-`#why` contract. The one
+    # thing it adds is a THRESHOLD: a bare Rubric's `#pass?` is unreliable for a
+    # continuous judge, but a refutation genuinely IS binary -- a finding either
+    # survives or it does not -- so this reads `#score` and rebuilds the Grade
+    # with an explicit `pass:`.
     class Refuter
       DEFAULT_CRITERIA = <<~CRITERIA
         You are refuting a finding produced by an automated grader, checking it
@@ -46,31 +41,23 @@ module Lain
         Grade.new(score: verdict.score, why: verdict.why, pass: verdict.score >= @threshold)
       end
 
-      # Replays journaled {Telemetry::Verdict} records instead of judging live
-      # -- the same "recorded is a replay of a real interpretation" shape as
-      # {Effect::Handler::Recorded}, one level up: that class replays a TOOL
-      # CALL's outcome keyed by `tool_use_id`; this replays a FINDING's
-      # verdict keyed by the finding's OWN content digest, since a finding
-      # carries no id of its own. A miss is a loud {Unrecorded}, never a
-      # silently invented verdict -- the same discipline as an unhandled
-      # Effect.
+      # Replays journaled {Telemetry::Verdict} records instead of judging live,
+      # keyed by the finding's OWN content digest, since a finding carries no id
+      # of its own. A miss is a loud {Unrecorded}, never a silently invented
+      # verdict.
       #
-      # Two findings can share IDENTICAL text -- there is nothing else to key
-      # on -- so a digest is NOT unique the way a `tool_use_id` is. Collapsing
-      # same-digest journal lines into one (a plain digest => record Hash)
-      # would silently discard every occurrence but the last, and a replay
-      # could then hand every duplicate finding the WRONG verdict. Each digest
-      # therefore keys a QUEUE of same-digest records, consumed FIFO -- the
-      # same order `Verified#grade` wrote them in, since it walks `inner`'s
-      # findings and journals each one before moving to the next.
+      # Two findings can share IDENTICAL text and there is nothing else to key
+      # on, so a digest is NOT unique the way a `tool_use_id` is. A plain
+      # digest => record Hash would silently discard every occurrence but the
+      # last and hand every duplicate finding the WRONG verdict. Each digest
+      # therefore keys a QUEUE consumed FIFO -- the order `Verified#grade` wrote
+      # them in, since it journals each finding before moving to the next.
       class Recorded
         class Unrecorded < Lain::Error; end
 
-        # Build from journaled records: each `verdict` record becomes a
-        # replayable Grade queued under its finding digest. Entries are the
-        # {Journal.records} duck -- parsed Hashes or raw NDJSON line Strings --
-        # so `Recorded.from_journal(File.foreach(path))` reconstitutes a
-        # refuter straight from the record.
+        # Each `verdict` record becomes a replayable Grade queued under its
+        # finding digest, so `Recorded.from_journal(File.foreach(path))`
+        # reconstitutes a refuter straight from the record.
         #
         # @param entries [Enumerable<Hash, String>]
         # @return [Recorded]

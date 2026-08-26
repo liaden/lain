@@ -64,9 +64,9 @@ RSpec.describe Lain::Config::Epics do
   end
 
   # Panel review round 2: Epics.new bypasses .from entirely, so the closed
-  # set has to be enforced in the value's own constructor too -- T1's
-  # Epic::Issue does exactly this, and this whole wave's blockers were all
-  # variants of "constructs fine, fails later" (T9 is specified to `case`
+  # set has to be enforced in the value's own constructor too -- Epic::Issue
+  # does exactly this, and this whole wave's blockers were all variants of
+  # "constructs fine, fails later" (a downstream consumer is specified to `case`
   # on epics_home, so a value that skipped this check would reach it live).
   it "refuses a value outside the closed set at construction, not just through .from" do
     expect { described_class.new(home: :bogus) }.to raise_error(Lain::Config::Epics::InvalidHome, /bogus/)

@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-# B2 (chunk-bench-arms-subcommand): the assembling entry point `bench arms`
-# sits on. It takes a fixture path, the ONE resolved Lain::CLI::Backend the flags
-# built, and an optional isolation NAME -- assembles the arms, the ArmTasks
-# suite, that suite's per-task gold grader and the live SpawnSeam, and hands all
-# four to #arm_report, returning the report String. exe/lain therefore stays a
-# flag parser (its boundary rule at exe/lain:80-85).
+# The assembling entry point `bench arms` sits on. It takes a fixture path, the
+# ONE resolved Lain::CLI::Backend the flags built, and an optional isolation
+# NAME -- assembles the arms, the ArmTasks suite, that suite's per-task gold
+# grader and the live SpawnSeam, and hands all four to #arm_report, returning
+# the report String. exe/lain therefore stays a flag parser (its boundary rule
+# at exe/lain:80-85).
 #
 # Every example here is driven through Provider::Mock: this entry point spends
 # real money in production, so its specs must never resolve a live provider.
@@ -95,7 +95,7 @@ RSpec.describe Lain::Bench::CLI do
     # so a suite silently truncated to the two tasks Driver demands, or an arm
     # quietly dropped, fails here.
     #
-    # T12 widened the header, and the attribution is asserted in the SAME example
+    # The header was widened, and the attribution is asserted in the SAME example
     # because it is the same claim about the same four lines: what ran, over what,
     # under what. `arms_report` is the only caller that can answer all three, so a
     # header that keeps the counts and drops the fixture is still an unattributable
@@ -129,7 +129,7 @@ RSpec.describe Lain::Bench::CLI do
       expect(score_section(arms_report)).to include("1.000").and include("0.000")
     end
 
-    # T12 / CE-6.2: the chunk's headline metric, end to end through the real
+    # The chunk's headline metric, end to end through the real
     # assembly. Every arm asks the same mock once per task, so the whole suite
     # is priced off one recorded model and the section must carry a real figure
     # rather than the zero an unpriced fold would render.
@@ -258,8 +258,9 @@ RSpec.describe Lain::Bench::CLI do
       expect(driver_kwargs).to be_empty
     end
 
-    # The suite fixture is user-supplied (B3 passes a path), and ArmTasks owns
-    # what a missing one means -- one authority on "what a bench task is".
+    # The suite fixture is user-supplied (the caller passes a path), and
+    # ArmTasks owns what a missing one means -- one authority on "what a bench
+    # task is".
     it "surfaces ArmTasks' own error for a fixture path that is not there" do
       expect { cli.arms_report(fixture_path: "no/such/tasks.yml", backend:, provider:) }
         .to raise_error(Lain::Bench::ArmTasks::MissingFixture, %r{no/such/tasks\.yml})
@@ -273,9 +274,9 @@ RSpec.describe Lain::Bench::CLI do
         .to raise_error(Lain::CLI::UnknownProvider, /gpt5/)
     end
 
-    # B3 passes --model/--max-tokens/--temperature/--seed through this tail, and
-    # a silently dropped one is invisible: an unpinned --seed is a
-    # reproducibility hole on a bench whose whole claim is repeatability. The
+    # The command line passes --model/--max-tokens/--temperature/--seed through
+    # this tail, and a silently dropped one is invisible: an unpinned --seed is
+    # a reproducibility hole on a bench whose whole claim is repeatability. The
     # Request the provider was actually handed is the end of that wire.
     it "carries every sampler flag in the tail through to the provider" do
       cli.arms_report(fixture_path:, provider:,
@@ -330,7 +331,7 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
-  # B-1: Arm::OrchestratorWorker's own DEFAULT_DECOMPOSE splits on LINES, and
+  # Arm::OrchestratorWorker's own DEFAULT_DECOMPOSE splits on LINES, and
   # every prompt in the committed suite is a folded YAML scalar -- one line, so
   # one worker, so no fan-out at all. An orchestrator arm that never orchestrates
   # produces a column that looks like a measurement and is a second copy of the
@@ -366,8 +367,8 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
-  # S-1: ArmTasks enforces a unique `id`, NOT a unique `prompt`, and B3 takes the
-  # fixture path from the command line. SuiteGrader dispatches BY PROMPT, so two
+  # ArmTasks enforces a unique `id`, NOT a unique `prompt`, and the fixture path
+  # comes from the command line. SuiteGrader dispatches BY PROMPT, so two
   # tasks sharing one would both resolve to the first -- the second's gold scored
   # against the first's trajectory, silently. Refused where the assumption lives.
   describe "the grader's dispatch key" do

@@ -3,95 +3,78 @@
 module Lain
   module Frontend
     class Neovim
-      # The question round trip's Ruby end (T9): a pending {Question::Set} opens
+      # The question round trip's Ruby end: a pending {Question::Set} opens
       # in the editor as lain://question, the human ticks boxes and writes
       # indented prose, and `:w` hands the parsed {Question::AnswerSet} on.
       #
       # {Compose} is the model for the buffer discipline -- a failure comes back
       # as a NOTICE STRING rather than a boolean, because the object that failed
-      # is the one that knows why -- and it is the model for what this object
-      # deliberately does NOT have. Compose has a {Compose#settle} because a
-      # human pressed C-g and the prompt thread is parked waiting for the answer.
-      # NOTHING WAITS FOR A QUESTION: the asking agent is parked on a
-      # {Lain::Promise} somebody else resolves, so there is no half of this
-      # object that blocks, and adding one would be a park with no waiter.
+      # is the one that knows why -- and for what this object deliberately does
+      # NOT have. Compose has a {Compose#settle} because the prompt thread is
+      # parked waiting. NOTHING WAITS FOR A QUESTION: the asking agent is parked
+      # on a {Lain::Promise} somebody else resolves, so a blocking half here
+      # would be a park with no waiter.
       #
-      # THE GENERATION STAMP IS THE SET'S CONTENT DIGEST (ruling 6). Compose
-      # hand-rolled a counter; content-addressing already supplies one, and the
-      # digest is also how the answer is routed once it leaves here. A write
-      # citing a digest this view is not holding is DROPPED -- never
-      # reinterpreted against whatever is open now, which is the one way a
-      # human's answer could be filed against the wrong question.
+      # THE GENERATION STAMP IS THE SET'S CONTENT DIGEST. Compose hand-rolled a
+      # counter; content-addressing already supplies one, and the digest is also
+      # how the answer is routed once it leaves here. A write citing a digest
+      # this view is not holding is DROPPED, never reinterpreted against whatever
+      # is open now -- which is the one way a human's answer could be filed
+      # against the wrong question.
       #
-      # ONE SET IS OPEN, and it is the one being answered (ruling 2). {#open}
-      # REFUSES while a set is open and unanswered, rather than trusting its
-      # caller not to ask: that refusal is what makes {RequestBuffer}'s clobber
-      # defect ("last-writer-wins on a buffer with two writers",
-      # request_buffer.rb:36-42) structurally unreachable rather than merely
-      # unattempted. It was written as prose here first, and a panel probe walked
-      # straight into it -- a second open re-rendered over a half-ticked
-      # document, and the first set's answer could then never be written, with no
-      # notice on any path. A rule the structure does not enforce is a rule the
-      # next caller gets to break.
+      # ONE SET IS OPEN, and it is the one being answered. {#open} REFUSES while
+      # a set is open and unanswered rather than trusting its caller not to ask,
+      # which is what makes {RequestBuffer}'s clobber defect
+      # (last-writer-wins on a buffer with two writers) structurally unreachable
+      # rather than merely unattempted. Written as prose first, a probe walked
+      # straight into it: a second open re-rendered over a half-ticked document
+      # and the first set's answer could then never be written, with no notice on
+      # any path.
       #
       # CALL SHAPE. {#wrote} runs SYNCHRONOUSLY inside nvim's `BufWriteCmd`
       # rpcrequest, so it reports a bad document by RETURNING the failure: the
-      # lua half turns that into an rpcrequest error, which leaves the buffer
-      # modified with the human's text intact for them to fix. A raise past this
-      # object would kill the RPC thread over a mistyped line, and nothing here
-      # ever re-renders on a failure -- a re-render would overwrite the very edit
-      # they have to go correct.
+      # lua half turns that into an rpcrequest error, leaving the buffer modified
+      # with the human's text intact. A raise past this object would kill the RPC
+      # thread over a mistyped line, and nothing here ever re-renders on a
+      # failure -- a re-render would overwrite the very edit they have to correct.
       #
       # THREAD CONTRACT, AND THE LOCK. {#wrote} and {#abandoned} run on the RPC
-      # thread; {#open} runs on whichever thread opened the set (the reply
-      # consumer's fiber, today). `@open` is the only shared state, and every one
-      # of the three GUARDS it and then SWAPS it -- which the digest alone cannot
-      # make safe, because the digest protects the READ and nothing protected the
-      # write-back. An {#open} landing between {#wrote}'s guard and its swap was
-      # posted to the editor and then destroyed by that swap: the buffer on
-      # screen, `open?` false, every later write answering {STALE}, and no notice
-      # on any path. That is `compose.rb:214-221`'s check-then-act at a second
-      # point, and a compare-and-set is only the same race in two more bytecodes.
+      # thread; {#open} runs on whichever thread opened the set. `@open` is the
+      # only shared state, and all three GUARD it and then SWAP it -- which the
+      # digest alone cannot make safe, because the digest protects the READ and
+      # nothing protected the write-back. An {#open} landing between {#wrote}'s
+      # guard and its swap was posted to the editor and then destroyed by that
+      # swap: the buffer on screen, `open?` false, every later write answering
+      # {STALE}, and no notice on any path. A compare-and-set is only the same
+      # race in two more bytecodes.
       #
-      # So one `Mutex` spans guard-and-swap in all three, and the parse sits
-      # inside it -- the parse is the window, being the slowest thing here.
-      # Nothing under the lock can park: the editor post is the non-blocking
-      # {RenderInlet} path -- `write_nonblock`, and a `push(..., true)` that
-      # raises rather than waits -- and the rail is an unbounded, never-closed
-      # queue. That is a CONSTRAINT on whoever adds the question's own post, not
-      # a property of `RenderQueue`: it also has a blocking `SizedQueue(1024)`
-      # shape, and posting through that one would hold this lock on a full
-      # queue. The
-      # notifier is called OUTSIDE it, because a notice is not state and this
-      # notifier is called OUTSIDE it, because a notice is not state and this
-      # object must not hold a lock across somebody's terminal.
+      # So one `Mutex` spans guard-and-swap in all three, with the parse inside
+      # it, being the slowest thing here and therefore the window. Nothing under
+      # the lock can park: the editor post is the non-blocking {RenderInlet} path
+      # and the rail is an unbounded, never-closed queue. That is a CONSTRAINT on
+      # whoever adds the question's own post rather than a property of
+      # `RenderQueue`, which also has a blocking `SizedQueue(1024)` shape that
+      # would hold this lock on a full queue. The notifier is called OUTSIDE the
+      # lock, because a notice is not state and this object must not hold a lock
+      # across somebody's terminal.
       #
       # It never resolves a promise. {Lain::Promise} wraps an `Async::Variable`
       # and must be resolved on the reactor thread, so the answer leaves through
       # an injected rail -- a queue push, popped by the same consumer that serves
       # every other editor command.
       class QuestionView
-        # The one lain:// buffer that holds a question set. Like
-        # {Compose::BUFFER} it is absent from the runtime's BUFFERS set (00_constants.lua): it is
-        # created when a set is opened, so a session that answers nothing never
-        # grows the buffer.
+        # Like {Compose::BUFFER}, absent from the runtime's BUFFERS set
+        # (00_constants.lua): it is created when a set is opened, so a session
+        # that answers nothing never grows the buffer.
         BUFFER = "lain://question"
 
-        # No editor took the document: none is attached, or the one that was has
-        # died, or it has stopped draining. One notice for all three, because
-        # they are one fact from the human's side ({Compose::DETACHED}'s reason).
-        #
-        # Only {Detached} answers this TODAY. A live editor's refusal comes back
-        # from {RenderInlet#refusable} (rpc_thread.rb:200-203), which
-        # hands every refused open the same {Compose::DETACHED} sentence --
-        # "composing needs an attached editor", which is the wrong sentence for a
-        # question. The card that adds `open_question` to that inlet owns making
-        # it answer this constant instead.
+        # No editor took the document: none attached, one died, or one stopped
+        # draining -- one notice for all three, because they are one fact from
+        # the human's side.
         DETACHED = "answering in the editor needs an attached editor"
 
-        # The buffer already holds a set nobody has answered (ruling 2). Named
-        # rather than boolean: what the human does next differs for the two
-        # cases, so the two sentences do.
+        # The buffer already holds a set nobody has answered. Two sentences
+        # rather than one, because what the human does next differs.
         ALREADY_OPEN = "that question set is already open in #{BUFFER} -- switch to the buffer; reopening it " \
                        "would replace whatever you have typed there".freeze
         OCCUPIED = "#{BUFFER} is holding question set %s, which nobody has answered yet -- answer or close that " \
@@ -140,17 +123,16 @@ module Lain
         # The set the buffer holds, and the only set a write may answer. Both
         # halves travel together because they are read together: the digest says
         # whether this write belongs here, and the set is what the parse is
-        # given (ruling 5).
+        # given.
         Open = Data.define(:digest, :set) do
           def answers?(named) = digest == named
           def open? = true
           def document = Question::Document.unanswered(set)
         end
 
-        # This object's own state representation, private for {Compose}'s reason
-        # (compose.rb:88): nothing outside constructs one or matches on one. What
-        # a caller does need -- the buffer name, the notices, and the two Null
-        # seams -- stays public.
+        # This object's own state representation: nothing outside constructs one
+        # or matches on one. What a caller does need -- the buffer name, the
+        # notices, and the two Null seams -- stays public.
         private_constant :Open, :Closed
 
         # @param rpc [#open_question] the editor's inlet: takes the document's
@@ -178,9 +160,9 @@ module Lain
         # @return [String, nil]
         def digest = @open.digest
 
-        # Render a pending set into the editor. Refuses while a set is already
-        # open (ruling 2) and otherwise never blocks: the post is the editor's
-        # non-blocking path and a refusal is the answer rather than an exception.
+        # Refuses while a set is already open, and otherwise never blocks: the
+        # post is the editor's non-blocking path and a refusal is the answer
+        # rather than an exception.
         #
         # The set is installed AFTER the post, and both under the lock, so a
         # refused open leaves whatever was open untouched and a write for this
@@ -254,12 +236,12 @@ module Lain
 
         private
 
-        # The digest is the whole of a write's identity (ruling 6), so a blank
-        # one is refused at the door and by name: `nil == nil` is true, which is
-        # exactly how a buffer opened under nothing would go on to answer a write
-        # citing nothing. ArgumentError rather than a notice, because this is a
-        # caller handing over a value it should not have -- the human has done
-        # nothing yet.
+        # The digest is the whole of a write's identity, so a blank one is
+        # refused at the door and by name: `nil == nil` is true, which is exactly
+        # how a buffer opened under nothing would go on to answer a write citing
+        # nothing. ArgumentError rather than a notice, because this is a caller
+        # handing over a value it should not have -- the human has done nothing
+        # yet.
         def named!(digest)
           return digest unless Blankness.blank?(digest)
 
@@ -268,8 +250,8 @@ module Lain
                                "so a blank one would let any buffer answer any set"
         end
 
-        # Ruling 2's refusal, and it is two facts rather than one: the human
-        # switches to a buffer they already have, or finishes a different set.
+        # Two facts rather than one: the human switches to a buffer they already
+        # have, or finishes a different set.
         def occupied(digest)
           @open.answers?(digest) ? ALREADY_OPEN : format(OCCUPIED, @open.digest)
         end

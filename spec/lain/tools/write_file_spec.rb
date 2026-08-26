@@ -44,7 +44,7 @@ RSpec.describe Lain::Tools::WriteFile do
       end.not_to raise_error
     end
 
-    # Review panel P8 (Schneeman, BLOCKER): a whole-file writer that cannot
+    # Review panel (Schneeman, BLOCKER): a whole-file writer that cannot
     # produce an empty file, and fails by RAISING rather than by returning an
     # error Result, contradicts its own description ("creating it if it does
     # not exist"). content is a required KEY in the wire schema -- the model

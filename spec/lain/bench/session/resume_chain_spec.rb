@@ -2,7 +2,7 @@
 
 require "json"
 
-# T3: the chain-seam integrity property is fold MEMBERSHIP, not head equality.
+# The chain-seam integrity property is fold MEMBERSHIP, not head equality.
 # `resumed_from.head` may be ANY digest verified while rebuilding the prior
 # file -- a fork from an ancestor head chains to a digest the prior file
 # recorded but did not end on. Membership means "a verified turn RECORDED IN

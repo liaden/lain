@@ -1,21 +1,19 @@
 # frozen_string_literal: true
 
 module Lain
-  # A typed, content-addressed IR for the Gherkin acceptance criteria that plan
-  # docs and skill scaffolds already carry as fenced ```gherkin blocks. Parsing
-  # the house format into deeply frozen values gives the grader a stable digest
-  # to attest against (`Oracle::Definition#digest` is the content-addressing
-  # precedent): two criteria that mean the same thing hash the same, and any
-  # edited clause is a different address.
+  # A typed, content-addressed IR for the Gherkin acceptance criteria plan docs
+  # and skill scaffolds already carry as fenced code blocks. Parsing the house
+  # format into deeply frozen values gives the grader a stable digest to attest
+  # against: two criteria that mean the same thing hash the same, and any edited
+  # clause is a different address.
   #
   # The grammar is deliberately narrow -- exactly what the corpus uses: fenced
-  # blocks of `Scenario:` headers over `Given|When|Then|And` clauses, with
-  # wrapped continuation lines folded into the clause they trail and `#` comment
-  # lines ignored. The one pinned marker is `# rubric` on its own line
-  # immediately before a `Scenario:`, which flags that scenario as human-judged
-  # rather than mechanical. Every other placement of that marker, and anything
-  # the grammar cannot account for, is a loud {MalformedBlock} naming the line --
-  # no silent placement ambiguity, per the loud-failure doctrine.
+  # blocks of `Scenario:` headers over `Given|When|Then|And` clauses, wrapped
+  # continuation lines folded into the clause they trail, comment lines ignored.
+  # The one pinned marker is `# rubric` alone on the line immediately before a
+  # `Scenario:`, flagging it human-judged rather than mechanical. Every other
+  # placement of that marker, and anything the grammar cannot account for, is a
+  # loud {MalformedBlock} naming the line -- no silent placement ambiguity.
   module Gherkin
     class MalformedBlock < Error; end
 
@@ -32,10 +30,10 @@ module Lain
       end
     end
 
-    # A named scenario: its ordered clauses and whether it is `mechanical` (a
-    # generated test proves it) or human-judged (`mechanical: false`, flagged by
-    # a `# rubric` line). The clauses Array is frozen and holds shareable
-    # Clauses, so the whole value is Ractor-shareable.
+    # A named scenario: its ordered clauses and whether a generated test proves
+    # it (`mechanical`) or a human judges it (flagged by a `# rubric` line). The
+    # clauses Array is frozen over shareable Clauses, so the value is
+    # Ractor-shareable.
     Scenario = Data.define(:name, :clauses, :mechanical) do
       def initialize(name:, clauses:, mechanical: true)
         super(name: -name.to_s, clauses: clauses.freeze, mechanical:)
@@ -45,12 +43,11 @@ module Lain
         { "name" => name, "mechanical" => mechanical, "clauses" => clauses.map(&:canonical) }
       end
 
-      # Back OUT to the house format the parser accepts: the `Scenario:` header,
-      # then one clause per line indented two spaces. It lives on the value
+      # Back OUT to the house format the parser accepts. It lives on the value
       # because the two consumers that quote a scenario -- {Approval}'s question
-      # to the human and {TestGeneration}'s prompt to `test_engineer` -- each held
-      # their own copy of these lines, and a scenario asked in one wording and
-      # generated from in another is a difference nothing would report.
+      # to the human and {TestGeneration}'s prompt -- each held their own copy of
+      # these lines, and a scenario asked in one wording and generated from in
+      # another is a difference nothing would report.
       #
       # NOT {#canonical}'s business, which is the digest's wire form: this one is
       # read by people, so it may be reformatted without changing an address.
@@ -76,19 +73,18 @@ module Lain
         scenarios.each(&block)
       end
 
-      # One digest over every scenario in order. `Canonical` sorts object keys
-      # and preserves array order, so clause order and scenario order both count
-      # -- an edited or reordered clause is a different criteria.
+      # `Canonical` sorts object keys and preserves array order, so clause order
+      # and scenario order both count: an edited or reordered clause is a
+      # different criteria.
       def digest
         Canonical.digest("scenarios" => scenarios.map(&:canonical))
       end
     end
 
-    # The line-oriented parser. Held apart from the value objects it builds: it is
-    # the one mutable thing here, folding a fenced block's lines into frozen
-    # Scenarios. Kept out of a `Data.define` block on purpose -- constants and
-    # nested classes declared inside such a block scope to the enclosing module,
-    # not the value class.
+    # The line-oriented parser, held apart from the values it builds because it is
+    # the one mutable thing here. Kept out of a `Data.define` block on purpose:
+    # constants and nested classes declared inside one scope to the enclosing
+    # module, not the value class.
     module Parse
       module_function
 
@@ -96,24 +92,24 @@ module Lain
       TAG = "gherkin"
       KEYWORDS = %w[Given When Then And].freeze
       RUBRIC = "# rubric"
-      # A capitalized word ending in a colon: `Also:`, `Given:`, `Feature:`. That
-      # is unambiguous author intent to name a step/section, so it is never a
-      # wrapped-prose continuation -- an unknown one fails loud rather than being
-      # silently absorbed. `Scenario:` is handled before this ever runs.
+      # A capitalized word ending in a colon is unambiguous author intent to name
+      # a step or section, so it is never a wrapped-prose continuation -- an
+      # unknown one fails loud rather than being silently absorbed. `Scenario:`
+      # is handled before this ever runs.
       COLON_TOKEN = /\A[A-Z][A-Za-z]*:\z/
 
       def call(source)
         Fences.new(source).blocks.flat_map { |open_line, lines| Block.new(open_line, lines).scenarios }
       end
 
-      # Splits a document into fenced ```gherkin blocks: `[opener_line, [[line,
-      # text]...]]` with 1-based line numbers so a {MalformedBlock} names the
-      # offending line. Its one job is fence integrity. A gherkin fence left open
-      # at EOF, or interrupted by another fence before its bare-``` close, is a
-      # loud error naming the opener -- a dropped closing fence silently swallowing
-      # scenarios is exactly the quiet loss the loud-failure doctrine forbids. An
-      # opener followed only by blank lines is an empty block (an author mistake,
-      # not "zero scenarios"). Prose that never opens a fence is simply no blocks.
+      # Splits a document into gherkin-fenced blocks, with 1-based line numbers so
+      # a {MalformedBlock} names the offending line. Its one job is fence
+      # integrity: a fence left open at EOF, or interrupted by another fence
+      # before its bare closing run of backticks, is a loud error naming the
+      # opener, because a dropped closing fence silently swallowing scenarios is
+      # exactly the quiet loss the loud-failure doctrine forbids. An opener
+      # followed only by blank lines is an empty block, an author mistake and not
+      # "zero scenarios"; prose that never opens a fence is simply no blocks.
       class Fences
         def initialize(source)
           @open_line = nil
@@ -133,10 +129,10 @@ module Lain
           end
         end
 
-        # A gherkin fence is recognized by its FIRST info-string token, so a
-        # decorated opener (```gherkin title=x) is never silently dropped. But the
-        # house grammar is bare-only, so anything after the tag is a loud error --
-        # loud beats both silent-parse and silent-drop.
+        # Recognized by its FIRST info-string token, so a decorated opener is
+        # never silently dropped -- but the house grammar is bare-only, so
+        # anything after the tag is a loud error. Loud beats both silent-parse
+        # and silent-drop.
         def open_gherkin(line_number, text)
           raise MalformedBlock, "line #{line_number}: ```gherkin opener must be bare" unless bare_opener?(text)
 
@@ -190,9 +186,8 @@ module Lain
         private
 
         # A pending `# rubric` may be followed ONLY by a `Scenario:` line; any
-        # other line (blank, comment, clause, continuation, a second marker) is
-        # the "no silent placement ambiguity" error, named at the MARKER's line
-        # (not the trailing line that exposed it).
+        # other line is the placement-ambiguity error, named at the MARKER's line
+        # rather than the trailing line that exposed it.
         def feed(line_number, text)
           if @rubric_pending && !scenario?(text)
             raise MalformedBlock,
@@ -290,9 +285,7 @@ module Lain
   end
 end
 
-# G3: TestGeneration reopens nothing (it is a plain sibling class, not a Gherkin
-# reopen), but it depends on Criteria/Scenario existing first, so it loads after
-# the module body above -- gherkin.rb becomes this subtree's index the same way
-# skill.rb is skill/catalog.rb's.
+# A plain sibling class, not a reopen, but it depends on Criteria/Scenario
+# existing first, so it loads after the module body above.
 require_relative "gherkin/test_generation"
 require_relative "gherkin/approval"

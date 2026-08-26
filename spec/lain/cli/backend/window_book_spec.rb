@@ -6,9 +6,9 @@
 # depend on is Backend's.
 #
 # What is here is the one thing that is NOT about Backend's flags: the
-# PROVENANCE of the number a book answers with. T9 made that a value a caller
-# can ask about, because `:approaching_window` spends a window on an
-# irreversible lossy rewrite and a guess must not be allowed to authorise one.
+# PROVENANCE of the number a book answers with. It is a value a caller can ask
+# about, because `:approaching_window` spends a window on an irreversible lossy
+# rewrite and a guess must not be allowed to authorise one.
 RSpec.describe Lain::CLI::Backend::WindowBook do
   describe Lain::CLI::Backend::WindowBook::Served do
     # The narrower book underneath, carrying its own fallback, so an example can
@@ -41,7 +41,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     # direction: a Served book answering for a model it did NOT probe is
     # published (or guessed) by whatever `shipped` says. Calling it probed
     # would hand a rewrite the authority of a runner nobody asked about that
-    # model -- F3 in the opposite direction.
+    # model -- the guessed-window defect in the opposite direction.
     it "is not probed for a model it merely delegated" do
       resolution = served.resolve("claude-sonnet-4-6")
 
@@ -64,10 +64,10 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
         .to raise_error(Lain::ContextWindow::UnknownModel, /wiring bug/)
     end
 
-    # The number is unchanged: T9 suppresses a trigger, it never moves a
+    # The number is unchanged: provenance suppresses a trigger, it never moves a
     # denominator, and the three readers that divide by this book must go on
     # getting exactly what they got.
-    # T6 gave this book a provenance because `--num-ctx` alone builds one with
+    # This book gained a provenance because `--num-ctx` alone builds one with
     # no server behind it. The DEFAULT stays probed: every construction that
     # predates the keyword is a window a runner reported, and
     # `spec/lain/compaction/source_spec.rb` builds one directly to mean exactly
@@ -90,7 +90,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     # discovered on the render path is a chat that dies mid-turn.
     it "refuses an unknown provenance where the mistake was made" do
       expect { described_class.new(model: "qwen3", window_tokens: 32_768, provenance: :measured) }
-        .to raise_error(ArgumentError, /unknown provenance :measured/)
+        .to raise_error(ArgumentError, /provenance must be one of .*, got :measured/)
     end
 
     it "answers the same numbers #window_tokens always did" do
@@ -104,7 +104,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
 
   # The ordinary case, not an error path: nothing resident yet, no server
   # running, or a provider with no endpoint that reports one. It is also the
-  # exact wiring F3 broke under.
+  # exact wiring the guessed-window defect broke under.
   describe "#book" do
     def backend(served_window:, num_ctx: nil)
       provider = instance_double(Lain::Provider::Ollama, context_window_tokens: served_window)
@@ -116,7 +116,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
         .to equal(Lain::ContextWindow.default)
     end
 
-    # The F3 path in one line: no runner resident, an ollama id no
+    # The guessed-window path in one line: no runner resident, an ollama id no
     # Anthropic-shaped table carries, so the number is a floor somebody picked.
     it "resolves an unknown model through that book as a guess" do
       resolution = described_class.new(backend: backend(served_window: nil)).book.resolve("qwen3:4b")
@@ -125,7 +125,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
       expect(resolution).not_to be_authoritative
     end
 
-    # T5 / Correction 4, end to end: the cloud arm's window needs NO provider
+    # End to end: the cloud arm's window needs NO provider
     # change. `ollama.com` has no resident runner to probe, so the provider
     # reports nil and `#book` hands back the shipped book -- which now carries
     # the cloud catalogue, so the answer is authoritative rather than the 8,192
@@ -150,8 +150,8 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     # early return and `vouched_by(nil)` tags the answer GUESSED -- the shipped
     # table is never consulted and {Lain::Compaction::Source} declines
     # `:approaching_window` on it. That is pre-existing and identical on the
-    # local arm; T5 publishes windows, it does not change who vouches for one.
-    # Pinned so the day it changes, it changes here first.
+    # local arm; the cloud catalogue publishes windows, it does not change who
+    # vouches for one. Pinned so the day it changes, it changes here first.
     it "falls back to an unauthoritative --num-ctx for the same cloud model" do
       resolution = described_class.new(backend: cloud_backend(num_ctx: 16_384)).book.resolve("gpt-oss:120b-cloud")
 
@@ -178,7 +178,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
       expect(resolution.provenance).to eq(Lain::ContextWindow::PROBED)
     end
 
-    # T6, and the measured defect it fixes. `--num-ctx 999999` on a model
+    # The measured defect this fixes. `--num-ctx 999999` on a model
     # trained to 262,144 journaled `window=999999 provenance="probed"` while
     # ollama served 262,144: with nothing resident the provider answers nil,
     # `.compact` drops it, and the operator's number became the whole book
@@ -297,11 +297,11 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
       expect(blank.asked).to eq(1)
     end
 
-    # T6 FIX ROUND, and a behaviour change made deliberately. "Re-resolves until
-    # authoritative" silently means "never stops" for the users least able to
-    # diagnose it: an ollama model the shipped table does not carry resolves
-    # GUESSED through {ContextWindow::CONSERVATIVE_FALLBACK}, so no answer short
-    # of a runner can ever settle it. Measured against a black-holed host at
+    # A behaviour change made deliberately. "Re-resolves until authoritative"
+    # silently means "never stops" for the users least able to diagnose it: an
+    # ollama model the shipped table does not carry resolves GUESSED through
+    # {ContextWindow::CONSERVATIVE_FALLBACK}, so no answer short of a runner can
+    # ever settle it. Measured against a black-holed host at
     # 2.003s per re-resolution -- and {Middleware::ResolveWindow} fires once per
     # ITERATION of the agent loop, so a ten-tool-call turn paid +20s for a number
     # that was never going to arrive.

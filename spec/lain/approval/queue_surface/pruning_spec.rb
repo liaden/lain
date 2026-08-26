@@ -9,7 +9,7 @@ module PruningSpecSupport
 end
 
 RSpec.describe Lain::Approval::QueueSurface::Pruning do
-  # AC2: the seen-set no longer grows unbounded. A long watch adjudicates many
+  # The seen-set no longer grows unbounded. A long watch adjudicates many
   # pendings; once one SETTLES (decided elsewhere, or by this surface), its
   # entry is released -- observable here, at the pruning seam itself, rather
   # than via an object-count heuristic on a surface's private @adjudicated.

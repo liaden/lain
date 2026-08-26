@@ -2,7 +2,7 @@
 
 require "timeout"
 
-# T9: the Ruby half of the question round trip. The object is {Compose}'s buffer
+# The Ruby half of the question round trip. The object is {Compose}'s buffer
 # discipline with one half removed and one substituted -- there is no #settle,
 # because nothing waits for a question, and the generation stamp is the set's
 # own content digest (ruling 6) rather than a hand-rolled counter.
@@ -327,7 +327,7 @@ RSpec.describe Lain::Frontend::Neovim::QuestionView do
     end
   end
 
-  # T16's constraint, made mechanical. The next set has to be opened by the
+  # The constraint, made mechanical. The next set has to be opened by the
   # RAIL'S CONSUMER -- the fiber that pops the hand-off queue -- and never by
   # the `submit` callable, because `submit` runs INSIDE this object's lock and
   # that lock is not reentrant. The failure is not subtle and not silent, which

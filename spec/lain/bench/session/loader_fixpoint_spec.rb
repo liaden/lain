@@ -86,7 +86,7 @@ RSpec.describe Lain::Bench::Session::Loader do
   # to REMEMBER is a precondition one of them will forget, and #on_chain? did:
   # it reached the fold directly, so on a healthy spawned session 8 of the 24
   # orders in which the Loader's four public questions can be asked still raised
-  # the F23 refusal -- and the loader stayed poisoned for every later question.
+  # the Corrupt refusal -- and the loader stayed poisoned for every later question.
   # Production was masked only by ResumeChain#prior_timeline happening to ask
   # #timeline one line earlier, an accident of a call site, which is the very
   # order-dependence this card exists to delete. The fixpoint now lives on the
@@ -304,7 +304,7 @@ RSpec.describe Lain::Bench::Session::Loader do
       expect(loaded.timeline.head_digest).to eq(citing.head_digest)
     end
 
-    # T2 scope expansion, and the reason this case is spec'd at the Loader
+    # This is a scope expansion, and the reason this case is spec'd at the Loader
     # rather than only on MessageReplay: eager prior-file replay is exactly the
     # path that carried the escape ACROSS a file boundary. A prior file damaged
     # this way refused as a bare Store::MissingObject with nothing on it naming

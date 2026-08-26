@@ -1,6 +1,6 @@
--- Annotations and critique findings, projected into nvim's DIAGNOSTIC layer
--- (T17). The whole trade: a severity map, in exchange for gutter signs, virtual
--- text, `]d`/`[d`, `:setqflist`, severity filtering and every picker's
+-- Annotations and critique findings, projected into nvim's DIAGNOSTIC layer.
+-- The whole trade: a severity map, in exchange for gutter signs, virtual text,
+-- `]d`/`[d`, `:setqflist`, severity filtering and every picker's
 -- diagnostics source -- which is how `:Telescope diagnostics` becomes a comment
 -- browser without a line of code here. None of that is machinery this repo then
 -- owns.
@@ -20,8 +20,8 @@
 -- names its anchor extmark, this module asks nvim where that mark is NOW, and
 -- the whole namespace is re-rendered whenever the buffer changes.
 --
--- 49, after 47_diff: the buffers it decorates are T15's, and it reads the
--- `b:lain_review_side` stamp T15 withdraws when the human moves on. ONE new
+-- 49, after 47_diff: the buffers it decorates are 47_diff's, and it reads the
+-- `b:lain_review_side` stamp 47_diff withdraws when the human moves on. ONE new
 -- top-level name, as 41_layout and 47_diff each take one, because the chunk
 -- shares a scope.
 --
@@ -83,11 +83,12 @@ function review_diagnostics.severity(name)
 end
 
 -- Where the note IS, asked of the extmark that holds it. A mark that answers
--- nothing is refused rather than skipped: the extmark contract measured for T15
--- is that a mark inside a rewritten span MOVES and never invalidates, so an id
--- with no position is a bookkeeping slip -- an entry naming a mark from another
--- buffer or another namespace -- and dropping it silently would lose a note the
--- human wrote while every count still looked right.
+-- nothing is refused rather than skipped: the extmark contract measured for
+-- 47_diff's buffers is that a mark inside a rewritten span MOVES and never
+-- invalidates, so an id with no position is a bookkeeping slip -- an entry
+-- naming a mark from another buffer or another namespace -- and dropping it
+-- silently would lose a note the human wrote while every count still looked
+-- right.
 --
 -- Answers nil rather than refusing, because the two callers want opposite things
 -- from the same question and only ONE of them is being told something new. See
@@ -130,12 +131,12 @@ end
 
 -- The entries whose anchors are STILL THERE, for the speculative path.
 --
--- This is the set/refresh asymmetry this module already states for T15's stamp,
--- applied to the mark -- and it was missing, which cost the card its own failure
--- mode back. A `set` is Ruby naming a mark it believes in, so a mark that
--- answers nothing is a bookkeeping slip and is refused. A REFRESH is
--- speculative: T16 owns annotation removal, so a mark that has gone since the
--- render is a note somebody legitimately withdrew, not a slip.
+-- This is the set/refresh asymmetry this module already states for 47_diff's
+-- stamp, applied to the mark -- and it was missing, which cost the card its own
+-- failure mode back. A `set` is Ruby naming a mark it believes in, so a mark
+-- that answers nothing is a bookkeeping slip and is refused. A REFRESH is
+-- speculative: 48_annotate owns annotation removal, so a mark that has gone
+-- since the render is a note somebody legitimately withdrew, not a slip.
 --
 -- Raising there was silently catastrophic rather than loud. Measured: clear the
 -- annotation namespace and type one character -- nvim SWALLOWS an error thrown
@@ -205,21 +206,21 @@ end
 -- idempotent: nothing crosses the wire, because the words were remembered when
 -- they were rendered and only the positions can have moved.
 --
--- It re-checks T15's stamp AND each mark, where `set_review_diagnostics` refuses
--- on both, and the asymmetry is the point. A `set` is an instruction from Ruby,
--- which knows what it is rendering; a refresh is speculative -- an autocmd fired
--- it, or a caller with no fresh knowledge did -- so it has to ask whether the
--- claims still hold, and a claim that has stopped holding is somebody else's
--- legitimate change rather than an error to throw at them.
+-- It re-checks 47_diff's stamp AND each mark, where `set_review_diagnostics`
+-- refuses on both, and the asymmetry is the point. A `set` is an instruction
+-- from Ruby, which knows what it is rendering; a refresh is speculative -- an
+-- autocmd fired it, or a caller with no fresh knowledge did -- so it has to ask
+-- whether the claims still hold, and a claim that has stopped holding is
+-- somebody else's legitimate change rather than an error to throw at them.
 --
--- So: T15 withdraws the stamp when the human moves on (the new side is a real
--- file buffer that outlives the review, and diagnostics left on it would be a
--- review of a file nobody is reviewing) -- the buffer is cleared and forgotten.
--- T16 withdraws a note -- that entry is dropped, its siblings keep rendering,
--- and a namespace with nothing left is reset and forgotten. NOTHING here
--- raises, because see `surviving`: an error thrown from an autocmd callback is
--- swallowed by nvim, which turns a refusal into a diagnostic frozen at a stale
--- row forever.
+-- So: 47_diff withdraws the stamp when the human moves on (the new side is a
+-- real file buffer that outlives the review, and diagnostics left on it would
+-- be a review of a file nobody is reviewing) -- the buffer is cleared and
+-- forgotten. 48_annotate withdraws a note -- that entry is dropped, its
+-- siblings keep rendering, and a namespace with nothing left is reset and
+-- forgotten. NOTHING here raises, because see `surviving`: an error thrown from
+-- an autocmd callback is swallowed by nvim, which turns a refusal into a
+-- diagnostic frozen at a stale row forever.
 function _G.__lain.refresh_review_diagnostics(buf)
   local held = review_diagnostics.kept[buf]
   if held == nil then

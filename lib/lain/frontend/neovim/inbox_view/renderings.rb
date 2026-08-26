@@ -5,9 +5,8 @@ module Lain
     class Neovim
       class InboxView
         # What this view has handed out, and which of it the editor can still be
-        # holding. Separate from {InboxView} because reconciling "what I drew"
-        # with "what you are looking at" is its own rule, and the gesture is only
-        # safe while that rule is stated in one place.
+        # holding. Its own object because the gesture is only safe while that
+        # rule is stated in one place.
         #
         # LOCK-FREE ON PURPOSE, and it is safe only because of who calls it:
         # every caller is an {InboxView} method holding that view's `@slot`
@@ -15,22 +14,17 @@ module Lain
         # this object's mutation and every read of it are already serialized.
         # Nothing outside {InboxView} may hold one.
         class Renderings
-          # One rendering, as a gesture has to read it back: the STAMP the
-          # editor's buffer carries for it (T16), and which set OWNS each of its
-          # lines. The stamp is what the editor sends back with the gesture,
-          # and it is the whole of the identity -- the empty-state placeholder
-          # and a one-item list are both ONE line high, so the height could
-          # never separate them and the stamp always does.
+          # The STAMP the editor's buffer carries, and which set OWNS each of its
+          # lines. The stamp is the whole of the identity: the empty-state
+          # placeholder and a one-item list are both ONE line high, so a height
+          # could never separate them.
           #
-          # ONE ENTRY PER LINE, NEVER ONE PER SET (T12), and that is what this
-          # object had wrong rather than incomplete: `digests` used to be the
-          # listed sets in order, addressed as `digests[line - 1]`, which is the
-          # same answer only while every item is exactly one line. The moment a
-          # question folded under its summary, that arithmetic named the
-          # NEIGHBOURING set -- which is why {InboxView#line_for} was pinned to
-          # one line at all. `owners` is the map the drawing pass builds beside
-          # the lines it draws, so a set owns every line of its own item and the
-          # keys below the list own nothing.
+          # ONE ENTRY PER LINE, NEVER ONE PER SET. Addressing the listed sets as
+          # `digests[line - 1]` is the same answer only while every item is
+          # exactly one line; the moment a question folds under its summary that
+          # arithmetic names the NEIGHBOURING set. `owners` is the map the drawing
+          # pass builds beside the lines it draws, so a set owns every line of its
+          # own item and the keys below the list own nothing.
           Rendering = Data.define(:generation, :owners) do
             def stamped?(named) = generation == named
 
@@ -41,22 +35,17 @@ module Lain
           end
           private_constant :Rendering
 
-          # How many stay resolvable, and it is a MEMORY bound now rather than a
-          # rule about correctness -- which is the whole difference the stamp
-          # makes. The previous bound was 2, justified by "the render queue
-          # drains everything in one tick, so the screen is the newest rendering
-          # or the one before it". That justification was FALSE: {RenderQueue}
-          # drains once per RPC tick, so a burst posts arbitrarily many
-          # renderings between drains and the screen can be k of them behind.
-          # Under the height key, a rendering that aged out did not fail --
-          # it ALIASED onto a later one of the same height and opened the wrong
-          # document, reported as a success. Under the stamp both sides are
-          # safe: a rendering still held resolves exactly, and one forgotten is
-          # refused BY NAME ({UNSHOWN}). So this number only says how far
-          # behind the screen may be before a keypress must be pressed again,
-          # and each rendering costs one frozen array of digests -- one entry
-          # per LINE since T12, which is a rendering's height rather than its
-          # item count and still nothing worth bounding more tightly.
+          # How many stay resolvable: a MEMORY bound, not a rule about
+          # correctness, which is the difference the stamp makes. "The render
+          # queue drains everything in one tick, so the screen is the newest
+          # rendering or the one before it" is FALSE -- {RenderQueue} drains once
+          # per RPC tick, so a burst posts arbitrarily many renderings between
+          # drains and the screen can be k of them behind. Keyed on HEIGHT, a
+          # rendering that aged out did not fail: it ALIASED onto a later one of
+          # the same height and opened the wrong document, reported as a success.
+          # Under the stamp a rendering still held resolves exactly and one
+          # forgotten is refused BY NAME, so this number only says how far behind
+          # the screen may be before a keypress must be pressed again.
           HELD = 16
 
           def initialize

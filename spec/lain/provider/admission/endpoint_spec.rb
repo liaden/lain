@@ -4,8 +4,8 @@
 # key. Split from the gate because they are two jobs -- counting callers, and
 # reading URLs -- and because a review probe proved they have to AGREE: the
 # canonical key must fold exactly the spellings `.local?` folds, or the keying
-# defeats the rule. F26 reproduced through the real construction sites while
-# they disagreed.
+# defeats the rule. The overlap defect reproduced through the real construction
+# sites while they disagreed.
 RSpec.describe Lain::Provider::Admission::Endpoint do
   # BOTH MISCLASSIFICATIONS ARE HARMFUL, IN OPPOSITE DIRECTIONS, and the table
   # below is written to keep that in view rather than to check a flag.
@@ -14,13 +14,13 @@ RSpec.describe Lain::Provider::Admission::Endpoint do
   #   flight and SERIALISES concurrent subagents -- the throughput regression
   #   the locality rule exists to prevent;
   #
-  #   a FALSE NEGATIVE (local read as hosted) hands it {Null} and LEAVES F26
-  #   LIVE, silently -- nothing errors, two round trips simply overlap on a
+  #   a FALSE NEGATIVE (local read as hosted) hands it {Null} and LEAVES THE
+  #   OVERLAP LIVE, silently -- nothing errors, two round trips simply overlap on a
   #   one-slot server again.
   #
   # Neither direction is the safe default, so neither may be relaxed to fix the
   # other. Three of these were live at review: the trailing-dot FQDN and the
-  # bind-all address failed the F26 way, and the scheme-less hosted name failed
+  # bind-all address failed the overlap way, and the scheme-less hosted name failed
   # the subagent way.
   [["http://localhost:11434", "the canonical spelling"],
    ["http://LOCALHOST:11434", "an uppercased host"],

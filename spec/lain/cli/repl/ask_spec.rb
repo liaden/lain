@@ -2,7 +2,7 @@
 
 require "stringio"
 
-# The unit half of T16's Ruby rule. `repl_spec.rb` drives the whole thing --
+# The unit half of the value-path rule. `repl_spec.rb` drives the whole thing --
 # a real Agent, a real Conductor, a real Async task -- and measures what reaches
 # the human's stderr, which is the only place the defect was ever visible. This
 # file states the contract that makes that possible, on its own subject: which
@@ -70,7 +70,7 @@ RSpec.describe Lain::CLI::Repl::Ask do
       expect(ask.settle(Lain::Error.new("torn"))).to be_nil
     end
 
-    # B5's ordering, kept with the code that moved: a raise can land AFTER
+    # This ordering, kept with the code that moved: a raise can land AFTER
     # commits, so the committed turns are journaled BEFORE the stop is recorded
     # and `interrupted` then names the true last commit rather than an earlier
     # head.
@@ -87,7 +87,7 @@ RSpec.describe Lain::CLI::Repl::Ask do
       expect(chronicle).not_to have_received(:interrupted)
     end
 
-    # F26's triage has to be doable from the file: "the model went quiet" and
+    # Triage has to be doable from the file: "the model went quiet" and
     # "the harness stopped the run" are different failures with different
     # owners, and before this they were one indistinguishable record.
     it "names a provider stall rather than a generic interruption" do

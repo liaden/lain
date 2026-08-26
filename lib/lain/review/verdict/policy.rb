@@ -8,20 +8,20 @@ module Lain
       # A PORT, not a rule, and that is the whole reason it is an object. The
       # interaction between "approve requires every hunk reviewed" and the
       # `deferred` approval gate is an open question, and a rule you cannot swap
-      # is a rule you cannot experiment with on a bench -- so {Session} takes one
-      # of these as a collaborator and takes no admissibility decision itself.
-      # THREE RULES, and which of them a caller can TYPE is as much of the
-      # design as what each one admits. {EveryHunk} is what a session takes when
-      # nobody says otherwise. {BlockersOnly} is the escape a human asks for by
-      # name ({FLAG}): it forgives rows nobody read and still refuses an
-      # objection nobody answered. {Permissive} forgives everything, which is
-      # right for a run with nobody at a keyboard and is why it has no typed
-      # construction site -- it arrives only as an injected `policy:`.
+      # is a rule you cannot experiment with on a bench.
       #
-      # It judges ADMISSIBILITY only. The vocabulary -- that `approve` is a
-      # verdict and `looks-fine` is not -- belongs to {Review::VERDICTS} and is
-      # enforced by {ReviewVerdict}'s own guard, which runs whether a policy
-      # exists or not. Two guards for one question is how they drift apart.
+      # THREE RULES, and which of them a caller can TYPE is as much of the design
+      # as what each admits. {EveryHunk} is what a session takes when nobody says
+      # otherwise. {BlockersOnly} is the escape a human asks for by name
+      # ({FLAG}): it forgives rows nobody read and still refuses an objection
+      # nobody answered. {Permissive} forgives everything, which is right for a
+      # run with nobody at a keyboard and is why it has no typed construction
+      # site.
+      #
+      # It judges ADMISSIBILITY only. The vocabulary belongs to
+      # {Review::VERDICTS} and is enforced by {ReviewVerdict}'s own guard, which
+      # runs whether a policy exists or not. Two guards for one question is how
+      # they drift apart.
       class Policy
         # An approve was submitted over work that is not fully reviewed. Named
         # after the CHANGESET's condition rather than the verdict's, because the
@@ -66,19 +66,15 @@ module Lain
         # sentence that offers {FLAG} and the object that flag asks for are one
         # question, and answering it twice is how the two come to disagree.
         #
-        # ⚠️ IT DOES NOT ANSWER {Permissive}, AND THAT IS THE POINT OF THE
-        # METHOD. The flag's own sentence ({EveryHunk#refusal}) offers it as a
-        # way past ROWS nobody has read. An unanswered `blocker` is not an
-        # unread row -- it is somebody who read the work and said no -- so
+        # IT DOES NOT ANSWER {Permissive}, AND THAT IS THE POINT OF THE METHOD.
+        # The flag's own sentence ({EveryHunk#refusal}) offers it as a way past
+        # ROWS nobody has read. An unanswered `blocker` is not an unread row, so
         # forgiving one is outside what the sentence promises, and a flag named
-        # in both commands' `usage` would put that power in front of every
-        # reader of the help text. {Permissive} keeps its own semantics for the
-        # injected path; what the human can type resolves to {BlockersOnly}.
-        #
-        # An earlier draft of this method DID answer `Permissive`, which made an
-        # objection forgivable by a typed line for the first time -- the escape
-        # is old, its reachability was new, and reachability is what made it a
-        # defect.
+        # in both commands' `usage` would put that power in front of every reader
+        # of the help text. An earlier draft of this method DID answer
+        # `Permissive`, which made an objection forgivable by a typed line for
+        # the first time -- the escape is old, its reachability was new, and
+        # reachability is what made it a defect.
         #
         # @param permissive [Boolean] whether the caller's line carried {FLAG}
         # @return [Policy] the escape a human may ask for, or the rule that
@@ -89,34 +85,30 @@ module Lain
         # in one place, on the port, because a second policy deriving its own
         # answer is the trap {Marks} already warns about for the tri-state.
         #
-        # ANNOTATIONS ARE A LOG, NOT A MAP, and getting that backwards is worth
-        # a paragraph because the first version of this method did. A mark is a
+        # ANNOTATIONS ARE A LOG, NOT A MAP, and getting that backwards is worth a
+        # paragraph because the first version of this method did. A mark is a
         # map: the key MEANS "this hunk's state", re-marking is the only gesture
         # that touches it, and last-wins is what the key is FOR. A note is an
-        # entry: {Session#annotations} is append-only, a surface renders every
-        # one of them, and placing a second is an additive act rather than a
-        # state transition. So identity here is {AnnotationPlaced}'s own `id` --
-        # what {Surface::Neovim} already draws by -- and folding by position
-        # would collapse two objections that drifted onto one line into one,
-        # making the policy and the surface disagree by construction.
+        # entry: {Session#annotations} is append-only and placing a second is
+        # additive rather than a state transition. So identity here is
+        # {AnnotationPlaced}'s own `id`, and folding by position would collapse
+        # two objections that drifted onto one line into one, making the policy
+        # and the surface disagree by construction.
         #
         # A position `(path, side, line)` is therefore not an identity but an
         # ADDRESS: where an answer is delivered. The rule is one answer, one
-        # objection, oldest first -- a human with two objections on a line
-        # answers both or the line still refuses. What resolves a blocker is a
-        # `note` on the same line: `:LainNote note ...`, the `n` key on the diff
-        # rail. There is no `resolved` kind and no record that deletes a note,
-        # and inventing either would be a persisted-record change; this needs
-        # neither.
+        # objection, oldest first. What resolves a blocker is a `note` on the
+        # same line; there is no `resolved` kind and no record that deletes a
+        # note, and inventing either would be a persisted-record change.
         #
         # An answer cannot precede its objection, which falls out of the walk
         # rather than being checked: a note landing on a line with nothing open
         # is spent on nothing.
         #
         # `revision` is deliberately NOT part of the address. An anchor carries
-        # the revision it was authored against ({AnnotationPlaced}), so folding
-        # it in would mean a human who answered a blocker after the diff moved
-        # had answered nothing, with no way to tell they had not.
+        # the revision it was authored against, so folding it in would mean a
+        # human who answered a blocker after the diff moved had answered nothing,
+        # with no way to tell they had not.
         #
         # @param annotations [Enumerable<AnnotationPlaced>] this round's notes,
         #   oldest first -- {Session#annotations}' own order
@@ -128,9 +120,9 @@ module Lain
         end
 
         # One queue of open blocker ids per address; an {ANSWER} spends the
-        # oldest one waiting there. Two accumulators rather than one because
-        # they answer different questions -- what is still open as the walk runs,
-        # and what was closed by the end -- and only the second is the result.
+        # oldest one waiting there. Two accumulators rather than one because they
+        # answer different questions -- what is still open as the walk runs, and
+        # what was closed by the end -- and only the second is the result.
         #
         # @param annotations [Enumerable<AnnotationPlaced>]
         # @return [Array<String>] the ids of the blockers that were answered
@@ -172,21 +164,19 @@ module Lain
         # rule is the one that flag's sentence promises: rows nobody read stop
         # refusing, and an unanswered `blocker` still does. Those are different
         # claims -- an unread row says nobody looked, a blocker says somebody
-        # looked and said no -- and a single escape that collapsed them would
-        # make `blocker` a kind nothing reads again, which is the exact defect
-        # {Policy.unresolved} was written to end.
+        # looked and said no -- and a single escape collapsing them would make
+        # `blocker` a kind nothing reads again.
         #
-        # It is {EveryHunk}'s SUPERCLASS rather than its sibling, so the blocker
+        # {EveryHunk}'s SUPERCLASS rather than its sibling, so the blocker
         # refusal and its sentence exist once. The strict rule is this rule plus
         # one more, which is what the inheritance says out loud.
         #
-        # {Marks#states} is called for its PRECONDITION and its answer
-        # discarded: a base mismatch means the blockers' own line numbers were
-        # recorded against another diff, so nothing below is evidence about the
-        # changeset in hand. {EveryHunk} needs that same walk's RESULT, which is
-        # why it re-states the call rather than taking this one through `super`
-        # -- two walks of a work-scale corpus for one submission is a real cost,
-        # and the note on {EveryHunk#admit!} is about paying it once.
+        # {Marks#states} is called for its PRECONDITION and its answer discarded:
+        # a base mismatch means the blockers' own line numbers were recorded
+        # against another diff. {EveryHunk} needs that same walk's RESULT, which
+        # is why it re-states the call rather than taking this one through
+        # `super` -- two walks of a work-scale corpus for one submission is a
+        # real cost.
         class BlockersOnly < Policy
           # How many positions a refusal names before it summarizes the rest. A
           # work-scale changeset is thousands of files (research 3.7), and a
@@ -217,15 +207,13 @@ module Lain
           # Names the ADDRESS rather than the note's words: the words are on
           # screen where the human left them, and the address is what they have
           # to navigate back to in order to answer it. The way out is in the
-          # sentence for the reason {EveryHunk#refusal} puts the swap in its own
-          # -- a wall that does not carry one is a review nobody can settle, and
-          # this is the only place the gesture is written down for someone who
-          # has not read {Policy.unresolved}.
+          # sentence for {EveryHunk#refusal}'s reason -- a wall that does not
+          # carry one is a review nobody can settle.
           #
-          # It offers no flag, and no flag may ever be added to it: {FLAG} is
-          # advertised in both review commands' `usage`, and a sentence that
-          # named one here would tell every reader of the help text how to
-          # approve over an objection.
+          # It offers no flag, and none may ever be added: {FLAG} is advertised
+          # in both review commands' `usage`, and a sentence naming one here
+          # would tell every reader of the help text how to approve over an
+          # objection.
           #
           # It COUNTS them, because two objections that drifted onto one line
           # name the same address twice and would otherwise read as one entry
@@ -253,22 +241,20 @@ module Lain
 
         # Approve only over a changeset whose every hunk is marked reviewed.
         #
-        # {BlockersOnly} plus one rule, which is what the superclass says: an
-        # unanswered objection refuses either way, and this adds that a row
-        # nobody has read refuses too. {FLAG} drops exactly this addition.
+        # {BlockersOnly} plus one rule: an unanswered objection refuses either
+        # way, and this adds that a row nobody has read refuses too. {FLAG} drops
+        # exactly this addition.
         #
         # It reads the tri-state through {Marks#states} -- one total pass, and
         # the one place that derivation lives -- rather than deriving anything
         # itself. A second derivation here would be free to disagree with the
-        # glyph a surface renders beside it, which is the same trap
-        # {Review::MARK_STATES}' own doc warns about for a stored `partial`.
+        # glyph a surface renders beside it.
         #
         # A file the diff touched but no hunk covers (a binary change, a mode
-        # change, a pure rename) never reaches {Marks#states} at all, so it
-        # cannot block: it has no unreviewed hunk to block WITH. Its row still
-        # renders `unreviewed`, because no hunk of it is marked reviewed, and
-        # those two statements are consistent rather than in tension -- one is
-        # about hunks, the other about a file with none.
+        # change, a pure rename) never reaches {Marks#states}, so it cannot
+        # block: it has no unreviewed hunk to block WITH. Its row still renders
+        # `unreviewed`, and the two statements are consistent -- one is about
+        # hunks, the other about a file with none.
         class EveryHunk < BlockersOnly
           # The one {MARK_STATES} member that counts, in the Symbol form
           # {Marks#states} answers in. Derived from {Marks::REVIEWED} rather
@@ -280,18 +266,16 @@ module Lain
           # because a base mismatch is a PRECONDITION: the marks were recorded
           # against another diff, and so were the blockers' own line numbers, so
           # nothing below is evidence about the changeset in hand. Refusing
-          # "answer the blocker at a.rb:3" over a position that names a line in
-          # some other diff sends a human somewhere real and wrong, and only
-          # walls them at the actual problem on the second try.
+          # "answer the blocker at a.rb:3" over a position naming a line in some
+          # other diff sends a human somewhere real and wrong.
           #
           # Blocked then outranks Incomplete: a human who has read the work and
-          # said no is a stronger statement than a human who has not read it
-          # yet.
+          # said no is a stronger statement than one who has not read it yet.
           #
           # This costs the whole-corpus walk on every refusal, blockers included
-          # -- an earlier draft put the blocker check first to skip it. That was
-          # the wrong trade: correctness outranks the walk, and the walk is one
-          # a submit already pays on every path that admits.
+          # -- an earlier draft put the blocker check first to skip it. Wrong
+          # trade: correctness outranks the walk, and it is one a submit already
+          # pays on every path that admits.
           #
           # @param verdict [String] a member of {Review::VERDICTS}
           # @param changeset [#base_ref, #hunks] the whole, unfiltered changeset
@@ -319,21 +303,18 @@ module Lain
           # sentence has to carry its own escape.
           #
           # BOTH REMEDIES ARE GESTURES, and that is the correction this sentence
-          # carries. It used to end `Verdict::Policy::Permissive.new`, which is
-          # a Ruby constructor offered to somebody holding an editor: this
-          # message is {Handover#wrote_verdict}'s return value, and the lua half
-          # echoes it on the review rail. `x` is the sidebar's own reviewed-mark
-          # key (`46_sidebar.lua`'s `MARK_KEYS`) and {FLAG} is a switch both
-          # review commands declare, so a reader can perform either without
-          # leaving the review.
+          # carries. It used to end `Verdict::Policy::Permissive.new`, a Ruby
+          # constructor offered to somebody holding an editor: this message is
+          # {Handover#wrote_verdict}'s return value, and the lua half echoes it on
+          # the review rail. `x` is the sidebar's own reviewed-mark key and {FLAG}
+          # is a switch both review commands declare, so a reader can perform
+          # either without leaving the review.
           #
           # It says nothing about a blocker, and must not: {BlockersOnly#blocked}
-          # outranks this refusal, so a human reading THIS one has none
-          # standing. The escape it offers is mechanically incapable of
-          # forgiving one -- {FLAG} resolves to {BlockersOnly}, which keeps that
-          # refusal -- and the two statements have to stay true together: a
-          # sentence that offered a flag which DID forgive an objection would be
-          # a promise the flag broke.
+          # outranks this refusal, so a human reading THIS one has none standing.
+          # The escape it offers is mechanically incapable of forgiving one --
+          # {FLAG} resolves to {BlockersOnly} -- and the two statements have to
+          # stay true together.
           def refusal(verdict, outstanding)
             named = outstanding.first(NAMED_LIMIT).map { |path, state| "#{path} is #{state}" }
             rest = outstanding.size - named.size
@@ -347,29 +328,24 @@ module Lain
         # Admit anything. The designed escape for a run with nobody at a
         # keyboard: an unattended agent under the `deferred` gate cannot mark
         # hunks, so {EveryHunk} would wedge it, and the answer is to swap the
-        # rule rather than to weaken it for everyone.
+        # rule rather than weaken it for everyone. A real class rather than a
+        # `->(...) {}` so a caller wiring it says the name out loud.
         #
-        # It is a real class rather than a `->(...) {}` so that a caller wiring
-        # it says the name out loud in the code.
-        #
-        # ⚠️ IT HAS NO TYPED CONSTRUCTION SITE, and that is a property to keep.
-        # Nothing a human can put on a `/survey` or `/review` line resolves
-        # here: {FLAG} answers {BlockersOnly}, and this class arrives only as an
-        # injected `policy:` (`tools/request_review.rb`). The reason is in
-        # {Policy.strict_unless}, and it is about REACHABILITY rather than about
-        # these semantics -- forgiving everything is right for a run with nobody
-        # at a keyboard and wrong for a word advertised in a `usage` string.
+        # IT HAS NO TYPED CONSTRUCTION SITE, and that is a property to keep.
+        # Nothing a human can put on a `/survey` or `/review` line resolves here:
+        # {FLAG} answers {BlockersOnly}, and this arrives only as an injected
+        # `policy:`. The reason is REACHABILITY rather than these semantics --
+        # forgiving everything is right for a run with nobody at a keyboard and
+        # wrong for a word advertised in a `usage` string.
         class Permissive < Policy
           # Every argument is kept and named, and none is read: the port's shape
           # is what a reader needs from this file, and `(*, **)` would hide it.
-          # {Surface::Null} makes the same trade for the same reason.
           #
-          # `annotations` is kept and unread like the rest, and a blocker is
-          # therefore admitted over. That is the escape working as designed: a
-          # run with nobody at a keyboard cannot resolve a blocker any more than
-          # it can mark a hunk, so a Permissive that started reading them would
-          # wedge exactly the case it exists to unwedge.
-          #
+          # `annotations` is kept and unread like the rest, so a blocker is
+          # admitted over. That is the escape working as designed: a run with
+          # nobody at a keyboard cannot resolve a blocker any more than it can
+          # mark a hunk, so a Permissive that started reading them would wedge
+          # exactly the case it exists to unwedge.
           # @return [void]
           def admit!(verdict, changeset:, marks:, annotations:) = nil # rubocop:disable Lint/UnusedMethodArgument
         end

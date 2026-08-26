@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-# B1 (chunk-bench-arms-subcommand): the LIVE spawn seam -- the sibling of
-# ArmSweep::Recordings#seam, whose provider is replayed from a committed
-# fixture. This one is HANDED the same Lain::CLI::Backend `bench record` and
-# `lain chat` are handed, so a provider name means one thing across every
-# command and the seam holds no second copy of the flags that built it.
+# The LIVE spawn seam -- the sibling of ArmSweep::Recordings#seam, whose
+# provider is replayed from a committed fixture. This one is HANDED the same
+# Lain::CLI::Backend `bench record` and `lain chat` are handed, so a provider
+# name means one thing across every command and the seam holds no second copy
+# of the flags that built it.
 #
 # Every example here injects a Provider::Mock: the seam's whole point is that it
 # CAN build a money-spending client, so no spec is allowed to let it (the one
@@ -68,7 +68,7 @@ RSpec.describe Lain::Bench::SpawnSeam do
       expect(second.timeline.store.size).to be_zero
     end
 
-    # The capabilities B2 hands the arms through. Dropped, every arm still
+    # The capabilities every arm is handed through. Dropped, every arm still
     # completes and merely scores zero -- which a bench cannot tell apart from a
     # model that failed the task.
     it "gives every agent the injected toolset" do
@@ -102,7 +102,7 @@ RSpec.describe Lain::Bench::SpawnSeam do
       expect(seam.call(journal:, timeline: rooted).timeline.head).to eq(rooted.head)
     end
 
-    # B10's adaptive router spawns with `model:`/`template:`; a fixed-arity seam
+    # The adaptive router spawns with `model:`/`template:`; a fixed-arity seam
     # would reject those, so the tail is accepted and ignored rather than
     # crashing an arm this seam does not yet serve.
     it "accepts spawn-time options it does not use" do

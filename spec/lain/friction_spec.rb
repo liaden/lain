@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# M1: the friction-observer's deterministic core, for the lain USER. Folds
+# The friction-observer's deterministic core, for the lain USER. Folds
 # Grader::FrustrationRepair, Grader::ToolSteering, and Bench::Rewrites over
 # one session Journal and renders each detected signal beside the knob that
 # addresses it -- no model call, so the render is byte-identical across runs.
@@ -84,7 +84,7 @@ RSpec.describe Lain::Friction::Report do
     end
   end
 
-  # T18: one report, one projection. FrustrationRepair and ToolSteering read the
+  # One report, one projection. FrustrationRepair and ToolSteering read the
   # SAME ToolCallIndex over the same records, so the Report builds it once and
   # injects it -- three parses of one in-memory array was the defect.
   describe "one render builds one ToolCallIndex" do
@@ -143,7 +143,7 @@ RSpec.describe Lain::Friction::Report do
     end
   end
 
-  # T11/AC 2. The round-8 ollama report printed `4 prefix rewrites detected` and,
+  # The round-8 ollama report printed `4 prefix rewrites detected` and,
   # two lines later, `none -- no prefix break was re-billed`. Both true: the
   # rewrite line reads `request_sent` prefix chains and nothing else, while the
   # waste line multiplies those same breaks by the cache-creation tokens the next

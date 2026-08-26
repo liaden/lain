@@ -6,9 +6,9 @@ module Lain
 
     # The `[approval]` table: the answers a human chose to remember, so a call
     # shape they have already ruled on is never put to them twice.
-    # {Approval::Remembered} interprets them; this class only decides whether
-    # the file says something well-formed, which is why it names no tool, no
-    # verdict and no precedence of its own.
+    # {Approval::Remembered} interprets them; this class only decides whether the
+    # file says something well-formed, which is why it names no tool, no verdict
+    # and no precedence of its own.
     #
     # It is `Answers` rather than `Approval`, and that name is FORCED: a
     # `Config::Approval` constant would win Ruby's lexical lookup over
@@ -34,9 +34,9 @@ module Lain
       # enclosing module instead.
       TOOL = "tool"
       INPUT = "input"
-      # Two strengths keyed by call SHAPE, one by tool. Emacs'
-      # `ignored-local-variable-values` (this variable at this value) against
-      # `ignored-local-variables` (this variable, whatever it says).
+      # Two strengths keyed by call SHAPE, one by tool name whatever the call
+      # says -- Emacs' `ignored-local-variable-values` against
+      # `ignored-local-variables`.
       ALLOW = "allow"
       DENY = "deny"
       SHAPED = [ALLOW, DENY].freeze
@@ -146,12 +146,11 @@ module Lain
         list.each { |entry| check_entry!(key, entry, path:) }
       end
 
-      # Public because {#initialize} runs it too, and extracted rather than
-      # written once per caller for the reason {#named}'s comment records one
-      # rule down: the parse and the constructor drifted apart precisely
-      # because each carried its OWN copy of a shape rule. One copy cannot lie
-      # to the other. `path:` is absent on the constructor's side because a
-      # value built by hand names no config file to open.
+      # Public because {#initialize} runs it too, and one copy rather than one
+      # per caller: the parse and the constructor drifted apart precisely
+      # because each carried its OWN copy of a shape rule ({#named} records what
+      # that cost). The constructor's side passes no path -- a value built by
+      # hand names no config file to open.
       def self.check_list_shape!(key, list, path: nil)
         raise NotAList.new(key, list, path:) unless list.is_a?(Array)
       end

@@ -37,7 +37,7 @@ RSpec.describe Lain::Context::ProtectedPatterns do
     end
   end
 
-  # AC3: a span matching a protected pattern is exempt in EVERY consumer --
+  # A span matching a protected pattern is exempt in EVERY consumer --
   # DedupeToolCalls, PurgeFailedInputs, Prune, and Compact all take the SAME
   # ProtectedPatterns value and none of them may drop a matching span.
   describe "exempt in every consumer" do
@@ -113,7 +113,7 @@ RSpec.describe Lain::Context::ProtectedPatterns do
   end
 
   # Granularity must be UNIFORM across all four consumers: "a protected span
-  # is never dropped" (AC3) reads as one concept, not "protected block" for
+  # is never dropped" reads as one concept, not "protected block" for
   # two consumers and "protected message" for the other two. Every consumer
   # checks the CONTAINING MESSAGE's Canonical.dump, never a narrower block --
   # so the protecting text can live ANYWHERE in the message (a sibling text

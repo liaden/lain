@@ -85,10 +85,10 @@ RSpec.describe Lain::CLI::Command::Fork do
     end
   end
 
-  # T5 answered the inconsistency T3 opened here, and the review round narrowed
-  # the answer. T3 made `lain chat --fork` REPAIR a torn fork point: it projects
-  # a cancellation result for every stranded call. This door does not simply
-  # follow, because it is not always looking at the same fact.
+  # The inconsistency opened here has an answer, and the review round narrowed
+  # it. `lain chat --fork` REPAIRS a torn fork point: it projects a cancellation
+  # result for every stranded call. This door does not simply follow, because it
+  # is not always looking at the same fact.
   #
   # On disk, an assistant tool_use with no result means the call was stranded --
   # nothing will ever answer it, so answering it as cancelled states a fact.

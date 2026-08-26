@@ -9,16 +9,13 @@ module Lain
       # finally surfaces can speak from it.
       #
       # Faraday hands a streamed body to the request's `on_data` and then sets
-      # `env.body` to empty (faraday-net_http's `perform_request`), so by the
-      # time {Provider::HTTP::ErrorMiddleware} runs on the way out there is
-      # nothing left to quote: it falls through {ErrorMiddleware::STATUS_ERRORS}
-      # and `STATUS_MESSAGES` to a literal, and a human typing a model name
-      # wrong was told "An unknown error occurred" instead of "model
+      # `env.body` to empty, so by the time {Provider::HTTP::ErrorMiddleware}
+      # runs there is nothing left to quote: a human typing a model name wrong
+      # was told "An unknown error occurred" instead of "model
       # 'no-such-model-xyz' not found". This accumulates the bytes as they go
-      # past and re-raises through that SAME middleware with the body ollama
-      # actually sent -- so the class, the status and the message are the
-      # non-streaming path's exactly, rather than a second, parallel mapping
-      # that can drift from it.
+      # past and re-raises through that SAME middleware, so the class, status
+      # and message are the non-streaming path's exactly rather than a second,
+      # parallel mapping that can drift.
       #
       # The reset on every complete object is the part that is not obvious.
       # faraday-retry replays a retried attempt through the same `on_data`
@@ -72,7 +69,7 @@ module Lain
         # from the same body by the same parser and there is nothing to add. The
         # status is the response's real one -- never the severity guess
         # {Streaming::ErrorHandling#parse_streaming_error} would make, which is
-        # what relabeled a genuine 400 as a retryable 500 on Anthropic (RES1).
+        # what relabeled a genuine 400 as a retryable 500 on Anthropic.
         def supersedes?(response)
           return false if @body.nil?
           return false unless response.respond_to?(:status) && response.respond_to?(:body)

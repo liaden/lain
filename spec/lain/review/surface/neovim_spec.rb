@@ -54,6 +54,13 @@ class RecordingReviewInlet
     @refusal
   end
 
+  # The teardown leg, and argument-free for {#review_focus}'s reason: what a
+  # settled round leaves on screen is the editor's own question.
+  def review_settled
+    @posted << [:review_settled]
+    @refusal
+  end
+
   # Everything that reached the editor, as text. Arrays are flattened because a
   # render posts lines and a notice posts a sentence, and the shared group's
   # laws ask one question of both: did this argument get out of the surface.
@@ -122,10 +129,10 @@ RSpec.describe Lain::Review::Surface::Neovim do
   let(:view) { Lain::Frontend::Neovim::ReviewView.new }
   let(:session) { RecordingReviewSession.new }
 
-  # A REAL Review::Hunk, not a Struct answering `#new_start`: T14 keys a row's
-  # hunks so a mark gesture can resolve to one, and `Hunk.keys` reaches for
-  # `#content_key`. A double that stopped at the member this view happens to
-  # render would pass every rendering example and crash the gesture.
+  # A REAL Review::Hunk, not a Struct answering `#new_start`: the review keys
+  # a row's hunks so a mark gesture can resolve to one, and `Hunk.keys` reaches
+  # for `#content_key`. A double that stopped at the member this view happens
+  # to render would pass every rendering example and crash the gesture.
   def hunk(path:, new_start: 4)
     Lain::Review::Hunk.new(path:, old_start: new_start + 500, old_count: 1, new_start:, new_count: 1,
                            lines: [" #{path}:#{new_start}"])
@@ -232,7 +239,7 @@ RSpec.describe Lain::Review::Surface::Neovim do
         .to raise_error(Lain::Review::Surface::Incomplete, /answers present with the wrong shape/)
     end
 
-    # The T4 panel's ruling, unchanged by the relaxation: `Forwardable` and
+    # The panel's ruling, unchanged by the relaxation: `Forwardable` and
     # `SimpleDelegator` generate `(*args, &block)`, whose KINDS are not the
     # port's, so a delegation-based adapter is still refused before
     # construction rather than at first use.
@@ -361,7 +368,7 @@ RSpec.describe Lain::Review::Surface::Neovim do
       expect(inlet.posted.dig(0, 1)).to match(/\bunreviewed\z/)
     end
 
-    # F5: a REAL hunk key is a 64-hex-character content digest behind
+    # A REAL hunk key is a 64-hex-character content digest behind
     # `Hunk::CONTENT_SCHEME`, not the eight-character stand-in the rest of
     # this file uses. The untruncated message is long enough that it does
     # not fit one `nvim_echo` message line at an ordinary terminal width
@@ -369,7 +376,7 @@ RSpec.describe Lain::Review::Surface::Neovim do
     # at 120), which is what stalls nvim on `Press ENTER or type command to
     # continue` and blocks RPC on every mark -- see {Surface.preview}'s own
     # doc for the mechanism and `Surface::Neovim::MARKED`'s doc for the
-    # measurement. This is the AC1 scenario.
+    # measurement.
     it "fits comfortably inside a narrow pane, even for a real 64-hex-character digest key" do
       key = "hunk-content-v1:#{"a" * 64}"
 
@@ -378,7 +385,7 @@ RSpec.describe Lain::Review::Surface::Neovim do
       expect(inlet.posted.dig(0, 1).length).to be < 60
     end
 
-    # AC2: the truncated message still lets a human confirm it names the
+    # The truncated message still lets a human confirm it names the
     # row they just marked (the digest PREFIX, not just the constant scheme
     # boilerplate every key shares -- {Surface.preview}'s own SPLIT
     # reasoning), still marks that it is a prefix, and still keeps the
@@ -393,13 +400,12 @@ RSpec.describe Lain::Review::Surface::Neovim do
       expect(message).to match(/\breviewed\z/)
     end
 
-    # F5's finding #5: a flat slice off the front of the whole key gives
-    # the CONSTANT scheme name priority over the digest, so a longer scheme
-    # (`hunk-span-v1:`, 13 characters, one more than `hunk-content-v1:`'s
-    # 16) would show FEWER hex digits for exactly the keys that already
-    # needed a span-qualified key to stay unique (`Hunk.keys`' own
-    # tie-break). {Surface.preview} splits on the scheme boundary instead,
-    # so both schemes keep the same digest entropy.
+    # A flat slice off the front of the whole key gives the CONSTANT scheme
+    # name priority over the digest, so a longer scheme (`hunk-span-v1:`, 13
+    # characters, one more than `hunk-content-v1:`'s 16) would show FEWER hex
+    # digits for exactly the keys that already needed a span-qualified key to
+    # stay unique (`Hunk.keys`' own tie-break). {Surface.preview} splits on the
+    # scheme boundary instead, so both schemes keep the same digest entropy.
     it "keeps the same digest entropy for a span key as for a content key" do
       content_key = "hunk-content-v1:#{"d" * 64}"
       span_key = "hunk-span-v1:#{"d" * 64}"
@@ -452,7 +458,22 @@ RSpec.describe Lain::Review::Surface::Neovim do
     it "posts a notice naming the verdict the review landed on" do
       surface.settle("approve")
 
-      expect(inlet.posted).to eq([[:review_refused, "this review is settled: approve"]])
+      expect(inlet.posted).to eq([[:review_settled], [:review_refused, "this review is settled: approve"]])
+    end
+
+    # THE TEARDOWN, and it is not decoration on the notice. Nothing about a
+    # verdict is visible in the editor -- `47_diff.lua` keeps the round on the
+    # tabpage and hands a stamp back to any file the round opened when the human
+    # re-enters it -- so a review that settled silently goes on taking notes.
+    # This message is the only moment any adapter learns a round ended.
+    #
+    # ORDER IS ASSERTED, not just presence: the notice is what a human reads as
+    # "it is over", and an editor still accepting notes into the round while
+    # that sentence is on screen tells them two different things.
+    it "tears the round down in the editor before it says the review is settled" do
+      surface.settle("approve")
+
+      expect(inlet.posted.map(&:first)).to eq(%i[review_settled review_refused])
     end
 
     # It rides the same notice rail as #mark and #refuse, so it answers what
@@ -465,14 +486,14 @@ RSpec.describe Lain::Review::Surface::Neovim do
       expect(detached.settle("approve")).to eq("no editor")
     end
 
-    # F5's width constraint, on this rail too: `nvim_echo` writes the message
+    # The same width constraint, on this rail too: `nvim_echo` writes the message
     # area, and a notice that does not fit one line is what stalls nvim on
     # `Press ENTER or type command to continue` -- which would block RPC on the
     # very gesture that closes the review.
     it "fits one message line at an ordinary width, prefix included" do
       surface.settle("approve")
 
-      expect(inlet.posted.dig(0, 1).length).to be < 40
+      expect(inlet.posted.dig(1, 1).length).to be < 40
     end
   end
 
@@ -667,9 +688,10 @@ RSpec.describe Lain::Review::Surface::Neovim do
   # a real queue, a real `nvim_exec_lua` into a real editor. A fresh editor per
   # example, `diff_mode_spec.rb`'s discipline.
   #
-  # `set_thread` WAS excluded here, on the grounds that T18 had not written its
-  # far side yet -- and by the time it had, the exclusion was the only reason
-  # nothing noticed that this surface was posting a shape the editor refuses.
+  # `set_thread` WAS excluded here, on the grounds that its lua far side had
+  # not been written yet -- and by the time it had, the exclusion was the only
+  # reason nothing noticed that this surface was posting a shape the editor
+  # refuses.
   # Delivery is a NOTIFY: nvim discards the refusal, the queue answers nil, and
   # a broken rail is indistinguishable from a working one everywhere except
   # here. That is what makes this seam the one that matters on this rail.

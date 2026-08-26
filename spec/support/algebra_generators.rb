@@ -250,7 +250,7 @@ module AlgebraGenerators
   # is not incidental: the monoid generators in this same file build each draw
   # with `reduce(Identity, :>>)`, so making `#>>` left-absorbing collapses every
   # draw onto the unit and leaves the law sweep green -- the laws hold vacuously
-  # about a population the broken operation itself produced (follow-up A-1).
+  # about a population the broken operation itself produced.
   # Break `#only` here in any way at all and the draws are untouched, so the
   # laws are read over the same subjects and the same requests they were before,
   # and they fail.
@@ -263,7 +263,7 @@ module AlgebraGenerators
     end
 
     # Four sets of decreasing size plus the empty one, each crossed with the
-    # requests below. Built ONCE and captured: T1 made construction eager --
+    # requests below. Built ONCE and captured: construction is eager --
     # the canonical schema and its digest are computed before the freeze -- so a
     # population rebuilt per law would pay for it repeatedly.
     def population
@@ -515,7 +515,7 @@ module AlgebraGenerators
     # composition that actually composes something -- an all-Identity pool would
     # satisfy every law about nothing.
     #
-    # And no draw is built THROUGH `#|` (follow-up A-1): {Combinators.draw_from}
+    # And no draw is built THROUGH `#|`: {Combinators.draw_from}
     # and {Middlewares.draw_from} fold their pool with `reduce(Identity, :>>)`,
     # so a left-absorbing `#>>` collapses every draw onto the unit and both
     # monoid laws hold vacuously. Break `#|` here in any way at all and these

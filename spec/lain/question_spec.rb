@@ -99,7 +99,7 @@ RSpec.describe Lain::Question do
     end
   end
 
-  # S2: a code span strips one leading and one trailing space from its content,
+  # A code span strips one leading and one trailing space from its content,
   # so a padded id renders as text a parser reads back as a DIFFERENT id -- and
   # `distinct!` never sees the collision, because it compares pre-render bytes.
   describe "id hygiene" do
@@ -117,7 +117,7 @@ RSpec.describe Lain::Question do
     end
   end
 
-  # S1: MAX_BODY bounded one field out of five. Every free field is bounded now,
+  # MAX_BODY bounded one field out of five. Every free field is bounded now,
   # and the SET bounds the serialized whole (see the set spec).
   describe "size bounds" do
     it "refuses a body beyond the documented maximum, naming the size, rather than truncating" do
@@ -147,7 +147,7 @@ RSpec.describe Lain::Question do
     end
   end
 
-  # B1: an unclosed fence does not break the PARSER (it matches the body region
+  # An unclosed fence does not break the PARSER (it matches the body region
   # literally and skips it whole), but it wrecks the DOCUMENT -- every option
   # checkbox below an unclosed fence renders as code in the buffer the human
   # answers in. The rule is CommonMark's, not "count the ``` lines".
@@ -193,7 +193,7 @@ RSpec.describe Lain::Question do
     end
   end
 
-  # T5/B1: a label is rendered at the END of an option line in the answer
+  # A label is rendered at the END of an option line in the answer
   # document, and that document's parse strips every line it reads -- so a label
   # that does not survive an `rstrip` is one the renderer writes and the parser
   # then refuses, blaming the human for a line they never touched and leaving
@@ -214,7 +214,7 @@ RSpec.describe Lain::Question do
 
     it "accepts a label ending in whitespace an rstrip does not eat, since it survives the round trip" do
       # Written as an escape on purpose: the offending byte is invisible otherwise, which is
-      # the same trap S3 names in the mark refusal.
+      # the same trap the mark refusal names.
       label = "Ship now\u00A0"
 
       expect(Lain::Question::Option.new(id: "yes", label:).label).to end_with("\u00A0")
@@ -225,7 +225,7 @@ RSpec.describe Lain::Question do
     end
   end
 
-  # T5: the answer document finds a question by its heading, and so does the `x`
+  # The answer document finds a question by its heading, and so does the `x`
   # keymap above it -- by scanning UP from an option line to the nearest one,
   # out of buffer text alone, with no RPC and no fence state. A body line
   # wearing that exact shape would put every option below it under the wrong
@@ -268,7 +268,7 @@ RSpec.describe Lain::Question do
     end
   end
 
-  # S3: one member policy for both lists in this unit. A member arrives BUILT;
+  # One member policy for both lists in this unit. A member arrives BUILT;
   # `from_body` is the documented way in from raw data.
   describe "member policy" do
     it "refuses a raw option Hash, naming the class and the way in" do
@@ -308,7 +308,7 @@ RSpec.describe Lain::Question do
         .to eq(described_class.new(id: "why", body: "Why?"))
     end
 
-    # S5: Canonical RAISES on a Hash holding both :a and "a". Reading one of them
+    # Canonical RAISES on a Hash holding both :a and "a". Reading one of them
     # silently builds a question that cannot be content-addressed a moment later.
     it "refuses a key held as both a String and a Symbol, the way Canonical does" do
       expect { described_class.from_body({ :id => "sym", "id" => "str", "body" => "Why?" }) }

@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-# T4 (OR-3), second oracle arm: "worth remembering?" -- plugged into
+# The second oracle arm: "worth remembering?" -- plugged into
 # {Lain::Middleware::RefuseSecretWrites}'s existing `oracle:` seam via {Gate}.
 # The live gate is SYNCHRONOUS (a memory_write cannot be un-written once
 # indexed), so only the heuristic tier may ever back it in production; this
 # spec pins the contentlessness floor it applies -- it is a floor, not a
-# quality judgement, and not an OR-4 comparison baseline -- and the Gate
+# quality judgement, and not a comparison baseline -- and the Gate
 # adapter that exposes it through `#secret?`. The end-to-end wiring through
 # RefuseSecretWrites itself is pinned in refuse_secret_writes_spec.rb.
 RSpec.describe Lain::Oracle::MemorySave do

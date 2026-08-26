@@ -199,10 +199,10 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
   def displayed_width(line) = lua("return vim.fn.strdisplaywidth(...)", [line])
 
   # The refusal rail's OPERATIONAL half, which `messages` alone cannot state.
-  # F25 measured the mechanism and `neovim_runtime_spec.rb` pins it: a message
-  # the area cannot hold raises a hit-enter prompt, and every non-fast RPC
-  # request queues behind that prompt -- so an editor showing one answers
-  # nothing at all until a human presses a key.
+  # An earlier QA round measured the mechanism and `neovim_runtime_spec.rb`
+  # pins it: a message the area cannot hold raises a hit-enter prompt, and every
+  # non-fast RPC request queues behind that prompt -- so an editor showing one
+  # answers nothing at all until a human presses a key.
   #
   # ⚠️ THE UI ATTACH IS LOAD-BEARING. Measured on nvim 0.12 in
   # `neovim_runtime_spec.rb`: with no UI attached nvim never raises the prompt,
@@ -287,7 +287,7 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
     # and there is no buffer-name parsing anywhere in this module for exactly
     # that reason.
     #
-    # ON THE RAIL RATHER THAN RAISED (F72), `:LainNoteDone`'s correction one
+    # ON THE RAIL RATHER THAN RAISED, `:LainNoteDone`'s correction one
     # function up applied to the three refusals `:LainNote` makes itself: an
     # `error()` escaping a `define`d callback wears nvim's own
     # `stack traceback:` however it was raised, and with a UI attached raises a
@@ -368,7 +368,7 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
       expect(displayed_width(rail_line)).to be <= 80
     end
 
-    # AC5. Right-aligned is what keeps the marker off the code -- the whole
+    # Right-aligned is what keeps the marker off the code -- the whole
     # reason the note's TEXT lives in the thread pane and only a marker
     # renders inline, as octo does. `virt_text_pos` is read back off the mark
     # rather than assumed, because a `virt_text` with no position defaults to
@@ -426,7 +426,7 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
   end
 
   describe "what settles" do
-    # AC1, end to end: the editor's stamp, across the wire, into the record.
+    # End to end: the editor's stamp, across the wire, into the record.
     it "records a new-side note against that file line and the head revision" do
       open_changeset("docs/guide.txt", guide_old_lines)
 
@@ -439,7 +439,7 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
       )
     end
 
-    # AC2. The old side's revision is the MERGE BASE, and it is a different
+    # The old side's revision is the MERGE BASE, and it is a different
     # string from the new side's -- a module that stamped one revision on both
     # would pass every new-side example above.
     it "records an old-side note against the old-side line and the merge-base revision" do
@@ -455,7 +455,7 @@ RSpec.describe "the review annotation runtime", :nvim, :seam do
       expect(record.drifted).to be(false)
     end
 
-    # AC4, and the reason this module keeps a placement sequence at all.
+    # The reason this module keeps a placement sequence at all.
     # `nvim_buf_get_extmarks` answers in POSITION order, so an implementation
     # that iterated marks would send 12, 25, 40 -- a plausible, tidy, wrong
     # answer that no assertion about content would ever catch.

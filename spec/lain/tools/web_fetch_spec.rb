@@ -26,7 +26,7 @@ end
 #
 # It delivers the body the way a SOCKET does, and both halves of that are load
 # bearing. The bytes are ASCII-8BIT: a Ruby string literal is UTF-8, so a stub
-# that handed the literal straight through lied about the one thing F1 turned on
+# that handed the literal straight through lied about the encoding under test
 # and every example here passed over the defect. And the body arrives in SEVERAL
 # chunks, so a multi-byte character can straddle a boundary -- a single-chunk
 # stub reproduces the tagging bug but never the truncation one.
@@ -175,7 +175,7 @@ RSpec.describe Lain::Tools::WebFetch do
     expect(keys).not_to include("proxy-authorization")
   end
 
-  # F1: the tool hands its bytes to Tool::Result, which reaches Canonical, which
+  # The tool hands its bytes to Tool::Result, which reaches Canonical, which
   # raises on any byte >= 0x80. Faraday hands a body back ASCII-8BIT, so every
   # non-ASCII page crashed the turn. The tool is the layer that knows it asked
   # for text, so decoding belongs here -- never in Canonical.

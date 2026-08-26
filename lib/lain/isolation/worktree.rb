@@ -23,20 +23,18 @@ module Lain
     # always a clean checkout of the repo's current commit.
     #
     # UNCOMMITTED WORK IS SCRATCH. Release removes the worktree with `--force`,
-    # discarding any uncommitted or untracked files in it. A worktree lease is
-    # ephemeral scratch, not a place to author durable work: the ONE thing
-    # release must never do is leave the checkout on disk, because a leaked
-    # worktree silently defeats the next acquire and pollutes the repo's
-    # `git worktree list`. Refusing to remove a dirty tree would be exactly that
-    # silent leak (release is how the resource is reclaimed), so `--force` is the
-    # only choice that keeps the invariant "release always reclaims". Durable
-    # output leaves a worktree the same way it leaves any checkout: as a commit.
+    # discarding any uncommitted or untracked files in it. The ONE thing release
+    # must never do is leave the checkout on disk, because a leaked worktree
+    # silently defeats the next acquire and pollutes `git worktree list` --
+    # and refusing to remove a dirty tree would be exactly that leak, since
+    # release is how the resource is reclaimed. Durable output leaves a worktree
+    # the same way it leaves any checkout: as a commit.
     #
-    # A leftover worktree at the target path (a crash between acquire and
-    # release) is REAPED before add, not silently leaked or clobbered: a
-    # best-effort force-remove-then-prune clears a stale registration, while a
-    # foreign directory that git does not know is left alone so `git worktree
-    # add` refuses LOUDLY rather than overwriting it.
+    # A leftover worktree at the target path -- a crash between acquire and
+    # release -- is REAPED before add: a best-effort force-remove-then-prune
+    # clears a stale registration, while a foreign directory git does not know
+    # is left alone so `git worktree add` refuses LOUDLY rather than
+    # overwriting it.
     #
     # SERIALIZED per backend. reap-then-add is not atomic: two concurrent
     # acquires of one worker_id would target one path, each reap destroying the
@@ -45,14 +43,13 @@ module Lain
     # of a worker_id loses cleanly rather than corrupting the first's checkout.
     class Worktree
       # The git-context env vars that redirect where git finds its repository,
-      # index, and work tree. A Lain process launched from a git hook (pre-commit
-      # exports these) or any GIT_*-polluted env would otherwise have its shelled
-      # `git` resolve the index/dir against the WRONG repository -- the hook's,
-      # not the leased worktree's -- so every git call scrubs them. Mapping each
-      # to `nil` deletes it in the child (the {WorkerEnv} scrub semantics B1
-      # pinned; `Mixlib::ShellOut` and `Process.spawn` agree on it, which is what
-      # lets {Shell::Out} and an injected mixlib both run these calls), leaving
-      # `-C @repo_root` the sole authority on which repo git operates in.
+      # index, and work tree. A Lain process launched from a git hook --
+      # pre-commit exports these -- would otherwise have its shelled `git`
+      # resolve the index and dir against the HOOK's repository rather than the
+      # leased worktree's, so every git call scrubs them. Mapping each to `nil`
+      # deletes it in the child (`Mixlib::ShellOut` and `Process.spawn` agree on
+      # that, which is what lets {Shell::Out} and an injected mixlib both run
+      # these calls), leaving `-C @repo_root` the sole authority.
       GIT_CONTEXT_SCRUB = {
         "GIT_DIR" => nil, "GIT_INDEX_FILE" => nil, "GIT_WORK_TREE" => nil,
         "GIT_PREFIX" => nil, "GIT_COMMON_DIR" => nil
@@ -60,11 +57,9 @@ module Lain
 
       # A refused lease. Surfaced LOUDLY -- the backend never hands back a
       # shared-cwd lease that would silently defeat isolation. Two causes: a git
-      # subprocess returned nonzero ({.from_git} -- a dirty parent, an add over a
-      # foreign dir, a non-repo root, or a teardown failure), or the path is
-      # already held by a live lease (the concurrency guard). Named per the
-      # error-taxonomy convention: a refusal subclasses {Lain::Error} next to the
-      # owner that raises it.
+      # subprocess returned nonzero ({.from_git} -- a dirty parent, an add over
+      # a foreign dir, a non-repo root, or a teardown failure), or the path is
+      # already held by a live lease.
       class Refused < Error
         # Carries the OPERATION so a teardown-path (`remove`) failure is not
         # mislabeled as an `add`.
@@ -78,14 +73,12 @@ module Lain
       # @param root [String] the base directory per-worker worktrees live under
       #   (relocatable, injected -- the {Workspace::Snapshot} root idiom)
       # @param paths [Paths] supplies the per-worker key via {Paths#project_hash}
-      # @param shell_out_factory [#call] builds the subprocess runner, injected
-      #   as a factory exactly as {Tools::Bash} does, so a spec substitutes it.
-      #   {Shell::Out} rather than `Mixlib::ShellOut` because mixlib FORKS, and a
-      #   fork copies the parent's page tables: every `git` here costs the parent
-      #   an amount linear in its own RSS, for a runner whose result is three
-      #   values. Same argv, same `environment:` semantics, same timeout -- the
-      #   `Mixlib::ShellOut` a caller injects still works, and several specs
-      #   inject one.
+      # @param shell_out_factory [#call] builds the subprocess runner, a factory
+      #   so a spec substitutes it. {Shell::Out} rather than `Mixlib::ShellOut`
+      #   because mixlib FORKS, and a fork copies the parent's page tables:
+      #   every `git` here would cost the parent an amount linear in its own
+      #   RSS, for a runner whose result is three values. Same argv, same
+      #   `environment:` semantics, same timeout, so an injected mixlib works.
       def initialize(root:, repo_root: Dir.pwd, paths: Paths.new,
                      shell_out_factory: Shell::Out.public_method(:new))
         @repo_root = File.expand_path(repo_root)
@@ -96,9 +89,8 @@ module Lain
         @leased = Set.new
       end
 
-      # Provision an isolated checkout for `worker_id` and hand back the lease
-      # whose cwd is that checkout. The reap+add+register is serialized, so a
-      # concurrent acquire of the SAME worker_id refuses rather than clobbering.
+      # The reap+add+register is serialized, so a concurrent acquire of the SAME
+      # worker_id refuses rather than clobbering.
       # @param worker_id [Object] keyed through {Paths#project_hash} into a
       #   filesystem-safe, collision-resistant per-worker directory name
       # @return [Lease] cwd = the new worktree; release removes it
@@ -118,10 +110,9 @@ module Lain
 
       protected
 
-      # The WorkerEnv a lease hands the worker: the worktree as cwd, the process
-      # env otherwise. The overridable seam a per-service strategy (B3/B4)
-      # enriches with extra vars (DATABASE_URL, ...) without reshaping this base;
-      # `worker_id` rides through so that enrichment can name per-worker vars.
+      # The overridable seam a per-service strategy enriches with extra vars
+      # (DATABASE_URL, ...) without reshaping this base; `worker_id` rides
+      # through so that enrichment can name per-worker vars.
       def worker_env_for(path, _worker_id) = WorkerEnv.new(cwd: path, env: ENV.to_h)
 
       private
@@ -142,7 +133,6 @@ module Lain
         end
       end
 
-      # Reclaim the worktree, discarding uncommitted work (see the class doc).
       # `--force` reliably removes a dirty tree; a prune-and-retry clears a stale
       # registration whose directory is already gone. A failure to reclaim is a
       # real leak, so it is raised rather than swallowed.
@@ -156,10 +146,9 @@ module Lain
         raise Refused.from_git("remove", path, shell) unless shell.exitstatus.zero?
       end
 
-      # Best-effort: clear a leftover worktree registration at `path` before the
-      # add. A nonzero exit here means "nothing to reap" (or a foreign dir git
-      # will refuse to add over), so it is intentionally ignored -- the add is
-      # what fails loudly.
+      # Best-effort. A nonzero exit here means "nothing to reap", or a foreign
+      # dir git will refuse to add over, so it is ignored -- the add is what
+      # fails loudly.
       def reap(path)
         git("worktree", "remove", "--force", path)
         git("worktree", "prune")

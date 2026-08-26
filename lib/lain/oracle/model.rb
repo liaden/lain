@@ -18,17 +18,16 @@ module Lain
     class Model
       DEFAULT_MAX_TOKENS = 1024
 
-      # `model` is exposed so a journaling wrapper ({Oracle::Recorded::Journaling})
-      # records WHICH model answered without being told twice; `usage` retains the
-      # LAST call's token cost, which the same wrapper journals so an oracle
-      # model call's spend is visible in the Journal (the bench's cost accounting
-      # reads there, never off the tier). Held as the wire Hash, the shape
-      # {Telemetry::TurnUsage} already keeps.
+      # Exposed so a journaling wrapper ({Oracle::Recorded::Journaling}) records
+      # WHICH model answered without being told twice. `usage` retains the LAST
+      # call's cost, journalled by the same wrapper so an oracle call's spend is
+      # visible in the Journal -- the bench's accounting reads there, never off
+      # the tier.
       attr_reader :model
 
-      # @param definition [Oracle::Definition] renders the question from `inputs`
-      #   and validates the decoded reply back into answer attributes -- both ends
-      #   of the round trip, so this tier owns neither the prompt nor the schema
+      # @param definition [Oracle::Definition] renders the question and validates
+      #   the decoded reply -- both ends of the round trip, so this tier owns
+      #   neither the prompt nor the schema
       # @param provider [Provider] the one round trip #ask spends; synchronous, so
       #   the Promise it returns is already resolved. Also asked whether it
       #   supports `:structured_output` -- see #structured_answer_format
@@ -36,8 +35,8 @@ module Lain
       #   wrapper records off {#model}
       # @param max_tokens [Integer] the reply ceiling on every Request built here
       # @param decoder [#call] `Response -> answer attributes Hash`; the default
-      #   parses the reply as JSON. A stronger structured-output decoder (T1)
-      #   swaps in behind the same message without this tier changing shape.
+      #   parses the reply as JSON, and a structured-output decoder swaps in
+      #   behind the same message
       def initialize(definition:, provider:, model:, max_tokens: DEFAULT_MAX_TOKENS, decoder: JsonDecoder.new)
         @definition = definition
         @provider = provider
@@ -67,16 +66,16 @@ module Lain
       end
 
       # A provider that can constrain its own decoding is handed the answer's
-      # schema; one that cannot is asked plainly, and its request is byte-identical
-      # to what this tier sent before the marker existed -- which is the point of
-      # the capability gate, since #extra reaching an encoder that reads the same
-      # neutral key would move a prompt-cache prefix.
+      # schema; one that cannot is asked plainly, and its request stays
+      # byte-identical to what this tier sent before the marker existed -- the
+      # point of the capability gate, since #extra reaching an encoder that reads
+      # the same neutral key would move a prompt-cache prefix.
       #
       # Only the schema half of the marker is carried: the other half names a tool
       # for a tool-forcing backend to force, and an oracle sends no tools. The key
-      # itself is neutral -- both encoders define this same String as separate leaf
-      # files (see AnthropicEncoding::STRUCTURED_OUTPUT_KEY), so naming Ollama's is
-      # a choice between two identical constants, not a dependency on ollama.
+      # is neutral -- both encoders define this same String in separate leaf files
+      # -- so naming Ollama's is a choice between identical constants, not a
+      # dependency on ollama.
       def structured_answer_format
         return {} unless @provider.supports?(:structured_output)
 

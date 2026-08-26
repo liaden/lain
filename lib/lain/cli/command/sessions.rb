@@ -3,9 +3,9 @@
 module Lain
   module CLI
     module Command
-      # `/sessions` (T13): Command::Env's `sessions` reader IS
-      # {Lain::CLI::Sessions} (T3's `#listing(all:)`) -- this command adds
-      # nothing but the argument parse, rendering its answer verbatim.
+      # `/sessions`: Command::Env's `sessions` reader IS
+      # {Lain::CLI::Sessions}, whose `#listing(all:)` answers -- this command
+      # adds nothing but the argument parse, rendering that answer verbatim.
       class Sessions
         ALL_FLAGS = %w[--all all].freeze
 

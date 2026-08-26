@@ -23,9 +23,20 @@ RSpec.describe Lain::Epic::Stage do
       expect(described_class.all.map(&:name)).to eq(Lain::Epic::STAGES)
     end
 
-    it "refuses an unknown name loudly, naming the offender and the closed set" do
-      expect { stage("qa") }
-        .to raise_error(Lain::Epic::UnknownStage, /"qa".*research.*implementation/m)
+    # Pinned WHOLE, not by a loose scan for the offender and the endpoints.
+    # `cli/epic_submit.rb` is the first thing `lain epic submit STAGE` does with
+    # argv and this error renders as a one-line message at the terminal, so the
+    # wording is a user-facing surface -- and a scan that only demands "qa" and
+    # the two endpoints appear SOMEWHERE let a rewrite silently open the message
+    # with the carrier's attribute name, a word the human never typed. The
+    # `"<attribute> <message>"` join means `name` leads whatever is written
+    # here; the assertion is anchored so the rest has to go on reading as a
+    # sentence after it.
+    it "refuses an unknown name loudly, naming the closed set first and the offender last" do
+      expect { stage("qa") }.to raise_error(
+        Lain::Epic::UnknownStage,
+        /\Aname must be one of research -> epic_plan -> issue_plan -> implementation, got "qa"\z/
+      )
     end
 
     it "refuses an empty name -- a blank stage is the one partition key nothing can match back" do
@@ -97,7 +108,6 @@ RSpec.describe Lain::Epic::Stage do
     end
   end
 
-  # AC3
   describe "deferral never crosses a stage boundary within an epic" do
     it "raises naming the epic and the undrained earlier stage" do
       park(epic_slug: "alpha", stage: "research")
@@ -140,7 +150,6 @@ RSpec.describe Lain::Epic::Stage do
     end
   end
 
-  # AC4
   describe "epics do not block each other's boundaries" do
     it "opens beta's epic_plan gate while alpha's research partition is still parked" do
       park(epic_slug: "alpha", stage: "research")

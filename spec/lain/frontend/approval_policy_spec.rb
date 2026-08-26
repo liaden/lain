@@ -5,7 +5,7 @@ require "pastel"
 require "stringio"
 require "tmpdir"
 
-# I4: the terminal y/N prompt is now a queue SURFACE -- it answers Pending
+# The terminal y/N prompt is now a queue SURFACE -- it answers Pending
 # approvals drawn from Lain::Approval::Queue rather than being Gate's policy
 # itself. The y/N contract is unchanged: anything but an affirmative denies.
 RSpec.describe Lain::Frontend::ApprovalPolicy do
@@ -30,10 +30,10 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(output.string).to include("bash").and include("rm -rf /tmp/x")
   end
 
-  # T9: with a fleet running, tool-and-input alone cannot say whether the
-  # parent or a researcher subagent is the one asking -- the editor's row has
-  # led with the requester since T36, and in QA reading the spawn's `only`-set
-  # out of the journal was the only way to answer it at the terminal.
+  # With a fleet running, tool-and-input alone cannot say whether the parent or
+  # a researcher subagent is the one asking -- the editor's row already leads
+  # with the requester, and in QA reading the spawn's `only`-set out of the
+  # journal was the only way to answer it at the terminal.
   it "names who is asking, alongside the tool and its input" do
     policy_for("y\n").decide(pending_from("researcher"))
 
@@ -106,10 +106,11 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
   end
 
-  # T15's second half. A raise inside ONE prompt used to retire this fiber for
-  # the rest of the session, silently -- the failure {Approval::Queue::Pending}'s
-  # own comment names, and the one every sibling surface already guards
-  # ({Approval::QueueSurface#swept}, {CLI::HumanReplies::AnswerLoop#exchange}).
+  # The other half of the same fiber hazard. A raise inside ONE prompt used to
+  # retire this fiber for the rest of the session, silently -- the failure
+  # {Approval::Queue::Pending}'s own comment names, and the one every sibling
+  # surface already guards ({Approval::QueueSurface#swept},
+  # {CLI::HumanReplies::AnswerLoop#exchange}).
   # This is the surface it is fatal for: on `--no-nvim` there is no second one,
   # so a dead fiber here is a session that can never be asked anything again.
   describe "a prompt that raises" do
@@ -174,7 +175,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
   end
 
-  # T15, from manual-QA round 4 (F18): the FIRST gated call of a turn rendered
+  # From manual-QA round 4: the FIRST gated call of a turn rendered
   # and was answerable; every one after it rendered nothing and was never read,
   # so a plain `lain chat` -- which has no second surface -- wedged for good.
   #
@@ -299,12 +300,12 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
   end
 
-  # T7, from manual-QA round 8 (F40). Two human surfaces answer one queue and
+  # From manual-QA round 8. Two human surfaces answer one queue and
   # the first answer wins -- but this one, having TAKEN the arrival, was still
   # inside its read when the editor answered, and a read with no human behind it
   # never returns. So the watch fiber sat on a call that was already decided
   # while every later gated call queued up behind it, unrendered and
-  # unanswerable: the same session-wide silence T15's stolen arrivals caused,
+  # unanswerable: the same session-wide silence the stolen arrivals caused,
   # reached through the other door.
   #
   # Neither spec above can see it, and the gap between them is exact. The two
@@ -316,7 +317,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   # ONE EXAMPLE HERE DISCRIMINATES, AND THE REST ARE PINS. "asks about the
   # second call once the editor has answered the first" is the only one that
   # fails against the surface as it was: it is the pairing above, and nothing
-  # weaker reproduces F40. The other four hold the behaviour the fix had to
+  # weaker reproduces it. The other four hold the behaviour the fix had to
   # leave alone -- the sibling's verdict stands, no fault is manufactured, a
   # human at the terminal still signs their own answer, and an unanswered call
   # still meets the clock -- so they pass either way BY CONSTRUCTION, and a day
@@ -484,7 +485,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect { described_class::AFFIRMATIVE }.to raise_error(NameError, /private constant/)
   end
 
-  # T16: a Pending can carry the sensitive regions approving it would release
+  # A Pending can carry the sensitive regions approving it would release
   # (Approval::Queue::Outstanding), and this surface is where they are rendered
   # -- lib/ may not touch the terminal, so the whole capability's human half
   # lives behind the injected reader here.
@@ -532,7 +533,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       expect(rendered(disclosing)).not_to include(secret)
     end
 
-    # T9 changed these bytes deliberately: the question now leads with WHO is
+    # These bytes changed deliberately: the question now leads with WHO is
     # asking, the same word the editor's row leads with. What is unchanged is
     # the half this example exists for -- with nothing outstanding, no preamble
     # reaches the human at all.
@@ -549,8 +550,9 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
     # The path is model-influenced: it is the file the model asked to read, and
     # the detector need only fire on a file the agent itself wrote. The half of
-    # this question that predates T16 escapes through `inspect`; the release
-    # clause has to as well, or a crafted path forges a whole question.
+    # this question that predates the disclosure preamble escapes through
+    # `inspect`; the release clause has to as well, or a crafted path forges a
+    # whole question.
     describe "the path is escaped, because a forged one is a released secret" do
       # A path spelled as a complete, plausible, BENIGN approval question.
       let(:forged) { '/tmp/notes.txt: 0 sensitive regions outstanding -- approve read({path: "/ok"})? [y/N] ' }

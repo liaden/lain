@@ -12,16 +12,14 @@ local function fold_enabled()
 end
 
 -- w:lain_fold_saved is both the "surface installed here" marker and the
--- window's PRIOR fold options, captured at install so leaving the lain view
--- can hand the window back exactly as found (panel probe J: window options
--- are sticky per window, and lain's expr surface riding into the human's
--- next buffer would flatten their own indent/marker folds). A window
--- variable, not a lua table, so it dies with the window -- but :vsplit
--- copies window OPTIONS and NOT window variables (probe J re-run), so a
--- split from a lain-view window carries lain's foldexpr with no saved
--- record. That orphaned surface (however a window acquired it) self-heals
--- here: no saved options means the GLOBAL values are the best truth of
--- "before lain", exactly what a fresh split would have held.
+-- window's PRIOR fold options, captured at install so leaving the lain view can
+-- hand the window back exactly as found: window options are sticky per window,
+-- and lain's expr surface riding into the human's next buffer would flatten
+-- their own indent/marker folds. A window VARIABLE, so it dies with the window
+-- -- but :vsplit copies window OPTIONS and not window variables (measured), so a
+-- split from a lain-view window carries lain's foldexpr with no saved record.
+-- That orphaned surface self-heals here: no saved options means the GLOBAL
+-- values are the best truth of "before lain".
 local function uninstall_folds(win)
   local saved = vim.w[win].lain_fold_saved
   if saved == nil then
@@ -49,33 +47,27 @@ local function uninstall_folds(win)
 end
 
 -- The older-closed/newest-open DEFAULT, applied ONCE per display (the
--- BufWinEnter install), never per render: the editor itself preserves
--- per-fold open/closed state across appends and whole-buffer replaces
--- (panel probe I), so re-forcing it every render only stomped the human's
--- own zo/zR (panel probe H). The close is an explicit :%foldclose!, not a
--- 'foldlevel' write: folds just created come out OPEN and a same-value
--- foldlevel write is a no-op, so the option alone shows nothing closed --
--- verified live. vim.g.lain_foldlevel (>= 1 covers these level-1 folds)
--- skips the forced close for a human who wants everything open at rest.
--- WHICH record stays open at rest, and it is not one answer for every view. A
--- LOG's live record is its LAST -- a human follows a timeline or a journal
--- downward, and the newest line is the one they are waiting for. A FORM's is
--- its FIRST: lain://question is a document to fill in from the top, and the
--- older-closed default handed the human a form with the cursor on line 1
--- INSIDE a closed fold, two collapsed summaries above the only open question.
--- A `dd` there deletes a whole question they never saw. lain://approval is the
--- second, and the default cost it more: the re-open landed on the key-hints
--- trailer and left the parked call folded behind a summary cut at
--- ApprovalView::WIDTH -- the command a `y` is about, in the buffer and on no
--- screen.
+-- BufWinEnter install), never per render: the editor preserves per-fold
+-- open/closed state across appends and whole-buffer replaces, so re-forcing it
+-- every render only stomped the human's own zo/zR. The close is an explicit
+-- :%foldclose!, not a 'foldlevel' write: folds just created come out OPEN and a
+-- same-value foldlevel write is a no-op, so the option alone shows nothing
+-- closed. vim.g.lain_foldlevel skips the forced close for a human who wants
+-- everything open at rest.
 --
--- WHICH VIEWS ARE FORMS is a table a later module registers itself into --
--- lain://approval's name belongs to 62_approval, so an entry spelled here would
--- be a second copy of a string 00_constants deliberately does not carry. The
--- table is DECLARED in 05_records, beside RECORD_START: a registration from a
--- module loading before the declaration would land on a global the later
--- `local` shadows, silently, and declaring it with the record vocabulary is
--- what makes that unreachable. See its note there.
+-- WHICH record stays open at rest is not one answer for every view. A LOG's live
+-- record is its LAST -- a human follows a timeline or a journal downward. A
+-- FORM's is its FIRST: lain://question is a document filled in from the top, and
+-- the older-closed default handed the human a form with the cursor on line 1
+-- INSIDE a closed fold, where a `dd` deletes a whole question they never saw.
+-- lain://approval is the second, and the default cost it more: the re-open
+-- landed on the key-hints trailer and left the parked call folded behind a
+-- summary cut at ApprovalView::WIDTH -- the command a `y` is about, in the
+-- buffer and on no screen.
+--
+-- WHICH VIEWS ARE FORMS is a table a later module registers itself into, DECLARED
+-- in 05_records beside RECORD_START: a registration from a module loading before
+-- the declaration would land on a global the later `local` shadows, silently.
 local function open_at_rest(buf)
   if FORM_VIEWS[vim.b[buf].lain_view] then
     return 1
@@ -94,13 +86,12 @@ local function default_folds(win, buf)
   end)
 end
 
--- Every fold-option WRITE in this file goes through vim.wo[win][0] --
--- :setlocal scope -- never bare vim.wo[win]: the bare form writes like :set,
--- which ALSO updates the option's global default for every window opened
--- later (verified live -- it was why the orphan self-heal above once read
--- lain's own values back out of vim.go and "restored" the leak in place).
--- Local writes keep vim.go.* the human's, which is what makes the heal's
--- global fallback truthful.
+-- Every fold-option WRITE in this file goes through vim.wo[win][0] -- :setlocal
+-- scope -- never bare vim.wo[win]: the bare form writes like :set, which ALSO
+-- updates the option's global default for every window opened later. Verified
+-- live: it was why the orphan self-heal above once read lain's own values back
+-- out of vim.go and "restored" the leak in place. Local writes keep vim.go.*
+-- the human's, which is what makes the heal's global fallback truthful.
 local function install_folds(win, buf)
   if vim.w[win].lain_fold_saved == nil then
     vim.w[win].lain_fold_saved = {
@@ -122,11 +113,9 @@ local function install_folds(win, buf)
 end
 
 -- Per-render fold upkeep, deliberately minimal: at most re-open the NEWEST
--- record (the one a human is following live -- an append can land inside a
--- closed last fold), NEVER a re-close or a foldlevel write, so manual opens
--- and zR survive every render (probes H/I). This is also where a live
--- vim.g.lain_fold = false takes effect: a still-installed window meeting a
--- fold event while disabled is restored on the spot.
+-- record -- an append can land inside a closed last fold -- and NEVER a re-close
+-- or a foldlevel write, so manual opens and zR survive every render. Also where
+-- a live vim.g.lain_fold = false takes effect.
 local function refresh_folds(buf)
   if RECORD_START[vim.b[buf].lain_view] == nil then
     return
@@ -196,21 +185,16 @@ end
 -- shape), so it IS the summary; a multi-line record appends only its hidden
 -- line count.
 --
--- EVERY CLOSED FOLD HAS TO FILL ITS OWN LINE, and returning the summary is
--- not enough to get that: a closed fold displays this text and nvim then
--- FILLS the rest of the screen line with the 'fold' fillchar, so anything
--- shorter than the window trails a bar of dots -- a blank summary
--- (lain://approval's trailer, which must answer `spanning_record` true or
--- nothing in that buffer folds at all, 05_records' measurement) is only the
--- most visible case, not a special one. `strdisplaywidth` on the string this
--- function is ABOUT TO RETURN -- suffix included, so the `span > 1` branch's
--- padding accounts for "  (+N lines)" too -- is what the fillchar would
--- otherwise measure against: raw byte or character length disagrees with it
--- under a tab or multibyte content. Padding past the window is safe, since a
--- closed fold is one screen line and the surplus is simply not drawn.
--- `nvim_win_get_width` is the WHOLE window, so this math assumes no gutter
--- (no 'signcolumn'/'foldcolumn'/'number') -- true of every lain view today
--- and inherited unchanged from the pre-fix blank-only branch, not new here.
+-- EVERY CLOSED FOLD HAS TO FILL ITS OWN LINE, and returning the summary is not
+-- enough: a closed fold displays this text and nvim then FILLS the rest of the
+-- screen line with the 'fold' fillchar, so anything shorter than the window
+-- trails a bar of dots. `strdisplaywidth` on the string this function is ABOUT TO
+-- RETURN -- suffix included, so the `span > 1` branch's padding accounts for
+-- "  (+N lines)" too -- is what the fillchar measures against; raw byte or
+-- character length disagrees with it under a tab or multibyte content. Padding
+-- past the window is safe, since a closed fold is one screen line and the
+-- surplus is not drawn. `nvim_win_get_width` is the WHOLE window, so this math
+-- assumes no gutter -- true of every lain view today.
 function _G.__lain.foldtext()
   local line = vim.fn.getline(vim.v.foldstart)
   local span = vim.v.foldend - vim.v.foldstart + 1
@@ -221,14 +205,12 @@ function _G.__lain.foldtext()
 end
 
 -- 'foldmethod' and friends are WINDOW options, and these buffers are created
--- hidden by the first render -- so the fold surface attaches when a lain
--- buffer is first SHOWN (BufWinEnter), not at creation, and only in that
--- window. The pattern is "*", not "lain://*", because the SAME event is the
--- uninstall seam: a window whose buffer stops being a record-shaped lain
--- view (the human navigated away, or vim.g.lain_fold went false) is handed
--- back its saved fold options right here (probe J's leak). Cleared-augroup
--- convention like every lain augroup. The wipeout hook drops the line cache
--- so a recycled bufnr can never serve stale anchors.
+-- hidden by the first render -- so the fold surface attaches when a lain buffer
+-- is first SHOWN (BufWinEnter), not at creation, and only in that window. The
+-- pattern is "*", not "lain://*", because the SAME event is the uninstall seam: a
+-- window whose buffer stops being a record-shaped lain view is handed back its
+-- saved fold options right here. The wipeout hook drops the line cache so a
+-- recycled bufnr can never serve stale anchors.
 local fold_group = vim.api.nvim_create_augroup("lain_folds", { clear = true })
 vim.api.nvim_create_autocmd("BufWinEnter", {
   group = fold_group,

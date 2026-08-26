@@ -51,7 +51,7 @@ RSpec.describe Lain::Compaction::Head do
       expect(head.bytesize).to eq(Lain::Canonical.dump(messages[0..2]).bytesize)
     end
 
-    # FIX 2 (panel). The one object whose job is to be the single answer must
+    # The one object whose job is to be the single answer must
     # not answer its own question two ways, so the dump is unconditional --
     # including for an empty head, where it is the 2 bytes of "[]".
     it "answers exactly one way, at every size including empty" do
@@ -67,7 +67,7 @@ RSpec.describe Lain::Compaction::Head do
   describe "agreement with Context::Compact" do
     let(:summarizer) { ->(dropped) { "summary of #{dropped.size}" } }
 
-    # FIX 4 (panel): `messages - compact.call(messages)` was a SET difference
+    # `messages - compact.call(messages)` was a SET difference
     # and under-counted whenever a dropped message was byte-equal to a kept one
     # -- which repeated tool results produce routinely. The survivors are
     # compared positionally instead: Compact's output is one summary followed
@@ -86,8 +86,8 @@ RSpec.describe Lain::Compaction::Head do
     # dropped span, one inside the kept tail -- which is what makes the set
     # difference lose it: `Array#-` removes EVERY equal element, so the dropped
     # twin vanishes along with the surviving one. The fixture grew a message
-    # during T4 so the straddle still happens at this `keep_last`; the claim it
-    # makes did not change.
+    # when the boundary rule relaxed, so the straddle still happens at this
+    # `keep_last`; the claim it makes did not change.
     it "counts duplicates, where a set difference silently would not" do
       repeated = message("user", "identical tool result")
       dupes = [repeated, message("assistant", "unique"), repeated, message("assistant", "keep"), repeated]
@@ -127,7 +127,7 @@ RSpec.describe Lain::Compaction::Head do
       expect(compact.call(messages)).to eq(messages)
     end
 
-    # THE OPEN QUESTION, ANSWERED (B2, 2026-07-25). This example used to record
+    # THE OPEN QUESTION, ANSWERED (2026-07-25). This example used to record
     # the opposite -- "names the whole candidate span, protected survivors
     # included" -- as a characterization of the over-report a configured
     # protection policy produced. Wiring pins made that over-report real, so the
@@ -161,7 +161,7 @@ RSpec.describe Lain::Compaction::Head do
     end
   end
 
-  # B2. A pin is recorded as a turn DIGEST while Compact only ever sees
+  # A pin is recorded as a turn DIGEST while Compact only ever sees
   # projected TEXT, so the mapping between them is made ONCE -- in
   # {Lain::Compaction::Source}, the one object holding both the timeline and the
   # session -- and the SAME {Lain::Context::PinnedMessages} value is then handed
@@ -217,7 +217,7 @@ RSpec.describe Lain::Compaction::Head do
     # of the history is exercised -- including histories of REPEATED messages,
     # where pinning one occurrence protects both and the head has to say so.
     describe "agreement with what Compact actually removes" do
-      # The third family ALTERNATES, and it is not decoration: with T4's
+      # The third family ALTERNATES, and it is not decoration: with the relaxed
       # boundary an all-user history has no legal cut at all, so the first two
       # families exercise only the declined path and a sweep built from them
       # alone would agree vacuously, every cell dropping nothing.
@@ -249,11 +249,11 @@ RSpec.describe Lain::Compaction::Head do
           compact = Lain::Context::Compact.new(threshold: 1, keep_last:, protected_patterns: pins,
                                                summarizer: ->(dropped) { (seen = dropped) && "s" })
           compact.call(history)
-          # `head.empty?`, not `history.size <= keep_last`: T4 gave Compact three
-          # more ways to drop nothing -- a declined boundary, a boundary that
-          # snapped to 0, and a span whose every message is pinned -- and in all
-          # of them the summarizer must not be called at all. An empty head is
-          # now exactly the cases where it is not.
+          # `head.empty?`, not `history.size <= keep_last`: the relaxed rule
+          # gave Compact three more ways to drop nothing -- a declined boundary,
+          # a boundary that snapped to 0, and a span whose every message is
+          # pinned -- and in all of them the summarizer must not be called at
+          # all. An empty head is now exactly the cases where it is not.
           expected = head.empty? ? :summarizer_never_called : head.messages
 
           expect(seen).to eq(expected), "size=#{history.size} keep_last=#{keep_last} pinned=#{pinned.size}"
@@ -302,7 +302,7 @@ RSpec.describe Lain::Compaction::Head do
 
   # Scenario: a timeline shorter than keep_last yields an empty head.
   #
-  # The card's wording is "its size is zero". Ruling 2026-07-25 (panel, FIX 2)
+  # The card's wording is "its size is zero". Ruling 2026-07-25 (panel)
   # overrode that literal reading: `bytesize` is the UNCONDITIONAL canonical
   # dump, so an empty head measures the 2 bytes of "[]". Special-casing it to
   # zero made this object answer its own question two ways, and bought nothing
@@ -333,9 +333,9 @@ RSpec.describe Lain::Compaction::Head do
     end
   end
 
-  # FIX 1 (panel, probe_a5_boundaries.rb). The coupling fixture originally
-  # exercised only keep_last >= 1, and both degenerate values diverge --
-  # keep_last: 0 in the INVERTED direction, which is the worse one.
+  # From the panel probe `probe_a5_boundaries.rb`. The coupling fixture
+  # originally exercised only keep_last >= 1, and both degenerate values
+  # diverge -- keep_last: 0 in the INVERTED direction, which is the worse one.
   describe "the keep_last boundary" do
     let(:summarizer) { ->(dropped) { "summary of #{dropped.size}" } }
 
@@ -349,7 +349,7 @@ RSpec.describe Lain::Compaction::Head do
         .to raise_error(ArgumentError, "keep_last must be positive, got 0")
     end
 
-    # UPDATED BY T4, not deleted. This used to record the divergence itself --
+    # UPDATED, not deleted. This used to record the divergence itself --
     # Compact replacing the entire history with a summary of zero messages while
     # the head reported nothing droppable. Every consumer now asks
     # {Lain::Compaction.validate_keep_last}, so they refuse the same values with
@@ -369,7 +369,7 @@ RSpec.describe Lain::Compaction::Head do
         .to raise_error(ArgumentError, "keep_last must be positive, got -1")
     end
 
-    # Also updated by T4: Compact still raises, but on the RULE rather than on
+    # Also updated: Compact still raises, but on the RULE rather than on
     # `Array#last`'s "negative array size" -- which named the symptom and not
     # the argument that caused it.
     it "documents that Compact refuses a negative keep_last, now naming the argument" do
@@ -388,10 +388,10 @@ RSpec.describe Lain::Compaction::Head do
     # `seen` starts at a sentinel, NOT at []: where size <= keep_last Compact
     # returns at `compact.rb:50` without ever calling the summarizer, and an []
     # initializer would match the empty head by coincidence -- 26 of these 36
-    # cells asserting nothing (round-2 FIX 2). The sentinel makes those cells
+    # cells asserting nothing. The sentinel makes those cells
     # assert the real claim, which is that no drop happened at all.
     #
-    # Both role shapes, since T4: an all-user history has no legal cut and
+    # Both role shapes: an all-user history has no legal cut and
     # exercises only the DECLINED path, so a sweep over it alone would agree
     # about nothing at all.
     it "agrees with Compact at every history size and every keep_last it accepts" do
@@ -417,7 +417,7 @@ RSpec.describe Lain::Compaction::Head do
     end
   end
 
-  # T4. The cut rule is {Lain::Compaction::Boundary}'s, consulted here and by
+  # The cut rule is {Lain::Compaction::Boundary}'s, consulted here and by
   # {Lain::Context::Compact} with the same arguments -- and its two diagnostics
   # are answered by this object because this is the one
   # {Lain::Compaction::Source} already holds when it journals the turn's
@@ -451,14 +451,14 @@ RSpec.describe Lain::Compaction::Head do
       expect(head).not_to be_declined
     end
 
-    # THE CARRY-FORWARD (T2 panel review), and the regression for the ruling
+    # THE CARRY-FORWARD (from panel review), and the regression for the ruling
     # that dissolved it. One assistant landing at index 1 and thirty user
     # messages after it used to answer index 1 and `moved` 28 -- a head of ONE
     # message where three were asked, with nothing raising, no predicate
     # reporting trouble, {Need} never crossing threshold, and compaction quietly
     # stopping for the rest of the session. The relaxed boundary cuts where it
     # was asked to, so the shape is now unremarkable; `#moved` says so, and is
-    # still the surface T5 journals for the cases that are not.
+    # still the surface journalled for the cases that are not.
     it "no longer walks a long run of user messages, so the near-decline cannot recur" do
       history = [message("user", "ask"), message("assistant", "landing")] +
                 Array.new(30) { |index| message("user", "ask #{index}") }
@@ -490,9 +490,9 @@ RSpec.describe Lain::Compaction::Head do
     end
   end
 
-  # FIX 3 (panel, probe_a5_shape_and_dupes.rb §A). A frozen Head over mutable
-  # Hashes is a value object that lies: the probe mutated a message the head
-  # held and watched bytesize (313) stop matching its own messages (269).
+  # From the panel probe `probe_a5_shape_and_dupes.rb` §A. A frozen Head over
+  # mutable Hashes is a value object that lies: the probe mutated a message the
+  # head held and watched bytesize (313) stop matching its own messages (269).
   describe "value-object discipline" do
     it "is deeply frozen, so its measurement cannot go stale" do
       head = described_class.new(messages:, keep_last: 1)
@@ -510,11 +510,11 @@ RSpec.describe Lain::Compaction::Head do
       expect(head.bytesize).to eq(Lain::Canonical.dump(head.messages).bytesize)
     end
 
-    # Round-2 FIX 1 (panel, probe_review2_a5b.rb §B). Freezing in place froze
-    # only the SLICE, which left the caller holding a half-frozen array -- and
-    # froze nothing at all when size <= keep_last. A Head snapshots; it does not
-    # reach back into its argument. This matters as soon as anything builds two
-    # Heads from one list at different keep_last.
+    # From the round-2 panel probe `probe_review2_a5b.rb` §B. Freezing in place
+    # froze only the SLICE, which left the caller holding a half-frozen array --
+    # and froze nothing at all when size <= keep_last. A Head snapshots; it does
+    # not reach back into its argument. This matters as soon as anything builds
+    # two Heads from one list at different keep_last.
     it "leaves the caller's array and every element of it untouched" do
       caller_owned = messages
       described_class.new(messages: caller_owned, keep_last: 1)
@@ -542,7 +542,7 @@ RSpec.describe Lain::Compaction::Head do
       expect(caller_owned.map(&:frozen?)).to all(be(false))
     end
 
-    # CLAUDE.md requires this of value objects, and A6 hands a Head to code
+    # CLAUDE.md requires this of value objects, and a Head is handed to code
     # that runs through Ractor.make_shareable.
     it "is Ractor.shareable? whichever way it was built" do
       expect(described_class.new(messages:, keep_last: 1)).to be_deeply_frozen

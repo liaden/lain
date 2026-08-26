@@ -4,7 +4,7 @@ require "json"
 require "stringio"
 require "tmpdir"
 
-# T7: `lain watch SELECTOR` -- a read-only live view of ONE actor's stream.
+# `lain watch SELECTOR` -- a read-only live view of ONE actor's stream.
 # It tails a live session journal, admits only records whose lineage chains
 # to the watched spawn S (decided from the Message records' explicit NDJSON
 # fields alone -- from/to/causal_parents -- never by Store reconstruction),
@@ -292,7 +292,7 @@ RSpec.describe Lain::CLI::Watch do
     end
   end
 
-  # T3 fix round: the newest-session pick filtered on the ".ndjson" suffix
+  # A fix round: the newest-session pick filtered on the ".ndjson" suffix
   # ALONE, so it admitted both a zero-byte file (Journal.open creates the file
   # before the header lands) and a `.btw` scratch session that `lain sessions`
   # and `--resume` both hide. Tailing an empty file is unbounded by

@@ -147,7 +147,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
   # The harvest DECISION, end to end through a real Tools::AskHuman. The torn
   # turn carries the answer -- the ask_human that completed before the tear has
   # its real result in this very commit -- so this is the turn whose
-  # causal_parents retire the question (I6). Not harvesting would leave the
+  # causal_parents retire the question. Not harvesting would leave the
   # answer in the record with nothing citing it, and let a later, unrelated turn
   # claim the edge instead.
   it "cites a question answered before the tear, so it does not stay pending forever" do
@@ -175,7 +175,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
     expect(Lain::Event::Projection.new(log).pending("human").to_a).to be_empty
   end
 
-  # THE CONTRACT: T3 (`CLI::Resume::Cancellation`) projects a block for the same
+  # THE CONTRACT: `CLI::Resume::Cancellation` projects a block for the same
   # fact when a torn session is LOADED. Two shapes for one fact is how two
   # repairs of one defect come to disagree, so the agreement is asserted
   # mechanically here rather than kept by eye.
@@ -214,9 +214,9 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
       expect(results_turn(torn).content.drop(1).map { |block| block["is_error"] }).to all(be(true))
     end
 
-    # Load-bearing and verified rather than assumed: T3 carries no turn meta
-    # because one turn mixes real results with cancelled ones, so the fact has
-    # to live per block -- and a meta added on either side later moves the
+    # Load-bearing and verified rather than assumed: the load-side projection
+    # carries no turn meta because one turn mixes real results with cancelled
+    # ones, so the fact has to live per block -- and a meta added on either side later moves the
     # digest. This turn is the mixed one, so it is the right place to pin it.
     it "carries no turn meta, exactly as the projection does not" do
       expect(results_turn(torn).meta).to eq({})
@@ -228,7 +228,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
       expect(ids.uniq).to eq(ids)
     end
 
-    # The seam T3's review moved: the shared half states only that there is no
+    # The seam a review round moved: the shared half states only that there is no
     # result, and every inference about WHY sits in the half each side owns.
     # Referenced, so a drift is impossible rather than merely caught.
     it "states T3's shared half verbatim, and replaces only the half after it" do

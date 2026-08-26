@@ -5,74 +5,43 @@ require "active_support/core_ext/module/delegation"
 module Lain
   # A thread-safe, bounded queue of structured events (see {Lain::Telemetry}).
   #
-  # This is deliberately NOT a byte buffer. `parallel_safe?` tools run
-  # concurrently and subagents run async; a shared byte buffer would let two
-  # writers interleave mid-line and destroy provenance -- you could no longer
-  # tell which `tool_use_id` produced which line. A queue of whole, already
-  # attributed events preserves that provenance by construction. Bytes only
-  # ever live *inside* an event (e.g. {Lain::Telemetry::ToolOutput}), never smeared
-  # across the shared medium.
+  # Deliberately NOT a byte buffer. `parallel_safe?` tools run concurrently and
+  # subagents run async; a shared byte buffer would let two writers interleave
+  # mid-line and destroy provenance -- you could no longer tell which
+  # `tool_use_id` produced which line. Bytes only ever live *inside* an event
+  # (e.g. {Lain::Telemetry::ToolOutput}), never smeared across the medium.
   #
-  # == Overflow policy: BLOCK the producer (bounded backpressure)
+  # Overflow BLOCKS the producer: a full `SizedQueue` throttles a runaway
+  # producer (a `bash` command spewing megabytes) to the rate its consumer can
+  # drain -- bounded memory, no data loss, at the cost of a producer that stalls.
   #
-  # Backed by a `SizedQueue`, so when the queue is full {#push} blocks the
-  # calling (producer) thread until a consumer drains space. Backpressure
-  # throttles a runaway producer (a `bash` command spewing megabytes) to the rate
-  # its consumer can drain -- bounded memory, no data loss, at the cost of a
-  # producer that can stall.
+  # That policy is right for a consumer that must not miss an event, and wrong
+  # for the frontend, which renders and is not the record -- there a blocked
+  # producer is a deadlock the moment the render thread raises. Hence
+  # {Lain::Channel::DropOldest}, which drops the oldest event and surfaces a
+  # {Lain::Telemetry::Dropped} count. Both satisfy the same
+  # `push`/`pop`/`drain`/`close`/`Null` duck, so the WIRING chooses the policy,
+  # not the producer. Durability is not on this channel at all: {Lain::Journal}
+  # writes synchronously to its own fd under a mutex.
   #
-  # == Which consumer wants this, and which does not
-  #
-  # An earlier design justified blocking by "the channel feeds the Journal, and
-  # the Journal is the record, so it must not drop." That conflated two consumers
-  # with opposite needs. The record's durability now lives in {Lain::Journal},
-  # which writes synchronously to its own fd under a mutex; the Journal does not
-  # ride this channel at all. What remains on the channel is the FRONTEND, a
-  # consumer that may freely drop, because it renders -- it is not the record.
-  #
-  # So the two policies are split (see the plan, "Two consumers, two policies"):
-  #
-  # - {Lain::Channel} (this class) keeps blocking backpressure, for a consumer
-  #   that genuinely must not miss an event and can afford to throttle its
-  #   producer. It is still the right default where a stall is acceptable.
-  # - {Lain::Channel::DropOldest} drops the oldest event on overflow and surfaces
-  #   a {Lain::Telemetry::Dropped} count, for the frontend, where a blocked producer
-  #   would be a deadlock if the render thread ever raised.
-  #
-  # Both satisfy the same `push`/`pop`/`drain`/`close`/`Null` duck, so the wiring
-  # -- not the producer -- chooses the policy.
-  #
-  # The real risk of blocking is deadlock if *nobody* drains. Two things guard
-  # against it: (1) a consumer thread whose sole job is to drain and render, so
-  # under normal operation a consumer always exists; and (2) {#close} wakes every
-  # blocked producer with a `ClosedQueueError`, so teardown can never wedge a
-  # producer forever.
+  # Blocking risks deadlock only if *nobody* drains, and two things guard it: a
+  # consumer thread whose sole job is to drain and render, and {#close} waking
+  # every blocked producer with a `ClosedQueueError`.
   class Channel
-    # The two-mode destructive `drain`, shared by every channel policy: the
-    # dispatch loop is pure duck (`pop` + a private `drain_buffered`), so it is
-    # identical whatever the backing structure, while each includer keeps its
-    # own `drain_buffered` -- that is where the policies genuinely differ
-    # (SizedQueue's non-blocking pop here; DropOldest's marker-led surface).
+    # The two-mode destructive `drain`, shared by every channel policy. The
+    # dispatch loop is pure duck (`pop` plus a private `drain_buffered`), so
+    # each includer keeps only the half where the policies genuinely differ.
     # A plain module, not an `ActiveSupport::Concern`, per the {Lain::Freezable}
     # precedent: no `ClassMethods`, no dependency ordering, just one method.
     module Draining
-      # Destructive removal, in one of two modes depending on whether a block
-      # is given -- both are "drain" because both consume the channel, just on
-      # different schedules.
+      # Without a block: non-blocking. Every event currently buffered, in FIFO
+      # order, `[]` if none. This is the frontend's per-render-tick drain.
       #
-      # Without a block: non-blocking. Remove and return every event currently
-      # buffered, in FIFO order, without waiting for more. Returns `[]` if
-      # nothing is queued. This is the frontend's per-render-tick drain: pull
-      # whatever has accumulated, render it, come back later.
+      # With a block: blocking, until the channel is closed AND drained.
       #
-      # With a block: blocking. Repeatedly {#pop} and yield each event as it
-      # arrives, until the channel is closed AND drained (`pop` returning `nil`)
-      # -- the exit contract a render loop's `while (event = channel.pop) ...`
-      # already relied on, expressed as one call instead of a hand-rolled loop
-      # at every call site. Named `drain` rather than `each`/`Enumerable`
-      # deliberately: `each` promises a *repeatable* walk over a receiver that
-      # owns its elements, and this walk empties the channel as it goes and can
-      # only ever run once -- calling it `each` would be a lie about what it does.
+      # Named `drain` rather than `each`/`Enumerable` deliberately: `each`
+      # promises a *repeatable* walk over a receiver that owns its elements, and
+      # this empties the channel as it goes and can only ever run once.
       #
       # @yieldparam event [Object]
       # @return [Array<Object>] every currently-buffered event, when called without a block
@@ -96,15 +65,14 @@ module Lain
     # throttled long before it exhausts memory.
     DEFAULT_CAPACITY = 1024
 
-    # Throwaway carrier for validate-then-freeze construction (Ruling 2, T6).
-    # Channel is a lone guarded class in its own namespace, so it nests its own
-    # {Lain::Guard} subclass directly rather than joining a sibling `Guards`
-    # module (that form is for namespaces with several guarded classes, e.g.
-    # {Lain::Telemetry::Guards}). Channel is stateful, not a frozen value object, so
-    # there is no {Lain::Freezable} companion here -- just the carrier check.
-    # {DropOldest} shares this Guard deliberately (same capacity contract); it
-    # splits into its own the day their validations diverge.
-    class Guard < Lain::Guard
+    # Named rather than declared inline because {DropOldest} constructs against
+    # this same contract deliberately -- a channel's capacity means one thing
+    # whatever the overflow policy, and the shared name is what would make a
+    # divergence a visible edit rather than a silent drift.
+    #
+    # Channel is stateful, not a frozen value object, so there is no
+    # {Lain::Freezable} companion here -- just the check.
+    class Capacity < Declarative::Carrier
       attribute :capacity
       validates :capacity, numericality: { only_integer: true, greater_than: 0,
                                            message: "must be a positive Integer, got %<value>s" }
@@ -112,7 +80,7 @@ module Lain
 
     # @param capacity [Integer] maximum number of buffered events (>= 1)
     def initialize(capacity: DEFAULT_CAPACITY)
-      Guard.check!(capacity:)
+      Capacity.check!(capacity:)
 
       @queue = SizedQueue.new(capacity)
     end
@@ -168,10 +136,8 @@ module Lain
       drained
     end
 
-    # A channel that discards everything pushed to it, satisfying the same
-    # `#push`-shaped duck as a real Channel. The default channel for a
-    # {Tool::Invocation} that carries no live output destination, so a tool
-    # never needs an `if channel` guard before pushing -- it mirrors
+    # The default channel for a {Tool::Invocation} carrying no live output
+    # destination, so a tool never needs an `if channel` guard before pushing --
     # {Sink::Null}'s role one layer up.
     class Null
       # @return [self]

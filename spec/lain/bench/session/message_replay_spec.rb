@@ -3,10 +3,10 @@
 require "json"
 
 # The flat-record replay: every event a render chain cannot carry, re-put into
-# the Store a file rebuilds into. T2 gave it two record types that cite each
-# other across the spawn boundary, so it can no longer put in strict file order
-# -- and the SHAPE of what replaced that is a load-path property worth pinning,
-# not an implementation detail. A journal is unbounded.
+# the Store a file rebuilds into. Two record types cite each other across the
+# spawn boundary, so it can no longer put in strict file order -- and the SHAPE
+# of what replaced that is a load-path property worth pinning, not an
+# implementation detail. A journal is unbounded.
 RSpec.describe Lain::Bench::Session::MessageReplay do
   # Counts what the solver asks of the Store. That is the whole complexity
   # question said mechanically: a greedy sweep asks once per record, while a
@@ -123,7 +123,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
   end
 
   describe "records whose edges cross" do
-    # The cycle T2 could not order away: a question cites the turn it was asked
+    # The cycle no file ordering can undo: a question cites the turn it was asked
     # from, and the turn that delivers the answer cites the question back.
     it "lands a citing record written before the record it cites" do
       child = Lain::Timeline.empty(store:).commit(role: :user, content: text("child ask"))
@@ -180,7 +180,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
       expect { replay(records).messages }.to raise_error(Lain::Bench::Session::Corrupt, /content address/)
     end
 
-    # T2 scope expansion. `causal_parents` reaches neither of the two checks
+    # A scope expansion. `causal_parents` reaches neither of the two checks
     # that catch every other kind of rot: it is mapped and SORTED by
     # Event#normalize_causal before any digest exists, so a malformed entry
     # never reaches the content-address comparison, and the Store's own edge

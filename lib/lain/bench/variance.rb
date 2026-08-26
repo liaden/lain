@@ -2,7 +2,7 @@
 
 module Lain
   module Bench
-    # The experiment engine (design decision D3): n recordings of ONE task,
+    # The experiment engine: n recordings of ONE task,
     # reported along three axes in one String.
     #
     # 1. Determinism -- each recording, dry-replayed under its own Context,
@@ -17,16 +17,14 @@ module Lain
     # 3. Distribution -- {Compare}'s token/cost table across the recordings,
     #    because a single pair of runs is noise.
     #
-    # Recordings are an Array, auto-named "1".."n": they are repeated samples
-    # of one task, not named experimental arms, so ordinals carry all the
-    # meaning there is -- caller-chosen names belong to Compare's cross-arm
-    # use, not here. Steps print 1-based ("model call 2"), translated from
-    # StepDiff's 0-based index at this formatting boundary, so the experimenter
-    # never does off-by-one arithmetic against the 1-based ordinals.
+    # Recordings are an Array, auto-named "1".."n": they are repeated samples of
+    # one task, not named experimental arms, so ordinals carry all the meaning
+    # there is. Steps print 1-based, translated from StepDiff's 0-based index at
+    # this formatting boundary, so the experimenter never does off-by-one
+    # arithmetic against the 1-based ordinals.
     #
-    # Compare AND the determinism diffs are built eagerly: mismatched degraded
-    # sets ({Capability::Guard}) and a recording that cannot replay (an orphan
-    # request_sent tripping DryReplay's 1:1 guard) both refuse at
+    # Compare AND the determinism diffs are built eagerly, so mismatched
+    # degraded sets and a recording that cannot replay both refuse at
     # construction, before any report text exists.
     class Variance
       # @param recordings [Array<Session::Recording>] n >= 2 recordings of one task

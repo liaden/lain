@@ -5,95 +5,63 @@ require "shellwords"
 module Lain
   module CLI
     class Up
-      # The status-right HUD's string composition, extracted from {Up} so the
-      # tmux orchestration and the jq/fallback formatting stay one
-      # responsibility each. Everything here is a STRING for tmux's own
-      # `$SHELL -c` (the `#(...)` job boundary {Up}'s class comment explains),
-      # so state_path is Shellwords-escaped for that shell, not for ours.
+      # The status-right HUD's string composition. Everything here is a STRING
+      # for tmux's own `$SHELL -c` at the `#(...)` job boundary {Up}'s class
+      # comment explains, so state_path is escaped for THAT shell, not ours.
       class Hud
-        # jq does the whole warm/fleet/inbox derivation in one process,
-        # matching the approved design's "#(jq …) on a status-interval"
-        # (planning/interface-integration.md § 1). A single-quoted heredoc:
-        # jq's OWN string interpolation is `\(...)`, which must reach jq's
-        # parser byte-for-byte -- Ruby's `\(` means nothing, so an
-        # interpolating heredoc would risk a mangled filter for no gain.
-        # Verified against a real tmux 3.8 (nested parens and all) via an
-        # attached PTY: tmux's own `#()` job-boundary parser counts nesting
-        # correctly, so this is not the tmux-3.7-only risk it might look like
-        # at a glance.
+        # The whole warm/fleet/inbox derivation in one jq process, on tmux's
+        # status-interval. A single-quoted heredoc because jq's OWN string
+        # interpolation is `\(...)` and must reach jq's parser byte-for-byte.
+        # Verified against a real tmux 3.8 through an attached PTY: tmux's
+        # `#()` job-boundary parser counts the nested parens correctly.
         #
-        # The three later segments are CONDITIONAL, and every condition is
-        # written to survive a key that is simply absent: a state published by
-        # an older `lain`, or the ordinary pre-first-turn window where
-        # occupancy is genuinely unknown, must render the line it always did
-        # rather than "approve:0 ctx:--". A status bar that says something on
-        # every quiet chat is noise; these three speak only when there is
-        # something to say. (`.foo` on a missing key is null in jq, never an
-        # error, which is what makes the guards one comparison each. A zero
-        # occupancy is truthy in jq -- only null and false are not -- so a
-        # genuinely empty context still renders `ctx:0%`, and only ABSENCE is
-        # silent, which is the distinction the field exists to carry.)
+        # NO jq VARIABLES here, and no `if ... end as $x`. Each was a live bug
+        # this filter shipped with, and both fail SILENTLY:
         #
-        # The percentage is CLAMPED, and this is not defensive padding.
-        # {Lain::StatusFeed} publishes `used / window`, and
-        # {Lain::ContextWindow.default} answers an unmatched model with its
-        # 8,192-token conservative fallback rather than raising -- which is
-        # every Ollama id and most Bedrock ids. A real 32k local window then
-        # publishes 4.0, and an unclamped filter renders `ctx:400%`. The
-        # published number stays honest about what the book was asked (a bench
-        # reading it wants the truth); the status bar is where nonsense gets
-        # trimmed, because a pegged 100% reads as "full", which is the one
-        # thing a human can act on.
-        # ⚠️ NO jq VARIABLES, and no `if ... end as $x`. Both are deliberate,
-        # and each was a live bug this filter shipped with:
+        # * tmux 3.4 escapes a `$` in an option value to a backslash-dollar and
+        #   stores it escaped (3.8 does not), so the job tmux later handed the
+        #   shell was a jq syntax error -- swallowed by {#jq_status_right}'s
+        #   `2>/dev/null`, leaving a permanent "lain: no state yet" on every
+        #   tmux 3.4, which is Ubuntu 24.04's and every GitHub runner's.
+        # * `if ... end as $warmth` needs jq 1.8's relaxed grammar; jq 1.7
+        #   rejects it outright, and Ubuntu 24.04 ships jq 1.7.
         #
-        # * `$` cannot appear here at all. tmux 3.4 ESCAPES a `$` in an option
-        #   value to `\$` and stores it escaped (tmux 3.8 does not), so the job
-        #   tmux later hands the shell contained `\$warmth` -- a jq syntax
-        #   error, swallowed by {#jq_status_right}'s own `2>/dev/null`, leaving
-        #   a permanent "lain: no state yet" on every tmux 3.4 (Ubuntu 24.04's,
-        #   and every GitHub runner). Concatenating with `+` says the same thing
-        #   with nothing for tmux to escape.
-        # * The bare `if ... end as $warmth` it used before ALSO needed jq 1.8's
-        #   relaxed grammar; jq 1.7 rejects it outright ("unexpected as"), for
-        #   the same silent result. Ubuntu 24.04 ships jq 1.7.
+        # Concatenating with `+` says the same thing with nothing for tmux to
+        # escape, and renders identically under jq 1.7 and 1.8.
         #
-        # So it renders identically under jq 1.7 and 1.8, and survives a tmux
-        # 3.4 round trip. Verified against both, warm and cold, with and
-        # without the optional keys, including the clamp and a zero occupancy.
-        # The mode segment is the THIRD conditional, and it is deliberately a
-        # single non-empty test over an ALREADY COMPOSED string.
-        # {Lain::StatusFeed} publishes `mode_lighter` as the posture's lighter
-        # followed by every active layer's, and the mode design declares the
-        # default posture SILENT by giving `accept_edits` an empty lighter. Had
-        # this filter rendered `.posture` and `.layers` instead, it would carry
-        # its own copy of the posture/layer lighter table AND its own
-        # comparison against the literal name "accept_edits" -- restated again,
-        # byte for byte, in `plugin/tmux/scripts/lain-status`. One rule, one
-        # home, and this renderer only has to know that empty means quiet.
-        # `.mode_lighter` on a state published before the key existed is null,
-        # so `// ""` covers an older `lain` and the pre-first-switch window
-        # alike, both of which must render the line they always did.
+        # The optional segments are guarded so an absent key -- an older
+        # `lain`, or the pre-first-turn window -- renders the line it always
+        # did rather than "approve:0 ctx:--". `.foo` on a missing key is null
+        # in jq, never an error, which is what makes each guard one
+        # comparison; a zero is truthy in jq, so a genuinely empty context
+        # still renders `ctx:0%` and only ABSENCE is silent.
         #
-        # `run:` is E7's cumulative token spend, and BOTH halves of the label
-        # are load-bearing. "usage:" would read as the plan's consumption:
-        # {Lain::StatusFeed} sums what THIS process was billed on THIS key,
-        # another client on the same subscription is invisible to it, and no
-        # provider lain talks to publishes a used/remaining pair to reconcile
-        # against. "session:" would read as the whole conversation: a
-        # {Lain::Session} survives a `--resume` and this counter does not, so
-        # that noun would have a resumed chat rendering 0 over a record showing
-        # half a million. A RUN is the thing that was measured, and it is the
-        # word {Lain::Agent::Accounting} already uses for the same ledger.
-        # Guarded the way occupancy is, and for the same reason: null (an older
-        # `lain`, the window before the first turn) is silent, while a genuine
-        # zero still renders.
+        # The percentage is CLAMPED because {Lain::ContextWindow.default}
+        # answers an unmatched model with a conservative 8,192 -- which is
+        # every Ollama id and most Bedrock ids -- so a real 32k local window
+        # publishes 4.0 and an unclamped filter renders `ctx:400%`. The
+        # published number stays honest for a bench reading it; the bar is
+        # where nonsense gets trimmed, because a pegged 100% reads as "full",
+        # which is the one thing a human can act on.
         #
-        # The trailing `+ " "` is E8, and it is the LAST concatenation on
-        # purpose -- whatever the optional segments did, the line ends with one
-        # space so the bar's right edge has room. It lives here rather than on
-        # the tmux `status-right` option value because trailing whitespace in an
-        # option value is the more fragile of the two places to keep it.
+        # The mode segment tests an ALREADY COMPOSED string. Rendering
+        # `.posture` and `.layers` instead would put a second copy of the
+        # lighter table and of the literal "accept_edits" here, alongside the
+        # copy in `plugin/tmux/scripts/lain-status`; this renderer only has to
+        # know that empty means quiet.
+        #
+        # The label is `run:` and both halves are load-bearing. "usage:" would
+        # read as the plan's consumption, but {Lain::StatusFeed} sums only what
+        # THIS process was billed on THIS key. "session:" would read as the
+        # whole conversation, but a {Lain::Session} survives a `--resume` where
+        # this counter does not, so a resumed chat would render 0 over a record
+        # showing half a million. A run is what was measured, and the word
+        # {Lain::Agent::Accounting} already uses for the same ledger.
+        #
+        # The trailing space is the LAST concatenation on purpose, so the line
+        # ends with one space whatever the optional segments did. It lives here
+        # rather than in the tmux option value, where trailing whitespace is
+        # the more fragile of the two places to keep it.
         JQ_FILTER = <<~'JQ'.strip
           (if .cache_deadline and (.cache_deadline | fromdateiso8601) > now then "🔥" else "❄" end)
           + " fleet:\(.fleet | length) inbox:\(.inbox_count)"
@@ -107,14 +75,13 @@ module Lain
         JQ_MISSING_WARNING = "jq not found on PATH -- status-right falls back to raw state.json " \
                              "(install jq for the formatted warmth/fleet/inbox HUD)"
 
-        # How often tmux re-runs the `#(...)` job below. Lives here rather
-        # than on {Up} because it is a fact about this renderer -- what it
-        # costs to redraw, and how stale its numbers may get -- not about
-        # sessions, windows or attaching.
+        # How often tmux re-runs the `#(...)` job. A fact about this renderer --
+        # what a redraw costs, how stale its numbers may get -- not about
+        # sessions, windows or attaching, so it does not live on {Up}.
         DEFAULT_INTERVAL = 5
 
         # @param state_path [String] the state file the job reads, resolved by
-        #   {Lain::ProjectDir#state_path} -- since F50 that is under
+        #   {Lain::ProjectDir#state_path} -- which today lives under
         #   `$XDG_STATE_HOME/lain`, not in the project
         # @param interval [Integer] seconds between re-renders; tmux's
         #   `status-interval`, which {Up} writes as a session option
@@ -123,10 +90,9 @@ module Lain
           @interval = interval
         end
 
-        # `state_path` is public because this renderer is no longer the only
-        # thing that needs to NAME the file: it sits in a directory named by
-        # twelve hex characters of a hash, so {Up::Report#hud_line} tells the
-        # operator where it is. Reading it hands out a naming and no authority.
+        # `state_path` is public because the file sits in a directory named by
+        # twelve hex characters of a hash, so {Up::Report#hud_line} has to tell
+        # the operator where it is. Reading it hands out a name, not authority.
         attr_reader :interval, :state_path
 
         # @return [Array(String, String), Array(String, nil)] the status-right
@@ -139,22 +105,17 @@ module Lain
         private
 
         # `2>/dev/null` alone swallows every jq failure, not just a missing
-        # binary -- the ordinary fresh-`up` window (before StatusFeed's first
-        # publish, `state.json` not written yet) makes jq exit nonzero with
-        # empty stdout, which rendered as a LITERALLY BLANK status-right
-        # (reproduced live via an attached PTY capture). The `|| echo`
-        # combinator is the same never-silent fallback the no-jq branch uses,
-        # mirrored onto the jq job itself so both branches share the one
-        # guarantee: the HUD shows something real or an honest "no state yet",
-        # never blank.
+        # binary: an ordinary fresh `up` window, before StatusFeed's first
+        # publish writes `state.json`, makes jq exit nonzero with empty stdout
+        # and rendered a LITERALLY BLANK status-right (reproduced through an
+        # attached PTY capture). The `|| echo` gives this branch the same
+        # never-silent guarantee the no-jq branch has.
         def jq_status_right
           "#(jq -r '#{JQ_FILTER}' #{escaped_state_path} 2>/dev/null || echo 'lain: no state yet')"
         end
 
-        # jq missing cannot mean a blank HUD -- a demo machine's whole point
-        # is showing the state. So this still shows something real: raw
-        # `state.json`, or an honest "no state yet" when even that file is
-        # absent, never silence.
+        # jq missing cannot mean a blank HUD: raw `state.json`, or an honest
+        # "no state yet" when even that is absent -- never silence.
         def fallback_status_right
           "#(cat #{escaped_state_path} 2>/dev/null || echo 'lain: no state yet')"
         end

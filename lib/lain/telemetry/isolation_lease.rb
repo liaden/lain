@@ -2,10 +2,10 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # An isolation-lease record must land on one of the lifecycle kinds and
       # name the worker it belongs to.
-      class IsolationLease < Guard
+      class IsolationLease < Declarative::Carrier
         attribute :kind
         attribute :worker_key
         validates :kind, inclusion: { in: %i[acquired released service_provisioned service_torn_down],
@@ -15,42 +15,31 @@ module Lain
       end
     end
 
-    # One transition in an isolation lease's lifecycle: `kind` names WHICH
-    # transition (`:acquired`/`:released` today; `:service_provisioned`/
-    # `:service_torn_down` complete the vocabulary for a richer backend --
-    # B3's Postgres/Redis DB-index, B4's compose stack -- to emit ALONGSIDE
-    # these two, the same "closed enum, not every value reached yet" idiom
-    # {Compaction#cache_state} documents for its own unreached `:warm`).
-    # `worker_key` is the STRING form of whatever `worker_id` the caller
-    # passed to `acquire` -- the same arbitrary-object-as-key idiom
-    # {Paths#project_hash} already keys a filesystem path on -- so this record
-    # stays a self-describing value regardless of what a caller's worker
-    # identity actually is, and is the COUNTABLE key `Compare` sums lease/
-    # thrash cost over later (a worker with N acquire/release pairs is
-    # visible as N records sharing one `worker_key`). `backend` names the
-    # class doing the leasing (a String, not the object), so a report can
-    # break lease cost down by strategy.
+    # One transition in an isolation lease's lifecycle. The two service kinds
+    # complete the vocabulary for a richer backend -- a Postgres/Redis DB-index,
+    # a compose stack -- to emit alongside acquire/release: a closed enum whose
+    # every value is not yet reached, the idiom {Compaction#cache_state} keeps
+    # for its own `:warm`.
     #
-    # `service` is nil for the base `:acquired`/`:released` pair a lease
-    # lifecycle always emits -- there is no service to name yet, only a
-    # WorkerEnv -- and is the field a `:service_provisioned`/
-    # `:service_torn_down` record from a richer backend would fill with a
-    # NAME ("postgres", "redis"), never a connection string: this record
-    # must never carry a `DATABASE_URL`/`REDIS_URL` or any credential, only
-    # attribution. A backend that wants a URL journaled has to redact it
-    # first -- this record gives it nowhere to put the raw bytes.
+    # `worker_key` is the STRING form of whatever `worker_id` the caller passed
+    # to `acquire`, so the record stays self-describing whatever a caller's
+    # worker identity is, and is the COUNTABLE key `Compare` sums lease and
+    # thrash cost over. `backend` names the leasing class as a String, so a
+    # report can break that cost down by strategy.
     #
-    # Emitted by {Isolation::Journal}, the Journal-duck decorator
-    # ({Memory::JournalMemoryRoot}/{Session::Journaled}'s shape, applied to the
-    # Isolation seam) that wraps ANY backend's `acquire`/`release` -- never by a
-    # backend ({Null}/{Worktree}/a future DbIndex/Compose) itself, which stays
+    # `service` must carry a NAME ("postgres", "redis") and NEVER a connection
+    # string: this record may not hold a `DATABASE_URL`/`REDIS_URL` or any
+    # credential, only attribution, and it gives a backend nowhere to put the
+    # raw bytes.
+    #
+    # Emitted by {Isolation::Journal}, never by a backend itself, which stays
     # journal-ignorant.
     IsolationLease = Data.define(:kind, :worker_key, :backend, :service) do
       include Journalable
 
       def initialize(kind:, worker_key:, backend:, service: nil)
         kind = kind.to_sym
-        Guards::IsolationLease.check!(kind:, worker_key:)
+        Carriers::IsolationLease.check!(kind:, worker_key:)
 
         super(
           kind:,

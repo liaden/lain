@@ -60,7 +60,6 @@ RSpec.describe Lain::Compaction::Strategy::ElideToolObservations do
 
   def bytes(replacement) = Lain::Canonical.dump(replacement.content)
 
-  # AC 1
   describe "the ranges it claims" do
     it "covers exactly the messages carrying tool blocks" do
       claimed = strategy.ranges(mixed, span: 0...8).flat_map(&:to_a)
@@ -111,7 +110,6 @@ RSpec.describe Lain::Compaction::Strategy::ElideToolObservations do
     end
   end
 
-  # AC 2
   describe "a derivation over a mixed span" do
     let(:source) { fixtures.history(fixtures.mixed_blocks) }
     let(:derived) { Lain::Compaction::Derivation.new(strategy:, keep_last: 3).derive(source) }
@@ -140,7 +138,6 @@ RSpec.describe Lain::Compaction::Strategy::ElideToolObservations do
     end
   end
 
-  # AC 3
   describe "a purely conversational span" do
     let(:source) { fixtures.history(fixtures.conversational_blocks) }
     let(:derived) { Lain::Compaction::Derivation.new(strategy:, keep_last: 3).derive(source) }

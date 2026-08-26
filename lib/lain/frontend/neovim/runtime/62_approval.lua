@@ -1,4 +1,4 @@
--- lain://approval, the parked-approval list (T36): the buffer Ruby's
+-- lain://approval, the parked-approval list: the buffer Ruby's
 -- {Lain::Frontend::Neovim::ApprovalView} renders into, and the two keys that
 -- answer the call under the cursor.
 --
@@ -11,9 +11,9 @@
 -- `nofile` and nomodifiable like every other projection, and the answer is one
 -- keystroke.
 --
--- ONE new top-level name, 41_layout's and 46_sidebar's economy: the chunk shares
--- one scope and the binding cap is 60 upvalues per function prototype, so every
--- top-level local is a name each later module pays for.
+-- ONE new top-level name, 41_layout's economy: the binding cap is 60 upvalues
+-- per function prototype, so every top-level local is a name each later module
+-- pays for.
 local lain_approval = {
   NAME = "lain://approval",
 
@@ -21,52 +21,40 @@ local lain_approval = {
   -- ARRAY rather than a map, so `define` and the keymaps below run in one fixed
   -- order and neither is spelled by string surgery on the other.
   --
-  -- 46_sidebar's MARK_KEYS, and the same rule for the same reason: A KEY PER
-  -- VERDICT, NEVER ONE TOGGLE. The verdict RIDES THE WIRE, because a decision
-  -- computed here from the rendering on screen answers the neighbouring call
-  -- the moment the list has moved -- in SILENCE, since both values are legal.
+  -- 46_sidebar's MARK_KEYS rule for its reason: A KEY PER VERDICT, NEVER ONE
+  -- TOGGLE. The verdict RIDES THE WIRE, because a decision computed here from
+  -- the rendering on screen answers the neighbouring call the moment the list
+  -- has moved -- in SILENCE, since both values are legal.
   --
   -- Unlike MARK_KEYS this restates no Ruby constant: approve/deny is not a
-  -- vocabulary lain could grow a third member of, it is a Boolean
-  -- (Approval::Queue::Pending#decide takes one), and the Ruby side refuses any
-  -- word it does not have rather than coercing it. `y` and `n` because they are
-  -- the letters this same decision already wears at the terminal prompt
-  -- ("approve bash(...)? [y/N]"), which is the whole of a human's muscle memory
-  -- for this question.
+  -- vocabulary lain could grow a third member of, it is a Boolean. `y` and `n`
+  -- because they are the letters this same decision already wears at the
+  -- terminal prompt ("approve bash(...)? [y/N]").
   --
-  -- WHAT THE TWO KEYS COST, stated rather than glossed: in this buffer `y` is
-  -- not vim's yank and `n` is not repeat-search. Both are non-destructive keys
-  -- shadowed in one nomodifiable, transient buffer -- the cheapest pair
-  -- available, since every genuinely useful alternative (`a`, `d`, `x`) is an
-  -- operator whose absence a human WOULD feel. They are buffer-local, bound
-  -- from BufEnter, so nothing outside lain://approval changes.
+  -- WHAT THE TWO KEYS COST: in this buffer `y` is not vim's yank and `n` is not
+  -- repeat-search. Both are non-destructive keys shadowed in one nomodifiable,
+  -- transient buffer -- the cheapest pair available, since every useful
+  -- alternative (`a`, `d`, `x`) is an operator whose absence a human WOULD feel.
   VERDICTS = {
     { verdict = "approve", key = "y", command = "LainApprove" },
     { verdict = "deny", key = "n", command = "LainDeny" },
   },
 }
 
--- The fold and motion boundary for this buffer, registered from HERE rather
--- than written into 05_records' own table literal: the key is this module's
--- NAME, which 00_constants deliberately does not carry (see its note), so an
--- entry over there would spell it a second time. 20_buffers' rule -- a
--- capability stays deletable with its file -- is the precedent.
+-- The fold and motion boundary for this buffer, registered from HERE rather than
+-- written into 05_records' table literal: the key is this module's NAME, which
+-- 00_constants deliberately does not carry, so a capability stays deletable with
+-- its file.
 --
--- `spanning_record` UNWRAPPED, taking no region bound, and that is the whole
--- test: a line NOT carrying ApprovalView::INDENT starts an item. Ruby indents
--- nothing outside the list, so the blank and the hint below it answer true on
--- the pattern alone and need no `rows` -- see 05_records' note for why a
--- trailer answering true is what keeps the items closed at rest, and for the
--- one case (an indented trailer) that does need the bound.
+-- `spanning_record` UNWRAPPED, taking no region bound: a line NOT carrying
+-- ApprovalView::INDENT starts an item, and Ruby indents nothing outside the
+-- list, so the blank and the hint below it answer true on the pattern alone.
 --
--- WHAT THE ENTRY BUYS is everything 10_folds already installs for a view that
--- has one -- folds at record boundaries, `foldminlines = 0` so a one-line item
--- still closes, the older-closed default, and ]]/[[ from 20_buffers. An
--- approval's command is unbounded and now renders over several lines, so
--- without a fold surface three parked calls are a wall of text and the list
--- stops being readable at a glance; with one, the list at rest is one summary
--- line per call and the human OPENS the one they are about to answer. That is
--- the standing rule this serves: a human must read what they approve.
+-- WHAT THE ENTRY BUYS is everything 10_folds installs for a view that has one.
+-- An approval's command is unbounded and renders over several lines, so without
+-- a fold surface three parked calls are a wall of text; with one, the list at
+-- rest is one summary line per call and the human OPENS the one they are about
+-- to answer -- the standing rule that a human must read what they approve.
 RECORD_START[lain_approval.NAME] = spanning_record
 
 -- A FORM, NOT A LOG, which is 10_folds' other per-view answer and the one this
@@ -78,12 +66,10 @@ RECORD_START[lain_approval.NAME] = spanning_record
 -- surface whose premise is that a human reads what they approve.
 FORM_VIEWS[lain_approval.NAME] = true
 
--- `named_buf` attaches a filetype from READONLY_FILETYPES, a table in
--- 00_constants which this module does not edit -- so the lookup misses and the
--- option lands unset. 46_sidebar records the fix and this follows it: join the
--- one shared "lain" filetype like every other record-shaped view, with
--- b:lain_view naming which view it is. Guarded on the CURRENT value, because
--- setting 'filetype' fires FileType synchronously and this renders on a poll.
+-- `named_buf` attaches a filetype from READONLY_FILETYPES, which this module
+-- does not edit, so the lookup misses and the option lands unset; 46_sidebar
+-- records the fix. Guarded on the CURRENT value, because setting 'filetype'
+-- fires FileType synchronously and this renders on a poll.
 function lain_approval.buf()
   local buf = named_buf(lain_approval.NAME)
   if vim.bo[buf].filetype == "" then
@@ -92,21 +78,16 @@ function lain_approval.buf()
   return buf
 end
 
--- ONLY THE WINDOW THIS MODULE OPENED, and `w:lain_approval_opened` is what
--- makes that answerable. A window VARIABLE, and both alternatives get it wrong
--- in a way nothing here would notice: a window OPTION is copied by :vsplit
--- (10_folds' probe J), so a human's split off lain's window would wear lain's
--- mark and be taken from them; a lua table keyed by window id outlives the
--- window it names, so a recycled id would hand a stranger's window to this
--- loop. A window variable is copied by nothing, dies with its window, and
--- survives a render -- a render writes buffer lines and buffer variables and
--- touches no window at all.
+-- ONLY THE WINDOW THIS MODULE OPENED, and `w:lain_approval_opened` is what makes
+-- that answerable. A window VARIABLE, because both alternatives get it wrong in
+-- a way nothing here would notice: a window OPTION is copied by :vsplit, so a
+-- human's split off lain's window would wear lain's mark and be taken from them,
+-- while a lua table keyed by window id outlives the window it names and a
+-- recycled id would hand a stranger's window to this loop.
 --
--- THE BUFFER SURVIVES THE CLOSE. `bufhidden = "hide"` (20_buffers' named_buf)
--- is 60_question's measurement read the other way round: nvim_win_close there
--- did NOT unload the buffer, which is a problem for an abandon signal and
--- exactly right here -- `:buffer lain://approval` is still the way back to a
--- list with nothing in it.
+-- THE BUFFER SURVIVES THE CLOSE: `bufhidden = "hide"` means nvim_win_close does
+-- not unload it, so `:buffer lain://approval` is still the way back to a list
+-- with nothing in it.
 local function last_in_its_tab(win)
   return #vim.api.nvim_tabpage_list_wins(vim.api.nvim_win_get_tabpage(win)) == 1
 end
@@ -142,28 +123,21 @@ end
 -- serves: a line holding no record sends NOTHING, because an rpcrequest whose
 -- only possible answer is "that line names no call" is worse than silence.
 --
--- LINES, NEVER CALLS, and the two were the same number only while every item
--- was one line. An item whose command did not fit contributes all of its lines
--- here, so a cursor on a continuation line is INSIDE the list and answers the
--- item it continues -- ApprovalView::Rendering holds the line -> call map that
--- says which, and it is built by the same pass that drew these lines. The
--- alternative was a keypress that did nothing on every line but the first,
--- which is the same silence 70_inbox reserves for a line holding no record at
--- all -- and here it would be a lie, because the line does hold one.
+-- LINES, NEVER CALLS. An item whose command did not fit contributes all of its
+-- lines here, so a cursor on a continuation line is INSIDE the list and answers
+-- the item it continues -- ApprovalView::Rendering holds the line -> call map
+-- that says which. Counting CALLS gives a keypress that does nothing on every
+-- line but the first, which here would be a lie: the line does hold a record.
 --
--- IT TAKES THE WINDOW, and only on the way IN. set_question's reason applies
--- with more force here: lain is not merely handing the human something, it is
--- PARKED on their answer with a clock running, and an editor that showed
--- nothing while the chat pane waited is the defect this whole module exists to
--- fix. Focus is taken only when no window is already showing the buffer and
--- there is something to answer, so a poll never re-steals a cursor and an
--- emptied list never opens a window on nothing.
+-- IT TAKES THE WINDOW, and only on the way IN: lain is PARKED on the answer with
+-- a clock running, and an editor showing nothing while the chat pane waited is
+-- the defect this module exists to fix. Focus is taken only when no window is
+-- already showing the buffer and there is something to answer, so a poll never
+-- re-steals a cursor and an emptied list never opens a window on nothing.
 --
--- AND IT GIVES THE WINDOW BACK, which is the other half of taking one: a
--- window opened BECAUSE rows appeared has no claim on the screen once they are
--- gone, and a session that was gated once would otherwise carry a pane reading
--- the empty projection for the rest of its life. Only the window this module
--- opened, per the note above `close_opened_windows`.
+-- AND IT GIVES THE WINDOW BACK: a window opened BECAUSE rows appeared has no
+-- claim on the screen once they are gone, and a session gated once would
+-- otherwise carry a pane reading the empty projection for the rest of its life.
 --
 -- Written BEFORE the placement (46_sidebar's ordering), so the window never
 -- shows a half-drawn buffer.
@@ -183,23 +157,17 @@ function _G.__lain.set_approval(lines, gen, rows)
   announce_render(lain_approval.NAME, buf)
 end
 
--- The cursor-on-a-row ANSWER gesture. :LainReviewMark's shape in every respect
--- that matters: the same buffer guard for the same reason (`define` makes every
--- :Lain* command GLOBAL and this one reads the CURRENT window's cursor, so
--- hand-typed from lain://journal line 7 it would answer whatever call the list
--- holds on ITS line 7 -- a call the human never looked at), the LINE and the
--- buffer's STAMP riding together, and ONE array after the verb, because every
--- verb on this rail is destructured Ruby-side as `verb, args` and 65_review
--- records a verb that sent flat positionals and had everything after the first
--- dropped on the floor.
+-- The cursor-on-a-row ANSWER gesture, :LainReviewMark's shape: the same buffer
+-- guard for the same reason (`define` makes every :Lain* command GLOBAL and this
+-- one reads the CURRENT window's cursor), the LINE and the buffer's STAMP riding
+-- together, and ONE array after the verb, because every verb on this rail is
+-- destructured Ruby-side as `verb, args`.
 --
--- ACKED, so nothing here reads a return value -- and that is a design
--- constraint rather than a convenience. Answering a parked approval RESOLVES A
--- PROMISE, which must happen on Ruby's reactor; serving it on the RPC thread
--- the way a question's `:w` is served would mean blocking that thread on the
--- reactor, which this project has ruled out twice. So the gesture rides the
--- command inbox to the consumer fiber, and a refusal comes back on the rail
--- `__lain.review_refused` renders, exactly as a refused open does.
+-- ACKED, and that is a design constraint. Answering a parked approval RESOLVES A
+-- PROMISE, which must happen on Ruby's reactor; serving it on the RPC thread the
+-- way a question's `:w` is served would block that thread on the reactor. So the
+-- gesture rides the command inbox to the consumer fiber, and a refusal comes
+-- back on the rail `__lain.review_refused` renders.
 --
 -- WHAT THE CURSOR CANNOT SAY, recorded here because this is where the cursor is
 -- read: the line is where the human is LOOKING, not what they AIMED at. A
@@ -210,17 +178,14 @@ end
 local function submit_approval(verdict)
   local buf = vim.api.nvim_get_current_buf()
   if vim.api.nvim_buf_get_name(buf) ~= lain_approval.NAME then
-    -- ON THE RAIL, NOT ON `vim.notify`, exactly as the sentence above promises
-    -- a REFUSED answer arrives: `51_thread.lua` measured a plain notify blocking
-    -- at roughly `#sentence + 12 > columns`, which is the hit-enter prompt this
-    -- module's own comment says an answer must never sit behind. The rail
-    -- prepends the `lain: ` this string therefore does not.
+    -- ON THE RAIL, NOT ON `vim.notify`: a plain notify blocks at roughly
+    -- `#sentence + 12 > columns`, the hit-enter prompt an answer must never sit
+    -- behind. The rail prepends the `lain: ` this string therefore does not.
     --
-    -- `spec/refusal_delivery_discipline_spec.rb` does NOT reach this line:
-    -- it bounds itself to what is written inside a `define(...)` call, and this
-    -- is one call further down, in the helper both commands share. Converted by
-    -- hand, and recorded here because a reviewer is the only thing that catches
-    -- the next refusal placed in a helper.
+    -- `spec/refusal_delivery_discipline_spec.rb` does NOT reach this line: it
+    -- bounds itself to what is written inside a `define(...)` call, and this is
+    -- one call further down, in the helper both commands share. A reviewer is
+    -- the only thing that catches the next refusal placed in a helper.
     -- `need the cursor on a call in` rather than `answer the call under the
     -- cursor in`, which measured 84 against the 80-column budget.
     _G.__lain.review_refused(":LainApprove and :LainDeny need the cursor on a call in " ..
@@ -233,11 +198,9 @@ local function submit_approval(verdict)
   end
 end
 
--- TWO COMMANDS, where 46_sidebar's mark took one parameterised command. The
--- argument there was that a closed set with a completion list should have one
--- place to add its third member to; there is no third verdict to add, because
--- the far side takes a Boolean. What a human types under a running clock is the
--- word itself, so the word is the command name.
+-- TWO COMMANDS, where 46_sidebar's mark took one parameterised one: there is no
+-- third verdict to add, because the far side takes a Boolean, and what a human
+-- types under a running clock is the word itself.
 --
 -- SPELLED OUT, never looped over the table above, and that is not repetition:
 -- `spec/plugin/nvim_plugin_spec.rb` reads the runtime's command list by
@@ -254,14 +217,11 @@ define("LainDeny", function()
   submit_approval("deny")
 end)
 
--- Bound from a BufEnter autocmd (in a cleared augroup, so re-attach redefines
--- rather than stacks) rather than at load: the buffer is created by a render,
--- and since T7 the earliest of those is Surfaces#prime's zero-row placeholder
--- at attach -- still later than this file runs, and still not something to
--- assume, since a re-attach reuses whatever buffer is already there.
--- <Cmd> rather than ":", the inbox and sidebar maps' reason: it
--- runs the command without leaving normal mode, so the cursor the command is
--- about does not move out from under it.
+-- Bound from a BufEnter autocmd (cleared augroup, so re-attach redefines rather
+-- than stacks) rather than at load: the buffer is created by a render, which is
+-- later than this file runs. <Cmd> rather than ":", so the command runs without
+-- leaving normal mode and the cursor it is about does not move out from under
+-- it.
 local approval_group = vim.api.nvim_create_augroup("lain_approval", { clear = true })
 
 -- THE MARK EXPIRES WITH WHAT IT DESCRIBES. `w:lain_approval_opened` says "lain

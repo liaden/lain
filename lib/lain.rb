@@ -11,11 +11,12 @@ require_relative "lain/error"
 require_relative "lain/paths"
 require_relative "lain/project_dir"
 require_relative "lain/dsl_catalog"
-# Before `config`, not after: a `guard` block builds its carrier by subclassing
-# Guard as the class body evaluates, so both have to exist before the first
-# value class declares one.
-require_relative "lain/guardable"
-require_relative "lain/guard"
+# A `declare` block subclasses Carrier as the class body evaluates, so this has
+# to load before the first value class declares. The real bound is `question`
+# (the FIRST unit whose class body declares -- not `config`, which declares
+# nothing); anywhere above that would load, and nothing else about the position
+# is forced.
+require_relative "lain/declarative"
 require_relative "lain/config"
 require_relative "lain/cache_profile"
 require_relative "lain/proxy_bytes"

@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # Captured from the scripted run below against the pre-lens ToolRunner (the
-# "before" half of AC 3). Kept out of the RSpec block per
+# "before" half of the committed-bytes check). Kept out of the RSpec block per
 # Lint/ConstantDefinitionInBlock.
 PRE_LENS_DIGESTS = %w[
   blake3:4c979108fe0fccd553f923deb23d9cf48d1628f1f37caf4faaa3e9a984a6a9e1
@@ -51,8 +51,8 @@ RSpec.describe Lain::Response::ToolUse do
     # The class name alone is the diagnosis (see the comment above .wrap): the
     # regex above proves the class is NAMED, but an unanchored substring match
     # cannot prove a value is ABSENT -- a message that named the class and ALSO
-    # quoted the offending value would still match it. This is the second half
-    # of AC 2, checked directly: an interpolated `subject.inspect` -- which is
+    # quoted the offending value would still match it. This is the other half of
+    # that claim, checked directly: an interpolated `subject.inspect` -- which is
     # exactly what INSPECT_LIMIT (see the class-level constant) exists to keep
     # OUT of a raised message, for the write_file-shaped case where `input`
     # carries a whole file -- must not appear.
@@ -64,7 +64,7 @@ RSpec.describe Lain::Response::ToolUse do
       end
     end
 
-    # AC 3. The contract is entirely tag-shaped, so it should be readable by YARD
+    # The contract is entirely tag-shaped, so it should be readable by YARD
     # itself rather than only by a human skimming the prose above the method --
     # `source_location` keeps this grounded in the real file rather than a
     # hand-typed path that could drift from it.
@@ -72,7 +72,7 @@ RSpec.describe Lain::Response::ToolUse do
     # `YARD::Registry` is process-global mutable state, and no other example in
     # this tree touches it -- do not build on registry state surviving between
     # examples. `yard` also lives in the Gemfile's `:development` group, not
-    # `:test`: a deliberate first (see the spec's git history for C3), because
+    # `:test`: a deliberate first (see the spec's git history), because
     # only YARD itself parsing these lines proves the tag-shaped contract is
     # machine-readable -- a textual grep for `@param` would be weaker, and
     # would not catch CLAUDE.md's documented trap where a line-leading `@word`
@@ -188,7 +188,7 @@ RSpec.describe Lain::Response::ToolUse do
     end
   end
 
-  # AC 3. The lens is a VIEW: nothing it touches may move a committed byte. The
+  # The lens is a VIEW: nothing it touches may move a committed byte. The
   # literal below was captured from this same scripted run against the
   # pre-lens ToolRunner, so a drift in the wire hash the runner builds and
   # commits fails here rather than silently in a replay.

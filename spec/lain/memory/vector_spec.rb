@@ -9,7 +9,7 @@ class VectorSpecEmbedOnlyDuck
   def embed(texts) = texts.map { [1.0, 0.0] }
 end
 
-# Memory::Vector is a Manifest::Hit-duck search index (T10) over an injected
+# Memory::Vector is a Manifest::Hit-duck search index over an injected
 # Embedder (the batch #embed(texts) -> [[Float]] duck): items are embedded
 # ONCE at construction -- Bm25's build-once shape, bm25.rb:32-42 -- and a
 # query is scored against every item vector by exact cosine similarity, no
@@ -62,8 +62,8 @@ RSpec.describe Lain::Memory::Vector do
       expect(hits.first.why).to include(embedder.model_id)
     end
 
-    # Scenario: why names the model (T10 follow-up: Vector's why used to name
-    # only the embedder's Ruby class, never which model actually ran).
+    # Scenario: why names the model (Vector's why used to name only the
+    # embedder's Ruby class, never which model actually ran).
     it "names the embedding model id, not just the embedder class, for a Vector over Embedder::Ollama" do
       transport = Class.new do
         define_method(:embed_post) do |payload|
@@ -95,7 +95,7 @@ RSpec.describe Lain::Memory::Vector do
     # #model_id), so its #why must keep naming it by class exactly as before
     # #model_id existed -- the sweep report's recall-tokens column reads #why
     # text, and this is what keeps the committed sweep bytes stable across
-    # this change (T10 follow-up; see the escalation note on the task card).
+    # this change (see the escalation note on the task card).
     it "falls back to the embedder's own class name when it declares no #model_id" do
       duck = VectorSpecEmbedOnlyDuck.new
       index = index_over(item("a", "renal biopsy of the kidney"))

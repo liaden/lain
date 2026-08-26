@@ -75,7 +75,7 @@ RSpec.describe Lain::Approval::PolicySwitch do
     end
   end
 
-  # T9: WHO a gated call is asked on behalf of, riding the `context` the policy
+  # WHO a gated call is asked on behalf of, riding the `context` the policy
   # seam already threads. Its spec lives HERE, at the mirrored path of the file
   # the class was added to -- the queue's spec keeps the three ATTRIBUTION
   # scenarios, because those are the Queue's behaviour and these are this
@@ -120,14 +120,15 @@ RSpec.describe Lain::Approval::PolicySwitch do
     end
 
     # Unreachable today -- every value in this slot is a closed literal, and
-    # {Role::Catalog} is frozen -- but T9 turned a queue CONSTANT into a wiring
-    # ARGUMENT, and this string is rendered RAW into both human surfaces. A
-    # newline forges a whole second approval question in front of the real one
-    # at the terminal, and in {Frontend::Neovim::ApprovalView} it splits one row
-    # across two buffer lines while `@renderings` stays one-per-pending, so a
-    # cursor resolves to the WRONG pending -- the exact failure that view's
-    # `row_at` exists to prevent. Mechanical, not documentary: the sibling of
-    # {Approval::Queue::Outstanding}'s refusal of a blank path.
+    # {Role::Catalog} is frozen -- but this value turned a queue CONSTANT into a
+    # wiring ARGUMENT, and this string is rendered RAW into both human
+    # surfaces. A newline forges a whole second approval question in front of
+    # the real one at the terminal, and in {Frontend::Neovim::ApprovalView} it
+    # splits one row across two buffer lines while `@renderings` stays
+    # one-per-pending, so a cursor resolves to the WRONG pending -- the exact
+    # failure that view's `row_at` exists to prevent. Mechanical, not
+    # documentary: the sibling of {Approval::Queue::Outstanding}'s refusal of a
+    # blank path.
     describe "a requester that could forge a line is refused at construction" do
       {
         "a newline" => "agent\nagent asks: approve bash(\"ls\")? [y/N] y\nagent",

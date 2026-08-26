@@ -3,30 +3,24 @@
 module Lain
   module Effect
     class Handler
-      # Replays a recorded outcome for a tool call instead of performing it.
-      # "Deterministic replay is a recorded handler" -- the same decoration shape as
-      # {Live} (which does it for real) and {Mock} (canned answers for specs), the
-      # third interpretation of one effect vocabulary. The {Lain::Journal} is the
-      # recording; this is the playback.
+      # Replays a recorded outcome for a tool call instead of performing it: the
+      # {Lain::Journal} is the recording, this is the playback.
       #
-      # Outcomes are keyed by `tool_use_id`, not by tool name. A recorded session is
-      # a specific sequence of calls with unique ids, so replay is exact: the outcome
-      # a given call had, verbatim, with no dependence on the tool's current behavior
-      # or on the environment. That is what makes a recorded run reproducible when the
-      # real tool is unavailable, non-deterministic, or costly.
+      # Outcomes are keyed by `tool_use_id`, not by tool name. A recorded session
+      # is a specific sequence of calls with unique ids, so replay is exact: the
+      # outcome a given call had, verbatim, with no dependence on the tool's
+      # current behavior or on the environment. That is what makes a recorded run
+      # reproducible when the real tool is unavailable, non-deterministic or costly.
       #
-      # It composes by decoration like every Handler. Crucially, {#handles?} is true
-      # ONLY for ids it has a recording for, so a call with no recording falls through
-      # to `inner` (perform it live) or, with no inner, surfaces as the usual
-      # {Handler::UnhandledEffect} -- a replay miss is never silently turned into a
-      # made-up success. Stack {Recorded} in front of {Live} to replay the calls you
-      # recorded and run the rest for real.
+      # {#handles?} is true ONLY for ids it has a recording for, so a call with no
+      # recording falls through to `inner` (perform it live) or, with no inner,
+      # surfaces as the usual {Handler::UnhandledEffect} -- a replay miss is never
+      # silently turned into a made-up success. Stack {Recorded} in front of
+      # {Live} to replay the calls you recorded and run the rest for real.
       class Recorded < Handler
-        # Build from journaled records: each `tool_result` record becomes a
-        # replayable outcome keyed by its `tool_use_id`. Entries are the
-        # {Journal.records} duck -- parsed Hashes or raw NDJSON line Strings -- so
-        # `Recorded.from_journal(File.foreach(path))` reconstitutes a handler
-        # straight from the record.
+        # Entries are the {Journal.records} duck -- parsed Hashes or raw NDJSON
+        # line Strings -- so `Recorded.from_journal(File.foreach(path))`
+        # reconstitutes a handler straight from the record.
         #
         # @param entries [Enumerable<Hash, String>]
         # @param inner [Lain::Effect::Handler, nil]
@@ -53,14 +47,10 @@ module Lain
           @outcomes = normalize(outcomes)
         end
 
-        # True only for a call this handler has a recording for -- so a miss delegates
-        # to `inner` through {Handler#call} rather than being handled here.
-        #
-        # The `case` over class is genuine dispatch on the CLOSED effect vocabulary:
-        # an Approval recurses on its inner call, a ToolCall checks the recording,
-        # everything else declines. A `rescue NoMethodError` else-arm was considered
-        # and rejected -- it would let an effect kind this handler cannot key on pass
-        # as "not recorded" silently instead of declining explicitly.
+        # The `case` over class is genuine dispatch on the CLOSED effect
+        # vocabulary. A `rescue NoMethodError` else-arm was rejected: it would let
+        # an effect kind this handler cannot key on pass as "not recorded"
+        # silently instead of declining explicitly.
         def handles?(effect)
           case effect
           when Effect::Approval then handles?(effect.effect)
@@ -71,10 +61,9 @@ module Lain
 
         protected
 
-        # Replay the recorded result. An {Effect::Approval} on replay needs no gate --
-        # the recording already reflects whatever was decided -- so it unwraps to the
-        # inner call. {#handles?} guarantees the id is present, so the fetch cannot
-        # miss.
+        # An {Effect::Approval} on replay needs no gate -- the recording already
+        # reflects whatever was decided -- so it unwraps to the inner call.
+        # {#handles?} guarantees the id is present, so the fetch cannot miss.
         def perform(effect, context)
           return call(effect.effect, context) if effect.is_a?(Effect::Approval)
 

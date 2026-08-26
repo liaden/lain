@@ -63,8 +63,9 @@ RSpec.describe Lain::Arm do
     # over the UNIQUE turns REACHABLE from its timeline's head -- the repo's
     # content-addressed accounting model. So a fan-out arm that returns a Run over
     # ONE worker's head, leaving other paid workers' turns on unreachable heads,
-    # prices those workers at ZERO. This pins that undercount so B8's synthesis
-    # fold (which makes every worker head reachable) is a contract, not folklore.
+    # prices those workers at ZERO. This pins that undercount so the fan-out
+    # synthesis fold (which makes every worker head reachable) is a contract,
+    # not folklore.
     it "prices only the turns reachable from its timeline -- unreachable paid turns count zero" do
       store = Lain::Store.new
       worker_a = Lain::Timeline.empty(store:).commit(role: :user, content: [{ "type" => "text", "text" => "a" }])
@@ -86,12 +87,12 @@ RSpec.describe Lain::Arm do
   end
 
   # The spawn_seam duck is `call(journal:, **spawn_opts) -> Agent` (panel
-  # seam_probe): a spawn-time router (B10) must pass `model:` at the boundary, and
+  # seam_probe): a spawn-time router must pass `model:` at the boundary, and
   # a fixed-arity `->(journal:) {}` would reject it. This pins that a concrete arm
   # can pass an extra spawn opt through and the seam receives it.
   describe "the spawn_seam duck carries extra spawn-time options" do
     # A toy arm standing in for a spawn-time router: it forwards a `model:` choice
-    # through spawn_seam alongside the journal, exactly as B10 will.
+    # through spawn_seam alongside the journal, exactly as a real router will.
     routing_arm = Class.new(described_class) do
       def run(task, spawn_seam:, grader:, isolation: Lain::Arm::NoIsolation)
         isolation.acquire(name)

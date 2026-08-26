@@ -66,19 +66,19 @@ RSpec.describe Lain::Paths do
   end
 
   # The example above passes for a reason that does not generalise, and the
-  # generalisation is where F50 came back. {Lain::Paths#present}'s "absolute or
-  # ignored" rule guards the XDG variables; `$HOME`'s fallback is `Dir.home`,
-  # which on ruby 4.0.6 hands back `$HOME` VERBATIM with no absoluteness check
-  # of its own. A fixture env hides that -- it injects a hostile `HOME` while
-  # the PROCESS env stays healthy, so `Dir.home` quietly supplies a good
-  # answer -- but `Paths.new` defaults `env: ENV`, so in production the same
-  # hostile value is read twice and the guard is a no-op.
+  # generalisation is where the defect came back. {Lain::Paths#present}'s
+  # "absolute or ignored" rule guards the XDG variables; `$HOME`'s fallback is
+  # `Dir.home`, which on ruby 4.0.6 hands back `$HOME` VERBATIM with no
+  # absoluteness check of its own. A fixture env hides that -- it injects a
+  # hostile `HOME` while the PROCESS env stays healthy, so `Dir.home` quietly
+  # supplies a good answer -- but `Paths.new` defaults `env: ENV`, so in
+  # production the same hostile value is read twice and the guard is a no-op.
   #
   # The consequence is not cosmetic: a relative state_home makes
   # {Lain::ProjectDir#state_path} relative, which resolves against the
-  # project's cwd, which puts the state feed back inside the user's repository
-  # (F50). `with_env`, not an injected Hash, precisely because `Dir.home` is
-  # the half an injected Hash cannot reach.
+  # project's cwd, which puts the state feed back inside the user's repository.
+  # `with_env`, not an injected Hash, precisely because `Dir.home` is the half
+  # an injected Hash cannot reach.
   describe "a $HOME that is not absolute" do
     # The XDG variables are cleared alongside `$HOME`, never inherited from
     # whatever box is running this. Every accessor below reaches the `$HOME`
@@ -180,7 +180,7 @@ RSpec.describe Lain::Paths do
       end
     end
 
-    # T10's hash_agreement probe, pinned: nvim's getcwd() and Ruby's Dir.pwd
+    # The hash_agreement probe, pinned: nvim's getcwd() and Ruby's Dir.pwd
     # are both KERNEL-resolved, so a symlinked path ARGUMENT (--project
     # <symlink>) must hash post-resolution too, or it names a different
     # socket/session id than the editor actually serves.
@@ -247,7 +247,7 @@ RSpec.describe Lain::Paths do
     end
   end
 
-  # T3: the ephemeral (--btw) session convention. The header is write-once, so
+  # The ephemeral (--btw) session convention. The header is write-once, so
   # ephemerality lives in the FILENAME: <ts>-<pid>.btw.ndjson. Promotion is a
   # File.rename of WAL then journal (same directory), which keeps the owning
   # appender's fd valid; a clean unpromoted exit reaps both files; a crash
@@ -373,7 +373,7 @@ RSpec.describe Lain::Paths do
         end
       end
 
-      # T3 fix round (probe 4d): POSIX File.rename silently replaces its
+      # POSIX File.rename silently replaces its
       # target -- promotion onto names an unrelated durable session already
       # owns would DESTROY that record. One exist? guard each, both checked
       # before any rename runs, so a refused promotion changes nothing.

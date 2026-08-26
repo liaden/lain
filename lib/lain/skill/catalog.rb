@@ -97,9 +97,8 @@ module Lain
         freeze
       end
 
-      # The skill for +name+, raising a loud, catalog-listing error rather than
-      # returning nil: asking for a skill that does not exist is a wiring error,
-      # and the message names the whole catalog so the fix is one glance away.
+      # Loud and catalog-listing rather than nil: asking for a skill that does
+      # not exist is a wiring error, and the message names the whole catalog.
       def fetch(name)
         @skills.fetch(name.to_sym) do
           raise Unknown, "unknown skill #{name.inspect}, expected one of #{names.inspect}"
@@ -110,7 +109,6 @@ module Lain
       # The catalog's skill names, in load order (shipped, then user additions).
       def names = @skills.keys
 
-      # Every loaded skill.
       def all = @skills.values
     end
   end

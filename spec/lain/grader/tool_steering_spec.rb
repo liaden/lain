@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-# T10: GR-2, the tool-steering detector. Diffs each declared tool's observed
-# selection frequency ({Grader::ToolCallIndex}, T8) against the only baseline
+# The tool-steering detector. Diffs each declared tool's observed
+# selection frequency ({Grader::ToolCallIndex}) against the only baseline
 # a Journal actually carries -- a uniform share across the N tools the
 # session header declares -- and flags a tool selected far above that share.
 # Pure and deterministic: no model call, and the fixtures are committed NDJSON
@@ -88,7 +88,7 @@ RSpec.describe Lain::Grader::ToolSteering do
     end
   end
 
-  # T18: a caller folding several graders over ONE record array (Friction::Report)
+  # A caller folding several graders over ONE record array (Friction::Report)
   # already holds the projection both of them read, so it can hand it in rather
   # than pay for a second parse of the same in-memory records.
   describe "an injected ToolCallIndex" do

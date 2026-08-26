@@ -2,9 +2,9 @@
 
 module Lain
   # Concrete tool implementations. {Lain::Tool} is the abstract shape; each
-  # class here is a capability an Agent's {Lain::Toolset} can be handed. See
-  # the plan's "Tool tiers, and where the security boundary is" for why each
-  # one sits at the tier it does.
+  # class here is a capability an Agent's {Lain::Toolset} can be handed. Tools
+  # are capabilities, not permissions -- the tier each one sits at, and where
+  # the security boundary really is, is CLAUDE.md's "secret boundary" rule.
   module Tools
   end
 end

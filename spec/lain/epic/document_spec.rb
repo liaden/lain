@@ -337,7 +337,7 @@ RSpec.describe Lain::Epic::Document do
     end
   end
 
-  # T10 AC: Writer and the predicate agree. Writer only ever raises on the
+  # Writer and the predicate agree. Writer only ever raises on the
   # document grammar (DESCRIPTION_RULES/CRITERIA_RULES), so this only needs
   # the forward direction -- an issue the predicate calls emittable never
   # trips Writer -- not its converse: an issue whose id fails Home::NAME (like
@@ -373,9 +373,9 @@ RSpec.describe Lain::Epic::Document do
     expect(described_class.to_markdown(original)).to be_frozen
   end
 
-  # T2 validates `blocks` and `related` against the graph and deliberately does
-  # NOT validate `discovered_from`: a split removes the issue its parts grew out
-  # of, so provenance pointing outside the current issue set is the designed
+  # Validation checks `blocks` and `related` against the graph and deliberately
+  # does NOT check `discovered_from`: a split removes the issue its parts grew
+  # out of, so provenance pointing outside the current issue set is the designed
   # state. The asymmetry is invisible to an author who typos an id, so it is
   # pinned here rather than left to be rediscovered.
   describe "the provenance asymmetry" do

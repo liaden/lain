@@ -16,12 +16,9 @@ module Lain
   # separators. The zero-width set is NOT space to any locale and has to be
   # named: U+200B..U+200D, U+2060, U+FEFF.
   #
-  # It loads near the top of the manifest -- the bottom of the dependency
-  # order -- rather than beside its first caller
-  # because it now has callers in two units that must not depend on each other:
-  # {Approval::Gate::Adjudicator::GateEvidence} delegates down to it, and
-  # {Question::Answer} asks it whether a human wrote a comment. A second
-  # definition of "nothing" is exactly what the U+00A0 hole cost.
+  # It loads at the bottom of the dependency order rather than beside its first
+  # caller because two units that must not depend on each other both need it.
+  # A second definition of "nothing" is exactly what the U+00A0 hole cost.
   module Blankness
     NOTHING_AT_ALL = /\A[[:space:]\u{200B}-\u{200D}\u{2060}\u{FEFF}]*\z/
 

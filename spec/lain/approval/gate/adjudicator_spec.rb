@@ -109,7 +109,6 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
   def decisions = Lain::Journal.records(journal_io.string.lines, type: "gate_decision").to_a
   def evidence_records = Lain::Journal.records(journal_io.string.lines, type: "gate_evidence").to_a
 
-  # AC1
   describe "a clean APPROVE closes the gate with evidence" do
     it "approves the artifact" do
       expect(adjudicate).to be(true)
@@ -179,7 +178,6 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     end
   end
 
-  # AC2
   describe "prose around the verdict is hesitation" do
     let(:hedged) { "APPROVE — because the spec says so" }
 
@@ -229,7 +227,6 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
     end
   end
 
-  # AC3
   describe "no evidence, no approval" do
     let(:raiser) { ->(_prompt) { raise IOError, "the provider hung up" } }
 
@@ -327,7 +324,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       expect { adjudicate(adjudicator) }.to raise_error(Lain::Epic::StageBlocked)
     end
 
-    # AC3. The rule has ONE owner ({Policy::Boundary}), so one decision asks it
+    # The rule has ONE owner ({Policy::Boundary}), so one decision asks it
     # once per earlier stage. A second call site would double every entry here.
     it "asks the boundary rule exactly once per decision, not once per call site" do
       counted = AdjudicatorSpecSupport::CountingQueue.new(queue)
@@ -555,7 +552,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       expect(adjudicate(adj, item: artifact(digest: "blake3:plan-v2"))).to be(true)
     end
 
-    # AC1: two adjudicators cannot disagree about one artifact.
+    # Two adjudicators cannot disagree about one artifact.
     it "refuses a SECOND Adjudicator over a digest the first one approved" do
       adjudicate(adjudicator)
       before = journal_io.string.lines.length
@@ -566,7 +563,7 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       expect(journal_io.string.lines.length).to eq(before)
     end
 
-    # AC2: a terminal deny is also terminal.
+    # A terminal deny is also terminal.
     it "refuses a second Adjudicator after a terminal DENY, and lands no new gate_decision" do
       adjudicate(adjudicator(spawn_stub(verdict: "DENY")))
       before = decisions.length
@@ -663,8 +660,8 @@ RSpec.describe Lain::Approval::Gate::Adjudicator do
       expect { described_class.new(nil) }.to raise_error(ArgumentError, /Journal.records duck/)
     end
 
-    # Two conflicting terminal records for one address are reachable -- a
-    # pre-T9 journal permitted them, and so does the concurrent window. The
+    # Two conflicting terminal records for one address are reachable -- an
+    # older journal permitted them, and so does the concurrent window. The
     # REFUSAL is existential and order-independent either way; the rendered
     # verdict must name the one that stands, which is the last one written.
     describe "conflicting terminal records" do

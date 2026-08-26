@@ -5,7 +5,7 @@ require "stringio"
 require "timeout"
 require "tmpdir"
 
-# T1. A human question -- an `ask_human` or a parked approval -- can now be
+# A human question -- an `ask_human` or a parked approval -- can now be
 # raised from a frame {Repl#respond} never enters. A role-bound line
 # (`@role[/skill]`) is answered by {Middleware::SkillDispatch}, which SHORT-
 # CIRCUITS: it spawns a persona'd subagent, runs it to a final result, and sets
@@ -95,7 +95,7 @@ RSpec.describe "a human question raised while a skill spawn is dispatched", :sea
                              history_path: File.join(dir, "history"))
     end
     wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
-                                   status_feed: instance_double(Lain::StatusFeed))
+                                   status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
     Timeout.timeout(seconds) { wiring.run(backend: backend_over(provider), resumed: nil, nvim: nil) }
     wiring.conductor.close(reason: :exit)
     output.string

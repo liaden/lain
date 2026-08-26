@@ -39,8 +39,8 @@ RSpec.describe Lain::Ext::Store do
   end
 
   # Referential integrity at the API boundary -- mirrors store_spec.rb's Ruby
-  # group, plus the byte-identical message assertion the T1 parity examples
-  # established for this crate.
+  # group, plus the byte-identical message assertion the Ruby/Rust parity
+  # examples established for this crate.
   describe "referential integrity" do
     let(:missing) { "blake3:absent" }
     let(:dangling) { turn_with_parent(missing) }

@@ -10,112 +10,76 @@ module Lain
       # does the rendering.
       #
       # A FLAT scope and a GROUPED one, and the grouping is a requirement rather
-      # than a convenience: research §3.7 measured a real work changeset at
-      # 81,810 rendered lines cumulatively against 2,727 for one commit, so
-      # "scroll the flat list" is not a usable surface at that size. Which scope
-      # is on screen is NOT held here -- `Review::Session#present`'s own spec
-      # records that the presented scope is the SURFACE's state -- so it rides
-      # in as an argument on every render.
+      # than a convenience: a real work changeset measured 81,810 rendered lines
+      # cumulatively against 2,727 for one commit, so "scroll the flat list" is
+      # not a usable surface at that size. Which scope is on screen is the
+      # SURFACE's state, not this view's, so it rides in as an argument on every
+      # render.
       #
-      # == What this view may claim about a COMMIT group, and what it may not
-      #
+      # WHAT THIS VIEW MAY CLAIM ABOUT A COMMIT GROUP.
       # {Review::Partition::ByCommit} attributes at FILE granularity: the last
       # commit in the range to touch a file gets that file's hunks. Three things
-      # follow, and all three are the reader's to know rather than this object's
-      # to hide. None of them is true of a grouping that is not the walk, which
-      # is why {WALK_LEGEND} heads that scope and only that one.
+      # follow, none of them true of a grouping that is not the walk, which is
+      # why {WALK_LEGEND} heads that scope and only that one.
       #
-      # 1. It is not per-hunk provenance, and with a MERGE in the range it is
-      #    not even close -- the merge absorbs every file it re-reports and the
-      #    authoring commits come back with `files: []` (a review panel measured
-      #    3 commits with 2 of 3 blank). So the files under a commit are the hunks
-      #    REACHABLE there, which is all they are, and a commit that reaches none
-      #    says so ({NO_HUNKS_HERE}) rather than rendering as a subject with
-      #    nothing beneath it.
+      # 1. It is not per-hunk provenance, and with a MERGE in the range it is not
+      #    even close -- the merge absorbs every file it re-reports and the
+      #    authoring commits come back with `files: []` (measured: 3 commits, 2
+      #    of 3 blank). So the files under a commit are the hunks REACHABLE
+      #    there, and a commit that reaches none says so ({NO_HUNKS_HERE}).
       # 2. A merge's own numstat is the WHOLE SIDE BRANCH (`Changeset` runs
       #    `--diff-merges=first-parent`), so `+9 -9  Merge branch 'side'` can
-      #    outrank the commit that actually wrote the code. This view cannot
-      #    suppress it: `Source::Commit` carries no parent count, and
-      #    {Review::Partition::ByCommit}'s doc records that telling a merge apart
-      #    "is a port change". A
-      #    subject matching /^Merge/ is a guess, not a fact, and this codebase
-      #    does not ship those.
+      #    outrank the commit that wrote the code. This view cannot suppress it:
+      #    `Source::Commit` carries no parent count, and a subject matching
+      #    /^Merge/ is a guess rather than a fact.
       # 3. The tri-state marker on a nested file row is that file's WHOLE
       #    CHANGESET state, not its state within that commit. The two coincide
-      #    only because attribution is file-granular, so they will part company
-      #    the day it is not.
+      #    only because attribution is file-granular.
       #
       # {WALK_LEGEND} carries what fits in a 40-column navigator, which is a
-      # pointer and one clause; `:h lain://review` is where all three live, because
-      # a caveat that costs four of the first five rows is not a navigator.
+      # pointer and one clause; `:h lain://review` is where all three live.
       #
-      # == The changeset duck
+      # THE CHANGESET DUCK, beyond the `#files` / `#partitions` {Review::Surface}
+      # states for every adapter: a file entry's `#hunk_keys`, `#chunked?` and
+      # `#hunks` (whose first hunk's `#new_start` is the line an open lands on,
+      # with `#chunked?` saying whether asking is affordable); a group entry's
+      # `#counted?` with its `#added` / `#deleted` or its `#rendered_lines`, all
+      # as SCALARS. Not `#numstat`: that name is taken and means something else
+      # (`Partition::ByCommit::Commit#numstat` is a frozen Array of per-file
+      # stats, so `numstat.added` raises), and a duck borrowing an occupied name
+      # for a different shape is worse than a missing method because it reads as
+      # satisfied.
       #
-      # {Review::Surface}'s class doc is where the `#files` / `#partitions` duck
-      # is stated for every adapter, and this view needs five members it does
-      # not name. A file entry's `#hunk_keys`, `#chunked?` and `#hunks` (whose
-      # first hunk's `#new_start` is the line an open lands on -- a
-      # `Review::Hunk` already answers it, and `#chunked?` is what says whether
-      # asking is affordable); a group entry's `#counted?` with its
-      # `#added` / `#deleted` or its `#rendered_lines`, all as SCALARS.
-      # {Review::Session::MarkedChangeset}'s two rows are what answer them.
+      # DRAWING COSTS ONLY WHAT THE REVIEW HAS ALREADY READ. The heading's
+      # `+n -m`, the key table and the line an open lands on all ask the ROW,
+      # which knows without reading. Forcing a file's hunks is free over a diff,
+      # where a parser produces them with the file, and over a
+      # {Review::Source::Corpus} it chunks the whole survey the moment the
+      # sidebar is drawn -- precisely the cost that arm exists to defer.
       #
-      # Not `#numstat`. That name is already taken and already means something
-      # else: `Partition::ByCommit::Commit#numstat` is a frozen `Array` of
-      # per-file stats, so `numstat.added` raises. A duck that borrows an
-      # occupied name for a different shape is worse than a missing method,
-      # because it reads as satisfied -- a session that decorated the
-      # detail and forwarded what it does not answer would have crashed this
-      # walk. The aggregate belongs on the row object that can honestly supply
-      # it, which is where it now lives.
+      # WHAT A HEADING MAY CLAIM ABOUT A GROUP NOBODY HAS READ. `+n -m` is a
+      # COUNT, and a count of an unread group cannot be taken without reading it;
+      # `+0 -0` would be a zero that silently means "unknown". So the group says
+      # whether its figures are real (`#counted?`), and a heading that cannot
+      # count claims the SIZE the identity pass already measured ({UNREAD_SIZE}),
+      # a different quantity written in a different form. All-or-nothing per
+      # GROUP rather than per file, because `+n -m` summed over the read subset
+      # is an undercount wearing a count's spelling.
       #
-      # == Drawing costs only what the review has already read
+      # WHAT A ROW NAMES. A row carries the hunk keys the human is marking when
+      # they mark it, because the editor cannot send one: a sidebar row renders
+      # no key, and a key is a content DIGEST that never crosses the wire in
+      # either direction, so a `review_mark` gesture sends a LINE.
       #
-      # Three reads in this class used to force every file's hunks on every
-      # render, in BOTH scopes -- the heading's `+n -m`, the key table, and the
-      # line an open lands on. Over a diff that is free, because a parser
-      # produces a file's hunks with the file. Over a {Review::Source::Corpus}
-      # it chunked the whole survey the moment the sidebar was drawn, which is
-      # precisely the cost that arm exists to defer, and it undid the laziness
-      # {Review::Bounds} and {Review::Session} had already been taught. All
-      # three now ask the ROW, which knows without reading.
-      #
-      # == What a heading may claim about a group nobody has read
-      #
-      # `+n -m` is a COUNT, and a count of a group nobody has read cannot be
-      # taken without reading it. Rendering `+0 -0` instead would be a zero that
-      # silently means "unknown" -- the reading the partition chunk's Open
-      # decisions already refused once. So the group says whether its figures
-      # are real (`#counted?`), and a heading that cannot count claims the SIZE
-      # the survey's identity pass already measured ({UNREAD_SIZE}), which is a
-      # different quantity written in a different form.
-      #
-      # The switch is all-or-nothing per group rather than per file, because
-      # `+n -m` summed over the read SUBSET of a group is an undercount wearing
-      # a count's spelling -- the same defect one step smaller.
-      #
-      # == What a row NAMES, and why the keys come off the row
-      #
-      # A row carries the hunk keys the human is marking when they mark it.
-      # The editor cannot send one: a sidebar row renders no key, and a key is a
-      # content DIGEST that never crosses the wire in either direction -- so a
-      # `review_mark` gesture sends a LINE, and this view is the only object that
-      # can say which hunks that line named. Carrying them made {#marks}
-      # possible; without them the gesture rail reached the surface and stopped.
-      #
-      # They are READ off the entry rather than derived here, and the invariant
-      # that used to justify deriving them is now structural. `Hunk.keys` is a
-      # batch operation by construction ("a hunk cannot tell on its own that it
-      # is duplicated"), and a group entry carries only the hunks reachable in
-      # that group -- so keying that subset can hand a duplicated hunk a
-      # different key than the cumulative view gives it, a mark landing on a key
-      # `Marks` never produces. This view used to close that by re-keying
-      # `changeset.files` on every render, at the cost above.
-      # {Review::Session::MarkedChangeset} builds ONE row per file and a
-      # partition holds the very same object, so a nested row's keys ARE the
-      # whole file's and there is no second derivation left to disagree. A row
-      # that names no key refuses the gesture by name ({NO_HUNK}), which is also
-      # what a file nobody has read answers.
+      # They are READ off the entry rather than derived here. `Hunk.keys` is a
+      # batch operation by construction -- a hunk cannot tell on its own that it
+      # is duplicated -- and a group entry carries only the hunks reachable in
+      # that group, so keying that subset can hand a duplicated hunk a different
+      # key than the cumulative view gives it: a mark landing on a key `Marks`
+      # never produces. {Review::Session::MarkedChangeset} builds ONE row per
+      # file and a partition holds the very same object, so there is no second
+      # derivation left to disagree. A row that names no key refuses the gesture
+      # by name.
       #
       # THREAD CONTRACT. {#render} is driven by the surface and {#open}/{#marks}
       # by whichever fiber serves the editor's commands, and they share the
@@ -130,51 +94,41 @@ module Lain
       class ReviewView
         NAME = "lain://review"
 
-        # What a scope renders when it finds nothing, keyed like {SCOPE_ROWS} so
-        # each says what THAT scope looked for. One shared "(no changeset under
-        # review)" was wrong in the case that actually happens: a changeset with
-        # files but an empty walk announced that there was no changeset at all.
+        # Keyed like {SCOPE_ROWS} so each says what THAT scope looked for. One
+        # shared "(no changeset under review)" was wrong in the case that
+        # actually happens: a changeset with files but an empty walk announced
+        # that there was no changeset at all.
         PLACEHOLDERS = { cumulative: "(no files in this changeset)", commits: "(no commits in this changeset)",
                          by_directory: "(no directories in this changeset)" }.freeze
 
-        # One glyph per canonical file state, and a LITERAL table rather than
-        # `Review::FILE_STATES.to_h { ... }` -- which is what {Surface::Text}
-        # does one layer down and is the better shape. It cannot be done here:
-        # `lain.rb` loads `lain/frontend` BEFORE `lain/review`, so the constant
-        # is not resolvable while this class body runs. The spec pins these keys
-        # against `Review::FILE_STATES` instead, which is the same guarantee
-        # bought a line later.
+        # A LITERAL table rather than derived from `Review::FILE_STATES`, which
+        # is what {Surface::Text} does one layer down and is the better shape. It
+        # cannot be done here: `lain.rb` loads `lain/frontend` BEFORE
+        # `lain/review`, so the constant is not resolvable while this class body
+        # runs. The spec pins these keys against it instead.
         #
         # `#file_row` looks up `state.to_s`, so a Symbol reads as readily as the
-        # canonical String -- `Surface::Text`'s own tolerance, for its reason: a
-        # `Marks#states` Hash answers Symbols and every journaled record stores
-        # the String.
+        # canonical String: a `Marks#states` Hash answers Symbols and every
+        # journaled record stores the String.
         #
-        # Not every glyph this view draws -- {HUNKLESS_MARKER} is a fourth,
-        # held apart from this table on purpose (see its own doc).
+        # Not every glyph this view draws -- {HUNKLESS_MARKER} is a fourth, held
+        # apart from this table on purpose.
         STATE_MARKERS = { "reviewed" => "[x]", "partial" => "[~]", "unreviewed" => "[ ]" }.freeze
 
-        # What a row with NO HUNKS TO REVIEW carries instead of a tri-state
-        # glyph -- a binary file, a mode-only change, a pure rename, or a
-        # genuinely empty one. {Review::Marks#state_of}'s documented rule
-        # (`review/marks.rb:203-205`, "an empty batch answers `:unreviewed`")
-        # is untouched by this: `file.state` still reads `"unreviewed"` for
-        # such a row, and stays that way forever -- `Verdict::Policy::EveryHunk`
-        # judges HUNKS, so a file with none is not what blocks an approve.
-        # What was wrong was only the GLYPH: a row that can never become
-        # reviewed drawing the exact marker a row still waiting to be read
-        # draws is indistinguishable from one, and an approved review full of
-        # `[ ]` rows reads as unfinished when it is not.
+        # What a row with NO HUNKS TO REVIEW carries instead of a tri-state glyph
+        # -- a binary file, a mode-only change, a pure rename, or a genuinely
+        # empty one. {Review::Marks#state_of} is untouched by this: `file.state`
+        # still reads `"unreviewed"` for such a row forever, and
+        # `Verdict::Policy::EveryHunk` judges HUNKS, so a file with none is not
+        # what blocks an approve. Only the GLYPH was wrong -- a row that can never
+        # become reviewed drawing the marker a row still waiting to be read draws
+        # is indistinguishable from one, and an approved review full of `[ ]` rows
+        # reads as unfinished when it is not.
         #
-        # Kept OUT of {STATE_MARKERS}: the text surface derives its own
-        # markers from `Review::FILE_STATES` (`review/surface/text.rb:51`), and
-        # this glyph is deliberately not there.
-        #
-        # `[-]`, not reused from elsewhere in this file or from
-        # {STATE_MARKERS} -- distinct from both `[x]` (reviewed) and `[ ]`
-        # (unreviewed), which is the whole point: a human scanning the sidebar
-        # for `[ ]` rows must not have to also mentally exclude the ones that
-        # can never earn an `[x]`.
+        # Kept OUT of {STATE_MARKERS}, which the text surface derives its own
+        # markers from. `[-]` is distinct from both `[x]` and `[ ]`, which is the
+        # whole point: a human scanning for `[ ]` rows must not have to mentally
+        # exclude the ones that can never earn an `[x]`.
         HUNKLESS_MARKER = "[-]"
 
         # `scope:` dispatch, keyed by the NAME of each {Review::Partition}
@@ -189,17 +143,13 @@ module Lain
         SCOPE_ROWS = { cumulative: :file_rows, commits: :commit_rows, by_directory: :grouped_rows }.freeze
 
         # The COMMIT walk's one caveat row -- no other grouping claims
-        # authorship, so no other scope carries it. Caveat-SIZED because the sidebar
-        # is 40 columns (`41_layout`'s `lain_review_sidebar_width` default). The
-        # honest full statement is three clauses long and wrapped to four screen
-        # rows at the top of every render, which spends a navigator's most
-        # valuable space on prose; so the line carries the clause a reader must
-        # not miss and points at the help tag carrying the rest -- an EXISTING
-        # tag (`*lain://review*`, which 6.4 defines), never a new one invented
-        # here: `helptags` indexes what a doc DEFINES and never what it
-        # references, so a legend pointing at a tag nobody wrote answers E149
-        # the moment a human follows it. A spec pins the width against that
-        # default and the target against the doc.
+        # authorship. Caveat-SIZED because the sidebar is 40 columns
+        # (`41_layout`'s `lain_review_sidebar_width` default) and the honest full
+        # statement wraps to four screen rows at the top of every render. It
+        # points at an EXISTING help tag, never a new one invented here:
+        # `helptags` indexes what a doc DEFINES and never what it references, so
+        # a legend pointing at a tag nobody wrote answers E149 the moment a human
+        # follows it.
         WALK_LEGEND = "-- not authored here: :h lain://review"
 
         # A group the range attributes no file to -- normal for a commit, and the
@@ -207,48 +157,33 @@ module Lain
         # accounts for every commit, and short for {WALK_LEGEND}'s reason.
         NO_HUNKS_HERE = "  (no hunks reachable here)"
 
-        # What a heading claims where `+n -m` would be a lie -- see the class
-        # doc's "What a heading may claim about a group nobody has read".
+        # What a heading claims where `+n -m` would be a lie. `~` and the WORD
+        # `lines`, so it cannot be read as the pair it replaces.
         #
-        # `~` and the WORD `lines`, so it cannot be read as the pair it replaces:
-        # a `+0 -0` meaning "unknown" is the rendered zero the partition chunk's
-        # Open decisions refused once already, and a bare number in that column
-        # would be the same mistake spelled differently.
-        #
-        # `~` reads as "approximately" and the figure is stricter than that: a
-        # ONE-SIDED bound, and on a different measure. `rendered_lines` bounds a
-        # hunk's body plus one line per unit ({Review::Source::Corpus} over-
-        # measures deliberately, and `added` counts only added lines), so the
-        # same unchanged group goes `~172 lines` -> `+144 -0` on being read --
-        # measured, 19% apart. Wrong only in the direction that cannot let an
-        # oversized view through, which is why the glyph stays a tilde rather
-        # than becoming a claim of equality.
+        # `~` reads as "approximately" and the figure is stricter: a ONE-SIDED
+        # bound, on a different measure. `rendered_lines` bounds a hunk's body
+        # plus one line per unit, so the same unchanged group goes `~172 lines`
+        # -> `+144 -0` on being read -- measured, 19% apart. Wrong only in the
+        # direction that cannot let an oversized view through.
         UNREAD_SIZE = "~%d lines"
 
-        # How many renderings stay resolvable. {InboxView::Renderings::HELD}'s
-        # number and its reasoning: this is a MEMORY bound, not a correctness
-        # one, because the stamp -- not the line count -- is what identifies a
-        # rendering. A forgotten rendering is refused BY NAME; it never aliases
-        # onto a later one of equal height.
+        # {InboxView::Renderings::HELD}'s number and reasoning: a MEMORY bound,
+        # not a correctness one, because the STAMP identifies a rendering. A
+        # forgotten one is refused BY NAME and never aliases onto a later one of
+        # equal height.
         HELD = 16
 
-        # THREE sentences for three different events, not one for all of them.
-        # The first cut had two and told the other two cases the third's story:
-        # a buffer nothing has ever rendered into carries NO stamp (a nil value
-        # drops its key from a lua table entirely, so `{ line, nil }` reaches
-        # Ruby as a one-element array -- `runtime/65_review.lua` records being
-        # bitten by exactly that), and a stamp this view never issued is a wire
-        # or caller fault. Neither is "it has re-rendered since", which is a
-        # true and specific claim about a stamp that WAS issued and has since
-        # aged out of {HELD}.
+        # THREE sentences for three different events. A buffer nothing has ever
+        # rendered into carries NO stamp -- a nil value drops its key from a lua
+        # table entirely, so `{ line, nil }` reaches Ruby as a one-element array,
+        # which `runtime/65_review.lua` records being bitten by. A stamp this view
+        # never issued is a wire or caller fault. Neither is "it has re-rendered
+        # since", which is a specific claim about a stamp that WAS issued and has
+        # since aged out of {HELD}.
         #
         # All three are pinned under `spec/refusal_width_discipline_spec.rb`'s
-        # bar, which is what took them from 131/140/194 rendered characters to
-        # here: they ride the echo rail, and the message area is one line wide.
-        # Each keeps its CONDITION and its REMEDY and gives up the explanation
-        # in between -- the reasoning above is where a reader who wants it goes.
-        # `%<line>d` left {UNSHOWN} for that: the row is under the human's
-        # cursor, so naming it back cost width and told them nothing.
+        # bar, which took them from 131/140/194 rendered characters to here: they
+        # ride the echo rail, and the message area is one line wide.
         NO_STAMP = "this gesture carries no rendering stamp -- render #{NAME} first".freeze
         UNISSUED = "#{NAME} never issued rendering %<generation>s -- press again on a drawn row".freeze
         UNSHOWN = "#{NAME} re-rendered since %<generation>s -- press again on the row you want".freeze
@@ -261,15 +196,10 @@ module Lain
         # one that happened.
         NO_HUNK = "no hunk on #{NAME} line %d -- nothing on that row can be marked".freeze
 
-        # {NO_HUNK}'s third case, and the one that is TRANSIENT. A commit header
-        # will never name a hunk and a binary file will never have one; a
-        # surveyed file has none only until somebody opens it, and the remedy is
-        # one keystroke. That is {NO_HUNK}'s own rule applied once more -- the
-        # gestures fail for different reasons and the human is owed the one that
-        # happened -- over the distinction {Review::Session::MarkedChangeset}
-        # already keeps one layer down, where "read, and there is nothing" and
-        # "nobody has read it" are deliberately two facts rather than one glyph.
-        # Told "there is nothing here", a human stops looking.
+        # {NO_HUNK}'s third case, and the one that is TRANSIENT: a commit header
+        # will never name a hunk and a binary file will never have one, where a
+        # surveyed file has none only until somebody opens it. Told "there is
+        # nothing here", a human stops looking.
         UNREAD = "#{NAME} line %<line>d names %<path>s, which nothing has read -- open it with <CR> first".freeze
 
         # No hunk keys: every row that is not a file, and the frozen singleton
@@ -326,17 +256,13 @@ module Lain
           def marked? = !hunk_keys.empty?
         end
 
-        # The diff pair nobody wired ({InboxView::Unwired}'s honesty, one object
-        # over): it answers the two messages this view sends it, so no path below
-        # asks whether a surface exists -- and it refuses, because a navigator
-        # with nowhere to open a file must say so rather than report an open
-        # that never happened.
-        #
-        # Its sentence is the ACCEPTANCE TEST for wiring a real diff surface into
-        # the cockpit, and is read as one by `spec/lain/frontend/neovim_spec.rb`:
-        # once {Neovim#review_view} supplies a {ChangesetDiff}, it must be
-        # unreachable from a review drawn in a real editor -- and still be what
-        # a view built with no diff surface at all answers.
+        # The diff pair nobody wired: it answers the two messages this view sends
+        # it, so no path below asks whether a surface exists, and it refuses
+        # because a navigator with nowhere to open a file must say so rather than
+        # report an open that never happened. Its sentence is read as an
+        # acceptance test by `spec/lain/frontend/neovim_spec.rb`: unreachable from
+        # a review drawn in a real editor, and still what a view built with no
+        # diff surface answers.
         module Unwired
           module_function
 
@@ -374,34 +300,26 @@ module Lain
           end
         end
 
-        # Which changeset the rows this view draws BELONG to, forwarded to the
-        # diff surface a `<CR>` opens through.
+        # Which changeset the rows this view draws BELONG to, FORWARDED to the
+        # diff surface a `<CR>` opens through rather than kept: this view's state
+        # is the rendering HISTORY, and a changeset beside it would be a second
+        # answer to "what is under review", free to disagree with the rows.
         #
-        # It is not held here, and that is the point of forwarding rather than
-        # keeping: this view's state is the rendering HISTORY, and a changeset
-        # kept beside it would be a second answer to "what is under review" free
-        # to disagree with the rows. The diff surface holds exactly one thing and
-        # this is it.
-        #
-        # Sent by whoever opened the round -- {CLI::Command::Review#handover} and
-        # {Tools::RequestReview::Implementation#handover}, the two rails that
-        # build a {Review::Handover} -- because the editor's view pair is built
-        # when the frontend attaches and a review is opened long afterwards.
-        # Under {#render}'s own lock for {#render}'s reason: a gesture resolving
-        # a row while the round is being replaced must see one round or the
-        # other, never a rendering of one against the changeset of the next.
+        # Sent by whoever opened the round, because the editor's view pair is
+        # built when the frontend attaches and a review is opened long
+        # afterwards. Under {#render}'s own lock: a gesture resolving a row while
+        # the round is being replaced must see one round or the other, never a
+        # rendering of one against the changeset of the next.
         #
         # @param changeset [Review::Changeset] the round the sidebar now shows
         # @return [void] whatever the diff surface answered, which is nothing on
         #   both implementations of that duck
         def reviewing(changeset) = @slot.synchronize { @changesets.reviewing(changeset) }
 
-        # The `<CR>` gesture from lain://review (`runtime/46_sidebar.lua`): open
-        # the file the cursor sits on, at its first reachable hunk. The LINE
-        # rides -- the recorded rule, never a hunk key -- with the GENERATION
-        # stamped on the buffer the human is looking at, because a line number
-        # alone names a POSITION and these positions move every time the scope
-        # toggles or a mark redraws a row.
+        # Open the file the cursor sits on, at its first reachable hunk. The LINE
+        # rides, never a hunk key, with the GENERATION stamped on the buffer the
+        # human is looking at -- a line alone names a POSITION, and these
+        # positions move every time the scope toggles or a mark redraws a row.
         #
         # @param line [Integer] 1-based, as nvim's cursor reports it
         # @param generation [Integer, nil] b:lain_view_generation off that
@@ -411,17 +329,12 @@ module Lain
           @slot.synchronize { resolve(line, generation) }
         end
 
-        # The mark gesture from the same sidebar (`["review_mark", [line, state,
-        # generation]]`): which hunks does the row on this line name? {#open}'s
-        # shape and every one of its reasons -- the line rides because a row
-        # renders no key, the stamp rides because the row moves -- and the same
-        # three refusals, because a stamp this view cannot resolve is the same
-        # fact for both gestures.
+        # Which hunks does the row on this line name? {#open}'s shape and every
+        # one of its reasons, and the same three refusals.
         #
-        # It RESOLVES and applies nothing. Recording a mark is the session's,
-        # via `Review::Surface::Neovim`, so this stays a query over the
-        # rendering history and the lock never spans a write to the review
-        # model.
+        # It RESOLVES and applies nothing: recording a mark is the session's, so
+        # this stays a query over the rendering history and the lock never spans
+        # a write to the review model.
         #
         # @param line [Integer] 1-based, as nvim's cursor reports it
         # @param generation [Integer, nil] b:lain_view_generation off that buffer
@@ -522,14 +435,11 @@ module Lain
           "+#{group.added} -#{group.deleted}"
         end
 
-        # A leading climb ("../../../etc/foo/bar.rb") is `Corpus::Prefix.between`
-        # joining the hops from the chat's cwd out to a tree merely BESIDE it,
-        # ahead of the file's own path -- so a row surveyed outside the project
-        # root reads as a traversal rather than a name. Dropped for DISPLAY only,
-        # by both a group's label here and a file's path in {#file_row} below --
-        # alongside `Surface::Text#legible`'s force-encode-and-scrub, kept here
-        # for the same reason its own doc gives: git answers BYTES, and a
-        # rendering is not the diff itself.
+        # A leading climb ("../../../etc/foo/bar.rb") is the hops from the chat's
+        # cwd out to a tree merely BESIDE it, ahead of the file's own path, so a
+        # row surveyed outside the project root reads as a traversal rather than
+        # a name. Dropped for DISPLAY only, alongside the force-encode-and-scrub:
+        # git answers BYTES, and a rendering is not the diff itself.
         def displayed_path(path) = path.to_s.dup.force_encoding(Encoding::UTF_8).scrub("?").sub(%r{\A(?:\.\./)+}, "")
 
         # `path:` stays `file.path` untouched -- every gesture and
@@ -539,13 +449,9 @@ module Lain
             .with(path: file.path.to_s, line: first_line(file), hunk_keys: file.hunk_keys, read: file.chunked?)
         end
 
-        # {HUNKLESS_MARKER} only once a file has actually been READ and
-        # produced zero hunks -- `file.chunked?` is the same guard
-        # {#first_line} and {NO_HUNK}/{UNREAD} already gate on, for the same
-        # reason: a survey row nothing has opened yet has empty `#hunk_keys`
-        # too, but that is "not asked yet", not "asked, and there is nothing" --
-        # {Session::MarkedChangeset}'s own distinction, kept here rather than
-        # collapsed by a marker that cannot tell the two apart.
+        # {HUNKLESS_MARKER} only once a file has actually been READ and produced
+        # zero hunks. A survey row nothing has opened yet has empty `#hunk_keys`
+        # too, but that is "not asked yet", not "asked, and there is nothing".
         def state_marker(file)
           return HUNKLESS_MARKER if file.chunked? && file.hunk_keys.empty?
 
@@ -555,18 +461,13 @@ module Lain
         def plain(text) = Row.new(text:, path: nil, line: nil, hunk_keys: NO_KEYS, read: nil)
 
         # Where an open lands. A row nobody has read has no hunk to land on and
-        # must not be chunked to find that out, so it answers 1 -- the same
-        # answer a hunkless entry has always got, for the same reason: there is
-        # no first hunk. A file entry that HAS been read always carries hunks in
-        # practice (`group_by` yields no empty group), but a private method is
-        # still a promise to whatever calls it next.
+        # must not be chunked to find that out, so it answers 1.
         #
-        # It is not a promise of a line >= 1, and never was: a DELETED file's
-        # first hunk has `new_start` 0, and `0 || 1` is 0 in Ruby. That reaches
-        # the editor, where `47_diff.lua` clamps with `math.max(1, ...)`. So
-        # "opens at the top of the file" is true of what a human sees and not of
-        # what this returns; the clamp is the editor's and is where to look if a
-        # deleted file ever opens somewhere surprising.
+        # It is NOT a promise of a line >= 1: a DELETED file's first hunk has
+        # `new_start` 0, and `0 || 1` is 0 in Ruby. That reaches the editor,
+        # where `47_diff.lua` clamps with `math.max(1, ...)` -- so "opens at the
+        # top of the file" is true of what a human sees and not of what this
+        # returns.
         def first_line(file) = (file.chunked? && file.hunks.first&.new_start) || 1
       end
     end

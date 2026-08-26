@@ -14,43 +14,39 @@ module Lain
       # == The two measurements, and their honest fidelity
       #
       # TOKENS is a byte proxy -- the canonical byte length of what each turn
-      # would resend -- not a live tokenizer. It is the same proxy {Context::Compact}
-      # and {Compaction::Need} threshold on, and it is the number the study is
-      # about: how much CONTEXT each shape resends per turn. It is measured off the
-      # real render, so fork-per-step (small mainline, chunk-local forks) and
-      # linear-rewrite (one chain, summarized at each seam) genuinely diverge.
+      # would resend -- not a live tokenizer. The same proxy {Context::Compact}
+      # and {Compaction::Need} threshold on, and the number the study is about:
+      # how much CONTEXT each shape resends per turn. Measured off the real
+      # render, so fork-per-step and linear-rewrite genuinely diverge.
       #
       # CACHE-WRITES is derived from {Bench::Rewrites} over the mainline's
-      # prefix-digest chain, NOT from Usage -- because {Provider::Mock} never
-      # populates cache fields (the PC-6 escalation trigger). A cache-write is a
-      # prefix REWRITE: the persistent cached prefix invalidated and re-created.
-      # The plan-shaped arms project rewrites over the mainline CONTINUATION chain
-      # (the append-only proof P3 pins: fork rewrites zero, linear one per seam);
-      # the reactive arm projects over its single linear timeline's per-turn chain
-      # (its timeline IS the mainline). Same meaning -- rewrites of the persistent
-      # prefix -- sampled where each shape's mainline actually advances.
+      # prefix-digest chain, NOT from Usage, because {Provider::Mock} never
+      # populates cache fields. A cache-write is a prefix REWRITE: the
+      # persistent cached prefix invalidated and re-created. The plan-shaped
+      # arms project rewrites over the mainline CONTINUATION chain -- fork
+      # rewrites zero, linear one per seam -- while the reactive arm projects
+      # over its single timeline's per-turn chain, since its timeline IS the
+      # mainline. Same meaning, sampled where each shape's mainline advances.
       #
       # WALL-CLOCK is deliberately never measured: a mock replay has no real
-      # parallelism to time, so the {Report} marks it ABSENT rather than fabricate
-      # a number (the {ArmSweep} precedent).
+      # parallelism to time, so the {Report} marks it ABSENT rather than
+      # fabricate a number.
       class Driver
-        # The production-default cache-marking pipeline every arm renders through,
-        # so the prefix-digest chains reflect a real render's cache marks. A
-        # module-scope shareable lambda (self == the class): a Proc built inside a
-        # method would capture the Driver instance and fail Ractor.make_shareable
-        # the moment a Context stored it.
+        # The production-default cache-marking pipeline every arm renders
+        # through, so the prefix-digest chains reflect a real render's cache
+        # marks. Module-scope, because a Proc built inside a method would
+        # capture the Driver instance and fail `Ractor.make_shareable` the
+        # moment a Context stored it.
         BASE_PIPELINE = Ractor.make_shareable(->(_workspace) { Context::CacheBreakpoints.new })
 
-        # The reactive baseline's compaction knobs. One byte proxy governs all
-        # three so {Compaction::Need}'s token-threshold, the {Compaction::Scheduler}'s
-        # hard cap, and {Context::Compact}'s own threshold agree: once the
-        # CANDIDATE-FOR-DROP head crosses it, the need fires, the warm decision is
-        # FORCED, and Compact actually elides -- the honest cache-aware-compaction
-        # pipeline the card names as the baseline. The three measure the SAME
-        # bytes (the candidate head, {Scheduler#pipeline}'s documented `messages:`
-        # contract) so the scheduler never journals a compaction Compact no-ops.
-        # Sized off the fixture (every run's candidate head crosses it by the
-        # third step) so the baseline genuinely compacts partway through each run.
+        # One byte proxy governs all three of {Compaction::Need}'s
+        # token-threshold, the {Compaction::Scheduler}'s hard cap and
+        # {Context::Compact}'s own threshold, so that once the
+        # CANDIDATE-FOR-DROP head crosses it the need fires, the warm decision
+        # is FORCED, and Compact actually elides. All three measure the SAME
+        # bytes, so the scheduler never journals a compaction Compact no-ops.
+        # Sized off the fixture -- every run's candidate head crosses it by the
+        # third step -- so the baseline genuinely compacts partway through.
         REACTIVE_THRESHOLD = 250
         private_constant :REACTIVE_THRESHOLD
 
@@ -66,9 +62,9 @@ module Lain
         REACTIVE_KEEP_LAST = 1
         private_constant :REACTIVE_KEEP_LAST
 
-        # A fixed, deterministic stand-in for the elided head. Real enough for the
-        # baseline (the reactive scheduler's job is WHEN to compact, not how well
-        # it summarizes), and fixed so a rerun reproduces it byte-for-byte.
+        # Real enough for the baseline -- the reactive scheduler's job is WHEN to
+        # compact, not how well it summarizes -- and fixed so a rerun reproduces
+        # it byte-for-byte.
         REACTIVE_SUMMARY = "[reactive compaction: earlier turns summarized to protect the warm prefix]"
         private_constant :REACTIVE_SUMMARY
 
@@ -183,7 +179,7 @@ module Lain
 
         # Rewrites over the mainline: render each continuation (its timeline
         # through its pipeline) into a request and count the prefix rewrites across
-        # the chain -- exactly the churn projection P3's seam-policy spec pins.
+        # the chain -- exactly the churn projection the seam-policy spec pins.
         def mainline_writes(continuations, store)
           chain = continuations.map do |continuation|
             request = render(continuation.timeline(store), continuation.pipeline)

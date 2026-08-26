@@ -73,7 +73,7 @@ RSpec.describe Lain::Provider::Ollama, :ollama do
   # over: a false determinism claim poisons every bench conclusion built on this
   # arm. In that case pin the weaker invariant the corpus documents (e.g. runs are
   # stable per warm load) and record it honestly in docs/ollama.md -- do NOT mark
-  # this pending. (Escalation trigger, T21: seeded runs differing.)
+  # this pending. (Escalation trigger: seeded runs differing.)
   describe "temperature-0 reproducibility" do
     it "produces identical text across three warm same-seed runs" do
       prompt = "In one short sentence, describe what a compiler does."
@@ -94,7 +94,7 @@ RSpec.describe Lain::Provider::Ollama, :ollama do
   # guidance: name the tool, state the argument, and instruct the call explicitly.
   # If qwen3:4b will not call the tool reliably, do NOT loosen the assertion into
   # flakiness -- escalate with the transcript; model choice may need qwen3:8b
-  # (Joel's call, T21 escalation trigger).
+  # (Joel's call, and an escalation trigger).
   describe "a live tool-call turn through the Agent" do
     let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
     let(:context) do
@@ -136,12 +136,13 @@ RSpec.describe Lain::Provider::Ollama, :ollama do
 
   # ---- layer 4: what a REAL failure says ---------------------------------------
 
-  # T38. The offline coverage in ollama_streaming_spec.rb cans these bodies; this
+  # The offline coverage in ollama_streaming_spec.rb cans these bodies; this
   # is the one that proves ollama still sends the sentence they were copied from,
   # and that both paths hand it over unchanged. Costs one refused request, no
   # inference. `lain chat --provider ollama --model no-such-model-xyz` is the
-  # gesture it stands for -- it answered "An unknown error occurred" before T38,
-  # for this and every other streaming failure alike.
+  # gesture it stands for -- it answered "An unknown error occurred" for this and
+  # every other streaming failure alike, until the refusal path started carrying
+  # the server's own sentence.
   describe "a model the server does not have" do
     def refusal(stream:)
       request = Lain::Request.new(model: "no-such-model-xyz", max_tokens: 32, stream:,

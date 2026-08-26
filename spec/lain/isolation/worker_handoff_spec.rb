@@ -48,7 +48,7 @@ class RecordingResolver
 end
 
 # Operates on a THROWAWAY repo it creates itself (git init in a mktmpdir), never
-# the lain repo it runs in -- the posture worktree_spec.rb and the D4 handback
+# the lain repo it runs in -- the posture worktree_spec.rb and the handback
 # spec both take, and the reason this stays in the default suite: git is always
 # present, a model is not.
 RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
@@ -223,7 +223,7 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
       lease&.release
     end
 
-    # D4 used `-z` and re-tagged the path encoding precisely so BOTH of these
+    # `-z` and the re-tagged path encoding are here precisely so BOTH of these
     # still open: a bare `- #{path}` bullet shears the newline-bearing one across
     # two lines and names a file that does not exist, and the non-ASCII one is
     # the shape that catches a decoder which is not the true inverse of the
@@ -378,8 +378,8 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
   end
 
   describe "an unresolved conflict is reported, not swallowed" do
-    # A resolver that "finishes" without touching a marker -- the case D4's
-    # #continue refuses rather than committing corruption.
+    # A resolver that "finishes" without touching a marker -- the case the
+    # handoff's #continue refuses rather than committing corruption.
     let(:resolver) { RecordingResolver.new }
 
     it "says the conflict stands, names the ref, and leaves no merge in progress" do
@@ -827,7 +827,7 @@ RSpec.describe Lain::Isolation::WorkerHandoff, :seam do
       lease&.release
     end
 
-    # A parent already mid-merge from SOMEONE ELSE is D4's MID_MERGE decline, and
+    # A parent already mid-merge from SOMEONE ELSE is the MID_MERGE decline, and
     # #restore must not abort it: that merge belongs to a sibling worker, and
     # unwinding it would be real damage.
     it "never aborts a merge it did not start" do

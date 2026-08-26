@@ -45,10 +45,10 @@ RSpec.describe Lain::Exec::Core do
     end
   end
 
-  # F45's out-of-process half. The daemon is lain's OWN child, so it already
-  # carries BUNDLE_GEMFILE: an env map that merely OMITS the key leaves the
-  # daemon's copy in place. Only an explicit nil -- msgpack nil, the server's
-  # remove-the-key marker -- takes it away.
+  # The out-of-process half of exec. The daemon is lain's OWN child, so it
+  # already carries BUNDLE_GEMFILE: an env map that merely OMITS the key leaves
+  # the daemon's copy in place. Only an explicit nil -- msgpack nil, the
+  # server's remove-the-key marker -- takes it away.
   describe "lain's own toolchain does not reach the daemon's child" do
     it "maps each framework variable to an explicit nil, never to an omission" do
       with_env("BUNDLE_GEMFILE" => "/lain/Gemfile", "RUBYOPT" => "-rbundler/setup") do
@@ -69,7 +69,7 @@ RSpec.describe Lain::Exec::Core do
       end
     end
 
-    # The differential that matters for F45: both backends have to decide the
+    # The differential that matters here: both backends have to decide the
     # SAME environment, or the transport becomes observable in what a command
     # can see. Compared against the map the local arm hands mixlib.
     it "decides the same environment as the local backend, key for key" do
@@ -124,8 +124,8 @@ RSpec.describe Lain::Exec::Core do
   # The seam's contract admits a String or a term; this backend admits only the
   # first. Packing a term would put ["sh", "-c", [["printf", "hi"]]] on the wire,
   # which the daemon rejects at decode -- surfacing as a spawn refusal that
-  # Tools::CoreExec reports as a bad cwd. T2 threads backends into Tools::Bash,
-  # which DOES hold terms, so this stops being unreachable there.
+  # Tools::CoreExec reports as a bad cwd. Threading these backends into
+  # Tools::Bash, which DOES hold terms, stops this being unreachable there.
   describe "a shape it has no wire for" do
     it "refuses a term by name, rather than packing one the daemon cannot decode" do
       expect { run(command: [%w[printf hi]]) }

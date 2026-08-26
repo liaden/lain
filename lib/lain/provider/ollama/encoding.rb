@@ -5,31 +5,22 @@ module Lain
     class Ollama < Provider
       # The neutral-Request -> Ollama `/api/chat` payload encoding.
       #
-      # Unlike {AnthropicEncoding}, this mixin has no SDK oracle to stay
-      # byte-identical with, so #encode IS the wire payload -- there is no later
-      # `system_:`-to-`system` rewrite. The payload is rebuilt field by field
-      # rather than transformed in place, and that reconstruction is what keeps
-      # every neutral marker off the wire: only known fields (a block's text,
-      # a tool's name/description/schema) are ever copied out, so `"cache" =>
-      # true` -- which Ollama has no prompt cache to honor -- and
-      # `Workspace::WORKSPACE_MARKER` -- structural provenance, meaningful only
-      # to Lain's own Recall -- simply never have a field to land in. There is
-      # no `translate_block`-style strip here because there is nothing to
-      # strip FROM: `text_of` only ever reads `block["text"]`. Surfacing a
-      # missing capability (like prompt caching) is the policy's job
-      # (`:degrade` journals it); the encoder's job is only to not leak a key.
+      # Unlike {AnthropicEncoding} this mixin has no SDK oracle to stay
+      # byte-identical with, so #encode IS the wire payload. The payload is
+      # REBUILT field by field rather than transformed in place, and that
+      # reconstruction is what keeps every neutral marker off the wire: only
+      # known fields are ever copied out, so `"cache"` and
+      # `Workspace::WORKSPACE_MARKER` never have a field to land in. There is no
+      # `translate_block`-style strip because there is nothing to strip FROM.
       module Encoding
-        # Ollama's native wire carries no tool-call id. When a tool_result is
-        # sent back it correlates to its call by `tool_name` alone, so the name
-        # must be recovered from the prior tool_use block that Lain minted an id
-        # for. These are the keys involved on Lain's side.
+        # Ollama's native wire carries no tool-call id: a tool_result correlates
+        # to its call by `tool_name` alone, so the name must be recovered from
+        # the prior tool_use block Lain minted an id for.
         TOOL_USE = "tool_use"
         TOOL_RESULT = "tool_result"
 
         # The `Request#extra` keys the sampler honors, matching Ollama's
-        # `options` object. Requests normalize extra to String keys; T18 is what
-        # threads temperature/seed through here from the CLI, and T11 the two
-        # throughput knobs below.
+        # `options` object.
         #
         # `num_batch` is the one with a measured cost behind it: ollama starts
         # llama-server with `-b 512`, overriding llama.cpp's own default of
@@ -37,12 +28,10 @@ module Lain
         # the ONLY place it can be corrected. Measured on this box at 1.31x
         # prefill (docs/providers/ollama.md, "Serving performance").
         #
-        # Every key here is strictly opt-in: #encode_options copies one only
-        # when Request#extra already holds it, so a request nobody tuned still
-        # renders with no `options` object at all. The encoder is deliberately
-        # not the place to default one on -- that would be a wire change for
-        # every caller that never asked for it. Resolution lives at the CLI
-        # ({CLI::Backend#sampler_extra}), which is where an operator's flag is.
+        # Every key is strictly opt-in, so a request nobody tuned renders with
+        # no `options` object at all. Defaulting one on here would be a wire
+        # change for every caller that never asked for it; resolution belongs at
+        # the CLI, where an operator's flag is.
         SAMPLER_KEYS = %w[temperature seed num_batch num_ctx].freeze
 
         # `think` requests the reasoning trace onto `message.thinking` (qwen3
@@ -51,21 +40,17 @@ module Lain
         # top-level sibling of `stream`/`tools`, not a member of `options`.
         THINK_KEY = "think"
 
-        # T1: the neutral key a Request uses to carry a forced typed-answer
-        # format on #extra -- the same escape hatch THINK_KEY/SAMPLER_KEYS
-        # already ride, so a Request without it stays byte-identical to
-        # before this feature existed. The value is
-        # `{"schema" => <json schema>, "tool" => <name>}`; Ollama's native
-        # `format` field wants the schema alone (it has no tool-forcing
-        # concept), while Anthropic's encoder (AnthropicEncoding) reads
-        # "tool" instead to force tool_choice.
+        # The neutral key a Request uses to carry a forced typed-answer format
+        # on #extra, so a Request without it stays byte-identical to before the
+        # feature existed. Ollama's native `format` wants the marker's schema
+        # half alone, having no tool-forcing concept; {AnthropicEncoding} reads
+        # the "tool" half instead.
         STRUCTURED_OUTPUT_KEY = "structured_output"
 
         # The exact `/api/chat` body. Pure and deterministic: no clock, no
-        # ordering that depends on how the Request's Hashes were built. `stream`
-        # carries `request.stream` (Request coerces it to a bool) -- Ollama's wire
-        # default is `true`, so the flag is always sent explicitly; {Ollama#complete}
-        # routes to the streaming or non-streaming transport on the same value.
+        # ordering that depends on how the Request's Hashes were built. Ollama's
+        # wire default for `stream` is `true`, so the flag is always sent
+        # explicitly.
         def encode(request)
           { model: request.model, messages: encode_messages(request), stream: request.stream }
             .merge(optional_fields(request))
@@ -73,21 +58,15 @@ module Lain
 
         private
 
-        # The fields that only belong on the wire when the Request actually
-        # carries them: an empty `tools`/`options` renders as an absent key
-        # (matching what the non-cache-marker path already does), and `think`
-        # is present only when Request#extra asked for it -- a Request with no
-        # think extra must produce byte-identical bytes to before R5.
+        # An empty `tools`/`options` renders as an ABSENT key, and each flag
+        # appears only when Request#extra asked for it -- a Request that asked
+        # for none must produce byte-identical bytes to before these existed.
         def optional_fields(request)
           { tools: encode_tools(request.tools), options: encode_options(request.extra) }
             .reject { |_key, value| value.empty? }
             .merge(extra_flag_fields(request.extra))
         end
 
-        # The optional fields that ride a single Request#extra flag rather
-        # than a collection: absent unless the Request actually asked for
-        # them, which is what keeps a plain Request byte-identical to before
-        # each of these existed (R5 for `think`, T1 for `format`).
         def extra_flag_fields(extra)
           fields = {}
           fields[:think] = extra[THINK_KEY] if extra.key?(THINK_KEY)
@@ -96,13 +75,10 @@ module Lain
           fields
         end
 
-        # Ollama's `format` wants the raw JSON schema, not a tool wrapper --
-        # the "tool" half of the neutral marker names which tool a
-        # tool-forcing backend (Anthropic) should force instead, and has
-        # nothing to do here. A nil marker (key absent, or present with a nil
-        # value) and a marker missing "schema" both resolve to nil here, and
-        # #extra_flag_fields treats nil as "omit the key" -- the real Ollama
-        # API rejects a literal `format: null`, so this must never emit one.
+        # Ollama's `format` wants the raw JSON schema, not a tool wrapper. A
+        # nil marker and a marker missing "schema" both resolve to nil, which
+        # #extra_flag_fields omits: the real API rejects a literal
+        # `format: null`, so this must never emit one.
         def structured_format(extra)
           marker = extra[STRUCTURED_OUTPUT_KEY]
           marker && marker["schema"]
@@ -110,9 +86,9 @@ module Lain
 
         def encode_messages(request)
           system = encode_system(request.system)
-          # A running id -> tool_name map: a tool_use turn precedes its
-          # tool_result turn, so walking in order means the name is always known
-          # by the time a result needs to name its call on the wire.
+          # A running id -> tool_name map. A tool_use turn precedes its
+          # tool_result turn, so walking in order means the name is known by the
+          # time a result must name its call on the wire.
           conversation = request.messages.each_with_object(names: {}, out: system.dup) do |message, acc|
             acc[:out].concat(encode_message(message, acc[:names]))
           end
@@ -136,10 +112,10 @@ module Lain
           [assistant_or_user(message, blocks)]
         end
 
-        # role:"tool" messages carry `tool_name`, never an id (the native wire's
-        # only correlation handle). When two parallel calls hit the SAME tool the
-        # wire cannot disambiguate their results -- a documented Ollama gap, not a
-        # bug here; Lain's own tool_use_id keeps the loop unambiguous regardless.
+        # role:"tool" messages carry `tool_name`, never an id. When two parallel
+        # calls hit the SAME tool the wire cannot disambiguate their results -- a
+        # documented Ollama gap, not a bug here; Lain's own tool_use_id keeps the
+        # loop unambiguous regardless.
         def tool_message(block, names)
           { role: "tool", tool_name: names[block["tool_use_id"]], content: text_of(block["content"]) }
         end
@@ -177,9 +153,8 @@ module Lain
           end
         end
 
-        # A block list (or a bare String) flattened to the plain text Ollama's
-        # `content` field wants; non-text blocks (thinking, tool_use) contribute
-        # nothing here -- they ride their own fields.
+        # Flattened to the plain text Ollama's `content` field wants; non-text
+        # blocks ride their own fields and contribute nothing.
         def text_of(value)
           return value if value.is_a?(String)
           return "" unless value.is_a?(Array)

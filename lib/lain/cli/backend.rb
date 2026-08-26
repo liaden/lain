@@ -13,10 +13,9 @@ module Lain
     # Turns the CLI flags into the two collaborators a run needs a CHOICE about --
     # which Provider backend, and the Context carrying the model and the sampler
     # params (temperature/seed) that ride Request#extra. A plain object, not a bag
-    # of methods on the Thor executable: the provider/model resolution is then
-    # unit-testable without a Thor instance, and BOTH the chat and bench-record
-    # paths resolve `--provider` through this one seam, so they agree on what a
-    # provider name means (CLAUDE.md's Metrics rule -- extract, don't loosen).
+    # of methods on the Thor executable: BOTH the chat and bench-record paths
+    # resolve `--provider` through this one seam, so they agree on what a
+    # provider name means.
     #
     # Errors here are Lain's, not Thor's: an unknown provider raises
     # {UnknownProvider} (a {Lain::Error}), which the exe layer maps to a
@@ -24,19 +23,15 @@ module Lain
     class Backend
       # A missing key used to backtrace as {Provider::HTTP::ConfigurationError}
       # -- a plain StandardError, so it skipped the exe's `rescue Lain::Error`
-      # and dumped a raw trace naming "Transport" (an internal collaborator, not
-      # an operator-facing concept). Named refusal, checked BEFORE construction,
-      # following {Bench::CLI::MissingAPIKey}'s precedent (same shape, not
-      # reused -- Backend does not couple to Bench).
+      # and dumped a raw trace naming "Transport", an internal collaborator.
+      # Named refusal, checked BEFORE construction.
       class MissingAPIKey < Error; end
 
-      # A memoized factory answers its FIRST caller's arguments forever. With
-      # the one wiring site the run has that is a cache hit; a SECOND, differing
-      # call would hand back a {Compaction::Source} still bound to the first
-      # journal, and every per-turn decision would land in `Channel::Null` with
-      # nothing raising and nothing missing from the record's shape -- the
-      # precise silent degrade the whole compaction band exists to prevent.
-      # Loud instead, per CLAUDE.md's unknown-state premise.
+      # A memoized factory answers its FIRST caller's arguments forever. The run
+      # has one wiring site, so that is a cache hit; a SECOND, differing call
+      # would hand back a {Compaction::Source} still bound to the first journal,
+      # and every per-turn decision would land in `Channel::Null` with nothing
+      # raising and nothing missing from the record's shape.
       class Rebound < Error; end
 
       # A summarizer ceiling of zero or less. Loud, because every other layer is
@@ -44,26 +39,22 @@ module Lain
       # `Request#max_tokens` only does `Integer()`, with no range check; the
       # provider 400s; and {Oracle::Eager}'s task boundary swallows that BY
       # DESIGN, leaving "compaction quietly stopped summarizing" as the only
-      # symptom. A {Lain::Error}, not {Compaction::Head}'s bare ArgumentError,
-      # for {MissingAPIKey}'s reason: a bad flag reaches the operator as a clean
-      # Thor::Error only if the exe's `rescue Lain::Error` can see it.
+      # symptom. A {Lain::Error} for {MissingAPIKey}'s reason: a bad flag reaches
+      # the operator cleanly only if the exe's `rescue Lain::Error` can see it.
       class InvalidCeiling < Error; end
 
-      # The fourth of this class's own errors, {InvalidEndpoint}, is defined
-      # in `backend/endpoint.rb` instead of here, beside {Endpoint} -- the
-      # thing that raises it -- moved there to keep this class under
-      # `Metrics/ClassLength` rather than loosen the limit.
+      # This class's fourth error, {InvalidEndpoint}, lives beside the
+      # {Endpoint} that raises it.
 
       # The providers `--provider` selects between. The unknown-name guard names
       # this set, matching Capability::Policy.for's voice.
       PROVIDERS = %w[anthropic ollama ollama-cloud bedrock].freeze
 
       # Which of those the SUMMARIZER tier defaults to. Local, because an eager
-      # summary fires once per large tool result, off the turn's critical path,
-      # and paying frontier-model tokens to compress a tool result costs more
-      # than resending it. A default, not a law: `--summarizer-provider` buys a
-      # local chat a better summarizer, or lets a frontier chat keep summarizing
-      # for free -- which is exactly why the tier is journalled now.
+      # summary fires once per large tool result and paying frontier-model
+      # tokens to compress one costs more than resending it. A default, not a
+      # law: `--summarizer-provider` overrides it either way, which is why the
+      # tier is journalled.
       DEFAULT_SUMMARIZER_PROVIDER = "ollama"
 
       # Compaction's knobs, in {Compaction::Head}'s canonical-byte proxy. They
@@ -75,38 +66,31 @@ module Lain
       # the trigger that actually fires under Anthropic's 1M window (where
       # {Need::ApproachingWindow} would not fire until ~900k). The hard cap is
       # 4x that: below it a WARM cache defers, because a cache read costs ~0.1x
-      # what the rewrite costs, and above it the history is large enough that
-      # protecting the prefix is no longer the better trade.
+      # what the rewrite costs.
       DEFAULT_BYTE_THRESHOLD = 262_144
       DEFAULT_HARD_CAP = 1_048_576
 
       # Trailing messages a compaction never touches. Twenty is about the last
       # ten exchanges: enough that the model keeps the thread of what it is
-      # doing, since everything ahead of it survives only as summary or
-      # attestation.
+      # doing, since everything ahead survives only as summary or attestation.
       DEFAULT_KEEP_LAST = 20
 
       # {Compaction::Scheduler} prices EVERY compacting turn, and the bench's
-      # shared {PriceBook} raises on a model it has no list price for -- right,
-      # where a silently-free model would corrupt a cost bench's headline
-      # metric, and fatal here, where it would turn the first compaction of an
-      # ollama chat into a crash mid-conversation. `--model` is a free-form
-      # string, so this is not only the local-provider case.
+      # shared {PriceBook} raises on a model it has no list price for -- right
+      # for a cost bench, fatal here, where it would turn the first compaction
+      # of an ollama chat into a crash mid-conversation. `--model` is free-form,
+      # so this is not only the local-provider case.
       #
       # So compaction gets its own book: the same DEFAULTS, degrading to zero.
-      # Nothing is being under-reported that a bench reads -- `cost_saved` and
-      # `cost_spent` are annotations on a decision already made on BYTES -- and
-      # zero is the honest figure for the local tier this most often means.
-      # The degrading is not SILENT: {Telemetry::Compaction} carries a model
-      # beside the figures, so a zero next to a local model id reads as the
-      # fallback it is rather than as a free compaction.
+      # Nothing a bench reads is under-reported -- `cost_saved` and `cost_spent`
+      # annotate a decision already made on BYTES -- and the degrading is not
+      # SILENT, since {Telemetry::Compaction} carries a model beside the figures.
       #
       # Read that record's `model` through its `#priced?`, though, and not as
-      # "the tier these dollars are quoted in" -- since C2 it means one of
-      # three things (see {Telemetry::Compaction}'s header). It is the quoted
-      # tier only when `priced?`; on a refused quote it names the tier that
-      # RAN, with no figures beside it. This fallback's own zero is the case
-      # neither covers: `priced?` is true and the figure was never measured.
+      # "the tier these dollars are quoted in": it means one of three things
+      # (see {Telemetry::Compaction}'s header), and this fallback's own zero is
+      # the case neither of the other two covers -- `priced?` true and the
+      # figure never measured.
       #
       # No `.freeze`: PriceBook freezes itself and its map at construction.
       COMPACTION_PRICES =
@@ -115,10 +99,9 @@ module Lain
       # Both summarizer flags are refused HERE, at construction, rather than
       # where the tier is built. `--provider` refuses on every run because
       # {#provider} always runs; the summarizer's would not, because under
-      # `--no-compact` {#tool_observer} answers the Null, {#summary_oracle} is
-      # never built, and neither check ever ran -- so a typo was accepted in
-      # exactly one configuration. An asymmetry a user meets in only one mode is
-      # one they misread. Construction is the single path every command takes.
+      # `--no-compact` {#tool_observer} answers the Null and {#summary_oracle}
+      # is never built -- so a typo was accepted in exactly one configuration.
+      # Construction is the single path every command takes.
       #
       # The keys below are the whole surface this class reads out of Thor's flag
       # set; `exe/lain` remains the authority on each flag's spelling, default and
@@ -145,24 +128,26 @@ module Lain
         @options = options
         summarizer_name
         summarizer_max_tokens
-        # BOTH arms, built for their refusals and dropped. `--summarizer-provider
-        # ollama-cloud` is the same credential on the same wire as `--provider`
-        # is, and it is refused here for the reason `summarizer_max_tokens`
-        # above already is: the summarizer flags are construction-time refusals
-        # whatever `--no-compact` says, so `lain up` cannot open a pane that
-        # dies at the first compaction. It also evaluates {#api_base} on the way
-        # in, so that flag stays validated for EVERY provider.
+        # BOTH arms, built for their refusals and dropped: `--summarizer-provider
+        # ollama-cloud` is the same credential on the same wire as `--provider`,
+        # and the summarizer flags refuse at construction whatever `--no-compact`
+        # says, so `lain up` cannot open a pane that dies at the first
+        # compaction. It also evaluates {#api_base} on the way in, so that flag
+        # stays validated for EVERY provider.
         [@options[:provider], summarizer_name].each { |name| ollama_tier(name) }
         num_ctx
       end
 
-      # Anthropic reads its key from the environment; the two ollama arms are
-      # {OllamaTier}'s whole subject, since "which server, whose key, which
-      # default model" differs between them; Bedrock is also env-configured
-      # ({Provider::Bedrock} reads AWS_BEARER_TOKEN_BEDROCK / AWS_REGION
-      # itself, so no flag threads through here). An unknown name fails loudly,
-      # naming the valid set, as {UnknownProvider} (a bad flag is user error,
-      # surfaced by the exe as a clean Thor::Error, not a bug with a backtrace).
+      # Anthropic and Bedrock are env-configured and read their own credentials,
+      # so no flag threads through here; the two ollama arms are {OllamaTier}'s
+      # whole subject, since "which server, whose key, which default model"
+      # differs between them. An unknown name fails loudly as {UnknownProvider},
+      # naming the valid set.
+      #
+      # Both hosted names mean a RAW (vendored-transport) provider here, for
+      # uniform retry telemetry over one Faraday stack. The official-SDK classes
+      # are the `#encode` differential ORACLES and live in spec/support, so no
+      # run constructs one and the `anthropic` gem is not a runtime dependency.
       #
       # @param name [String] WHICH provider to build, already validated against
       #   PROVIDERS -- the chat's by default. {#summarizer_provider} passes its
@@ -172,35 +157,17 @@ module Lain
       #   that same reason: `--provider ollama-cloud` is a name, not a boolean,
       #   which is what lets `bench arms` and `bench record` reach it through
       #   the `provider:` their closed flag maps already forward.
-      #
       # @param spool [#open_frame] the chronicle's response spool -- a real
-      #   {Provider::ResponseWal} only when journaling is on ({CLI::Chronicle::Null}
-      #   answers {Provider::Spool::Null}, never nil, so this is never an `if
-      #   spool` guard). Threaded into {Provider::Anthropic} and, since the
-      #   ollama arm became metered, into {OllamaTier} as well: the Null spool
-      #   -- no chronicle asked, e.g. bench (never passes spool: at all) or
-      #   --no-journal chat -- just means nothing gets teed. BEDROCK still never
-      #   sees the keyword, because its constructor does not accept one.
-      #
-      # Both hosted names mean a RAW (vendored-transport) provider here:
-      # "anthropic" is {Provider::Anthropic} and "bedrock" is
-      # {Provider::Bedrock} -- uniform retry telemetry over one Faraday
-      # stack, the same call bench already made. The official-SDK classes are
-      # the `#encode` differential ORACLES and live in spec/support, so no run
-      # constructs one and the `anthropic` gem is not a runtime dependency.
-      #
-      # @param channel [Lain::Channel] where a raw provider's retry and CE-5
+      #   {Provider::ResponseWal} only when journaling is on
+      #   ({CLI::Chronicle::Null} answers {Provider::Spool::Null}, never nil, so
+      #   this is never an `if spool` guard). BEDROCK never sees the keyword,
+      #   because its constructor does not accept one.
+      # @param channel [Lain::Channel] where a raw provider's retry and
       #   stream_started events land -- chat's live TTY Channel, so a stream
-      #   start actually reaches the frontend. Like spool it defaults to the
-      #   Null instance (headless/bench pass nothing, so their events land
-      #   nowhere). Every arm gets it now: Bedrock and -- since F7 -- Ollama
-      #   too, whose retries used to reach no Journal at all. That also makes a
-      #   retry storm VISIBLE LIVE as well as readable afterwards:
-      #   {Frontend::Decorators::ProviderRetry} paints each
-      #   {Telemetry::ProviderRetry} as it lands, so a long stall shows the
-      #   operator what is happening instead of a blank screen. An earlier
-      #   edition of this note said the opposite, and called leaving it
-      #   unpainted a decision rather than a gap; painting it reversed that.
+      #   start reaches the frontend and {Frontend::Decorators::ProviderRetry}
+      #   paints a retry storm as it happens rather than leaving a blank screen.
+      #   Defaults to the Null instance, so headless and bench events land
+      #   nowhere.
       # @param queue [Boolean] the caller's willingness to WAIT for
       #   {Provider::Admission} to free a slot; not a property of the endpoint.
       #   Not forwarded to the bedrock arm, which does not take it: bedrock
@@ -218,13 +185,9 @@ module Lain
       # set. Deliberately handed neither the chat's spool nor its channel: an
       # oracle round trip is not a turn, so it belongs in neither the response
       # WAL a replay reads back as turns nor the live stream the frontend paints.
-      # `queue:` is passed THROUGH rather than decided here, because this one
-      # method serves two callers that need opposite answers:
-      # {Backend::Summarizer} builds the tier {Oracle::Eager} fires through, and
-      # its contract is that the turn never waits (`oracle/eager.rb:45-47`);
-      # {Backend::SpanSummarizer} answers on the RENDER path, where the summary
-      # is worth waiting for. They are separate objects with separate `#tier`
-      # methods, which is what makes one keyword enough to tell them apart.
+      # `queue:` is passed THROUGH rather than decided here, because
+      # {Backend::Summarizer} and {Backend::SpanSummarizer} need opposite
+      # answers; each says why at its own `#tier`.
       def summarizer_provider(queue: true) = provider(name: summarizer_name, queue:)
 
       # `--summarizer-model`, defaulting to the CHAT's model when both tiers
@@ -234,32 +197,25 @@ module Lain
       # What FORCED the rule is local: one GPU holds one resident model, so an
       # unpinned summarizer on the chat's own provider evicts the chat model at
       # every compaction and the next turn reloads it -- **84.0s against 7.5s**,
-      # measured. That argument is about residency and only bites on a local
-      # tier. The rule fires for anthropic-on-anthropic and bedrock-on-bedrock
-      # too, where nothing is resident and the reason is plainer: one provider is
-      # one model namespace, so the model the operator chose is the coherent
-      # default for both tiers, and it cannot cost more than the alternative --
-      # each hosted provider's own default is already its top tier, so
-      # inheriting is at worst neutral and is cheaper the moment `--model` names
-      # something smaller.
+      # measured. The rule fires for anthropic-on-anthropic and
+      # bedrock-on-bedrock too, where nothing is resident and the reason is
+      # plainer: one provider is one model namespace, and inheriting is at worst
+      # neutral, since each hosted provider's own default is already its top
+      # tier.
       #
       # Across providers neither argument survives -- no shared residency, no
-      # shared namespace, and a model id that does not even parse on the other
-      # side -- so `--provider anthropic` still must not name the local tier's
-      # model. That is the half of this the tiers were split for.
+      # shared namespace, and a model id that does not parse on the other side
+      # -- so `--provider anthropic` must not name the local tier's model.
       def summarizer_model = @options[:summarizer_model] || tier_default_model
 
       # `--summarizer-max-tokens`. A summary that runs out of ceiling is a
       # truncated summary, and a truncated summary REPLACES the result it
       # compressed, so the knob is worth exposing rather than inheriting the
-      # chat's (which is sized for a turn, not for a paragraph).
+      # chat's, which is sized for a turn rather than for a paragraph.
       #
-      # Non-positive is refused rather than measured, the shape
-      # {Compaction.validate_keep_last} uses for its own knob -- a separate rule
-      # and a separate error, because this is a different number with a different
-      # failure (see {InvalidCeiling} for what stays silent otherwise). Both
-      # ceiling flags reach it through {Ceiling}, so there is one place either
-      # can go wrong.
+      # Non-positive is refused rather than measured (see {InvalidCeiling} for
+      # what stays silent otherwise). Both ceiling flags reach {Ceiling}, so
+      # there is one place either can go wrong.
       def summarizer_max_tokens
         Ceiling.new(flag: "--summarizer-max-tokens",
                     value: knob(:summarizer_max_tokens, Oracle::Model::DEFAULT_MAX_TOKENS)).tokens
@@ -284,90 +240,67 @@ module Lain
       # The ONE window book this run measures occupancy against, resolved by
       # {WindowBook} out of the window the provider says it is actually SERVING
       # (see there for why the shipped table cannot answer). Read by three
-      # places that must agree -- the {StatusFeed} publishing the state feed
-      # ({ChatLaunch} threads it), {Compaction::Source}'s per-turn threshold
-      # ({#compaction_source}), and {Agent#occupancy}, which is the `ctx` figure
-      # in the REPL prompt line. MEMOIZED for the same reason {#pipeline_source}
-      # is: three readers dividing by three different numbers is the failure
-      # this exists to prevent, and the probe is one live round trip whose
-      # answer can move under a runner reload.
+      # places that must agree -- {StatusFeed}, {Compaction::Source}'s per-turn
+      # threshold, and {Agent#occupancy}, the `ctx` figure in the REPL prompt
+      # line -- so it is MEMOIZED: three readers dividing by three different
+      # numbers is the failure this exists to prevent.
       #
-      # The memo is of the OBJECT, not of the answer inside it. A run
-      # launched with `--num-ctx` while nothing is resident resolves to a guess,
-      # and a memoized guess is permanent -- the runner loads on turn one and
-      # the session goes on dividing by a number nobody confirmed. So the three
-      # readers keep sharing one {WindowBook::Live}, whose answer
-      # {Middleware::ResolveWindow} re-resolves once per turn until it is
-      # authoritative and then stops. Both halves are load-bearing: sharing is
-      # what keeps the readers agreeing, and the once-per-turn trigger is what
-      # keeps them agreeing WITHIN a turn.
+      # The memo is of the OBJECT, not of the answer inside it. A run launched
+      # with `--num-ctx` while nothing is resident resolves to a guess, and a
+      # memoized guess is permanent. So the three readers share one
+      # {WindowBook::Live}, whose answer {Middleware::ResolveWindow} re-resolves
+      # once per turn until it is authoritative. Both halves are load-bearing:
+      # sharing is what keeps the readers agreeing, and the once-per-turn
+      # trigger is what keeps them agreeing WITHIN a turn.
       #
       # @return [WindowBook::Live]
       def context_window = @context_window ||= WindowBook::Live.new(source: WindowBook.new(backend: self))
 
       # `--num-ctx`, through the same {Ceiling} both `--max-tokens` flags go
-      # through, and OPTIONAL: unset means "serve the model's own", which is a
-      # real answer rather than the omission {Ceiling} refuses for a ceiling
-      # every turn needs. What is NOT a real answer is a non-positive one, and
-      # `0` is where this bit -- truthy, so no `||` falls back for it; sent
-      # verbatim by {#sampler_extra}; and then adopted as a DENOMINATOR, where
-      # it took the chat out mid-turn with `ArgumentError: window_tokens must be
-      # a positive Integer, got 0` from inside {Compaction::Need}. `--num-ctx`
-      # is `type: :numeric` with no range check and `EnvDefaults.numeric` only
-      # rejects non-numbers, so `LAIN_NUM_CTX=0` in an `.envrc` was that crash
-      # for every session in the directory.
+      # through, and OPTIONAL: unset means "serve the model's own". What is NOT
+      # a real answer is a non-positive one, and `0` is where this bit --
+      # truthy, so no `||` falls back for it; sent verbatim by {#sampler_extra};
+      # and then adopted as a DENOMINATOR, taking the chat out mid-turn with
+      # `ArgumentError: window_tokens must be a positive Integer, got 0` from
+      # inside {Compaction::Need}. `--num-ctx` is `type: :numeric` with no range
+      # check and `EnvDefaults.numeric` only rejects non-numbers, so
+      # `LAIN_NUM_CTX=0` in an `.envrc` was that crash for every session in the
+      # directory.
       #
       # Refused at CONSTRUCTION, with both summarizer flags and for their
-      # reason: it is the one path every command takes, so the refusal cannot
-      # depend on which collaborator a given run happens to build. {NumCtx} owns
-      # both refusals, and MEMOIZED because the second of them costs a round
-      # trip: {WindowBook} reads this on every re-resolution, and asking the
-      # server for a ceiling that cannot have changed would spend one per turn.
-      # It runs AFTER {#api_base} for the same reason -- a base URL it is about
-      # to talk to has to be a usable one first.
+      # reason. MEMOIZED because {NumCtx}'s second refusal costs a round trip
+      # and {WindowBook} reads this on every re-resolution. It runs AFTER
+      # {#api_base}: a base URL it is about to talk to has to be usable first.
       def num_ctx = @num_ctx ||= NumCtx.new(backend: self, value: @options[:num_ctx]).tokens
 
-      # `--api-base`, through {Endpoint}, and OPTIONAL the same way `--num-ctx`
-      # is: unset means "ollama's own default", a real answer, not the
-      # omission {Ceiling} refuses for a ceiling every turn needs. What is NOT
-      # a real answer is a value with no http/https scheme and a host --
-      # `localhost:11434`, the ordinary way to leave the scheme off, PARSES as
-      # a URI (scheme `localhost`, opaque `11434`), so it used to sail past
-      # construction and die on the first turn with a bare `NoMethodError`
-      # from inside Faraday, naming an internal collaborator instead of the
-      # flag an operator actually got wrong.
+      # `--api-base`, through {Endpoint}, and OPTIONAL the way `--num-ctx` is:
+      # unset means "ollama's own default". {Endpoint} owns what an unusable one
+      # is and why the obvious `URI::InvalidURIError` guard does not catch it.
       #
-      # Refused at CONSTRUCTION, with `--num-ctx` and both summarizer flags
-      # and for their reason: it is the one path every command takes, so the
-      # refusal cannot depend on which collaborator a given run happens to
-      # build -- {#provider} is the only other reader of this flag, and it
-      # would not run at all for `bench record` on a non-ollama provider.
-      # {#initialize} reaches it through {OllamaTier}, which takes the validated
-      # value as an argument, so the eager refusal still fires whatever
+      # Refused at CONSTRUCTION, because {#provider} is the only other reader of
+      # this flag and would not run at all for `bench record` on a non-ollama
+      # provider. {#initialize} reaches it through {OllamaTier}, which takes the
+      # validated value as an argument, so the eager refusal fires whatever
       # `--provider` says.
       def api_base = @options[:api_base] && Endpoint.new(flag: "--api-base", value: @options[:api_base]).url
 
       # `--model` resolved once, so {#context}, {WindowBook} and the compaction
-      # book agree about which model this run is. PUBLIC alongside
-      # {#summarizer_model}, which always was: both are this class's answer to
-      # "which model", and {WindowBook} asks for it LAZILY -- it must not be
-      # resolved before that object can rescue what {#provider_name} raises for
-      # an option hash naming no provider at all.
+      # book agree about which model this run is. {WindowBook} asks for it
+      # lazily, since it must not be resolved before that object can rescue what
+      # {#provider_name} raises for an option hash naming no provider at all.
       def model = @options[:model] || default_model(provider_name)
 
       # Which Context THIS turn renders through -- the live compaction source
       # by DEFAULT, since `lain chat` compacts unless `--no-compact` says
       # otherwise, and {Agent::PipelineSource::Null} when it does.
       #
-      # MEMOIZED, unlike {#context}, which deliberately answers a fresh value at
-      # six call sites. The source is RUN state: {Compaction::Cold} accumulates
-      # the cache warmth it has observed and {Oracle::Eager} accumulates the
-      # summaries it has fired, so a source rebuilt per call would silently
-      # reset both every turn and the `:cold` decision path would never fire.
-      # The first call therefore BINDS the journal and the cache profile -- the
-      # run has exactly one wiring site ({CompactionMount}), which is where they
-      # come from -- and a differing second call raises {Rebound} rather than
-      # quietly answering the first binding.
+      # MEMOIZED, unlike {#context}. The source is RUN state: {Compaction::Cold}
+      # accumulates the cache warmth it has observed and {Oracle::Eager} the
+      # summaries it has fired, so a source rebuilt per call would silently reset
+      # both every turn and the `:cold` decision path would never fire. The first
+      # call therefore BINDS the journal and the cache profile, and a differing
+      # second call raises {Rebound} rather than quietly answering the first
+      # binding.
       #
       # @param cache_profile [Lain::CacheProfile] the CHAT provider's own, so
       #   {Compaction::Cold} compares idle time against a TTL that exists (a
@@ -377,7 +310,7 @@ module Lain
       # @param sink [Lain::Sink] where a `--compact-strategy`-selected policy
       #   reports a tier that is DOWN. Not bound by {#bind_once}: it changes
       #   nothing about which Source gets built, and it is the one argument a
-      #   caller may reasonably not have (see {SpanSummarizer}).
+      #   caller may reasonably not have
       # @raise [Rebound] on a second call with different arguments
       def pipeline_source(cache_profile:, journal: Channel::Null.instance, sink: Sink::Null.new)
         bind_once(:pipeline_source, cache_profile:, journal:)
@@ -391,13 +324,10 @@ module Lain
 
       # The post-dispatch observer {Agent::ToolRunner} fires eager summaries
       # through. {Effect::Handler::Summarizing::Observer} is the PRODUCTION
-      # mount and the {Effect::Handler::Summarizing} decorator is its
-      # alternative -- never both against one {Oracle::Eager}, since `#fire`
-      # consumes a digest before spawning, so whichever fires first spends it
-      # and the other misses that content forever.
-      #
-      # The Null under `--no-compact`: nothing would ever read a summary, so
-      # firing local model calls would be pure waste.
+      # mount and the {Effect::Handler::Summarizing} decorator its alternative
+      # -- never both against one {Oracle::Eager}, since `#fire` consumes a
+      # digest before spawning, so whichever fires first spends it and the other
+      # misses that content forever.
       def tool_observer
         @tool_observer ||= if compaction?
                              Effect::Handler::Summarizing::Observer.new(eager:)
@@ -408,7 +338,7 @@ module Lain
 
       # The run's ONE summary store, shared by {#tool_observer} (which fires
       # into it) and {#pipeline_source} (which snapshots it per turn). Two
-      # instances would mean every fire landed somewhere no render reads.
+      # instances would mean every fire landed where no render reads.
       def eager = @eager ||= Oracle::Eager.new(oracle: summary_oracle)
 
       # @return [Boolean] whether this run compacts at all; on unless
@@ -421,9 +351,7 @@ module Lain
       # lowest object above every reader: the repl's command surface, the skill
       # middleware, {Tools::RunSkill} and {Skill::RoleSpawn} are all wired from
       # {Wiring}, which is handed a Backend and cannot be handed a library it
-      # would then have to load itself. The halves used to have two owners --
-      # Wiring loaded the catalog, this loaded the slots -- and travelled onward
-      # as two keywords.
+      # would then have to load itself.
       def library = @library ||= Skill::Library.load
 
       # The loaded prompt slots -- exposed (not just the rendered String
@@ -433,15 +361,13 @@ module Lain
       # prompt cannot be reading two snapshots of one tree.
       def slots = library.slots
 
-      # RES4: the {Tool::SpawnPolicy} for a cataloged {Role}, resolved through
-      # {Role::Catalog} rather than hand-assembled at the call site -- the same
-      # "one seam decides" shape #provider gives `--provider` and #context
-      # gives `--model`. A spawn seam names the ROLE it wants (`:researcher`);
-      # the catalog is the one place that name's `only`-set can change, so a
-      # role's capability set cannot drift between a spawn site and its
-      # definition. An uncataloged name fails loudly as {Role::Catalog::Unknown}
-      # (a {Lain::Error}), naming the catalog, exactly as {Role::Catalog.fetch}
-      # already does -- there is no separate refusal to keep in sync.
+      # The {Tool::SpawnPolicy} for a cataloged {Role}, resolved through
+      # {Role::Catalog} rather than hand-assembled at the call site. A spawn seam
+      # names the ROLE it wants (`:researcher`) and the catalog is the one place
+      # that name's `only`-set can change, so a role's capability set cannot
+      # drift between a spawn site and its definition. An uncataloged name fails
+      # loudly through {Role::Catalog.fetch}, so there is no separate refusal to
+      # keep in sync.
       def spawn_policy(role_name) = Role::Catalog.fetch(role_name).spawn_policy
 
       private
@@ -449,15 +375,11 @@ module Lain
       # Refuses BEFORE construction: {Provider::Anthropic} validates the key
       # eagerly too, but as {Provider::HTTP::ConfigurationError}, which is not a
       # {Lain::Error} and so reaches the operator as a raw backtrace instead of
-      # the exe's clean Thor::Error mapping. Checking here keeps that mapping
-      # intact for the one refusal an anthropic chat run can hit before any
-      # request goes out.
+      # the exe's clean Thor::Error mapping.
+      #
       # `flag` is whichever one SELECTED this arm, resolved by the caller that
       # knows. `--summarizer-provider anthropic` used to be refused in
-      # `--provider`'s name -- a flag the operator never typed -- and the
-      # pre-flight's new summarizer enumeration made that reachable at launch
-      # rather than at the first compaction. The default keeps every other
-      # caller (bench, a hand-built Backend) saying what it always said.
+      # `--provider`'s name -- a flag the operator never typed.
       def anthropic_provider(spool, channel, queue: true, flag: OllamaTier::CHAT_FLAG)
         raise MissingAPIKey, "ANTHROPIC_API_KEY is not set; #{flag} anthropic needs it to build a client" \
           if ENV["ANTHROPIC_API_KEY"].to_s.empty?
@@ -469,12 +391,11 @@ module Lain
       # resolved per EVENT rather than captured here.
       #
       # {Backend::Summarizer::RunJournal}'s own reason, and it binds harder on
-      # this path: `cli/wiring/agent_build.rb:96` builds the chat provider inside
+      # this path: `Wiring::AgentBuild` builds the chat provider inside
       # `#backing`, and {#pipeline_source} -- where {#journal} gets bound -- runs
       # a line later, through {CompactionMount}. A provider handed `journal` by
-      # value would therefore hold {Channel::Null} for the whole session: every
-      # wait served, none recorded, nothing raised -- the same silent degrade
-      # {Rebound} above exists to prevent, one layer down.
+      # value would hold {Channel::Null} for the whole session: every wait
+      # served, none recorded, nothing raised.
       def run_journal = Summarizer::RunJournal.new(self)
 
       # Validated once, so #provider and #default_model both key off a name
@@ -497,34 +418,25 @@ module Lain
       # The one raw `--provider` read in this class, and it does NOT weaken
       # {#provider_name}'s seam: equality with an already-validated name IS the
       # validation. `summarizer_name` is refused at construction if unknown, so
-      # a chat name equal to it is in PROVIDERS too, and a name that is not
-      # equal takes the other branch and is never used here. What that buys is
-      # the summarizer tier still resolving for a Backend assembled from an
-      # option hash naming no chat provider, rather than refusing about a flag
-      # this method does not read -- {#provider}, which does read it, still
-      # refuses loudly, and there is an example for both halves.
-      #
-      # Generalized from a `same_provider?` predicate that asked only about the
-      # summarizer: two callers now need the same question about an arbitrary
-      # name, and one predicate is what keeps them agreeing about it.
+      # a chat name equal to it is in PROVIDERS too, and an unequal one takes
+      # the other branch and is never used here. What that buys is the
+      # summarizer tier still resolving for a Backend assembled from an option
+      # hash naming no chat provider, rather than refusing about a flag this
+      # method does not read.
       def chat_name?(name) = name == @options[:provider]
 
       # WHOSE arm a tier is -- which decides the flag a refusal names -- and,
-      # separately, whether `--api-base` is this tier's to use. They are NOT the
-      # same question: {OllamaTier.claims_base?} carries the case that proves it
-      # (`--provider anthropic --api-base http://my-ollama:11434`, where the
-      # summarizer is not the chat's arm and the base is still plainly for it).
-      #
-      # The base is filtered HERE, so the tier is never handed one it will drop.
+      # separately, whether `--api-base` is this tier's to use. NOT the same
+      # question: {OllamaTier.claims_base?} carries the case that proves it. The
+      # base is filtered HERE, so the tier is never handed one it will drop.
       def ollama_tier(name) = OllamaTier.new(name:, chat: chat_name?(name), api_base: ollama_base(name))
 
       def ollama_base(name) = OllamaTier.claims_base?(name, @options[:provider]) ? api_base : nil
 
-      # The ollama arms answer from {OllamaTier}, and from its CLASS rather
-      # than an instance: which model an arm defaults to is a pure function of
-      # the name, so this must not build a tier, read ENV, or be able to raise
-      # about a missing key -- {#model} is read per turn by three collaborators.
-      # The other two names are one constant each and stay here.
+      # The ollama arms answer from {OllamaTier}'s CLASS rather than an
+      # instance: this must not build a tier, read ENV, or be able to raise
+      # about a missing key, since {#model} is read per turn by three
+      # collaborators.
       def default_model(name)
         return OllamaTier.default_model(name) if OllamaTier::NAMES.include?(name)
 
@@ -539,18 +451,15 @@ module Lain
 
       # The context window is not resolved PER TURN here: the Source asks
       # {#context_window} about the live Context every turn, so a `/model`
-      # switch mid-session moves the threshold with it (see
-      # {Compaction::Source#window_for}). What this method owns is which BOOK
-      # answers -- the run's one provider-derived book, so the threshold a
-      # journal reader sees fired and the occupancy a human reads are the same
-      # division.
+      # switch mid-session moves the threshold with it. What this method owns is
+      # which BOOK answers -- the run's one provider-derived book, so the
+      # threshold a journal reader sees fired and the occupancy a human reads
+      # are the same division.
       #
       # `--compact-strategy` is resolved ONCE, HERE, and injected -- never
-      # fetched per turn. This method runs from the memoized {#pipeline_source},
-      # which raises {Rebound} on a differing second call, and a model-backed
-      # strategy holds a memo whose absence turns one range's two questions into
-      # two model calls (`summarizing.rb:220-239`). {SpanSummarizer} owns what
-      # an unset flag means and why it is not the resolver's own default.
+      # fetched per turn, because a model-backed strategy holds a memo whose
+      # absence turns one range's two questions into two model calls.
+      # {SpanSummarizer} owns what an unset flag means.
       def compaction_source(cache_profile:, journal:, sink:)
         Compaction::Source.new(
           need: Compaction::Need.new(byte_threshold: knob(:compact_bytes, DEFAULT_BYTE_THRESHOLD)),
@@ -566,8 +475,8 @@ module Lain
 
       # The binding half of a memoized factory (see {Rebound}). Same arguments
       # are a cache hit and pass silently; different ones name WHICH argument
-      # moved, since "it was already built" is exactly the diagnosis a caller
-      # cannot make from the wrong Source it would otherwise be handed.
+      # moved, since "it was already built" is the diagnosis a caller cannot
+      # make from the wrong Source it would otherwise be handed.
       #
       # Argument CLASSES, never their `#inspect`: a journal is a live sink that
       # may be holding the whole session's events, and a diagnostic that dumps
@@ -587,15 +496,14 @@ module Lain
       end
 
       # The eager tier ({Oracle::Summarize}), assembled by {Summarizer} out of
-      # the summarizer's OWN provider, model and ceiling. It defaults to the
-      # local tier and is no longer confined to it: `--summarizer-provider` may
-      # point it at a paid model independently of `--provider`, which is why
+      # the summarizer's OWN provider, model and ceiling. `--summarizer-provider`
+      # may point it at a paid model independently of `--provider`, which is why
       # every answer it gives is journalled -- an unrecorded model call is spend
       # the bench cannot see.
       #
-      # Construction opens no connection, so an absent ollama still costs
-      # nothing here: the fire fails inside {Oracle::Eager}'s task boundary and
-      # the compaction renders an elision instead.
+      # Construction opens no connection, so an absent ollama costs nothing here:
+      # the fire fails inside {Oracle::Eager}'s task boundary and the compaction
+      # renders an elision instead.
       #
       # {Oracle::RoutedSummarizer} goes OUTERMOST, above the journaling wrap
       # {Summarizer} builds: an answer the project's own `.lain/summarizers.rb`
@@ -616,12 +524,10 @@ module Lain
       # -- the determinism recipe -- and a `--seed 0` are KEPT: an unset flag
       # arrives as nil, and nil is the only absence there is here.
       #
-      # The opt-in half is load-bearing for the two throughput knobs, which is
-      # why they are resolved HERE and not defaulted inside
-      # {Provider::Ollama::Encoding}: an encoder-side default would put an
-      # `options` object on every ollama request in the process, where a flag
-      # the operator did not set leaves the payload byte-identical to before
-      # this method knew the key existed.
+      # The two throughput knobs are resolved HERE and not defaulted inside
+      # {Provider::Ollama::Encoding}, because an encoder-side default would put
+      # an `options` object on every ollama request in the process, where a flag
+      # the operator did not set leaves the payload byte-identical.
       def sampler_extra = %i[temperature seed num_batch num_ctx].to_h { |key| [key.to_s, @options[key]] }.compact
     end
   end

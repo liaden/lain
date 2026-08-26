@@ -40,8 +40,8 @@ RSpec.describe Lain::Provider::AnthropicReference do
   # `messages.stream` returns a single-pass stream whose `accumulated_message`
   # yields it. Injected so no unit test touches the network.
   #
-  # `each_with_index` yields one stand-in event: CE-5 drives the ONE real pass
-  # through it before asking for `accumulated_message` (see
+  # `each_with_index` yields one stand-in event: the first-token signal drives
+  # the ONE real pass through it before asking for `accumulated_message` (see
   # Provider::AnthropicReference#stream_dispatch), so it has to yield at least once for
   # the double to behave like a real stream that produced a response at all.
   # The "over the wire (webmock)" group below re-proves the actual SDK
@@ -74,7 +74,7 @@ RSpec.describe Lain::Provider::AnthropicReference do
     end
   end
 
-  # CAC-2: cache-aware compaction needs to schedule around real cache
+  # Cache-aware compaction needs to schedule around real cache
   # mechanics rather than a hardcoded constant (planning/specs/cache-aware-
   # compaction.md's per-model facts). Opus's numbers are fixed here rather
   # than looked up per-model because this class does not track which model a
@@ -160,7 +160,7 @@ RSpec.describe Lain::Provider::AnthropicReference do
       expect(emitted).not_to have_key("cache_control")
     end
 
-    # CE-1: placement (including the budget and the tail-clustered dropping
+    # Placement (including the budget and the tail-clustered dropping
     # of old markers) is entirely Context::CacheBreakpoints's job now; the
     # encoder used to also place its own intermediate breakpoint every 15
     # blocks, uncapped, and the two layers together were how a long enough
@@ -271,7 +271,7 @@ RSpec.describe Lain::Provider::AnthropicReference do
     end
   end
 
-  # CE-5: the transient first-token scheduling signal (cache-economics.md).
+  # The transient first-token scheduling signal (cache-economics.md).
   # Unit-level ordering/observer coverage over the doubled client; the "over
   # the wire" group below re-proves it against a REAL Anthropic::MessageStream.
   describe "#complete stream_started" do
@@ -432,7 +432,7 @@ RSpec.describe Lain::Provider::AnthropicReference do
       expect(response).to stop_with(:tool_use)
     end
 
-    # CE-5, proved against the REAL Anthropic::Streaming::MessageStream: this
+    # Proved against the REAL Anthropic::Streaming::MessageStream: this
     # is the empirical check that driving MessageStream#each ourselves (to see
     # the first event) and THEN calling the public #accumulated_message does
     # not double-consume the stream -- the SDK's `fused_enum` guard is what

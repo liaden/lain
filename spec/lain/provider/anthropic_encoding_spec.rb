@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# CE-1: two layers used to place cache_control independently -- this module's
+# Two layers used to place cache_control independently -- this module's
 # own with_stride_breakpoint, and Context::CacheBreakpoints -- with no shared
 # budget, so a long enough session exceeded Anthropic's 4-cache_control cap
 # and 400d. Context::CacheBreakpoints now owns the whole budget; this module
@@ -65,7 +65,7 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
     end
   end
 
-  # T1: structured-answer format, expressed neutrally on Request#extra (the
+  # Structured-answer format, expressed neutrally on Request#extra (the
   # same escape hatch temperature/tool_choice-forwarding already uses) rather
   # than a new Request field -- extra is already excluded from
   # Request#cache_payload, so this never touches cache identity.
@@ -96,7 +96,7 @@ RSpec.describe Lain::Provider::AnthropicEncoding do
       expect(encoded).to eq(model: "m", max_tokens: 64, messages: [{ "role" => "user", "content" => "hi" }])
     end
 
-    # T6: an Oracle::Model builds the marker from its answer SCHEMA and has no
+    # An Oracle::Model builds the marker from its answer SCHEMA and has no
     # tool to name, because an oracle sends no tools. A half-built marker must
     # therefore be treated the same as an absent one -- the mirror of
     # Ollama::Encoding#structured_format, which already omits `format` when the

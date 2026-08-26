@@ -5,8 +5,7 @@ module Lain
     # One tool result, as a summarizer sees it: the tool that produced the text
     # and the text itself. Both, because kinds of output divide on both axes --
     # a file read is told apart by its TOOL, while a coverage report and a build
-    # log are both `bash` and can only be told apart by their CONTENT. A
-    # predicate given just one of the two cannot express half the catalog.
+    # log are both `bash` and divide only by CONTENT.
     #
     # Deeply frozen so `Ractor.shareable?(result)` holds: `Data` freezes the
     # instance but not the Strings inside it, and `Symbol#to_s` hands back a

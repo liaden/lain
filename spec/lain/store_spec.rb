@@ -152,7 +152,7 @@ RSpec.describe Lain::Store do
       expect { store.put(event) }.not_to raise_error
     end
 
-    # T4: payload_digest is a THIRD predecessor edge -- the envelope names a body
+    # payload_digest is a THIRD predecessor edge -- the envelope names a body
     # the Store must already hold. Refused in the same message the parent edges
     # pin; a root event (no render/causal edge) isolates the payload as the sole
     # dangle, so the message names the payload digest.
@@ -166,7 +166,7 @@ RSpec.describe Lain::Store do
 
     # A stored payload stays Ractor-shareable -- "no reachable mutable state"
     # must survive the round trip through the Store, since storing payloads is
-    # what T4 begins doing on every commit.
+    # what every commit now does.
     it "keeps a stored payload Ractor-shareable" do
       body = { "role" => "user", "content" => [{ "type" => "text", "text" => "hi" }] }
       pay = Lain::Event::Payload.new(kind: :turn, body:)

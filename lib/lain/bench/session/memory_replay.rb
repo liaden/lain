@@ -6,21 +6,18 @@ module Lain
       # Event-sources the {RecordedMemory} surface from the turn records
       # themselves: successful memory_write tool_use inputs ARE the write log,
       # so a fresh {Memory::Index} replaying them lands on the same roots the
-      # live run produced -- content addressing makes byte-equality against
-      # the journaled memory_root chain the integrity proof, the Loader's
-      # verify-by-recommit idiom applied to memory. A write whose paired
-      # tool_result is an error (refused or failed) never reached the live
-      # recorder, so it must not enter the replay either.
+      # live run produced, and byte-equality against the journaled memory_root
+      # chain is the integrity proof. A write whose paired tool_result is an
+      # error never reached the live recorder, so it must not enter the replay.
       #
-      # A journal with ZERO memory_root records replays its writes unverified
-      # -- the tolerant pre-decorator precedent, like the header's
-      # `extra || {}`. A PARTIAL chain is different: memory_root records are
-      # not Merkle-anchored, so a silently deleted line is otherwise
-      # undetectable, and some records with incomplete coverage of the
-      # write-bearing turns raises {Corrupt}. Stated honestly: coverage is
-      # checked only for WRITE-BEARING turns, so deleting the record paired
-      # with a write-free turn still loads clean -- the envelope detects
-      # deletions that could hide a write, not every deletion.
+      # A journal with ZERO memory_root records replays its writes unverified,
+      # the tolerant pre-decorator precedent. A PARTIAL chain is different:
+      # memory_root records are not Merkle-anchored, so a silently deleted line
+      # is otherwise undetectable, and incomplete coverage of the write-bearing
+      # turns raises {Corrupt}. Stated honestly, coverage is checked only for
+      # WRITE-BEARING turns, so deleting the record paired with a write-free
+      # turn still loads clean -- the envelope detects deletions that could hide
+      # a write, not every deletion.
       class MemoryReplay
         def initialize(turns:, roots:)
           @turns = turns
@@ -36,9 +33,8 @@ module Lain
 
         private
 
-        # The pre-write pairing pinned by the memory-snapshot seam spec: a
-        # turn's root is snapshotted BEFORE its own writes apply, because
-        # TurnUsage (which the memory_root record pairs with) journals after
+        # A turn's root is snapshotted BEFORE its own writes apply, because
+        # TurnUsage -- which the memory_root record pairs with -- journals after
         # the assistant commit and strictly before perform_tools.
         def replayed
           index = Memory::Index.empty
@@ -58,18 +54,14 @@ module Lain
           end
         end
 
-        # Every turn paired with the write calls that replay, selected ONCE for
-        # the whole pass: the fold ({#replayed}) and the coverage envelope
-        # ({#write_bearing}) read the same blocks out of the same records, and
-        # re-selecting per reader re-scanned every turn's content twice.
+        # Selected ONCE for the whole pass: {#replayed} and {#write_bearing}
+        # read the same blocks out of the same records, and re-selecting per
+        # reader re-scanned every turn's content twice.
         #
-        # An Array of pairs, NOT a digest-keyed Hash: a rewound session
-        # journals the same turn digest more than once by design (the scribe
-        # re-records the chain after each `rewound`, and
-        # {SessionRecord::Replay#turns} hands those straight here), so keying
-        # by digest would drop an occurrence's writes and under-report
-        # {#write_bearing} -- a wrong count, reported silently. Pairs also keep
-        # {#writes} free of any membership precondition.
+        # An Array of pairs, NOT a digest-keyed Hash: a rewound session journals
+        # the same turn digest more than once by design, so keying by digest
+        # would drop an occurrence's writes and under-report {#write_bearing} --
+        # a wrong count, reported silently.
         def write_calls
           @write_calls ||= @turns.map { |record| [record, replayable(record)] }
         end

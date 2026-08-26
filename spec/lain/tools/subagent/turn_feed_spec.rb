@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T2: the feed that carries a spawned chain's turns to the session record.
+# The feed that carries a spawned chain's turns to the session record.
 #
 # It speaks {Lain::Middleware::JournalTurns}' `#catch_up` duck, which is what
 # lets a child Agent journal its own turns through the same middleware a chat

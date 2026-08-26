@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T16, the Ruby half: the notes an editor hands back, turned into the records
+# The Ruby half: the notes an editor hands back, turned into the records
 # the journal keeps. The editor half -- placing the marker, keeping the marks,
 # MEASURING DRIFT, and building this payload in placement order -- is
 # `spec/lain/frontend/neovim/annotate_spec.rb`, which drives a real nvim and
@@ -14,7 +14,7 @@
 # Ruby has. So the measurement is taken where the buffer is, and this side's job
 # is to refuse a note that arrives without one.
 RSpec.describe Lain::Review::Annotations do
-  # The wire shape T16's `:LainNoteDone` sends: String keys, because a lua table
+  # The wire shape `:LainNoteDone` sends: String keys, because a lua table
   # crosses msgpack that way.
   def note(**overrides)
     { "path" => "lib/widget.rb", "side" => "new", "line" => 2,
@@ -26,11 +26,11 @@ RSpec.describe Lain::Review::Annotations do
   def settle(*notes) = described_class.settle(notes)
 
   describe "a note on the new side" do
-    # AC1's Ruby half. The revision is the note's OWN -- stamped on the buffer it
-    # was placed in and carried across the wire -- and deliberately not looked up
-    # at settle time from whatever diff is on screen now. That lookup is the
-    # tuicr defect {Review::AnnotationPlaced}'s `revision` member exists to make
-    # detectable, so resolving it here would reintroduce it.
+    # The revision is the note's OWN -- stamped on the buffer it was placed in
+    # and carried across the wire -- and deliberately not looked up at settle
+    # time from whatever diff is on screen now. That lookup is the tuicr defect
+    # {Review::AnnotationPlaced}'s `revision` member exists to make detectable,
+    # so resolving it here would reintroduce it.
     it "records the new-side line, the head revision, and the human's words" do
       record = settle(note).first
 
@@ -52,7 +52,7 @@ RSpec.describe Lain::Review::Annotations do
   end
 
   describe "a note on the old side" do
-    # AC2. The old side's revision is the MERGE BASE, and it is a different
+    # The old side's revision is the MERGE BASE, and it is a different
     # string from the new side's -- so a note that inherited one revision for
     # both sides would name a commit its line never existed in.
     it "records the old side and the merge-base revision it was authored against" do
@@ -64,7 +64,7 @@ RSpec.describe Lain::Review::Annotations do
   end
 
   describe "a drifted note" do
-    # AC3. Kept and marked, never dropped: the words are the part nobody can
+    # Kept and marked, never dropped: the words are the part nobody can
     # reconstruct, and a settle that silently discarded the note would lose them
     # at exactly the moment the human most wants them.
     it "is recorded with drifted true and its text intact" do
@@ -98,7 +98,7 @@ RSpec.describe Lain::Review::Annotations do
   end
 
   describe "placement order" do
-    # AC4, and the reason this module maps rather than sorts. ORDER IS THE
+    # The reason this module maps rather than sorts. ORDER IS THE
     # OUTPUT: the journal's order is the only record of which note the human
     # placed first, and 40/12/25 is chosen so that ANY sort -- by line, by
     # anchor, by anything positional -- reads differently from the answer.

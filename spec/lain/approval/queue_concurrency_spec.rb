@@ -3,10 +3,10 @@
 require "async"
 require "stringio"
 
-# E3's fixture, kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
+# The fixture, kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module QueueConcurrencySpecSupport
   # A tool that is BOTH approval-gated and parallel-safe -- a combination no
-  # shipped tool claims today (the E1 audit opted no gated tool in), declared
+  # shipped tool claims today (the shipped-tool audit opted none in), declared
   # here deliberately: the queue must host N concurrently parked callers
   # whatever generates them, and gathered dispatch is the cheapest way to
   # produce two gated fibers parked at once through the real
@@ -31,7 +31,7 @@ module QueueConcurrencySpecSupport
   end
 end
 
-# E3: pins the fiber-safety invariant on {Approval::Queue}'s side. `@parked`
+# Pins the fiber-safety invariant on {Approval::Queue}'s side. `@parked`
 # is a plain Array on purpose: its mutations (`<<` in admit, `delete` in
 # settle's ensure) are straight-line Ruby with no yield point, and every park
 # happens on an Async primitive BETWEEN those mutations -- so N gated fibers
@@ -42,8 +42,9 @@ end
 # list, then restored.
 #
 # ESCALATION RULE (the card's whole point): if this spec ever needs a NEW lock
-# in Approval::Queue to pass, the between-IO-yields claim has failed and E1/E2
-# are unsound -- that diagnosis belongs to a human, not to a patch.
+# in Approval::Queue to pass, the between-IO-yields claim has failed and the
+# lock-free gating design is unsound -- that diagnosis belongs to a human,
+# not to a patch.
 RSpec.describe "Approval::Queue pendings under concurrent gather" do
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }

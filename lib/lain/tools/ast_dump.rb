@@ -2,12 +2,10 @@
 
 module Lain
   module Tools
-    # Dumps a source snippet's concrete syntax tree, node kind by node kind, via
-    # {Lain::Structural::Matcher#dump}. This is the diagnostic half of the
-    # ast-inspect pair: {TestPattern} shows a model that a pattern under-matched
-    # (e.g. `def $NAME($$$A)` silently skipping `def self.x`); this tool is how
-    # the model finds the REAL node kind it needs (`singleton_method`) to fix
-    # the pattern, rather than guessing at syntax.
+    # Dumps a source snippet's concrete syntax tree, node kind by node kind.
+    # The DIAGNOSTIC half of the ast-inspect pair: {TestPattern} shows that a
+    # pattern under-matched, and this is how the model finds the real node kind
+    # (`singleton_method`) rather than guessing at syntax.
     class AstDump < Tool
       # The wire shape: a code snippet plus which grammar to parse it with.
       class Input < Tool::Input
@@ -33,9 +31,9 @@ module Lain
           "depth cap is refused outright, naming that cap."
       end
 
-      # Audited: parses the given `code` String in-memory via a fresh, per-call
-      # Structural::Matcher -- documented stateless (astgrep.rs: "Every call is
-      # STATELESS"), no filesystem, no Session, no process-global state.
+      # Audited: parses the given `code` String in-memory via a fresh,
+      # per-call Structural::Matcher, documented stateless. No filesystem, no
+      # Session, no process-global state.
       def parallel_safe? = true
 
       protected

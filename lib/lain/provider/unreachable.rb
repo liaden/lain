@@ -5,20 +5,16 @@ module Lain
     # The provider a `--dry-run` assembles: it satisfies the {Provider} duck and
     # refuses, loudly, the moment anything asks it for a round trip.
     #
-    # It exists because the alternative was a `nil` that travels. A dry pass
-    # needs no model, so `provider:` was left nil and checked at USE
-    # ({Consolidation}'s deleted `require!`) -- which made every collaborator
-    # optional, put the failure a long way from the wiring that caused it, and
-    # made a genuine mis-wire indistinguishable from a deliberate dry run. With
-    # a Null object in the keyword, the keyword can be required: "no model here"
-    # becomes a thing the wiring SAYS, and "something reached for a model
-    # anyway" becomes a named error instead of a NoMethodError on nil.
+    # It exists because the alternative was a `nil` that travels: a nil
+    # `provider:` checked at USE made every collaborator optional, put the
+    # failure a long way from the wiring that caused it, and made a genuine
+    # mis-wire indistinguishable from a deliberate dry run.
     #
     # {Sink::Null} is the same pattern with the opposite ending -- it swallows,
     # because bytes going nowhere is a legitimate outcome. A dry pass touching
-    # the network is not an outcome, it is a defect, so this Null raises rather
-    # than returning an empty {Response} that would read as a model that had
-    # nothing to say.
+    # the network is a defect rather than an outcome, so this Null raises rather
+    # than returning an empty {Response} that would read as a model with nothing
+    # to say.
     class Unreachable < Provider
       # Something asked a dry run's provider for work. Always a defect at the
       # call site, never a condition to handle -- named so a backtrace says
@@ -38,11 +34,9 @@ module Lain
       # reason).
       def cache_profile = CacheProfile::NO_CACHING
 
-      # What a reader should see. {Provider#to_s} projects the capability list,
-      # which HERE is empty -- so the inherited version prints the empty string
-      # and `inspect` prints a class name with a hole after it. A dry-run report
-      # or a backtrace naming its provider has to say something, so this says
-      # what the object is and why it is here.
+      # {Provider#to_s} projects the capability list, which HERE is empty, so
+      # the inherited version prints nothing and `inspect` prints a class name
+      # with a hole after it.
       def to_s = "unreachable provider (assembled for --dry-run; no model)"
 
       # Encoding a payload is preparing to send one, so it refuses too: a dry
@@ -55,15 +49,12 @@ module Lain
       # real story.
       def complete(_request, **) = unreachable!("#complete")
 
-      # {Capability::Policy::Strict} asks this BEFORE anything calls {#complete},
-      # and the inherited answer -- "Provider::Unreachable does not support
-      # :streaming" -- is true and useless: it sends a reader looking for another
-      # tactic when the answer is "you are in a dry pass". The TYPE stays
+      # {Capability::Policy::Strict} asks this BEFORE anything calls
+      # {#complete}, and the inherited answer -- "does not support :streaming"
+      # -- is true and useless, sending a reader looking for another tactic when
+      # the answer is "you are in a dry pass". The TYPE stays
       # {Provider::Unsupported}, because Strict's contract is that a missing
-      # capability raises that; only the sentence changes. Latent today: it
-      # surfaces the first time a dry surface renders a Request and negotiates
-      # capabilities, which no dry surface does (both dry reports are pure
-      # functions of the journal).
+      # capability raises that; only the sentence changes.
       def require!(capability)
         raise Unsupported, "Provider::Unreachable cannot support #{capability.inspect}: #{DRY_RUN}"
       end

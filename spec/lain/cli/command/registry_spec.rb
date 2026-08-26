@@ -113,7 +113,7 @@ RSpec.describe Lain::CLI::Command::Registry do
     end
   end
 
-  # T1 review, BLOCKER 1. {Lain::CLI::Repl::LineScope} brackets every dispatched
+  # {Lain::CLI::Repl::LineScope} brackets every dispatched
   # line in the human's reply surfaces, so a command that opens its OWN
   # `human> ` read ({Command::Inbox}) would run with a second reader on the same
   # stdin -- and the human's typed answer would go to whichever fiber won the

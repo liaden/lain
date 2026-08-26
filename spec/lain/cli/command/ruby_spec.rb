@@ -2,7 +2,7 @@
 
 require "tmpdir"
 
-# T22: /ruby's three arities over the live conversation's InspectionBinding.
+# /ruby's three arities over the live conversation's InspectionBinding.
 # The expression and file arities are pinned behaviorally (they return the
 # rendered inspect). The bare/console arity opens IRB and OWNS the terminal
 # while live, so it is not driven here: the console launcher is injected and

@@ -90,10 +90,10 @@ RSpec.describe Lain::Provider::Ollama, :ollama_cloud do
   # has no honest counterpart here: three warm same-seed runs against
   # gpt-oss:20b-cloud produced THREE DISTINCT completions (measured 2026-08-24,
   # recorded in cloud.md). Ollama Cloud is a batched multi-tenant backend and
-  # greedy decoding does not survive it. Per T12's escalation trigger the
-  # response is to pin the invariant that is actually TRUE and say so, not to
-  # mark a determinism example pending -- a false determinism claim poisons
-  # every bench conclusion built on this arm. What is true is the contract in
+  # greedy decoding does not survive it. The response is to pin the invariant
+  # that is actually TRUE and say so, not to mark a determinism example pending
+  # -- a false determinism claim poisons every bench conclusion built on this
+  # arm. What is true is the contract in
   # layer 1; what replaces layer 2 is the finding below, which costs nothing.
   describe "/api/show on the cloud host" do
     let(:transport) do
@@ -128,7 +128,7 @@ RSpec.describe Lain::Provider::Ollama, :ollama_cloud do
     # one-line follow-up that closes it has something to turn red. `/api/show`
     # answers (above), but the deployment declares it does not, so the cloud arm
     # performs NO `--num-ctx` refusal: a `--num-ctx 500000` against a 128k model
-    # is accepted in silence. Flipping `model_metadata?` is out of T12's scope.
+    # is accepted in silence. Flipping `model_metadata?` is out of this spec's scope.
     it "is not asked by the provider, because the deployment declares it absent" do
       deployment = described_class::Deployment::Cloud.new(api_key: ENV.fetch("OLLAMA_API_KEY"))
 
@@ -205,7 +205,7 @@ RSpec.describe Lain::Provider::Ollama, :ollama_cloud do
           # ollama.com's own body is the single word `{"error":"Unauthorized"}`,
           # with no `www-authenticate` header to elaborate. Whichever sentence
           # survives the mapping, it must name the credential rather than
-          # degrade into "An unknown error occurred" -- the failure T38 closed
+          # degrade into "An unknown error occurred" -- the failure already closed
           # on the local arm, re-asserted here because this arm's 401 is the
           # ordinary first-run mistake.
           expect(error.message).to match(/unauthorized|api key|credential/i)
@@ -215,7 +215,7 @@ RSpec.describe Lain::Provider::Ollama, :ollama_cloud do
 
   # ---- layer 5: the rate-limit vocabulary -------------------------------------
   #
-  # Establishing this was T12's one genuinely expensive question, and the answer
+  # Establishing this was this arm's one genuinely expensive question, and the answer
   # is recorded verbatim in cloud.md. The headline: a 200 carries NO rate-limit
   # headers, but a 429 carries FIVE that never appear on success, so absence on
   # the success path proved nothing -- which is exactly why this was not

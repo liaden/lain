@@ -6,9 +6,8 @@ module Lain
   module Frontend
     # lain's whole Reline layer: which line-editor method gets called, how the
     # editor is configured, and the seam other code registers key actions
-    # through. Three parts, one file, because they are one question -- how does
-    # lain configure the line editor -- and answering it in three places is how
-    # the answers drift.
+    # through. One file, because they are one question, and answering it in
+    # three places is how the answers drift.
     #
     # Named LineEditor and not Reline, even though the file is reline.rb: a
     # constant `Lain::Frontend::Reline` would shadow the stdlib `::Reline` for
@@ -30,24 +29,22 @@ module Lain
     #   where a human types. In vi COMMAND mode, Enter submits the buffer
     #   whether or not the line ends in a backslash.
     #
-    # Arguably correct rather than broken: Enter in vi command mode means
-    # "execute". So it is documented here, taught contextually the first time
-    # it actually bites (see VI_COMMAND_CAVEAT), and pinned by specs -- not
-    # announced at startup. It is not worked around: the workaround is
-    # rebinding Enter in the vi_command keymap, a second method on a stdlib
-    # class and a far deeper coupling than this seam is allowed.
+    # Arguably correct rather than broken -- Enter in vi command mode means
+    # "execute" -- so it is taught contextually the first time it bites (see
+    # {VI_COMMAND_CAVEAT}) rather than announced at startup. Not worked around:
+    # the workaround is rebinding Enter in the vi_command keymap, a second method
+    # on a stdlib class and a deeper coupling than this seam is allowed.
     #
     # Key actions are unaffected and fire in all three keymaps.
     class LineEditor
-      # A line ending in a backslash continues; anything else submits. That
-      # rule is the whole submit predicate, and `readmultiline`'s block IS the
-      # predicate -- there is no second place where submission is decided.
+      # A line ending in a backslash continues; anything else submits.
+      # `readmultiline`'s block IS the predicate -- there is no second place
+      # where submission is decided.
       #
-      # No escape-of-escape: a line ending in two backslashes still ends in a
-      # backslash, so it still continues. The alternative -- IRB's approach of
-      # asking whether the buffer parses as complete Ruby -- means nothing for
-      # prose. A chat message is not a program, so a rule the human can state
-      # in one sentence beats a heuristic they cannot.
+      # No escape-of-escape: two backslashes still end in a backslash, so the
+      # line still continues. IRB's alternative -- asking whether the buffer
+      # parses as complete Ruby -- means nothing for prose, and a rule the human
+      # can state in one sentence beats a heuristic they cannot.
       CONTINUATION = "\\"
       CONTINUED_LINE = "#{CONTINUATION}\n".freeze
 
@@ -64,20 +61,15 @@ module Lain
       COMMAND_INDICATOR = "[cmd]"
       INSERT_INDICATOR = "[ins]"
 
-      # Reports nowhere. A LineEditor built without a notifier still has to do
-      # something with a handler's failure, and the Null Object is what keeps
-      # {Registry#dispatch} from growing a nil check.
+      # Reports nowhere -- the Null that keeps {Registry#dispatch} from growing
+      # a nil check.
       SILENT = ->(_message) {}
 
-      # The one thing vi mode still costs, taught at the moment it is useful
-      # rather than announced at every session start.
-      #
-      # Not a startup banner: this is a design DIFFERENCE, not a fault, and
-      # arguably the right one (Enter in vi command mode means "execute", so
-      # submitting is defensible). Loud failure is for things that went wrong.
-      # A line printed every session about behaviour the human cannot change is
-      # how a codebase teaches its user to skim past the warnings that DO
-      # matter -- and this frontend has several that do.
+      # Taught at the moment it is useful rather than announced at every session
+      # start. Not a startup banner: this is a design DIFFERENCE, not a fault,
+      # and a line printed every session about behaviour the human cannot change
+      # is how a codebase teaches its user to skim past the warnings that DO
+      # matter.
       VI_COMMAND_CAVEAT =
         "note: that line ended in a backslash but was submitted anyway -- vi command mode " \
         "submits on Enter without applying the continuation rule (a Reline limitation). " \
@@ -105,11 +97,10 @@ module Lain
       #   unless asked: with vi_mode false this class touches neither the editing
       #   mode nor the mode indicator, so an unconfigured lain leaves Reline
       #   exactly as it found it.
-      # @param notify [#call] renders a warning line ({TTY#render_warning}) --
-      #   presentation stays out of this class, the same seam
-      #   {TTY::History} takes its `notify:` through. It configures the
-      #   process-wide {Registry}, because there is one line editor per
-      #   process and pretending otherwise would be a fiction.
+      # @param notify [#call] renders a warning line ({TTY#render_warning}), so
+      #   presentation stays out of this class. It configures the process-wide
+      #   {Registry}, because there is one line editor per process and
+      #   pretending otherwise would be a fiction.
       def initialize(vi_mode: false, notify: SILENT)
         @vi_mode = vi_mode
         @notify = Reporter.new(notify)
@@ -120,11 +111,10 @@ module Lain
       #   nil at EOF (Ctrl-D / closed input)
       def read(prompt)
         configure
-        # The notifier is installed for the duration of THIS read and taken
-        # down after, because a read is the only window a key action can fire
-        # in. Constructing a LineEditor therefore mutates nothing global -- it
-        # used to install the notifier globally, so a second construction
-        # silently disarmed the first one's.
+        # Installed for the duration of THIS read and taken down after, because
+        # a read is the only window a key action can fire in. Installed
+        # globally, a second LineEditor's construction silently disarmed the
+        # first one's notifier.
         self.class.registry.reporting_to(@notify) do
           buffer = ::Reline.readmultiline(prompt, true) { |pending| submit?(pending) }
           buffer && accept(buffer)
@@ -148,13 +138,11 @@ module Lain
 
       private
 
-      # A buffer that arrives still ending in a continuation marker means the
+      # A buffer arriving still ending in a continuation marker means the
       # predicate was never consulted, and vi command mode's `ed_newline` --
-      # which calls `finish` directly -- is the only way that happens. So this
-      # is an exact signal that cannot false-positive: in every other mode the
-      # predicate would have continued the line instead of submitting it. The
-      # marker stays in the message rather than being eaten; the note explains
-      # it, and silently deleting a character the human typed would be worse.
+      # which calls `finish` directly -- is the only way that happens, so this
+      # signal cannot false-positive. The marker stays in the message: silently
+      # deleting a character the human typed would be worse than the note.
       def accept(buffer)
         warn_about_vi_command_mode unless submit?(buffer)
         join_continuations(buffer)
@@ -207,36 +195,29 @@ module Lain
     end
 
     class LineEditor
-      # Reopened rather than nested in the class body above -- the tty.rb idiom:
-      # each collaborator is its own responsibility, and the split keeps each
-      # body inside Metrics/ClassLength instead of loosening it.
+      # Reopened rather than nested in the class body above -- the tty.rb idiom,
+      # which keeps each body inside Metrics/ClassLength instead of loosening it.
 
-      # The process-global key-action registry.
-      #
-      # Global because everything beneath it already is: Reline is a singleton
-      # (`Reline.core`), its config owns the keymaps, and the method a key
-      # dispatches to is a method on the Reline::LineEditor CLASS. A
-      # per-instance registry would be a fiction over shared state, and the
-      # first two callers to register would silently fight over it.
+      # The process-global key-action registry. Global because everything
+      # beneath it already is: Reline is a singleton, its config owns the
+      # keymaps, and the method a key dispatches to is a method on the
+      # Reline::LineEditor CLASS. A per-instance registry would be a fiction
+      # over shared state, and the first two callers to register would fight.
       class Registry
         # Reline's binding for a byte, per keymap. lain binds into ALL THREE and
         # refuses any key any one of them genuinely claims.
         #
-        # vi_insert was excluded once, on the grounds that it binds C-g and C-x
-        # to `ed_insert` and claiming a key from self-insert felt rude. That was
-        # wrong, and wrong in the worst way: `set editing-mode vi` in a human's
-        # inputrc makes vi_insert the ACTIVE keymap at lain's DEFAULT setting,
-        # with `vi_mode:` never touched -- so a key bound only into emacs and
-        # vi_command routed to `ed_insert` and echoed a literal control
-        # character into the message instead of running. Measured on a real
-        # machine, not reasoned about.
+        # vi_insert must be among them even though it binds C-g and C-x to
+        # `ed_insert`: `set editing-mode vi` in a human's inputrc makes vi_insert
+        # the ACTIVE keymap at lain's DEFAULT setting, with `vi_mode:` never
+        # touched, so a key bound only into emacs and vi_command routed to
+        # `ed_insert` and echoed a literal control character into the message
+        # instead of running. Measured on a real machine.
         #
-        # Including it is also the consistent reading of NOT_A_CLAIM below: if
-        # self-insert does not count as the user's binding when asking whether a
-        # key is free, it cannot count as a reason to refuse to bind there.
-        # Nothing is actually taken from the human -- vi_insert keeps
-        # `ed_quoted_insert` on C-v, which is how a literal control character
-        # has always been typed.
+        # It is also the consistent reading of {NOT_A_CLAIM}: if self-insert does
+        # not count as the user's binding when asking whether a key is free, it
+        # cannot count as a reason to refuse to bind there. Nothing is taken from
+        # the human -- vi_insert keeps `ed_quoted_insert` on C-v.
         KEYMAPS = {
           emacs: ::Reline::KeyActor::EMACS_MAPPING,
           vi_insert: ::Reline::KeyActor::VI_INSERT_MAPPING,
@@ -260,10 +241,9 @@ module Lain
         #     vi mode meets vi_insert's catch-all -- every one of C-a..C-z reads
         #     as :ed_insert -- and lain refuses to bind any key at all.
         #
-        # Note the asymmetry, and it is deliberate: an inputrc that says
-        # `"\C-g": self-insert` reports :self_insert, which is NOT in this list
-        # and so DOES raise KeyTaken. Explicit intent is not the catch-all --
-        # someone who names a key in their inputrc has spoken about that key.
+        # The asymmetry is deliberate: an inputrc saying `"\C-g": self-insert`
+        # reports :self_insert, which is NOT in this list and so DOES raise
+        # KeyTaken. Someone who names a key in their inputrc has spoken about it.
         NOT_A_CLAIM = [nil, ACTION, :ed_insert].freeze
 
         # "C-g" and "c-G" name the same key; nothing else names a key at all.
@@ -311,17 +291,14 @@ module Lain
           @notify = previous
         end
 
-        # Runs ON Reline's input loop. A handler must therefore never block.
-        #
-        # Precisely: a blocking handler is uninterruptible by SIGINT. For the
-        # duration of a read Reline re-traps INT to its own flag-setter
-        # (line_editor.rb:207), and lain's {CLI::Signals} Proc -- the one that
-        # wakes {CLI::PromptBreaker}'s watcher thread -- is stashed as @old_trap
-        # and reached only from `handle_interrupted`, which runs on this very
-        # loop. Block the loop and Ctrl-C does nothing until the handler
-        # returns. TERM and QUIT are NOT re-trapped, so those still break out
-        # via the watcher's Thread#raise; SIGINT is the one that wedges, and it
-        # is the one a human will reach for.
+        # Runs ON Reline's input loop, so a handler must never block: a blocking
+        # one is uninterruptible by SIGINT. For the duration of a read Reline
+        # re-traps INT to its own flag-setter (line_editor.rb:207), and lain's
+        # own Proc is stashed as @old_trap and reached only from
+        # `handle_interrupted`, which runs on this very loop. TERM and QUIT are
+        # NOT re-trapped, so those still break out via the watcher's
+        # Thread#raise; SIGINT is the one that wedges, and the one a human will
+        # reach for.
         #
         # @return [String, nil] replacement text, or nil to leave the buffer be
         def dispatch(key, buffer)
@@ -340,13 +317,13 @@ module Lain
         private
 
         # THE conversion this seam lives or dies by. Reline indexes its keymaps
-        # by Integer byte, but hands a bound method `key.char`, which
-        # key_stroke.rb:55 builds as `matched_bytes.pack('c*')
-        # .force_encoding(@encoding)` -- a STRING, "\a" for C-g. Keying the
-        # registry on the raw argument produces a seam that registers happily,
-        # routes correctly, fires, and then silently matches no handler.
-        # Integer is accepted too, because a caller reaching in directly (or a
-        # future Reline) may reasonably pass one. See the round-trip spec.
+        # by Integer byte but hands a bound method `key.char`, which
+        # key_stroke.rb:55 builds as
+        # `matched_bytes.pack('c*').force_encoding(@encoding)` -- a STRING, "\a"
+        # for C-g. Keying the registry on the raw argument produces a seam that
+        # registers happily, routes correctly, fires, and then silently matches
+        # no handler. Integer is accepted too, for a caller reaching in directly
+        # or a future Reline.
         def byte_of(key) = key.is_a?(Integer) ? key : key.to_s.each_byte.first
 
         def replacement_from(result)
@@ -364,13 +341,12 @@ module Lain
         end
 
         # Who already owns this key, or nil. Three sources, and the third is
-        # the one that is easy to miss: `Config#key_bindings` is
+        # easy to miss: `Config#key_bindings` is
         # `Composite([oneshot, additional[mode], default[mode]])`, and inputrc
         # populates `additional`, which OUTRANKS the default table lain writes
-        # to. A key that looks free in the MAPPING constants can still be taken
-        # by the human -- verified: with `"\C-g": abort` in an inputrc,
-        # key_bindings.get([7]) is :abort while EMACS_MAPPING[7] is still nil.
-        # Binding it would hand back a registration that can never fire.
+        # to. Verified: with `"\C-g": abort` in an inputrc, key_bindings.get([7])
+        # is :abort while EMACS_MAPPING[7] is still nil, so a key that looks free
+        # in the MAPPING constants can be taken by the human.
         def claimed_by(byte)
           return "lain" if @handlers.key?(byte)
 
@@ -381,10 +357,9 @@ module Lain
           inputrc && "the user's inputrc (as #{inputrc})"
         end
 
-        # THE guard against a bind that succeeds and hands back a key which
-        # does nothing -- the shape of both defects this file has shipped.
-        # Writing into every keymap is necessary and not sufficient: what
-        # decides whether a key works is the keymap actually in force, so ask.
+        # THE guard against a bind that succeeds and hands back a key which does
+        # nothing. Writing into every keymap is necessary and not sufficient:
+        # what decides whether a key works is the keymap in force, so ask.
         def verify_routing(name, byte)
           routed = active_binding(byte)
           return if routed == ACTION

@@ -6,7 +6,8 @@ require "tmpdir"
 # The journal-discovery contract, owned once. Both `lain epic status` and
 # `lain epic queue` read a project's whole session history to fold an epic that
 # spans days and sessions, and the two used to state this rule twice -- the
-# shape that cost this chunk a silent bug already (T4's two whitespace lists).
+# shape that cost this chunk a silent bug already (two duplicated whitespace
+# lists).
 #
 # Five clauses, each spec'd here and nowhere else:
 #   1. every `.ndjson` in the directory, `.btw` ephemerals INCLUDED

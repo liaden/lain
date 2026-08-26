@@ -24,7 +24,6 @@ RSpec.describe Lain::Epic::IssueTransition do
     expect(described_class::JOURNAL_TYPE).to eq("issue_transition")
   end
 
-  # AC4
   it "round-trips through the journal, string-keyed, under its discriminator" do
     other = Lain::Epic::StageTransition.new(epic_slug: "alpha", stage: "research", event: "started")
 
@@ -172,7 +171,7 @@ RSpec.describe Lain::Epic::GraphRevision do
     expect(described_class::JOURNAL_TYPE).to eq("graph_revision")
   end
 
-  # AC1: a split's fiber is journaled with its payload.
+  # A split's fiber is journaled with its payload.
   it "holds the preimage, the results, the arriving issues' canonical forms and both digests" do
     after = before.split("a", into: parts)
 

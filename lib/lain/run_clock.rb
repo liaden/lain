@@ -2,68 +2,44 @@
 
 module Lain
   # Three elapsed-time measures for the chat UI: since the session started,
-  # since the user last answered a prompt, since the last compaction. Each is
-  # a plain subtraction against ONE injected clock, so all three move
-  # together under a jumped-clock spec the way {CLI::Conductor}'s own grace
-  # timing does -- both default to {MONOTONIC} below rather than each naming a
-  # clock of its own, because every reading here is a DURATION,
-  # never a wall-clock deadline a renderer ticks locally against the way
-  # {StatusFeed}'s published `cache_deadline` is. Nothing here is published;
-  # a caller reads the three methods directly.
+  # since the user last answered a prompt, since the last compaction. Each is a
+  # plain subtraction against ONE injected clock, so all three move together
+  # under a jumped-clock spec. Every reading here is a DURATION, never a
+  # wall-clock deadline a renderer ticks locally against the way {StatusFeed}'s
+  # published `cache_deadline` is, and nothing here is published.
   #
-  # Two write sites, deliberately different shapes because the two facts
-  # arrive by different means:
+  # Two write sites, shaped by how each fact arrives: {#record_input} is a
+  # direct call from the ONE place a user prompt is answered, while `#<<` is
+  # the {Channel}/{CLI::JournalTee} sink duck {StatusFeed} also answers, so a
+  # {Telemetry::Compaction} arrives off the SAME fan-out rather than a bespoke
+  # callback. Every unrecognized event is inert.
   #
-  # * {#record_input} is a direct call -- {CLI::Conductor#read_prompt} is the
-  #   ONE place a user prompt is answered, so it is the one caller, and there
-  #   is no "event" to duck-type there.
-  # * `#<<` makes this a {Channel}/{CLI::JournalTee} sink duck, the same one
-  #   {StatusFeed} answers, so a {Telemetry::Compaction} record reaches it
-  #   off the SAME fan-out rather than a bespoke callback. Every other event
-  #   this class does not recognize is inert -- no raise, no measure change --
-  #   matching {StatusFeed#<<}'s tolerance of the fan-out's full event mix.
-  #
-  # No ivar here is mutex-guarded, and that is deliberate, not an oversight.
-  # {StatusFeed} never faces this question -- it publishes to a file
-  # ({ProjectDir#state_path}) and every renderer reads the FILE, so it is never
-  # read cross-thread in-process. `RunClock` is the first of this family actually
-  # meant to be read directly from another thread/fiber than the one writing
-  # it (T7's status line reading `#elapsed`/`#idle` while `#<<` and
-  # `#record_input` are written from elsewhere; T13's channel wiring). That is
-  # safe under CRuby's GVL for exactly this shape: every write is one ivar
-  # reassignment to an immutable `Float` or `nil` (never an in-place mutation
-  # spanning bytecode boundaries), and the GVL makes a single ivar swap
-  # atomic, so a reader observes either the old value or the new one, never a
-  # torn one. `#since_compaction` binding `@last_compaction_at` to a local
-  # before its second read (see below) is what keeps a READER's own two
-  # touches of one ivar consistent with itself, on top of that per-write
-  # atomicity -- a concern a mutex would not even address, since the ivar
-  # itself is never in an invalid state, only potentially STALE between a
-  # reader's two reads of it. Probed directly: two writer threads hammering
-  # `#record_input`/`#<<` against a reader pulling all three methods 200k
-  # times raised nothing, produced no wrong-typed reading, and no reading in
-  # negative or otherwise impossible territory.
+  # NO IVAR HERE IS MUTEX-GUARDED, deliberately. This is the first of its family
+  # actually read from a thread other than the writer's ({StatusFeed} publishes
+  # to a file, so every renderer reads the FILE). Safe under CRuby's GVL for
+  # exactly this shape: every write is one ivar reassignment to an immutable
+  # `Float` or `nil`, never an in-place mutation spanning bytecode boundaries,
+  # and a single ivar swap is atomic -- a reader sees the old value or the new
+  # one, never a torn one. What a mutex would not address at all is a reader's
+  # own two touches of one ivar disagreeing, which is why {#since_compaction}
+  # binds to a local. Probed directly: two writer threads hammering
+  # `#record_input`/`#<<` against a reader pulling all three methods 200k times
+  # raised nothing and produced no wrong-typed or impossible reading.
   class RunClock
-    # The one monotonic time source every `clock:` seam in the repo defaults to
-    # -- {Middleware::Timeout}, {CLI::Shutdown}, {CLI::Conductor},
-    # {Approval::Queue}, {Approval::Gate}, {Gherkin::Approval},
-    # {Oracle::Recorded::Journaling}, {Arm::Instrument}, {Frontend::TTY},
-    # {Frontend::Neovim::Compose} -- plus {Core::Child}, which has no `clock:`
-    # seam and calls it. It lives HERE because this class was already the repo's
-    # clock object; a second `Lain::Clock` unit would only add a name.
+    # The one monotonic time source every `clock:` seam in the repo defaults to.
+    # It lives HERE because this class was already the repo's clock object; a
+    # second `Lain::Clock` unit would only add a name.
     #
     # ONE lambda, not a factory: two seams built on the default therefore hold
     # the same object, which is what makes `Arm::Instrument.new ==
     # Arm::Instrument.new` true.
     #
     # There is deliberately no `WALL` sibling. Wall time is asked three
-    # different ways on purpose -- {Journal} stamps an ISO8601 String,
-    # {CLI::EpicQueue} a utc `Time`, and {StatusFeed},
-    # {Frontend::Neovim::InboxView} and three others a local `Time.now` -- so a
-    # single constant would have to pick one and misname the other two.
+    # different ways on purpose -- an ISO8601 String, a utc `Time`, a local
+    # `Time.now` -- so a single constant would misname two of the three.
     #
-    # Units that load BEFORE run_clock in `lain.rb` (middleware) may still name
-    # it: a keyword's default is evaluated per call, not at definition.
+    # Units that load BEFORE run_clock in `lain.rb` may still name it: a
+    # keyword's default is evaluated per call, not at definition.
     MONOTONIC = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
 
     def initialize(clock: MONOTONIC)
@@ -85,12 +61,11 @@ module Lain
     #   `nil` when none has been observed -- absence, not a zero a renderer
     #   could mistake for "just compacted".
     #
-    # Bound to a local FIRST: `@last_compaction_at` is read twice (the
-    # truthiness check, then the subtraction), and a concurrent `#<<` can
-    # advance the ivar between them -- a bare `@last_compaction_at &&
-    # (@clock.call - @last_compaction_at)` could pass the nil check against
-    # the old value and then subtract a newer one, reporting a reading for a
-    # compaction the caller never decided to report. One read, one snapshot.
+    # Bound to a local FIRST. Reading the ivar in both the nil check and the
+    # subtraction lets a concurrent `#<<` advance it in between, so the check
+    # passes against the old value while the subtraction uses a newer one,
+    # reporting a reading for a compaction the caller never decided to report.
+    # One read, one snapshot.
     def since_compaction
       last = @last_compaction_at
       last && (@clock.call - last)

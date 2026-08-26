@@ -48,7 +48,7 @@ RSpec.describe Lain::Plan::Document do
       expect(step.with_status("failed")).to be_failed
     end
 
-    # S1: the markdown round-trip must be total -- every constructible Step must
+    # The markdown round-trip must be total -- every constructible Step must
     # either round-trip digest-identically OR be refused loudly at construction.
     # These are the shapes the round-trip probe found that the line-oriented,
     # backtick/brace-delimited grammar cannot represent unambiguously; each is
@@ -169,7 +169,7 @@ RSpec.describe Lain::Plan::Document do
       expect(described_class.new(steps:)).to eq(described_class.new(steps:))
     end
 
-    # N1: the constructor must not freeze the caller's array in place -- it copies
+    # The constructor must not freeze the caller's array in place -- it copies
     # before freezing, so a caller can keep mutating its own steps array.
     it "leaves the caller's steps array unfrozen" do
       caller_steps = steps.dup

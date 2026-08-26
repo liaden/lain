@@ -2,31 +2,25 @@
 
 module Lain
   module Tools
-    # The on-demand half of the {Toolset::Disclosure::Deferred} arm (T13):
-    # given a query, either returns one tool's full input schema (an exact
-    # name match) or a list of matching catalog entries (name + one-line
-    # description) -- the same shape {Toolset::Disclosure::Deferred} renders
-    # upfront.
+    # The on-demand half of the {Toolset::Disclosure::Deferred} arm: an exact
+    # name returns one tool's full input schema, anything else returns matching
+    # catalog entries.
     #
     # == Possession gates disclosure, not just invocation
     #
-    # This is the security-relevant half of the seam. `toolset:` is injected
-    # -- the EXACT (possibly attenuated) {Lain::Toolset} this tool instance
-    # belongs to -- and every lookup, exact or fuzzy, walks that Toolset and
-    # nothing else. A tool dropped via `#only`/`#except` before this instance
-    # was built is not a candidate at any point: it is never in `toolset`'s
-    # `#each`, so no query -- however it is phrased -- can surface its
-    # schema or even its name. Searching does not grant capability; it can
-    # only ever describe capability already held. See {Lain::Toolset}'s own
-    # comment: attenuation is the security primitive precisely because a
-    # dropped tool cannot be regained by the holder, and a search tool that
-    # consulted anything wider than its own Toolset would silently defeat
-    # that.
+    # The security-relevant half of the seam. `toolset:` is the EXACT, possibly
+    # attenuated {Lain::Toolset} this instance belongs to, and every lookup --
+    # exact or fuzzy -- walks that Toolset and NOTHING ELSE. A tool dropped via
+    # `#only`/`#except` before this instance was built is never in `toolset`'s
+    # `#each`, so no query, however phrased, can surface its schema or even its
+    # name. Searching does not grant capability; it can only describe capability
+    # already held. Attenuation is the security primitive precisely because a
+    # dropped tool cannot be regained by the holder, and a search tool
+    # consulting anything wider than its own Toolset would silently defeat that.
     #
-    # `toolset:` follows the same thunk convention {AskHuman} uses for
-    # `parent:`: a Toolset or a `-> { toolset }`, since this tool is itself a
-    # member of the Toolset it searches -- the toolset must exist before it
-    # can be constructed with this tool in it, so the reference is late-bound.
+    # `toolset:` is a Toolset or a `-> { toolset }`: this tool is itself a
+    # member of the Toolset it searches, so the toolset must exist before the
+    # tool can be constructed into it, and the reference is late-bound.
     class ToolSearch < Tool
       # The wire shape: a single free-form query, doing double duty as an
       # exact tool name (schema lookup) or a search term (catalog lookup).
@@ -72,12 +66,12 @@ module Lain
         Canonical.dump(toolset.fetch(query).to_schema)
       end
 
-      # Case-insensitive substring match over name and {Tool#one_line_description}
-      # -- NOT the fuller `#description` -- so a match can never exist for text
-      # this method is not also willing to render in {#render}. Matching and
-      # rendering sharing one projection is what makes "search never discloses
-      # more than the catalog would" structural rather than two truncation
-      # rules that could drift; see {Tool#one_line_description}'s comment.
+      # Case-insensitive substring match over name and
+      # {Tool#one_line_description} -- NOT the fuller `#description` -- so a
+      # match can never exist for text {#render} is not also willing to show.
+      # Matching and rendering sharing ONE projection is what makes "search
+      # never discloses more than the catalog would" structural rather than two
+      # truncation rules that could drift.
       def search(query)
         needle = query.downcase
         toolset.select do |candidate|
@@ -91,9 +85,8 @@ module Lain
         matches.map { |candidate| "#{candidate.name}: #{candidate.one_line_description}" }.join("\n")
       end
 
-      # The live Toolset this instance searches: a Toolset passes through, a
-      # thunk (`-> { toolset }`) is called -- late-bound because this tool is
-      # itself a member of the Toolset it searches (see the class comment).
+      # A Toolset passes through, a thunk is called -- late-bound because this
+      # tool is itself a member of the Toolset it searches.
       def toolset
         @toolset.respond_to?(:call) ? @toolset.call : @toolset
       end

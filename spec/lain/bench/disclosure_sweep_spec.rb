@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
-# T14: a Compare-style report comparing the two Toolset::Disclosure arms that
-# exist today -- Upfront (T12) and Deferred (T13) -- on upfront-disclosure
-# tokens and correct-call rate, over a committed, zero-network fixture of
-# tool-selection tasks (spec/fixtures/bench/disclosure/*). The code-API arm
-# (M6, exec boundary) does not exist yet and is explicitly out of scope; the
-# report must say so rather than silently present two arms as the whole axis.
+# A Compare-style report comparing the two Toolset::Disclosure arms that exist
+# today -- Upfront and Deferred -- on upfront-disclosure tokens and
+# correct-call rate, over a committed, zero-network fixture of tool-selection
+# tasks (spec/fixtures/bench/disclosure/*). The code-API arm (an exec
+# boundary) does not exist yet and is explicitly out of scope; the report must
+# say so rather than silently present two arms as the whole axis.
 RSpec.describe Lain::Bench::DisclosureSweep do
   def fixture_path(name) = File.join(__dir__, "..", "..", "fixtures", "bench", "disclosure", "#{name}.yml")
 

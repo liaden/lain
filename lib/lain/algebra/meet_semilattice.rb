@@ -29,9 +29,8 @@ module Lain
     # raise CrossStore against every real operand, and a lazy one would mint a
     # different store on every read. The bottom is relative to a store, which
     # makes it a fact about the structure rather than a value the structure
-    # holds. So it is recorded as a short description: the card asks the
-    # declaration to name its identity or bottom for a READER, and a String does
-    # that while being unusable as data by construction -- nobody can wire it
+    # holds. So it is recorded as a short description, which names the bottom for
+    # a READER while being unusable as data by construction -- nobody can wire it
     # into a law group wrongly. The law group agrees: it takes a `population:`
     # and never asks for a bottom.
     module MeetSemilattice

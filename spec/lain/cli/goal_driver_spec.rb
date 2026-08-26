@@ -129,7 +129,7 @@ RSpec.describe Lain::CLI::GoalDriver do
     end
   end
 
-  # B3. The objective's turn cannot be pinned when `/goal` runs -- the command
+  # The objective's turn cannot be pinned when `/goal` runs -- the command
   # dispatches lib-side with ZERO Timeline commits, and the objective reaches
   # the chain only when the Repl feeds this driver's own re-prompt through
   # #ask. So the driver pins on the poll AFTER its first drive, and it finds

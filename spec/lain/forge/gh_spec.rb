@@ -278,4 +278,34 @@ RSpec.describe Lain::Forge::Gh do
       expect(answer.detail["message"]).to include("mergeStateStatus")
     end
   end
+
+  # `Answer#value` is `detail["value"]`, and two CLI readers subscript `detail`
+  # directly (`cli/command/review_submit.rb`, `cli/epic_land.rb`). So "detail is
+  # a Hash" is a public guarantee of this value, not an accident of how today's
+  # verbs happen to build one -- `Canonical` accepts a String, an Array and an
+  # Integer just as happily, and a declared `default:` answers only for an
+  # ABSENT key, never for an explicit nil.
+  describe "detail is a Hash whatever a verb hands over" do
+    def answer(**attrs) = Lain::Forge::Gh::Answer.new(ok: true, **attrs)
+
+    it "reads an explicit nil as no detail rather than storing the nil" do
+      expect(answer(detail: nil).detail).to eq({})
+    end
+
+    it "takes pairs from anything that answers #to_h, so #value can subscript it" do
+      expect(answer(detail: [%w[value 55]]).value).to eq("55")
+    end
+
+    it "still canonicalizes, so a Symbol-keyed payload addresses as its String twin" do
+      expect(answer(detail: { value: 7 }).detail).to eq("value" => 7)
+    end
+
+    it "hands two answers omitting detail their own frozen Hash" do
+      first = answer.detail
+      second = answer.detail
+
+      expect(first).to eq({}).and be_frozen
+      expect(first).not_to be(second)
+    end
+  end
 end

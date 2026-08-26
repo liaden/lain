@@ -50,7 +50,7 @@ RSpec.describe Lain::Tools::WebSearch do
 
   describe "the default (unconfigured) backend" do
     # Ships with a Null backend so the tool is constructible without wiring in a
-    # concrete provider. F2: an unconfigured search must say so, distinguishably
+    # concrete provider. An unconfigured search must say so, distinguishably
     # from a configured backend that searched and found nothing (folded into the
     # "reports no results" example above) -- and it must read as NON-RETRYABLE
     # and name the QUERY: the QA run's failure mode was six retries against a

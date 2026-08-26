@@ -1290,8 +1290,8 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
       expect(said).not_to include("lain: lain:")
     end
 
-    # The other half of F30, and the half round 7 left live in this pane: a
-    # raise out of a `BufWriteCmd` reaches the human wearing nvim's
+    # The other half of the prompt-wedge defect, and the half round 7 left live
+    # in this pane: a raise out of a `BufWriteCmd` reaches the human wearing nvim's
     # `stack traceback:` with a hit-enter prompt behind it, and that prompt
     # queues every non-fast RPC request -- `:messages` included -- until
     # somebody presses a key. Round 7 measured this exact leg at
@@ -1442,7 +1442,7 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
       expect(answer["shown"].last).not_to include("LainNoteDone")
     end
 
-    # F66. Both sentences were true and the human could only see one: a `● note`
+    # Both sentences were true and the human could only see one: a `● note`
     # marker sits visibly on the line, and `:LainThread` answered "no thread on
     # this line". The anchor id is minted at hand-back
     # ({Lain::Review::Handover}), so a thread genuinely cannot exist yet -- the
@@ -1544,10 +1544,10 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
       expect([outside, noted]).to all(include(" ... "))
     end
 
-    # Round 7's F31, on the surface this card touches: an `error()` inside a
-    # `define`d command reaches the human wearing `stack traceback:` with a
-    # hit-enter prompt behind it, and that prompt queues every non-fast RPC
-    # request until somebody presses a key.
+    # Round 7's prompt-wedge defect, on the surface this card touches: an
+    # `error()` inside a `define`d command reaches the human wearing
+    # `stack traceback:` with a hit-enter prompt behind it, and that prompt
+    # queues every non-fast RPC request until somebody presses a key.
     #
     # KEYSTROKES WITH A UI ATTACHED, for `type_write`'s measured reason -- an
     # error out of a NOTIFIED `nvim_exec_lua` is discarded by nvim,
@@ -1647,14 +1647,14 @@ RSpec.describe Lain::Frontend::Neovim, "the review thread pane", :nvim do
     end
   end
 
-  # T11. A survey presents ONE side, so the layout opens `sidebar | new` and the
+  # A survey presents ONE side, so the layout opens `sidebar | new` and the
   # `old` slot -- still in the vocabulary, still ordered, simply not opened --
   # is where `OPPOSITE["new"]` sends the thread. The pane therefore has to be
   # opened ON DEMAND, by the gesture that asks for it, and the alternative is
   # what this group exists to keep out: `review_place` handing
   # `nvim_win_set_buf` a nil window inside a `define`d command, which is an
-  # `error()`, a traceback and a blocking hit-enter prompt -- round 7's F31
-  # shape, on the surface this chunk exists to repair.
+  # `error()`, a traceback and a blocking hit-enter prompt -- round 7's
+  # prompt-wedge shape, on the surface this chunk exists to repair.
   describe "the docent thread pane on a round that presents one side" do
     # The fact rides the SIDEBAR rail, because that render precedes the layout:
     # the panes are built on the first sidebar paint, before any row is opened.

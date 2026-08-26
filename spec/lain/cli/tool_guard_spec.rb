@@ -12,7 +12,7 @@ class ToolGuardSpecBoard
   attr_reader :ledger, :approvals, :sensitivity
 
   # `sensitivity` is a REAL {Lain::Sensitivity::Policy} over a REAL classifier
-  # for this file's own reason, one slot over: T23's claim is that the listing
+  # for this file's own reason, one slot over: the claim is that the listing
   # guard filters through the BOARD's policy rather than through a second
   # filter built beside it, and a double answering `filter` cannot tell those
   # apart. The default is the live one because that is what {CLI::Wiring} now
@@ -84,9 +84,9 @@ RSpec.describe Lain::CLI::ToolGuard do
 
     # This example was the Null pin -- "wires the listing guard with the Null
     # filter, because no classifier is constructed yet" -- and it existed so
-    # T23's swap could not happen silently. It has happened, so the pin is
-    # INVERTED rather than deleted: a stack entry is still only half of what
-    # makes a guard live, and this is the other half.
+    # the swap away from it could not happen silently. It has happened, so the
+    # pin is INVERTED rather than deleted: a stack entry is still only half of
+    # what makes a guard live, and this is the other half.
     #
     # Identity against `board.sensitivity.filter`, never `be_a(Filter)`: a
     # filter built HERE from a freshly constructed classifier would be a real

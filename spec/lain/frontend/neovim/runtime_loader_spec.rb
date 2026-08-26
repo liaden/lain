@@ -6,7 +6,7 @@ require "socket"
 require "timeout"
 require "tmpdir"
 
-# T6: the injected runtime is one chunk assembled from many files, and this is
+# The injected runtime is one chunk assembled from many files, and this is
 # the assembly's own spec. `neovim_runtime_spec.rb` pins what the runtime DOES
 # and passed the split unmodified, which is that card's contract; what it cannot
 # see is the loader -- a module silently dropped from the glob, or concatenated
@@ -109,10 +109,10 @@ RSpec.describe Lain::Frontend::Neovim::RuntimeLoader do
     end
   end
 
-  # Load order is a contract SIX later cards inherit (T14 sidebar, T15 diff, T16
-  # annotate, T17 diagnostics, T18 thread, T26 layout), so it is asserted as a
-  # pure function of the names. Stubbing a directory reader instead is what makes
-  # the guard asymmetric: a card that swaps the reader out entirely leaves such an
+  # Load order is a contract SIX later cards inherit (sidebar, diff, annotate,
+  # diagnostics, thread, layout), so it is asserted as a pure function of the
+  # names. Stubbing a directory reader instead is what makes the guard
+  # asymmetric: a card that swaps the reader out entirely leaves such an
   # example vacuously green, because the stub no longer applies to anything.
   # Nothing here touches the filesystem, so no reader swap can dodge it.
   describe "#ordered" do
@@ -274,7 +274,7 @@ RSpec.describe Lain::Frontend::Neovim::RuntimeLoader do
 
     # The handshake reads off the HEAD, which is the one part of the chunk the
     # split moved bytes around. Against the constant, never a literal: a bump
-    # (T28 has one planned) must not be able to leave this green by accident.
+    # (one is planned) must not be able to leave this green by accident.
     it "hands the editor the protocol the gem holds" do
       frontend.run do
         wait_until { inspector.get_var("lain_rpc_version") == Lain::Frontend::Neovim::PROTOCOL }

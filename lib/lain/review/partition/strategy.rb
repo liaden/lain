@@ -4,7 +4,7 @@ module Lain
   module Review
     class Partition
       # The seam between a changeset and HOW IT IS GROUPED FOR READING. Grouping
-      # by commit was the only answer for a long time and it read as the only
+      # by commit was the only answer for long enough to read as the only
       # possible one; it is one strategy among several ({Whole}, {ByDirectory},
       # {ByCommit}), and this is what makes swapping it a decision rather than a
       # rewrite.
@@ -16,14 +16,12 @@ module Lain
       #   advice                  the sentence a refusal recommends this by
       #   supports?(source)       whether this source can be grouped this way
       #
-      # == A strategy takes a CHANGESET, never a source
-      #
-      # That is the seam, and it is what keeps a strategy testable without a
-      # repository. {ByCommit} needs the walk, so a {Changeset} answers
-      # `#commits` -- the strategy still takes the changeset. `#supports?` is
-      # what a source that cannot answer for a strategy is refused BY, at
-      # presentation, instead of dying on a missing message halfway through a
-      # partition.
+      # A strategy takes a CHANGESET, never a source: that is what keeps one
+      # testable without a repository. {ByCommit} needs the walk, so a
+      # {Changeset} answers `#commits` and the strategy still takes the
+      # changeset. `#supports?` is what a source that cannot answer for a
+      # strategy is refused BY, at presentation, rather than dying on a missing
+      # message halfway through a partition.
       #
       # == Why `check!` is a duck probe, not a base class
       #
@@ -50,9 +48,9 @@ module Lain
         #
         # Compared through {shape_of}, never `==` against this Hash directly:
         # what the port constrains is each argument's KIND and, for a keyword,
-        # its NAME -- a keyword IS its name at every call site, while a
-        # positional's is private to the method. The names below stay because
-        # this Hash is also the port's documentation.
+        # its NAME -- a keyword IS its name at every call site, a positional's is
+        # private to the method. The names stay because this Hash is also the
+        # port's documentation.
         #
         # DEEPLY frozen: `.freeze` on the outer Hash alone leaves the
         # `%i[req changeset]`-shaped inner Arrays mutable.

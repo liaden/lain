@@ -29,13 +29,12 @@ module Lain
       # rotated 180 degrees, and the commonest edit there is in a codebase whose
       # house style is a paragraph of why above every method.
       #
-      # What counts as commentary is PER LANGUAGE, and blank-or-comment is the
+      # What counts as commentary is PER LANGUAGE; blank-or-comment is the
       # Ruby-shaped answer. Rust puts attributes between a doc comment and its
       # item and TypeScript puts decorators there, so a blank-or-comment walk
       # stops at `#[inline]` and strands the `///` above it with the previous
       # definition -- 374 definitions in this repository's own Rust are preceded
-      # by an attribute line, so it is the common shape and not a corner. The
-      # prefixes live in {EXTENSIONS} beside the language they belong to.
+      # by an attribute line, so it is the common shape, not a corner.
       #
       # A require is not commentary, so the preamble rule above still holds: the
       # run stops at the first line that is neither commentary nor blank. A run
@@ -50,18 +49,16 @@ module Lain
       #
       # == What a definition capture actually gives us
       #
-      # A start, and no end. The authored queries bind the NAME node
-      # (`(method name: (identifier) @definition.method)`) so that a capture
+      # A start, and no end. The authored queries bind the NAME node so a capture
       # carries a role directly, which is what makes them useful to the symbols
       # tool -- and it means a definition's extent is not in the answer. Those
-      # files serve production and are deliberately left unchanged, so a
-      # definition's unit runs to the line before the NEXT definition's run.
+      # files serve production and are left unchanged, so a definition's unit runs
+      # to the line before the NEXT definition's run.
       #
       # Nesting needs no policy for the same reason: identifier captures are
-      # points, and points cannot overlap, so `module`, `class` and `def`
-      # starts are simply three boundaries in one ordered list. What that costs
-      # is granularity -- one one-line unit per nesting level, in every file in
-      # this repository -- and {Granularity} is what pays it back.
+      # points and points cannot overlap, so `module`, `class` and `def` starts
+      # are three boundaries in one ordered list. What that costs is granularity
+      # -- one one-line unit per nesting level -- and {Granularity} pays it back.
       #
       # A language with no authored query, a file whose extension names none,
       # and a file whose bytes are not valid UTF-8 all fall to the paragraph
@@ -72,17 +69,11 @@ module Lain
         private_constant :Language
 
         # Extension to language, and to the line prefixes that make a line
-        # COMMENTARY in that language. ONE table, because they are one fact
-        # about a file type -- and it maps extensions only. Whether lain can
-        # actually parse the language is {Structural::Queries}' answer, asked at
-        # every call, so dropping a language from its table makes these files
-        # fall to the floor instead of raising out of a chunker.
-        #
-        # Commentary is wider than "comment", and per language, because what
-        # sits between a doc comment and the thing it documents differs: Rust
-        # puts attributes there and TypeScript decorators. Both belong to the
-        # definition below them, and treating them as ordinary code strands the
-        # doc comment above them with the PREVIOUS definition.
+        # COMMENTARY in that language -- ONE table, because they are one fact
+        # about a file type. Whether lain can actually parse the language is
+        # {Structural::Queries}' answer, asked at every call, so dropping a
+        # language from its table makes these files fall to the floor instead of
+        # raising out of a chunker.
         EXTENSIONS = {
           ".rb" => Language.new(name: :ruby, commentary: ["#"].freeze),
           ".rake" => Language.new(name: :ruby, commentary: ["#"].freeze),

@@ -2,28 +2,20 @@
 
 module Lain
   module Tools
-    # Runs an ast-grep pattern against a source snippet via
-    # {Lain::Structural::Matcher#match} and reports the match count plus, per
-    # match, its line and captures. This is the discovery half of the
+    # Runs an ast-grep pattern against a source snippet and reports the match
+    # count plus each match's line and captures. The discovery half of the
     # ast-inspect pair: a pattern can parse cleanly and still UNDER-match --
-    # `def $NAME($$$A)` finds a plain `def total(x)` but silently skips
-    # `def self.x`, a distinct CST node -- and there is no exception to catch
-    # for that, only a match count lower than the source warrants. Reporting
-    # the count next to the actual per-match captures is what makes the gap
-    # visible to the model reading it: a source with two method defs and a
-    # report naming only one is the signal to reach for {AstDump} next and find
-    # the node kind the pattern is missing.
+    # `def $NAME($$$A)` finds `def total(x)` but silently skips `def self.x`, a
+    # distinct CST node -- and there is no exception to catch for that, only a
+    # count lower than the source warrants. Reporting the count beside the
+    # per-match captures is what makes the gap visible, and the signal to reach
+    # for {AstDump}.
     class TestPattern < Tool
-      # A match report is an ENUMERATION under {Tool::Bounds}' stated boundary,
-      # and it is the closest of the six to the precedent: {Grep} and
-      # {AstSearch} cap structural matches at 200, this reports structural
-      # matches, so it takes the same number outright rather than inventing a
-      # second one for the same shape.
+      # An ENUMERATION under {Tool::Bounds}' boundary, taking {Grep}'s and
+      # {AstSearch}'s 200 outright rather than inventing a second number for the
+      # same shape.
       #
-      # The disclosure is only half new here. `report`'s header already states
-      # the TRUE count, so a capped report was never going to lie about how many
-      # matches there were -- what it lacked was a row saying which of them the
-      # reader is looking at. The notice supplies that, and the two numbers are
+      # `report`'s header states the TRUE count, so the two numbers are
       # deliberately allowed to disagree: the header is what the pattern found,
       # the rows are what fits.
       BOUND = Tool::Bounds::Enumeration.new(limit: 200, unit: "matches")
@@ -57,9 +49,8 @@ module Lain
       end
 
       # Audited: matches the given `code` String in-memory via a fresh,
-      # per-call Structural::Matcher -- documented stateless (astgrep.rs:
-      # "Every call is STATELESS"), no filesystem, no Session, no
-      # process-global state.
+      # per-call Structural::Matcher, documented stateless. No filesystem, no
+      # Session, no process-global state.
       def parallel_safe? = true
 
       protected

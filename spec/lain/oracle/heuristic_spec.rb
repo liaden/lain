@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T2: the model-free oracle tier. A pure predicate decides the answer locally and
+# The model-free oracle tier. A pure predicate decides the answer locally and
 # it is validated through the SAME typed schema as the model tier, so a caller
 # cannot tell which tier answered from the answer's shape -- and no provider is
 # wired at all.

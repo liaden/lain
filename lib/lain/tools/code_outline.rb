@@ -2,44 +2,34 @@
 
 module Lain
   module Tools
-    # Tier 1 (structured): a FIXED set of catalog queries -- Structural::Patterns'
-    # `:class_def` and `:method_def` -- run over ONE file through
-    # Structural::Matcher. This is not a new mechanism; T2's catalog and T3's
-    # Matcher already exist, so this tool is only the read-one-file-and-format
-    # wiring over them.
+    # Tier 1 (structured): a FIXED set of catalog queries -- `:class_def` and
+    # `:method_def` -- run over ONE file.
     #
-    # Because matching is structural (an ast-grep pattern against a parsed
-    # syntax tree, not a line of text), an identifier that only APPEARS inside
-    # a comment or a string literal never counts as a hit -- the whole point
-    # next to a regex-based outline, which cannot tell `class Foo` the
-    # definition from `# class Foo` the comment.
+    # Because matching is STRUCTURAL, an identifier that only appears inside a
+    # comment or a string literal never counts as a hit -- the whole point next
+    # to a regex outline, which cannot tell `class Foo` the definition from
+    # `# class Foo` the comment.
     #
-    # Nesting (a class inside a module) is deliberately NOT reconstructed:
-    # each hit carries only its own line, so the outline is flat and
-    # line-ordered rather than a tree. Recovering real lexical scope needs a
-    # scope walk over the CST (tree-sitter `locals`), which is T8's job, not
-    # this card's.
+    # Nesting is deliberately NOT reconstructed: each hit carries only its own
+    # line, so the outline is flat and line-ordered. Recovering real lexical
+    # scope needs a scope walk over the CST, which is a separate tool's job.
     class CodeOutline < Tool
-      # An outline is an ENUMERATION under {Tool::Bounds}' stated boundary: one
-      # row per definition, independent of the rest, so the first N of them are
-      # a usable partial answer. It caps and discloses in band.
+      # An ENUMERATION under {Tool::Bounds}' boundary: one row per definition,
+      # so the first N are a usable partial answer.
       #
-      # 200, which is {Grep::MAX_MATCHES} taken outright rather than re-derived
-      # -- the row is match-shaped and the model already knows that number from
-      # `grep` and `ast_search`. It sits well above anything a human writes:
-      # measured with THIS tool over all 647 of the repo's `lib/**/*.rb`, the
-      # densest outline is **80** definitions (`lib/lain/review/docent.rb`,
-      # with `frontend/neovim/rpc_thread.rb` next at 79). So the ceiling binds
-      # only on generated or pathological source, which is the case it is here
-      # for. At ~23 B a row it costs ~5 KB, under {Glob}'s ceiling, and
-      # that asymmetry is right: an outline is per-FILE, so a caller that hits
-      # this cap has a narrower question available (`ast_search` for one
-      # construct) that a listing's caller does not.
+      # 200 is {Grep::MAX_MATCHES} taken outright rather than re-derived -- the
+      # row is match-shaped and the model already knows that number. It sits
+      # well above anything a human writes: measured with THIS tool over all 647
+      # of the repo's `lib/**/*.rb`, the densest outline is 80 definitions. So
+      # the ceiling binds only on generated or pathological source. At ~23 B a
+      # row it costs ~5 KB, under {Glob}'s ceiling, and that asymmetry is right:
+      # an outline is per-FILE, so a caller that hits this cap has a narrower
+      # question available that a listing's caller does not.
       #
-      # Applied after `render`'s by-line sort, never during collection --
+      # Applied AFTER `render`'s by-line sort, never during collection:
       # `class_entries` are gathered before `method_entries`, so a cap taken
-      # before the sort would answer a large file with every class and no
-      # method while claiming to be an outline of it.
+      # before the sort would answer a large file with every class and no method
+      # while claiming to be an outline of it.
       BOUND = Tool::Bounds::Enumeration.new(limit: 200, unit: "definitions")
 
       # The wire shape: a file path plus the language to parse it as.
@@ -68,10 +58,9 @@ module Lain
       end
 
       # Audited: reads Session#worker_env.cwd (a value read, not a mutation) to
-      # resolve the path, then one file (File.read), run through a fresh,
-      # per-call Structural::Matcher -- documented stateless (astgrep.rs:
-      # "Every call is STATELESS", no ext-side index handle). No Session write,
-      # no chdir, no process-global state.
+      # resolve the path, then one file, run through a fresh per-call
+      # Structural::Matcher, documented stateless. No Session write, no chdir,
+      # no process-global state.
       def parallel_safe? = true
 
       protected
@@ -83,36 +72,29 @@ module Lain
 
         language = input.language.downcase.to_sym
         # `encoding:` is not decoration: a bare File.read tags its result with
-        # Encoding.default_external, which under a C locale (containers, systemd
-        # units) is US-ASCII -- so every ordinary UTF-8 file would come back
-        # mislabelled and the ext would refuse it, truthfully but uselessly.
+        # Encoding.default_external, US-ASCII under a C locale, so every
+        # ordinary UTF-8 file would come back mislabelled and the ext would
+        # refuse it -- truthfully but uselessly.
         source = File.read(path, encoding: Encoding::UTF_8)
         Tool::Result.ok(render(outline_entries(source, language)))
       rescue Structural::Matcher::UnknownLanguage, Structural::Patterns::Unknown => e
-        # Patterns.fetch raises Unknown for a language its own catalog has no
-        # queries for (today, anything but :ruby) -- BEFORE the Matcher ever
-        # gets a chance to raise its own UnknownLanguage for one outside its
-        # (larger) supported set. Both spellings mean the same thing to this
-        # tool's caller: this language cannot be outlined, so both fold into
-        # one error Result.
+        # Patterns.fetch raises Unknown for a language its catalog has no
+        # queries for, BEFORE the Matcher can raise its own UnknownLanguage for
+        # one outside its larger supported set. Both mean the same thing to this
+        # caller -- this language cannot be outlined -- so both fold into one
+        # error Result.
         Tool::Result.error(e.message)
-      # `EncodingError` joins the unreadable-file arm rather than earning its
-      # own: the ext refuses a source it would have to transcode, because the
-      # byte offsets this tool turns into line numbers would then index a copy
-      # the caller never sees (ext/lain/src/read_text.rs). To the model that is
-      # the same answer as any other "this file cannot be read" -- and it must
-      # land here, not escape #call, which no Tool does with a question the
-      # model asked.
+      # `EncodingError` joins the unreadable-file arm: the ext refuses a source
+      # it would have to transcode, because the byte offsets this tool turns
+      # into line numbers would then index a copy the caller never sees. To the
+      # model that is the same answer as any other "this file cannot be read".
       rescue SystemCallError, IOError, EncodingError => e
         Tool::Result.error("could not read #{path}: #{e.message}")
       end
 
       private
 
-      # A relative path resolves against the session's WorkerEnv cwd (Dir.pwd
-      # under the default, so byte-identical to a raw File.read); an absolute
-      # one is honored as given. Same rule, same shape, as {ReadFile}
-      # and {Grep#resolved_path}.
+      # Same rule, same shape, as {ReadFile} and {Grep#resolved_path}.
       def resolved_path(input, invocation)
         File.expand_path(input.path, session_of(invocation).worker_env.cwd)
       end
@@ -125,11 +107,9 @@ module Lain
         nil
       end
 
-      # One structural hit: a 1-based line, the literal keyword to print
-      # ("module"/"class" from which `:class_def` template matched,
-      # "def"/"def self." from which `:method_def` template matched -- so the
-      # outline echoes the source's own spelling rather than inventing a
-      # generic "method" tag), and the captured name.
+      # A 1-based line, the literal keyword to print, and the captured name.
+      # The keyword comes from which template matched, so the outline echoes the
+      # source's own spelling rather than inventing a generic "method" tag.
       Entry = Data.define(:line, :label, :name)
       private_constant :Entry
 

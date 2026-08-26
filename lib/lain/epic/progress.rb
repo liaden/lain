@@ -7,52 +7,38 @@ module Lain
     # The journal handed to {Progress.fold} names other epics and never the one
     # it was asked to fold. Loud rather than folded to "nothing happened here":
     # a typo'd slug and the wrong journal both land exactly there, and both
-    # would report a live epic as untouched.
-    #
-    # Named for what it IS -- a journal belonging to other work -- rather than
+    # would report a live epic as untouched. Named for what it IS rather than
     # for "mixed epics", which is neither necessary (one foreign epic is enough)
-    # nor sufficient (this epic's records sitting beside another's are fine, and
-    # are simply partitioned away).
+    # nor sufficient (this epic's records beside another's are partitioned away).
     class ForeignJournal < Error; end
 
     # The provenance a graph's LIVE issues declare, and the two questions the
     # fold asks of an id: is it CURRENT, and if not, is it HISTORY?
     #
-    # The distinction is the whole superseded-id rule. {Graph#split} removes the
-    # issue its parts grew out of and stamps each part's `discovered_from` with
-    # the id that left, so a journal recorded before the split still names an id
-    # the graph no longer holds. That is the designed state, not drift: those
-    # transitions fold as inert history and touch no live issue's status. An
-    # absent id nothing declares is a drifted document, and drift is an error
-    # rather than a shrug.
+    # That distinction is the superseded-id rule. {Graph#split} removes the issue
+    # its parts grew out of and stamps each part's `discovered_from` with the id
+    # that left, so a journal recorded before the split still names an id the
+    # graph no longer holds: designed state, not drift, folding as inert history
+    # that touches no live issue's status. An absent id nothing declares IS
+    # drift, and drift is an error rather than a shrug.
     #
-    # == It reaches exactly ONE hop
+    # The set is `{issue.discovered_from : issue live}` and reaches exactly ONE
+    # hop -- `discovered_from` resolves to a live issue only while that issue
+    # survives, and every live issue's own link is already in the set, so
+    # following one could never add an id the first pass missed. An earlier draft
+    # recursed; it was provably incapable of adding an element, and the two specs
+    # guarding it (multi-hop reach, cycle termination) both passed vacuously.
     #
-    # The set is `{issue.discovered_from : issue live}` and nothing more. There
-    # is no chain to walk: `discovered_from` resolves to a live issue only while
-    # that issue survives, and every live issue's own link is already in the set
-    # -- so following one would never add an id the first pass missed. An
-    # earlier draft here recursed; it was provably incapable of adding an
-    # element, and the two specs guarding it (multi-hop reach, cycle
-    # termination) both passed vacuously because of it.
+    # History goes unreadable when a structural edit removes the LAST live issue
+    # whose link names the id. {Graph#merge} reaches that in ONE edit: with
+    # `discovered_from` single-valued, declaring one parent always orphans the
+    # other, and a genuinely historical transition past that boundary is refused
+    # as drift. Loud beats a silently wrong status, but it IS a false positive
+    # and the fix belongs in the lineage a {Graph} carries. Specs pin both sides.
     #
-    # The boundary that follows: history goes unreadable the moment a structural
-    # edit removes the LAST live issue whose link names the id. {Graph#merge}
-    # reaches it in ONE edit -- it passes no provenance override, so an arrival
-    # declaring none orphans both parents at once, and since `discovered_from`
-    # is single-valued, declaring one always orphans the other (merge's own
-    # comment concedes exactly this). Splitting is gentler: parts are stamped
-    # automatically, so a lineage stays readable while any sibling survives.
-    # Past that boundary a genuinely historical transition is refused as drift.
-    # Loud beats a silently wrong status, so the direction is right, but it IS a
-    # false positive and the fix belongs in the lineage a {Graph} carries -- one
-    # link cannot express two parents, and nothing inherits provenance forward.
-    # Specs pin both sides.
-    #
-    # Held apart from {Progress} because Progress is the frozen VALUE and this
-    # is a mutable index built to answer it -- one ivar of this would cost
-    # `Ractor.shareable?(progress)`, the mechanical statement that the fold's
-    # answer has no reachable mutable state.
+    # Held apart from {Progress}: Progress is the frozen VALUE, this is a mutable
+    # index built to answer it, and one ivar of this would cost
+    # `Ractor.shareable?(progress)`.
     class Lineage
       def initialize(graph)
         @by_id = graph.to_h { |issue| [issue.id, issue] }
@@ -65,17 +51,14 @@ module Lain
     end
     private_constant :Lineage
 
-    # The fold itself: journal records in, a frozen {Progress} out.
-    #
-    # Held apart from Progress for {Lineage}'s reason -- Progress is the value,
-    # this is the machinery -- and because the three passes it makes (statuses,
-    # stage, sign-offs) are one responsibility each, none of them the value's.
+    # The fold itself: journal records in, a frozen {Progress} out. Held apart
+    # from Progress for {Lineage}'s reason, and because its three passes
+    # (statuses, stage, sign-offs) are one responsibility each, none the value's.
     class Refold
-      # The record types that name an epic, and so the ones this epic's
-      # PRESENCE in a journal is judged by. Deliberately closed: scanning every
-      # record for an `epic_slug` key would let an unrelated tier's record vouch
-      # for an epic. `gate_decision` counts, because a gate parked before any
-      # issue moved is a real state.
+      # The record types this epic's PRESENCE in a journal is judged by, and a
+      # CLOSED set: scanning every record for an `epic_slug` key would let an
+      # unrelated tier's record vouch for an epic. `gate_decision` counts,
+      # because a gate parked before any issue moved is a real state.
       SLUG_TYPES = [IssueTransition::JOURNAL_TYPE, StageTransition::JOURNAL_TYPE,
                     Approval::SignoffQueue::JOURNAL_TYPE].freeze
 
@@ -84,8 +67,7 @@ module Lain
         # times and a one-shot Enumerator would silently fold to empty on the
         # second pass -- the trap {Event::Projection} documents for its own log.
         # An epic is a handful of issues and a day's records, so three passes
-        # over an Array is the cheap answer; nothing here earns StatusFeed's
-        # incremental machinery.
+        # over an Array is the cheap answer.
         records = Journal.records(entries).to_a
         @graph = graph
         @epic_slug = -epic_slug.to_s
@@ -103,7 +85,7 @@ module Lain
       private
 
       # A record naming ANOTHER epic is not ours and is dropped. A record naming
-      # NO epic is KEPT, so its own guard refuses it downstream -- a filter that
+      # NO epic is KEPT, so its own contract refuses it downstream -- a filter that
       # swallowed the unattributable line would silently skip exactly the record
       # that most needs refusing.
       def mine?(record)
@@ -115,12 +97,8 @@ module Lain
       # fine -- a fresh epic has journaled nothing yet, and that folds to the
       # document's own statuses -- but "this journal is about other work" and
       # "nothing has happened here" are different facts, and only one of them
-      # should read as an untouched epic.
-      #
-      # This is the residual of the derivation this fold used to do. Deriving
-      # the slug turned a typo'd name or the wrong journal into a confident
-      # answer about another epic's work; naming it turns the same mistake into
-      # a silent "nothing happened". Refusing here is what closes that.
+      # should read as an untouched epic. Naming the slug rather than deriving it
+      # turns a typo into that silent "nothing happened"; this closes it.
       def refuse_foreign_journal!(records)
         named = named_epics(records)
         return if named.empty? || named.include?(@epic_slug)
@@ -137,10 +115,9 @@ module Lain
                .reject { |slug| slug.strip.empty? }.uniq.sort
       end
 
-      # The document's statuses with every journaled transition laid over them,
-      # handed back to {Graph.new} so `#ready`, `#waves`, and the edge and cycle
-      # validation are the graph's own answers over the effective statuses
-      # rather than a second implementation of them here.
+      # Handed back to {Graph.new} so `#ready`, `#waves`, and the edge and cycle
+      # validation are the graph's own answers over the effective statuses rather
+      # than a second implementation of them here.
       def overlaid
         statuses = of_type(IssueTransition::JOURNAL_TYPE).inject(document_statuses) do |carried, record|
           moved = moved_id(record)
@@ -152,13 +129,13 @@ module Lain
       def document_statuses = @graph.to_h { |issue| [issue.id, issue.status] }
 
       # The live id this transition moves, or nil when it moves an id that is
-      # inert history. Guarded on the same {Guards::IssueTransition} the WRITE
-      # side uses: a record that cannot be read whole aborts the fold, because
+      # inert history. Checked against the same {Contracts::IssueTransition} the
+      # WRITE side uses: a record that cannot be read whole aborts the fold, because
       # skipping it would leave its issue reading at the document's stale status
       # -- which is the very answer the Journal exists to override.
       def moved_id(record)
-        Guards::IssueTransition.check!(epic_slug: record["epic_slug"], issue_id: record["issue_id"],
-                                       from_status: record["from_status"], to_status: record["to_status"])
+        Contracts::IssueTransition.check!(epic_slug: record["epic_slug"], issue_id: record["issue_id"],
+                                          from_status: record["from_status"], to_status: record["to_status"])
         id = record["issue_id"].to_s
         return id if @lineage.current?(id)
         return nil if @lineage.superseded?(id)
@@ -166,40 +143,35 @@ module Lain
         raise UnknownIssue, unknown_message(id)
       end
 
-      # Says what to DO, not what the walk failed to find. The two remedies are
-      # the two ways the id can have got here: the document drifted (re-journal
-      # the transition under the id that carries the work now), or a structural
-      # edit dropped the provenance that made it legible (declare
-      # `discovered_from` on the live issue that inherited it). A merge reaches
-      # the second case in one edit, so it is not the rare path the machinery
-      # makes it sound.
+      # Says what to DO, not what the walk failed to find, because the id can
+      # have got here two ways: the document drifted, or a structural edit
+      # dropped the provenance that made it legible. A merge reaches the second
+      # in one edit, so it is not the rare path the machinery makes it sound.
       def unknown_message(id)
         "journaled issue_transition names unknown issue #{id.inspect} in epic #{@epic_slug.inspect} -- " \
           "no live issue carries that id or declares it as `discovered_from`. Re-journal the transition " \
           "under the id that carries the work now, or declare the missing provenance on the live issue."
       end
 
-      # The last stage STARTED, or the first stage when nothing has started.
-      # A completion advances nothing: inventing the successor would claim work
-      # began that no record shows, and an epic can sit between stages for days.
-      # Every record is guarded, completions included -- a malformed one is
-      # unreadable about which stage it names either way.
+      # The last stage STARTED, or the first when nothing has. A completion
+      # advances nothing: inventing the successor would claim work began that no
+      # record shows, and an epic can sit between stages for days. Every record
+      # is checked, completions included -- a malformed one is unreadable about
+      # which stage it names either way.
       def current_stage
         started = of_type(StageTransition::JOURNAL_TYPE).filter_map { |record| checked_start(record) }
         started.to_a.last || Stage.new(STAGES.first)
       end
 
       def checked_start(record)
-        Guards::StageTransition.check!(epic_slug: record["epic_slug"], event: record["event"])
+        Contracts::StageTransition.check!(epic_slug: record["epic_slug"], event: record["event"])
         stage = Stage.new(record["stage"].to_s)
         stage if record["event"].to_s == STAGE_EVENTS.first
       end
 
-      # The rebuild NEVER degrades to an empty queue on failure. There is no
-      # rescue here and there must not be one: {Approval::Gate::Policy::Drained}
-      # legitimizes "this session has no queue", never "this rebuild failed",
-      # and an empty queue reads as drained while drained opens the next stage
-      # over work nobody signed off.
+      # The rebuild NEVER degrades to an empty queue on failure, so there is no
+      # rescue here and must not be one: an empty queue reads as drained, and
+      # drained opens the next stage over work nobody signed off.
       def parked_at(stage)
         Approval::SignoffQueue.from_journal(@records).parked(@epic_slug, stage.name)
       end
@@ -211,28 +183,23 @@ module Lain
     # Where one epic actually stands: the Journal's runtime truth folded over
     # the document an author wrote.
     #
-    # `graph` is the parsed graph with the journal's statuses laid over it, so
-    # it IS the effective view and there is no second copy of the statuses to
-    # disagree with it. `#ready` is the graph's own derivation asked of that
-    # view rather than reimplemented, which is what keeps "an abandoned blocker
-    # still blocks" a single rule.
-    #
-    # A pure offline refold, in {Event::Projection}'s shape: same records and
-    # same graph, same answer, no accumulated state. Deeply frozen and
-    # `Ractor.shareable?`, so it can be handed to a renderer or another thread
-    # as the settled fact it is.
+    # `graph` is the parsed graph with the journal's statuses laid over it, so it
+    # IS the effective view and there is no second copy to disagree with it.
+    # `#ready` is the graph's own derivation asked of that view rather than
+    # reimplemented, which keeps "an abandoned blocker still blocks" one rule. A
+    # pure offline refold in {Event::Projection}'s shape: same records and same
+    # graph, same answer, no accumulated state, deeply frozen and
+    # `Ractor.shareable?`.
     #
     # Note {Graph#waves} is deliberately status-blind -- a finished first wave
     # still reports as wave 1, which is correct as a DAG layering. Remaining
     # work is computed from these effective statuses, never from wave output.
     Progress = Data.define(:graph, :stage, :epic_slug, :parked) do
-      # `epic_slug` is REQUIRED, and that is the safety rule rather than an
-      # ergonomic slip. A {Graph} carries no slug, so a slug derived from the
-      # records could never be checked against the issues it is about: a journal
-      # holding only another epic's transitions would derive THAT epic and fold
-      # its work onto these issues, reporting progress on work that never
-      # happened. Every caller knows the slug -- it read the document the graph
-      # came from.
+      # `epic_slug` is REQUIRED as a safety rule, not an ergonomic slip. A
+      # {Graph} carries no slug, so a slug derived from the records could never
+      # be checked against the issues it is about: a journal holding only another
+      # epic's transitions would derive THAT epic and fold its work onto these
+      # issues, reporting progress on work that never happened.
       #
       # @param entries [Enumerable<Hash, String>] journal lines or records
       # @param graph [Graph] the parsed document's issue graph
@@ -254,8 +221,7 @@ module Lain
       # Pending, with every blocker done -- {Graph#ready} over the overlay.
       def ready = graph.ready
 
-      # The one line an author scans: where the epic is, how much is finished,
-      # how much is moving, and how much is waiting on a human.
+      # The one line an author scans.
       def summary
         "stage #{stage} — #{tally("done")}/#{graph.count} done, #{tally("in_flight")} in flight, " \
           "#{parked.size} #{"gate".pluralize(parked.size)} parked"
@@ -265,11 +231,9 @@ module Lain
 
       def tally(status) = graph.count { |issue| issue.status == status }
 
-      # Member type asserted rather than ducked, for {Graph#clean_issues}'
-      # reason. `Data` freezes the instance and `Array#freeze` is shallow, so
-      # this value is deeply frozen -- and `Ractor.shareable?` -- only because
-      # every member is itself a frozen value. {Refold} always supplies Items,
-      # but this constructor is public, so it says so instead of hoping. Copied
+      # Member type asserted rather than ducked: `Data` freezes the instance and
+      # `Array#freeze` is shallow, so this value is deeply frozen -- and
+      # `Ractor.shareable?` -- only because every member is itself frozen. Copied
       # before freezing, so the caller keeps ownership of the array it passed.
       def signoffs(parked)
         refuse_stranger!(parked) unless parked.is_a?(Array)
@@ -285,11 +249,9 @@ module Lain
       end
 
       # Interned first, so the check judges the bytes that get stored: a slug
-      # object whose #to_s is blank passes a naive presence test and then names
-      # a partition nothing can match -- the reason {Approval::SignoffQueue}'s
-      # own Partition interns before its guard. Asserted here for the reason the
-      # member type above is: this constructor is public, and every other member
-      # of this value is refused when it cannot do its job.
+      # object whose #to_s is blank passes a naive presence test and then names a
+      # partition nothing can match -- the reason {Approval::SignoffQueue}'s own
+      # Partition interns before its contract.
       def named_epic(epic_slug)
         slug = -epic_slug.to_s
         refuse_unnamed!(epic_slug) if slug.strip.empty?

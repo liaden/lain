@@ -6,23 +6,20 @@ require "uri"
 module Lain
   class Provider
     class Admission
-      # WHICH SERVER an endpoint string names, and whether that server is on this
-      # machine. Extracted from {Admission} when the class outgrew its length
-      # limit, which was the right signal: a gate that counts callers and a
-      # classifier that reads URLs are two jobs, and only the second one needs to
-      # know what `::ffff:127.0.0.1` is.
+      # WHICH SERVER an endpoint string names, and whether that server is on
+      # this machine.
       #
       # NOT {CLI::Backend::Endpoint}, which validates an operator's `--api-base`
       # at launch and REFUSES a bad one. This never refuses anything: it runs on
       # the round-trip path, where the only useful answers are a key and a
       # boolean.
       #
-      # The two questions are deliberately answered in one place, because they
-      # have to agree. {DEFAULT_WIDTH}'s justification is that every loopback
-      # spelling is one server -- and if {.canonical} did not fold exactly what
-      # {.local?} folds, the keying would defeat that argument by handing each
-      # spelling its own slot. It did, once: F26 reproduced through the real
-      # construction sites after admission had supposedly fixed it.
+      # The two questions are answered in ONE place because they have to agree.
+      # {Admission::DEFAULT_WIDTH}'s justification is that every loopback
+      # spelling is one server, and if {.canonical} did not fold exactly what
+      # {.local?} folds the keying would defeat that argument by handing each
+      # spelling its own slot. It did, once, reproducing the overlap through the
+      # real construction sites after admission had supposedly fixed it.
       module Endpoint
         # Loopback by NAME rather than by address. RFC 6761 reserves `localhost`
         # and every name under it for loopback, so `foo.localhost` is as local as
@@ -67,27 +64,21 @@ module Lain
         #
         # == Both misclassifications are harmful, in OPPOSITE directions
         #
-        # Read this before adjusting anything here, because the two errors do not
-        # look alike and only one of them is loud.
-        #
         # A FALSE POSITIVE -- calling a hosted endpoint local -- gates it at one
-        # in flight and SERIALISES concurrent subagents, the throughput
-        # regression the locality rule exists to prevent. A FALSE NEGATIVE --
+        # in flight and SERIALISES concurrent subagents. A FALSE NEGATIVE --
         # calling a local endpoint hosted -- hands it {Admission::Null} and
-        # leaves F26 live, SILENTLY: nothing errors, two round trips simply
-        # overlap on a one-slot server again. Neither direction is the safe
+        # leaves the overlap live SILENTLY: nothing errors, two round trips
+        # simply share a one-slot server again. Neither direction is the safe
         # default, so neither may be relaxed to fix the other.
         #
         # == What counts as local
         #
         # Loopback in every spelling, because they are all one server: the name
-        # `localhost` and RFC 6761's subdomains of it, a trailing-dot FQDN
-        # (`localhost.` is the same name, explicitly rooted), any address in
-        # 127.0.0.0/8 -- `127.0.0.1` and `127.5.5.5` reach one ollama -- `::1`,
-        # and the IPv4-mapped forms {IPAddr#loopback?} folds in. Also the
-        # UNSPECIFIED address, `0.0.0.0` and `::`: `#loopback?` answers false for
-        # it, but as a destination it means this host, `Backend::Endpoint`
-        # accepts it, and a bind-all base is a thing operators really write.
+        # `localhost` and RFC 6761's subdomains of it, a trailing-dot FQDN, any
+        # address in 127.0.0.0/8, `::1`, and the IPv4-mapped forms
+        # {IPAddr#loopback?} folds in. Also the UNSPECIFIED address, `0.0.0.0`
+        # and `::`: `#loopback?` answers false for it, but as a destination it
+        # means this host and a bind-all base is a thing operators write.
         #
         # A hostname is never RESOLVED to decide this. `myollama` in `/etc/hosts`
         # pointing at 127.0.0.1 reads as hosted, deliberately: a DNS lookup on
@@ -99,10 +90,9 @@ module Lain
         # A `unix:` scheme, or no scheme with an absolute (or empty) path, is a
         # socket or a filesystem path and is local by construction. A bare
         # `api.anthropic.com` is NOT: `URI` reads it as a relative PATH with no
-        # host, so treating "no host" as local on its own silently gated a hosted
-        # endpoint. Only the CLI is protected from that by validation at
-        # `Backend#initialize`; every direct `api_base:` caller -- bench, the
-        # oracle tiers, future wiring -- reaches here unfiltered.
+        # host, so treating "no host" as local on its own silently gated a
+        # hosted endpoint. Only the CLI is protected from that by validation at
+        # launch; every direct `api_base:` caller reaches here unfiltered.
         #
         # An UNPARSEABLE endpoint answers false rather than raising. A gate is
         # not the right place to refuse a malformed base.

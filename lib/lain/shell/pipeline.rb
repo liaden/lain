@@ -94,10 +94,10 @@ module Lain
       # An ALLOWLIST, because "I have no evidence this is safe under
       # attacker-chosen stdin" is the honest reading of an absence. Membership
       # therefore requires having READ the program's flags, not having recognised
-      # its name: `rg` sat here in this card's first draft and was REMOVED after
-      # the panel measured `echo hi | rg --pre=id foo` executing `id` -- the
-      # `time` defect, self-inflicted. Hand-maintained and incomplete, in the
-      # direction that costs a refusal rather than an execution.
+      # its name: `rg` sat here until `echo hi | rg --pre=id foo` was measured
+      # executing `id` -- the `time` defect, self-inflicted. Hand-maintained and
+      # incomplete, in the direction that costs a refusal rather than an
+      # execution.
       #
       # `sh`, `ruby`, `python`, `awk`, `sed` and `psql` are the case this list
       # exists for. They are also on {Verdict}'s name denylist and so abstain

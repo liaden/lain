@@ -9,11 +9,10 @@ module Lain
     # An append-only write-ahead log of raw provider response bytes: one file per
     # session (`<session-stem>.wal` beside the NDJSON), one frame per round trip.
     #
-    # It is a {Spool} -- the Provider opens a frame with the request digest it
-    # alone computes, and the transport only appends chunks and closes. The bytes
-    # spooled are EXACTLY what came off the wire (SSE lines, or a sync body before
-    # JSON parsing), never a re-serialization: that verbatim property is the whole
-    # point, since a salvage pass rebuilds a turn by re-parsing these bytes.
+    # The bytes spooled are EXACTLY what came off the wire (SSE lines, or a sync
+    # body before JSON parsing), never a re-serialization: that verbatim
+    # property is the whole point, since a salvage pass rebuilds a turn by
+    # re-parsing them.
     #
     # == Frame format, and what the reader actually trusts
     #
@@ -21,14 +20,13 @@ module Lain
     #
     #   RS {"request_digest":..,"at":..}\n <raw bytes> RS {"bytes":N,"complete":b}\n
     #
-    # This is DELIMITER framing, not length framing: {Reader} scans for RS
-    # (ASCII 0x1E, RFC 7464 json-seq's separator) and uses the terminator's byte
-    # count only as a completeness CHECKSUM, never as a seek distance. The
-    # invariant that makes the scan sound is RS-absence in payloads -- Anthropic
-    # escapes C0 controls in its JSON/SSE output, the same trust shape as
-    # NDJSON's no-embedded-newline -- and it is trusted loudly, not silently:
-    # an embedded RS mis-slots a record mid-file and the reader refuses with
-    # {CorruptFrame} rather than let completeness lie.
+    # DELIMITER framing, not length framing: {Reader} scans for RS (ASCII 0x1E,
+    # RFC 7464 json-seq's separator) and uses the terminator's byte count only
+    # as a completeness CHECKSUM, never as a seek distance. What makes the scan
+    # sound is RS-absence in payloads -- Anthropic escapes C0 controls in its
+    # JSON/SSE output, the same trust shape as NDJSON's no-embedded-newline --
+    # and it is trusted LOUDLY: an embedded RS mis-slots a record mid-file and
+    # the reader refuses with {CorruptFrame} rather than let completeness lie.
     #
     # A frame is COMPLETE only when its terminator is present, marks
     # `complete: true`, and its byte count matches the bytes on disk. A frame
@@ -38,13 +36,12 @@ module Lain
     #
     # == One file, many fibers: no interleaved records, ever
     #
-    # T17w lets the main Agent and every subagent share ONE spool, and parallel
-    # subagents fan out as sibling async fibers that all reach this ONE file.
-    # Async fibers yield to the scheduler on socket IO, so two frames' writes
-    # could interleave AT RECORD GRANULARITY -- and an interleaved record is
-    # exactly the corruption {Reader} refuses ("bytes trail a terminator
-    # record"), which would make a crashed parallel-subagent session
-    # unresumable. Two guards make interleaving structurally impossible:
+    # The main Agent and every subagent share ONE spool, and parallel subagents
+    # fan out as sibling async fibers reaching this ONE file. Async fibers yield
+    # to the scheduler on socket IO, so two frames' writes could interleave AT
+    # RECORD GRANULARITY -- exactly the corruption {Reader} refuses, which would
+    # make a crashed parallel-subagent session unresumable. Two guards make
+    # interleaving structurally impossible:
     #
     # 1. Every write to the file goes through {@monitor}. A single `write` never
     #    tears, whatever the fiber scheduler does around it.
@@ -68,24 +65,19 @@ module Lain
     # tail. A DIFFERENT fiber opening mid-stream is a genuine parallel subagent,
     # so it buffers.
     #
-    # DURABILITY TRADE, stated honestly. The SERIAL case (one frame open at a
-    # time -- the overwhelming common case, and every non-subagent session) is
-    # byte-identical to before: it streams, mid-stream watermark fsyncs land
-    # durably well before the terminator, and a SIGKILL mid-stream leaves a torn
-    # partial the Reader surfaces incomplete -- a reviewable artifact, the plan's
-    # decision 5.
+    # DURABILITY TRADE, stated honestly. The SERIAL case -- one frame open at a
+    # time, every non-subagent session -- streams, so its watermark fsyncs land
+    # well before the terminator and a SIGKILL mid-stream leaves a torn partial
+    # the Reader surfaces incomplete: a reviewable artifact.
     #
-    # A CONCURRENTLY-buffered frame gives that up entirely: its bytes live in
-    # memory, unwritten, until a DRAIN POINT flushes {@pending} -- the live
-    # streaming frame closing, a same-fiber takeover of the streaming slot, or
-    # the spool closing. Between its own `close` and the next drain point the
-    # frame is COMPLETE but not yet on disk, so a SIGKILL there loses a WHOLE
-    # completed buffered frame, not merely a partial -- the buffered case has no
-    # reviewable-torn-tail consolation the streaming case has. (A graceful spool
-    # close always drains, so a clean exit never loses one; only a SIGKILL in
-    # that window does.) Only the second-and-later of a set of genuinely
-    # simultaneous frames pays this; the streaming sibling still leaves its own
-    # reviewable partial.
+    # A CONCURRENTLY-buffered frame gives that up entirely. Its bytes live in
+    # memory until a DRAIN POINT flushes {@pending} -- the live streaming frame
+    # closing, a same-fiber takeover of the slot, or the spool closing -- so
+    # between its own `close` and the next drain point the frame is COMPLETE but
+    # not on disk, and a SIGKILL there loses a WHOLE completed frame rather than
+    # a partial. A graceful close always drains, so only a SIGKILL in that
+    # window does it, and only the second-and-later of a set of genuinely
+    # simultaneous frames pays it.
     class ResponseWal
       # An impossible record shape mid-file. Raised, never skipped: a reader
       # that guesses across corruption cannot promise `complete` is true.
@@ -93,11 +85,10 @@ module Lain
       # RFC 7464 record separator; see the class comment for why RS and not \n.
       RECORD_SEPARATOR = "\x1e"
 
-      # fsync mid-stream every 64 KiB so a long stream is durable well before its
-      # terminator, without paying an fsync per token-sized SSE chunk. The file is
-      # opened `sync: true`, so every write already reaches the OS (a SIGKILL
-      # leaves the bytes recoverable); the watermark fsync is the disk-durability
-      # knob on top of that.
+      # fsync mid-stream every 64 KiB so a long stream is durable well before
+      # its terminator, without paying an fsync per token-sized SSE chunk. The
+      # file is opened `sync: true`, so every write already reaches the OS; this
+      # is the disk-durability knob on top of that.
       FSYNC_WATERMARK = 64 * 1024
 
       Entry = Data.define(:request_digest, :bytes, :complete) do
@@ -108,10 +99,9 @@ module Lain
         def corrupt? = false
       end
 
-      # The streaming frame: the sole frame permitted to write to the file
-      # incrementally (see the class comment). Its header was written when it
-      # opened; it appends raw chunks and, at close, writes its terminator and
-      # flushes any buffered siblings that closed while it was live.
+      # The sole frame permitted to write to the file incrementally. At close it
+      # writes its terminator and flushes any buffered siblings that closed
+      # while it was live.
       class StreamingFrame
         def initialize(wal:, watermark:)
           @wal = wal
@@ -136,9 +126,9 @@ module Lain
       end
 
       # A frame opened while another was already streaming: it buffers its whole
-      # header+bytes+terminator in memory (binary, so wire bytes and the ASCII
-      # JSON records concatenate without an encoding clash) and lands as ONE
-      # atomic locked write at close -- never mid-stream.
+      # header+bytes+terminator in memory -- binary, so wire bytes and the ASCII
+      # JSON records concatenate without an encoding clash -- and lands as ONE
+      # atomic locked write at close, never mid-stream.
       class BufferedFrame
         def initialize(wal:, header:)
           @wal = wal
@@ -179,11 +169,8 @@ module Lain
         @pending = []
       end
 
-      # Opens a frame for one round trip. If no frame is currently streaming this
-      # one streams (its header lands immediately, so a crash before the first
-      # byte still leaves a readable, incomplete frame); otherwise it buffers so
-      # its records never interleave with the live stream's (see the class
-      # comment).
+      # A frame that gets the streaming slot writes its header immediately, so a
+      # crash before the first byte still leaves a readable, incomplete frame.
       def open_frame(request_digest:)
         @monitor.synchronize do
           header = ResponseWal.header_record(request_digest)
@@ -312,9 +299,9 @@ module Lain
       end
 
       # A long-lived append handle spanning every frame of the session, so the
-      # block form does not apply; #close owns its lifetime. `sync: true` pushes
-      # each write straight to the OS, so a SIGKILL leaves the bytes recoverable.
-      # Only ever touched under {@monitor}.
+      # block form does not apply and #close owns its lifetime. `sync: true`
+      # pushes each write straight to the OS, so a SIGKILL leaves the bytes
+      # recoverable. Only ever touched under {@monitor}.
       def writer
         @writer ||= File.open(@path, "ab").tap { |io| io.sync = true } # rubocop:disable Style/FileOpen
       end

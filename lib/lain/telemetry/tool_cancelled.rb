@@ -2,15 +2,20 @@
 
 module Lain
   module Telemetry
-    module Guards
-      # A cancellation record must name the assistant turn whose calls were
-      # cancelled and at least one cancelled call. The second is not pedantry:
-      # a turn torn AFTER every tool returned commits its real results and is
-      # not a cancellation at all, so a record with an empty `cancelled` would
-      # be the one shape that reads as a cancellation while describing none.
-      class ToolCancelled < Guard
+    module Carriers
+      # At least one cancelled call is required, and that is not pedantry: a
+      # turn torn AFTER every tool returned commits its real results and is not
+      # a cancellation, so an empty `cancelled` is the one shape that reads as a
+      # cancellation while describing none.
+      #
+      # The optional lists take LAMBDA defaults so `settle!` hands each record a
+      # fresh, deeply frozen Array -- a bare `default: []` would share ONE Array
+      # across every record that omitted it.
+      class ToolCancelled < Declarative::Carrier
         attribute :head
         attribute :cancelled
+        attribute :running, default: -> { [] }
+        attribute :completed, default: -> { [] }
         validates :head, presence: { message: "must name the assistant turn whose calls were cancelled, got nil" }
         validates :cancelled, presence: { message: "must name at least one cancelled call" }
       end
@@ -29,30 +34,26 @@ module Lain
     # The three id lists partition the turn's calls, and the partition IS the
     # record's content: `completed` kept the tool's own output, `running` were
     # dispatched and had not returned, `cancelled` is every call with no output
-    # (`running` is its subset). The split matters because it is the one thing
-    # a load-side repair can never reconstruct -- from a journal alone, "the
-    # tool never ran" and "the tool ran and its effects are on disk" are
-    # indistinguishable, and only the process that was present at the tear
-    # knows which.
+    # (`running` is its subset). The split is the one thing a load-side repair
+    # can never reconstruct -- from a journal alone, "the tool never ran" and
+    # "the tool ran and its effects are on disk" are indistinguishable, and only
+    # the process present at the tear knows which.
     #
-    # A turn whose tools all returned emits NOTHING, the same doctrine
-    # {ProviderWait} keeps: the presence of a record is itself the signal, and
-    # an uninterrupted session journals none of these at all.
+    # A turn whose tools all returned emits NOTHING: the presence of a record is
+    # itself the signal.
     ToolCancelled = Data.define(:head, :cancelled, :running, :completed) do
       include Journalable
 
-      def initialize(head:, cancelled:, running: [], completed: [])
-        Guards::ToolCancelled.check!(head:, cancelled:)
-
-        super(head: head.dup.freeze, cancelled: freeze_ids(cancelled),
-              running: freeze_ids(running), completed: freeze_ids(completed))
+      # `settle!` rebuilds each id list as a frozen Array of frozen Strings,
+      # which is what keeps the record `Ractor.shareable?` -- an Array of
+      # Strings is only as immutable as its elements.
+      #
+      # `head`/`cancelled` are named so they stay REQUIRED; the optional lists
+      # ride in `**optional` so omitting them reaches the carrier's default
+      # rather than being re-defaulted here, in two places at once.
+      def initialize(head:, cancelled:, **optional)
+        super(**Carriers::ToolCancelled.settle!(head:, cancelled:, **optional))
       end
-
-      private
-
-      # Deeply frozen, so the record stays `Ractor.shareable?` like every other
-      # event: an Array of Strings is only as immutable as its elements.
-      def freeze_ids(ids) = ids.map { |id| id.dup.freeze }.freeze
     end
   end
 end

@@ -234,7 +234,7 @@ RSpec.describe Lain::Tool::Bounds do
     end
 
     # Both shapes answer the same question about a size; only what they DO with
-    # the answer differs. T5, T6 and T13 all lean on that.
+    # the answer differs. The callers that carry bounds all lean on that.
     it "answers admits? in both shapes" do
       expect(Lain::Tool::Bounds::Enumeration.new(limit: 1, unit: "rows"))
         .to respond_to(:admits?)

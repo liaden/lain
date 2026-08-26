@@ -2,11 +2,11 @@
 
 require "async"
 
-# The asker a run wires when nobody is at the terminal. It had no spec file
-# until T9, and closing that gap is part of that card: the EOF door and this
-# one are the same fact reached two ways -- no human will answer -- so the two
-# refusals have to keep saying the same thing, and only a spec on each can
-# notice when one of them stops.
+# The asker a run wires when nobody is at the terminal. It went unspecced for a
+# long time, and closing that gap matters: the EOF door and this one are the
+# same fact reached two ways -- no human will answer -- so the two refusals have
+# to keep saying the same thing, and only a spec on each can notice when one of
+# them stops.
 #
 # What is pinned here is the DOCTRINE, not the sentence: that the call comes
 # back rather than parking, that it comes back as an error in the tool's own

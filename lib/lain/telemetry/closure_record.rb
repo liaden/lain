@@ -2,11 +2,11 @@
 
 module Lain
   module Telemetry
-    module Guards
+    module Carriers
       # A closure pointer must name the closure it points at, the step it
       # closed, the plan that step belongs to, and the step's S/M/L size class
-      # (P5 calibrates seam placement over size from the Journal alone).
-      class ClosureRecord < Guard
+      # (a later sweep calibrates seam placement over size from the Journal alone).
+      class ClosureRecord < Declarative::Carrier
         attribute :closure_digest
         attribute :step_id
         attribute :plan_digest
@@ -21,7 +21,7 @@ module Lain
     # The Journal-resident pointer to one {Plan::Closure}: `closure_digest`
     # addresses the frozen record in the Store, `step_id` and `plan_digest` are
     # the join keys a report groups closures by, `size` is the step's S/M/L
-    # class (carried so P5 calibrates seam placement over size from the Journal
+    # class (carried so a sweep calibrates seam placement over size from the Journal
     # alone -- Plan::Document is never journaled, so this pointer is the only
     # place size survives), and `chunk_turn_digests` names the elided span the
     # closure attests -- the same digests the closure's own `elided_digests`
@@ -31,14 +31,14 @@ module Lain
     #
     # Emitted by {Plan::Closure#record}, the same pairing {MemoryRoot} makes: a
     # {Plan::Closure} is put into the in-memory Store by its content address, and
-    # this record journals that address so a later process -- P5's calibration, a
+    # this record journals that address so a later process -- a calibration sweep, a
     # resumed session -- recovers the closure from the Journal alone, the Store
     # having died with its process.
     ClosureRecord = Data.define(:closure_digest, :step_id, :plan_digest, :size, :chunk_turn_digests) do
       include Journalable
 
       def initialize(closure_digest:, step_id:, plan_digest:, size:, chunk_turn_digests:)
-        Guards::ClosureRecord.check!(closure_digest:, step_id:, plan_digest:, size:)
+        Carriers::ClosureRecord.check!(closure_digest:, step_id:, plan_digest:, size:)
 
         super(
           closure_digest: closure_digest.dup.freeze,

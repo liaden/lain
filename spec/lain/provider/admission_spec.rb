@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
-# F26: nothing in lain owned a provider's CAPACITY, so the harness put two
-# requests on a one-slot server and read the silence it caused itself as a dead
-# stream. {Provider::Admission} is that missing concept -- a gate per RESOLVED
+# Nothing in lain owned a provider's CAPACITY, so the harness put two requests
+# on a one-slot server and read the silence it caused itself as a dead stream.
+# {Provider::Admission} is that missing concept -- a gate per RESOLVED
 # ENDPOINT, entered around a round trip.
 #
 # The last example is not an ordinary unit test, and it is the reason this object
 # is hand-rolled rather than an `Async::Semaphore`. It was a standalone probe
-# during T1's escalation, where it measured three failures at once: the
+# during an escalation, where it measured three failures at once: the
 # `FiberError: fiber called across threads` lands in the RELEASING fiber (the
 # agent's turn, killed by an unrelated resend), the waiting thread stays parked
 # after a 5s join, and `Semaphore#release` decrements before it resumes, so the
@@ -201,13 +201,14 @@ RSpec.describe Lain::Provider::Admission do
     end
   end
 
-  # Width 1 is a LOCAL-SERVER claim -- F26 is a one-slot local server handed two
-  # requests -- so it is applied only where that claim holds. A hosted endpoint
-  # gated at 1 would serialise concurrent subagents: `cli/wiring.rb:475` ->
-  # `toolset_build.rb:316` builds ONE shared `Subagent::Seam` provider that every
-  # child spawn runs over, and those children run at once. One provider, N
-  # concurrent callers, one endpoint key -- so sharing the client does not soften
-  # it, and the result is a throughput regression nobody asked for.
+  # Width 1 is a LOCAL-SERVER claim -- the defect was a one-slot local server
+  # handed two requests -- so it is applied only where that claim holds. A
+  # hosted endpoint gated at 1 would serialise concurrent subagents:
+  # `cli/wiring.rb:475` -> `toolset_build.rb:316` builds ONE shared
+  # `Subagent::Seam` provider that every child spawn runs over, and those
+  # children run at once. One provider, N concurrent callers, one endpoint key
+  # -- so sharing the client does not soften it, and the result is a throughput
+  # regression nobody asked for.
   describe "locality, which is what width 1 is a claim about" do
     # The most callers ever inside at once, which is the only thing "does it
     # serialise" can mean. A Hash rather than two locals so {#occupying} can
@@ -319,7 +320,7 @@ RSpec.describe Lain::Provider::Admission do
     # models -- and the local?/hosted dichotomy above has no room for it.
     # {ENV_KEY} cannot express it either: it is one process-wide number, so
     # raising it to 3 for the cloud endpoint also raises the LOCAL one off
-    # {DEFAULT_WIDTH} and re-opens F26.
+    # {DEFAULT_WIDTH} and re-opens the defect.
     describe "a width the caller declares, where locality cannot classify the endpoint" do
       let(:cloud) { "https://ollama.com" }
 
@@ -408,9 +409,9 @@ RSpec.describe Lain::Provider::Admission do
         end
       end
 
-      # THE ASYMMETRY IS THE POINT, not an oversight. F26 is a one-slot local
-      # server, and a caller that could declare its way past {DEFAULT_WIDTH}
-      # would re-open exactly that from inside the process.
+      # THE ASYMMETRY IS THE POINT, not an oversight. The defect was a one-slot
+      # local server, and a caller that could declare its way past
+      # {DEFAULT_WIDTH} would re-open exactly that from inside the process.
       it "ignores a declared width on a local endpoint" do
         unpinned do
           with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
@@ -578,8 +579,9 @@ RSpec.describe Lain::Provider::Admission do
         end
       end
 
-      # The other half: a REAL gate is never replaced, so F26's one slot cannot
-      # be talked out of by a later declaration any more than by a first one.
+      # The other half: a REAL gate is never replaced, so a local endpoint's one
+      # slot cannot be talked out of by a later declaration any more than by a
+      # first one.
       it "keeps a local endpoint at one slot when a later caller declares a width" do
         unpinned do
           with_env("LAIN_PROVIDER_CONCURRENCY" => nil) do
@@ -726,7 +728,8 @@ RSpec.describe Lain::Provider::Admission do
   end
 
   describe described_class::Null do
-    # A Null Object may do nothing; it may not LIE. T3's journal reads this.
+    # A Null Object may do nothing; it may not LIE. {Admission::Journal}
+    # reads this.
     it "reports the callers actually inside it, rather than a flat zero" do
       admission = described_class.new(endpoint: "http://unbounded.example")
       seen = nil
@@ -879,7 +882,7 @@ RSpec.describe Lain::Provider::Admission do
     end
 
     # THE REGRESSION TEST FOR THE WHOLE CARD, promoted from a review probe that
-    # reproduced F26 after admission had supposedly fixed it.
+    # reproduced the original defect after admission had supposedly fixed it.
     #
     # The pairing is the real one, not a convenient one: a chat provider built
     # from `--api-base`, against the BARE `Provider::Ollama.new` that

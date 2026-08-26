@@ -1443,8 +1443,7 @@ XDG path relative, which put machine state back inside the user's repository)
    `call_model` and cannot interleave into the dispatch window; the journal's five `run_interrupted`
    records follow 25/25/25/25/**12** turns, and the one that stranded the call came after 12. The
    repair therefore lands **at load** (`Resume`), which is trigger-agnostic and covers SIGKILL and
-   OOM that no in-process handler sees. Findings in
-   [`planning/qa-findings-round8-2026-08-21.md`](planning/qa-findings-round8-2026-08-21.md).
+   OOM that no in-process handler sees.
 
 35. **Planned (2026-08-23, panel-reviewed)** —
    `planning/specs/chunk-qa-round9-where-the-record-lives.md`: discharge QA round 9. **Most of its
@@ -1496,7 +1495,7 @@ XDG path relative, which put machine state back inside the user's repository)
    predicate contradicted its own acceptance criterion (and exposed a second unreported defect — a
    good UTF-8 file already dies under `LC_ALL=C`), a wave-1 card with a wave-2 criterion, and a
    **silently dropped round-9 card** that would have left `collapse_strategy` shipped and never
-   written. Findings in `planning/qa-findings-round10-2026-08-23.md`.
+   written.
 
 37. **Landed 2026-08-24** (24 commits, `c46c1a6c`..this one; planned 2026-08-24, panel-reviewed) —
    `planning/specs/chunk-ollama-cloud-arm.md`: **a second ollama arm, so the provider axis has a cut

@@ -3,7 +3,7 @@
 require "async"
 require "async/queue"
 
-# 5-0.3 / OM-0: the loop runs under async's fiber scheduler so that a user
+# The loop runs under async's fiber scheduler so that a user
 # interrupt (Ctrl-C, a supervising timeout) is *structured* cancellation --
 # Async::Task#stop raises Async::Stop at the task's next scheduler yield, not
 # at an arbitrary bytecode boundary the way Thread#kill would. Two properties
@@ -128,14 +128,14 @@ RSpec.describe "Lain::Agent cancellation" do
     end
   end
 
-  # I6 review fix: the exactly-once consumption edge holds by construction --
+  # Review fix: the exactly-once consumption edge holds by construction --
   # Async::Stop escapes `rescue StandardError`, and AskHuman#perform appends
   # the hand-over only AFTER promise.await returns -- but nothing pinned it.
   # This parks a stop exactly inside the await and pins the no-drop /
   # no-double-cite property: nothing appended, nothing cited, and a resumed
   # exchange cites ONLY its own question. (Verified red by mutation: appending
   # the digest BEFORE the await makes the resumed delivery cite the cancelled
-  # question and this example fail -- see the I6 handback.)
+  # question and this example fail.)
   describe "a stop raised while ask_human awaits the human" do
     it "appends no hand-over, cites no turn, and a resumed exchange cites only its own question" do
       agent = nil

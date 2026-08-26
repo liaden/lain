@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
-# B12 (chunk-orchestration-arms-isolation): the arms bench sweep. Runs the
-# three orchestration arms -- single-thread (the control), orchestrator-worker,
-# and dual-ledger -- over B0's ArmTasks suite, driven by committed recorded
-# trajectories through Provider::Mock (deterministic, offline, zero network),
-# and reports grader, tokens, wall-time, context-loss, and replans/stalls as
-# distributions PER ARM, per category, with single-thread present as the
-# control every arm is measured against.
+# The arms bench sweep. Runs the three orchestration arms -- single-thread (the
+# control), orchestrator-worker, and dual-ledger -- over the ArmTasks suite,
+# driven by committed recorded trajectories through Provider::Mock
+# (deterministic, offline, zero network), and reports grader, tokens,
+# wall-time, context-loss, and replans/stalls as distributions PER ARM, per
+# category, with single-thread present as the control every arm is measured
+# against.
 RSpec.describe Lain::Bench::ArmSweep do
   def tasks_path = File.join(__dir__, "..", "..", "fixtures", "arms", "tasks.yml")
   def recordings_path(name) = File.join(__dir__, "..", "..", "fixtures", "bench", "arm_sweep", "#{name}.yml")

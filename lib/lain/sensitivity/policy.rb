@@ -18,10 +18,9 @@ module Lain
     # project's own rule as ours makes "why is my file denied?" unanswerable.
     #
     # `tool_use_id` and `tool` ride along rather than being read back off the
-    # effect, and that is what keeps the {Effect::Approval} unwrapping in ONE
+    # effect, which is what keeps the {Effect::Approval} unwrapping in ONE
     # place: {Effect::Handler::Sensitivity} sits ahead of the Gate, so it sees
-    # wrappers, which carry neither field. This class has already looked through
-    # the wrapper to decide, so it alone holds the call they belong to.
+    # wrappers, which carry neither field.
     #
     # Frozen but deliberately NOT deeply so: `path` is whatever the model's
     # input held, and coercing it here would duplicate the normalization
@@ -32,7 +31,9 @@ module Lain
 
     # Does this tool call name a sensitive path -- asked by
     # {Effect::Handler::Gate}, so a `read_file` on `.env` reaches a human
-    # although `read_file` declares itself tier 1.
+    # although `read_file` declares itself tier 1. The whole three-place
+    # boundary, and the measured detector behind it, is in ARCHITECTURE.md's
+    # "The secret boundary".
     #
     # The gate already turns on {Tool#requires_approval?}, which is the TIER
     # axis: whether the model controls the command string. This is the second
@@ -44,30 +45,8 @@ module Lain
     # == It is the PATH boundary, and it is pre-read
     #
     # Only the name is judged, before the file is opened. Whether the BYTES look
-    # like a credential is a different question with a different answer -- it is
-    # post-read, it cannot withhold the read that already happened, and it lives
-    # in its own arm. The two are deliberately separate, and this one makes no
-    # claim about content.
-    #
-    # == The one piece of coupling, in one object
-    #
-    # {PATH_FIELDS} is the whole of what this class knows about tools: which
-    # input field names a path, per tool. That coupling is real and cannot be
-    # abolished -- something has to know that `bash` names a directory in `cwd`
-    # while `read_file` names a file in `path` -- so it is DATA, in one place, a
-    # reader can check against the tools' own {Tool::Input} declarations. The
-    # alternative, a `path`-shaped field sniffed off any input, gates on strings
-    # the tool will never act on and reads as a rule nobody wrote.
-    #
-    # A tool the table does not name is not gated by this policy, which is why
-    # the table is pinned by a spec that fails by NAME when a new path-taking
-    # tool ships rather than letting it arrive unjudged in silence. That spec
-    # has no allowlist to land in, deliberately: the table and the set of
-    # shipped tools taking a path must be the SAME set. An earlier edition
-    # allowlisted the three AST readers as "scoped out", which made a green
-    # suite state three bypasses as intended -- and `ast_search path=.env
-    # pattern="$A = $B"` returns the captured VALUES, byte-for-byte what
-    # `read_file` returns.
+    # like a credential is post-read, cannot withhold the read that already
+    # happened, and lives in its own arm. This one makes no claim about content.
     #
     # == Not ordinary, rather than gated
     #
@@ -78,7 +57,11 @@ module Lain
     # out; gating it as well costs at most one prompt for a file already
     # refused, and is the direction this boundary has to err in.
     class Policy
-      # tool name => the input field that names a path for that tool.
+      # tool name => the input field that names a path for that tool, and the
+      # whole of what this class knows about tools. Pinned by a spec that fails
+      # BY NAME when a new path-taking tool ships, with no allowlist to land in;
+      # see ARCHITECTURE.md's "The secret boundary" for why a `path`-shaped
+      # field sniffed off any input was rejected.
       PATH_FIELDS = {
         "read_file" => "path",
         "glob" => "path",
@@ -153,23 +136,20 @@ module Lain
       # SAME table {#gates?} does -- one extraction, so the two axes cannot drift
       # about which field names a path -- and hands back the whole verdict,
       # because the refusal message and {Telemetry::ReadRefused} both want the
-      # REASON: `:protected` and `:configured` are different findings, and
-      # reporting a project's own rule as ours makes "why is my file denied?"
-      # unanswerable.
+      # REASON.
       #
       # == Why this unwraps an Approval and {#gates?} does not
       #
-      # The asymmetry is real and it is not an oversight, so do not "fix" it by
+      # The asymmetry is real and is not an oversight, so do not "fix" it by
       # adding an unwrap to {#gates?} -- that would change WHEN the gate fires.
-      # {Effect::Handler::Gate#perform} unwraps before it evaluates its own
-      # axis, so `gates?` only ever sees the inner call.
+      # {Effect::Handler::Gate#perform} unwraps before it evaluates its own axis,
+      # so `gates?` only ever sees the inner call.
       # {Effect::Handler::Sensitivity} sits AHEAD of the gate and sees the
       # wrapper, and without this an {Effect::Approval} around a denied
       # `read_file` would be declined here, unwrapped by Gate, and approved --
-      # wrapping would lift a denial nothing is supposed to lift. Looking
-      # through it belongs HERE and not in that handler: this class already owns
-      # "which effects name paths", so this is the single home for the knowledge
-      # rather than a second copy of Gate's unwrapping contract.
+      # wrapping would lift a denial nothing is supposed to lift. It belongs
+      # HERE, not in that handler, because this class already owns "which
+      # effects name paths".
       #
       # @param effect [Lain::Effect] any effect at all; the question is total
       #   over the vocabulary, so no caller guards on kind first
@@ -222,17 +202,14 @@ module Lain
       # carrying both, so there is no ambiguity to resolve here.
       #
       # The Hash check is not defensive habit. {Effect::ToolCall} does not
-      # constrain `input`, and this runs on the SYNCHRONOUS dispatch path
-      # BEFORE {Tool::Input} validation, so an Array reaches `Array#[]("path")`
-      # -- a TypeError out of {Effect::Handler::Gate#handles?}, where nothing
-      # raised before this class existed. The repair that a raise on a security
-      # path invites is a `rescue` answering false, and that is this boundary
-      # failing OPEN. A shape carrying no readable field is declined instead,
-      # which is the same answer with no trap in it.
-      #
-      # It also stops `String#[]` from answering: on a raw JSON payload that is
-      # a SUBSTRING SEARCH, so a fragment of the wire bytes would be read as a
-      # path. Harmless today by luck rather than by rule.
+      # constrain `input`, and this runs on the SYNCHRONOUS dispatch path BEFORE
+      # {Tool::Input} validation, so an Array reaches `Array#[]("path")` -- a
+      # TypeError out of {Effect::Handler::Gate#handles?}, where nothing raised
+      # before this class existed. The repair a raise on a security path invites
+      # is a `rescue` answering false, and that is this boundary failing OPEN. A
+      # shape carrying no readable field is declined instead. It also stops
+      # `String#[]` from answering: on a raw JSON payload that is a SUBSTRING
+      # SEARCH, so a fragment of the wire bytes would be read as a path.
       def at(input, field)
         return nil unless input.is_a?(Hash)
 

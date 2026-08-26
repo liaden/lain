@@ -4,7 +4,7 @@
 #
 # `Forge::Gh` shells out, `Forge::Gh::Recorded` replays a journal, and
 # `Forge::Journaled` wraps either -- three objects that must be substitutable for
-# one another, because T24's landing holds one of them and must not care which.
+# one another, because their caller holds one of them and must not care which.
 # Deliberate identity is what a shared group states MECHANICALLY: three copies of
 # these cases could only stay identical by convention, and a fix applied to one
 # would be a fix missing from the other two (the reasoning

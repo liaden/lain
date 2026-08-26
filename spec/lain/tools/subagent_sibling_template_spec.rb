@@ -67,7 +67,7 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
   # "Different roles with the same template": two DIFFERENT tools (different
   # only-sets -- the closest thing this seam has to roles) over the same union
   # and template must still share prefix bytes, because under handler_union the
-  # attenuation never reaches the schema. Aaron: this is the CE-4 win stated as
+  # attenuation never reaches the schema. Aaron: this is the cache win stated as
   # bytes.
   it "two differently-attenuated siblings over one template share full prefix bytes" do
     a = build_tool(provider: (pa = mock(text_response("a"))),
@@ -199,7 +199,7 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
   # FIXED (was the Schneeman SHOULD-FIX finding): #launch_actor builds the
   # child through the same child_context seam (the template rides) and now
   # calls journal_floor too -- an actor-mode sibling below the floor is
-  # reported, never the "silently un-cacheable" state AC4 forbids.
+  # reported, never the "silently un-cacheable" state the criterion forbids.
   it "launch_actor threads the template AND journals the floor note" do
     journal = Lain::Channel.new
     provider = mock(text_response("actor done"))

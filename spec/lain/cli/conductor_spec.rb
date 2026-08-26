@@ -2,14 +2,14 @@
 
 require "timeout"
 
-# T22: the per-ask supervision conductor. It co-locates the run task, a
+# The per-ask supervision conductor. It co-locates the run task, a
 # {Lain::CLI::Shutdown} coordinator, and the countdown ticker in ONE reactor (so
 # Budget#interrupt stops a task on its own reactor -- never cross-thread), routes
 # OS signals to that coordinator for the ask's duration, drives the TTY countdown,
 # and reports whether the session closed. Its own {#close} is the guarded closer
 # both the coordinator and chat's normal-exit ensure share.
 #
-# Driven with REAL signals delivered to self (the T20 SIGUSR2 idiom): a parking
+# Driven with REAL signals delivered to self (the SIGUSR2 idiom): a parking
 # provider makes the reactor provably inside a model call, and an injected clock
 # makes grace expiry synchronous, so no example races a real 60s window.
 RSpec.describe Lain::CLI::Conductor do
@@ -17,7 +17,7 @@ RSpec.describe Lain::CLI::Conductor do
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
 
   # Records the session-record calls in order, so an example can pin the
-  # catch_up -> interrupted -> close ordering the B5 amendment fixed.
+  # catch_up -> interrupted -> close ordering a later amendment fixed.
   let(:chronicle) do
     Class.new do
       def initialize = @events = []
@@ -290,7 +290,7 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 
-  # T5: Conductor is the one place a user prompt is answered, so #read_prompt
+  # Conductor is the one place a user prompt is answered, so #read_prompt
   # is the run clock's one write site -- a signal-ended (Break) or EOF (nil)
   # prompt is NOT user input and must not record.
   describe "the run clock's one write site" do

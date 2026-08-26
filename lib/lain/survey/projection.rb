@@ -21,45 +21,33 @@ module Lain
     #
     # == What it masks is exactly what {Sensitivity::Regions} finds, no more
     #
-    # Said plainly, because a survey applies this to whole trees of prose rather
-    # than to the one file a model named, and "no secret reaches the corpus" is
-    # a claim this cannot make. A value the detector reports is masked wherever
-    # it sits; a value it does not report is not. So a credential repeated in
-    # a sentence, in a shell transcript, or inside a JSON body projects
-    # verbatim; a `machine host login sam password hunter2` line has no
-    # assignment shape and is not seen; and UTF-16LE content is invisible end to
-    # end, because the shapes are byte-anchored. That is the detector's
-    # documented residual and the read path behaves identically over the same
-    # file -- this arm neither widens nor narrows it. What the projection
-    # guarantees is narrower and true: no region the ledger holds as unreleased
-    # survives into a survey artifact.
+    # Said plainly, because a survey applies this to whole trees of prose and "no
+    # secret reaches the corpus" is a claim it cannot make. A value the detector
+    # reports is masked wherever it sits; one it does not report is not. So a
+    # credential repeated in a sentence, a shell transcript or a JSON body
+    # projects verbatim; `machine host login sam password hunter2` has no
+    # assignment shape and is not seen; UTF-16LE content is invisible end to end,
+    # because the shapes are byte-anchored. That is the detector's documented
+    # residual, and the read path behaves identically over the same file. What
+    # the projection guarantees is narrower and true: no region the ledger holds
+    # as unreleased survives into a survey artifact.
     #
     # == Applied at the SOURCE, which is where a leak can still be stopped
     #
-    # {Middleware::RedactSecretReads}' argument, one layer over: unreleased bytes
-    # must never exist above the thing that remembers them. Above the source,
-    # the session, the journal, the docent and the model see only released
-    # bytes, so no survey artifact can carry an unreleased secret -- and unit
-    # keys and the corpus address digest the PROJECTION, so a release
-    # legitimately changes what the survey can show and the affected units
-    # honestly demand a re-read.
+    # {Middleware::RedactSecretReads}' argument one layer over: unreleased bytes
+    # must never exist above the thing that remembers them. Above the source, the
+    # session, journal, docent and model see only released bytes -- and unit keys
+    # and the corpus address digest the PROJECTION, so a release legitimately
+    # changes what the survey can show and the affected units honestly demand a
+    # re-read.
     #
-    # One surface is NOT that artifact and this guarantee does not cover it:
-    # on a SURVEY, the window `:LainNote` operates on -- the diff's `new`
-    # slot, the only slot a survey ever opens, since a corpus has no old
-    # side -- shows the file on disk, unprojected, deliberately. A survey is
-    # a survey of project STATE, and the note rail needs the real file: that
-    # slot is a REAL file buffer the human can edit (`51_thread.lua:140-144`),
-    # not a rendering this class produced. (This is deliberately a
-    # SURVEY-specific claim, not a general one about "the annotation pane" --
-    # there is no such slot; `41_layout.lua:51`'s vocabulary is `sidebar`,
-    # `old`, `new`. A changeset review's note rail can also mark `old`, a
-    # `nofile` git-show buffer, which is NOT the file on disk.) The survey
-    # case is the same fact stated below in different words: a human can
-    # always open their own file in their own editor. Unprojected bytes
-    # there are correct, not a leak -- what WOULD be a leak is unprojected
-    # bytes inside the artifact itself: the journal, the docent brief, a
-    # `/critique` prefill.
+    # One surface is NOT that artifact: on a SURVEY the window `:LainNote`
+    # operates on is the diff's `new` slot, a REAL file buffer the human can
+    # edit, and it shows the file on disk unprojected, deliberately -- a survey is
+    # a survey of project STATE and the note rail needs the real file. A human can
+    # always open their own file in their own editor, so unprojected bytes there
+    # are correct. What WOULD be a leak is unprojected bytes inside the artifact
+    # itself: the journal, the docent brief, a `/critique` prefill.
     #
     # == The ledger is the run's one ledger
     #
@@ -69,15 +57,15 @@ module Lain
     # release control that releases everything, wearing this codebase's Null
     # idiom as camouflage.
     #
-    # `complete: true` on every call, and that is EARNED rather than assumed: a
-    # corpus reads whole files by construction, never a prefix and never an
-    # offset window, which is exactly what makes the reconcile inside
-    # {Sensitivity::Ledger#outstanding} sound. A size cap here would have to come
-    # back through `complete: false` or every projection past it forgets its
-    # releases and re-masks what a human already approved.
+    # `complete: true` on every call is EARNED rather than assumed: a corpus reads
+    # whole files by construction, never a prefix and never an offset window,
+    # which is what makes the reconcile inside {Sensitivity::Ledger#outstanding}
+    # sound. A size cap here would have to come back through `complete: false`, or
+    # every projection past it forgets its releases and re-masks what a human
+    # already approved.
     #
     # With no approval surface wired into a survey, the masked projection simply
-    # stands -- a human can always open their own file in their own editor.
+    # stands.
     class Projection
       # The contract the required `ledger:` keeps, named so the raise and the
       # doc above it cannot drift into two different arguments.
@@ -99,10 +87,9 @@ module Lain
       #   per-run and has no cwd of its own to resolve against, and refuses a
       #   relative path rather than merging two files behind one key
       # @param content [String] its whole bytes, in any encoding
-      # @param size [Integer, nil] what the walk measured, when the caller holds
-      #   a {Walk::Listing}; checked against the bytes and refused on a
-      #   disagreement. Absent for a caller with no listing, which has nothing
-      #   to check against -- it is a cross-check, not a second source of truth.
+      # @param size [Integer, nil] what the walk measured, when the caller holds a
+      #   {Walk::Listing}; checked against the bytes and refused on a
+      #   disagreement. A cross-check, not a second source of truth.
       # @return [String] the same bytes with every unreleased region masked,
       #   shaped and encoded as it arrived
       # @raise [ArgumentError] on a relative path (from the ledger) or on
@@ -123,19 +110,16 @@ module Lain
         # {Sensitivity::Masking} and not a walk of this object's own: the read
         # path renders withheld regions too, and one walk is what stops the two
         # arms drifting on the bytes around the placeholder. The ordinal counts
-        # MASKED regions in reading order, so a released one consumes no number
-        # and the human sees `1, 2` rather than `2, 3`.
+        # MASKED regions, so a released one consumes no number.
         Sensitivity::Masking.render(content, unreleased)
       end
 
       private
 
-      # `complete: true` is a claim about the BYTES, and this object cannot see
-      # a truncation by looking at one. Where a caller holds a listing it can
-      # say what the walk measured, and the disagreement is caught here --
-      # because the failure it prevents surfaces nowhere near the truncation:
-      # a partial scan reconciles away releases for regions nobody looked at,
-      # and the file re-masks what a human already approved, forever.
+      # `complete: true` is a claim about the BYTES, and this object cannot see a
+      # truncation by looking at one. The failure it prevents surfaces nowhere
+      # near the truncation: a partial scan reconciles away releases for regions
+      # nobody looked at, and the file re-masks what a human approved, forever.
       def whole!(content, size)
         return if size.nil? || content.bytesize == size
 

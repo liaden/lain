@@ -15,15 +15,12 @@ module Lain
   # session": an invariant a free-form `bash` tool cannot express, but a
   # structured tool can, because it owns its own precondition. See {.requires}.
   #
-  # Subclasses override {#name}, {#description}, {#input_schema}, and {#perform};
-  # the public {#call} template validates input, checks preconditions, dispatches
-  # to `#perform`, then checks postconditions. A tool that *fails* returns a
-  # {Result} with `is_error: true` -- it does not raise as a matter of course.
-  # When it does raise (a bug, a contract violation, a bad input), the executing
-  # {Lain::Effect::Handler} converts that into an error {Result} so nothing propagates
-  # past the loop (correctness gate 3). The two concerns are kept apart on
-  # purpose: the contract mechanism stays Eiffel-honest (a violation raises),
-  # while loop totality is the handler's job.
+  # A tool that *fails* returns a {Result} with `is_error: true` -- it does not
+  # raise as a matter of course. When it does raise (a bug, a contract
+  # violation, a bad input), the executing {Lain::Effect::Handler} converts that
+  # into an error {Result} so nothing propagates past the loop. The two concerns
+  # are kept apart on purpose: the contract mechanism stays Eiffel-honest (a
+  # violation raises), while loop totality is the handler's job.
   class Tool
     class NotImplemented < Error; end
     class InvalidInput < Error; end
@@ -67,18 +64,14 @@ module Lain
       raise NotImplemented, "#{self.class} must define #description"
     end
 
-    # The upfront-catalog-safe projection of {#description}: its first line
-    # only. This is the SINGLE source both halves of deferred disclosure
-    # share -- {Toolset::Disclosure::Deferred} renders it, and
-    # {Tools::ToolSearch} both renders AND matches queries against it. A
-    # search that matched the fuller `#description` while only ever
-    # rendering this truncation would let a caller binary-search substrings
-    # to infer text the catalog never shows; routing both through the same
-    # method is what makes "search never discloses more than the catalog
-    # would" a structural guarantee instead of two copies of a truncation
-    # rule that could drift. Descriptions built by string concatenation (the
-    # house style -- see AskHuman) have no embedded newline, so this is a
-    # no-op for every tool that exists today.
+    # The upfront-catalog-safe projection of {#description}: its first line only,
+    # and the SINGLE source both halves of deferred disclosure share --
+    # {Toolset::Disclosure::Deferred} renders it, and {Tools::ToolSearch} both
+    # renders AND matches queries against it. A search that matched the fuller
+    # `#description` while only ever rendering this truncation would let a caller
+    # binary-search substrings to infer text the catalog never shows; routing
+    # both through one method makes "search never discloses more than the catalog
+    # would" structural rather than two truncation rules that could drift.
     def one_line_description
       description.to_s.lines.first.to_s.strip
     end
@@ -236,6 +229,29 @@ module Lain
     # content blocks, matching what a `tool_result` block accepts on the wire.
     # Defined in a reopened `Tool` to keep the behavioral core measurably small.
     Result = Data.define(:content, :is_error) do
+      include Declarative
+
+      # `content` is either a String or an Array of provider content blocks --
+      # what a `tool_result` block accepts on the wire, and nothing else. Written
+      # as a `validate` rather than an `inclusion:` over classes, because the
+      # rule is "is one of these two", which no stock validator states.
+      #
+      # `check!` and never `settle!`: settling deep-FREEZES what it hands back,
+      # and a caller's content Array is theirs to keep -- {.ok} has always
+      # answered a Result holding the very object it was given.
+      declare raising: InvalidResult do
+        attribute :content
+        validate :content_is_string_or_array
+
+        private
+
+        def content_is_string_or_array
+          return if content.is_a?(String) || content.is_a?(Array)
+
+          errors.add(:content, "must be a String or an Array, got #{content.class}")
+        end
+      end
+
       # A successful result carrying `content`.
       def self.ok(content)
         new(content:, is_error: false)
@@ -249,9 +265,7 @@ module Lain
       end
 
       def initialize(content:, is_error: false)
-        unless content.is_a?(String) || content.is_a?(Array)
-          raise InvalidResult, "Tool::Result content must be a String or an Array, got #{content.class}"
-        end
+        self.class.check!(content:)
 
         # Coerce to a strict Boolean so `is_error` is never a truthy-but-not-true
         # value that a `== true` check downstream would miss.
@@ -270,13 +284,11 @@ module Lain
     # A deliberately small type/required validator for raw JSON-schema Hashes.
     #
     # It exists so the loop never dispatches a tool on structurally wrong input
-    # (a missing required key, a string where a number belongs) and so those
-    # failures surface as a clear {InvalidInput} rather than a `NoMethodError`
-    # deep inside `#perform`. It is NOT a full JSON-schema implementation on
-    # purpose -- adding a json-schema gem would be a dependency to serve a
-    # validator this loop does not need. It checks `type` and `required`,
-    # recursing into object properties and array items, and is lenient about
-    # extra keys (the provider's own strict-schema enforcement covers those).
+    # and so those failures surface as a clear {InvalidInput} rather than a
+    # `NoMethodError` deep inside `#perform`. NOT a full JSON-schema
+    # implementation on purpose -- a json-schema gem would be a dependency
+    # serving a validator this loop does not need. Lenient about extra keys,
+    # since the provider's own strict-schema enforcement covers those.
     #
     # Defined in a reopened `Tool` so the validator's size is measured on its own
     # rather than inflating the main class it logically belongs to.

@@ -5,8 +5,8 @@
 # claim: ONE object holds both directions of the one conversation. Nothing here
 # attaches; RpcThread touches nvim only in #start.
 #
-# Moved out of rpc_thread_spec.rb when the class moved out of neovim.rb (T12
-# re-work): its own file, beside its own object.
+# Moved out of rpc_thread_spec.rb when the class moved out of neovim.rb: its
+# own file, beside its own object.
 RSpec.describe Lain::Frontend::Neovim::CommandInbox do
   subject(:inbox) { frontend.command_inbox }
 
@@ -41,7 +41,7 @@ RSpec.describe Lain::Frontend::Neovim::CommandInbox do
                                                    ["review generation 7 is not open"])
   end
 
-  # The third direction (T12): an answer lain produced ITSELF, from the editor's
+  # The third direction: an answer lain produced ITSELF, from the editor's
   # write, joining the same rail rather than a private path only it knows about.
   it "puts a locally answered question set on the same rail, as [verb, one array of args]" do
     answers = Lain::Question::AnswerSet.new(

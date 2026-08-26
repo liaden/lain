@@ -15,7 +15,7 @@ module ApprovalSeamSupport
   Effect = Struct.new(:name, :input, :tool_use_id)
 end
 
-# The runtime.lua contract, protocol 3 (T5): User autocmds, b:lain_view on
+# The runtime.lua contract, protocol 3: User autocmds, b:lain_view on
 # every lain:// buffer, the richer shared syntax, and lain://workspace's
 # lua-side home. Same headless-nvim harness as neovim_spec.rb: a real editor
 # on a unix socket, observed through a SECOND independent connection so every
@@ -54,7 +54,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # It carries zero rows, so it takes no window.
   def primed_views = all_views + [Lain::Frontend::Neovim::ApprovalView::BUFFER]
 
-  # The six documented lain* groups (T5's AC): tool attribution, digests,
+  # The six documented lain* groups: tool attribution, digests,
   # roles, event kinds, ages, sender attribution.
   def syntax_groups
     %w[lainToolName lainDigest lainRole lainEventKind lainAge lainSender]
@@ -261,7 +261,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T16, and the reason the card exists: `<CR>` on an inbox row must put that
+  # The reason this coverage exists: `<CR>` on an inbox row must put that
   # set's document in lain://question. Every piece of that path shipped before
   # this -- the keys, the :LainOpen command, the view that resolves the line,
   # the surface that renders the set -- with NOTHING popping the verb in
@@ -298,7 +298,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T36, and the reason THAT card exists: the whole approval seam was built for
+  # The reason this block exists: the whole approval seam was built for
   # a Neovim surface -- {Lain::Frontend::ApprovalPolicy}'s own class comment
   # names it -- and nothing had ever written one, so a gated call parked the
   # agent with the question visible in the chat pane alone.
@@ -391,8 +391,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # THE REACHABILITY HALF, and the one this chunk keeps failing: every example
   # above binds the approval view the way {Lain::CLI::Repl} binds it, which
   # proves the round trip and NOT that anything in production performs that
-  # bind. T35 and T28 both found capabilities whose every collaborator had a
-  # green spec and which no code path ever constructed.
+  # bind. Two earlier rounds both found capabilities whose every collaborator
+  # had a green spec and which no code path ever constructed.
   #
   # So this one drives the REAL {Lain::CLI::Repl} -- it builds the frontend, it
   # binds the view to both halves, and its own #respond spawns the watch fiber
@@ -404,8 +404,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     let(:conductor) { instance_double(Lain::CLI::Conductor, closed?: false) }
     let(:agent) { instance_double(Lain::Agent, timeline: nil) }
     # `dispatch` YIELDS: a registry that swallowed the line would skip the model
-    # turn. `serves_replies?` is the second half of the command surface's duck
-    # (T1): the Repl asks whether the LINE is itself a reply surface before it
+    # turn. `serves_replies?` is the second half of the command surface's duck:
+    # the Repl asks whether the LINE is itself a reply surface before it
     # brackets it in the human's answer and approval surfaces.
     let(:commands) do
       Struct.new(:none) do
@@ -440,7 +440,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
                                         "verdict" => "approve")
     end
 
-    # T7 / QA round 8 (F40), and the REACHABILITY half of it: the surface that
+    # QA round 8's finding, and the REACHABILITY half of it: the surface that
     # has to let go of its read is the one {Repl::ApprovalSurfaces} builds for
     # itself, reading through `conductor.read_reply` -- not one an example wired.
     #
@@ -631,7 +631,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
                                             ask_human: Lain::Tools::AskHuman::Directory.new,
                                             questions: Async::Queue.new)
       replies.bind_editor(frontend.command_inbox, views: frontend.buffers)
-      # session_surfaces: the editor rail is the conversation's since T33.
+      # session_surfaces: the editor rail is the conversation's.
       surfaces = replies.session_surfaces(task)
       pumped_until(task, reason: "the stop channel closing") { stop.closed? }
       surfaces.each(&:stop)
@@ -644,7 +644,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   # The chunk nvim is actually sent. Read through the loader, never off runtime.lua,
-  # which since T6 is only the chunk's HEAD and defines nothing.
+  # which is only the chunk's HEAD and defines nothing.
   def runtime_source
     Lain::Frontend::Neovim::RuntimeLoader.new.source
   end
@@ -712,7 +712,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
 
     # The number advertises a contract, so the entry that dates it may not name a thing
     # that does not exist -- an entry claiming a capability the runtime has not got is
-    # worse than no entry, which is the failure this bump was split out of T11 to avoid.
+    # worse than no entry, which is the failure this bump was split out to avoid.
     #
     # Read off the LIVE runtime, never off the lua source: a `function _G.__lain.x` that
     # a load-order mistake never installs greps identically to one that works. Two
@@ -797,13 +797,13 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       %w[set_review open_changeset set_thread].each do |point|
         expect(entry).to include("__lain.#{point}")
       end
-      # T15's two documentation corrections, which are the reason this card owed more
+      # Two documentation corrections, which are the reason this bump owed more
       # than a number: b:lain_view stopped naming a view, and the review pair's stamps
       # are what a gesture reads instead of parsing a buffer name apart.
       expect(entry).to include("b:lain_view").and include("b:lain_review_side")
     end
 
-    # The example above's shape, for the bump T32b owed. Written down for its
+    # The example above's shape, for the protocol 10 bump. Written down for its
     # reason -- "what protocol 10 added" is a fact about HISTORY, which the
     # running runtime does not know -- and kept honest by the same two sweeps: a
     # command named here that the runtime does not define fails the doc sweep in
@@ -823,7 +823,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(entry).to include(*Lain::Review::MARK_STATES).and include("Lain::Review::VERDICTS")
     end
 
-    # T35's bump, in the shape the two above use. What it has to record is a
+    # The protocol 11 bump, in the shape the two above use. What it has to record is a
     # DISTINCTION and not a feature: an entry saying only "a second attach is
     # refused" is satisfied by the implementation that refuses on presence, and
     # that one costs a human their editor for as long as one lain has ever
@@ -835,7 +835,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(entry).to match(/LIVENESS, never presence/i)
     end
 
-    # T36's bump, in the shape the three above use. What it has to record is
+    # The protocol 12 bump, in the shape the three above use. What it has to record is
     # again a DISTINCTION rather than a feature, and there are two.
     #
     # A key PER VERDICT: an entry saying only "the editor can answer approvals"
@@ -872,7 +872,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # a second collision, inside the example testing the first.
   def second_frontend = described_class.new(channel: Lain::Channel.new, socket_path: @socket)
 
-  # ONE LAIN PER EDITOR (T35). The runtime is injected into a process-wide
+  # ONE LAIN PER EDITOR. The runtime is injected into a process-wide
   # `_G.__lain`, and every :Lain* command closes over `chan`, the chunk-local at
   # the head of runtime.lua -- so a second attach re-injects the whole chunk and
   # repoints every verb at the newcomer's channel. Measured twice before this
@@ -1079,7 +1079,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # F4/AC5: a buffer this command was never opened on refuses cleanly -- the
+    # A buffer this command was never opened on refuses cleanly -- the
     # guard's own sentence, naming the command a changeset review or a survey
     # actually reaches, never an escaped Lua error.
     #
@@ -1145,7 +1145,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # THE SAME RULE, ON THE COMMAND THAT DID NOT GET IT (T16). The two examples
+    # THE SAME RULE, ON THE COMMAND THAT DID NOT GET IT. The two examples
     # above cover refusals this runtime raises LOCALLY; this one covers a
     # refusal that crossed the WIRE -- `review_verdict` is an ANSWERED verb, so
     # lain's sentence comes back as the rpcrequest's error and `46_sidebar.lua`
@@ -1186,7 +1186,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # F25, and the reason it is worth its own block: a refusal wider than the
+  # The reason this is worth its own block: a refusal wider than the
   # message area raises nvim's hit-enter prompt, and that prompt blocks the
   # RPC. Round 5 measured `nvim --server ... --remote-expr "execute('messages')"`
   # hanging for its full two-minute timeout, so the documented recovery paths --
@@ -1259,7 +1259,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
     end
 
-    # AC1. `mode` is checked alongside `blocking` because nvim spells the
+    # `mode` is checked alongside `blocking` because nvim spells the
     # hit-enter family with a leading "r" -- "r" for the prompt itself, "rm" for
     # `-- More --`, "r?" for a confirm query -- and only one of those three is
     # the one this fixture happens to raise today.
@@ -1276,7 +1276,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC2. The whole point of shortening the echoed line is that nothing is
+    # The whole point of shortening the echoed line is that nothing is
     # lost by it: `:messages` is where a human goes for the sentence they could
     # not read on one line, so the sentence has to actually be there, whole.
     it "keeps the whole sentence in :messages even when the echoed line is shortened" do
@@ -1291,7 +1291,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC3. A refusal that fits is untouched -- prefix, sentence, nothing else --
+    # A refusal that fits is untouched -- prefix, sentence, nothing else --
     # on BOTH halves of the rail, which is why `:messages` is pinned here beside
     # the answer. `review_refused` answers with the line it put on SCREEN, and
     # that is not a test-only accessor: the fitted line is echoed with
@@ -1385,9 +1385,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # Reachable by the same route as the two-line case: the real five-line
     # `ScriptError#message` blocks in any pane under six rows.
     #
-    # The sting worth recording: AC1's own comment above already named `"rm"`
-    # as `-- More --` and no example exercised it. A named-but-unexercised mode
-    # is how this got missed twice.
+    # The sting worth recording: the hit-enter comment above already named
+    # `"rm"` as `-- More --` and no example exercised it. A named-but-unexercised
+    # mode is how this got missed twice.
     #
     # Both halves are asserted here on purpose, so this one example is the
     # whole property: it does not block, AND `:messages` still holds the
@@ -1480,7 +1480,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # AC4, on the wide sentence specifically: the traceback-free rule already
+    # On the wide sentence specifically: the traceback-free rule already
     # pinned for refusals that FIT must survive the path that shortens one.
     it "stays traceback-free on the path that shortens a refusal" do
       frontend = described_class.new(channel:, socket_path: @socket)
@@ -1517,7 +1517,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   def settled_delta(frontend, review, token, timeout: 8)
     Sync do |task|
       replies = replies_for(frontend, review, token)
-      # session_surfaces: the editor rail is the conversation's since T33.
+      # session_surfaces: the editor rail is the conversation's.
       surfaces = replies.session_surfaces(task)
       deadline = Async::Clock.now + timeout
       task.sleep(0.02) until token.resolved? || Async::Clock.now > deadline
@@ -1531,7 +1531,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T15: the compose round trip against a REAL editor. lain://compose is the
+  # The compose round trip against a REAL editor. lain://compose is the
   # one lain:// buffer nvim must be able to `:write`, and the two escalation
   # triggers the card names are both setup errors that show up here as nvim's
   # own E382/E32 -- so the buffer options are asserted, not assumed.
@@ -1677,7 +1677,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(compose_state).to include("modified" => true)
     end
 
-    # PANEL SHOULD-FIX 4: the generation stamped on the buffer is what lets a
+    # Panel should-fix: the generation stamped on the buffer is what lets a
     # late answer from an earlier compose be dropped rather than mistaken for
     # this one's.
     it "stamps each compose with its own generation, and reuses the one buffer" do
@@ -1696,7 +1696,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # PANEL P6: renders and the compose post share ONE queue and ONE thread, so
+    # Panel probe: renders and the compose post share ONE queue and ONE thread, so
     # a compose racing a flood of renders must neither reorder nor touch the
     # session off-thread. The compose post is also the only non-blocking push
     # onto that queue, which is exactly what a flood would otherwise stall.
@@ -1747,7 +1747,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
-    # PANEL SHOULD-FIX 6, recorded rather than defended against: `:wall` and
+    # Panel should-fix, recorded rather than defended against: `:wall` and
     # autosave plugins DO fire BufWriteCmd, and the round trip takes that as
     # the human's answer. Pinned so the behaviour is a known limitation rather
     # than a surprise -- lain attaches to the human's own nvim, plugins and all.
@@ -1786,7 +1786,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # T12: lain://question against a REAL editor. It is `acwrite` for
+  # lain://question against a REAL editor. It is `acwrite` for
   # lain://compose's reason -- `:w` IS the submit -- and it is the one lain://
   # buffer whose write can be REFUSED, because the grammar reads the document
   # back BEFORE the ack. nil until the buffer exists at all.
@@ -2295,16 +2295,16 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # C1/F72, and the operational half of
+  # The operational half of
   # `spec/refusal_delivery_discipline_spec.rb`. `define`
   # (`runtime/30_commands.lua:8-11`) does not rescue -- its only `pcall` guards
   # the idempotent delete -- so an `error()` inside a user-command callback
   # escapes into nvim, which appends its own `stack traceback:` and, with a UI
   # attached, raises the hit-enter prompt the block above measures. Behind that
   # prompt every non-fast RPC request queues, so the editor answers nothing at
-  # all while a refusal naming the recovery is on screen. F31 fixed that at
-  # `:LainNoteDone`; F72 found the same defect at `:LainNote`, and
-  # `:LainReviewMark` and `:LainAnnotate` carried it too.
+  # all while a refusal naming the recovery is on screen. An earlier QA round
+  # fixed that at `:LainNoteDone`; a later one found the same defect at
+  # `:LainNote`, and `:LainReviewMark` and `:LainAnnotate` carried it too.
   #
   # THE OTHER DOOR IS `vim.notify`, and it reaches the same prompt by WIDTH
   # rather than by a raise -- `51_thread.lua` carries the measurement, roughly
@@ -2401,6 +2401,1053 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         expect(message_history).not_to include("lain: lain:")
       ensure
         typed("\r")
+      end
+    end
+
+    # The add-to-survey gesture (`:LainSurveyAdd`, `46_sidebar.lua:326`)
+    # used to ack a `survey_add` rpcrequest that `Gestures#routes`
+    # (`human_replies.rb:843-852`) has no route for -- a silent no-op, and the
+    # human was told nothing was wrong. It now refuses instead, on the same
+    # rail as everything else in this block, and sends no request at all: the
+    # frontend's own `command_inbox` -- which every ACKED command lands in
+    # regardless of routing (`rpc_thread.rb:1220`) -- proves that by staying
+    # empty.
+    it "refuses :LainSurveyAdd from a real file buffer instead of acking silently" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "survey_target.rb")
+        File.write(path, "# a real file\n")
+
+        frontend.run do
+          attach_ui
+          inspector.session.request(:nvim_command, "edit #{path}")
+          typed(":LainSurveyAdd\r")
+          mode = settled_mode
+
+          expect(mode).to include("blocking" => false)
+          expect(message_history).to include("lain: :LainSurveyAdd sends nothing -- accretion is not wired yet")
+          expect { frontend.command_inbox.pop(true) }.to raise_error(ThreadError)
+        ensure
+          typed("\r")
+        end
+      end
+    end
+
+    # Scenario 3's distinctness, from the buffer side: the wrong-buffer
+    # refusal and the not-wired refusal are two different
+    # sentences, so a human who reads one is never told the other's reason.
+    # The editor is on lain://journal here, which is where attach leaves it
+    # (`:LainPin`'s own example above relies on the same fact) -- buftype is
+    # non-empty there, so the wrong-buffer guard fires before the not-wired
+    # refusal ever would.
+    it "keeps the wrong-buffer refusal distinct from the not-wired one" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        attach_ui
+        wait_until { buffer_lines("lain://journal").any? }
+        inspector.command("buffer lain://journal")
+        typed(":LainSurveyAdd\r")
+        mode = settled_mode
+
+        expect(mode).to include("blocking" => false)
+        history = message_history
+        expect(history).to include("lain: :LainSurveyAdd needs a real file buffer, not lain://journal")
+        expect(history).not_to include("accretion is not wired")
+      ensure
+        typed("\r")
+      end
+    end
+  end
+
+  # `gf` out of a review buffer silently ended the review. The new side is
+  # DELIBERATELY a real, editable, file-backed buffer -- that is what makes the
+  # language server and treesitter attach (`47_diff.lua`'s header) -- so the
+  # gestures that leave it are the ordinary ones, and `47_diff.unstamp` had
+  # already withdrawn the previous row's stamp when the next one opened. Coming
+  # back left the human in the file they were reviewing with none of the review's
+  # keys on it.
+  #
+  # THE RULE IS THE TABPAGE, AND IT IS CHECKED ON EVERY ENTRY, not once. Inside
+  # the review's tabpage a file THIS round opened re-acquires its stamp; outside
+  # it, a buffer that carries one gives it back. A boundary tested on the first
+  # transition only is not a boundary -- it would let a human annotate the review
+  # from a tabpage the review is not in, which is authority and not decoration.
+  # `review_notes.stamp` is still the single membership test, and `unstamp` still
+  # means what it meant: withdrawal is what makes the record, so nothing here
+  # takes a stamp `unstamp` left or keeps one it took.
+  #
+  # THE ROUND ENDS WHEN LAIN SAYS SO. Nothing in the editor can see a settle --
+  # the tabpage, the panes and the buffers all survive it -- so
+  # `Review::Surface::Neovim#settle` tells the runtime, and `__lain.review_settled`
+  # tears the round down. Without it every buffer the round opened would go on
+  # re-acquiring against a review nobody is holding.
+  #
+  # A SURVEY rather than a changeset for most of these, because that is the round
+  # the defect was measured in and the harder one: one side, so the row's buffer IS the
+  # file on disk and there is no `nofile` old side to fall back into.
+  describe "a review that survives the tabpage" do
+    # `47_diff.lua` freezes the project root at attach and resolves every
+    # repository-relative path against it; `vim.g.lain_review_root` is the
+    # documented override for an editor started somewhere else, which this
+    # harness's nvim always is.
+    def survey(dir, sides = ["new"])
+      inspector.exec_lua("vim.g.lain_review_root = ...", [dir])
+      inspector.exec_lua("_G.__lain.set_review({ 'a.rb', 'b.rb' }, 1, ...)", [sides])
+    end
+
+    # `a.rb` names `stray.rb` on its second line, which is what makes a REAL `gf`
+    # drivable below: nvim's default 'path' begins with `.`, the directory of the
+    # file the cursor is in, so the gesture resolves without configuring anything.
+    def write_round(dir)
+      File.write(File.join(dir, "a.rb"), "alpha\nstray.rb\n")
+      File.write(File.join(dir, "b.rb"), "gamma\ndelta\n")
+      File.write(File.join(dir, "stray.rb"), "no row names this one\n")
+    end
+
+    # A survey's own pair: {Review::Source::Corpus::BASE_REF}-shaped, and the one
+    # a re-acquired stamp has to still be naming.
+    def revisions = { "old" => "base0ff", "new" => "head1ff" }
+
+    def open_row(path, old_lines = [])
+      inspector.exec_lua("_G.__lain.open_changeset(...)", [path, old_lines, 1, revisions])
+    end
+
+    # What `Review::Surface::Neovim#settle` posts when a verdict lands. Driven at
+    # the runtime here because that is this file's subject; that the surface
+    # actually posts it is `spec/lain/review/surface/neovim_spec.rb`'s to pin.
+    def settle_round = inspector.exec_lua("_G.__lain.review_settled()", [])
+
+    # The reported gesture itself: out of the REVIEW BUFFER, which is the file
+    # pane and not the navigator. `open_changeset` lands the human in the sidebar
+    # (`review_diff.landing`), so an `:edit` run wherever focus happens to be
+    # measures re-entry into the navigator instead -- a different window, and not
+    # the one the defect was reported from. So the file pane is focused first, and
+    # `:edit` is `gf` reduced to its effect: a real buffer switch in a real
+    # window, firing nvim's own `BufEnter` rather than a synthetic one.
+    def gesture(dir, name)
+      inspector.exec_lua(<<~LUA, [File.join(dir, name)])
+        local wanted = ...
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+          if vim.w[win].lain_review_slot == "new" then vim.api.nvim_set_current_win(win) end
+        end
+        vim.cmd("edit " .. vim.fn.fnameescape(wanted))
+      LUA
+    end
+
+    # The same switch WITHOUT hunting for the review's file pane -- for the
+    # tabpage that has no such window, where "wherever the human is" is the whole
+    # point of the example.
+    def enter_here(dir, name)
+      inspector.exec_lua("vim.cmd('edit ' .. vim.fn.fnameescape(...))", [File.join(dir, name)])
+    end
+
+    # nvim's own `gf`, pressed rather than approximated, and then nvim's own way
+    # back. Both go through `nvim_replace_termcodes` because `<C-o>` in a lua
+    # string is not an escape sequence, it is six characters.
+    def followed_the_filename
+      inspector.exec_lua(<<~LUA, [])
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+          if vim.w[win].lain_review_slot == "new" then vim.api.nvim_set_current_win(win) end
+        end
+        vim.api.nvim_win_set_cursor(0, { 2, 0 })
+        vim.cmd("normal! gf")
+        return vim.api.nvim_buf_get_name(0)
+      LUA
+    end
+
+    def went_back
+      inspector.exec_lua(<<~LUA, [])
+        vim.cmd("normal! " .. vim.api.nvim_replace_termcodes("<C-o>", true, false, true))
+        return vim.api.nvim_buf_get_name(0)
+      LUA
+    end
+
+    # The note keys as nvim answers for them in the current buffer. `maparg` per
+    # lhs rather than pressing anything: a press that finds no map is not a no-op
+    # in normal mode, so an absence asserted by pressing fails somewhere else
+    # entirely (`annotate_spec.rb`'s reason). The prefix crosses as an ARGUMENT
+    # because `\L` is not a lua escape.
+    def note_keys
+      inspector.exec_lua(<<~LUA, ["\\L"])
+        local prefix = ...
+        local found = {}
+        for _, suffix in ipairs({ "n", "q", "b" }) do
+          found[suffix] = vim.fn.maparg(prefix .. suffix, "n")
+        end
+        return found
+      LUA
+    end
+
+    # The stamp on one buffer, found by the name the editor resolved. `stamped`
+    # is always present so the answer is a dictionary either way -- an all-nil
+    # table would cross msgpack as an empty ARRAY and read as a different shape.
+    def stamp_of(dir, name)
+      inspector.exec_lua(<<~LUA, [File.join(dir, name)])
+        local wanted = ...
+        local buf = vim.fn.bufnr(wanted)
+        if buf == -1 then return { stamped = false } end
+        return { stamped = vim.b[buf].lain_review_side ~= nil, side = vim.b[buf].lain_review_side,
+                 revision = vim.b[buf].lain_review_revision, path = vim.b[buf].lain_review_path }
+      LUA
+    end
+
+    # Every buffer in the editor that currently CLAIMS to be the review, as the
+    # three facts a rail reads off one. A census rather than a count, because
+    # "how many" is not the question `unstamp`'s rule is about.
+    def claiming_the_review
+      inspector.exec_lua(<<~LUA, [])
+        local claiming = vim.tbl_filter(function(b) return vim.b[b].lain_review_side ~= nil end,
+          vim.api.nvim_list_bufs())
+        local claims = vim.tbl_map(function(b)
+          return vim.b[b].lain_review_side .. "@" .. vim.b[b].lain_review_revision .. ":" .. vim.b[b].lain_review_path
+        end, claiming)
+        table.sort(claims)
+        return claims
+      LUA
+    end
+
+    # Every buffer still REMEMBERING a round -- `b:lain_review_round`, which
+    # `withdraw` writes and `reacquire` reads. A claim and a memory of one are
+    # different facts, so a settle has to end both.
+    def remembering_the_round
+      inspector.exec_lua(<<~LUA, [])
+        local held = vim.tbl_filter(function(b) return type(vim.b[b].lain_review_round) == "table" end,
+          vim.api.nvim_list_bufs())
+        return vim.tbl_map(function(b) return vim.b[b].lain_review_round.path end, held)
+      LUA
+    end
+
+    def markers
+      inspector.exec_lua(<<~LUA, [])
+        local buf = vim.api.nvim_get_current_buf()
+        local ns = vim.api.nvim_create_namespace("lain_review_notes")
+        local found = {}
+        for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true })) do
+          found[#found + 1] = { row = mark[2] + 1, text = mark[4].virt_text[1][1] }
+        end
+        return found
+      LUA
+    end
+
+    def messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+
+    def noted(line, text)
+      inspector.exec_lua(<<~LUA, [line, text])
+        local row, sentence = ...
+        vim.api.nvim_win_set_cursor(0, { row, 0 })
+        local ok, err = pcall(vim.cmd, "LainNote note " .. sentence)
+        return { ok, tostring(err) }
+      LUA
+    end
+
+    # The keys come back, and the command they name works -- asserted
+    # together, because a key that is bound and refuses is the failure this whole
+    # autocmd exists to prevent.
+    it "binds the note keys again on a row this round already opened" do
+      Dir.mktmpdir("lain-review-tab") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+          open_row("b.rb")
+
+          gesture(dir, "a.rb")
+
+          expect(note_keys).to include(
+            "n" => a_string_including("LainNote note"),
+            "q" => a_string_including("LainNote question"),
+            "b" => a_string_including("LainNote blocker")
+          )
+          expect(noted(2, "hello")).to eq([true, ""])
+          expect(markers).to eq([{ "row" => 2, "text" => "● note" }])
+        end
+      end
+    end
+
+    # The deferred half, stated as a refusal rather than as a guess: a
+    # buffer no row has opened needs a revision, a side and a repository-relative
+    # path that only Ruby holds, and deriving one from the buffer's name is the
+    # second silent spelling of `OLD_PREFIX` that `47_diff.stamp` refuses.
+    it "leaves a file no row has opened out of the review, and says how to get back" do
+      Dir.mktmpdir("lain-review-tab") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+
+          gesture(dir, "stray.rb")
+
+          expect(note_keys.values).to all(eq(""))
+          expect(noted(1, "hello")).to eq([true, ""])
+          expect(messages).to include("lain: :LainNote needs a buffer lain has open for review -- <C-o> goes back")
+          expect(markers).to be_empty
+        end
+      end
+    end
+
+    # The other half of the example above, and the one a sentence cannot be
+    # trusted without: the remedy has to work FROM WHERE THE HUMAN IS. `gf`
+    # replaces the buffer in the window it was pressed in, so a refusal naming
+    # the sidebar names a surface this very gesture can have taken off the
+    # screen. `<C-o>` is nvim's own way back from a jump, it needs no window the
+    # human can still see, and landing is what re-acquires the stamp -- so the
+    # sentence and the fix are one gesture.
+    it "names a way back that works from the buffer the human landed in" do
+      Dir.mktmpdir("lain-review-tab") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+
+          expect(followed_the_filename).to eq(File.join(dir, "stray.rb"))
+          expect(note_keys.values).to all(eq(""))
+
+          expect(went_back).to eq(File.join(dir, "a.rb"))
+          expect(note_keys["n"]).to include("LainNote note")
+        end
+      end
+    end
+
+    # Renamed for what it pins: a file the round has MOVED PAST. The old
+    # title said "a reviewed file", which is also true of one the human has just
+    # revisited -- and that one is the example below, whose answer is the
+    # opposite until the stamp is given back at the boundary.
+    it "does not stamp a file the round has moved past in another tabpage" do
+      Dir.mktmpdir("lain-review-tab") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+          open_row("b.rb")
+
+          inspector.exec_lua("vim.cmd('tabnew')", [])
+          enter_here(dir, "a.rb")
+
+          expect(note_keys.values).to all(eq(""))
+          expect(stamp_of(dir, "a.rb")).to include("stamped" => false)
+        end
+      end
+    end
+
+    # THE BOUNDARY ON EVERY ENTRY, which is what makes it a boundary at all. A
+    # buffer that has just re-acquired its stamp inside the review tabpage holds
+    # a BUFFER variable, and a buffer variable follows the buffer anywhere it is
+    # shown -- so without a withdrawal on the way out the human could annotate
+    # the review from a tabpage the review is not in. Coming back is the other
+    # half: the withdrawal is what records the round, so the stamp returns.
+    #
+    # THE RETURN IS A BARE `tabprevious`, deliberately: the review's pane and the
+    # other tabpage's window hold the SAME buffer here, so nvim reports no buffer
+    # entry in either direction and a `BufEnter`-only rule would leave the human
+    # in the file they are reviewing with the keys the far tabpage took. Crossing
+    # a tabpage is a window entry, which is why the runtime watches both.
+    it "gives the stamp back when the buffer leaves the review tabpage, and again when it returns" do
+      Dir.mktmpdir("lain-review-tab") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+          open_row("b.rb")
+          gesture(dir, "a.rb")
+          expect(stamp_of(dir, "a.rb")).to include("stamped" => true)
+
+          inspector.exec_lua("vim.cmd('tabnew')", [])
+          enter_here(dir, "a.rb")
+
+          expect(note_keys.values).to all(eq(""))
+          expect(stamp_of(dir, "a.rb")).to include("stamped" => false)
+
+          inspector.exec_lua("vim.cmd('tabprevious')", [])
+
+          expect(stamp_of(dir, "a.rb")).to include("stamped" => true, "path" => "a.rb")
+          expect(note_keys["n"]).to include("LainNote note")
+        end
+      end
+    end
+
+    # DISMISSING IS NOT SETTLING, and what tells them apart is that one of them
+    # is a tabpage. Closing the review's tabpage is the human's dismiss gesture
+    # and the review stays open -- 41_layout's own ruling, and `51_thread`
+    # rebuilds the whole layout for a render that arrives afterwards, finding the
+    # pair by these very stamps (`side_buf`). So a buffer entered while the
+    # review has NO tabpage keeps its claim: there is no boundary to be outside
+    # of, and only a settle ends a round.
+    it "keeps the claim while the review's tabpage is closed" do
+      Dir.mktmpdir("lain-review-tab") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+
+          inspector.exec_lua("vim.cmd('tabclose')", [])
+          enter_here(dir, "a.rb")
+
+          expect(stamp_of(dir, "a.rb")).to include("stamped" => true, "path" => "a.rb")
+        end
+      end
+    end
+
+    # A LATER ROUND DOES NOT INHERIT THE ONE BEFORE IT, which is what forgetting
+    # at settle buys beyond tidiness. Round two opens `b.rb` alone, so `a.rb` is a
+    # file only the PREVIOUS round ever drew -- and `open_changeset` in THIS round
+    # is the whole scope of what may re-acquire. While the teardown left the
+    # record behind, a matching revision pair was enough to hand a claim to a file
+    # this round never opened, and the sidebar's own row list would not have
+    # agreed that it was under review.
+    it "does not hand a later round a file the round before it opened" do
+      Dir.mktmpdir("lain-review-tab") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+          open_row("b.rb")
+          settle_round
+
+          survey(dir)
+          open_row("b.rb")
+          gesture(dir, "a.rb")
+
+          expect(stamp_of(dir, "a.rb")).to include("stamped" => false)
+          expect(claiming_the_review).to eq(["new@head1ff:b.rb"])
+        end
+      end
+    end
+
+    # The one that matters: the INTERLEAVING, not the endpoints. A
+    # stamp that was never withdrawn would pass an endpoint assertion and prove
+    # nothing about `unstamp`; a stamp re-acquired from anywhere but the round's
+    # own memory could come back naming the wrong file or the wrong revision.
+    it "hands back the stamp this round gave it, after the next row withdrew it" do
+      Dir.mktmpdir("lain-review-tab") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+
+          open_row("a.rb")
+          expect(stamp_of(dir, "a.rb")).to include("stamped" => true, "path" => "a.rb")
+
+          open_row("b.rb")
+          expect(stamp_of(dir, "a.rb")).to include("stamped" => false)
+
+          gesture(dir, "a.rb")
+
+          expect(stamp_of(dir, "a.rb")).to eq(
+            "stamped" => true, "side" => "new", "revision" => "head1ff", "path" => "a.rb"
+          )
+          expect(stamp_of(dir, "b.rb")).to include("stamped" => true, "path" => "b.rb")
+        end
+      end
+    end
+
+    # THE CENSUS, because `unstamp`'s own comment used to say only the two under
+    # review are ever stamped and that is no longer the rule the tree keeps. A
+    # revisited row is a THIRD claim, and it is a correct one: the human is
+    # reading a file this round opened, inside the round's tabpage. What the rule
+    # protects is unchanged -- every claim here names this round's revisions and
+    # its own path, so no reader can be handed a file nobody is reviewing.
+    it "lets a revisited row claim the review beside the pair being drawn" do
+      Dir.mktmpdir("lain-review-tab") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir, %w[old new])
+          open_row("a.rb", ["alpha"])
+          open_row("b.rb", ["gamma"])
+
+          gesture(dir, "a.rb")
+
+          expect(claiming_the_review).to eq(
+            ["new@head1ff:a.rb", "new@head1ff:b.rb", "old@base0ff:b.rb"]
+          )
+        end
+      end
+    end
+
+    # THE ROUND IS OVER, and the editor has to be told: nothing about a settle is
+    # visible here -- the tabpage, its panes and every buffer survive it. Left
+    # untold, the tabpage goes on vouching for the round and every file it opened
+    # re-acquires on entry, so a note lands in a review nobody is holding. That is
+    # a wrong answer rather than a missing one, and it is the whole reason
+    # `#settle` posts anything at all.
+    #
+    # THE MEMORY GOES WITH THE CLAIM, asserted beside it because the teardown's
+    # own mechanism is what would leave it: `withdraw` is the writer of the round
+    # record, so a sweep that only withdrew would retire every claim and re-arm
+    # every one of them in the same pass. Settling is as permanent for a round as
+    # `:saveas` is for one buffer.
+    it "stops handing stamps back once the round has settled" do
+      Dir.mktmpdir("lain-review-tab") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+          open_row("b.rb")
+
+          settle_round
+
+          expect(claiming_the_review).to be_empty
+          expect(remembering_the_round).to be_empty
+          gesture(dir, "a.rb")
+
+          expect(stamp_of(dir, "a.rb")).to include("stamped" => false)
+          expect(note_keys.values).to all(eq(""))
+          expect(noted(1, "hello")).to eq([true, ""])
+          expect(markers).to be_empty
+        end
+      end
+    end
+  end
+
+  describe "a long note grown in a pane" do
+    # The same survey `a review that survives the tabpage` drives, and for its
+    # reasons: one side, so the row's buffer IS the file on disk. Its helpers are
+    # its own; this block asks different questions of the same round.
+    def survey(dir)
+      inspector.exec_lua("vim.g.lain_review_root = ...", [dir])
+      inspector.exec_lua("_G.__lain.set_review({ 'a.rb' }, 1, ...)", [["new"]])
+    end
+
+    def write_round(dir)
+      File.write(File.join(dir, "a.rb"), "#{(1..30).map { |i| "line #{i}" }.join("\n")}\n")
+    end
+
+    def revisions = { "old" => "base0ff", "new" => "head1ff" }
+
+    def open_row(path) = inspector.exec_lua("_G.__lain.open_changeset(...)", [path, [], 1, revisions])
+
+    # `open_changeset` lands the human in the sidebar, so every gesture below
+    # starts by putting them back in the file pane -- the window a note is placed
+    # from.
+    def in_file_pane(body)
+      inspector.exec_lua(<<~LUA, [])
+        for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+          if vim.w[win].lain_review_slot == "new" then vim.api.nvim_set_current_win(win) end
+        end
+        #{body}
+      LUA
+    end
+
+    # The cmdline note, as a human types it.
+    def noted(line, text)
+      in_file_pane(<<~LUA)
+        vim.api.nvim_win_set_cursor(0, { #{line}, 0 })
+        vim.cmd("LainNote note #{text}")
+      LUA
+    end
+
+    # The pane gesture: cursor onto a line in the file pane, then the command the
+    # `c` key pre-fills. The reservation is taken HERE. The raise is RETURNED
+    # rather than swallowed -- a regression that raises must fail as a raise and
+    # not as a missing message three assertions later.
+    def compose(line, arguments = "note")
+      in_file_pane(<<~LUA)
+        vim.api.nvim_win_set_cursor(0, { #{line}, 0 })
+        local ok, err = pcall(vim.cmd, "LainNoteCompose #{arguments}")
+        return { ok = ok, err = tostring(err) }
+      LUA
+    end
+
+    # The panes, by the prefix their names carry, in name order.
+    def pane_names
+      inspector.exec_lua(<<~LUA, [])
+        local found = {}
+        for _, b in ipairs(vim.api.nvim_list_bufs()) do
+          local name = vim.api.nvim_buf_get_name(b)
+          if name:match("^lain://note/") then found[#found + 1] = name end
+        end
+        table.sort(found)
+        return found
+      LUA
+    end
+
+    def pane_buf(name = nil)
+      found = pane_names
+      wanted = name || found.first
+      raise "no compose pane among #{found.inspect}" if wanted.nil?
+
+      inspector.exec_lua(<<~LUA, [wanted])
+        local wanted = ...
+        for _, b in ipairs(vim.api.nvim_list_bufs()) do
+          if vim.api.nvim_buf_get_name(b) == wanted then return b end
+        end
+      LUA
+    end
+
+    def typed_into_pane(lines, name = nil)
+      inspector.exec_lua("vim.api.nvim_buf_set_lines(select(1, ...), 0, -1, false, select(2, ...))",
+                         [pane_buf(name), lines])
+    end
+
+    # `:w` on the pane, with the write's own outcome ANSWERED. A `pcall` whose
+    # error is discarded turns a future raise into "expected messages to
+    # include...", which names the wrong thing entirely.
+    def write_pane(name = nil)
+      inspector.exec_lua(<<~LUA, [pane_buf(name)])
+        local b = ...
+        local ok, err
+        vim.api.nvim_buf_call(b, function() ok, err = pcall(vim.cmd, "write") end)
+        return { ok = ok, err = tostring(err), modified = vim.bo[b].modified }
+      LUA
+    end
+
+    # `:LainNoteDone` with `vim.rpcrequest` swapped for a capture -- `annotate_spec.rb`'s
+    # idiom, needed here too: `review_notes` is an ANSWERED verb, so the batch never
+    # reaches `command_inbox` and the only place to read it is the wire.
+    def settled
+      inspector.exec_lua(<<~LUA, [])
+        local seen
+        local original = vim.rpcrequest
+        vim.rpcrequest = function(_, _, _, args) seen = args end
+        local ok, err = pcall(vim.cmd, "LainNoteDone")
+        vim.rpcrequest = original
+        return { ok = ok, err = tostring(err), sent = seen }
+      LUA
+    end
+
+    # The batch as it crossed the wire. BOTH ways of sending nothing are refused
+    # by name: `ok` false is the command raising, a nil `sent` is `:LainNoteDone`
+    # deciding there was nothing to hand over and never reaching the wire.
+    def handed_back
+      answer = settled
+      raise "LainNoteDone raised: #{answer["err"]}" unless answer["ok"]
+      raise "LainNoteDone sent nothing: #{answer.inspect}" if answer["sent"].nil?
+
+      answer.fetch("sent").fetch(0)
+    end
+
+    def markers
+      in_file_pane(<<~LUA)
+        local ns = vim.api.nvim_create_namespace("lain_review_notes")
+        local found = {}
+        for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(0, ns, 0, -1, { details = true })) do
+          found[#found + 1] = { row = mark[2] + 1, text = mark[4].virt_text[1][1] }
+        end
+        return found
+      LUA
+    end
+
+    def note_keys
+      inspector.exec_lua(<<~LUA, ["\\L"])
+        local prefix = ...
+        local found = {}
+        for _, suffix in ipairs({ "n", "q", "b", "c", "N", "t" }) do
+          found[suffix] = vim.fn.maparg(prefix .. suffix, "n")
+        end
+        return found
+      LUA
+    end
+
+    def messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
+
+    # The rail's lines, anchored. A matcher that looks anywhere in one blob
+    # cannot see a doubled `lain: ` prefix, which is how one once reached a human
+    # for a whole card (`annotate_spec.rb`'s reason).
+    def echoed = messages.lines.map(&:chomp).grep(/\Alain: /)
+
+    def displayed_width(line) = inspector.exec_lua("return vim.fn.strdisplaywidth(...)", [line])
+
+    # The whole round trip of the long path: opened from a line, typed into,
+    # written -- and the note lands on THAT line with THOSE words.
+    it "places the note the pane was written with, on the line the pane was opened from" do
+      Dir.mktmpdir("lain-note-pane") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+
+          expect(compose(7)).to include("ok" => true)
+          typed_into_pane(["the first paragraph of a long note", "", "and its second"])
+          expect(write_pane).to include("ok" => true, "modified" => false)
+
+          expect(markers).to eq([{ "row" => 7, "text" => "● note" }])
+          expect(handed_back).to contain_exactly(
+            hash_including("line" => 7, "kind" => "note", "side" => "new", "path" => "a.rb",
+                           "text" => "the first paragraph of a long note\n\nand its second")
+          )
+        end
+      end
+    end
+
+    # THE WHOLE POINT OF THE CARD: the INTERLEAVING. The pane is opened first
+    # and written LAST, so a sequence assigned at commit time would hand these
+    # back in the wrong order -- and every assertion about the notes' content
+    # would still pass. Only the order can catch it.
+    it "hands a pane note back ahead of a cmdline note placed after the pane opened" do
+      Dir.mktmpdir("lain-note-pane") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+
+          compose(10)
+          noted(20, "the quick one")
+          typed_into_pane(["the slow one"])
+          write_pane
+
+          expect(handed_back.map { |note| note["line"] }).to eq([10, 20])
+        end
+      end
+    end
+
+    # Whitespace under nothing is not a note -- and the refusal is the
+    # thread pane's shape exactly: on the rail, no traceback, and 'modified' left
+    # standing, because clearing it would be the one write that says "saved" over
+    # text lain never took.
+    it "refuses an empty pane in words and leaves the buffer modified" do
+      Dir.mktmpdir("lain-note-pane") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+
+          compose(7)
+          typed_into_pane(["   ", ""])
+          expect(write_pane).to include("modified" => true)
+
+          expect(echoed).to include("lain: this pane has no note in it yet -- write one, then :w again")
+          expect(messages).not_to include("stack traceback")
+          expect(markers).to be_empty
+        end
+      end
+    end
+
+    # THE SECOND `:w`: `BufWriteCmd` fires on an acwrite buffer whether or not it
+    # is modified, so a human who saves twice out of habit would file the
+    # identical note twice, under two sequence numbers, on one line. The pane
+    # stays CLEAN on this leg -- its note really was taken, so a write that
+    # reported failure would be the lie in the other direction.
+    it "places nothing on a second write of a pane whose note is already placed" do
+      Dir.mktmpdir("lain-note-pane") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+
+          compose(7)
+          typed_into_pane(["said once"])
+          write_pane
+          expect(write_pane).to include("ok" => true, "modified" => false)
+
+          expect(echoed.last).to start_with("lain: this pane's note is already placed;")
+          expect(messages).not_to include("stack traceback")
+          expect(markers).to eq([{ "row" => 7, "text" => "● note" }])
+          expect(handed_back.size).to eq(1)
+        end
+      end
+    end
+
+    # The short path is untouched: `<leader>Ln` still PRE-FILLS the cmdline
+    # with the same characters, byte for byte, and the pane's own key sits beside
+    # it rather than in place of it.
+    it "leaves the cmdline note keys exactly as they were, and adds the pane's beside them" do
+      Dir.mktmpdir("lain-note-pane") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+          in_file_pane("return true")
+
+          expect(note_keys).to include(
+            "n" => ":LainNote note ",
+            "q" => ":LainNote question ",
+            "b" => ":LainNote blocker ",
+            "c" => ":LainNoteCompose "
+          )
+        end
+      end
+    end
+
+    # THE CARD'S SIBLING CONSTRAINT, pinned rather than argued: the pane must not
+    # become a third writer of the stamp state. Entering it INSIDE the review's
+    # tabpage is the case that matters -- that is where `review_diff.entered`
+    # re-acquires -- so the entry is driven for real and both halves are read: the
+    # pane acquires no stamp and no round memory and binds no note key, and the
+    # buffer the human came from still holds both.
+    it "acquires no stamp and binds no note key when it is entered inside the review tabpage" do
+      Dir.mktmpdir("lain-note-pane") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+          compose(10)
+
+          state = inspector.exec_lua(<<~LUA, [pane_buf, "\\L"])
+            local pane, prefix = ...
+            vim.api.nvim_set_current_buf(pane)
+            vim.api.nvim_exec_autocmds("BufEnter", { buffer = pane })
+            vim.api.nvim_exec_autocmds("WinEnter", {})
+            local keys = {}
+            for _, suffix in ipairs({ "n", "q", "b", "c", "N", "t" }) do
+              keys[#keys + 1] = vim.fn.maparg(prefix .. suffix, "n")
+            end
+            return { side = tostring(vim.b[pane].lain_review_side),
+                     revision = tostring(vim.b[pane].lain_review_revision),
+                     path = tostring(vim.b[pane].lain_review_path),
+                     round = tostring(vim.b[pane].lain_review_round),
+                     keys = keys,
+                     in_review_tab = vim.t[0].lain_review_revisions ~= nil }
+          LUA
+
+          expect(state).to include("in_review_tab" => true, "side" => "nil", "revision" => "nil",
+                                   "path" => "nil", "round" => "nil")
+          expect(state["keys"]).to all(eq(""))
+          expect(in_file_pane("return tostring(vim.b[0].lain_review_side)")).to eq("new")
+          expect(note_keys["n"]).to eq(":LainNote note ")
+        end
+      end
+    end
+
+    # THE RESTART, WHICH IS THE DESIGNED LIFECYCLE AND NOT AN EDGE. The runtime is
+    # injected once per attach, so the reservation counter starts again at one --
+    # while nvim outlives the Ruby process (ARCHITECTURE: `lain up` reattaches to
+    # a tmux session) and a hidden pane keeps its NAME. Naming a fresh buffer over
+    # a surviving one is E95, which escapes a `define`d callback wearing nvim's
+    # traceback and, with a UI attached, a hit-enter prompt -- and leaves an
+    # orphaned unnamed scratch buffer behind on every attempt, because the buffer
+    # is created before it is named.
+    it "opens a pane on a second attach while the first attach's pane is still there" do
+      Dir.mktmpdir("lain-note-pane") do |dir|
+        write_round(dir)
+
+        described_class.new(channel:, socket_path: @socket).run do
+          survey(dir)
+          open_row("a.rb")
+          compose(7)
+          typed_into_pane(["begun before the restart"])
+        end
+        expect(pane_names.size).to eq(1)
+
+        @inspector = nil
+        described_class.new(channel:, socket_path: @socket).run do
+          survey(dir)
+          open_row("a.rb")
+
+          expect(compose(9)).to include("ok" => true)
+          expect(messages).not_to include("stack traceback")
+          expect(pane_names.size).to eq(2)
+          expect(pane_names.uniq.size).to eq(2)
+          expect(inspector.exec_lua(<<~LUA, [])).to eq(0)
+            local orphans = 0
+            for _, b in ipairs(vim.api.nvim_list_bufs()) do
+              if vim.api.nvim_buf_get_name(b) == "" and vim.bo[b].buftype == "acwrite" then
+                orphans = orphans + 1
+              end
+            end
+            return orphans
+          LUA
+        end
+      end
+    end
+
+    # THE SETTLE THAT WOULD INVERT THE INTERLEAVING THROUGH A DOOR THAT EXAMPLE
+    # DOES NOT WATCH. A pane holding a reservation it has not spent is a note
+    # whose place in line is taken and whose words have not arrived; settling
+    # around it hands back the LATER note first and files the earlier one in a
+    # later batch, which is the one thing this card exists to prevent.
+    # `assert_saved` refuses an unsaved reviewed buffer for the neighbouring
+    # reason; this is the same obligation.
+    it "refuses to settle while a pane still holds a reservation, and names it" do
+      Dir.mktmpdir("lain-note-pane") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+
+          compose(10)
+          typed_into_pane(["a long note still being typed"])
+          noted(20, "the quick one")
+
+          answer = settled
+          expect(answer).to include("ok" => true)
+          expect(answer["sent"]).to be_nil
+          expect(echoed.last).to eq("lain: a note pane is unwritten -- :w it, or :bwipeout lain://note/1")
+          expect(messages).not_to include("stack traceback")
+
+          write_pane
+          expect(handed_back.map { |note| note["line"] }).to eq([10, 20])
+        end
+      end
+    end
+
+    # A PANE THE HUMAN RENAMES HAS LEFT LAIN, AND ITS PLACE IN LINE GOES WITH IT.
+    # `:file`/`:saveas` renames a buffer IN PLACE and fires no unload, so nothing
+    # released the claim: `assert_placed` then refused every settle -- for the
+    # life of the attach -- naming a buffer that no longer holds the draft, and
+    # the next pane could take the stranded name and overwrite the orphan, so the
+    # refusal went on to name a DIFFERENT human's draft. A refusal whose remedy
+    # does not reach the thing it names is the one way that guard can trap
+    # somebody, which is worse than the inversion it exists to prevent.
+    # `47_diff` carries a whole `BufFilePost` handler for this same gesture on a
+    # buffer that cannot even be written, so it is not exotic.
+    #
+    # THE OLD NAME SURVIVES THE RENAME, which is nvim's doing and not lain's:
+    # `:file` sets the ALTERNATE file to the buffer's old name, so an unloaded
+    # husk is left holding `lain://note/1`. That is why the next pane is
+    # `lain://note/2` -- `free_name` asks the editor, and the editor still has
+    # that name spoken for.
+    it "gives back the place in line when the pane is renamed out from under lain" do
+      Dir.mktmpdir("lain-note-pane") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+
+          compose(10)
+          typed_into_pane(["taken out of lain's hands"])
+          renamed = inspector.exec_lua(<<~LUA, [File.join(dir, "renamed.md"), pane_buf])
+            local wanted, pane = ...
+            vim.api.nvim_buf_call(pane, function()
+              vim.cmd("file " .. vim.fn.fnameescape(wanted))
+            end)
+            return vim.api.nvim_buf_get_name(pane)
+          LUA
+          expect(renamed).to eq(File.join(dir, "renamed.md"))
+
+          noted(20, "the quick one")
+          expect(handed_back.map { |note| note["line"] }).to eq([20])
+          expect(echoed).not_to include(a_string_starting_with("lain: a note pane is unwritten"))
+
+          # ...and the next pane is a pane of its own, holding a place in line
+          # the renamed one is not standing in front of. It is `note/2` because
+          # the alternate husk still holds `note/1` -- so both are named here, and
+          # the new one is addressed BY NAME rather than taken as "the first",
+          # which the husk would have answered.
+          compose(11)
+          expect(pane_names).to eq(["lain://note/1", "lain://note/2"])
+          typed_into_pane(["a second draft, after the rename"], "lain://note/2")
+          expect(write_pane("lain://note/2")).to include("ok" => true, "modified" => false)
+          expect(handed_back.map { |note| note["line"] }).to eq([11])
+        end
+      end
+    end
+
+    # THE ARGUMENT SHAPE, AND IT IS THE ONE `<leader>Lc` INVITES. The key
+    # pre-fills exactly as `<leader>Ln` does, whose contract is "the kind, then
+    # your words" -- so a human who keeps typing must not have the whole line
+    # echoed back at them as a mistyped kind. `nargs = "+"` splits and `fargs[1]`
+    # is one whitespace-free token, so the refusal stays inside the budget; the
+    # words that followed seed the pane rather than being dropped.
+    it "takes the kind as the first word alone, and seeds the pane with what follows it" do
+      Dir.mktmpdir("lain-note-pane") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+
+          compose(7, "note the beginning of a thought")
+          expect(inspector.exec_lua("return vim.api.nvim_buf_get_lines(select(1, ...), 0, -1, false)",
+                                    [pane_buf])).to eq(["the beginning of a thought"])
+
+          compose(8, "notee and some words after it")
+          refusal = echoed.last
+          expect(refusal).to eq("lain: :LainNoteCompose takes a kind: blocker, note, question -- got notee")
+          expect(displayed_width(refusal)).to be <= 80
+        end
+      end
+    end
+
+    # A `:bdelete`d PANE, whose draft nvim has already thrown away: the name
+    # survives, so `:w` on the reloaded husk still reaches this rail -- and the
+    # husk comes back `buftype = ""` and UNMODIFIED, which is the one leg where
+    # "reaching here means they typed something" does not hold. So this leg sets
+    # 'modified' itself: a write that placed nothing must not report success.
+    it "fails the write and places nothing when the pane has been deleted under it" do
+      Dir.mktmpdir("lain-note-pane") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+          compose(10)
+          name = pane_names.first
+          inspector.exec_lua("vim.cmd('bdelete! ' .. vim.fn.bufnr(select(1, ...)))", [name])
+
+          revived = inspector.exec_lua(<<~LUA, [name])
+            local name = ...
+            vim.cmd("tabnew")
+            vim.cmd("edit " .. vim.fn.fnameescape(name))
+            local b = vim.api.nvim_get_current_buf()
+            local ok, err
+            vim.api.nvim_buf_call(b, function() ok, err = pcall(vim.cmd, "write") end)
+            return { ok = ok, err = tostring(err), modified = vim.bo[b].modified }
+          LUA
+
+          expect(revived).to include("modified" => true)
+          expect(echoed.last).to start_with("lain: nothing is pending in this pane;")
+          expect(messages).not_to include("stack traceback")
+          expect(markers).to be_empty
+        end
+      end
+    end
+
+    # THE DRAFT HAS AN ADDRESS, and the echo is where the human is told it. A
+    # pane backed out of with `:q` is hidden and UNLISTED, so `:ls` does not show
+    # it and no later gesture reaches it -- the one moment lain can name it is the
+    # moment it opens. The path goes LAST, `assert_saved`'s rule for an unbounded
+    # field, so a shortened echo truncates the file and not the way back.
+    it "names the buffer the draft lives in, and the line it is against" do
+      Dir.mktmpdir("lain-note-pane") do |dir|
+        write_round(dir)
+        frontend = described_class.new(channel:, socket_path: @socket)
+
+        frontend.run do
+          survey(dir)
+          open_row("a.rb")
+          compose(10)
+
+          expect(echoed.last).to eq("lain: :w places this note; :b lain://note/1 comes back -- a.rb:10")
+          expect(displayed_width(echoed.last)).to be <= 80
+
+          typed_into_pane(["a draft backed out of"])
+          inspector.exec_lua("vim.cmd('quit')", [])
+          expect(inspector.exec_lua("return vim.fn.win_findbuf(select(1, ...))", [pane_buf])).to be_empty
+
+          # ...and the address in that sentence is one that actually works.
+          expect(inspector.exec_lua(<<~LUA, [])).to eq(["a draft backed out of"])
+            vim.cmd("buffer lain://note/1")
+            return vim.api.nvim_buf_get_lines(0, 0, -1, false)
+          LUA
+        end
       end
     end
   end

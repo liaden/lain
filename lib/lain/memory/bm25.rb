@@ -3,28 +3,27 @@
 module Lain
   module Memory
     # A Manifest::Hit-duck search index backed by Lain::Ext::Bm25 (the `bm25`
-    # crate, in-process -- see T8 and ext/lain/src/bm25.rs). Where Manifest is
-    # the always-runs lexical floor, Bm25 is a boosting arm over the SAME
-    # corpus: it never replaces Manifest as the pointer layer, it only ranks
+    # crate, in-process -- see ext/lain/src/bm25.rs). Where Manifest is the
+    # always-runs lexical floor, Bm25 is a boosting arm over the SAME corpus: it
+    # never replaces Manifest as the pointer layer, it only ranks
     # (references/memory-and-retrieval.md #2).
     #
-    # Built ONCE from an index snapshot's items (id, description + body) --
-    # the crate's data-structure placement rules cross the FFI boundary in one
-    # batch, never per query (see ext/lain/CLAUDE.md rule #4). Body is indexed
-    # here, unlike Manifest, which tokenizes only id + description; a rare
-    # drug name mentioned only in an item's body is exactly the case Bm25
-    # exists to recall.
+    # Built ONCE from an index snapshot's items -- the crate's data-structure
+    # placement rules cross the FFI boundary in one batch, never per query (see
+    # ext/lain/CLAUDE.md rule #4). Body is indexed here, unlike Manifest, which
+    # tokenizes only id + description; a rare drug name mentioned only in an
+    # item's body is exactly the case Bm25 exists to recall.
     #
-    # A query that is entirely non-alphanumeric (an emoji, punctuation only)
-    # tokenizes to nothing on both sides of the FFI boundary and returns [],
-    # never an error -- the same tokenless-query behavior Manifest has.
+    # A query that is entirely non-alphanumeric tokenizes to nothing on both
+    # sides of the FFI boundary and returns [], never an error -- the same
+    # tokenless-query behavior Manifest has.
     class Bm25
       include Inspectable
 
       # A u32 token-hash collision inside the crate can score a document above
       # zero with an EMPTY surface intersection (no shared tokens to name).
       # Hit#why raises on blank, so that case gets this named fallback rather
-      # than a blank string or an exception -- see T8's review panel (Gallant).
+      # than a blank string or an exception.
       FALLBACK_WHY = "bm25 score match (token-level explanation unavailable)"
 
       # @param index [#map, #to_h] a Memory::Index snapshot (or any duck that
@@ -52,8 +51,8 @@ module Lain
       # @return [Array<Manifest::Hit>] sorted by descending score, ties broken
       #   by build-batch insertion order (pinned in ext/lain/src/bm25.rs); []
       #   on no match.
-      # rubocop:disable Naming/MethodParameterName -- `k` is the pinned name
-      # from the plan card (T9/T10), matching Context::Recall's own `k:`.
+      # rubocop:disable Naming/MethodParameterName -- `k` is the pinned name,
+      # matching Context::Recall's own `k:`.
       def search(query, k: nil)
         bound = k.nil? ? @size : Integer(k)
         return [] if @engine.nil? || bound <= 0

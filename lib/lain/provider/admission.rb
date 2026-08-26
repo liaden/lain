@@ -1,9 +1,8 @@
 # frozen_string_literal: true
 
-# A sibling `admission/` directory makes this file that subtree's index, so it
-# requires its own children. Both sit here by CONVENTION, not by constraint:
-# neither reopens {Admission} nor resolves its constants at load time, so `lain`
-# loads with these at either end of the file. Probed, not assumed.
+# This file is its subtree's index. Neither child reopens {Admission} nor
+# resolves its constants at load time, so the position here is convention
+# rather than constraint -- probed, not assumed.
 require_relative "admission/endpoint"
 require_relative "admission/journal"
 
@@ -12,72 +11,60 @@ module Lain
     # A provider's CAPACITY, as one object: at most `width` callers inside one
     # RESOLVED ENDPOINT at a time.
     #
-    # F26 is the absent concept this fills. Nothing owned capacity, so the
-    # harness put two requests on a one-slot local server and then read the
-    # silence it had caused itself as a dead stream. Admission wraps
-    # {Provider#complete} and nothing below it: `#complete` encloses the whole
-    # stream, and the stall clock arms on the FIRST TICK rather than at send
-    # (`http/streaming/faraday_handlers.rb:397`), so a request waiting here has
-    # no clock installed at all and cannot time out while it queues.
+    # The absent concept this fills: nothing owned capacity, so the harness put
+    # two requests on a one-slot local server and then read the silence it had
+    # caused itself as a dead stream. Admission wraps {Provider#complete} and
+    # nothing below it: `#complete` encloses the whole stream and the stall
+    # clock arms on the FIRST TICK rather than at send, so a request waiting
+    # here has no clock installed and cannot time out while it queues.
     #
     # == The key is the resolved endpoint, not the flag
     #
-    # There is one `--api-base` for every tier (`exe/lain:416`), so
+    # There is one `--api-base` for every tier, so
     # `--provider anthropic --summarizer-provider ollama` gives `api_base == nil`
     # on BOTH sides -- a key of "api_base" would serialise a hosted turn behind a
     # local summary. Each provider resolves its own endpoint, and that string is
     # the key. It is also why {.for} exists rather than injection:
-    # {Oracle::SecretRead.tier} constructs its provider bare and takes no seam,
-    # deliberately (`oracle/secret_read.rb:19-38`), so admission has to be
-    # reachable without one.
+    # {Oracle::SecretRead.tier} constructs its provider bare and deliberately
+    # takes no seam, so admission has to be reachable without one.
     #
     # == Why this is hand-rolled and not an Async::Semaphore
     #
-    # Because `Provider#complete` is reached from TWO OS threads. On the `--nvim`
-    # path `cli/repl.rb:135` wires a real {CLI::ResendBridge}, whose dispatch
-    # runs on `frontend/neovim.rb:351`'s resend-worker thread and reaches
-    # `resend_bridge.rb:156`'s `@agent.run` -- and {Agent#run} is `Sync { }`,
-    # which spins up a SECOND reactor when there is none to join. Meanwhile the
-    # eager oracle, the span summarizer and the window probes run on the
-    # conductor's. `Agent#dispatch_lock` excludes a concurrent `#ask` and none of
-    # those.
+    # Because `Provider#complete` is reached from TWO OS threads. On the
+    # `--nvim` path {CLI::ResendBridge}'s dispatch runs on the resend-worker
+    # thread and reaches `@agent.run` -- and {Agent#run} is `Sync { }`, which
+    # spins up a SECOND reactor when there is none to join. Meanwhile the eager
+    # oracle, the span summarizer and the window probes run on the conductor's.
     #
     # `Async::Semaphore` is single-reactor by construction: `@count` is
     # unsynchronised, and `FiberNode#resume` calls `Fiber.scheduler.resume` on
     # the RELEASING thread's scheduler. Measured, all three at once: the
     # `FiberError: fiber called across threads` lands in the releasing fiber --
     # the agent's turn, killed by an unrelated resend -- the waiting thread is
-    # still parked after a 5s join, wedging `resend_loop`'s blocking-pop
-    # consumer, and `#release` decrements before it resumes, so the gate is left
-    # at zero with a waiter still queued and SILENTLY STOPS GATING. The last
-    # example in the spec is that measurement, kept.
+    # still parked after a 5s join, and `#release` decrements before it resumes,
+    # so the gate is left at zero with a waiter still queued and SILENTLY STOPS
+    # GATING. The last example in the spec is that measurement, kept.
     #
-    # So: a Mutex-guarded counter, which is correct across threads, and a poll
-    # that sleeps between attempts. `ConditionVariable#wait` is deliberately NOT
-    # used -- it blocks the whole reactor thread, which is the failure
-    # `cli/repl/approval_surfaces.rb:56-62` records, where a thread-blocking read
-    # froze the reactor so the approval queue's fail-closed timer could never
-    # fire. A plain `Kernel#sleep` is the opposite: under a fiber scheduler it is
-    # hooked (`Async::Scheduler#kernel_sleep`) and yields the fiber, so sibling
-    # fibers keep running (measured: 20 ticks of a 10ms ticker across one 200ms
-    # sleep), and off a reactor it blocks only the calling thread. That is why
-    # this file requires no ASYNC machinery at all: it is correct on and off a
-    # reactor, which a gate reached from two of them has to be. Note
-    # the precise claim: yielding rather than blocking is a property of ASYNC's
-    # scheduler, which implements `kernel_sleep`. Any other fiber scheduler that
-    # did not would block the thread here, and nothing in this file enforces
-    # that it does.
+    # So: a Mutex-guarded counter, correct across threads, and a poll that
+    # sleeps between attempts. `ConditionVariable#wait` is deliberately NOT used
+    # -- it blocks the whole reactor thread, the failure that once froze the
+    # reactor so the approval queue's fail-closed timer could never fire. A
+    # plain `Kernel#sleep` is the opposite: under Async's scheduler it is hooked
+    # and yields the fiber (measured: 20 ticks of a 10ms ticker across one 200ms
+    # sleep), and off a reactor it blocks only the calling thread. So this file
+    # needs no ASYNC machinery at all. The precise claim, though: yielding
+    # rather than blocking is a property of ASYNC's scheduler, and nothing here
+    # enforces that some other fiber scheduler implements `kernel_sleep`.
     #
     # == There is no fairness, and that is worth stating
     #
     # Waiters are not queued: each polls independently, so whoever happens to
     # look when a slot frees takes it. A caller arriving LATE can therefore be
-    # served ahead of one already waiting -- measured, two waiters arriving 150ms
-    # later beat four already queued. Silence would read as FIFO, so: it is not.
-    # Starvation is improbable at real arrival rates (the deadline bounds any one
-    # caller's exposure, and a saturated endpoint is the pathology admission
-    # exists to report rather than to schedule around), but a bench that cares
-    # about causal order should not have to discover this from the source.
+    # served ahead of one already waiting -- measured, two waiters arriving
+    # 150ms later beat four already queued. Silence would read as FIFO, so: it
+    # is not. The deadline bounds any one caller's exposure, and a saturated
+    # endpoint is the pathology admission exists to report rather than to
+    # schedule around.
     class Admission
       # No slot came free inside the acquire deadline. Named for the ENDPOINT,
       # because the interesting fact is which server is saturated.
@@ -92,67 +79,50 @@ module Lain
       # parallelism is a provider-specific probe on a path that must stay
       # synchronous, and 1 is correct for every local server this bench runs.
       #
-      # Read the qualifier as load-bearing. The justification has always been a
-      # LOCAL-SERVER one, and F26 is a one-slot local server being handed two
-      # requests; applying the same 1 to a hosted endpoint would serialise
-      # concurrent SUBAGENTS, which run at once over the ONE shared
-      # `Subagent::Seam` provider `cli/wiring.rb:475` -> `toolset_build.rb:316`
-      # builds for every child. (One provider, N concurrent callers, one endpoint
-      # key -- the sharing does not soften the argument, since the gate keys on
-      # the server rather than on the client.) That is a
-      # throughput regression nobody asked for, and it is the same harm as
-      # serialising a hosted turn behind a local summary -- the case the
-      # endpoint key already exists to prevent -- merely wearing the hosted
-      # endpoint's own face. So {.build} applies this width only where
-      # {.local?} holds, and hands everything else the unbounded {Null}.
+      # Read the LOCAL qualifier as load-bearing. Applying the same 1 to a
+      # hosted endpoint would serialise concurrent SUBAGENTS, which run at once
+      # over one shared provider -- a throughput regression, and the same harm
+      # as serialising a hosted turn behind a local summary wearing the hosted
+      # endpoint's face. So {.build} applies this width only where {.local?}
+      # holds and hands everything else the unbounded {Null}.
       #
       # == What this costs a LOCAL subagent fan-out, which is a real cost
       #
-      # Local children no longer overlap: N siblings over one ollama now queue,
-      # each against its own {DEFAULT_DEADLINE} acquire clock. So a fan-out that
-      # used to run slow can now RAISE {Busy} at sibling N -- a behaviour change,
-      # not merely a slowdown, and the thing to recognise if a `Busy` turns up
-      # under a wide local spawn.
-      #
-      # Two of the three places that can meet it already contain it: the render
-      # path rescues {Lain::Error} (`compaction/strategy/summarizing.rb:213`) and
-      # {Oracle::Eager} contains anything a fire raises inside its task boundary.
-      # A SUBAGENT'S OWN TURN IS NEITHER. It has no such rescue, so the refusal
-      # surfaces as that child's failure. That is the honest trade -- the
-      # alternative is the overlap F26 is about -- but it is why the deadline is
-      # 300s rather than something a busy fan-out would trip casually, and why
-      # {ENV_KEY} exists.
+      # Local children no longer overlap: N siblings over one ollama queue, each
+      # against its own {DEFAULT_DEADLINE}. A fan-out that used to run slow can
+      # now RAISE {Busy} at sibling N -- a behaviour change, not merely a
+      # slowdown. The render path rescues {Lain::Error} and {Oracle::Eager}
+      # contains what a fire raises, but A SUBAGENT'S OWN TURN IS NEITHER, so
+      # the refusal surfaces as that child's failure. That is why the deadline
+      # is 300s rather than something a busy fan-out would trip casually, and
+      # why {ENV_KEY} exists.
       DEFAULT_WIDTH = 1
 
       # Between polls for a free slot. {Approval::QueueSurface::DEFAULT_POLL_INTERVAL}'s
       # value and its reason -- the sleep is a scheduler yield, not a wall-clock
-      # stall -- reused rather than restated, as {Notify::POLL_INTERVAL} does.
+      # stall -- reused rather than restated.
       POLL_INTERVAL = Approval::QueueSurface::DEFAULT_POLL_INTERVAL
 
       # The longest a caller waits for a slot before being refused by name.
       #
-      # One `request_timeout` (`provider/http/configuration.rb:73`), which is the
-      # longest a legitimate holder's single attempt can take -- so a wait longer
-      # than this means the holder is retrying or wedged rather than working. It
-      # has to be bounded at all because the holder's own ceiling is ~20 minutes,
-      # not 300s: faraday-retry sits INSIDE the connection with `:post` in its
-      # retry methods, so one hung endpoint holds for four `request_timeout`s
-      # (`connection/middleware_stack.rb:64-70`).
+      # One `request_timeout`, the longest a legitimate holder's single attempt
+      # can take -- so a longer wait means the holder is retrying or wedged
+      # rather than working. It has to be bounded at all because the holder's
+      # own ceiling is ~20 minutes, not 300s: faraday-retry sits INSIDE the
+      # connection with `:post` in its retry methods, so one hung endpoint holds
+      # for four `request_timeout`s.
       DEFAULT_DEADLINE = 300.0
 
       # What a caller that never queued reports. Exactly zero rather than a
       # measured epsilon: the wait IS the time spent polling, so a caller
-      # admitted on its first attempt waited none, and T3's journal can tell
-      # "did not queue" from "queued briefly" without picking a threshold.
+      # admitted on its first attempt waited none, and the admission journal can
+      # tell "did not queue" from "queued briefly" without picking a threshold.
       #
       # THE DISTINCTION IS EXACT; THE MAGNITUDE IS NOT. A reported wait is
       # quantised to {POLL_INTERVAL}, because a waiter only learns the slot is
-      # free when it next wakes -- measured 0.0501s reported against a ~0.040s
-      # true queue. So a non-zero reading is never below one interval and
-      # over-reports by up to one, and anything consuming it (T3's journal) must
-      # present it as "queued, at ~50ms resolution" rather than as a measurement.
-      # Shortening the interval would trade that error against poll churn; it is
-      # not a bug to fix here.
+      # free when it next wakes -- measured 0.0501s against a ~0.040s true
+      # queue. So a consumer must present it as "queued, at ~50ms resolution"
+      # rather than as a measurement.
       NO_WAIT = 0.0
 
       # `0` selects the Null arm; a positive `N` sets the width. Either way it
@@ -163,29 +133,22 @@ module Lain
       #
       # It is a PROCESS-START switch, not a rescue. {.for} memoises per endpoint
       # and pins whatever the env said at that endpoint's first resolution, so
-      # exporting `0` cannot free a session that is already wedged -- it governs
-      # the next process. Calling it an "escape hatch" (as an earlier draft of
-      # this comment did) reads as mid-session recovery it cannot perform.
+      # exporting `0` cannot free a session that is already wedged.
       ENV_KEY = "LAIN_PROVIDER_CONCURRENCY"
 
-      # One admission per resolved endpoint, process-wide. The Mutex is what
-      # makes that safe: the registry is reached from both threads named in this
-      # class's header, and `Hash#[]=` across threads is not safe. It is NOT a
-      # `Ractor.shareable?` concern -- `spec/value_object_shareability_spec.rb`
-      # sweeps Data/Struct VALUE objects, and a mutable registry is not one.
+      # One admission per resolved endpoint, process-wide, behind a Mutex: the
+      # registry is reached from both threads named in this class's header.
       #
-      # It is never evicted, and that is deliberate rather than a leak: the key
-      # set is the endpoints one process talks to, which is a handful, and an
-      # admission that vanished under a live holder would stop gating exactly
-      # when it mattered. {.reset!} is the one way to clear it.
+      # Never evicted, deliberately rather than as a leak: the key set is the
+      # endpoints one process talks to, and an admission that vanished under a
+      # live holder would stop gating exactly when it mattered. {.reset!} is the
+      # one way to clear it.
       #
       # Class-level ivars rather than constants because this state is MEANT to
-      # mutate, and `Style/MutableConstant` is right to say a constant should
-      # not: taking its `.freeze` autocorrect would break the memoisation below.
-      # The disable is the same argument one cop further on -- the hazard
-      # `ThreadSafety/MutableClassInstanceVariable` names is real and is answered
-      # by the lock on the very next line, which the cop cannot see. Every read
-      # and write of `@registry` goes through it.
+      # mutate; `Style/MutableConstant`'s `.freeze` autocorrect would break the
+      # memoisation below. The disable answers the same way: the hazard
+      # `ThreadSafety/MutableClassInstanceVariable` names is real and is closed
+      # by the lock on the very next line, which the cop cannot see.
       @registry = {} # rubocop:disable ThreadSafety/MutableClassInstanceVariable
       @registry_lock = Mutex.new
 
@@ -195,53 +158,36 @@ module Lain
       attr_reader :width
       # @return [Float] the acquire deadline, in seconds
       attr_reader :deadline
-      # The granularity of every wait this gate reports, since a waiter learns a
-      # slot is free only when it next wakes. Readable so an observer can
-      # describe the gate it is wrapping instead of assuming {POLL_INTERVAL} --
-      # a decorator that guessed would report a resolution the gate does not run
-      # at. A reader and never a writer: the interval is fixed at construction.
+      # Readable so an observer can describe the gate it wraps instead of
+      # assuming {POLL_INTERVAL} -- a decorator that guessed would report a
+      # resolution the gate does not run at.
       # @return [Float] seconds between attempts while waiting
       attr_reader :poll_interval
 
       # The admission for one resolved endpoint, built once and shared.
       #
-      # KEYED ON {.canonical}, NOT ON THE STRING IT WAS HANDED, and that is what
-      # makes the whole object work rather than a nicety. A raw-string key
+      # KEYED ON {.canonical}, NOT ON THE STRING IT WAS HANDED. A raw-string key
       # defeats {DEFAULT_WIDTH}'s own argument -- that every loopback spelling
-      # must count local *because they are one server* -- by handing each
-      # spelling its own slot. Measured before it was fixed: a chat provider on
-      # `--api-base http://127.0.0.1:11434` and the BARE `Provider::Ollama.new`
-      # that {Oracle::SecretRead.tier} constructs (the one site that can never
-      # take an injected gate, and the reason admission lives in the provider at
-      # all) overlapped two round trips on one ollama. F26, still live, through
-      # the exact construction sites this card exists to cover.
+      # counts local *because they are one server* -- by handing each spelling
+      # its own slot. Measured before it was fixed: a chat provider on
+      # `--api-base http://127.0.0.1:11434` and the bare `Provider::Ollama.new`
+      # that {Oracle::SecretRead.tier} constructs overlapped two round trips on
+      # one ollama.
       #
       # == FIRST DECLARATION WINS -- among DECLARATIONS. SILENCE IS NOT ONE.
       #
-      # A declared width is READ AT BUILD TIME AND PINNED BY THE MEMOISATION,
-      # NEVER FOLDED INTO THE KEY: {.canonical} is the whole key, before this
-      # keyword existed and after it. So a second caller declaring a different
+      # A declared width is read at build time and PINNED BY THE MEMOISATION,
+      # never folded into the key. So a second caller declaring a different
       # number for an endpoint that already has a REAL gate is handed the gate
-      # that exists and its number is ignored -- a later declaration may not
-      # widen a gate other callers are already inside, which is the one thing a
-      # capacity claim cannot do.
+      # that exists: a later declaration may not widen a gate other callers are
+      # already inside.
       #
-      # That argument covers a WIDENING and nothing else, and an earlier draft
-      # of this comment over-claimed by stopping there. Silence pinning {Null}
-      # is not a widening to preserve, it is the absence of a claim: the first
-      # caller to resolve a hosted endpoint WITHOUT a width -- which
-      # `--provider ollama --api-base https://ollama.com` builds today, since a
-      # provider with no cloud deployment answers no width -- would otherwise
-      # leave every later round trip in the process unbounded against a plan
-      # that permits 3, with no error raised and nothing journaled. That is this
-      # card's own failure wearing its other face.
-      #
-      # So A DECLARATION REPLACES AN UNBOUNDED ENTRY THAT IS IDLE, and nothing
-      # else -- see {.supersedable?}, which holds the four conditions and the
-      # window that remains open. Idle is the whole of the safety argument:
-      # {Null} declines to GATE its callers but it counts them, so an occupied
-      # one may not be swapped. {.reset!} remains how a process re-reads
-      # everything.
+      # Silence pinning {Null} is not a widening to preserve, though, it is the
+      # absence of a claim -- the first caller to resolve a hosted endpoint
+      # WITHOUT a width would otherwise leave every later round trip in the
+      # process unbounded against a plan that permits 3, with no error and
+      # nothing journaled. So A DECLARATION REPLACES AN UNBOUNDED ENTRY THAT IS
+      # IDLE, and nothing else; see {.supersedable?}.
       #
       # @param endpoint [String] the endpoint the provider resolved for itself
       # @param width [Integer, nil] what the caller knows its server's capacity
@@ -258,46 +204,32 @@ module Lain
         end
       end
 
-      # Whether {.build} should run for this key at all. Four conditions, and
-      # every one of them is load-bearing.
+      # Whether {.build} should run for this key at all. Four conditions, each
+      # load-bearing.
       #
-      # NOTHING MEMOISED -- the ordinary first resolution, and the only one that
-      # is not a supersession.
+      # A WIDTH WAS DECLARED, because silence supersedes nothing.
       #
-      # A WIDTH WAS DECLARED. Silence supersedes nothing: a caller that knows
-      # nothing about the server takes whatever is already there.
-      #
-      # {ENV_KEY} SAID NOTHING. An env-set endpoint's arm is the operator's
-      # choice and a declaration cannot move it, so there is nothing here to
-      # supersede. Without this clause the off switch's {Null} is supersedable
-      # FOREVER -- {.build} re-reads the env, answers another {Null}, and that
-      # one qualifies again -- so the gate is rebuilt on EVERY round trip, since
-      # {Admitted#admitted} resolves it per request. Measured before the clause
-      # existed: 5 resolutions, 5 distinct objects; 2000 resolutions, ~33
-      # allocations each, every one carrying a fresh Mutex.
+      # {ENV_KEY} SAID NOTHING -- an env-set arm is the operator's choice.
+      # Without this clause the off switch's {Null} is supersedable FOREVER
+      # ({.build} re-reads the env, answers another {Null}, which qualifies
+      # again), so the gate is rebuilt on EVERY round trip. Measured before the
+      # clause existed: 2000 resolutions, ~33 allocations each, every one
+      # carrying a fresh Mutex.
       #
       # THE ENTRY IS UNBOUNDED AND IDLE. `width.finite?` asks the entry what it
-      # IS rather than what class it is -- {Null} answers {Float::INFINITY}
-      # precisely so that it can be asked -- which keeps the two arms
-      # indistinguishable to everyone except the factory that chose between
-      # them. `in_flight.zero?` is the safety condition, and it is the one an
-      # earlier draft of this comment got wrong by asserting that "{Null} holds
-      # nobody". IT DOES HOLD THEM. It declines to GATE them and counts them
-      # exactly, which its own docstring insists on because
-      # {Telemetry::ProviderWait} reads {#in_flight} and a flat zero would
-      # report an idle endpoint under load. So replacing an OCCUPIED entry
-      # installs a gate whose count starts at zero and admits a full declared
-      # width on top of the callers already inside -- measured at peak 6 against
-      # a declared 3.
+      # IS rather than what class it is, keeping the two arms indistinguishable
+      # to everyone but the factory. `in_flight.zero?` is the safety condition:
+      # {Null} DOES hold callers -- it declines to gate them and counts them
+      # exactly -- so replacing an OCCUPIED entry installs a gate whose count
+      # starts at zero and admits a full declared width on top of those already
+      # inside, measured at peak 6 against a declared 3.
       #
-      # A WINDOW REMAINS, and it is stated rather than denied. {#in_flight} is a
-      # snapshot, and {Admitted#admitted} resolves the gate and enters it as two
-      # steps, so a caller handed the old entry can still enter it after the
-      # swap -- inside an object the registry no longer names, invisible to the
-      # new gate's count. It is one caller wide, it closes when that round trip
-      # ends, and it can only happen on an endpoint's first declaration. Closing
-      # it needs a gate that can hand its occupants over, which is a different
-      # object than this one.
+      # A WINDOW REMAINS, stated rather than denied. {#in_flight} is a snapshot
+      # and {Admitted#admitted} resolves-then-enters in two steps, so a caller
+      # handed the old entry can still enter it after the swap, invisible to the
+      # new gate's count. One caller wide, closing when that round trip ends,
+      # and only on an endpoint's first declaration. Closing it needs a gate
+      # that can hand its occupants over, which is a different object.
       # @return [Boolean]
       def self.supersedable?(existing, declared)
         return true if existing.nil?
@@ -306,28 +238,19 @@ module Lain
       end
       private_class_method :supersedable?
 
-      # A declaration's FORMAT AND DOMAIN, checked the way {.width_from_env}
-      # checks the environment's -- same class of input, same care.
-      #
-      # IT IS CHECKED HERE, BEFORE THE REGISTRY AND BEFORE LOCALITY, and both
-      # are load-bearing. Inside {.build} the check would be skipped whenever
-      # the key was already memoised, making the refusal depend on what ran
-      # first; and it would sit BELOW the locality branch, so a provider whose
+      # CHECKED HERE, BEFORE THE REGISTRY AND BEFORE LOCALITY, and both are
+      # load-bearing. Inside {.build} the check would be skipped whenever the
+      # key was already memoised, making the refusal depend on what ran first;
+      # and it would sit BELOW the locality branch, so a provider whose
       # `#admission_width` computed a bad value would raise against a cloud
-      # endpoint and pass in silence against localhost -- loudness inverted from
-      # where a developer debugging that provider is looking.
+      # endpoint and pass in silence against localhost.
       #
-      # A String is the shape that will really arrive: the cloud width is
-      # configured from the environment, and `ENV.fetch` answers Strings.
-      # Unchecked it reaches `width.positive?` and dies as `undefined method
-      # 'positive?' for an instance of String`, from inside a gate the caller
-      # never mentioned and naming neither the endpoint nor the fix. A Float is
-      # the quieter one: `3.5` passes every check `0` fails and builds a gate
-      # 3.5 callers wide, which is not a capacity any server has.
-      # The refusal names the value, the ENDPOINT and the way out -- built
-      # inline the way {.width_from_env} builds its own, three methods down --
-      # because whoever meets it is a provider author who mis-typed a capacity,
-      # not an operator reading {ENV_KEY}'s.
+      # A String is the shape that will really arrive, since the cloud width is
+      # configured from the environment and `ENV.fetch` answers Strings.
+      # Unchecked it dies as `undefined method 'positive?' for an instance of
+      # String`, from inside a gate the caller never mentioned. A Float is the
+      # quieter one: `3.5` passes every check `0` fails and builds a gate 3.5
+      # callers wide, which is not a capacity any server has.
       # @return [Integer, nil] nil when nothing was declared
       def self.declared_width(width, endpoint)
         return nil if width.nil?
@@ -346,48 +269,31 @@ module Lain
 
       # Forget every memoised admission, so the next {.for} rebuilds from the
       # env. The registry pins {ENV_KEY} at an endpoint's FIRST resolution, so
-      # without this there is no way to re-read it -- which made a spec mint a
-      # random endpoint per example to dodge leakage, a fixture working around a
-      # missing affordance.
+      # without this there is no way to re-read it.
       #
       # It does NOT free a wedged session: existing holders keep the admission
-      # they entered, and a rebuilt gate simply does not know about them. It is
-      # for re-reading configuration, not for recovery.
-      #
-      # Nor is it per-example hygiene, which is the other thing it looks like
-      # from a spec. The registry is process-global, so a suite that overlaps two
-      # round trips on one LOCAL endpoint meets a real gate -- see
-      # `spec/lain/provider/ollama_spec.rb`'s `without_admission`, which pairs a
-      # reset with {ENV_KEY} to ask for the off switch and resets again on the
-      # way out. Reaching for a blanket reset between every example would hide
-      # that coupling rather than state it, and would quietly widen this method's
-      # meaning; it is deliberately not done.
+      # they entered, and a rebuilt gate does not know about them. Nor is it
+      # per-example hygiene -- the registry is process-global, so a suite that
+      # overlaps two round trips on one LOCAL endpoint meets a real gate, and a
+      # blanket reset between examples would hide that coupling rather than
+      # state it.
       # @return [void]
       def self.reset!
         @registry_lock.synchronize { @registry = {} }
         nil
       end
 
-      # `env > declared > locality`, and the ORDER is the policy: an explicit
-      # {ENV_KEY} wins in BOTH directions -- `0` unbounds a local endpoint, a
-      # positive `N` gates a hosted one -- an operator who has said a number has
-      # said it about this process, not about this half of it; a caller who
-      # knows its own server's capacity is believed next; and only silence from
-      # both lets {.local?} decide.
+      # `env > declared > locality`, and the ORDER is the policy: an operator who
+      # has said a number has said it about this process, not about half of it;
+      # a caller that knows its own server's capacity is believed next; only
+      # silence from both lets {.local?} decide.
       #
       # A LOCAL ENDPOINT IGNORES `declared`, DELIBERATELY. {DEFAULT_WIDTH} is
-      # F26 -- a one-slot local server handed two requests -- and a caller that
-      # could declare its way past it would re-open exactly that, from inside
-      # the process rather than from the environment. So a declaration only ever
-      # reaches the arm locality has no answer for: hosted, where the alternative
-      # is the unbounded {Null}. It can therefore only ever TIGHTEN.
-      #
-      # `declared` arrives ALREADY CHECKED -- {.declared_width} refuses a
-      # non-Integer or non-positive one up in {.for}, above the locality branch
-      # here, so a bad width is refused on every endpoint rather than only on
-      # the arm that happens to read it. A declaration is not a second way to
-      # build a gate that could never admit anyone, and {ENV_KEY}'s `0` remains
-      # the one way to ask for {Null}.
+      # the answer to a one-slot local server handed two requests, and a caller
+      # that could declare its way past it would re-open exactly that from
+      # inside the process. So a declaration only ever reaches the arm locality
+      # has no answer for -- hosted, where the alternative is the unbounded
+      # {Null} -- and can therefore only ever TIGHTEN.
       #
       # @return [Admission, Admission::Null] Null when the off switch is set, or
       #   when the endpoint is neither local nor given a width and nothing overrode that
@@ -408,22 +314,16 @@ module Lain
       # @return [Boolean]
       def self.local?(endpoint) = Endpoint.local?(endpoint)
 
-      # Loud on a typo, per the house rule that unknown values fail rather than
-      # degrade: a misspelt width that silently meant 1 would look exactly like
-      # admission working.
+      # FORMAT AND DOMAIN ARE BOTH CHECKED, and the second is the one that
+      # bites. `-1` parses fine and then makes `@count < @width` false with
+      # NOTHING in flight, so every caller polls the whole deadline and raises
+      # {Busy} -- and `-1` is exactly what someone reaches for meaning "no
+      # limit", so the failure mode is a hung session produced by trying to turn
+      # admission OFF. `0` is the way to do that.
       #
-      # FORMAT AND DOMAIN ARE BOTH CHECKED, and the second is the one that bites.
-      # `-1` parses fine and then makes `@count < @width` false with NOTHING in
-      # flight, so every caller polls the whole deadline and raises {Busy} -- and
-      # `-1` is exactly what someone reaches for meaning "no limit", so the
-      # failure mode is a hung session produced by trying to turn admission OFF.
-      # `0` is the way to do that, and it is the only non-positive value that
-      # means anything here.
-      #
-      # UNSET ANSWERS nil, NOT {DEFAULT_WIDTH}, and the distinction is what makes
-      # the locality rule expressible: {.build} has to tell "the operator asked
-      # for 1" from "nobody said", because the first gates a hosted endpoint and
-      # the second does not.
+      # UNSET ANSWERS nil, NOT {DEFAULT_WIDTH}: {.build} has to tell "the
+      # operator asked for 1" from "nobody said", because the first gates a
+      # hosted endpoint and the second does not.
       # @return [Integer, nil] nil when the variable is unset or empty
       def self.width_from_env
         raw = ENV.fetch(ENV_KEY, nil)
@@ -462,12 +362,10 @@ module Lain
 
       # Enter, waiting up to {#deadline} for a slot.
       #
-      # The deadline bounds the WAIT and never the block. That separation is the
-      # whole point and is easy to lose by wrapping both in one timeout: a round
-      # trip is legitimately minutes on a local model -- prompt evaluation is
-      # silence, which is why `request_timeout` stays at 300s
-      # (`provider/http/configuration.rb:86-90`) -- so a timeout around the block
-      # would cancel healthy generations. Only the poll loop watches the clock.
+      # The deadline bounds the WAIT and never the block, and that is easy to
+      # lose by wrapping both in one timeout: a round trip is legitimately
+      # minutes on a local model, so a timeout around the block would cancel
+      # healthy generations. Only the poll loop watches the clock.
       #
       # @yieldparam waited [Float] seconds spent queued; {NO_WAIT} if it never was
       # @return the block's value
@@ -484,10 +382,10 @@ module Lain
       # Enter only if a slot is free RIGHT NOW; never queue.
       #
       # The eager oracle's entry point: its contract is that the turn which
-      # produced the text never waits on it (`oracle/eager.rb:45-47`), so a busy
-      # endpoint means the summary is SKIPPED, which {Compaction::SummarySnapshot}
-      # already reads as an ordinary miss. Queueing instead would be the worse
-      # degradation -- a fire reaped at teardown burns its digest for the session.
+      # produced the text never waits on it, so a busy endpoint means the
+      # summary is SKIPPED, which {Compaction::SummarySnapshot} already reads as
+      # an ordinary miss. Queueing instead would be the worse degradation -- a
+      # fire reaped at teardown burns its digest for the session.
       #
       # Test-and-set under the one Mutex, so this is atomic across threads too --
       # unlike a `blocking?` check followed by an acquire, which is only atomic
@@ -556,15 +454,12 @@ module Lain
       # `LAIN_PROVIDER_CONCURRENCY=0`.
       #
       # {Sink::Null}'s shape -- it satisfies the same duck and gates nothing, so
-      # no caller writes `if admission`. Selected by `LAIN_PROVIDER_CONCURRENCY=0`
-      # at process start, it restores exactly the pre-F26 behaviour: every caller
-      # straight through, no queue, no deadline.
+      # no caller writes `if admission`.
       #
-      # It still COUNTS, though, and that is the difference between doing nothing
-      # and lying. {Sink::Null} returns a real byte count for bytes it discards;
-      # this returns the callers really inside it, because T3's journal reads
-      # {#in_flight} and a flat zero would report an idle endpoint under load.
-      # Gating is what it declines to do -- not bookkeeping.
+      # It still COUNTS, though, and that is the difference between doing
+      # nothing and lying: the admission journal reads {#in_flight}, and a flat
+      # zero would report an idle endpoint under load. Gating is what it
+      # declines to do, not bookkeeping.
       class Null
         # @return [String] the endpoint it declines to gate
         attr_reader :endpoint
@@ -581,9 +476,8 @@ module Lain
 
         # It never polls, so there is no interval to name. Zero rather than a
         # borrowed default: it completes the duck an observer reads without
-        # claiming a granularity this arm does not have. Nothing journals it --
-        # this arm never queues, so it never emits a record -- and
-        # {Telemetry::Guards::ProviderWait} would rightly refuse a zero
+        # claiming a granularity this arm does not have. Nothing journals it,
+        # and {Telemetry::Guards::ProviderWait} would rightly refuse a zero
         # resolution if one ever reached a record.
         # @return [Float]
         def poll_interval = NO_WAIT

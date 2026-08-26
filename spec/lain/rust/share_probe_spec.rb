@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# The M4 Timeline port depends on a magnus `TypedData` object being
+# The Timeline port depends on a magnus `TypedData` object being
 # `Ractor.shareable?` once frozen. This canary proves the `frozen_shareable`
 # mechanism in isolation, before `Turn` relies on it -- a magnus upgrade that
 # silently broke the flag would fail here rather than deep in the port.

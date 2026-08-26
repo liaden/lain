@@ -223,7 +223,7 @@ RSpec.describe Lain::Effect::Handler::Sensitivity do
     end
 
     # {Tool::Input} COERCES rather than refuses, so a Pathname declined here
-    # would be read anyway -- the fail-open T11's panel demonstrated end to end.
+    # would be read anyway -- the fail-open a review demonstrated end to end.
     it "refuses a Pathname spelling of a denied path" do
       effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file",
                                           input: { "path" => Pathname.new("#{home}/.ssh/id_rsa") })
@@ -291,7 +291,7 @@ RSpec.describe Lain::Effect::Handler::Sensitivity do
   # `handles?` and `perform` each ask, and the two questions can straddle a
   # board change: {CLI::Wiring::ToolsetBuild::LiveSensitivity} -- what BOTH
   # production chains are wired with -- re-reads `board.call` on every call,
-  # which is the property T11's own spec asserts by moving the board slot
+  # which is the property its own spec asserts by moving the board slot
   # between two calls. So "the second answer equals the first" holds for a
   # fixed Policy and not for the delegator, and a flip to nil must not become
   # a NoMethodError on the synchronous dispatch path.
@@ -322,7 +322,7 @@ RSpec.describe Lain::Effect::Handler::Sensitivity do
       expect { handler.call(effect) }.to raise_error(Lain::Effect::Handler::UnhandledEffect)
     end
 
-    # The window is not hypothetical: this is T11's own liveness property,
+    # The window is not hypothetical: it is a real liveness property,
     # driven through the delegator both production chains hold.
     it "is reachable through LiveSensitivity, whose board really can move" do
       slot = [board(policy)]

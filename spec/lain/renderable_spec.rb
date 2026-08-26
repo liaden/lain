@@ -3,10 +3,10 @@
 require "pastel"
 require "stringio"
 
-# T9: a command's answer as STRUCTURE. The renderable names style TOKENS as
+# A command's answer as STRUCTURE. The renderable names style TOKENS as
 # Symbols and never a colour -- that is what lets it live in lib/lain/ and be
 # returned by a command without the cli layer depending on the frontend. The
-# Theme (T8) is the only object that turns a Symbol into an escape sequence.
+# Theme is the only object that turns a Symbol into an escape sequence.
 RSpec.describe Lain::Renderable do
   def theme(enabled: true, depth: 256, tokens: Lain::Frontend::Theme::DEFAULT_TOKENS)
     Lain::Frontend::Theme.new(pastel: Pastel.new(enabled:), tokens:, detect: -> { depth })

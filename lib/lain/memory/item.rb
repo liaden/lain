@@ -11,6 +11,7 @@ module Lain
     # read as two.
     class Item
       include ContentAddressed
+      include Declarative
 
       # [[:space:]] is Unicode-aware where String#strip is ASCII-only: an
       # NBSP-only id must still count as blank. Private: the rule is exposed
@@ -34,10 +35,23 @@ module Lain
         id.to_s.match?(BLANK)
       end
 
+      # Only the id gets the blank check: an item that cannot be addressed is a
+      # defect, where an empty description is merely a pointless manifest line.
+      # Both rules cite the constants above rather than restating them, so the
+      # declaration and {.blank_id?} cannot drift into two answers.
+      declare do
+        attribute :id, :lain_canonical
+        attribute :description, :lain_canonical
+        attribute :body, :lain_canonical
+        validates :id, format: { without: BLANK, message: "must not be blank" }
+        validates :id, :description, format: { without: LINE_BREAK, message: "must be one line" }
+      end
+
+      # The keywords stay spelled out rather than collected as `**attrs`: a
+      # declaration has no arity, so a forgotten `body:` would settle to nil and
+      # be digested instead of refused.
       def initialize(id:, description:, body:)
-        @id = checked_id(Canonical.normalize(id))
-        @description = one_line("description", Canonical.normalize(description))
-        @body = Canonical.normalize(body)
+        @id, @description, @body = self.class.settle!(id:, description:, body:).values_at(:id, :description, :body)
         @digest = Canonical.digest(payload)
         freeze
       end
@@ -51,22 +65,6 @@ module Lain
         "#<Lain::Memory::Item #{id} #{digest[0, 19]}...>"
       end
       alias inspect to_s
-
-      private
-
-      # An item that cannot be addressed is a defect; an empty description is
-      # merely a pointless manifest line, so only the id gets the blank check.
-      def checked_id(id)
-        raise ArgumentError, "id must not be blank, got #{id.inspect}" if self.class.blank_id?(id)
-
-        one_line("id", id)
-      end
-
-      def one_line(field, value)
-        raise ArgumentError, "#{field} must be one line, got #{value.inspect}" if value.match?(LINE_BREAK)
-
-        value
-      end
     end
   end
 end

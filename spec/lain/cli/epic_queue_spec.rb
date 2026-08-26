@@ -3,7 +3,7 @@
 require "json"
 require "tmpdir"
 
-# T13: `lain epic queue` -- the surface a human drains the sign-off queue
+# `lain epic queue` -- the surface a human drains the sign-off queue
 # through. The queue is a FOLD over journaled `gate_decision` records, so
 # draining is journaling and nothing mutates: `approve`/`deny` append a terminal
 # decision and the next fold sees the partition drained.
@@ -32,7 +32,7 @@ RSpec.describe Lain::CLI::EpicQueue do
   let(:evidence_a) { "blake3:#{"1" * 64}" }
 
   # Built through the real producers, so the fixture cannot drift from the wire
-  # shape T5 and T7 actually write (the sessions_spec `header` idiom).
+  # shape production actually writes (the sessions_spec `header` idiom).
   def decision(digest:, at:, policy:, approved: false, slug: "alpha", stage: "research",
                answered_by: "gate_adjudicator", evidence_digest: nil, reason: nil)
     Lain::Approval::GateDecision.new(artifact_digest: digest, epic_slug: slug, stage:, approved:,
@@ -313,7 +313,7 @@ RSpec.describe Lain::CLI::EpicQueue do
     end
   end
 
-  # SHOULD-FIX 3: the same bytes can be gated at two stages, so one digest can
+  # The same bytes can be gated at two stages, so one digest can
   # be parked twice. Signing off "the digest" signs off each place it waits, and
   # the confirmation names them -- leaving one parked with no sign to say so is
   # exactly the failure this surface exists to prevent.
@@ -345,7 +345,7 @@ RSpec.describe Lain::CLI::EpicQueue do
     end
   end
 
-  # SHOULD-FIX 4: a deferral stamped in the future made `approve` raise a bare
+  # A deferral stamped in the future made `approve` raise a bare
   # ArgumentError from GateDecision's guard -- neither of this class's named
   # errors, no remedy in the message -- and wedged the item until the wall clock
   # caught up, while the listing rendered "waiting -3600s".

@@ -4,7 +4,7 @@ require "json"
 
 # The file-order fold Loader delegates to: re-commit every turn record over the
 # accumulated chain and verify each rebuild against the digest recorded beside
-# it. C2's stake in it is the causal edge -- `causal_parents` is part of the
+# it. The subtle part is the causal edge -- `causal_parents` is part of the
 # content address, so a fold that drops it re-derives a DIFFERENT digest and
 # raises Corrupt over bytes that are perfectly sound. The reader therefore has
 # to feed it back to Timeline#commit; relaxing the verification instead would
@@ -24,7 +24,7 @@ RSpec.describe Lain::Bench::Session::ChainFold do
     end
   end
 
-  # AC1: a causal edge survives the round trip.
+  # A causal edge survives the round trip.
   describe "a turn committed with two causal parents" do
     let(:store) { Lain::Store.new }
     let(:asked) { message_into(store, to: "human", body: "which dose?") }
@@ -61,7 +61,7 @@ RSpec.describe Lain::Bench::Session::ChainFold do
     end
   end
 
-  # AC3: an older journal still loads. Proven against a COMMITTED fixture --
+  # An older journal still loads. Proven against a COMMITTED fixture --
   # every .ndjson in this repo was recorded before the field existed, so the
   # compatibility path is bytes on disk, never a hand-built record.
   describe "a recorded journal whose turn records predate causal_parents" do
@@ -83,7 +83,7 @@ RSpec.describe Lain::Bench::Session::ChainFold do
     end
   end
 
-  # Review FIX 1. A turn's causal parent is a Store edge, so a fold that has
+  # A turn's causal parent is a Store edge, so a fold that has
   # not landed the cited event gets Store::MissingObject -- an error NOTHING
   # rescues. Every other way this format can be wrong arrives as Corrupt, and
   # CLI::Resume rescues exactly Corrupt to build its Refusal, so letting this
@@ -112,12 +112,13 @@ RSpec.describe Lain::Bench::Session::ChainFold do
     end
   end
 
-  # Review FIX 2. `meta` and `content` announce their corruption through the
+  # `meta` and `content` announce their corruption through the
   # digest they then fail to re-derive, and a bad `role` raises a named
   # InvalidRole -- but causal_parents cannot get that far, because
   # Event#normalize_causal maps and sorts it before any digest is computed. So
   # the one field this card added had the worst corrupt-journal message of any,
-  # and it escaped the same rescue FIX 1 did. One currency: Corrupt.
+  # and it escaped the same rescue the dangling-parent case above did. One
+  # currency: Corrupt.
   describe "a turn record whose causal_parents survived the disk badly" do
     def folded_with(causal_parents)
       base = Lain::Timeline.empty(store: Lain::Store.new)

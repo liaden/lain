@@ -7,42 +7,36 @@ module Lain
         # Which artifact addresses a machine has already SETTLED, read off the
         # journal.
         #
-        # It is a FOLD, not a set, for {SignoffQueue}'s reason one level over:
-        # the record is the state, so two readers of one journal agree by
-        # construction and a session that dies loses no verdict. Re-walked per
-        # lookup rather than indexed once, because the whole question is whether
-        # somebody ELSE -- another Adjudicator, another session -- settled this
-        # address since we last looked, which a snapshot cannot answer.
+        # A FOLD rather than a set: the record is the state, so two readers of
+        # one journal agree by construction. RE-WALKED per lookup rather than
+        # indexed once, because the whole question is whether somebody ELSE --
+        # another Adjudicator, another session -- settled this address since we
+        # last looked, which a snapshot cannot answer.
         #
-        # {Adjudicator::TERMINAL_POLICY} is the discriminator, and it is the only
-        # honest one available: {Gate}'s approval registry is add-only, so it
-        # answers "was this APPROVED" and leaves a terminal DENIAL looking
-        # exactly like an artifact nobody ever judged. The `policy` label does
-        # not -- it says a machine reached a verdict here, whichever way it went.
-        # A `deferred` record is deliberately NOT terminal: parking is an
-        # invitation to come back.
+        # {Adjudicator::TERMINAL_POLICY} is the discriminator and the only
+        # honest one available: {Gate}'s registry is add-only, so it answers
+        # "was this APPROVED" and leaves a terminal DENIAL looking exactly like
+        # an artifact nobody judged. A `deferred` record is deliberately NOT
+        # terminal -- parking is an invitation to come back.
         #
         # == The identity is the DIGEST ALONE
         #
-        # `(epic_slug, stage)` is on every record and {Approval::GateDecision}
-        # refuses to be built without it, so ignoring it here is a decision, not
-        # an oversight: one address adjudicated in `alpha/epic_plan` refuses the
+        # `(epic_slug, stage)` is on every record, so ignoring it here is a
+        # decision: one address adjudicated in `alpha/epic_plan` refuses the
         # same CONTENT in `beta/research`, permanently, with no override short
-        # of editing the journal. It is chosen because it fails CLOSED and
-        # because it is the identity {Gate#approved?} already uses -- an
-        # approval is remembered by digest and carries across partitions, so a
-        # partition-scoped refusal could disagree with a global approval, which
-        # is the exact disagreement {AlreadyDecided} exists to prevent.
+        # of editing the journal. Chosen because it fails CLOSED and because it
+        # is the identity {Gate#approved?} already uses -- an approval carries
+        # across partitions, so a partition-scoped refusal could disagree with a
+        # global approval, the exact disagreement {AlreadyDecided} prevents.
         #
-        # It stops mattering in practice as submissions arrive pre-qualified:
+        # It stops mattering as submissions arrive pre-qualified:
         # `Submission#digest` addresses `{stage, slug, artifact}`, so the same
-        # artifact in two partitions is already two addresses by the time it
-        # reaches a gate.
+        # artifact in two partitions is already two addresses.
         class Decided
-          # A nil `decisions:` builds cleanly and then dies INSIDE the fold with
-          # `NoMethodError: undefined method 'lazy' for nil` -- mid-decision,
-          # after both spawns are paid for, naming neither the argument nor the
-          # caller that omitted it. Refused where the mistake was made.
+          # A nil `decisions:` builds cleanly and then dies INSIDE the fold --
+          # mid-decision, after both spawns are paid for, naming neither the
+          # argument nor the caller that omitted it. Refused where the mistake
+          # was made.
           MISSING = "Decided needs the journal read back -- the Journal.records duck (an Enumerable of parsed " \
                     "Hashes or raw NDJSON lines), got nil. There is no 'nothing was decided' default."
           private_constant :MISSING
@@ -75,12 +69,10 @@ module Lain
           private
 
           # The LAST match, not the first. Which record refuses does not matter
-          # -- any terminal record refuses, and that holds under any order --
-          # but which one the MESSAGE names does: two conflicting terminal
-          # records for one address are reachable (a pre-T9 journal permitted
-          # them, and so does the concurrent window {AlreadyDecided} documents),
-          # and journal order is time order, so the last one written is the one
-          # that stands.
+          # -- any terminal one does -- but which the MESSAGE names does: two
+          # conflicting terminal records for one address are reachable through
+          # the concurrent window {AlreadyDecided} documents, and journal order
+          # is time order, so the last written is the one that stands.
           def [](digest)
             Journal.records(@entries, type: SignoffQueue::JOURNAL_TYPE)
                    .select { |record| terminal?(record, digest) }

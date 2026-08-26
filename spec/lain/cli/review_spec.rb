@@ -243,7 +243,7 @@ RSpec.describe Lain::CLI::Review, :seam do
     end
   end
 
-  # T34: WHERE a review of this target can be posted, decided by the two methods
+  # WHERE a review of this target can be posted, decided by the two methods
   # that already know which of the two they resolved. Recorded on the resolution
   # rather than asked of the source afterwards, so nothing downstream type-tests
   # a source to find out whether a review of it has anywhere to go.
@@ -359,11 +359,11 @@ RSpec.describe Lain::CLI::Review, :seam do
     end
   end
 
-  # The guard T29 shipped. Its ceilings are constructor arguments precisely so a
+  # The size guard. Its ceilings are constructor arguments precisely so a
   # refusal can be driven without building the 800-file changeset it was written
   # against.
   #
-  # T31c MOVED THE CALL onto {Lain::Review::Session#present}, and this block is
+  # THE CALL MOVED onto {Lain::Review::Session#present}, and this block is
   # what says the move was behaviour-preserving where it mattered: the same
   # error class, the same three wordings, the same nonzero exit through
   # `Boundary#render`. The `bounds:` this command injects still reaches the
@@ -426,7 +426,7 @@ RSpec.describe Lain::CLI::Review, :seam do
     # used to run before `Session.open` journaled anything, so a refusal left no
     # record; it now runs inside `Session#present`, one call later. The record is
     # true -- a round WAS opened -- and buying the old property back would mean a
-    # second caller of `check_presentation!`, which is what T31c deleted.
+    # second caller of `check_presentation!`, which is what the move deleted.
     it "opens the round before it refuses, which is the one thing the move changed" do
       expect { bounded(max_files: 1).present("feature") }.to raise_error(Lain::Review::Bounds::TooLarge)
 
@@ -472,15 +472,15 @@ RSpec.describe Lain::CLI::Review, :seam do
   # {Source::GithubPr}'s own requirement -- a fallback must be REPORTED rather
   # than silent -- discharged at the first surface with a human in front of it.
   #
-  # THIS GROUP IS ALSO AN ORDERING PIN, discovered by T31c breaking it. A source
-  # answers `diff_origin` differently depending on which message reached it
-  # first: `base_ref` fetches, and a fetched {Source::GithubPr} then serves the
-  # diff from the object database and reports `already_local` for a combined
-  # diff GitHub refused outright. The fallback note was only ever printed
-  # because the size guard read `files` before the round was opened, and moving
-  # that guard onto {Lain::Review::Session#present} silently deleted the note
-  # until the command asked for the origin itself, in a stated order. Nothing
-  # else in the suite fails when that note disappears.
+  # THIS GROUP IS ALSO AN ORDERING PIN, discovered by the guard move breaking
+  # it. A source answers `diff_origin` differently depending on which message
+  # reached it first: `base_ref` fetches, and a fetched {Source::GithubPr} then
+  # serves the diff from the object database and reports `already_local` for a
+  # combined diff GitHub refused outright. The fallback note was only ever
+  # printed because the size guard read `files` before the round was opened,
+  # and moving that guard onto {Lain::Review::Session#present} silently deleted
+  # the note until the command asked for the origin itself, in a stated order.
+  # Nothing else in the suite fails when that note disappears.
   describe "a combined diff GitHub would not serve" do
     # A repository that has never seen the pull request, so the API is asked
     # first and its refusal is what forces the fetch. `init` and a remote, never

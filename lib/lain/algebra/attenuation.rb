@@ -11,29 +11,23 @@ module Lain
     # `#except` drops them -- and the claim is per-operation like every other
     # here:
     #
-    #   include Algebra::Attenuation
-    #
-    #   def only(*names) = ...
-    #   def except(*names) = ...
-    #
     #   attenuation on: :only, dual: :except
     #
     # == Why the dual is evidence and not a second declaration
     #
-    # The two operations are not independent claims about which the registry
-    # could sensibly disagree: `except(x)` IS `only(names - x)`, and that
-    # equation is one of the laws. A declaration per operation would let a
-    # reader delete one and leave the other standing as a coherent-looking
-    # half-claim, which the duality law is precisely the refusal of. So one
-    # claim, carrying the name of its dual -- and the dual is held to the same
-    # `answers?` check {Registry#refuse_unanswered} applies to the operation,
-    # because a typo'd `dual:` that registered quietly would fail somewhere far
+    # The two operations are not independent claims: `except(x)` IS
+    # `only(names - x)`, and that equation is one of the laws. A declaration per
+    # operation would let a reader delete one and leave the other standing as a
+    # coherent-looking half-claim, which the duality law is precisely the refusal
+    # of. So one claim, carrying the name of its dual -- and the dual is held to
+    # the same `answers?` check {Registry#refuse_unanswered} applies to the
+    # operation, because a typo'd dual that registered quietly would fail far
     # from the line that caused it.
     #
     # == The structure is a meet-semilattice ACTION, not a lattice
     #
     # Attenuations of one subject order by inclusion and compose downward:
-    # `only(a).only(b) == only(b)` whenever `b` is inside `a`. Outside it, the
+    # `only(a).only(b) == only(b)` whenever `b` is inside `a`. Outside it the
     # chain RAISES -- the operation is partial, and that partiality is the
     # structure rather than a rough edge on it. Which is why there is no join
     # here and no `:join_semilattice` to refute: a join would let a holder
@@ -66,13 +60,11 @@ module Lain
       end
 
       # The same refusal {Registry#refuse_unanswered} makes about the operation,
-      # made here about the dual, and for the same reason: every claim in this
-      # vocabulary is refused at load or not at all.
-      #
-      # `respond_to?(:to_sym)` first, so `dual: "except"` is accepted exactly as
-      # {Registry#declare} accepts a String operation, while `dual: nil` and
-      # `dual: 42` fail as this vocabulary's own named error rather than as a
-      # raw TypeError out of `method_defined?`.
+      # made here about the dual, for the same reason: every claim in this
+      # vocabulary is refused at load or not at all. `respond_to?(:to_sym)`
+      # first, so a String dual is accepted exactly as {Registry#declare} accepts
+      # a String operation, while nil and 42 fail as this vocabulary's own named
+      # error rather than as a raw TypeError out of `method_defined?`.
       def self.refuse_unanswered_dual(subject, operation, dual)
         return if dual.respond_to?(:to_sym) && Algebra.answers?(subject, dual.to_sym)
 

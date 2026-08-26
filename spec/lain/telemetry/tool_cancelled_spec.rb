@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# T6/F46: the record a tool-calling turn leaves behind when the run was
+# The record a tool-calling turn leaves behind when the run was
 # interrupted in the middle of it. The EMITTER is spec'd where it lives --
 # `spec/lain/agent_spec.rb` for when it is written and
 # `spec/lain/seams/tool_cancellation_spec.rb` for a real tear; what is asserted
@@ -31,11 +31,17 @@ RSpec.describe Lain::Telemetry::ToolCancelled do
     expect(record.completed & record.cancelled).to be_empty
   end
 
+  # The defaults live on the carrier now (`default: -> { [] }`), so this also
+  # pins that they are a fresh Array per record rather than ONE Array shared by
+  # every record that omitted them -- which a bare `default: []` would be.
   it "defaults the two optional lists, for a turn torn before anything was dispatched" do
     bare = described_class.new(head: "blake3:aaa", cancelled: %w[tu_1])
+    twin = described_class.new(head: "blake3:aaa", cancelled: %w[tu_1])
 
     expect(bare.running).to eq([])
     expect(bare.completed).to eq([])
+    expect(bare.running).not_to equal(twin.running)
+    expect(bare.completed).not_to equal(twin.completed)
   end
 
   it "refuses a record that names no torn turn" do
