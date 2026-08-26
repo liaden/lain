@@ -291,12 +291,13 @@ vim.api.nvim_create_autocmd("BufEnter", {
 -- The add-to-survey gesture (B16), the wire half of accretion (B12). It lives
 -- here rather than getting its own file because this module already carries
 -- two of the four gestures reaching `Gestures#routes`
--- (`human_replies.rb:609-611`) -- `review_open`/`review_mark` above -- and
--- `survey_add` is the third; `51_thread.lua`'s `review_ask` is the fourth. What
--- differs from every keymap above is the BUFFER: a sidebar row is a NAME this
--- runtime knows ahead of time to scope a `BufEnter` to, but a survey grows from
--- WHATEVER FILE the human is reading, and there is no name to scope that to --
--- so the command and its keymap are GLOBAL, never buffer-local.
+-- (`human_replies.rb:843-852`) -- `review_open`/`review_mark` above -- and
+-- `survey_add` would be the third once B12 gives it a route;
+-- `51_thread.lua`'s `review_ask` is the fourth. What differs from every
+-- keymap above is the BUFFER: a sidebar row is a NAME this runtime knows
+-- ahead of time to scope a `BufEnter` to, but a survey grows from WHATEVER
+-- FILE the human is reading, and there is no name to scope that to -- so the
+-- command and its keymap are GLOBAL, never buffer-local.
 --
 -- PREFIXED rather than a bare letter, through `30_commands`' `lain_key`: `x`/
 -- `u`/`<CR>` are safe to claim on `review_sidebar.buf()`, which is
@@ -305,43 +306,32 @@ vim.api.nvim_create_autocmd("BufEnter", {
 -- bare `a` would cost them vim's own append. Every global lain key shares one
 -- movable prefix for that reason; see `lain_key`.
 --
--- ACKED, `review_open`/`review_mark`'s shape, and this card proves emission
--- only: nothing here reads a return value, and an unrouted verb is not a raise
--- -- `Router#call`'s `@routes[verb]&.call(...)` (`rpc_thread.rb:741`) is a
--- silent no-op for a verb its table does not carry, and the ack
--- (`respond(request.id, true)`, `rpc_thread.rb:1118-1121`) has already
--- returned by the time that runs. So today, ahead of B12, pressing this key
--- sends `survey_add` into {Lain::Frontend::Neovim::RpcThread#command_inbox}
--- for nobody yet to drain -- the editor is never blocked or raised through.
---
--- The PATH is forced through `:p`, `47_diff.lua`'s `review_diff.absolute`
--- idiom, rather than trusted as `nvim_buf_get_name` hands it back: a buffer
--- opened by a relative `:edit` answers with that relative name until
--- something forces it, and B12's own escalation list names a relative path as
--- a payload it cannot resolve. GENERATION rides whatever
--- `b:lain_view_generation` the buffer already carries -- the generic rendering
--- stamp `45_views.lua`'s `set_view` sends only when a gesture needs one -- and
--- is nil for an ordinary file, exactly as unstamped there. Deciding what a
--- survey's own generation means is B12's open design question, not this
--- card's to answer.
---
--- UNSTAMPED is not the only nil case a receiver may see: a Lua table literal
--- `{ path, gen }` with `gen == nil` TRUNCATES before it crosses msgpack (Lua's
--- array part stops at the first hole), so an unstamped buffer's payload
--- arrives Ruby-side as the ONE-element `[path]`, not `[path, nil]`. Harmless
--- (`Array#[]` past the end answers `nil` either way), but the ARITY itself is
--- therefore not a fixed contract -- worth knowing before indexing past 0.
+-- REFUSES (C10), where the comment here used to say ACKED. `Gestures#routes`
+-- (`human_replies.rb:843-852`) has no `survey_add` entry, and `Router#call`'s
+-- `@routes[verb]&.call(...)` (`rpc_thread.rb:831`) is a silent no-op for a
+-- verb its table does not carry -- the ack (`respond(request.id, true)`,
+-- `rpc_thread.rb:1221`) had already returned by the time that ran. So the key
+-- told the human it worked while it had done nothing: no route drains
+-- `survey_add`, and nothing was ever added to a survey. Accretion (B12) is
+-- what would give this a route; until it lands, honesty is the only correct
+-- behaviour, and `_G.__lain.review_refused` (`65_review.lua`) is the same
+-- rail the wrong-buffer refusal below already answers on. No payload is
+-- built for a route that does not exist -- the `:p`-forced absolute path and
+-- the generation stamp B12 will need (nil for an ordinary file, same as
+-- everywhere else `b:lain_view_generation` goes unstamped) are that card's to
+-- add back, alongside the route itself.
 --
 -- Every OTHER buffer-guard in this module (see `LainReviewOpen`/
 -- `LainReviewMark` above, and `:LainPin`'s own spec at
 -- `neovim_spec.rb:416`) refuses when fired from the wrong buffer and SAYS SO,
 -- rather than acting on whatever is current. An empty name alone is not
 -- enough of a guard here: every lain:// buffer HAS a name (`lain://timeline`,
--- `lain://review`, ...) and would otherwise sail through and be sent as a
--- "path". `buftype ~= ""` is the real discriminator, `47_diff.lua`'s own:
--- `buftype = ""` is what makes the diff's new side "THE FILE" rather than a
--- scratch copy, and it is exactly what every lain:// buffer (`nofile`,
--- `acwrite`) is not.
+-- `lain://review`, ...) and would otherwise sail through this guard and reach
+-- the wrong refusal -- "not wired" when the real problem is that this was
+-- never a file to add. `buftype ~= ""` is the real discriminator,
+-- `47_diff.lua`'s own: `buftype = ""` is what makes the diff's new side "THE
+-- FILE" rather than a scratch copy, and it is exactly what every lain://
+-- buffer (`nofile`, `acwrite`) is not.
 define("LainSurveyAdd", function()
   local buf = vim.api.nvim_get_current_buf()
   local name = vim.api.nvim_buf_get_name(buf)
@@ -350,8 +340,7 @@ define("LainSurveyAdd", function()
       (name == "" and "an unnamed one" or name))
     return
   end
-  vim.rpcrequest(chan, "lain_command", "survey_add",
-    { vim.fn.fnamemodify(name, ":p"), vim.b[buf].lain_view_generation })
+  _G.__lain.review_refused(":LainSurveyAdd sends nothing -- accretion is not wired yet")
 end)
 
 lain_key("sa", "<Cmd>LainSurveyAdd<CR>", "add the current file to the open survey")

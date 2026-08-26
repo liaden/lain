@@ -44,6 +44,27 @@ RSpec.describe "lain nvim plugin", :nvim do
   # the sweep itself rather than a second copy of the same expression.
   def documents?(doc, name) = doc.match?(/:#{name}\b/)
 
+  # The prose that hangs off one `*tag*` line, up to whichever comes first:
+  # the next tag-only line, or the end of the file. C10's own reason to need
+  # this rather than the buffers sweep's whole-SECTION split
+  # (`doc.split(/^-{78}$/)`): several commands share one `-{78}`-delimited
+  # section in 6.4 RUNTIME COMMANDS, so that split cannot tell
+  # `*:LainSurveyAdd*`'s paragraph from `*:LainReviewOpen*`'s. A tag can sit
+  # directly above ANOTHER tag with no blank line between (`*:LainReviewOpen*`
+  # then `*lain://review*`) -- those are both this entry's own header, not the
+  # next entry starting, so the leading run of tag-only lines is skipped
+  # before the paragraph is collected.
+  def any_tag_line?(line) = line.match?(/\A\s*\*\S+\*\s*\z/)
+
+  def tag_section(doc, tag)
+    lines = doc.lines
+    start = lines.find_index { |line| line.match?(/\A\s*\*#{Regexp.escape(tag)}\*\s*\z/) }
+    raise "no *#{tag}* in doc/lain.txt" if start.nil?
+
+    after_header = lines[(start + 1)..].drop_while { |line| any_tag_line?(line) }
+    after_header.take_while { |line| !any_tag_line?(line) }.join
+  end
+
   # --clean skips the human's config but still sources plugin/ files from any
   # rtp we add, which is exactly how an installed plugin loads.
   # `state:` and `home:` are spelled with an explicit default rather than
@@ -456,6 +477,21 @@ RSpec.describe "lain nvim plugin", :nvim do
       doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
       expect(doc).to include("*lain-ownership*").and include("*__lain.channel*")
       expect(doc).to match(/refused/i).and match(/crashed/i).and match(/live/i)
+    end
+
+    # C10. `:LainSurveyAdd` sends nothing today -- `Gestures#routes`
+    # (`human_replies.rb:843-852`) has no `survey_add` entry -- so the manual
+    # must say so rather than describing a working gesture. Scoped to the
+    # `*:LainSurveyAdd*` paragraph itself, {#tag_section}'s own reason: a
+    # whole-file `match?` would pass with the caveat sitting anywhere in the
+    # doc while the paragraph beside the tag still claimed it works.
+    # `:LainReviewOpen` is the control -- a gesture that DOES work -- so this
+    # also catches the words drifting onto every entry and going meaningless.
+    it "marks :LainSurveyAdd as not yet available, unlike a gesture that works" do
+      doc = File.read(File.join(plugin_root, "doc", "lain.txt"))
+
+      expect(tag_section(doc, ":LainSurveyAdd")).to match(/not yet available/i)
+      expect(tag_section(doc, ":LainReviewOpen")).not_to match(/not yet available/i)
     end
 
     # The command list is READ OFF the runtime rather than written down here,

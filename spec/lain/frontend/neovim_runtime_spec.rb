@@ -2403,5 +2403,61 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         typed("\r")
       end
     end
+
+    # The add-to-survey gesture (`:LainSurveyAdd`, `46_sidebar.lua:326`)
+    # used to ack a `survey_add` rpcrequest that `Gestures#routes`
+    # (`human_replies.rb:843-852`) has no route for -- a silent no-op, and the
+    # human was told nothing was wrong. It now refuses instead, on the same
+    # rail as everything else in this block, and sends no request at all: the
+    # frontend's own `command_inbox` -- which every ACKED command lands in
+    # regardless of routing (`rpc_thread.rb:1220`) -- proves that by staying
+    # empty.
+    it "refuses :LainSurveyAdd from a real file buffer instead of acking silently" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "survey_target.rb")
+        File.write(path, "# a real file\n")
+
+        frontend.run do
+          attach_ui
+          inspector.session.request(:nvim_command, "edit #{path}")
+          typed(":LainSurveyAdd\r")
+          mode = settled_mode
+
+          expect(mode).to include("blocking" => false)
+          expect(message_history).to include("lain: :LainSurveyAdd sends nothing -- accretion is not wired yet")
+          expect { frontend.command_inbox.pop(true) }.to raise_error(ThreadError)
+        ensure
+          typed("\r")
+        end
+      end
+    end
+
+    # Scenario 3's distinctness, from the buffer side: the wrong-buffer
+    # refusal and the not-wired refusal are two different
+    # sentences, so a human who reads one is never told the other's reason.
+    # The editor is on lain://journal here, which is where attach leaves it
+    # (`:LainPin`'s own example above relies on the same fact) -- buftype is
+    # non-empty there, so the wrong-buffer guard fires before the not-wired
+    # refusal ever would.
+    it "keeps the wrong-buffer refusal distinct from the not-wired one" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+
+      frontend.run do
+        attach_ui
+        wait_until { buffer_lines("lain://journal").any? }
+        inspector.command("buffer lain://journal")
+        typed(":LainSurveyAdd\r")
+        mode = settled_mode
+
+        expect(mode).to include("blocking" => false)
+        history = message_history
+        expect(history).to include("lain: :LainSurveyAdd needs a real file buffer, not lain://journal")
+        expect(history).not_to include("accretion is not wired")
+      ensure
+        typed("\r")
+      end
+    end
   end
 end

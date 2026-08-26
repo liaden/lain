@@ -435,8 +435,11 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     end
   end
 
-  # B16's editor half: the add-to-survey gesture only EMITS `survey_add`; B12
-  # (not yet landed) is what gives the verb a route and a meaning. Real nvim,
+  # B16's editor half: the add-to-survey gesture used to only EMIT
+  # `survey_add`, on the theory that a route would arrive to give it a meaning.
+  # None did, so the gesture now refuses honestly rather than acking a keypress
+  # nothing drains -- see `46_sidebar.lua`'s `LainSurveyAdd`
+  # and `plugin/nvim/doc/lain.txt`'s `*:LainSurveyAdd*` section. Real nvim,
   # `pin`'s reason above: only the keybinding round trip needs one.
   describe "the add-to-survey gesture on a real file buffer" do
     def open_real_file(path)
@@ -445,10 +448,6 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         vim.cmd("edit " .. vim.fn.fnameescape(path))
         return vim.api.nvim_get_current_buf()
       LUA
-    end
-
-    def stamp_generation(buf, gen)
-      inspector.exec_lua("local buf, gen = ...; vim.b[buf].lain_view_generation = gen", [buf, gen])
     end
 
     # A tmp file rather than a lain:// buffer: the gesture's whole premise is
@@ -460,29 +459,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       path
     end
 
-    it "emits survey_add carrying the buffer's absolute path and its view generation" do
-      frontend = described_class.new(channel:, socket_path: @socket)
-      path = real_file
-
-      frontend.run do |handle|
-        buf = open_real_file(path)
-        stamp_generation(buf, 7)
-
-        feed(path, "\\Lsa", cursor: [1, 0])
-
-        verb, args = Timeout.timeout(5) { handle.command_inbox.pop }
-        expect(verb).to eq("survey_add")
-        expect(args).to eq([path, 7])
-      end
-    end
-
-    # The trigger this card exists to check: Ruby has no route for `survey_add`
-    # yet (B12 is unmerged), so `Router#call`'s unrouted-verb path
-    # (`rpc_thread.rb:741`) is exercised for real rather than assumed. If the
-    # ack had not returned -- a raise reaching `dispatch`, or the connection
-    # wedged -- neither the inbox pop nor the round trip below would return
-    # inside their timeouts.
-    it "acks the gesture and keeps serving requests, with no route wired for it" do
+    it "refuses instead of emitting survey_add" do
       frontend = described_class.new(channel:, socket_path: @socket)
       path = real_file
 
@@ -490,8 +467,27 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         open_real_file(path)
 
         feed(path, "\\Lsa", cursor: [1, 0])
+        wait_until { messages.include?("accretion is not wired") }
 
-        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to include("survey_add")
+        expect(messages).to include("lain: :LainSurveyAdd sends nothing -- accretion is not wired yet")
+        expect { handle.command_inbox.pop(true) }.to raise_error(ThreadError)
+      end
+    end
+
+    # `Gestures#routes` (`human_replies.rb:843-852`) has no `survey_add`
+    # entry, so a refusal must not wedge the connection the way a raise
+    # escaping a `define`d callback would (`refusal_delivery_discipline_spec.rb`).
+    it "keeps serving requests after refusing, with no request ever reaching the router" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+      path = real_file
+
+      frontend.run do |handle|
+        open_real_file(path)
+
+        feed(path, "\\Lsa", cursor: [1, 0])
+        wait_until { messages.include?("accretion is not wired") }
+
+        expect { handle.command_inbox.pop(true) }.to raise_error(ThreadError)
         expect { Timeout.timeout(5) { inspector.command("echo 'still here'") } }.not_to raise_error
         expect(messages).not_to match(/E5108|Error executing lua/)
       end
@@ -500,10 +496,9 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     # Fix round (panel finding, Linus): the empty-name guard alone let this
     # fire from any lain:// buffer -- which HAS a name -- and send the view
     # URI as though it were a file path. `:LainPin`'s own wrong-buffer spec
-    # above is the shape this follows: asserted without a sleep, because the
-    # lain://timeline press is followed by a real one and the FIRST thing to
-    # reach the inbox must be the real one, not the URI.
-    it "refuses from a lain:// buffer, and says so, rather than sending its URI as a path" do
+    # above is the shape this follows. Both presses refuse; the point is that
+    # the SENTENCES differ, so a human can tell which reason they hit.
+    it "keeps the wrong-buffer refusal distinct from the not-wired refusal" do
       frontend = described_class.new(channel:, socket_path: @socket)
       path = real_file
 
@@ -512,13 +507,15 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         set_view("lain://timeline", ["user: first", "assistant: second"])
 
         feed("lain://timeline", "\\Lsa", cursor: [1, 0])
+        wait_until { messages.include?("needs a real file buffer") }
+        expect(messages).to include("lain: :LainSurveyAdd needs a real file buffer, not lain://timeline")
+
         open_real_file(path)
         feed(path, "\\Lsa", cursor: [1, 0])
+        wait_until { messages.include?("accretion is not wired") }
 
-        verb, args = Timeout.timeout(5) { handle.command_inbox.pop }
-        expect(verb).to eq("survey_add")
-        expect(args.first).to eq(path)
-        expect(messages).to include("LainSurveyAdd")
+        expect(messages).to include("lain: :LainSurveyAdd sends nothing -- accretion is not wired yet")
+        expect { handle.command_inbox.pop(true) }.to raise_error(ThreadError)
       end
     end
 
@@ -530,12 +527,13 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       frontend = described_class.new(channel:, socket_path: @socket)
       path = real_file
 
-      frontend.run do |handle|
+      frontend.run do
         open_real_file(path)
 
         feed(path, "\\zsa", cursor: [1, 0])
+        wait_until { messages.include?("accretion is not wired") }
 
-        expect(Timeout.timeout(5) { handle.command_inbox.pop }).to include("survey_add")
+        expect(messages).to include("lain: :LainSurveyAdd sends nothing -- accretion is not wired yet")
       end
     end
 
