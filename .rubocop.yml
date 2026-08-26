@@ -256,6 +256,7 @@ ThreadSafety/ClassInstanceVariable:
     - "exe/lain"
     - "lib/lain/algebra.rb"
     - "lib/lain/compaction/summary_snapshot.rb"
+    - "lib/lain/declarative/carrier.rb"
     - "lib/lain/frontend/completion.rb"
     - "lib/lain/frontend/reline.rb"
     - "lib/lain/guard.rb"

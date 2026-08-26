@@ -16,6 +16,12 @@ require_relative "lain/dsl_catalog"
 # value class declares one.
 require_relative "lain/guardable"
 require_relative "lain/guard"
+# Same constraint, for the same mechanism under its own name: a `declare` block
+# subclasses Carrier as the class body evaluates. The real bound is `question`
+# (the FIRST unit whose class body declares -- not `config`, which declares
+# nothing); anywhere above that would load. It sits with `guard`/`guardable`
+# because it replaces them, and nothing else about the position is forced.
+require_relative "lain/declarative"
 require_relative "lain/config"
 require_relative "lain/cache_profile"
 require_relative "lain/proxy_bytes"
