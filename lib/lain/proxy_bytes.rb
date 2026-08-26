@@ -2,6 +2,8 @@
 
 module Lain
   ProxyBytes = Data.define(:count) do
+    include Declarative
+
     # Non-negative, and that is not defensive noise: `Integer#/` FLOORS rather
     # than truncating, so a negative count would round AWAY from zero and
     # overstate the magnitude {#to_tokens} promises to understate. Nothing can
@@ -9,9 +11,27 @@ module Lain
     # ({Compaction::Scheduler::Rewrite#dropped} and {Plan::SeamDecision#call})
     # -- so this closes the gap between what the docstring claims and what the
     # arithmetic does, rather than a live defect.
+    #
+    # The coercion stays `Integer(count)` and does NOT become
+    # `:lain_strict_integer`. The strict type is stricter in two ways this
+    # constructor has never been -- it refuses a fractional Float where
+    # `Integer(3.7)` truncates, and reads `"010"` as ten where `Integer("010")`
+    # reads eight -- and it refuses by raising {Declarative::Types::CoercionError},
+    # a {Lain::Error} rather than the ArgumentError every caller of this
+    # constructor already rescues. Adopting it would move both WHEN the refusal
+    # fires and WHICH class it raises -- and on a `check!` class carrying a
+    # `validates` rule, the cast fires from inside `valid?` and PRE-EMPTS the
+    # declared refusal entirely, so the malformed input the strict type exists
+    # to catch is the one input it would break.
+    declare do
+      attribute :count
+      validates :count, numericality: { greater_than_or_equal_to: 0,
+                                        message: "cannot be negative, got %<value>s" }
+    end
+
     def initialize(count:)
       count = Integer(count)
-      raise ArgumentError, "a byte count cannot be negative, got #{count}" if count.negative?
+      self.class.check!(count:)
 
       super
     end

@@ -98,12 +98,15 @@ module Lain
     # CommonMark's fenced-code-block rule, and exactly as much of it as a
     # balance check needs.
     #
-    # NOT "count the ``` lines". A fence opens on a run of three or MORE
+    # NOT "count the fence lines". A fence opens on a run of three or MORE
     # backticks or tildes and closes only on a run of the SAME character at
-    # least as long, carrying no info string -- so a ```` fence legally holds a
-    # ``` line, and marker-counting would refuse the very bodies this chunk
-    # exists to carry. A false refusal is worse than the bug: a fenced diff and
-    # a mermaid block are the point.
+    # least as long, carrying no info string -- so a four-backtick fence legally
+    # holds a three-backtick line, and marker-counting would refuse the very
+    # bodies this chunk exists to carry. A false refusal is worse than the bug:
+    # a fenced diff and a mermaid block are the point.
+    #
+    # The runs are spelled in words above on purpose: written literally they
+    # unbalance the docstring's own markdown, which yard-lint reads as a defect.
     module Fence
       # Which fence is open and where it was opened, so a refusal can name the
       # line whoever wrote the body has to go fix.
@@ -369,10 +372,17 @@ module Lain
     end
 
     # Validated on a throwaway carrier that is checked and discarded, so the
-    # frozen value never carries ActiveModel's ivars (see {Lain::Guard}). Only
-    # the field-shaped rules live here; "these two options share an id" is a
-    # rule about a LIST and reads better as the raise it is.
-    class Fields < Guard
+    # frozen value never carries ActiveModel's ivars (see
+    # {Lain::Declarative::Carrier}). Only the field-shaped rules live here;
+    # "these two options share an id" is a rule about a LIST and reads better as
+    # the raise it is.
+    #
+    # `check!` and not `settle!`: every field reaching it has already been
+    # through {Rules}, which interns via {Canonical} and refuses with a message
+    # naming the field in the answer document's own vocabulary ("a question
+    # id", not "id"). A settled copy would dup those interned Strings back
+    # apart and buy nothing.
+    class Fields < Declarative::Carrier
       attribute :id
       attribute :body
       attribute :arity
@@ -388,7 +398,7 @@ module Lain
     class Option
       # The label occupies a whole line of the answer document, so a line break
       # in it would silently become a second, unowned line of grammar.
-      class Fields < Guard
+      class Fields < Declarative::Carrier
         attribute :id
         attribute :label
         validates :id, presence: { message: "must name the option, got blank" }
@@ -429,6 +439,10 @@ module Lain
     end
     private_class_method :options_in
 
+    # @param id [String] the question's identifier
+    # @param body [String] markdown prose the human reads
+    # @param options [Array<Option>] the choices offered, in the order they are read
+    # @param arity [Symbol] whether one answer is expected or several
     def initialize(id:, body:, options: [], arity: SINGLE)
       fields = { id: Rules.identifier(id, "a question id", MAX_ID), body: markdown(body),
                  arity: Rules.normalized(arity, "a question arity") }
@@ -464,8 +478,8 @@ module Lain
     # list is preserved rather than sorted, unlike an edge set. Copied rather
     # than frozen in place, as {Epic::Issue#clean_edges} does: the caller keeps
     # ownership of the Array it handed over, and our member stays immutable.
-    def choices(options)
-      built = Rules.members!(options, Option, "a question's options")
+    def choices(offered)
+      built = Rules.members!(offered, Option, "a question's options")
       Rules.distinct!(built.map(&:id), "a question's options")
       built.dup.freeze
     end

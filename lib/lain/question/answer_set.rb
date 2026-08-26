@@ -114,7 +114,7 @@ module Lain
 
     class AnswerSet
       # The rules that need BOTH sides of the pair, on a throwaway carrier that
-      # is checked and discarded -- {Lain::Guard}'s convention, in plain Ruby
+      # is checked and discarded -- {Lain::Declarative}'s convention, in plain Ruby
       # because none of these are field-shaped: "one option on a single-select"
       # and "an option this question offers" are joins, not presence checks.
       #

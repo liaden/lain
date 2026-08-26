@@ -65,7 +65,7 @@ module Lain
 
       private
 
-      # Echoes {Improvement::Guards::Record}'s own write-path wording, so the
+      # Echoes {Improvement}'s own write-path wording, so the
       # kind a `improvement_write` refused and the kind this report refuses
       # read as one vocabulary rather than two.
       def assert_known_kind!(kind)

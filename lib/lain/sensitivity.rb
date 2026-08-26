@@ -62,11 +62,15 @@ module Lain
   # The anchored ones match a whole path SEGMENT, so `/home/tester` never
   # swallows `/home/tester2`.
   class Sensitivity
+    include Declarative
+
     Verdict = Data.define(:level, :reason)
 
     # What the classifier answers. Frozen and shareable by being a Data of
     # Symbols, so it journals and crosses a Ractor as-is.
     class Verdict
+      include Declarative
+
       # The constants live on this reopen rather than in a `Data.define` block,
       # where they would scope to {Sensitivity} instead (see
       # {Request::SYSTEM_PREFIX}).
@@ -89,11 +93,20 @@ module Lain
       # Checked, not coerced, for the reason {Approval::Risk::Classification}
       # states: a wrong value answering the permissive question in silence is
       # exactly what this boundary must not do.
+      #
+      # Declared HERE, below {LEVELS}/{REASONS}, so both resolve by ordinary
+      # lexical lookup -- {Project}'s reason. One declaration and not two guard
+      # clauses, so a Verdict built with BOTH fields wrong reports both rather
+      # than the first half of the mistake.
+      declare do
+        attribute :level
+        attribute :reason
+        validates :level, inclusion: { in: LEVELS, message: "must be one of #{LEVELS.join(", ")}, got %<value>p" }
+        validates :reason, inclusion: { in: REASONS, message: "must be one of #{REASONS.join(", ")}, got %<value>p" }
+      end
+
       def initialize(level:, reason:)
-        raise ArgumentError, "level must be one of #{LEVELS.join(", ")}, got #{level.inspect}" \
-          unless LEVELS.include?(level)
-        raise ArgumentError, "reason must be one of #{REASONS.join(", ")}, got #{reason.inspect}" \
-          unless REASONS.include?(reason)
+        self.class.check!(level:, reason:)
 
         super
       end
@@ -398,16 +411,27 @@ module Lain
       text.encoding.ascii_compatible? && text.valid_encoding? && !text.include?(NUL)
     end
 
+    # A home of "" (HOME unset) or "/" (Docker's default when the uid has no
+    # /etc/passwd entry) builds prefixes like "//.ssh" that match nothing,
+    # silently disabling every home-anchored rule below. A cwd of "/" is fine,
+    # so only `home` is declared.
+    #
+    # Judged on the ANCHORED path rather than the argument as written, exactly
+    # as the guard clause it replaces was -- which is also why the message now
+    # reports the anchored form: `"/./"` and `"/"` are one home, and saying so
+    # is the more useful of the two answers.
+    declare do
+      attribute :home
+      validates :home, exclusion: { in: [ROOT], message: "must not be the filesystem root, got %<value>p" }
+    end
+
     # @param home [String, Pathname] the user's home directory, INJECTED -- never read from ENV here
     # @param cwd [String, Pathname] what a relative path resolves against, also injected
     # @param rules [Rules] what this project added, and what it exempted
     def initialize(home:, cwd:, rules: Rules.empty)
       @home = anchor(:home, home)
       @cwd = anchor(:cwd, cwd)
-      # A home of "" (HOME unset) or "/" (Docker's default when the uid has no
-      # /etc/passwd entry) builds prefixes like "//.ssh" that match nothing,
-      # silently disabling every home-anchored rule below. A cwd of "/" is fine.
-      raise ArgumentError, "home must not be the filesystem root, got #{home.inspect}" if @home == ROOT
+      self.class.check!(home: @home)
 
       @rules = [*DENIED, *rules.denied, *rules.exempt, *GATED, *rules.gated, ORDINARY].freeze
       freeze

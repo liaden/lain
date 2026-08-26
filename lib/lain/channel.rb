@@ -96,15 +96,17 @@ module Lain
     # throttled long before it exhausts memory.
     DEFAULT_CAPACITY = 1024
 
-    # Throwaway carrier for validate-then-freeze construction (Ruling 2, T6).
-    # Channel is a lone guarded class in its own namespace, so it nests its own
-    # {Lain::Guard} subclass directly rather than joining a sibling `Guards`
-    # module (that form is for namespaces with several guarded classes, e.g.
-    # {Lain::Telemetry::Guards}). Channel is stateful, not a frozen value object, so
-    # there is no {Lain::Freezable} companion here -- just the carrier check.
-    # {DropOldest} shares this Guard deliberately (same capacity contract); it
-    # splits into its own the day their validations diverge.
-    class Guard < Lain::Guard
+    # The capacity contract, as a named {Lain::Declarative::Carrier}: what a
+    # channel may be constructed with, checked on a throwaway carrier and
+    # discarded. Channel is stateful, not a frozen value object, so there is no
+    # {Lain::Freezable} companion here -- just the check.
+    #
+    # Named rather than declared inline, because {DropOldest} constructs against
+    # this same contract deliberately (a channel's capacity means one thing
+    # whatever the overflow policy). It splits into its own the day the two
+    # validations diverge, and a shared name is what makes that divergence a
+    # visible edit rather than a silent drift.
+    class Capacity < Declarative::Carrier
       attribute :capacity
       validates :capacity, numericality: { only_integer: true, greater_than: 0,
                                            message: "must be a positive Integer, got %<value>s" }
@@ -112,7 +114,7 @@ module Lain
 
     # @param capacity [Integer] maximum number of buffered events (>= 1)
     def initialize(capacity: DEFAULT_CAPACITY)
-      Guard.check!(capacity:)
+      Capacity.check!(capacity:)
 
       @queue = SizedQueue.new(capacity)
     end

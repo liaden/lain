@@ -21,6 +21,15 @@ module Lain
     # finds real text -- or finds none, in which case nothing is injected.
     class Recall < Combinator
       include TailInjection
+      include Declarative
+
+      # A non-positive k means "recall nothing", but `hits.first(@k)` would only
+      # surface that at render time (first(0) is [], first(-1) raises). Refuse it
+      # at construction, where the mistake was actually made.
+      declare do
+        attribute :k
+        validates :k, numericality: { greater_than: 0, message: "must be positive, got %<value>s" }
+      end
 
       # `k:` is the pinned constructor shape from the plan card (T10) --
       # top-k retrieval is exactly what it is elsewhere in the literature,
@@ -29,11 +38,11 @@ module Lain
       def initialize(index:, k:)
         super()
         @index = index
+        # Checked on the COERCED value, where the guard clause it replaces
+        # checked it: `Integer(k)` is what refuses a non-number, and the sign
+        # rule only means anything once that has passed.
         @k = Integer(k)
-        # A non-positive k means "recall nothing", but `hits.first(@k)` would
-        # only surface that at render time (first(0) is [], first(-1) raises).
-        # Refuse it at construction, where the mistake was actually made.
-        raise ArgumentError, "k must be positive, got #{@k}" unless @k.positive?
+        self.class.check!(k: @k)
 
         freeze
       end

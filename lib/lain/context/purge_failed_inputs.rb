@@ -2,20 +2,6 @@
 
 module Lain
   class Context
-    module Guards
-      # `turns` is a window WIDTH, consumed as `messages.first(boundary)` /
-      # `messages.last(turns)`. A negative value would silently flip that
-      # slicing math -- `messages.last(-1)` raises, but the boundary
-      # arithmetic upstream would first hand back a boundary larger than
-      # `messages.size`, purging turns the caller meant to protect as
-      # "recent." Fail loudly at construction instead, matching
-      # Guards::Prune's and Guards::CacheBreakpoints's house style.
-      class PurgeFailedInputs < Guard
-        attribute :turns
-        validates :turns, numericality: { greater_than_or_equal_to: 0, message: "must not be negative, got %<value>s" }
-      end
-    end
-
     # Redacts a failed tool_use's `input` once it ages out of the trailing
     # `turns:` window, while leaving its answering tool_result (the error
     # text a later turn may still need to reason about) untouched. A large
@@ -43,8 +29,22 @@ module Lain
     # anomaly to tolerate, never as impossible, and an id-keyed rewrite of this
     # class silently redacts protected content when one shows up.
     class PurgeFailedInputs < Combinator
+      include Declarative
+
+      # `turns` is a window WIDTH, consumed as `messages.first(boundary)` /
+      # `messages.last(turns)`. A negative value would silently flip that
+      # slicing math -- `messages.last(-1)` raises, but the boundary
+      # arithmetic upstream would first hand back a boundary larger than
+      # `messages.size`, purging turns the caller meant to protect as
+      # "recent." Fail loudly at construction instead, matching {Prune}'s and
+      # {CacheBreakpoints}'s house style.
+      declare do
+        attribute :turns
+        validates :turns, numericality: { greater_than_or_equal_to: 0, message: "must not be negative, got %<value>s" }
+      end
+
       def initialize(turns:, protected_patterns: ProtectedPatterns::NONE)
-        Guards::PurgeFailedInputs.check!(turns:)
+        self.class.check!(turns:)
 
         super()
         @turns = Integer(turns)

@@ -90,7 +90,7 @@ RSpec.describe Lain::CLI::Backend::WindowBook do
     # discovered on the render path is a chat that dies mid-turn.
     it "refuses an unknown provenance where the mistake was made" do
       expect { described_class.new(model: "qwen3", window_tokens: 32_768, provenance: :measured) }
-        .to raise_error(ArgumentError, /unknown provenance :measured/)
+        .to raise_error(ArgumentError, /provenance must be one of .*, got :measured/)
     end
 
     it "answers the same numbers #window_tokens always did" do

@@ -282,6 +282,8 @@ module Lain
       # declared inside that block are lexically scoped to the ENCLOSING module,
       # and {None} has to hang off Occupancy itself (CLAUDE.md's trap list).
 
+      include Declarative
+
       # The window, coerced and checked. Zero and negative windows never raise
       # on their own -- they read as Infinity and NaN, and a NaN ratio also
       # breaks `==` for a caller holding two readings -- so a bad denominator
@@ -354,10 +356,24 @@ module Lain
       # with nothing left to name who built it. The invariant belongs here,
       # where both doors pass, and `#with` keeps working for every rewrite that
       # is not a nil.
+      #
+      # `exclusion: [nil]` and not `presence:`, which also refuses `false` and
+      # `""`. The rule is about ABSENCE specifically -- {None} is where absence
+      # lives -- and widening it to blankness would refuse shapes this
+      # constructor has always let through to fail on their own terms.
+      #
+      # Only `used_tokens` is declared: `window_tokens` is refused by
+      # {Occupancy.window!} below, with its own message about its own parameter,
+      # and a second rule in front of it would only get in the way of that one.
+      declare do
+        attribute :used_tokens
+        validates :used_tokens,
+                  exclusion: { in: [nil],
+                               message: "must not be nil -- absence is Occupancy::None, which .of builds" }
+      end
+
       def initialize(used_tokens:, window_tokens:)
-        if used_tokens.nil?
-          raise ArgumentError, "used_tokens must not be nil -- absence is Occupancy::None, which .of builds"
-        end
+        self.class.check!(used_tokens:)
 
         super(used_tokens:, window_tokens: Occupancy.window!(window_tokens))
       end
@@ -388,10 +404,19 @@ module Lain
     # with their own message about their own parameter, and a third guard in
     # front of both would only get in the way of theirs.
     WindowResolution = Data.define(:window_tokens, :provenance) do
+      include Declarative
+
+      # Only `provenance` is declared, for the reason the class docstring gives:
+      # the window itself is NOT coerced or checked here.
+      declare do
+        attribute :provenance
+        validates :provenance,
+                  inclusion: { in: PROVENANCES,
+                               message: "must be one of #{PROVENANCES.inspect}, got %<value>p" }
+      end
+
       def initialize(window_tokens:, provenance:)
-        unless PROVENANCES.include?(provenance)
-          raise ArgumentError, "unknown provenance #{provenance.inspect} -- one of #{PROVENANCES.inspect}"
-        end
+        self.class.check!(provenance:)
 
         super
       end

@@ -54,7 +54,7 @@ module Lain
       # @param capacity [Integer] maximum buffered events before the oldest is
       #   evicted (>= 1)
       def initialize(capacity: Channel::DEFAULT_CAPACITY)
-        Channel::Guard.check!(capacity:)
+        Channel::Capacity.check!(capacity:)
 
         @capacity = capacity
         @buffer = []

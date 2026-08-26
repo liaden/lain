@@ -33,6 +33,12 @@ module Lain
       new(head_digest: nil, store:)
     end
 
+    # Referential integrity, and deliberately NOT a {Lain::Declarative}
+    # declaration. The rule is one predicate against an INJECTED COLLABORATOR
+    # (does this store hold this digest), not a shape check on a value, and
+    # stating it declaratively costs eleven lines where the clause costs one --
+    # enough to push this class through `Metrics/ClassLength`, whose only honest
+    # fix would be extracting a collaborator that has no separate responsibility.
     def initialize(head_digest:, store:)
       raise Store::MissingObject, "no object #{head_digest.inspect}" if head_digest && !store.key?(head_digest)
 

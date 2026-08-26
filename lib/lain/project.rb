@@ -2,7 +2,7 @@
 
 module Lain
   Project = Data.define(:root, :cwd, :kind, :detected_by) do
-    include Guardable
+    include Declarative
 
     # `File.realpath` resolves symlinks AND requires the path to exist,
     # deliberately: a Project names a real place on disk, and letting a
@@ -49,11 +49,17 @@ module Lain
   # detection (a later chunk) climbed to find this Project, and later work
   # (this project's own consent rule) branches on it directly.
   #
-  # `guard do ... end` lives HERE, below {KINDS}/{DETECTED_BY}, rather than in
-  # the `Data.define` block above -- the same reason {Improvement}'s own guard
-  # reaches those constants by BARE name rather than through a lambda: this
-  # block's lexical nesting is `[Project, Lain]`, so `KINDS` resolves directly
-  # once construction actually validates, with nothing to defer.
+  # `declare do ... end` lives HERE, below {KINDS}/{DETECTED_BY}, rather than in
+  # the `Data.define` block above -- the same reason {Improvement}'s own
+  # declaration reaches those constants by BARE name rather than through a
+  # lambda: this block's lexical nesting is `[Project, Lain]`, so `KINDS`
+  # resolves directly once construction actually validates, with nothing to
+  # defer.
+  #
+  # `check!` and not `settle!`: `root`/`cwd` are INTERNED (`-`) below, which a
+  # settled copy would turn back into an ordinary frozen dup -- shareable either
+  # way, but one Project per repo per run is exactly the population interning
+  # exists for.
   class Project
     include Inspectable
 
@@ -76,7 +82,7 @@ module Lain
       end
     end
 
-    guard do
+    declare do
       attribute :root, :string
       attribute :cwd, :string
       attribute :kind

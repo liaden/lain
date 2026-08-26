@@ -236,6 +236,29 @@ module Lain
     # content blocks, matching what a `tool_result` block accepts on the wire.
     # Defined in a reopened `Tool` to keep the behavioral core measurably small.
     Result = Data.define(:content, :is_error) do
+      include Declarative
+
+      # `content` is either a String or an Array of provider content blocks --
+      # what a `tool_result` block accepts on the wire, and nothing else. Written
+      # as a `validate` rather than an `inclusion:` over classes, because the
+      # rule is "is one of these two", which no stock validator states.
+      #
+      # `check!` and never `settle!`: settling deep-FREEZES what it hands back,
+      # and a caller's content Array is theirs to keep -- {.ok} has always
+      # answered a Result holding the very object it was given.
+      declare raising: InvalidResult do
+        attribute :content
+        validate :content_is_string_or_array
+
+        private
+
+        def content_is_string_or_array
+          return if content.is_a?(String) || content.is_a?(Array)
+
+          errors.add(:content, "must be a String or an Array, got #{content.class}")
+        end
+      end
+
       # A successful result carrying `content`.
       def self.ok(content)
         new(content:, is_error: false)
@@ -249,9 +272,7 @@ module Lain
       end
 
       def initialize(content:, is_error: false)
-        unless content.is_a?(String) || content.is_a?(Array)
-          raise InvalidResult, "Tool::Result content must be a String or an Array, got #{content.class}"
-        end
+        self.class.check!(content:)
 
         # Coerce to a strict Boolean so `is_error` is never a truthy-but-not-true
         # value that a `== true` check downstream would miss.

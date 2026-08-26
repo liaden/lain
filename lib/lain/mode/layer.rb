@@ -42,10 +42,14 @@ module Lain
       # `Data.define` block do not land on the Data class.
 
       # The lighter obligation, as validate-then-freeze. It lives on a throwaway
-      # {Lain::Guard} carrier because a frozen value must never include
+      # {Lain::Declarative::Carrier} because a frozen value must never include
       # ActiveModel itself -- `valid?` leaves mutable ivars behind and
       # `Ractor.shareable?` goes false.
-      class Declaration < Guard
+      #
+      # `check!` and not `settle!`: `name` is coerced with `#to_sym` and
+      # `lighter` with `-#to_s`, and no declared type does either -- a settled
+      # copy would hand back a String name and a merely-frozen lighter.
+      class Declaration < Declarative::Carrier
         attribute :name
         attribute :lighter, :string
         attribute :alters_outcome

@@ -2,27 +2,6 @@
 
 module Lain
   class Context
-    module Guards
-      # `every` must stay strictly inside the lookback window, and `cap` must be
-      # a positive marker budget. Validated on a throwaway carrier before the
-      # frozen combinator exists (see {Lain::Guard}).
-      class CacheBreakpoints < Guard
-        attribute :every
-        attribute :lookback
-        attribute :cap
-        validates :cap, numericality: { greater_than: 0, message: "must be positive, got %<value>s" }
-        validate :every_inside_lookback
-
-        private
-
-        def every_inside_lookback
-          return if every.nil? || lookback.nil?
-
-          errors.add(:every, "(#{every}) must stay inside the lookback window (#{lookback})") if every >= lookback
-        end
-      end
-    end
-
     # Places prompt-cache breakpoints on the message list: the final block of
     # the final message, plus intermediate blocks roughly every `every`
     # blocks, so a long agentic turn never drifts outside Anthropic's
@@ -49,6 +28,8 @@ module Lain
     # messages -- because reserving is safe (worst case, one slot goes
     # unused) and guessing wrong is not (worst case, a 400).
     class CacheBreakpoints < Combinator
+      include Declarative
+
       # Anthropic looks back a bounded number of content blocks when matching
       # a cache breakpoint. Agentic turns, which pile up tool_use/tool_result
       # pairs, blow past it easily, so intermediate breakpoints are placed
@@ -57,6 +38,24 @@ module Lain
       EVERY = 15
       CAP = 4
 
+      # `every` must stay strictly inside the lookback window, and `cap` must be
+      # a positive marker budget. The three DEFAULTS live here too, beside the
+      # rules that judge them, rather than in the constructor signature: this is
+      # the one combinator whose every parameter is an Integer, so
+      # {Lain::Declarative::ClassMethods#settle!} can hand the defaulted,
+      # validated values straight back and there is nowhere for a signature
+      # default and a declared default to disagree.
+      declare do
+        attribute :every, default: EVERY
+        attribute :lookback, default: LOOKBACK_BLOCKS
+        attribute :cap, default: CAP
+        validates :cap, numericality: { greater_than: 0, message: "must be positive, got %<value>s" }
+        validate do
+          errors.add(:every, "(#{every}) must stay inside the lookback window (#{lookback})") if
+            every && lookback && every >= lookback
+        end
+      end
+
       # `cap: 1` is legal and yields ZERO message markers -- the reserved
       # system slot consumes the whole budget, so not even the last block is
       # marked. The degrade is silent by design: this combinator is pure
@@ -64,12 +63,21 @@ module Lain
       # Channel), so there is no runtime channel to signal through without
       # breaking that contract. This comment and the spec pinning the
       # behavior are the loud part.
-      def initialize(every: EVERY, lookback: LOOKBACK_BLOCKS, cap: CAP)
-        Guards::CacheBreakpoints.check!(every:, lookback:, cap:)
+      #
+      # `**attrs`, and not the three keywords spelled out: the defaults are
+      # declared above, so repeating them here would be a second copy to keep in
+      # step. The cost is that a typo'd keyword raises
+      # {Lain::Declarative::UndeclaredAttribute} rather than Ruby's `unknown
+      # keyword` -- a better message (it lists what IS declared), and a
+      # programmer error either way, never a refused value.
+      #
+      # @param attrs [Hash] `every:`, `lookback:`, `cap:` -- each defaulted above
+      def initialize(**attrs)
+        settled = self.class.settle!(**attrs)
 
         super()
-        @every = every
-        @message_budget = cap - 1
+        @every = settled.fetch(:every)
+        @message_budget = settled.fetch(:cap) - 1
         freeze
       end
 

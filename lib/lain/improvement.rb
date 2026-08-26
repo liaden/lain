@@ -19,12 +19,13 @@ module Lain
   Improvement = Data.define(:note, :kind, :evidence_digests, :project_hash, :session, :at) do
     include Telemetry::Journalable
 
-    # `Guards`/`LINE_MAX_BYTES` are reached via `self.class::`, not by bare
-    # name: this block is lexically scoped to `Lain` (the trap
-    # {Request::SYSTEM_PREFIX} documents), not to the reopened `Improvement`
-    # below where those constants actually live.
+    # `LINE_MAX_BYTES` is reached via `self.class::`, not by bare name: this
+    # block is lexically scoped to `Lain` (the trap {Request::SYSTEM_PREFIX}
+    # documents), not to the reopened `Improvement` below where that constant
+    # actually lives. The declaration is reached as `self.class.check!` for the
+    # same reason -- it is a method, so no constant lookup is involved at all.
     def initialize(note:, kind:, project_hash:, session:, evidence_digests: [], at: Time.now.utc)
-      self.class::Guards::Record.check!(note:, kind:, project_hash:, session:)
+      self.class.check!(note:, kind:, project_hash:, session:)
 
       super(**normalized(note:, kind:, project_hash:, session:, evidence_digests:, at:))
       assert_within_line_budget!
@@ -72,6 +73,8 @@ module Lain
   end
 
   class Improvement
+    include Declarative
+
     # Reopened rather than declared inside the `Data.define(...) do ... end`
     # block above: a `module`/`class` keyword written INSIDE that block is
     # lexically scoped to this file's enclosing module (`Lain`), not to the
@@ -96,34 +99,39 @@ module Lain
     # than hoped to stay under it.
     LINE_MAX_BYTES = 4096
 
-    # {Guard} construction contract for {Improvement}: validate-then-freeze,
-    # the same convention every {Telemetry} carrier uses.
-    module Guards
-      # An improvement record must name a real kind and project/session, and
-      # its note must be present and within {NOTE_MAX_BYTES}.
-      class Record < Guard
-        attribute :note
-        attribute :kind
-        attribute :project_hash
-        attribute :session
+    # The construction contract: an improvement record must name a real kind and
+    # project/session, and its note must be present and within {NOTE_MAX_BYTES}.
+    #
+    # Declared inline rather than on a carrier of its own -- nothing outside
+    # this class ever names these rules. `check!` and not `settle!`, because
+    # `at` normalizes a {Time} and the four String fields are INTERNED (`-`)
+    # rather than merely frozen; both are coercions a settled copy would lose,
+    # so the constructor below keeps them and this declaration only refuses.
+    #
+    # Declared HERE, below {KINDS}/{NOTE_MAX_BYTES}, so those resolve by
+    # ordinary lexical lookup with nothing to defer -- {Project}'s reason.
+    declare do
+      attribute :note
+      attribute :kind
+      attribute :project_hash
+      attribute :session
 
-        validates :note, presence: { message: "must not be blank" }
-        validates :kind, inclusion: { in: KINDS, message: "must be one of #{KINDS.inspect}, got %<value>s" }
-        validates :project_hash, presence: { message: "must name the project, got nil" }
-        validates :session, presence: { message: "must name the session, got nil" }
-        validate :note_within_size_guard
+      validates :note, presence: { message: "must not be blank" }
+      validates :kind, inclusion: { in: KINDS, message: "must be one of #{KINDS.inspect}, got %<value>s" }
+      validates :project_hash, presence: { message: "must name the project, got nil" }
+      validates :session, presence: { message: "must name the session, got nil" }
+      validate :note_within_size_budget
 
-        private
+      private
 
-        # ActiveModel's `length:` validator counts characters, not bytes; the
-        # atomicity budget this guard protects is a BYTE budget (what
-        # `write(2)` actually sees), so the check is hand-rolled over
-        # `#bytesize` rather than reached for via `length: { maximum: }`.
-        def note_within_size_guard
-          return if note.to_s.bytesize <= NOTE_MAX_BYTES
+      # ActiveModel's `length:` validator counts characters, not bytes; the
+      # atomicity budget this rule protects is a BYTE budget (what `write(2)`
+      # actually sees), so the check is hand-rolled over `#bytesize` rather
+      # than reached for via `length: { maximum: }`.
+      def note_within_size_budget
+        return if note.to_s.bytesize <= NOTE_MAX_BYTES
 
-          errors.add(:note, "must be at most #{NOTE_MAX_BYTES} bytes, got #{note.to_s.bytesize}")
-        end
+        errors.add(:note, "must be at most #{NOTE_MAX_BYTES} bytes, got #{note.to_s.bytesize}")
       end
     end
 
@@ -137,7 +145,7 @@ module Lain
     # `open(2)` -- every writer's single `write(2)` atomically seeks to
     # end-of-file and writes, so lines from different processes interleave
     # whole, never torn, as long as each write stays under {LINE_MAX_BYTES}
-    # (see {Improvement}'s own guard).
+    # (see {Improvement}'s own line-budget assertion).
     class Sink
       def initialize(session:, paths: Paths.new, project_hash: paths.project_hash)
         @paths = paths

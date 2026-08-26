@@ -18,6 +18,8 @@ module Lain
   # The report is a DX artifact, not a debug dump: a scannable per-metric table,
   # returned as a String (nothing here touches stdout).
   class Compare
+    include Declarative
+
     # One run's measured outcome, in the vocabulary Compare aggregates. Built
     # either directly from measured metrics or, more usually, from a recorded
     # Timeline via {.from_timeline}, which prices it through the {Ledger}.
@@ -99,13 +101,23 @@ module Lain
                             fmt: ->(v) { format("%.1f", v) } }
     }.freeze
 
+    # A comparison is a DISTRIBUTION, and one sample is not one. Declared over
+    # the coerced list rather than the constructor's argument, because `Array()`
+    # is what turns a lone Run into a list of one -- the count only means
+    # anything once that has happened.
+    declare do
+      attribute :runs
+      validates :runs, length: { minimum: 2,
+                                 message: "must hold at least two; one run is not a distribution" }
+    end
+
     # @param runs [Array<Run>] the runs to compare (n >= 2)
     # @raise [ArgumentError] on fewer than two runs
     # @raise [Capability::Guard::Mismatch] when the runs degraded different sets
     # @raise [Posture::Mismatch] when the runs ran under different postures
     def initialize(runs)
       @runs = Array(runs).freeze
-      raise ArgumentError, "compare needs at least two runs; one run is not a distribution" if @runs.size < 2
+      self.class.check!(runs: @runs)
 
       guard_degraded!
       guard_postures!

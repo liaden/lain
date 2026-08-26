@@ -36,8 +36,14 @@ module Lain
       MAX_COMMENT = 64 * 1024
 
       # Validated on a throwaway carrier that is checked and discarded, so the
-      # frozen value never carries ActiveModel's ivars (see {Lain::Guard}).
-      class Fields < Guard
+      # frozen value never carries ActiveModel's ivars (see
+      # {Lain::Declarative::Carrier}).
+      #
+      # `check!` and not `settle!`, for {Question::Fields}' reason: the one
+      # field it judges has already been interned by {Rules.identifier}, and
+      # the two it does not judge -- `option_ids`, `comment` -- are coerced by
+      # rules no declared type expresses.
+      class Fields < Declarative::Carrier
         attribute :question_id
         validates :question_id, presence: { message: "must name the question it answers, got blank" }
       end

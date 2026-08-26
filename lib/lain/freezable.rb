@@ -7,8 +7,9 @@ module Lain
   # runs the real constructor and then this freezes -- in one place.
   #
   # Deliberately freeze-ONLY. It does not validate, for two reasons. (1) A frozen
-  # value must never carry ActiveModel's ivars (see {Lain::Guard}), so validation
-  # is a throwaway carrier called inside the real initialize, not folded in here.
+  # value must never carry ActiveModel's ivars (see {Lain::Declarative::Carrier}),
+  # so validation is a throwaway carrier called inside the real initialize,
+  # not folded in here.
   # (2) On a `Data.define` value `super` has ALREADY frozen the instance by the
   # time this method resumes, so a `validate!` here would try to write `@errors`
   # onto a frozen object and raise -- which is also why Data values don't use

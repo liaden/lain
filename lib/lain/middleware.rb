@@ -214,15 +214,34 @@ module Lain
     # Timeout lands with the concurrency model; until then this bounds what it can
     # bound without pretending to bound what it cannot.
     class Timeout < Base
+      include Declarative
+
       class Exceeded < Error; end
 
       # The env key under which the absolute monotonic deadline is published.
       DEADLINE_KEY = :deadline
 
+      # Hand-written rather than `numericality:`, which is type-PERMISSIVE:
+      # it parses `"5"` as five, and a String budget would then be compared
+      # against a monotonic Float at the boundary. The rule here has always
+      # been "a Numeric, and positive", and that is the rule that stays.
+      declare do
+        attribute :seconds
+        validate :positive_numeric
+
+        private
+
+        def positive_numeric
+          return if seconds.is_a?(Numeric) && seconds.positive?
+
+          errors.add(:seconds, "must be a positive Numeric, got #{seconds.inspect}")
+        end
+      end
+
       # @param seconds [Numeric] the budget (> 0)
       # @param clock [#call] monotonic time source, injectable for tests
       def initialize(seconds:, clock: RunClock::MONOTONIC)
-        raise ArgumentError, "seconds must be a positive Numeric, got #{seconds.inspect}" unless positive?(seconds)
+        self.class.check!(seconds:)
 
         @seconds = seconds
         @clock = clock
@@ -243,12 +262,6 @@ module Lain
         raise Exceeded, "downstream exceeded #{@seconds}s budget (took #{elapsed.round(3)}s)" if elapsed > @seconds
 
         result
-      end
-
-      private
-
-      def positive?(seconds)
-        seconds.is_a?(Numeric) && seconds.positive?
       end
     end
   end
