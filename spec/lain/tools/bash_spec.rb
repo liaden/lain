@@ -431,6 +431,100 @@ RSpec.describe Lain::Tools::Bash do
     end
   end
 
+  # The description and the command field are the only channel that reaches
+  # every consumer of this tool, and they are what the model reads to decide
+  # what to send. Two arms run a command here, so prose promising `sh -c`
+  # outright is false for every command Shell::Verdict allows -- and the shape
+  # that earns the shell-free arm is something the model has no other way to
+  # learn. These examples hold the prose to the code by asking the real verdict
+  # rather than by restating its rule.
+  describe "what the model is told about the two arms" do
+    let(:command_field) { tool.input_schema.dig("properties", "command", "description") }
+
+    it "conditions the shell on the command not being fully understood" do
+      expect(tool.description).to include("fully understood")
+      expect(tool.description).not_to include("Runs a shell command via `sh -c`")
+    end
+
+    # An allow is not on its own enough -- #arm_for asks takes_term? too, and
+    # Exec::Docker refuses a multi-stage term. Both halves of the request carry
+    # that caveat, so neither can be read alone and come away with the property
+    # that is kept but not the one that is surrendered.
+    it "carries the backend caveat in its own half, not only on the shared field" do
+      expect(tool.description).to include("wherever the backend running it takes argv")
+      expect(command_field).to include("wherever the backend running it takes argv")
+    end
+
+    it "names the shape that earns the shell-free arm, on the shared command field" do
+      expect(command_field).to include("literal", "pipes", "cat README.md | head -20")
+    end
+
+    it "names the constructs that lose it" do
+      expect(command_field).to include("more than one line", "&&", "||", "redirection", "globs", "git", "sudo")
+    end
+
+    # The rule the list generalises over is itself a claim the model reasons
+    # from, and it takes TWO arms: a program can reach the shell arm by running
+    # something its own arguments name, or by having a documented escape into a
+    # shell. Naming only the first made the prose wrong about `less`, which is
+    # one of the second.
+    it "states both reasons a program loses the shell-free arm" do
+      expect(command_field).to include("run a program named in its own arguments",
+                                       "drop the user into a shell")
+    end
+
+    it "advertises only shapes the verdict really allows" do
+      decisions = ["ls -la", "cat README.md | head -20", "grep -rn foo lib | wc -l"]
+                  .map { |command| Lain::Shell::Verdict.new.call(command) }
+
+      expect(decisions).to all(be_allow)
+      expect(decisions[1].term).to eq([%w[cat README.md], %w[head -20]])
+    end
+
+    it "warns off constructs the verdict really abstains on" do
+      warned = ["echo a && echo b", "echo a || echo b", "echo a ; echo b", "sleep 1 &",
+                %(echo "hello world"), "echo foo\\ bar", "echo hi > out.txt", "echo $HOME",
+                "ls *.rb", "echo ~/x", "echo a\necho b",
+                "git log --oneline -5", "tar -cf x.tar dir", "rsync -a a b",
+                "python3 script.py", "sudo ls", "less README.md"]
+
+      expect(warned.map { |command| Lain::Shell::Verdict.new.call(command) }).to all(be_abstain)
+    end
+
+    # "More than one line" and not "no newlines": a TRAILING newline still
+    # allows, so the stricter wording would have been a fresh false claim.
+    it "still allows a single command carrying a trailing newline" do
+      expect(Lain::Shell::Verdict.new.call("ls -la\n")).to be_allow
+    end
+
+    # Every program the prose names, measured -- the lesson from the wording
+    # that was wrong about its own example. The list is held here rather than
+    # scraped from the string, so it pins the prose against the verdict in the
+    # direction that matters: a name that stops abstaining reds, and so does a
+    # name deleted from the description.
+    it "names only programs the verdict really abstains on" do
+      named = %w[git tar rsync sudo less vim man psql sh python awk]
+      commands = ["git status", "tar -cf x.tar dir", "rsync -a a b", "sudo ls", "less README.md",
+                  "vim README.md", "man ls", "psql -c select", "sh script.sh", "python script.py",
+                  "awk BEGIN"]
+
+      expect(named.all? { |program| command_field.include?(program) }).to be(true)
+      expect(commands.map { |command| Lain::Shell::Verdict.new.call(command) }).to all(be_abstain)
+    end
+
+    # The family the corrected clause generalises over. None of these is named
+    # in the description, so they are what proves the RULE carries rather than
+    # the list -- a model reasoning from "can drop the user into a shell"
+    # reaches the right answer for each.
+    it "generalises correctly to the escape-capable programs it does not name" do
+      unnamed = ["nano README.md", "more README.md", "info coreutils", "sqlite3 db.sqlite",
+                 "vi README.md", "nvim README.md", "ed README.md", "emacs README.md",
+                 "most README.md", "mysql -e select"]
+
+      expect(unnamed.map { |command| Lain::Shell::Verdict.new.call(command) }).to all(be_abstain)
+    end
+  end
+
   # A command's output is a whole artifact -- its first N bytes read like
   # the answer and are not -- so an oversized one is REFUSED, and the refusal
   # keeps the one fact truncation would have kept: the exit status.

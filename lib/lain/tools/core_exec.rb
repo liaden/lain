@@ -60,10 +60,20 @@ module Lain
 
       def name = "core_exec"
 
+      # In step with {Bash}'s, and deliberately NOT a copy of it. The shared
+      # {Bash::Input} tells the model a fully understood command can skip the
+      # shell "wherever the backend running it takes argv"; {Exec::Core} takes
+      # none, and this tool only ever sends a String. So this half names the
+      # same rule and then says where this transport stands under it, rather
+      # than borrowing a conditional that is false here -- which is the defect
+      # the day someone wires this tool up and reads only its own string.
       def description
-        "Runs a shell command via `sh -c` in the out-of-process lain-core " \
-          "daemon and returns its exit status, stdout, and stderr. The " \
-          "command is killed server-side if it runs past its timeout."
+        "Runs a shell command in the out-of-process lain-core daemon and " \
+          "returns its exit status, stdout, and stderr. A command that is " \
+          "fully understood can run as argv with no shell process at all, " \
+          "but only where the backend takes argv, and the daemon does not: " \
+          "`sh -c` runs everything sent here. The command is killed " \
+          "server-side if it runs past its timeout."
       end
 
       # Tier 3: the model fully controls `command`. The transport does not

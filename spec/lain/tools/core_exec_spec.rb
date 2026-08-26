@@ -81,6 +81,26 @@ RSpec.describe Lain::Tools::CoreExec do
       expect(described_class.input_model).to be(Lain::Tools::Bash::Input)
       expect(tool.input_schema).to eq(Lain::Tools::Bash.new.input_schema)
     end
+
+    def command_field(tool) = tool.input_schema.dig("properties", "command", "description")
+
+    # The command field's guidance about which shapes avoid a shell reaches
+    # this tool by sharing one Input class, so it cannot drift. The two
+    # #description strings are separate objects and can, which is why both
+    # halves are read here rather than only the live one.
+    it "carries Bash's command-field guidance verbatim, because the Input is one class" do
+      expect(command_field(tool)).to eq(command_field(Lain::Tools::Bash.new))
+      expect(command_field(tool)).to include("no shell", "cat README.md | head -20")
+    end
+
+    # Exec::Core refuses every term and this tool only ever sends a String, so
+    # this half may not borrow Bash's conditional claim: it names the rule and
+    # then says where this transport actually stands under it.
+    it "says the shell is conditional in general and unconditional on this transport" do
+      expect(tool.description).to include("fully understood")
+      expect(tool.description).to include("sh -c")
+      expect(tool.description).not_to eq(Lain::Tools::Bash.new.description)
+    end
   end
 
   describe "the client-side deadline backstop" do

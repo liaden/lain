@@ -72,8 +72,43 @@ module Lain
       ].freeze
 
       # The wire shape: a required command String, plus optional cwd and timeout.
+      #
+      # `command`'s description is where the two-arm rule is written, because
+      # this class is SHARED BY IDENTITY with {CoreExec} -- guidance put here
+      # lands on both tools and cannot drift, where the two `#description`
+      # strings are separate objects and can. It states a capability rather
+      # than a rule: the research behind it measured adherence to a stated
+      # syntax constraint topping out near two thirds and failing SILENTLY
+      # into ordinary shell, so anything phrased as a mandate would be false
+      # for a third of calls.
+      #
+      # THE GENERALISATION IS ITSELF A CLAIM, and it needs measuring exactly
+      # like the list of constructs does. An earlier wording named `less` under
+      # "runs a program named in its own arguments" -- but `less` belongs to
+      # {Shell::Verdict}'s shell-escape family, whose rule is a documented
+      # escape INTO a shell, so a model reasoning from the stated rule would
+      # conclude `vim README.md` takes the argv path when it does not. Prose
+      # that is wrong about its own example is worse than an incomplete list,
+      # because the reader cannot detect it. Both arms are named now, and
+      # spec/lain/tools/bash_spec.rb re-measures every program this string
+      # mentions against the real verdict rather than restating the rule.
+      #
+      # "More than one line" rather than "no newlines", because a TRAILING one
+      # still allows: `"ls -la\n"` reaches allow with the term `[["ls","-la"]]`.
       class Input < Tool::Input
-        field :command, :string, description: "Shell command to run via `sh -c`.", required: true
+        field :command, :string, required: true,
+                                 description: "Shell command to run. A command whose every stage is a literal " \
+                                              "program with literal words, optionally joined by pipes -- " \
+                                              "`cat README.md | head -20` -- can run as argv with no shell " \
+                                              "process anywhere, and does wherever the backend running it takes " \
+                                              "argv. Everything else goes through `sh -c`: more than one line, " \
+                                              "quoting or escaping of any kind, `;`, `&&`, `||`, `&`, " \
+                                              "redirection, `$` expansion, globs or `~`, and any program that " \
+                                              "can run a program named in its own arguments or that can drop " \
+                                              "the user into a shell -- git, tar, rsync, sudo, less, vim, man, " \
+                                              "psql, and interpreters such as sh, python or awk. Both forms are " \
+                                              "accepted; the simple one is the one that keeps a shell out of " \
+                                              "the picture."
         field :cwd, :string, description: "Working directory for the command. Defaults to the current directory."
         field :timeout, :integer,
               description: "Seconds to allow before the command's whole process group is killed. " \
@@ -128,9 +163,21 @@ module Lain
 
       def name = "bash"
 
+      # The shape guidance lives on {Input}'s `command` field, which {CoreExec}
+      # shares; what is left here is the one claim this string used to get
+      # wrong, that a shell always runs the command.
+      #
+      # It carries the backend caveat too, rather than leaning on the field to
+      # supply it. {#arm_for} asks `takes_term?` before it offers, so an allow
+      # is not on its own enough -- {Exec::Docker} refuses a multi-stage term
+      # -- and stating the property that is KEPT while omitting the one that is
+      # surrendered is exactly the defect this subsystem has already been
+      # caught at once.
       def description
-        "Runs a shell command via `sh -c` and returns its exit status, " \
-          "stdout, and stderr. The command's whole process group is killed " \
+        "Runs a shell command and returns its exit status, stdout, and " \
+          "stderr. A command that is fully understood runs as argv with no " \
+          "shell process at all, wherever the backend running it takes argv; " \
+          "`sh -c` runs the rest. The command's whole process group is killed " \
           "if it runs past its timeout."
       end
 
