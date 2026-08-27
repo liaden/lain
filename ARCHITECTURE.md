@@ -762,14 +762,16 @@ Two **backends** answer it directly:
 Three **decorators** wrap either backend. They are decorators rather than `worker_env_for`
 overrides because each owns a `release` that must compose with the inner backend's own release:
 
-- `Isolation::DbIndex` provisions one database per declared service per worker.
+- `Isolation::DbIndex` provisions one database per declared service per worker, named from the worker key.
 - `Isolation::Compose` brings up a per-worker `docker compose` stack.
 - `Isolation::Journal` records lease acquisition and release as telemetry.
 
 `Isolation::Services` (`lib/lain/isolation/services.rb`) is what they read: a `.lain/services.rb`
 Ruby DSL on the same `.lain/` convention as `Prompt::Slots` and `Skill::Catalog`, `instance_eval`'d
 with no sandbox (shape-not-safety, as `Tool::Input` reads), whose surface is `postgres` and
-`redis`. An absent file loads to an empty collection, which makes both decorators Null by empty
+`compose`. A `redis` line is refused by name and pointed at a container: it was the one service
+that allocated its resource from state shared across a backend's workers rather than naming it
+from the worker key, so a second backend in one run handed out a colliding index. An absent file loads to an empty collection, which makes both decorators Null by empty
 enumeration rather than by a nil check: **no declared services means no docker or `createdb`
 command runs at all**, and the lease is simply the inner one. The loading half of that -- the
 `ProjectDir`-relative `DSL_PATH`, the exist-guard, the `Builder.build(source, path)` dispatch and

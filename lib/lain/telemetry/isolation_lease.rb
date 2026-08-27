@@ -16,8 +16,8 @@ module Lain
     end
 
     # One transition in an isolation lease's lifecycle. The two service kinds
-    # complete the vocabulary for a richer backend -- a Postgres/Redis DB-index,
-    # a compose stack -- to emit alongside acquire/release: a closed enum whose
+    # complete the vocabulary for a richer backend -- a per-worker Postgres
+    # database, a compose stack -- to emit alongside acquire/release: a closed enum whose
     # every value is not yet reached, the idiom {Compaction#cache_state} keeps
     # for its own `:warm`.
     #
@@ -27,8 +27,8 @@ module Lain
     # thrash cost over. `backend` names the leasing class as a String, so a
     # report can break that cost down by strategy.
     #
-    # `service` must carry a NAME ("postgres", "redis") and NEVER a connection
-    # string: this record may not hold a `DATABASE_URL`/`REDIS_URL` or any
+    # `service` must carry a NAME ("postgres", "compose_cache") and NEVER a
+    # connection string: this record may not hold a `DATABASE_URL` or any
     # credential, only attribution, and it gives a backend nowhere to put the
     # raw bytes.
     #

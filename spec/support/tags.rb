@@ -180,9 +180,9 @@ RSpec.configure do |config|
   config.filter_run_excluding(:seam) unless SEAM_ENABLED
 end
 
-# :services specs provision REAL Postgres/Redis for the DB-index isolation
+# :services specs provision a REAL Postgres for the DB-index isolation
 # strategy (spec/lain/isolation/db_index_spec.rb). They cost no money and touch
-# no network -- they shell out to createdb/dropdb/redis-cli against a local
+# no network -- they shell out to createdb/dropdb against a local
 # server -- but they need that server running, so they are opt-in like :nvim,
 # run only with LAIN_SERVICES=1. When opted in but the CLI tools are absent, an
 # example SKIPS (never fails): a missing server is an environment gap, not a

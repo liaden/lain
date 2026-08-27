@@ -161,7 +161,7 @@ module Lain
 
       # @param services [Enumerable] the declared services; only {Services::Compose}
       #   declarations are acted on, so one `.lain/services.rb` can mix compose
-      #   with pg/redis and each backend picks its own
+      #   with postgres and each backend picks its own
       # @param inner [#acquire] the backend whose lease this enriches ({Null}/{Worktree})
       # @param paths [Paths] supplies the per-worker `-p` name via {Paths#project_hash}
       # @param project_root [String] where the compose file is resolved from when

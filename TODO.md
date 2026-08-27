@@ -1,6 +1,6 @@
 Ideas/Todos:
 
-* A `mise` isolation backend, beside compose/pg/redis. mise already resolves a
+* A `mise` isolation backend, beside compose/pg. mise already resolves a
   per-directory environment, so a worktree could get its own `DATABASE_URL`
   pointing at a fresh `createdb` instance without lain hand-rolling the env
   plumbing. `Isolation::Compose` is the shape to copy: a DECORATOR over a whole
