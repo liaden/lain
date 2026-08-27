@@ -447,9 +447,40 @@ module Lain
         assembler = StreamAssembler.new
         attempt = @retries.open_attempt { assembler.reset }
         @transport.stream(encode(request), attempt:, frame:) { |chunk| assembler.feed(chunk) }
-        assembler.result
+        assembler.result.tap { note_truncated_stream(assembler, request) }
       rescue JSON::ParserError => e
         raise APIError, "corrupt NDJSON line in stream: #{e.message}"
+      end
+
+      # The witness for a stream that never said it was finished. NDJSON puts
+      # `done` on its last line and nothing earlier says how many lines to
+      # expect, so a severed connection reassembles into a body shape-identical
+      # to a complete turn -- and every reader above here sees a turn that
+      # merely stopped oddly. The assembler takes no arguments and holds no
+      # channel, so the reading is made there and the record is cut here, where
+      # the journal is.
+      #
+      # It reports and does not repair: the body is handed on untouched, because
+      # the failure this was built from was a content-bearing turn and losing
+      # the answer would be the worse defect.
+      #
+      # Scoped to the attempt actually RETURNED. This assembler is the one whose
+      # bytes reached the caller, and #reset zeroed its counters on every
+      # discard, so a severed attempt that faraday-retry cleanly replaced has
+      # nothing left here to record -- a record for it would name a stream
+      # nobody was served.
+      #
+      # The digest is added HERE and nowhere lower, because it is the one part
+      # of the record the assembler cannot know. Without it the line is
+      # unjoinable: this Provider is constructed once and reused, the chat tier
+      # and the summarizer tier sharing it for a whole session, so several round
+      # trips interleave on one channel and `model` plus adjacency cannot say
+      # which of forty turns died.
+      def note_truncated_stream(assembler, request)
+        reading = assembler.truncation
+        return if reading.nil?
+
+        @journal << Telemetry::TruncatedStream.new(**reading, request_digest: request.digest)
       end
 
       # THE DEPLOYMENT FIRST, THE FLAG SECOND, and the order is the whole
