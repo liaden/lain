@@ -1,6 +1,6 @@
 # Chunk — the pipeline algebra: deterministic approval over parsed shell terms
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Torvalds, Evans, Metz, Schneeman, Patterson, plus the category-theory seat for T1 and
@@ -1642,14 +1642,14 @@ failure count alone.
 - [x] T7 — bash journals its arm — `c80bd1da` (records the arm AND the verdict; term_arm? is the countable one)
 - [x] T8 — `Rule::Call` carries a derived term — `155a9afb` (a blanket #with refusal; one spec had pinned the forge as a feature)
 - [x] T9 — the composed-term approval rule — `bb55485d` (six predicates; /proc/self/root aliased the whole filesystem)
-- [ ] T10 — shell manual-QA scenario
+- [x] T10 — shell manual-QA scenario — `4357a2d9` (scheduled into the gate; every string in it is still a prediction)
 - [x] T11 — `web_fetch` egress floor — `fde1a0be` (metadata, loopback and RFC1918 refused before connecting)
 
 ### Landed, in order
 
 `173dcd5d` T4 · `3b9d8fba` T5 · `174fad5e` T1 · `1d97c490` T3 · `ede7d5cf` census ·
 `fde1a0be` T11 · `0bb167b1` T2 · `e92a97d6` T6 · `c80bd1da` T7 · `155a9afb` T8 ·
-`bb55485d` T9
+`bb55485d` T9 · `4357a2d9` T10
 
 `ede7d5cf` is orchestrator-owned and belongs to no card: `NAT64` was reported
 UNCLASSIFIED by `bin/comment-census --check-tickets` when T11 wanted it in prose.
