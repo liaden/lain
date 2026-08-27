@@ -35,9 +35,13 @@ module Lain
   #   ANSWER needs a collaborator this object cannot be given at construction
   #   (see {#bind_store}), and it is held to the nvim `lain://inbox` buffer's
   #   answer by a parity spec.
-  # * `occupancy` -- how full the live model's context window the LAST turn left
-  #   it, 0..1, nil before any turn (absence, never a zero that would read as an
-  #   empty context). Derived from the SAME {Telemetry::TurnUsage} the deadline
+  # * `occupancy` -- how full the live model's context window the LAST MEASURABLE
+  #   turn left it, 0..1, nil until one happens. A turn this feed cannot measure
+  #   leaves the previous reading exactly where it was rather than replacing it
+  #   with a zero or a nil, so this number is a reading and never a
+  #   guess -- {#record_occupancy} argues it, and `unmeasured_turns` is how a
+  #   reader tells a fresh one from a stale one. Derived from the SAME
+  #   {Telemetry::TurnUsage} the deadline
   #   slides on, because that record names both halves of the ratio.
   #   {Agent#occupancy} answers it from the live Agent's accounting; this sink
   #   cannot ask one, so it asks the same BOOK instead. The two differ only
@@ -53,6 +57,12 @@ module Lain
   #   clamps, because "244%" is nonsense on a status bar where "100%" is not. A
   #   deployment that knows its real local window should inject a book with the
   #   right `fallback:`.
+  # * `unmeasured_turns` -- how many turns in a ROW have left `occupancy` where
+  #   it was because the record could not be measured, zero while it is fresh.
+  #   Without it the suppression is invisible: a frozen ratio beside a climbing
+  #   `run_tokens` reads as a STUCK context rather than a stale reading, and no
+  #   renderer can tell those apart from the ratio alone. Same argument as
+  #   `derivation_refusal_streak` below, and a streak for the same reason.
   # * `run_tokens` -- what THIS RUN has SPENT, every billed field of every
   #   {Telemetry::TurnUsage} summed. nil before the first payment, because
   #   "nothing yet" and "billed nothing" are different claims.
@@ -190,6 +200,7 @@ module Lain
     def start_empty
       @cache_deadline = nil
       @occupancy = nil
+      @unmeasured_turns = 0
       @run_tokens = nil
       @mode = ModeState::NONE
       @approvals_pending = 0
@@ -288,8 +299,10 @@ module Lain
     # `Canonical.normalize(nil)` is nil, so the record is constructible -- and
     # `nil["input_tokens"]` inside a {CLI::JournalTee} sink is a NoMethodError
     # that unwinds into the agent loop and costs the turn. Same answer as
-    # {#occupancy_of}'s rescue: a malformed record makes this sink derive
-    # nothing, never raise.
+    # {#occupancy_of}'s rescue: nothing derived, nothing raised -- and routed
+    # through {#record_occupancy} all the same, because a stream truncated
+    # before its usage block and one truncated into all-zero counts are the same
+    # failure, and a run of either must not read as fresh.
     #
     # The accrual is summed over RECORDS with no dedupe, which is the one place
     # this differs from {Usage}'s "sum over unique turn digests": that rule is
@@ -298,13 +311,36 @@ module Lain
     # across two records both genuinely paid for. Deduplicating would undercount
     # exactly what {Agent::Accounting} counts, and the two agreeing is the whole
     # point. `to_i` on the nil start keeps absence distinct from a billed zero.
+    #
+    # The payment and the reading are settled SEPARATELY because they fail
+    # separately: a record whose window cannot be measured was still billed, and
+    # adding its zero to a sum is honest where replacing a ratio would not be.
+    # {#occupancy_of} decides whether there is a reading; {#record_occupancy}
+    # decides what happens to one.
     def observe_usage(event)
-      return if event.usage.nil?
+      return record_occupancy(nil) if event.usage.nil?
 
       usage = JournaledUsage.new(event.usage)
       slide_cache_deadline(usage)
       @run_tokens = @run_tokens.to_i + usage.total_tokens
-      @occupancy = occupancy_of(usage, event.model)
+      record_occupancy(occupancy_of(usage, event.model))
+    end
+
+    # `@occupancy`'s ONE writer after the seed, and the whole policy in a
+    # sentence: an absence never overwrites a reading. The rule had three
+    # ad-hoc writers with three different answers -- the seed, a zero-usage
+    # skip, and the unresolvable-model rescue below, which ASSIGNED its nil and
+    # so erased a good number over a record it merely failed to read.
+    #
+    # A reading MEASURES the last window; its absence is the failure to take
+    # one. Publishing the second over the first left the feed remembering the
+    # spend (`run_tokens` accrues either way) and forgetting the window.
+    #
+    # A STREAK rather than a total, so the count answers "how stale is this
+    # ratio" and a measurable turn clears it.
+    def record_occupancy(reading)
+      @unmeasured_turns = reading.nil? ? @unmeasured_turns + 1 : 0
+      @occupancy = reading || @occupancy
     end
 
     def slide_cache_deadline(usage)
@@ -313,13 +349,28 @@ module Lain
       @cache_deadline = (@clock.call + @cache_profile[:ttl]).utc.iso8601
     end
 
-    # @return [Float, nil] nil when the book cannot answer. {ContextWindow} is
-    #   deliberately LOUD about a blank model and a non-positive window, and
-    #   {Agent#occupancy} lets both raise because its caller rescues per prompt.
-    #   This sink has no such caller: it rides the {CLI::JournalTee}, which
-    #   re-raises a sink's failure, so a raise here would cost the agent its
-    #   turn over a status line.
+    # @return [Float, nil] the reading, or nil for the ABSENCE of one. Two
+    #   things make a turn unmeasurable and both answer nil: nothing billed on
+    #   the way IN, and a model the book cannot resolve.
+    #
+    #   The gate is over exactly the fields the NUMERATOR is over. Gating on a
+    #   four-field total instead would admit a record billing output against
+    #   zero input and divide a real window by 0, publishing 0.0 over a true
+    #   reading -- and `Ollama::Decoding#build_usage` takes `prompt_eval_count`
+    #   straight off the body, so a reply carrying no such key is exactly that
+    #   shape. Note that {Usage#zero?} is the four-field question and so is NOT
+    #   the predicate here; the journaled hash is read with `to_i` anyway,
+    #   because rebuilding a real {Usage} goes through `Integer()` and a raise
+    #   is what this object may not do ({JournaledUsage} holds that argument).
+    #
+    #   {ContextWindow} is deliberately LOUD about a blank model and a
+    #   non-positive window, and {Agent#occupancy} lets both raise because its
+    #   caller rescues per prompt. This sink has no such caller: it rides the
+    #   {CLI::JournalTee}, which re-raises a sink's failure, so a raise here
+    #   would cost the agent its turn over a status line.
     def occupancy_of(usage, model)
+      return nil unless usage.total_input_tokens.positive?
+
       @context_window.occupancy(usage.total_input_tokens, model:).ratio
     rescue ContextWindow::UnknownModel, ArgumentError
       nil
@@ -388,16 +439,18 @@ module Lain
     # some unrelated event happened along. A running total rather than a flag,
     # so a SECOND compaction is a change too.
     #
-    # `derivation_refusal_streak` is here for that same argument, and it does
-    # not contradict `since_compaction`'s exclusion: that exclusion is about
-    # CLOCKS, while this streak moves only when a record moved it. A refusal
-    # earning no write would leave the published state saying compaction was
-    # healthy while the session had stopped compacting.
+    # `unmeasured_turns` and `derivation_refusal_streak` are here for that same
+    # argument, and neither contradicts `since_compaction`'s exclusion: that
+    # exclusion is about CLOCKS, while a streak moves only when a record moved
+    # it. A refusal earning no write would leave the published state saying
+    # compaction was healthy while the session had stopped compacting; an
+    # unmeasurable turn earning none would leave a stale ratio looking fresh.
     #
     # @return [Hash] string-keyed, JSON-shaped
     def observed
       { "cache_deadline" => @cache_deadline, "fleet" => @fleet.keys, "inbox_count" => @inbox.pending_size,
         "approvals_pending" => @approvals_pending, "occupancy" => @occupancy,
+        "unmeasured_turns" => @unmeasured_turns,
         "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak,
         "run_tokens" => @run_tokens }
         .merge(@mode.published)

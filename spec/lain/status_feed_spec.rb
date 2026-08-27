@@ -606,6 +606,16 @@ RSpec.describe Lain::StatusFeed do
       )
     end
 
+    # What a truncated stream journals: a well-formed record naming a real
+    # model, every billed field zero.
+    def zero_turn_usage
+      Lain::Telemetry::TurnUsage.new(
+        digest: "blake3:zero", model: "claude-opus-4-8", stop_reason: :end_turn,
+        usage: { "input_tokens" => 0, "output_tokens" => 0,
+                 "cache_read_input_tokens" => 0, "cache_creation_input_tokens" => 0 }
+      )
+    end
+
     it "reports 0.5 for a turn filling half the model's context window" do
       feed = described_class.new(path:)
 
@@ -680,6 +690,89 @@ RSpec.describe Lain::StatusFeed do
 
       expect { feed << blank }.not_to raise_error
       expect(published["occupancy"]).to eq(0.5)
+    end
+
+    # An unmeasurable turn never overwrites a measured one -- StatusFeed
+    # #record_occupancy holds the argument. These pin the four ways a turn comes
+    # out unmeasurable and the one thing they all do about it.
+    it "leaves the last real occupancy standing when a turn bills nothing at all" do
+      feed = described_class.new(path:)
+      feed << sized_turn_usage(input_tokens: 500_000)
+
+      feed << zero_turn_usage
+
+      expect(published["occupancy"]).to eq(0.5)
+    end
+
+    # The gate is over the fields the NUMERATOR is over. A four-field total
+    # would admit this record and divide a real window by zero; Ollama's decoder
+    # reads `prompt_eval_count` straight off the body, so a reply carrying no
+    # such key is exactly this shape.
+    it "leaves it standing for a turn that billed output against no input at all" do
+      feed = described_class.new(path:)
+      feed << sized_turn_usage(input_tokens: 500_000)
+
+      feed << Lain::Telemetry::TurnUsage.new(digest: "blake3:out-only", model: "claude-opus-4-8",
+                                             stop_reason: :end_turn, usage: { "output_tokens" => 250 })
+
+      expect(published["occupancy"]).to eq(0.5)
+    end
+
+    # The rescue below used to ASSIGN its nil, so a turn with real tokens and an
+    # unresolvable model erased a good reading -- the same defect one field over.
+    it "leaves it standing when the book cannot resolve the turn's model" do
+      feed = described_class.new(path:, context_window: Lain::ContextWindow.new(windows: { "tiny" => 1000 }))
+      feed << sized_turn_usage(input_tokens: 250, model: "tiny-local")
+
+      feed << sized_turn_usage(input_tokens: 250, model: nil)
+
+      expect(published["occupancy"]).to eq(0.25)
+    end
+
+    # The half a `return if unmeasurable` would break: only the RATIO is
+    # suppressed. run_tokens is contracted to equal Agent::Accounting's total,
+    # which counts the record either way.
+    it "still accrues the unmeasurable turn's tokens rather than dropping the record" do
+      feed = described_class.new(path:)
+      feed << sized_turn_usage(input_tokens: 500_000)
+
+      feed << zero_turn_usage
+
+      expect(published["run_tokens"]).to eq(500_005)
+    end
+
+    # With no reading behind it there is nothing to keep, and absence is what
+    # publishes -- never a floor of 0.0.
+    it "publishes absence, never a zero, when the first turn observed bills nothing" do
+      feed = described_class.new(path:)
+
+      feed << zero_turn_usage
+
+      expect(published["occupancy"]).to be_nil
+    end
+
+    # JournaledUsage reads with `to_i`, which makes "malformed" asymmetric on
+    # purpose: unparseable garbage reads 0 and so SUPPRESSES (the examples
+    # above), while a plausible count in the wrong JSON type still MEASURES. A
+    # provider spelling a number as a string or a float is a wire quirk, not a
+    # claim about how full the window is, so it is taken as authoritative.
+    # Neither direction was pinned before; this is which one it is.
+    it "measures a token count that arrived as a numeric string" do
+      feed = described_class.new(path:)
+
+      feed << Lain::Telemetry::TurnUsage.new(digest: "blake3:str", model: "claude-opus-4-8",
+                                             stop_reason: :end_turn, usage: { "input_tokens" => "250000" })
+
+      expect(published["occupancy"]).to eq(0.25)
+    end
+
+    it "measures a token count that arrived as a JSON float, truncating it" do
+      feed = described_class.new(path:)
+
+      feed << Lain::Telemetry::TurnUsage.new(digest: "blake3:float", model: "claude-opus-4-8",
+                                             stop_reason: :end_turn, usage: { "input_tokens" => 250_000.0 })
+
+      expect(published["occupancy"]).to eq(0.25)
     end
 
     # The half-fix guard. Two surfaces read this number -- `.lain/state.json`
@@ -766,6 +859,89 @@ RSpec.describe Lain::StatusFeed do
   # the Journal keeps. Every example here is about the number being a RUNNING
   # TOTAL over events -- which is what puts it in #observed rather than the
   # measures, and what the seam spec pins against Agent::Accounting.
+  # Suppressing an unmeasurable reading is silent by construction: `occupancy`
+  # simply stops moving while `run_tokens` keeps climbing, which reads on a
+  # status bar as a STUCK context rather than a stale reading. This field is
+  # what tells the two apart, on derivation_refusal_streak's argument -- a
+  # streak, so it answers "how stale" and a measured turn clears it.
+  describe "unmeasured_turns" do
+    def measurable = turn_usage(input: 10)
+
+    def unmeasurable
+      Lain::Telemetry::TurnUsage.new(digest: "blake3:unmeasurable", model: "claude-x",
+                                     stop_reason: :end_turn, usage: { "output_tokens" => 7 })
+    end
+
+    # The record the sink refuses to derive anything at all from -- see the
+    # occupancy group's own pin for why that guard exists.
+    def nil_usage
+      Lain::Telemetry::TurnUsage.new(digest: "blake3:nilusage", model: "claude-x",
+                                     stop_reason: :end_turn, usage: nil)
+    end
+
+    it "is zero while every turn can be measured" do
+      feed = described_class.new(path:)
+
+      feed << measurable
+
+      expect(published["unmeasured_turns"]).to eq(0)
+    end
+
+    it "counts the turns in a row whose window could not be measured" do
+      feed = described_class.new(path:)
+
+      2.times { feed << unmeasurable }
+
+      expect(published["unmeasured_turns"]).to eq(2)
+    end
+
+    it "clears on the next turn that can be measured" do
+      feed = described_class.new(path:)
+      feed << unmeasurable
+
+      feed << measurable
+
+      expect(published["unmeasured_turns"]).to eq(0)
+    end
+
+    # The fourth unmeasurable cause, and the one that used to bypass the single
+    # writer: a record whose `usage` is nil returns before any derivation runs,
+    # because `nil["input_tokens"]` inside a JournalTee sink once cost a turn. A
+    # truncated stream that fabricates NO usage block and one that fabricates
+    # all-zero counts are the same failure in two hats, so the streak has to see
+    # both -- a run of them reading 0 would say "fresh" during exactly the
+    # stretch this field exists to make visible.
+    it "counts a record whose usage block is missing entirely, and keeps the reading" do
+      feed = described_class.new(path:)
+      feed << measurable
+      standing = published["occupancy"]
+
+      3.times { feed << nil_usage }
+
+      expect(published["unmeasured_turns"]).to eq(3)
+      expect(published["occupancy"]).to eq(standing)
+    end
+
+    it "goes on counting when a nil-usage record follows another unmeasurable one" do
+      feed = described_class.new(path:)
+      feed << measurable
+      feed << unmeasurable
+
+      feed << nil_usage
+
+      expect(published["unmeasured_turns"]).to eq(2)
+    end
+
+    # Derived from an EVENT, so it belongs in the change token -- otherwise the
+    # first suppressed turn after a quiet stretch moves no compared field and
+    # the write carrying it is skipped.
+    it "is part of the observed state a publish is compared on" do
+      feed = described_class.new(path:)
+
+      expect(feed.observed).to have_key("unmeasured_turns")
+    end
+  end
+
   describe "run_tokens" do
     # `#usage` alone is not the duck, and this is the whole reason the feed
     # asks for `#stop_reason` too -- Compaction::Source#turn_usage? has drawn
@@ -1175,7 +1351,8 @@ RSpec.describe Lain::StatusFeed do
       feed << turn_usage(cache_read: 1)
 
       expect(published.keys).to contain_exactly("cache_deadline", "fleet", "inbox_count", "approvals_pending",
-                                                "occupancy", "compactions", "derivation_refusal_streak",
+                                                "occupancy", "unmeasured_turns", "compactions",
+                                                "derivation_refusal_streak",
                                                 "run_tokens", "posture", "layers", "mode_lighter",
                                                 "elapsed", "idle", "since_compaction")
     end
