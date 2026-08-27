@@ -98,15 +98,34 @@ shape. The one exception is its §6 second half: confirming the shipped default 
 cache on a real round trip costs **2 completions against a live Anthropic key** — the free half of
 §6 (the byte count against the published floor) costs nothing and is not a substitute for it.
 
-**Fifteen scenarios do not fit in one round, and pretending otherwise is how a slot gets
+**Also added 2026-08-26** — the shell subsystem, which had **zero** manual-QA coverage: no scenario
+mentioned `Shell::Verdict`, `Parse`, `Pipeline`, the term arm or arm selection, and the five
+scenarios that touch `bash` all use it as a vehicle for something else. It was not in Known gaps
+either, so the gap was invisible:
+
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`shell-terms.md`](scenarios/shell-terms.md) | Does the **deterministic half of the shell subsystem** decide the way it says it does — which commands earn the no-shell **term arm**, which a project's `[shell] exclude` table refuses **by name** (a deny path that had never been driven), which are approved by `Approval::ComposedTerm` with **nobody asked**, and — the half that matters more — which still reach a human? Plus the `web_fetch` egress floor and the `shell_arm` record in **both** attended and `/mode auto`. | cheap (one step paid) |
+
+Six of its ten sections are **zero-model `/ruby` inspection**, on `prompt-slots-and-roles.md`'s
+shape; three spend local completions; §9 alone is metered. Its §0 names the **three postures**
+(attended ladder, `/mode auto`'s `ApproveAll`, the one-rung unattended deny-all) because they
+decide differently and a driver who conflates them files a false finding.
+
+**Seventeen scenarios do not fit in one round, and pretending otherwise is how a slot gets
 substituted** — that is the failure rounds 7 and 8 made with `cockpit-surfaces`, one level out. So
-the six above are **not appended to the full round below**. They are placed:
+the six added 2026-08-23 are **not appended to the full round below**. They, and the two scenarios
+added since, are placed:
 
 - `repl-commands` and `epic-tier` are cheap and fully deterministic, so they join the
   **regression gate** (see below) on the standing rule that anything deterministic belongs in the
   cheap set even when the feature it guards is not. **`survey` joins them as of 2026-08-25** on the
   same rule: §1–§6 are zero-model, and §7's one local call is what stops the docent debt being
-  deferred a fifth time.
+  deferred a fifth time. **`shell-terms` joins them as of 2026-08-26** on the same rule again:
+  §0–§4 and §8 are zero-model `/ruby` paths, and they cover the whole deterministic surface —
+  arm selection, the config deny path, the approval rule's allowlist, and the egress floor.
+  Cut its §9 first (it is the only metered step) and its §7 second (it needs a docker daemon);
+  **do not cut §5**, which holds every negative control.
 - `secret-boundary`, `changeset-review`, `subagents-and-backends` and `memory-and-dogfood` are
   **owned rounds**, on `rails-blog`'s precedent: a scenario that owns its context has no position in
   a list to be unlucky about. Schedule one per round alongside the full round, rotating.
@@ -120,6 +139,12 @@ the six above are **not appended to the full round below**. They are placed:
   precondition round 11 must handle deliberately rather than improvise: **`rails` is absent from
   this box** (not on `PATH`, gem not installed), and installing it collides with P15's `GEM_HOME`
   question. Budget the install as part of that round, or say plainly that it slipped again.
+
+**Two scenarios are described above and scheduled nowhere**, which is the exact failure this
+placement list exists to prevent: `prompt-slots-and-roles` (added 2026-08-25) and
+`ollama-cloud-arm` (added 2026-08-24) each have a table row and appear in no tier. **Neither is
+placed here** — the placement is a judgement about a round's budget, not a bookkeeping edit, so
+naming them keeps them visible as a debt rather than letting a table row read as coverage.
 
 **A full round — the default when no scope is named** (`.claude/skills/manual-qa` defers to this
 line for the order): `session-and-window` → `rust-cli` → a subject with `cockpit-surfaces`
@@ -156,8 +181,9 @@ skipped by convention stops being a gap anyone can see; one that is separately s
 visible as an outstanding debt instead.
 
 **A suggested regression gate after a chunk lands:** `failure-injection` + `session-and-window`,
-and since 2026-08-23 also `repl-commands` + `epic-tier`, and since 2026-08-25 `survey`.
-All five are cheap, deterministic, and cover the paths most chunks touch. As of 2026-08-18 the first pair
+and since 2026-08-23 also `repl-commands` + `epic-tier`, since 2026-08-25 `survey`, and since
+2026-08-26 `shell-terms`.
+All six are cheap, deterministic, and cover the paths most chunks touch. As of 2026-08-18 the first pair
 also covers **most of a chunk that was mostly not about the cockpit at all** — the price table and
 its lint, `--compact-strategy` resolution, both tool-bound shapes, the `edit_file` refusal
 vocabulary, the summarizer's ceilings, the per-ask iteration ceiling and the `lain up`
@@ -165,8 +191,11 @@ crash-on-start case. That is deliberate: **a check that only runs in an expensiv
 does not run**, so anything deterministic belongs in the cheap set even when the feature it guards
 is expensive. The two added in 2026-08-23 are there on exactly that rule: `repl-commands` is almost
 entirely zero-model-turn refusal paths, and `epic-tier` is deterministic except for one policy.
-`survey` is there on the same rule again, with a caveat that is the point of adding it: **cut its
-§7 last, not first.** Every other section in it is deterministic and will keep; §7 is the one thing
+`shell-terms` is there on the same rule a third time, and it is the clearest case yet: the whole
+deterministic shell surface answers to `/ruby` with no model call at all, while the feature it
+guards — a rule that approves a shell command with no human — is the most expensive thing in the
+tree to be wrong about. `survey` is there on the same rule again, with a caveat that is the point
+of adding it: **cut its §7 last, not first.** Every other section in it is deterministic and will keep; §7 is the one thing
 in this whole directory that has been dropped by three consecutive rounds, and it is only ever
 dropped because it is the section at the end that needs a model.
 
@@ -223,6 +252,14 @@ first exercised the section rather than what the section asks for:
   should expect to correct the document as much as to find defects, and should say which it did:
   a wrong expectation in a scenario and a defect in lain look identical from the driver's seat, and
   telling them apart is the first round's real job. Until then they are coverage on paper only.
+
+- **`shell-terms.md` has been driven ZERO times.** Written 2026-08-26 from the code — every
+  expected string in it was read through a real object in a real process at the merged tree, which
+  makes each one a claim about *that* checkout on *that* box and not a round's finding. Two things
+  in it are the likeliest to be wrong first, and both are hand-maintained tables: `ComposedTerm`'s
+  ten-program allowlist with its per-program disqualifying flags, and `web_fetch`'s blocked-range
+  list. The first round should expect to correct the document as much as to find defects, and
+  should say which it did.
 
 - **`cockpit-surfaces.md` §4b (notes on a survey) was first driven on 2026-08-20**, in round 7's
   `/survey` supplement. Rounds 4, 5, 6 and round 7's
@@ -293,6 +330,14 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   today" because no chat path spawns an actor-mode subagent, but `CLI::Wiring` builds a real
   `Supervisor` with `fleet_isolation(...)` and `Subagent#adopt_actor` refuses only
   `unless supervisor.running?`. One of the two is wrong.
+- **Program identity on the term arm — uncovered by construction, not by omission.** `shell-terms`
+  (2026-08-26) drives everything the approval rule *does* check about a program; what nothing
+  checks is whether the binary `execvp` finds is the program the allowlist vouched for. `PATH` is
+  inherited and uncontrolled, so a shim in a user-writable directory runs. The four rungs that
+  would close it (resolve-and-record, resolve-and-constrain, verify-identity, control `PATH`) are
+  costed in `../specs/chunk-shell-term-approval.md` and built by nothing. **A round that finds a
+  shim running has found documented scope**, so the gap is stated here rather than left for a
+  driver to re-derive as a finding.
 - **Cost and latency.** Nothing records wall-clock or tokens per act, so "the plumbing works" and
   "the plumbing is usable" are not separated. One wiring mistake once cost 84.0s against 7.5s and
   nothing here would catch the same class again.

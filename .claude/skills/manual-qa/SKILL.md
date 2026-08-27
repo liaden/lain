@@ -21,17 +21,20 @@ components disagreeing with each other, and for the moments a human would be mis
 
 ## Phase 1 — Scope, and say what you chose
 
-**Enumerate `planning/qa/scenarios/` — never work from a remembered list.** Fourteen files as of
-2026-08-25, and a round that runs a hard-coded five silently stops covering the sixth. A scenario in
-neither README's tiers nor your round is one somebody added and nobody scheduled: say so.
+**Enumerate `planning/qa/scenarios/` — never work from a remembered list.** Seventeen files as of
+2026-08-26, and a round that runs a hard-coded five silently stops covering the sixth. A scenario in
+neither README's tiers nor your round is one somebody added and nobody scheduled: say so — and two
+of the seventeen are exactly that today (`prompt-slots-and-roles`, `ollama-cloud-arm`), named in
+README rather than quietly placed.
 
-**README sorts the fourteen into three tiers, and that sorting — not the directory listing — is what
-a round follows.** It carries the reasoning for each; this is the shape:
+**README sorts them into three tiers, and that sorting — not the directory listing, and not the
+table below — is what a round follows.** The table is a shape, it goes stale, and README is the
+authority; re-read it rather than dispatching from here:
 
 | tier | what |
 |---|---|
 | **full round** | `session-and-window` → `rust-cli` → **a SUBJECT with `cockpit-surfaces` piggybacked** → `bench-arms` → `failure-injection` |
-| **regression gate** | `failure-injection` + `session-and-window` + `repl-commands` + `epic-tier` — cheap, deterministic, run after any chunk |
+| **regression gate** | `failure-injection` + `session-and-window` + `repl-commands` + `epic-tier` + `survey` + `shell-terms` — cheap, deterministic, run after any chunk. README says which to cut first if it will not fit (`epic-tier`), and which sections of the last two to cut before the whole file |
 | **owned rounds** | `rails-blog`, `secret-boundary`, `changeset-review`, `subagents-and-backends`, `memory-and-dogfood` — each drives its OWN round in its OWN context, because each brings up its own subject and interleaving them half-builds a precondition |
 
 **With no scope named, run the full round.** Two traps in that sequence, both of which have already
