@@ -21,32 +21,42 @@ module Lain
     #
     # A {Call}: the tool, plus its input already through the tool's own
     # {Tool::Input} validation. Never a raw Hash, and the guarantee is the
-    # TYPE's rather than one constructor's good manners -- {Call#initialize}
-    # refuses anything that is not a {Tool::Input}, so `new`, `Data::[]` and
-    # `#with` are all shut by the same line.
+    # TYPE's rather than one constructor's good manners -- {Call.for} is the
+    # only way to hold one. `new` and `Data::[]` are private and `#with`
+    # refuses outright, so {Call#initialize}'s check on `input` is a floor
+    # nothing can get under rather than the only thing standing there.
     #
-    # == The unmechanized half, and the hazard it leaves
+    # == The term door, and what still walks around it
     #
-    # A tool whose declared field IS a command String hands a rule that String,
-    # and nothing here stops a rule from prefix-matching it. The DOCTRINE is
-    # that a shell command reaches policy as a parsed term (`Shell::Parse` /
-    # `Shell::Verdict`) or not at all -- but the escalation ladder does not
-    # enforce it: its `rules` rung still calls `Call.for(tool:, input:
-    # effect.input)` with the model's raw input. Discharging that needs a
-    # decision this Call cannot express today, since no {Tool::Input} declares a
-    # field shaped like `[["git", "-c", "...", "status"]]` and most commands
-    # ABSTAIN at the verdict -- so a term-carrying Call would be absent for
-    # exactly the calls a rule most wants to read.
+    # The DOCTRINE is that a shell command reaches policy as a parsed term
+    # (`Shell::Parse` / `Shell::Verdict`) or not at all. {Call#term} is the door
+    # that makes the parsed form reachable, and {Call#term?} is how a rule tells
+    # "no term" from "a term of no stages" without inspecting emptiness. The
+    # term is DERIVED from the Call's own input by asking the live tool -- the
+    # same object the executor would dispatch, holding the same
+    # {Shell::Verdict} it will pick its own arm from -- so a rule and the run
+    # read ONE verdict rather than two whose agreement nothing enforces.
     #
-    # The hazard is specific: the ladder consults
-    # {Approval::Escalation::Triage} FIRST, which abstains on `git ...` because
-    # git is a program runner, and then hands the `rules` rung the raw string
-    # anyway. A hand-written prefix rule -- `command.start_with?("git ")` --
-    # would therefore allow `git -c core.fsmonitor=id status`, which executes
-    # `id`. `Remembered` is not that rule, matching an exact call shape rather
-    # than a prefix, so nothing shipped is exploitable today. The fix is carried
-    # in `planning/specs/chunk-modes-approval-undo.md`: give {Call} a
-    # term-carrying door and build a command tool's Call from the parsed term.
+    # Being derived is what makes the term unforgeable, and it is also what
+    # decides the SHAPE of the door. The term is a function of BOTH members, so
+    # closing the `term:` keyword would have closed nothing: `#with(tool:)`
+    # keeps a valid input and swaps the verdict under it, which reaches a rule
+    # with a term its own input never produced. {Call} therefore follows
+    # {Risk::Keepsake} -- `new` and `Data::[]` private, `#with` refusing
+    # WHATEVER it is handed. A blanket refusal is the point: it enumerates no
+    # keywords, so it cannot be outflanked by the member nobody thought of, and
+    # the one that broke an earlier draft of this file was `tool`.
+    #
+    # The door is open and nothing in `lib/` walks through it yet: this file
+    # widens the interface, and the policy that reads a term is a separate
+    # change. So the hazard the doctrine names is narrowed, not closed. The
+    # ladder consults {Approval::Escalation::Triage} FIRST, which abstains on
+    # `git ...` because git is a program runner, and then hands the `rules` rung
+    # the same call -- whose raw string is still right there beside the term. A
+    # hand-written prefix rule -- `command.start_with?("git ")` -- would
+    # therefore still allow `git -c core.fsmonitor=id status`, which executes
+    # `id`. {Remembered} is the only {Rule} in `lib/`, and it matches an exact
+    # call shape rather than a prefix, so nothing shipped is exploitable today.
     #
     # == Identity travels with the decision
     #
@@ -113,6 +123,36 @@ module Lain
         # A Call built around something that is not a validated {Tool::Input}.
         class NotValidated < Error; end
 
+        # A Call built, or altered, through any door but {.for}.
+        class Forged < Error; end
+
+        # What a tool with no parse to offer answers, in the one message
+        # {#term} asks a {Shell::Verdict::Decision} for, so nothing above
+        # branches on nil to find out whether a term exists.
+        #
+        # TWO kinds of tool land here and the name must not hide the second.
+        # {Tools::ReadFile} and its kin run no command at all. {Tools::CoreExec}
+        # DOES run one -- it is the second name in
+        # {Escalation::Triage::COMMAND_TOOLS} and shares {Tools::Bash::Input} by
+        # identity -- but it holds no {Shell::Verdict} and hands its backend the
+        # model's String either way, so it has no term to offer either. ONE Null
+        # for both, because what a rule may do with them is identical: no term
+        # arrived, and a rule keyed on one must not fire. A second object would
+        # differ only in its name.
+        #
+        # `NO_TERM` is named inside the method rather than assigned to a
+        # constant here: `lain.rb` loads `lain/approval` before `lain/shell`,
+        # so a Shell constant in this class body is a NameError at load. Naming
+        # the shipped one rather than a second empty Array keeps absence a
+        # single object -- which {#term?} then has something to test against.
+        class Termless
+          def term = Shell::Verdict::NO_TERM
+        end
+        private_constant :Termless
+
+        TERMLESS = Termless.new.freeze
+        private_constant :TERMLESS
+
         # @param tool [Lain::Tool] the capability being invoked
         # @param input [Hash] the model's parsed input for it
         # @return [Call] with `input` coerced and validated
@@ -148,8 +188,21 @@ module Lain
         end
 
         # Kept for the MESSAGE: a caller reaching for `.new` is told the door
-        # has a name rather than that a keyword was wrong.
-        private_class_method :new
+        # has a name rather than that a keyword was wrong. `Data::[]` is the
+        # second public constructor and goes with it.
+        private_class_method :new, :[]
+
+        # The third door, and the one that starts from a LEGITIMATE Call --
+        # which is what makes it the sharpest. It refuses WHATEVER it is
+        # handed rather than naming the members that would forge a term,
+        # because {#term} is derived from both of them and a refusal that
+        # enumerates keywords is only as good as the list.
+        FORGED = "a Call's term is derived from the tool and input it was built with -- " \
+                 "build another with Call.for rather than editing this one"
+
+        def with(**)
+          raise Forged, FORGED
+        end
 
         def self.undeclared_message(tool)
           "#{tool.name.inspect} declares no Tool::Input, so an approval rule has no fields to read"
@@ -167,7 +220,44 @@ module Lain
         # axis the gate already turns on.
         def gated? = tool.requires_approval?
 
+        # The parsed command this call would run, DERIVED and never accepted:
+        # the Call asks the tool it is holding what it makes of the input it is
+        # holding, so a term always corresponds to that pair. A third `Data`
+        # member would not have held that, and MEASURED against a stand-in
+        # rather than reasoned about: `#with(term:)` re-runs {#initialize},
+        # whose one check is about `input`, so the forged term is neither
+        # refused nor kept -- it is silently REPLACED, and an expectation that
+        # a forgery raises cannot be written. A reader has no such door, and
+        # `Call.members` is unchanged, which is what leaves
+        # {Remembered::Entry.for_call}'s key byte-identical.
+        #
+        # @return [Array<Array<String>>] one argv per stage, or
+        #   {Shell::Verdict::NO_TERM}
+        def term = parsed.term
+
+        # Absence, asked rather than inferred -- and derived from the TERM, not
+        # from the arm. `parsed.allow?` read through the name `term?` would be
+        # a different question wearing this one's name, and "is this call
+        # allowed" is a sentence to misparse in a file rules decide from.
+        #
+        # Identity against the Null rather than `#empty?`. MEASURED: every
+        # absence -- an abstention, a denial, and a tool with no parse to offer
+        # -- answers the one shipped {Shell::Verdict::NO_TERM} object, while an
+        # allow answers a fresh Array. `#empty?` would agree today, and not by
+        # luck: `Doubts#nothing_to_run?` puts a cause on empty stages, on an
+        # empty argv and on an empty word, and an allow is exactly the result
+        # whose causes are empty -- so a zero-stage allow is unreachable by
+        # construction, not merely unobserved. This does not rest on that. It
+        # asks whether a term ARRIVED, which stays the right question if that
+        # construction ever changes.
+        def term? = !term.equal?(Shell::Verdict::NO_TERM)
+
         private
+
+        # One parse per ask, because a {Data} instance is frozen and has
+        # nowhere to memoize. {Shell::Verdict} is frozen and pure, so repeated
+        # asks answer the same.
+        def parsed = tool.respond_to?(:decision_for) ? tool.decision_for(input) : TERMLESS
 
         def not_validated_message(input)
           "a Call carries a validated Tool::Input, got #{input.class} -- build it with Call.for"

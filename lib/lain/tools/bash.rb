@@ -194,6 +194,18 @@ module Lain
       # question, asked per call and answered from the verdict.
       def requires_approval? = true
 
+      # What this tool makes of an input, offered so a caller that must decide
+      # ABOUT a call can read what the call will run on. The approval ladder's
+      # rules rung holds this exact object -- it fetches the tool the executor
+      # would dispatch -- so the term a rule judges and the term {#perform}
+      # hands the backend come from ONE {Shell::Verdict} asked twice, which is
+      # frozen and pure, rather than from two whose agreement nothing enforces.
+      # Nothing is threaded in, and no second verdict is built.
+      #
+      # @param input [Input] a validated input for this tool
+      # @return [Shell::Verdict::Decision] the arm, its reason, and the term
+      def decision_for(input) = @verdict.call(input.command)
+
       protected
 
       # Exit status rides in the returned content, NOT `is_error`: a nonzero

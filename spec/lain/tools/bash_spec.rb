@@ -627,6 +627,36 @@ RSpec.describe Lain::Tools::Bash do
   # the gate to ApproveAll, which consults no rung. So the tool records the
   # decision itself, on both arms -- an abstention that went through `sh -c` is
   # as much a datapoint as an allow that ran as argv.
+  # The one message that exposes this tool's verdict. The approval ladder's
+  # rules rung fetches the tool the executor would dispatch and asks it, which
+  # is how Approval::Rule::Call#term reaches a parse without the approval
+  # namespace constructing a Shell::Verdict of its own.
+  describe "the parse it offers a caller that must decide about a call" do
+    it "answers the arm, its reason and the term for an input it would run" do
+      input = described_class::Input.build({ "command" => "cat README.md | head -20" })
+
+      expect(described_class.new.decision_for(input))
+        .to have_attributes(name: :allow, term: [%w[cat README.md], %w[head -20]])
+    end
+
+    it "answers from the INJECTED verdict, never one of its own" do
+      pinned = Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec pins", term: [%w[true]].freeze)
+      tool = described_class.new(verdict: ->(_command) { pinned })
+
+      expect(tool.decision_for(described_class::Input.build({ "command" => "ls -la" }))).to be(pinned)
+    end
+
+    it "is the same verdict #perform picks its arm from, so the two cannot disagree" do
+      recorder = RecordingChannel.new
+      tool = described_class.new(journal: recorder)
+      input = described_class::Input.build({ "command" => "echo a && echo b" })
+      tool.call({ command: input.command }, invocation)
+
+      expect(tool.decision_for(input).name)
+        .to eq(recorder.events.grep(Lain::Telemetry::ShellArm).map(&:verdict).last)
+    end
+  end
+
   describe "journalling which arm ran" do
     let(:journal) { RecordingChannel.new }
 

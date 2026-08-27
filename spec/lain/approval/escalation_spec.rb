@@ -105,6 +105,18 @@ module EscalationSpecSupport
     end
   end
 
+  # Keeps the subject the rung built, so an example can read what a real rule
+  # would have been shown. Abstains, because the question is what reached the
+  # rule and not what it decided.
+  class Capturing < Lain::Approval::Rule
+    attr_reader :seen
+
+    def decide(call)
+      @seen = call
+      nil
+    end
+  end
+
   # A queue-shaped rung stand-in: answers a fixed Boolean the way
   # {Lain::Approval::Queue#call} does, without parking a fiber.
   class Surface
@@ -541,6 +553,39 @@ RSpec.describe Lain::Approval::Escalation do
 
     it "does not resurrect a human's denial into an approval" do
       expect(settled_by(faulting, surface: "tty", approve: false)).to be(false)
+    end
+  end
+
+  # Scenario: a command tool's call carries the parsed term
+  # Scenario: an abstention carries no term, visibly
+  # Scenario: a non-command tool is unaffected
+  #
+  # The rung's `tools:` is the LIVE toolset here, holding the same
+  # {Lain::Tools::Bash} an executor would dispatch, so what these examples read
+  # is the parse that tool will pick its own arm from.
+  describe "the subject the rules rung builds" do
+    def captured(name, input)
+      rule = EscalationSpecSupport::Capturing.new
+      ladder(rules_rung(rule)).call(Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name:, input:), nil)
+      rule.seen
+    end
+
+    it "carries the command's parsed term, stage by stage" do
+      expect(captured("bash", { "command" => "cat README.md | head -20" }).term)
+        .to eq([%w[cat README.md], %w[head -20]])
+    end
+
+    it "carries an empty term when the verdict abstained" do
+      expect(captured("bash", { "command" => "git log --oneline -5" }).term).to be_empty
+    end
+
+    it "says a term is absent rather than leaving a rule to infer it from emptiness" do
+      expect(captured("bash", { "command" => "git log --oneline -5" })).not_to be_term
+    end
+
+    it "hands a tool whose input is no command the Call it always had" do
+      expect(captured("read_file", { "path" => "README.md" }))
+        .to have_attributes(tool_name: "read_file", term: [], term?: false)
     end
   end
 

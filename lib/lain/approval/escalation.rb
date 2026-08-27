@@ -291,7 +291,9 @@ module Lain
 
         # @param rules [Enumerable<Approval::Rule>] consulted in order
         # @param tools [#fetch] the LIVE capability set, so the tier a rule reads
-        #   is read off the exact tool the executor would dispatch
+        #   is read off the exact tool the executor would dispatch -- and so is
+        #   {Rule::Call#term}, which that tool derives from its own
+        #   {Shell::Verdict} rather than this rung threading one down
         # @param faults [#call] where a broken rule is reported; REQUIRED, with
         #   no Null default, because a ladder wired with the Null is silently
         #   lenient in exactly the way {RuleChain}'s poisoning exists to prevent

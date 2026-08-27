@@ -223,17 +223,27 @@ RSpec.describe Lain::Approval::RuleChain do
       expect { Lain::Approval::Rule::Call.new(tool: read_file, input: shadow) }
         .to raise_error(NoMethodError, /private method 'new'/)
       expect { Lain::Approval::Rule::Call[tool: read_file, input: shadow] }
-        .to raise_error(Lain::Approval::Rule::Call::NotValidated, /Hash/)
-      expect { Lain::Approval::Rule::Call[tool: bash, input: "rm -rf /"] }
-        .to raise_error(Lain::Approval::Rule::Call::NotValidated, /String/)
+        .to raise_error(NoMethodError, /private method '\[\]'/)
       expect { call.with(input: shadow) }
-        .to raise_error(Lain::Approval::Rule::Call::NotValidated, /Hash/)
+        .to raise_error(Lain::Approval::Rule::Call::Forged)
       expect { call.with(input: "rm -rf /") }
-        .to raise_error(Lain::Approval::Rule::Call::NotValidated, /String/)
+        .to raise_error(Lain::Approval::Rule::Call::Forged)
     end
 
-    it "keeps Data's own derivation working for a validated input" do
-      expect(call.with(tool: bash).tool_name).to eq("bash")
+    # Data's own derivation is REFUSED here rather than kept, and the reason is
+    # one seam out: {Rule::Call#term} is derived from both members, so a
+    # `#with` that swaps the tool hands a rule a term the input beside it never
+    # produced. The refusal is blanket for that reason -- it names no keyword,
+    # so no member can be the one nobody thought of.
+    it "refuses Data's own derivation, even onto a validated input" do
+      expect { call.with(tool: bash) }.to raise_error(Lain::Approval::Rule::Call::Forged)
+    end
+
+    # The floor under those doors, unchanged: were one ever reopened, the
+    # constructor still refuses anything that is not a Tool::Input.
+    it "still refuses a raw Hash at the constructor itself" do
+      expect { Lain::Approval::Rule::Call.send(:new, tool: read_file, input: { "path" => "x" }) }
+        .to raise_error(Lain::Approval::Rule::Call::NotValidated, /Hash/)
     end
 
     it "refuses to build a call whose input does not validate" do
