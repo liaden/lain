@@ -142,14 +142,16 @@ module Lain
       end
 
       # A nested copy of this tool, for a child's union: same {Seam} and config,
-      # rebinding only the seam's parent handle to the CHILD so the grandchild's
-      # lineage names the child's head. The ceiling is capped, never RAISED past
-      # this tool's own, so a tool wired never to spawn (max_depth 0) stays that
-      # way whatever the spawner had left. Public only for {ChildBuilder}, which
-      # is not a Subagent, so `protected` can no longer say "only the spawn
-      # machinery".
-      def descend(parent:, ceiling:)
-        config = @builder.config(parent:)
+      # rebinding the seam's parent handle to the CHILD so the grandchild's
+      # lineage names the child's head, and its escalation road to the CHILD's
+      # OWN ({ChildBuilder#config}) so a grandchild's question relays through
+      # the child rather than skipping it. The ceiling is capped, never RAISED
+      # past this tool's own, so a tool wired never to spawn (max_depth 0)
+      # stays that way whatever the spawner had left. Public only for
+      # {ChildBuilder}, which is not a Subagent, so `protected` can no longer
+      # say "only the spawn machinery".
+      def descend(parent:, escalation:, ceiling:)
+        config = @builder.config(parent:, escalation:)
         self.class.new(**config, max_depth: [@max_depth, ceiling].min, name: @name,
                                  announces_as: @announces_as, mode: @mode, log: @log)
       end
@@ -352,15 +354,17 @@ module Lain
       # there. The word is taken twice; read which object is being asked.
       GENERIC_DENIAL = -> { Effect::Handler::Gate::DENIAL }
 
-      # The ask-the-human seam a spawn was never taught about. It enrols a bare
-      # {AskHuman}: the child HOLDS the capability and writes its Q into the
-      # shared Store, but announcement lives in {AskHuman::Notifying} so the
-      # question reaches no queue and no desktop, and the registration is
-      # {AskHuman::Directory::Unheld} so no answer can be routed back.
+      # The ask-the-human seam a spawn was never taught about: there is no
+      # queue and no desktop for a question to reach, at ANY depth an
+      # escalation might relay through, so it enrols an {AskHuman::Unattended}
+      # rather than a bare {AskHuman} -- the refusal a spawn under it gets is
+      # immediate and names why, instead of writing a Q that parks forever
+      # with nobody able to see it. The registration stays
+      # {AskHuman::Directory::Unheld}: nothing is ever outstanding to route an
+      # answer back to.
       #
-      # NOT a sanctioned production state -- a child parked on a question nobody
-      # can see is the exact failure the arrival seam exists to prevent, and the
-      # exe passes the run's own askers. It duplicates
+      # NOT a sanctioned production state -- the exe always passes the run's
+      # own askers, wired to a real queue. It duplicates
       # {CLI::Wiring::Askers.unwired} because `lain.rb` loads `lain/cli` before
       # `lain/tools`, so this file cannot name that class -- and neither should
       # it: a spawn asks for an enrolment, not for the CLI's way of making one.
@@ -372,8 +376,14 @@ module Lain
         Enrolled = Data.define(:asker, :registration)
 
         # `**` and not `agent:`, because there is nobody to name an asker TO.
+        # `text: AskHuman::Unattended::NO_MAILBOX` rather than the class
+        # default: this seam was never wired to a queue, which is not what
+        # `--non-interactive` means, so the DEFAULT wording (accurate for
+        # {CLI::Wiring::Askers#asker_over}'s own case) would state a false
+        # reason here.
         def self.enrol(parent, **)
-          Enrolled.new(asker: AskHuman.new(parent:), registration: AskHuman::Directory::Unheld)
+          asker = AskHuman::Unattended.new(parent:, text: AskHuman::Unattended::NO_MAILBOX)
+          Enrolled.new(asker:, registration: AskHuman::Directory::Unheld)
         end
 
         def self.inspect = "Lain::Tools::Subagent::NoAskers"
@@ -506,15 +516,23 @@ module Lain
       # new. This bundles collaborators -- it is not a value in the
       # {Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :journal, :supervisor, :observer,
-                         :gate_policy, :permits, :askers, :sensitivity, :denial, :isolation) do
+                         :gate_policy, :permits, :askers, :sensitivity, :denial, :isolation, :escalation) do
         # Everything after `parent` defaults to its Null object; {UNGATED} and
         # {Mode::Posture::Permits::All} are the two that say "no posture has
         # been bound to this seam". The first three stay required, so Data's own
         # missing-keyword error is the loud failure, unwritten.
+        #
+        # `escalation` defaults to `[AskHuman::HUMAN]`: absent a spawn, `parent`
+        # IS the run's own chat, so a question asked FROM it need go no further
+        # once it is addressed there. A seam a spawn built over
+        # ({ChildBuilder#own_chain}) replaces this with whatever `parent`'s OWN
+        # further hops are, so a grandchild's relay carries the whole road
+        # rather than only its immediate parent's name.
         def initialize(provider:, context_factory:, parent:, journal: Channel::Null.instance,
                        supervisor: Supervisor::Null, observer: NO_OBSERVER,
                        gate_policy: UNGATED, permits: Mode::Posture::Permits::All, askers: NoAskers,
-                       sensitivity: UNJUDGED, denial: GENERIC_DENIAL, isolation: NO_ISOLATION)
+                       sensitivity: UNJUDGED, denial: GENERIC_DENIAL, isolation: NO_ISOLATION,
+                       escalation: [AskHuman::HUMAN].freeze)
           super
         end
 
@@ -580,17 +598,52 @@ module Lain
         end
 
         # One spawn's own chain: where the child STARTS, how to read its live
-        # head, and how its committed turns reach the session record. The three
-        # travel together because the asker needs the last two before the Agent
+        # head, how its committed turns reach the session record, and the
+        # whole road a question the child asks travels before it reaches a
+        # human -- the parent's own correlation first, then wherever THAT
+        # parent's own questions would go, which {#own_chain} reads off the
+        # seam being spawned INTO rather than recomputing. The four travel
+        # together because the asker needs the other three before the Agent
         # that owns them exists.
-        Chain = Data.define(:base, :timeline, :feed) do
+        Chain = Data.define(:base, :timeline, :feed, :escalation) do
+          # A correlation is a chain's ROOT digest, and an `:inherit` spawn is
+          # `parent.fork`, so child and parent share a root PERMANENTLY -- the
+          # child's own future correlation is therefore the SAME STRING as
+          # `parent`'s, computable here from `base` before the child's own
+          # Timeline exists (a fork's root never changes as later turns land
+          # on it). Left uncollapsed, a hop would address a chain to ITSELF:
+          # the child's own Q writes `from:` that string and {#asking_handle}
+          # would hand it right back as `to:`. `base` carries no head at all
+          # under `fresh`/`sibling_template` (a brand-new root), so
+          # `correlation_of` reads nil there and nothing collapses -- the
+          # ordinary, already-correct case.
+          #
+          # `chunk_while` collapses every RUN of equal addresses to one --
+          # not just the leading self-address, because an `:inherit` chain
+          # several spawns deep can repeat the SAME root at every hop -- and
+          # `drop(1)` removes the leading entry, which is always the child's
+          # own identity rather than an address the record should carry.
+          #
+          # A class method rather than an instance one: {ChildBuilder#own_chain}
+          # needs this value BEFORE a Chain exists to call it on.
+          def self.escalation_road(base, parent, beyond)
+            road = [Event::ChainWriter.correlation_of(base), Event::ChainWriter.correlation_of(parent), *beyond]
+            road.chunk_while { |a, b| a == b }.map(&:first).drop(1)
+          end
+
           # What a child's asker is handed instead of a bare timeline thunk:
-          # the same live head, plus the promotion that has to happen before a
-          # question cites it. {Middleware::JournalTurns} promotes when an
-          # iteration RETURNS, and a parked ask never returns from the one it
-          # asked in -- so unpromoted, the question named a turn no record
-          # carried and the session refused to fork or resume.
-          def asking_handle = AskHuman::Parent.new(read: timeline, settle: method(:promote))
+          # the same live head, the promotion that has to happen before a
+          # question cites it, and the escalation road so the Q names who it
+          # was actually put to and {AskHuman} can relay it the rest of the
+          # way without ever touching an ancestor's own dispatch.
+          # {Middleware::JournalTurns} promotes when an iteration RETURNS, and
+          # a parked ask never returns from the one it asked in -- so
+          # unpromoted, the question named a turn no record carried and the
+          # session refused to fork or resume.
+          def asking_handle
+            AskHuman::Parent.new(read: timeline, settle: method(:promote),
+                                 to: escalation.first, escalation: escalation.drop(1))
+          end
 
           # And what a NESTED spawn's seam is handed, for the same defect one
           # record up: a grandchild's :spawn cites the child's live head
@@ -631,10 +684,16 @@ module Lain
         # or nested spawns vanish from the session record, and its actors the
         # same reactor.
         #
-        # `parent` is the ONE member a copy does not inherit: it points at the
-        # CHILD, so the grandchild's lineage names the child's live head.
-        def config(parent:)
-          { seam: @seam.with(parent:), toolset: @toolset, policy: @policy,
+        # `parent` and `escalation` are the two members a copy does NOT
+        # inherit: `parent` points at the CHILD, so the grandchild's lineage
+        # names the child's live head, and `escalation` becomes the CHILD's
+        # OWN full road ({Chain#escalation}, computed by the `#own_chain` call
+        # that is spawning THIS child) rather than staying `@seam.escalation`
+        # -- the road as it looked one hop further out. Passing the unchanged
+        # value here would let a grandchild's question skip straight past its
+        # own parent to wherever ITS grandparent's mailbox is.
+        def config(parent:, escalation:)
+          { seam: @seam.with(parent:, escalation:), toolset: @toolset, policy: @policy,
             budget: @budget, persona: @persona }
         end
 
@@ -650,7 +709,7 @@ module Lain
         def build(parent, ceiling:, worker_env: WorkerEnv.default)
           child = nil
           chain = own_chain(parent) { child.timeline }
-          union = child_union(chain.spawning_handle, ceiling)
+          union = child_union(chain.spawning_handle, chain.escalation, ceiling)
           spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, worker_env)
             .tap { |built| child = built.agent }
         end
@@ -667,9 +726,23 @@ module Lain
         # free because every {Tool::SpawnPolicy::PrefixStrategy} builds one
         # purely -- `Timeline.empty` or an O(1) `parent.fork` -- so a spawn that
         # goes on to raise merely discards it.
+        #
+        # The escalation road: `parent`'s own correlation first -- the chain
+        # being spawned FROM, not the child's own, exactly as {Lineage#message}
+        # names its `to:`, so a child's question and the spawn's own result
+        # message address the same identity by the same derivation -- then
+        # `@seam.escalation`, which is `parent`'s OWN further road (defaulted
+        # to `[HUMAN]` when `parent` is the run's own chat, or set by an
+        # ENCLOSING `#own_chain` call when `parent` is itself a spawned child;
+        # see {ChildBuilder#config}). {Chain.escalation_road} collapses a run
+        # this may create for an `:inherit` spawn; read here rather than
+        # inside {Chain#asking_handle} because that method's receiver is the
+        # CHILD's own chain, which has no way back to the parent it was
+        # spawned under.
         def own_chain(parent, &timeline)
           base = @policy.prefix.base_timeline(parent:, store: parent.store)
-          Chain.new(base:, timeline:, feed: TurnFeed.new(observer: @seam.observer, base: base.head_digest))
+          Chain.new(base:, timeline:, escalation: Chain.escalation_road(base, parent, @seam.escalation),
+                    feed: TurnFeed.new(observer: @seam.observer, base: base.head_digest))
         end
 
         # A spawn that raises past this point ({NoCapability}, a Context that
@@ -769,9 +842,9 @@ module Lain
         # constructing ceiling, and recursion would never terminate via the cap.
         # The copy's schema bytes are identical, so the rendered tools block --
         # and with it the cache prefix -- is unchanged.
-        def child_union(parent_handle, ceiling)
+        def child_union(parent_handle, escalation, ceiling)
           Toolset.new(@toolset.map do |tool|
-            tool.is_a?(Subagent) ? tool.descend(parent: parent_handle, ceiling:) : tool
+            tool.is_a?(Subagent) ? tool.descend(parent: parent_handle, escalation:, ceiling:) : tool
           end)
         end
 

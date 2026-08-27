@@ -208,6 +208,60 @@ RSpec.describe Lain::Tools::AskHuman do
     end
   end
 
+  # ---- Scenario: a child addresses its parent, not the human -----------------
+  #
+  # Every asker's `from:` is already its own chain's correlation -- a child
+  # addresses a question FROM itself exactly as the chat's own asker does.
+  # `to:` was not: every asker, child included, wrote `to: HUMAN` regardless
+  # of who spawned it, so the record could never say a question went to a
+  # parent rather than straight to a human. `to:` gives a caller that
+  # recipient explicitly; unset, an asker keeps addressing the human, which
+  # is what the run's own asker (wiring.rb) still does.
+  describe "addressing (who a question is sent to, and a reply comes from)" do
+    let(:grandparent) do
+      Lain::Timeline.empty(store:)
+                    .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
+    end
+    let(:parent_correlation) { Lain::Event::ChainWriter.correlation_of(grandparent) }
+    let(:child) { described_class.new(parent:, to: parent_correlation) }
+
+    it "addresses a child's question to the parent it was spawned under, not the literal human" do
+      Sync { child.ask("which file?") }
+
+      expect(child.last_question.to).to eq(parent_correlation)
+      expect(child.last_question.to).not_to eq(described_class::HUMAN)
+    end
+
+    it "still addresses the run's own asker to the human, unchanged" do
+      Sync { tool.ask("which file?") }
+
+      expect(tool.last_question.to).to eq(described_class::HUMAN)
+    end
+
+    # The escalation chain a later card builds has nowhere to answer a
+    # question addressed away from HUMAN unless the reply names the same
+    # identity the question named -- otherwise a reader walking Q to A would
+    # find two different addressees closing one exchange.
+    it "answers a child's question from the same identity it was addressed to" do
+      Sync { child.ask("which file?") }
+
+      child.reply("config.rb", child.last_question.digest)
+
+      expect(child.last_answer.from).to eq(parent_correlation)
+    end
+
+    # Routing `to:` a parent must not cost the human the one thing a
+    # notification exists to say: which ROLE is asking, not which parent
+    # relayed it.
+    it "still announces which role is asking, unaffected by who the question is addressed to" do
+      named = described_class.new(parent:, agent: "researcher", to: parent_correlation)
+
+      Sync { named.ask("which file?") }
+
+      expect(named.last_question.body.fetch(described_class::ASKED_BY)).to eq("researcher")
+    end
+  end
+
   # ---- Scenario: the sync gate is the degenerate case -----------------------
 
   describe "#call (the tool dispatch: emit then await, one mechanism)" do

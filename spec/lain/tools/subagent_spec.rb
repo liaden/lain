@@ -1197,6 +1197,35 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
+  # ---- A child's escalation, with no queue for a human to answer from -------
+  #
+  # {Tools::Subagent::Seam}'s DEFAULT `askers:` is
+  # {Tools::Subagent::NoAskers} -- every fixture above this line spawns over
+  # it, since none of them wires a real {CLI::Wiring::Askers}. A child
+  # enrolled that way used to hold a bare {AskHuman} that wrote its Q and then
+  # parked FOREVER: nothing was ever going to answer it, because nothing
+  # announced it to anyone. {NoAskers} now enrols an
+  # {Tools::AskHuman::Unattended} instead, so the refusal is immediate and the
+  # child's own dispatch never blocks on a human it had no way to reach.
+  describe "a child's escalation with nowhere to relay to" do
+    def asks_with_no_queue = tool_response(["c1", "ask_human", { "question" => "which db?" }])
+
+    it "refuses the escalation by name, and hands the child that refusal as its answer rather than waiting" do
+      tool = build_subagent(provider: mock(asks_with_no_queue, text_response("proceeded without an answer")))
+
+      result = tool.call({ "prompt" => "go" }, invocation)
+
+      # The child's own loop survived the refusal and went on to its final
+      # turn -- nothing about the escalation being unreachable stops the spawn
+      # itself from completing.
+      expect(result).to be_ok
+      refusal = tool.last_child.to_a.flat_map(&:content).find { |block| block["type"] == "tool_result" }
+      expect(refusal["is_error"]).to be(true)
+      expect(refusal["content"]).to include("no human mailbox is reachable")
+      expect(refusal["content"]).not_to include("--non-interactive")
+    end
+  end
+
   # ---- A child of its own may ask the human ---------------------------------
   #
   # The capability policy this chunk reverses. A subagent used to be denied
@@ -1648,6 +1677,82 @@ RSpec.describe Lain::Tools::Subagent do
 
       delivered = tool.last_child.to_a.flat_map(&:content).select { |block| block["type"] == "tool_result" }
       expect(delivered.map { |block| block["content"] }).to eq(["postgres, it is already provisioned"])
+    end
+
+    # Driven through the REAL enrolment path -- {Lain::CLI::Wiring::Askers}, the
+    # same seam every example above spawns a child over -- rather than through a
+    # hand-built {Tools::AskHuman}: a spec that constructs the asker itself
+    # proves the relay mechanism works, not that a child asker built the way
+    # {Tools::Subagent::ChildBuilder#build} builds one actually relays.
+    #
+    # `item.digest` -- what the queue announced and what a reply would name --
+    # is the OUTERMOST hop, addressed to the literal human so `pending("human")`
+    # still finds it; the child's OWN question, addressed to the parent, is
+    # its causal parent. Both hops are in the record, which is the whole of
+    # what "reaches the human through its parent" means.
+    it "reaches the human through its parent, and the record shows both hops" do
+      tool = asking_subagent(mock(asks, text_response("done")))
+      parent_correlation = Lain::Event::ChainWriter.correlation_of(parent)
+
+      _dispatched, item = answered(tool, answer: "postgres")
+      relayed = store.fetch(item.digest)
+      own_question = store.fetch(relayed.causal_parents.first)
+
+      expect(relayed.to).to eq(Lain::Tools::AskHuman::HUMAN)
+      expect(relayed.from).to eq(parent_correlation)
+      expect(own_question.to).to eq(parent_correlation)
+      expect(own_question.from).not_to eq(parent_correlation)
+    end
+
+    # The pair must stay legible however far it relayed: a reader walking Q to
+    # A finds the answer attributed to the SAME address the outermost Q was
+    # sent to -- the literal human, since that is who actually typed it --
+    # never the parent it passed through on the way. {Directory#reply} hands
+    # back the A event it wrote, so this reads the attribution off the real
+    # reply path rather than re-deriving it.
+    it "answers a child's question from the address its outermost hop was sent to" do
+      tool = asking_subagent(mock(asks, text_response("done")))
+
+      Sync do |task|
+        spawning(task, tool) do |run|
+          item = arrival(task)
+          a = askers.directory.reply("postgres", item.digest)
+
+          expect(a.from).to eq(Lain::Tools::AskHuman::HUMAN)
+          expect(a.causal_parents).to include(item.digest)
+          run.wait
+        end
+      end
+    end
+
+    # Two hops deep: a GRANDchild relays through the child that spawned it,
+    # which relays through the run's own chat. {ChildBuilder#config} is what
+    # carries the road that far -- a child's OWN escalation ({Chain#escalation})
+    # becomes the escalation a NESTED seam hands to whatever it spawns, so a
+    # grandchild's question passes through its immediate parent rather than
+    # skipping straight to whichever ancestor happens to be attended. The
+    # SAME body rides every hop, {Tools::AskHuman::ASKED_BY} included, so the
+    # human learns which ROLE originally asked -- "researcher" -- never
+    # "subagent", the name of whichever tool relayed it.
+    it "tells the human which role originally asked, two relay hops deep" do
+      grandchild = asking_subagent(mock(asks, text_response("grandchild done")),
+                                   name: "researcher", announces_as: "researcher", max_depth: 3)
+      middle = asking_subagent(mock(tool_response(["m1", "researcher", { "prompt" => "deeper" }]),
+                                    text_response("middle done")),
+                               toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new, grandchild]), max_depth: 3)
+
+      Sync do |task|
+        spawning(task, middle) do |run|
+          item = arrival(task)
+          relayed = store.fetch(item.digest)
+
+          expect(relayed.to).to eq(Lain::Tools::AskHuman::HUMAN)
+          expect(relayed.body.fetch(Lain::Tools::AskHuman::ASKED_BY)).to eq("researcher")
+
+          askers.directory.reply("postgres", item.digest)
+          run.wait
+        end
+      end
     end
 
     it "keeps the parent and the child pending at once, and the inbox projection lists both" do
@@ -2178,19 +2283,21 @@ RSpec.describe Lain::Tools::Subagent do
         .to raise_error(ArgumentError, "unknown keywords: :max_dept, :nam")
     end
 
-    # A descended copy re-injects the seam verbatim EXCEPT the parent handle: a
-    # grandchild's lineage must name the CHILD's head, while the observer and
-    # supervisor must stay the same objects or a nested spawn's record vanishes
-    # one level up.
-    it "descends the seam onto the child, rebinding only the parent" do
+    # A descended copy re-injects the seam verbatim EXCEPT the parent handle
+    # and the escalation road: a grandchild's lineage must name the CHILD's
+    # head and a grandchild's question must relay through the CHILD rather
+    # than skip it, while the observer and supervisor must stay the same
+    # objects or a nested spawn's record vanishes one level up.
+    it "descends the seam onto the child, rebinding only the parent and the escalation road" do
       wired = seam.with(observer: ->(_event) {}, supervisor: Lain::Supervisor.new, journal: Lain::Channel.new)
       tool = described_class.new(seam: wired, toolset: union, policy: spawn_policy, max_depth: 3)
       child_handle = -> { parent }
 
-      copy = tool.descend(parent: child_handle, ceiling: 1)
+      copy = tool.descend(parent: child_handle, escalation: ["a-parent-correlation"], ceiling: 1)
 
       expect(copy.seam.parent).to be(child_handle)
-      expect(copy.seam.to_h.except(:parent)).to eq(wired.to_h.except(:parent))
+      expect(copy.seam.escalation).to eq(["a-parent-correlation"])
+      expect(copy.seam.to_h.except(:parent, :escalation)).to eq(wired.to_h.except(:parent, :escalation))
     end
 
     # The union a child attenuates FROM, published. It was reachable only by a

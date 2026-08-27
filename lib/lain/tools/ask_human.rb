@@ -46,6 +46,9 @@ module Lain
     # {Outstanding} ENFORCES that rather than assuming it. An actor mode that
     # asks concurrently must carry its promises on events, not here.
     class AskHuman < Tool
+      # Who a question is addressed to by default. The run's own asker has no
+      # parent to name, so this is what `#initialize`'s `to:` defaults to --
+      # a child's asker is handed its parent's correlation instead.
       HUMAN = "human"
 
       # Every question in a set carries an id -- the join key the answer
@@ -260,13 +263,47 @@ module Lain
         # a Timeline, a thunk reading one -- becomes one here.
         def self.over(handle) = handle.is_a?(Parent) ? handle : new(read: handle)
 
+        # Who a question written against this handle is addressed to, absent
+        # an explicit override at {AskHuman#initialize}. {HUMAN} by default:
+        # a bare Timeline or thunk, wrapped by {.over}, names nobody in
+        # particular. {Tools::Subagent::ChildBuilder::Chain#asking_handle}
+        # is the one place that builds a handle carrying something else --
+        # the correlation of the chain a child was spawned under -- so the
+        # address rides the SAME handle the identity and the citation already
+        # ride, and every enrolment path that forwards this handle unchanged
+        # (an attended run's, an unattended one's, the seam a spawn was never
+        # taught about) inherits it without having to learn a new keyword.
+        attr_reader :to
+
+        # The rest of the road from {#to} to an actual human mailbox, empty
+        # when {#to} already IS one. `to:` alone answers "the record shows the
+        # child asked the parent" -- it says nothing about how the parent's
+        # OWN mailbox is reached, and a parent is itself a spawned child more
+        # often than not. Each entry is one further hop {AskHuman#ask}'s own
+        # infrastructure relays through, mechanically, ending in {HUMAN}: the
+        # value is an explicit, JOURNALED chain, not anything reasoning about
+        # where to send a question.
+        attr_reader :escalation
+
         # @param read [Lain::Timeline, #call] a Timeline, or a thunk reading the
         #   live one, since the toolset is built before the Agent
         # @param settle [#call] takes the Timeline and puts into the record
         #   everything a question written against its head may cite
-        def initialize(read:, settle: Null)
+        # @param to [String] who a question written against this handle is
+        #   addressed to; see {#to}
+        # @param escalation [Array<String>] the further hops beyond `to:`; see
+        #   {#escalation}
+        def initialize(read:, settle: Null, to: HUMAN, escalation: [])
           @read = read
           @settle = settle
+          @to = to
+          # `.dup.freeze` rather than trusting the caller's Array frozen: a
+          # `freeze` that left a REACHABLE mutable Array behind would not be
+          # the mechanical "no reachable mutable state" this codebase's value
+          # objects are held to, and here the mutable state would be WHERE
+          # questions get sent -- `handle.escalation << "elsewhere"` must not
+          # be a live wire into every future question this handle asks.
+          @escalation = escalation.dup.freeze
           freeze
         end
 
@@ -282,6 +319,19 @@ module Lain
         # `ask_human` is a barrier and no fiber can commit between them, which
         # is a fact about the caller and not about this.
         def settled = timeline.tap { |live| @settle.call(live) }
+
+        # Relays `message` one hop per {#escalation} entry, each citing the
+        # message before it rather than a live agent head -- see
+        # {AskHuman#emit_question} for why that is what lets a relay never
+        # wait on a parent's own dispatch. The block is handed
+        # FROM/TO/BODY/CAUSAL_PARENTS and answers with the {Lain::Event} it
+        # put, so this stays what this class already is -- data about where a
+        # question goes -- and the ChainWriter stays the caller's own.
+        def escalate(message)
+          escalation.inject(message) do |previous, to|
+            yield(from: previous.to, to:, body: previous.body, causal_parents: [previous.digest])
+          end
+        end
       end
 
       # One question set, wearing the text a human is shown for it -- and the
@@ -425,11 +475,20 @@ module Lain
       # This is per-asker, rides the Q event under {ASKED_BY}, and is the same
       # value the TTY and desktop were already announced, so every surface reads
       # one name. Absent, the envelope's correlation stands in.
-      def initialize(parent:, name: "ask_human", agent: nil, observer: Event::ChainWriter::Null.new)
+      #
+      # `to` is who the Q is addressed to and who the eventual A is
+      # attributed FROM -- one value for both ends, so a reader walks Q to A
+      # and finds the same identity closing the loop rather than two
+      # different ones straddling one exchange. Unset, it rides the `parent`
+      # handle instead of defaulting here a second way -- see {Parent#to} for
+      # who inherits what. Passing `to:` explicitly still overrides, for a
+      # caller with no handle worth carrying an address on at all.
+      def initialize(parent:, name: "ask_human", agent: nil, observer: Event::ChainWriter::Null.new, to: nil)
         super()
         @parent = Parent.over(parent)
         @name = name
         @agent = agent
+        @to = to || @parent.to
         @chain_writer = Event::ChainWriter.new(observer:)
         @outstanding = Outstanding.new
       end
@@ -566,10 +625,18 @@ module Lain
       # of it, but attributed to {Unanswered::NOBODY} and carrying no `"answer"`
       # key, so a question nobody could answer reads differently from one a
       # human answered emptily.
+      #
+      # `from: @last_question.to` rather than {HUMAN} or {#to}: {#emit_question}
+      # may have RELAYED the question past `@to`, and `pending`'s digest --
+      # what this A cites and what {Outstanding} named the set by -- is
+      # ALWAYS the outermost hop's, so the answer is attributed to whoever
+      # that hop was actually addressed to. Q and A close the loop as one
+      # identity instead of two straddling the same exchange, whatever the
+      # relay's length.
       def recorded_reply(answer, pending)
         return unanswered_record(answer, pending) if answer.is_a?(Unanswered)
 
-        @last_answer = written(pending, from: HUMAN, body: { "answer" => answer })
+        @last_answer = written(pending, from: @last_question.to, body: { "answer" => answer })
       end
 
       # Its own method rather than a ternary arm, so the two records read side
@@ -584,16 +651,37 @@ module Lain
         write_message(parent, from:, to: identity(parent), body:, causal_parents: [pending.digest])
       end
 
-      # Q, and the digest {Outstanding} names its set by.
+      # Q, relayed past {#to} for every hop {Parent#escalate} carries, and the
+      # digest {Outstanding} names its set by -- always the OUTERMOST hop's,
+      # because that is the one a queue announces and a human answers.
       #
-      # `settled` rather than {#parent_timeline}: the head this cites has to be
-      # in the record before the citation is written, and for a child's asker
-      # that is not free -- see {Parent}.
+      # `settled` rather than {#parent_timeline}: the head THIS OWN Q cites has
+      # to be in the record before the citation is written, and for a child's
+      # asker that is not free -- see {Parent}. Nothing past this cites a live
+      # head again -- {Parent#escalate} chains message to message instead
+      # (a :message is journaled the instant {#write_message} returns, the
+      # shared observer seeing it synchronously exactly as {Lineage#message}
+      # relies on), which is what lets it relay without the parent a hop
+      # addresses ever being touched, let alone required to be free to act.
+      # The SAME body rides every hop unchanged, {ASKED_BY} included, so
+      # whoever finally reads the outermost one learns which role originally
+      # asked, not who relayed it -- mechanical on purpose, since nothing here
+      # decides WHETHER to escalate, only where the chain already goes next.
+      # HAZARD, dormant rather than closed here: `@last_question.from` used to
+      # be this asker's own identity and is now, once relayed, the LAST
+      # relayer's -- ASKED_BY still carries the true asker's name, but a
+      # caller that falls back to the bare event when ASKED_BY is blank
+      # ({HumanReplies::InboxItem.asked}, {CLI::Wiring::Askers#desktop_name})
+      # would present the relayer rather than who actually asked. Unreachable
+      # today, since both production enrolment sites always pass a name --
+      # flagged rather than guarded, because closing it means deciding what
+      # THOSE callers should show instead, which is their call to make.
       def emit_question(announcement)
         parent = @parent.settled
-        @last_question = write_message(parent, from: identity(parent), to: HUMAN,
-                                               body: emitted_body(announcement),
-                                               causal_parents: [parent.head_digest].compact)
+        own_question = write_message(parent, from: identity(parent), to: @to,
+                                             body: emitted_body(announcement),
+                                             causal_parents: [parent.head_digest].compact)
+        @last_question = @parent.escalate(own_question) { |**hop| write_message(parent, **hop) }
         @last_question.digest
       end
 
