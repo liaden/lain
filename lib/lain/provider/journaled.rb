@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 module Lain
   class Provider
     # A Provider-duck decorator that records every outbound {Lain::Request} as a
@@ -73,14 +75,11 @@ module Lain
         @inner.complete(request, **)
       end
 
-      def capabilities = @inner.capabilities
-      def supports?(capability) = @inner.supports?(capability)
-      def require!(capability) = @inner.require!(capability)
-      def cache_profile = @inner.cache_profile
-      def context_window_tokens(model) = @inner.context_window_tokens(model)
-      def trained_context_tokens(model) = @inner.trained_context_tokens(model)
-      def encode(request) = @inner.encode(request)
-      def to_s = @inner.to_s
+      # Everything this decorator does NOT record. Declared rather than written
+      # out as eight bodies, so the one message it does decorate (`#complete`)
+      # is the only method in the class and a reader cannot miss it.
+      delegate :capabilities, :supports?, :require!, :cache_profile, :context_window_tokens,
+               :trained_context_tokens, :encode, :to_s, to: :@inner
     end
   end
 end

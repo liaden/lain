@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 module Lain
   module Epic
     class Home
@@ -55,15 +57,14 @@ module Lain
           @reviews = reviews
         end
 
-        def slug = @home.slug
-        def path = @home.path
+        # What this decorator does NOT acknowledge: a read answers no DocWritten,
+        # and the home's own identity is not a write at all.
+        delegate :slug, :path, :read_epic, to: :@home
 
         def research = written(@home.research, "research")
         def epic = written(@home.epic, "epic")
         def issue(id) = written(@home.issue(id), "issue")
         def plan(id) = written(@home.plan(id), "plan")
-
-        def read_epic = @home.read_epic
 
         # The graph's own content address rides along with the bytes', because
         # the two answer different questions: `byte_digest` says what is on disk,
@@ -110,9 +111,7 @@ module Lain
             @graph_digest = graph_digest
           end
 
-          def path = @artifact.path
-          def read = @artifact.read
-          def exist? = @artifact.exist?
+          delegate :path, :read, :exist?, to: :@artifact
 
           # Exactly {Home::Artifact#write}'s arity, which is the point: this
           # wraps that method and must not be a wider duck than it.

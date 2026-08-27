@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 module Lain
   module Epic
     # The ownership baton for one epic's artifacts. While a human holds a
@@ -152,9 +154,7 @@ module Lain
         end
 
         def delta(disk) = @baseline.delta(disk)
-        def resolve(delta) = @promise.resolve(delta)
-        def resolved? = @promise.resolved?
-        def await = @promise.await
+        delegate :resolve, :resolved?, :await, to: :@promise
       end
 
       # The fold that rebuilds an open set from journaled records --

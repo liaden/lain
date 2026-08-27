@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 module Lain
   module Review
     class Session
@@ -204,14 +206,8 @@ module Lain
         # what a heading may claim never has to ask `#hunks` to find out whether
         # asking `#hunks` is affordable.
         FileRow = Data.define(:file, :state, :hunk_keys) do
-          def path = file.path
-          def old_path = file.old_path
-          def new_path = file.new_path
-          def status = file.status
-          def binary? = file.binary?
-          def hunks = file.hunks
-          def chunked? = file.chunked?
-          def rendered_lines = file.rendered_lines
+          delegate :path, :old_path, :new_path, :status, :binary?, :hunks,
+                   :chunked?, :rendered_lines, to: :file
         end
 
         # One group's row: what heads it, its share of the files as {FileRow}s,

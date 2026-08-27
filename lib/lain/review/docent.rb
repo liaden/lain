@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
 require "async"
 
 module Lain
@@ -717,11 +718,9 @@ module Lain
 
         attr_reader :anchor, :hunk
 
-        def entries = @exchanges.entries
-        def asked?(question) = @exchanges.asked?(question)
-        def pending?(question) = @exchanges.pending?(question)
-        def ask(question) = @exchanges.ask(question)
-        def drop(question) = @exchanges.drop(question)
+        # The thread's contents are the exchanges'; only {#settle} needs a body,
+        # and it has one below.
+        delegate :entries, :asked?, :pending?, :ask, :drop, to: :@exchanges
 
         def settle(question, speaker:, text:, state:)
           @exchanges.settle(question, speaker:, text:, state:)

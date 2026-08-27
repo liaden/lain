@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 module Lain
   module Tools
     class Subagent < Tool # rubocop:disable Style/Documentation -- doc lives on the reopen below; see .rubocop.yml's note
@@ -258,9 +260,9 @@ module Lain
         handle.respond_to?(:call) ? handle.call : handle
       end
 
-      def journal = @seam.journal
-      def observer = @seam.observer
-      def supervisor = @seam.supervisor
+      # The seam's collaborators, passed through untouched -- only
+      # {#parent_timeline} needs the thunk-or-value reading above.
+      delegate :journal, :observer, :supervisor, to: :@seam
     end
 
     # A subagent as an ordinary tool: possessing it is the authorization to

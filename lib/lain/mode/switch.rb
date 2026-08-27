@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 module Lain
   class Mode
     # The delegating slot `/mode` writes and every mode-aware surface reads --
@@ -33,11 +35,9 @@ module Lain
         @journal = journal
       end
 
-      def posture = @current.posture
-
-      def layers = @current.layers
-
-      def describe = @current.describe
+      # The mode's own questions, answered by whichever Mode is in force --
+      # the same set {CLI::Switchboard::Layers} delegates through this object.
+      delegate :posture, :layers, :describe, to: :@current
 
       # The record is BUILT before the slot moves, and that order is the whole
       # contract: {Telemetry::Guards::ModeSwitch} refuses a flip it cannot
