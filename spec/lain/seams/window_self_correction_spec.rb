@@ -272,4 +272,50 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
       expect(measured.last["provenance"]).to eq("probed")
     end
   end
+
+  # The invariant the two producers jointly own, on the shape that reaches it.
+  # The block above asserts the same equality, but it converses at 4,000 input
+  # tokens -- a reading both producers take -- so it stays green through any
+  # divergence in the guard. A turn reporting no input tokens is the one input
+  # that separates them, and each producer decides independently whether to
+  # take it: {Lain::Agent::Accounting} from a real {Lain::Usage}, the feed from
+  # the String-keyed hash off the journal.
+  describe "a turn that reports no input tokens, across both producers" do
+    around { |example| Dir.mktmpdir("lain-window-seam") { |dir| @state_dir = dir and example.run } }
+
+    let(:input_tokens) { 4_000 }
+    let(:state_path) { File.join(@state_dir, "state.json") }
+    let(:status_feed) { Lain::StatusFeed.new(path: state_path, context_window: backend.context_window) }
+
+    # A measured turn, then one billing output with no input -- what an ollama
+    # body missing `prompt_eval_count` decodes to, and what a stream truncated
+    # before its counts arrived produces.
+    def scripted_model
+      measured = text_response("a considered answer " * 200, model:, usage: Lain::Usage.new(input_tokens:))
+      output_only = Lain::Usage.new(input_tokens: 0, output_tokens: 250)
+      unmeasured = text_response("and another", model:, usage: output_only)
+      Lain::Provider::Mock.new(responses: [measured, unmeasured])
+    end
+
+    before do
+      trained
+      runner_resident
+      converse(2, sink: Lain::CLI::JournalTee.new(journal, status_feed))
+    end
+
+    def published = JSON.parse(File.read(state_path))
+
+    it "leave one reading standing rather than one of them forgetting" do
+      expect(agent.occupancy).to eq(published["occupancy"])
+    end
+
+    it "hold the reading the measured turn established, not a fresh zero" do
+      expect(published["occupancy"]).to eq(measured.last["used_tokens"].fdiv(measured.last["window_tokens"]))
+      expect(published["occupancy"]).to be_positive
+    end
+
+    it "say the turn went unmeasured, since suppression is otherwise invisible" do
+      expect(published["unmeasured_turns"]).to eq(1)
+    end
+  end
 end
