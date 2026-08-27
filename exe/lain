@@ -985,11 +985,14 @@ class LainCLI < Thor
                                 "(needs $TMUX and the session journal; incompatible with --no-journal)"
   # Names IsolationBackend::BACKENDS rather than restating the set, on the same
   # rule the compact knobs below follow: the flag's help text and the resolver
-  # cannot come to disagree about what a backend name means. Resolved on every
-  # chat launch and injected into a live Supervisor (Wiring#fleet_isolation);
-  # only an actor-mode subagent leases from it (Tools::Subagent#adopt_actor).
+  # cannot come to disagree about what a backend name means. Resolved ONCE per
+  # chat launch (Wiring#fleet_isolation) and shared between the fleet
+  # Supervisor and every model-dispatched spawn's lease (Tools::Subagent#run_child,
+  # #adopt_actor) -- one-shot or actor, and a nested spawn (Tools::Subagent#descend)
+  # leases and releases its own dispatch too, so a grandchild never escapes into
+  # the host.
   method_option :isolation, type: :string, default: Lain::CLI::IsolationBackend::DEFAULT,
-                            desc: "Isolation backend actor-mode subagents lease workers from " \
+                            desc: "Isolation backend spawned subagents lease workers from, per dispatch " \
                                   "(#{Lain::CLI::IsolationBackend::BACKENDS.join(", ")}); the main chat's own " \
                                   "session is never isolated"
   method_option :grace, type: :numeric, default: Lain::CLI::Shutdown::GRACE_DEFAULT,
