@@ -173,7 +173,7 @@ RSpec.describe LainCLI do
       ask_human = Lain::Tools::AskHuman.new(parent: -> {})
       with_env("ANTHROPIC_API_KEY" => "sk-test") do
         wiring.send(:build_toolset, recorder, backend: backend(provider: "anthropic"),
-                                              parent: -> {}, journal: Lain::Channel.new, ask_human:)
+                                              parent: -> {}, ask_human:)
       end
     end
 

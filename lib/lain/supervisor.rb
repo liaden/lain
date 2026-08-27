@@ -223,9 +223,14 @@ module Lain
     #   when an earlier one already had it
     def claim(registration) = @reaped.add?(registration) && registration
 
+    # Minted through {Isolation::WorkerId} rather than spelled here: the spawn
+    # path numbers its own workers off a sequence this one cannot see, and a
+    # backend keys a checkout path on whichever id it is handed -- so the two
+    # lanes' disjointness belongs to one object that can prove it, not to two
+    # format strings that happen to differ.
     def next_worker_id(role)
       @worker_seq += 1
-      "#{role}-#{@worker_seq}"
+      Isolation::WorkerId.adopted(role:, ordinal: @worker_seq).to_s
     end
 
     # A crashed worker's lease outlives its actor: {Restart} replays it under a

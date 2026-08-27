@@ -181,6 +181,13 @@ module Lain
         #   ({Wiring::Askers#enrol}, which also hands back the registration whoever
         #   owns that child's lifetime must `deregister`). Defaults to
         #   {Wiring::Askers.unwired} for the direct-construction seams the specs drive.
+        # @param isolation [#acquire] the run's ONE {Lain::Isolation} backend, the
+        #   same instance {Wiring} hands the {Lain::Supervisor}. Injected rather
+        #   than resolved here: a second resolution of one `--isolation` flag is
+        #   a second allocator over one project, and neither can see the other's
+        #   claims. Defaults to the shared-process baseline for the
+        #   direct-construction seams the specs drive, matching what a chat
+        #   started without the flag really gets.
         # @param root [String] the PROJECT's root, handed down by {Wiring} -- this
         #   object holds no Project. Read only to resolve `exec` below; a container
         #   MOUNTS it, so a chat started in a subdirectory (or under `--root PATH`)
@@ -209,6 +216,7 @@ module Lain
         #   that order.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
                        root:, switchboard: -> { NoSwitchboard }, askers: Askers.unwired, usage: nil,
+                       isolation: Lain::Isolation::Null.new,
                        exec: ExecBackend.resolve(options[:exec], image: options[:exec_image], root:))
           @library = library
           @backend = backend
@@ -218,7 +226,7 @@ module Lain
           @askers = askers
           @usage = usage
           @seam = spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:,
-                             observer: chronicle.observer)
+                             observer: chronicle.observer, isolation:)
         end
 
         # The run's toolset: the capability floor, plus the child seams and the
@@ -253,9 +261,21 @@ module Lain
         # privilege-inversion reason the other three do -- a child told the
         # generic "approval denied" in an unattended session reads a human's no
         # and retries a call nobody can ever approve, for the life of the run.
-        def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, observer:)
+        # `isolation:` is the run's ONE backend, INJECTED -- the same instance
+        # {Wiring} hands the {Supervisor}, never a second resolution of the same
+        # flag. Two backends over one project each allocate from per-instance
+        # state, so they cannot refuse each other's checkout paths and a service
+        # pool without a worker key in it hands one slot out twice; the reason
+        # in full is on {Wiring#fleet_isolation}. It is wrapped HERE, and here
+        # only, in the {Lain::Tools::Subagent::Leases} that owns the spawn
+        # lane's worker-id sequence -- one per seam, which is one per run, which
+        # is what makes a nested spawn and a sibling fan-out draw from the same
+        # count. The backend arrives already journalled, nearest the concrete,
+        # and nothing here wraps it again.
+        def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, observer:, isolation:)
           Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
                                           journal:, supervisor:, observer:, askers:,
+                                          isolation: Lain::Tools::Subagent::Leases.new(backend: isolation),
                                           gate_policy: LivePolicy.new(board: switchboard),
                                           permits: PosturePermits.new(board: switchboard),
                                           sensitivity: LiveSensitivity.new(board: switchboard),

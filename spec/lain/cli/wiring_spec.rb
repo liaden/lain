@@ -1007,6 +1007,31 @@ RSpec.describe Lain::CLI::Wiring do
       Dir.mktmpdir("lain-d2-chat") { |dir| Dir.chdir(File.realpath(dir), &block) }
     end
 
+    # ONE backend per run, and the run's two consumers share it. The fleet a
+    # {Lain::Supervisor} adopts actors onto and the children a model dispatches
+    # both key resources on a worker id, and both allocate from per-INSTANCE
+    # state -- {Lain::Isolation::Worktree}'s `@leased` Set and Monitor serialize
+    # one instance, so two backends cannot refuse each other's paths, and a
+    # per-{Lain::Isolation::DbIndex} pool hands the same index out twice. The
+    # declaration file is read once for the same reason
+    # {Lain::CLI::IsolationBackend}'s own `#services` gives.
+    #
+    # Resolution count is the whole assertion available without a reader: with
+    # exactly one resolved, the example below (the supervisor leasing a real
+    # Worktree) and the model-dispatch example (the child leasing a real
+    # Worktree) cannot be naming two different objects.
+    it "resolves ONE isolation backend for the whole run, not one per consumer" do
+      allow(Lain::CLI::IsolationBackend).to receive(:resolve).and_call_original
+
+      in_throwaway_chat_dir do
+        wiring = wiring_with(nil)
+        recorder, session = wiring.run_state(nil)
+        wiring.wire_agent(channel:, recorder:, session:, backend:)
+      end
+
+      expect(Lain::CLI::IsolationBackend).to have_received(:resolve).once
+    end
+
     context "without an isolation option" do
       it "leases the chat's own process environment -- the shared-process default" do
         chat_cwd = nil
@@ -1055,7 +1080,8 @@ RSpec.describe Lain::CLI::Wiring do
           Dir.mktmpdir("lain-d2-runtime") do |runtime|
             repo = File.realpath(project)
             seed_repo(repo)
-            Dir.chdir(repo) { with_env("XDG_RUNTIME_DIR" => File.realpath(runtime)) { yield repo } }
+            runtime_dir = File.realpath(runtime)
+            Dir.chdir(repo) { with_env("XDG_RUNTIME_DIR" => runtime_dir) { yield repo, runtime_dir } }
           end
         end
       end
@@ -1064,6 +1090,63 @@ RSpec.describe Lain::CLI::Wiring do
         in_throwaway_repo { adopt_worker(wiring_with("worktree")) }
 
         expect(leases.map(&:backend).uniq).to eq(["Lain::Isolation::Worktree"])
+      end
+
+      # THROUGH THE TOOL, and that is the whole of why this example exists. The
+      # defect it pins survived because every spec that proved a lease injected
+      # its own backend, while production threaded {Lain::WorkerEnv.default}
+      # down #run_child -- so a proof over an injected backend would have
+      # shipped the same gap a second time, green. Nothing here is doubled: the
+      # backend is the one `--isolation worktree` really resolves, the tool is
+      # the one this run's own ToolsetBuild built, and the spawn is a tool_use
+      # the model dispatched through the parent's loop.
+      #
+      # A child's cwd is unobservable from outside a spawn that hands back a
+      # Timeline and never an Agent, so the child asks for a RELATIVE path that
+      # does not exist and `list_files` names the absolute path it resolved to.
+      context "when the MODEL dispatches a subagent" do
+        let(:mock_provider) do
+          Lain::Provider::Mock.new(responses: [
+                                     tool_response(["s1", "subagent", { "prompt" => "look around" }]),
+                                     tool_response(["l1", "list_files", { "path" => "no-such-dir" }]),
+                                     text_response("child done"),
+                                     text_response("parent done")
+                                   ])
+        end
+
+        def spawn_through_the_tool(wiring)
+          recorder, session = wiring.run_state(nil)
+          agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
+          Sync { agent.ask("look around") }
+        end
+
+        # The one tool_result whose content is a refusal naming an absolute
+        # path: the child's `list_files` at a relative path that is nowhere.
+        def child_resolved_path
+          refusal = mock_provider.requests.flat_map(&:messages)
+                                 .flat_map { |message| message["content"] }
+                                 .grep(Hash)
+                                 .find { |block| block["type"] == "tool_result" }
+          refusal.fetch("content").to_s.delete_prefix("no such directory: ")
+        end
+
+        it "leases the resolved worktree for the child, which resolves its relative paths there" do
+          chat_cwd = nil
+          runtime_dir = nil
+          in_throwaway_repo do |repo, runtime|
+            chat_cwd = repo
+            runtime_dir = runtime
+            spawn_through_the_tool(wiring_with("worktree"))
+          end
+
+          expect(leases.map { |lease| [lease.kind, lease.backend] })
+            .to eq([[:acquired, "Lain::Isolation::Worktree"], [:released, "Lain::Isolation::Worktree"]])
+          # Under the throwaway XDG_RUNTIME_DIR, which nothing but a leased
+          # checkout writes into, and NOT under the chat's own tree.
+          expect(child_resolved_path).to start_with(runtime_dir)
+          expect(child_resolved_path).to include("/worktrees/")
+          expect(child_resolved_path).not_to start_with(chat_cwd)
+        end
       end
 
       it "runs the adopted actor's session against the leased checkout, not the chat's cwd" do

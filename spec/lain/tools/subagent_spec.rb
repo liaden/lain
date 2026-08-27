@@ -1,10 +1,94 @@
 # frozen_string_literal: true
 
 require "async"
+require "fileutils"
 require "json"
+require "monitor"
 require "stringio"
 require "tmpdir"
 require "timeout"
+
+# A REAL isolation backend, small enough to live beside the examples that drive
+# it: every acquire provisions an actual directory named for the worker and
+# hands back a lease whose cwd points there, and release removes it. Not a
+# stand-in for the duck -- a child dispatched under one of these leases really
+# does resolve its relative paths inside that directory, which is what makes
+# "the grandchild ran somewhere else" an assertion rather than string math over
+# a path nothing ever used. {Lain::Isolation::Worktree} is the concrete backend,
+# and spec/lain/cli/wiring_spec.rb drives THAT one end to end through the real
+# `--isolation` wiring; it costs five git subprocesses per lease, where what
+# these examples are about is the lease LIFECYCLE.
+#
+# It keeps Worktree's one-live-lease-per-path refusal, so a worker-id allocator
+# that handed two live spawns one id fails as loudly here as it would there.
+class SubagentSpecIsolation
+  # `high_water` is how many leases were live at once at the busiest moment --
+  # the only way an example can tell genuine simultaneity from N dispatches that
+  # merely happened in one reactor, and what arms the already-leased refusal.
+  attr_reader :worker_ids, :leased, :released, :high_water
+
+  # `reclaim: :refuse` is {Lain::Isolation::Worktree}'s real teardown failure:
+  # `#remove` raises rather than leave a checkout it could not reclaim standing.
+  def initialize(root, reclaim: :succeed)
+    @root = root
+    @reclaim = reclaim
+    @worker_ids = []
+    @leased = []
+    @released = []
+    @live = []
+    @high_water = 0
+    @monitor = Monitor.new
+  end
+
+  def acquire(worker_id)
+    path = File.join(@root, worker_id.to_s)
+    @monitor.synchronize do
+      raise Lain::Error, "#{path} is already leased" if @live.include?(path)
+
+      claim(path, worker_id)
+    end
+    Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default.with(cwd: path),
+                               on_release: -> { give_back(path) })
+  end
+
+  private
+
+  def claim(path, worker_id)
+    FileUtils.mkdir_p(path)
+    @live << path
+    @worker_ids << worker_id.to_s
+    @leased << path
+    @high_water = [@high_water, @live.size].max
+  end
+
+  def give_back(path)
+    @monitor.synchronize do
+      @live.delete(path)
+      raise Lain::Error, "could not reclaim #{path}" if @reclaim == :refuse
+
+      @released << path
+    end
+  end
+end
+
+# Reports the working directory of the Session it was dispatched under, and
+# records every one it saw. A child's cwd is otherwise unobservable from
+# outside: a spawn hands back a Timeline, never the Agent, so where a GRANDchild
+# ran has to be asked from inside its own dispatch.
+class SubagentSpecCwdTool < Lain::Tool
+  def initialize(seen)
+    super()
+    @seen = seen
+  end
+
+  def name = "cwd"
+  def description = "Reports the directory this session resolves relative paths against."
+  def input_schema = { type: :object, properties: {} }
+
+  def perform(_input, invocation)
+    session_of(invocation).worker_env.cwd.tap { |cwd| @seen << cwd }.then { |cwd| Lain::Tool::Result.ok(cwd) }
+  end
+end
 
 RSpec.describe Lain::Tools::Subagent do
   # A shared Store, and a two-turn parent chain whose head is H.
@@ -633,6 +717,189 @@ RSpec.describe Lain::Tools::Subagent do
       second_results = tool_result_blocks(tool.last_child)
       expect(second_results.first["is_error"]).to be(true)
       expect(File.read(path)).to eq("goodbye world")
+    end
+  end
+
+  # ---- A child runs in a LEASED environment ---------------------------------
+  #
+  # `--isolation worktree` used to reach only an actor an OPERATOR adopted:
+  # #run_child hard-coded {Lain::WorkerEnv.default}, so a model-dispatched child
+  # worked in the human's own checkout however the run was started. The lease is
+  # taken per DISPATCH now, and taken UNCONDITIONALLY -- {Lain::Isolation::Null}
+  # hands back WorkerEnv.default and reclaims nothing, so an unisolated run pays
+  # one object and there is no `if isolation` anywhere to get backwards.
+  describe "the isolation lease a child runs under" do
+    around do |example|
+      Dir.mktmpdir("lain-subagent-leases") do |dir|
+        @leases_root = dir
+        example.run
+      end
+    end
+
+    attr_reader :leases_root
+
+    let(:backend) { SubagentSpecIsolation.new(leases_root) }
+    let(:leases) { Lain::Tools::Subagent::Leases.new(backend:) }
+    let(:seen) { [] }
+    let(:cwd_tool) { SubagentSpecCwdTool.new(seen) }
+
+    def reports_cwd = mock(tool_response(["c1", "cwd", {}]), text_response("done"))
+
+    def cwd_only(*names) = Lain::Toolset.new([cwd_tool, *names])
+
+    # Sibling fan-out only pays under a shared template prefix, so the policy
+    # says so -- what this file's fan-out group uses, narrowed to the one tool.
+    def staggered_policy
+      Lain::Tool::SpawnPolicy.new(
+        prefix: Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate.new(template: "one shared brief. " * 20),
+        posture: :handler_union, only: %i[cwd]
+      )
+    end
+
+    it "runs in the host working directory when no isolation is wired" do
+      tool = build_subagent(provider: reports_cwd, toolset: cwd_only, policy: spawn_policy(only: %i[cwd]))
+
+      expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+      expect(seen).to eq([Dir.pwd])
+    end
+
+    it "runs the child in the leased directory, and releases the lease when it returns" do
+      tool = build_subagent(provider: reports_cwd, toolset: cwd_only,
+                            policy: spawn_policy(only: %i[cwd]), isolation: leases)
+
+      expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+      expect(seen).to eq(backend.leased)
+      expect(seen).not_to eq([Dir.pwd])
+      expect(backend.released).to eq(backend.leased)
+    end
+
+    # The other exit. A context that will not render is {ChildBuilder#spawned}'s
+    # own named example of a spawn raising past the acquire, and a lease held by
+    # a raise is a leaked checkout that defeats the NEXT acquire at that path.
+    it "releases the lease when the spawn raises, not only when the child returns" do
+      tool = described_class.new(provider: mock(text_response("unused")),
+                                 context_factory: -> { raise "this child gets no context" },
+                                 toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
+                                 parent:, isolation: leases, budget: Lain::Agent::Budget.new)
+
+      expect { tool.run("go") }.to raise_error("this child gets no context")
+      expect(backend.leased.size).to eq(1)
+      expect(backend.released).to eq(backend.leased)
+    end
+
+    # A grandchild takes a SIBLING checkout, never one nested inside its
+    # parent's: a worktree-of-a-worktree is a peer in git's one registry anyway,
+    # and the parent's release force-removes its tree, which would either
+    # destroy the grandchild's or be blocked by it. So "did not escape" is
+    # asserted against the PARENT's leased path as well as the host's -- a
+    # sibling is trivially not the host's cwd, so the host alone would pass on
+    # the bug this pins.
+    it "gives a nested child a leased directory of its own -- neither the host's nor its parent's" do
+      provider = mock(
+        tool_response(["c1", "subagent", { "prompt" => "deeper" }]),
+        tool_response(["g1", "cwd", {}]),
+        text_response("grandchild done"),
+        tool_response(["c2", "cwd", {}]),
+        text_response("child done")
+      )
+      inner = build_subagent(provider:, toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
+                             max_depth: 9, isolation: leases)
+      tool = build_subagent(provider:, toolset: cwd_only(inner), max_depth: 2,
+                            policy: spawn_policy(only: %i[cwd subagent]), isolation: leases)
+
+      expect(tool.call({ "prompt" => "start" }, invocation)).to be_ok
+
+      grandchild, child = seen
+      expect(seen.size).to eq(2)
+      expect(grandchild).not_to eq(child)
+      expect(seen).not_to include(Dir.pwd)
+      expect(seen.sort).to eq(backend.leased.sort)
+    end
+
+    # The teardown that FAILS. {Lain::Isolation::Worktree#remove} raises rather
+    # than leave a checkout it could not reclaim, and `Tool#call` does not
+    # rescue -- so a bare `ensure lease.release` hands the parent the teardown
+    # failure instead of the answer a completed child already paid for. The
+    # tolerance is {Lain::Supervisor#reap}'s, at the seam with the same shape:
+    # the failure is journaled rather than swallowed, because a checkout that
+    # outlived its lease is a real leak and the record is where its key is
+    # found.
+    it "returns the child's answer when the lease cannot be reclaimed, journaling the leak" do
+      journal = Lain::Channel.new
+      unreclaimable = SubagentSpecIsolation.new(leases_root, reclaim: :refuse)
+      tool = build_subagent(provider: mock(text_response("child answer")), toolset: cwd_only,
+                            policy: spawn_policy(only: %i[cwd]), journal:,
+                            isolation: Lain::Tools::Subagent::Leases.new(backend: unreclaimable))
+
+      result = tool.call({ "prompt" => "go" }, invocation)
+
+      expect(result).to be_ok
+      expect(result.content).to eq("child answer")
+      leaks = journal.drain.grep(Lain::Tools::Subagent::LeaseNotReclaimed)
+      expect(leaks.map(&:worker_key)).to eq(unreclaimable.worker_ids)
+      # `error` is the half a human can act on: the worker key is hashed into
+      # the path, so what names the directory still standing is the backend's
+      # own message.
+      expect(leaks.map(&:error)).to all(include(leases_root))
+    end
+
+    # #fan_out dispatches siblings concurrently over one tool, so two fibers are
+    # really inside the allocator at once. A shared counter that lost an
+    # increment would hand two live siblings one worker id, and a backend that
+    # keys a checkout on it refuses the second -- which is why the id allocation
+    # is the thing under test here, not the refusal.
+    it "allocates a distinct worker id per dispatch, so concurrent siblings never share one" do
+      provider = mock(text_response("a"), text_response("b"), text_response("c"))
+      tool = build_subagent(provider:, toolset: cwd_only, policy: staggered_policy, isolation: leases)
+
+      results = tool.fan_out(%w[alpha beta gamma])
+
+      expect(results).to all(be_ok)
+      expect(backend.worker_ids.uniq.size).to eq(3)
+      expect(backend.released.sort).to eq(backend.leased.sort)
+    end
+
+    # The allocator under real contention, driven directly rather than through a
+    # spawn: `+= 1` is a read and a write with a suspension point available
+    # between them, and a lost increment is two workers sent to one checkout
+    # path. 64 rather than a handful because a dropped increment under a Monitor
+    # is not a failure a three-way race reproduces.
+    #
+    # The block PARKS until every sibling holds its own lease, and that park is
+    # what makes the example honest: a block with no suspension point runs to
+    # completion before the next task starts, so 64 tasks would be 64 SEQUENTIAL
+    # holds, the live high-water mark would be one, and the backend's
+    # already-leased refusal would never be armed at all.
+    it "keeps every concurrently held lease on a path of its own" do
+      Sync do
+        arrived = 0
+        Array.new(64) do
+          Async do
+            leases.hold("hammer", journal: Lain::Channel::Null.instance) do
+              arrived += 1
+              Async::Task.current.yield while arrived < 64
+            end
+          end
+        end.each(&:wait)
+      end
+
+      expect(backend.high_water).to eq(64)
+      expect(backend.worker_ids.uniq.size).to eq(64)
+      expect(backend.released.sort).to eq(backend.leased.sort)
+    end
+
+    # Minted through the ONE object both allocators draw from, never spelled
+    # here: {Lain::Supervisor} numbers the actors an operator adopts off a
+    # sequence this one cannot see, and a spawn that spelled its own id would
+    # put the disjointness of the two in a string convention neither asserts.
+    it "mints its worker ids in the spawned lane of the shared allocator" do
+      tool = build_subagent(provider: mock(text_response("done")), toolset: cwd_only,
+                            policy: spawn_policy(only: %i[cwd]), isolation: leases, name: "researcher")
+
+      tool.call({ "prompt" => "go" }, invocation)
+
+      expect(backend.worker_ids)
+        .to eq([Lain::Isolation::WorkerId.spawned(role: "researcher", ordinal: 1).to_s])
     end
   end
 
@@ -1855,6 +2122,14 @@ RSpec.describe Lain::Tools::Subagent do
     # make two otherwise identical seams compare unequal.
     it "defaults the ask-the-human seam to the one wired to nothing" do
       expect(seam.askers).to be(Lain::Tools::Subagent::NoAskers)
+    end
+
+    # The isolation member, and the same singleton rule for the same reason: it
+    # owns a worker-id sequence, so it cannot be frozen, but it must still be
+    # the SAME object every time or two otherwise identical seams compare
+    # unequal.
+    it "defaults isolation to the shared unisolated lease source" do
+      expect(seam.isolation).to be(Lain::Tools::Subagent::NO_ISOLATION)
     end
 
     # A value object whose `==` depends on WHICH member the caller let default is

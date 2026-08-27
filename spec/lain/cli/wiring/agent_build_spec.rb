@@ -477,7 +477,7 @@ RSpec.describe Lain::CLI::Wiring::AgentBuild do
     it "reads nil until the agent build assigns it, which is what makes the thunk late" do
       recorder, = wiring.run_state(nil)
       wiring.send(:build_toolset, recorder, backend: wired_backend, parent: -> {},
-                                            journal: channel, ask_human: Lain::Tools::AskHuman.new(parent: -> {}))
+                                            ask_human: Lain::Tools::AskHuman.new(parent: -> {}))
 
       expect(wiring.role_spawn.seam.gate_policy.board.call).to be_nil
     end

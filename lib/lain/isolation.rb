@@ -17,6 +17,7 @@ module Lain
   end
 end
 
+require_relative "isolation/worker_id"
 require_relative "isolation/lease"
 require_relative "isolation/null"
 require_relative "isolation/worktree"
