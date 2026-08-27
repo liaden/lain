@@ -80,6 +80,60 @@ RSpec.describe Lain::Tools::AskHuman do
     end
   end
 
+  # ---- Scenario: the head a question cites is already in the record ---------
+  #
+  # A Q cites the head its asker stood at when it asked, and on reload that
+  # citation resolves only if the record already CARRIES that head. For the
+  # chat's own asker it always does -- {CLI::Repl::Ask} catches the record up
+  # per ask, before it anchors anything. For a child's it does not: a child's
+  # turns reach the record when its ITERATION returns, and a question that
+  # parks never returns from the one it was asked in. So the handle a spawn
+  # hands over settles the record first, and the citation is what says it did.
+  describe "the head a question cites" do
+    it "is the parent handle's live head" do
+      Sync { tool.ask("which file?") }
+
+      expect(tool.last_question.causal_parents).to eq([parent.head_digest])
+    end
+
+    # The invariant is "the head cited IS the head promoted", and it has to be
+    # structural rather than a courtesy of the caller: the settler is HANDED
+    # the Timeline, so a second read cannot answer something else and no
+    # discipline about single fibers is load-bearing.
+    it "hands the settler the very Timeline whose head it then cites" do
+      promoted = []
+      live = parent.commit(role: :user, content: [{ "type" => "text", "text" => "mid-iteration" }])
+      settling = described_class::Parent.new(read: -> { live }, settle: ->(timeline) { promoted << timeline })
+
+      asking = described_class.new(parent: settling)
+      Sync { asking.ask("which file?") }
+
+      expect(promoted.map(&:head_digest)).to eq(asking.last_question.causal_parents)
+    end
+
+    # A settle CAN raise -- {Tools::Subagent::TurnFeed} refuses a rewound
+    # timeline -- and it now runs inside a tool dispatch. Nothing may be half
+    # open afterwards: no Q in the append-only Store, and no set outstanding.
+    it "leaves no question set open when the settle raises" do
+      boom = described_class::Parent.new(read: parent, settle: ->(_timeline) { raise "the feed diverged" })
+      asking = described_class.new(parent: boom)
+
+      expect { Sync { asking.ask("which file?") } }.to raise_error("the feed diverged")
+      expect(asking.pending?).to be(false)
+      expect(asking.last_question).to be_nil
+    end
+
+    # A handle nobody taught to settle is the common case and stays a bare
+    # thunk at every call site: whoever owns ITS record catches it up already.
+    it "reads a plain thunk exactly as it reads a Timeline" do
+      thunked = described_class.new(parent: -> { parent })
+
+      Sync { thunked.ask("which file?") }
+
+      expect(thunked.last_question.causal_parents).to eq([parent.head_digest])
+    end
+  end
+
   # ---- Scenario: await parks the fiber, not the reactor ---------------------
 
   it "parks the awaiting fiber while a concurrent fiber does work" do

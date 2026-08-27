@@ -459,6 +459,39 @@ module Lain
           end
         end
 
+        # One spawn's own chain: where the child STARTS, how to read its live
+        # head, and how its committed turns reach the session record. The three
+        # travel together because the asker needs the last two before the Agent
+        # that owns them exists.
+        Chain = Data.define(:base, :timeline, :feed) do
+          # What a child's asker is handed instead of a bare timeline thunk:
+          # the same live head, plus the promotion that has to happen before a
+          # question cites it. {Middleware::JournalTurns} promotes when an
+          # iteration RETURNS, and a parked ask never returns from the one it
+          # asked in -- so unpromoted, the question named a turn no record
+          # carried and the session refused to fork or resume.
+          def asking_handle = AskHuman::Parent.new(read: timeline, settle: method(:promote))
+
+          # And what a NESTED spawn's seam is handed, for the same defect one
+          # record up: a grandchild's :spawn cites the child's live head
+          # exactly as a question cites its asker's, and a grandchild parked
+          # mid-iteration leaves the CHILD's iteration unreturned too. A thunk
+          # rather than the handle above, because {Seam}'s `parent` member is a
+          # Timeline or a thunk and this seam gains no new duck.
+          def spawning_handle = -> { settled }
+
+          # ONE read, promoted and then cited: a record names the head that was
+          # promoted because it is the same value, not because nothing could
+          # advance between two reads.
+          def settled = timeline.call.tap { |live| promote(live) }
+
+          # Idempotent through {TurnFeed}'s stop digest, which advances per
+          # turn: the catch-up the iteration runs afterwards re-walks nothing,
+          # so this cannot double-record and cannot re-enter the middleware it
+          # shares a feed with.
+          def promote(live) = feed.catch_up(live)
+        end
+
         attr_reader :policy, :toolset
 
         # `name` is what a human is TOLD is asking when this child puts a
@@ -496,23 +529,38 @@ module Lain
         # method can name a child that does not exist yet.
         def build(parent, ceiling:, worker_env: WorkerEnv.default)
           child = nil
-          handle = -> { child.timeline }
-          union = child_union(handle, ceiling)
-          spawned(@seam.askers.enrol(handle, agent: @name), parent, union, worker_env)
+          chain = own_chain(parent) { child.timeline }
+          union = child_union(chain.spawning_handle, ceiling)
+          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, worker_env)
             .tap { |built| child = built.agent }
         end
 
         private
 
+        # One spawn's own chain, built HERE rather than at the Agent, because
+        # the asker is enrolled before the Agent exists and needs the feed.
+        # Per SPAWN and never memoized on the builder: a fan-out runs sibling
+        # spawns concurrently over one of these, so a shared feed would promote
+        # one sibling's turns against another's stop digest.
+        #
+        # Hoisting the base above {#permitted}'s refusal and the attenuation is
+        # free because every {Tool::SpawnPolicy::PrefixStrategy} builds one
+        # purely -- `Timeline.empty` or an O(1) `parent.fork` -- so a spawn that
+        # goes on to raise merely discards it.
+        def own_chain(parent, &timeline)
+          base = @policy.prefix.base_timeline(parent:, store: parent.store)
+          Chain.new(base:, timeline:, feed: TurnFeed.new(observer: @seam.observer, base: base.head_digest))
+        end
+
         # A spawn that raises past this point ({NoCapability}, a Context that
         # will not render) leaves no lifetime for anyone to hang a `deregister`
         # on, and retention runs from `register` to `deregister` and nothing
         # else -- so this method is the only place that release can live.
-        def spawned(enrolled, parent, union, worker_env)
+        def spawned(enrolled, chain, union, worker_env)
           child = nil
           asker = enrolled.asker
           allowed = granted(permitted(@policy.attenuate(union)), asker)
-          child = Child.new(agent: spawn_agent(parent, granted(union, asker), allowed, worker_env),
+          child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, worker_env),
                             registration: enrolled.registration)
         ensure
           # Keyed on the handle rather than `rescue StandardError`, so a
@@ -614,13 +662,11 @@ module Lain
         # sibling's reads into the next. This builder is never handed the
         # parent's Session, so the child's read-set starts empty by
         # construction.
-        def spawn_agent(parent, union, allowed, worker_env)
-          agent = nil
-          base = @policy.prefix.base_timeline(parent:, store: parent.store)
-          agent = Agent.new(
+        def spawn_agent(chain, union, allowed, worker_env)
+          Agent.new(
             provider: @seam.provider, context: child_context,
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: child_handler(union, allowed),
-            timeline: base, turn_middleware: recorded_turns(base.head_digest) { agent.timeline },
+            timeline: chain.base, turn_middleware: recorded_turns(chain),
             session: Session.new(worker_env:), budget: @budget, journal: @seam.journal
           )
         end
@@ -629,13 +675,15 @@ module Lain
         # per settle: a child's `ask_human` question is written DURING an
         # iteration and cites the head that iteration committed, so a feed that
         # waited for the child to settle would record the turn AFTER the
-        # question naming it. `agent.timeline` rides a thunk because the turn
-        # env carries the PRE-step snapshot, and is late-bound because the
+        # question naming it. The timeline rides a thunk because the turn env
+        # carries the PRE-step snapshot, and is late-bound because the
         # middleware must exist before the Agent that runs it.
-        def recorded_turns(base, &timeline)
-          Middleware::Stack.new(
-            [Middleware::JournalTurns.new(scribe: TurnFeed.new(observer: @seam.observer, base:), timeline:)]
-          )
+        #
+        # Per-iteration is still not often enough for a question that PARKS --
+        # that iteration never returns -- which is what {Chain#asking_handle}
+        # covers, on the same feed.
+        def recorded_turns(chain)
+          Middleware::Stack.new([Middleware::JournalTurns.new(scribe: chain.feed, timeline: chain.timeline)])
         end
 
         # Two composed reshapes over the factory's Context: PERSONA first, then

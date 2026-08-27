@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "async"
+require "json"
 require "stringio"
 require "tmpdir"
 require "timeout"
@@ -1058,20 +1059,71 @@ RSpec.describe Lain::Tools::Subagent do
       # askers' Q/A included.
       let(:askers) { Lain::CLI::Wiring::Askers.new(notifier:, observer:) }
 
-      def recorded_tool
+      def recorded_tool(provider: mock(asks, text_response("done")), toolset: union,
+                        policy: spawn_policy(only: []), max_depth: 1)
         described_class.new(
-          seam: Lain::Tools::Subagent::Seam.new(provider: mock(asks, text_response("done")),
-                                                context_factory: -> { child_context }, parent:, askers:, observer:),
-          toolset: union, policy: spawn_policy(only: []), max_depth: 1
+          seam: Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context },
+                                                parent:, askers:, observer:),
+          toolset:, policy:, max_depth:
         )
       end
 
-      def recorded_session
+      # A spawn TWO deep, where the parking is the grandchild's. The exposure
+      # moves one record up with it: a grandchild's :spawn cites the CHILD's
+      # live head exactly as a question cites its asker's, and a grandchild
+      # parked mid-iteration means the child's iteration never returns either,
+      # so that head is unpromoted for the same reason.
+      def nested_tool
+        inner = recorded_tool(provider: mock(asks("which db?"), text_response("inner done")), max_depth: 3)
+        recorded_tool(provider: mock(tool_response(["s1", "subagent", { "prompt" => "deeper" }]),
+                                     text_response("outer done")),
+                      toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new, inner]), max_depth: 3)
+      end
+
+      # A closed file for a run that ASKED and was answered: the shape every
+      # fixture here had before the parked one below it.
+      def answered_journal
         answered(recorded_tool)
+        settled_journal
+      end
+
+      # And the shape none of them had: the question reaches the queue, nobody
+      # answers, and the child's fiber is stopped where it stands -- a Ctrl-C,
+      # or a run that outlived the human. The turn the question cites is
+      # COMMITTED but unpromoted, because {Middleware::JournalTurns} catches up
+      # when an iteration RETURNS and a parked ask never returns from the one it
+      # was asked in. Every fixture that answers the question hides that, which
+      # is why the suite could not have caught this.
+      def parked_journal(tool = recorded_tool)
+        Sync { |task| spawning(task, tool) { arrival(task) } }
+        settled_journal
+      end
+
+      def cited_by(bytes)
+        recording = Lain::Bench::Session.load(bytes.each_line)
+        [recording, recording.messages.flat_map(&:causal_parents).uniq]
+      end
+
+      def settled_journal
         scribe.catch_up(parent)
         scribe.close(reason: :exit)
-        Lain::Bench::Session.load(journal_io.string.each_line)
+        journal_io.string
       end
+
+      def recorded_session = Lain::Bench::Session.load(answered_journal.each_line)
+
+      # The two doors a human reloads a session through. The refusal lives at
+      # LOAD, so `--fork` and `--resume` meet it alike -- and both read a FILE,
+      # which is the one shape neither can be driven without.
+      def reopened(bytes)
+        Dir.mktmpdir do |state_home|
+          paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home })
+          File.write(File.join(paths.sessions_dir, "20260101T000000-1.ndjson"), bytes)
+          yield Lain::CLI::Resume.new(paths:)
+        end
+      end
+
+      def fork_selector = "20260101@#{parent.head_digest.delete_prefix("blake3:")[0, 12]}"
 
       it "reloads, and the fork point checks out, with no dangling causal parent" do
         recording = nil
@@ -1086,6 +1138,126 @@ RSpec.describe Lain::Tools::Subagent do
         cited = recording.messages.flat_map(&:causal_parents).uniq
 
         expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+      end
+
+      # The answered path, at the doors themselves rather than at the load
+      # alone: it worked before this card and has to go on working.
+      it "forks and resumes when the question was answered" do
+        reopened(answered_journal) do |resume|
+          expect(resume.fork(selector: fork_selector).timeline.head_digest).to eq(parent.head_digest)
+          expect(resume.call.timeline.head_digest).to eq(parent.head_digest)
+        end
+      end
+
+      # The promotion a parked ask forces and the one its iteration runs
+      # afterwards share ONE feed, and the stop digest advancing per turn is
+      # the whole of why the second walks nothing. Doubled records would be
+      # this file's own claim about the run, told twice.
+      it "journals each child turn exactly once when the question was answered" do
+        answered_journal
+        recorded = journal_io.string.each_line.filter_map do |line|
+          record = JSON.parse(line)
+          record["digest"] if record["type"] == "child_turn"
+        end
+
+        expect(recorded).to eq(recorded.uniq)
+        expect(recorded).not_to be_empty
+      end
+
+      describe "when the question is never answered" do
+        it "carries every digest the parked question cites" do
+          recording, cited = cited_by(parked_journal)
+
+          expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+        end
+
+        it "forks at its head" do
+          reopened(parked_journal) do |resume|
+            expect(resume.fork(selector: fork_selector).timeline.head_digest).to eq(parent.head_digest)
+          end
+        end
+
+        it "resumes onto that head" do
+          reopened(parked_journal) do |resume|
+            expect(resume.call.timeline.head_digest).to eq(parent.head_digest)
+          end
+        end
+
+        # `fresh` gives the child a root with no render edge out of it;
+        # `inherit` forks the parent, so the child's first turn RENDERS onto a
+        # parent head whose own turn record is not written yet either.
+        it "carries every cited digest under an inherit prefix too" do
+          inheriting = recorded_tool(policy: spawn_policy(prefix: :inherit, only: []))
+          recording, cited = cited_by(parked_journal(inheriting))
+
+          expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+        end
+
+        # The other disposition a parked question can end in: nobody COULD
+        # answer it, so the record is an `unanswered` message rather than an A.
+        it "carries every cited digest when the question ends unanswered" do
+          tool = recorded_tool
+          Sync do |task|
+            spawning(task, tool) do |run|
+              item = arrival(task)
+              askers.directory.reply(Lain::Tools::AskHuman::Unanswered.new, item.digest)
+              run.wait
+            end
+          end
+          recording, cited = cited_by(settled_journal)
+
+          expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+        end
+
+        # One builder, two children parked at once. The chain a spawn promotes
+        # against is built PER SPAWN for exactly this: a shared feed would walk
+        # one sibling's turns against the other's stop digest.
+        it "carries every cited digest when two siblings park at once" do
+          tool = recorded_tool(provider: mock(asks("first?"), asks("second?"), text_response("done")))
+          Sync do |task|
+            siblings = [task.async { tool.call({ "prompt" => "a" }, invocation) },
+                        task.async { tool.call({ "prompt" => "b" }, invocation) }]
+            pumped_until(task) { askers.questions.size >= 2 }
+            siblings.each(&:stop)
+          end
+          recording, cited = cited_by(settled_journal)
+
+          expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+        end
+
+        # The SECOND question parks, so this promotion runs on a feed whose
+        # stop digest the first iteration's catch-up already advanced.
+        it "carries every cited digest when a child parks on its second question" do
+          tool = recorded_tool(provider: mock(asks("first?"), asks("second?"), text_response("done")))
+          Sync do |task|
+            spawning(task, tool) do
+              askers.directory.reply("postgres", arrival(task).digest)
+              arrival(task)
+            end
+          end
+          recording, cited = cited_by(settled_journal)
+
+          expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+        end
+      end
+
+      # One level up, where the record's exposure is the grandchild's :spawn
+      # rather than its question -- the same unpromoted head, cited by a
+      # different record. A depth qualifier nobody wrote is not a scope
+      # boundary, so this door has to open too.
+      describe "when the parked question is a GRANDchild's" do
+        it "carries every digest its records cite" do
+          recording, cited = cited_by(parked_journal(nested_tool))
+
+          expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+        end
+
+        it "forks and resumes" do
+          reopened(parked_journal(nested_tool)) do |resume|
+            expect(resume.fork(selector: fork_selector).timeline.head_digest).to eq(parent.head_digest)
+            expect(resume.call.timeline.head_digest).to eq(parent.head_digest)
+          end
+        end
       end
     end
 
