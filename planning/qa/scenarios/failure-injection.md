@@ -12,7 +12,10 @@ journal, the store, the transport or the tools.
 **Three halves, and it is worth knowing which you are in.**
 
 - **§§1–3 and §11 need nothing running** — a journal on disk, a shell, and `lain` on `PATH`. No
-  cockpit, no nvim, no endpoint.
+  cockpit, no nvim, no endpoint. (§1's two record-integrity checks are the one exception:
+  *provoking* a zero-usage turn or a `TruncatedStream` needs a live endpoint behind a severing
+  proxy, the same instrument §4 and §12 use — *confirming* one, once provoked, is the usual
+  journal-on-disk read.)
 - **§§4–6 drive the transport at a broken endpoint.** Requests are attempted; none of them reaches a
   model, so there is no generation to wait for and nothing the model can decide.
 - **§§7–10 need a live session** with a real model behind it: the iteration ceiling, the tool
@@ -36,6 +39,74 @@ ruby -rjson -e 'bad=0; n=0; ARGF.each_line{|l| n+=1; (JSON.parse(l) rescue (bad+
 ```
 
 Remember token counts are nested: `turn_usage.usage.input_tokens`, not top-level.
+
+### 1a — The zero-usage case: a suppressed reading must not overwrite a real one
+
+`Agent::Accounting` (the last-turn reading `render_request` feeds to compaction) and `StatusFeed`
+(the published occupancy) used to gate on all four usage fields reading zero. A response that
+billed OUTPUT while reporting no INPUT passed that test, so both readers overwrote a real reading
+with a suppressed one wearing its shape. Both now gate on `total_input_tokens` being positive
+instead — the sum they actually publish — and a turn that fails the gate is skipped rather than
+believed: `Accounting#last_turn_usage` keeps its prior value, and so does `StatusFeed`'s
+`occupancy`, while its `unmeasured_turns` streak climbs by one. That streak is the fix's whole
+point — without it the token count keeps climbing while occupancy sits still, which reads as a
+stuck context rather than a stale reading.
+
+**To provoke it:** the severing proxy from §4/§12, in front of a live ollama. Sever the stream
+*after* the content tokens finish but *before* the terminal frame that would carry
+`prompt_eval_count`/`eval_count`. That is the exact shape `Provider::Ollama` used to decode as an
+ordinary turn — all-zero usage, prose intact, nothing said.
+
+**To confirm it,** from the journal:
+
+```bash
+# the severed turn's own record: input_tokens/output_tokens/cache fields all zero
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="turn_usage";
+  puts "digest=#{r["digest"]} usage=#{r["usage"]}"}' "$JOURNAL"
+
+# the next compaction_decision's used_tokens: must still be the LAST REAL reading, not the
+# severed turn's zero
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="compaction_decision";
+  puts "used=#{r["used_tokens"]}"}' "$JOURNAL"
+```
+
+and from the status feed's `state.json` (path per `method.md`'s "Record before you interpret"):
+`occupancy` unchanged across the severed turn, `unmeasured_turns` incremented by exactly one. A
+`used_tokens` or `occupancy` that drops to (or through) zero across the severed turn, or an
+`unmeasured_turns` that does not move, is the regression.
+
+### 1b — `TruncatedStream`: the producer now names which zero-usage shape it made
+
+`Provider::Ollama`'s stream assembler used to write `done: true` whether or not a terminal NDJSON
+frame ever arrived, so a connection that died mid-answer reassembled into a body
+shape-identical to a complete turn — `:unknown` stop reason, all-zero usage, prose intact — and
+nothing said so. A `Telemetry::TruncatedStream` record (journal type `truncated_stream`) now
+does: `kind` is `"unterminated"` (no terminal frame arrived at all — the prose is a fragment) or
+`"counts_absent"` (a terminal frame arrived, the prose is whole, but it carried no
+`prompt_eval_count`/`eval_count`), alongside `frames` (NDJSON objects ingested),
+`accumulated_bytes` (message bytes accumulated), `tool_calls` (tool-call frames in flight when
+the stream died — counted separately, because those carry no message text and would otherwise
+look like empty keepalives), and `request_digest`, the join key back to the round trip the
+stream was answering.
+
+**To provoke it:** the same severing proxy, in the two shapes the record distinguishes —
+
+- sever before ANY frame carrying `done: true` arrives, for `kind: "unterminated"`;
+- let the stream reach a `done: true` frame but strip its `prompt_eval_count`/`eval_count`, for
+  `kind: "counts_absent"`.
+
+**To confirm it:**
+
+```bash
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="truncated_stream";
+  puts "kind=#{r["kind"]} frames=#{r["frames"]} bytes=#{r["accumulated_bytes"]} " \
+       "tool_calls=#{r["tool_calls"]} digest=#{r["request_digest"]}"}' "$JOURNAL"
+```
+
+Join `request_digest` against the `turn_usage` record it explains — expect exactly one
+`TruncatedStream` per severed request, with `kind` matching the variant driven. A silent
+all-zero turn with no matching record here is the old, undiagnosable shape — the producer not
+saying anything is itself the regression to watch for.
 
 ## 2 — A torn `turn` record
 

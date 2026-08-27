@@ -252,15 +252,27 @@ only worth having if it is read rather than skimmed:
 
   This is also the cheapest explanation for an nvim RPC that hangs: check the pane geometry
   (`list-panes -a -F '#{pane_width}x#{pane_height}'`) before hunting anything subtler.
-- **Run ONE cockpit at a time (round 13, F73).** A second concurrent `lain up` — even on a
-  different project, with its own hash and its own nvim socket — deadlocks its nvim on an
-  `E325: ATTENTION` swap-file modal for `lain-cockpit://start`, whose swap path is a constant and
-  therefore shared. The modal blocks before nvim serves RPC, so `lain://approval` and
-  `:LainApprove` are unreachable while the chat pane looks perfectly healthy. Kill the previous
-  session, kill any surviving cockpit nvim, and remove
-  `$XDG_STATE_HOME/nvim/swap/lain-cockpit*.sw?` before bringing the next one up. A stale
-  `$XDG_RUNTIME_DIR/lain/nvim-*.sock` from the killed cockpit also makes `nv.sh` refuse on an
-  ambiguous glob (correctly) — remove it too.
+- **The one-cockpit-at-a-time workaround is retired (2026-08-27).** Round 13's F73 — a second
+  concurrent `lain up` deadlocking its nvim on the shared `lain-cockpit://start` swap path's
+  `E325: ATTENTION` modal, before nvim ever serves RPC — is fixed: `setlocal noswapfile` now
+  scopes to the scratch buffer and, the part that matters, runs *before* the `:file` that names
+  it, since `:file` is what creates the swapfile. A guard placed after it never ran — nvim was
+  already blocked on the recovery modal by then, and that is exactly the shape the first attempt
+  at this fix took: a correct-looking argv that did not fix the bug. Verified 2026-08-27 through
+  real tmux against a planted dirty swapfile: the pre-fix argv served no RPC and raised `E325`;
+  the flag placed after `:file` also served no RPC and raised `E325`; the shipped ordering served
+  RPC with no `E325`. A real file opened afterwards in that same nvim still gets its own
+  swapfile, so this does not disable swap recovery generally. The kill-the-previous-session,
+  clear-the-swap ritual this bullet used to prescribe is gone with it — recorded here, retired,
+  so a driver who remembers the old rule knows it was lifted on purpose, not lost in an edit.
+
+  Two facts about this class of bug are still worth carrying, because they govern how a driver
+  reproduces it:
+  - **`E325` fires on a *dirty* swapfile, not merely a present one.** A live-but-unmodified peer
+    collides silently onto `.swo`. The cockpit's scratch buffer is dirty as soon as a view lands,
+    so dirty is its steady state — but a check run against a clean buffer passes on the bug.
+  - **A stale swapfile is what a *crash* leaves.** `:qa!` removes it on clean exit, so
+    reproducing this needs a killed nvim, not a quit one.
 - **`remain-on-exit on` for every window the DRIVER opens**, or a crash erases its own evidence:
   `tmux -L lain-qa set-option -w -t <window> remain-on-exit on`.
 - **Chat input needs `-l`**: `send-keys -t <chat> -l '<text>'` then `send-keys -t <chat> Enter`.
@@ -503,6 +515,23 @@ been impossible. `nv.sh` now refuses rather than guesses (checks `$XDG_RUNTIME_D
 sandbox's own path before globbing, and refuses on more than one match instead of taking `head -1`);
 a hand-typed recipe copied out of this doc has no such guard, so resolve `$S` through `$QA/nv.sh`
 where possible rather than reimplementing the `find` by hand.
+
+**The refusal's remedy is your own stale socket, and `nv.sh` will not remove it for you.** A killed
+cockpit's nvim leaves its `$XDG_RUNTIME_DIR/lain/nvim-*.sock` behind, and that stale file is what
+usually turns one live match into the ambiguous "more than one" this refusal is protecting against.
+Remove the stale socket before bringing up the next cockpit, rather than working around the refusal.
+
+**Never `rm` the glob.** Several agents share this box -- that is the whole premise of the paragraph
+above -- and since the swapfile fix landed, two cockpits running at once is the ORDINARY state rather
+than the anomaly it used to be, so more than one LIVE socket is now expected. A wildcard delete takes
+a stranger's live cockpit with it, which is the same accident this section exists to prevent, in the
+other direction. Delete only what nothing answers on:
+
+```bash
+for s in "$XDG_RUNTIME_DIR"/lain/nvim-*.sock; do
+  timeout 2 nvim --server "$s" --remote-expr '1+1' >/dev/null 2>&1 || rm -f "$s"
+done
+```
 
 ### Pane attributes: `capture-pane -e`, not `-p`
 
