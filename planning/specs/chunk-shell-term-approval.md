@@ -1639,16 +1639,17 @@ failure count alone.
 - [x] T4 — excluded-programs config table — `173dcd5d` (the deny path is reachable from config)
 - [x] T5 — shell-arm journal record — `3b9d8fba` (its own spec is its only coverage; the sweeps cannot build it)
 - [x] T6 — one verdict, injected at both seams — `e92a97d6` (sameness is structural; the deny path is reachable)
-- [ ] T7 — bash journals its arm
-- [ ] T8 — `Rule::Call` carries a derived term
-- [ ] T9 — the composed-term approval rule
+- [x] T7 — bash journals its arm — `c80bd1da` (records the arm AND the verdict; term_arm? is the countable one)
+- [x] T8 — `Rule::Call` carries a derived term — `155a9afb` (a blanket #with refusal; one spec had pinned the forge as a feature)
+- [x] T9 — the composed-term approval rule — `bb55485d` (six predicates; /proc/self/root aliased the whole filesystem)
 - [ ] T10 — shell manual-QA scenario
 - [x] T11 — `web_fetch` egress floor — `fde1a0be` (metadata, loopback and RFC1918 refused before connecting)
 
 ### Landed, in order
 
 `173dcd5d` T4 · `3b9d8fba` T5 · `174fad5e` T1 · `1d97c490` T3 · `ede7d5cf` census ·
-`fde1a0be` T11 · `0bb167b1` T2 · `e92a97d6` T6
+`fde1a0be` T11 · `0bb167b1` T2 · `e92a97d6` T6 · `c80bd1da` T7 · `155a9afb` T8 ·
+`bb55485d` T9
 
 `ede7d5cf` is orchestrator-owned and belongs to no card: `NAT64` was reported
 UNCLASSIFIED by `bin/comment-census --check-tickets` when T11 wanted it in prose.
@@ -1707,3 +1708,28 @@ does hold); and `Shell::Parse` described as value-equal (`Parse.new == Parse.new
 **The tell, four times out of five, was a quantifier** — *every other host*, *every prefix*, *both
 collaborators*, *nothing in `lib/`*. Every card after this one is asked to run the same audit and
 to report it even when clean.
+
+## Integration checks — results
+
+Run on `bb55485d` from a quiet tree. Check 11 is **not** orchestrator-runnable and is owed to a
+human at a real cockpit.
+
+| # | check | result |
+|---|---|---|
+| 1 | suite + example COUNT | **16,398 / 0 failures / 15 pendings**, against a recorded pre-chunk baseline of 16,176 |
+| 2 | `rubocop`, bare | 1410 files, 0 offences. **No `Metrics/*` loosened** — every trip paid by extraction |
+| 3 | `pre-commit run --all-files` | all 15 hooks pass |
+| 4 | Rust | **no crate changed**; `cargo fmt`/`clippy`/`test`/`deny` all pass |
+| 5 | output discipline | 3 / 0 |
+| 6 | `Ractor.shareable?` sweeps | 7 / 0 |
+| 7 | **the headline capability** | `cat README.md \| head -20` and `grep -n foo lib \| wc -l` approved at the rules rung, ruling names `composed_term`, **no approval parked** |
+| 8 | six negative controls | all park for a human: bare-word `cat .netrc`, `cat .env`, `gzip somefile`, `/tmp/evil/cat README.md`, `grep -h -r . <abs>/.ssh`, one unlisted stage — plus `cat /proc/self/environ` |
+| 9 | egress floor | metadata, carrier-NAT, IETF-protocol and empty-host all refused before connecting; `https://example.com/x` still permitted |
+| 10 | `--exec docker` | a piped term reports `takes_term? false`, falls back to the string, **no unsupported-shape error**, exit 0; a one-stage term runs as argv |
+| 12 | ticket census | 0 banned schemes, 0 unclassified |
+| 13 | density | the 23 touched `lib/` files read **1.55 prose:code** — the repo's own average is 1.53. The new files are higher (`composed_term.rb` 2.38) and the panel judged the excess to be per-entry evidence the card mandates rather than restatement |
+
+**Check 11 — the manual-QA round — is owed.** `planning/qa/scenarios/shell-terms.md` exists and is
+scheduled into the regression gate, but **every expected string in it is a prediction until a round
+drives it**. The first round should expect to correct the document as much as to find defects, and
+should say which it did.
