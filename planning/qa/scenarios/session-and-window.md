@@ -120,7 +120,14 @@ honest denominator with nothing resident. That is the operator lever; it is othe
 
 ## 4 — The three readers must agree
 
-Journal `compaction_decision`, `.lain/state.json` `occupancy`, and the HUD's `ctx N%`.
+Journal `compaction_decision`, the status feed's `occupancy`, and the HUD's `ctx N%`.
+
+**The status feed is NOT `.lain/state.json` any more, and this section used to say it was** (round
+13). `ProjectDir` retired that path: the feed is now
+`$XDG_STATE_HOME/lain/status/<project_hash>/state.json`, and `spec/lain/project_dir_spec.rb` fails
+any expression in `lib/` that recomposes the old one. `lain up` prints the resolved path on the
+`HUD state:` line at launch — read it from there rather than reconstructing the hash. A driver who
+looks for `.lain/state.json` finds nothing and has no reader to cross-check against.
 *Disagreement between them is the real failure;* a uniformly wrong number is the known one.
 
 Cross-check the denominator too -- **but mind the LAG, which round 9 measured and which the old

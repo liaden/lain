@@ -85,7 +85,7 @@ with `git ls-files --cached --others --exclude-standard` before trusting a count
 
 | target | files | lines | |
 |---|---:|---:|---|
-| `lib` | 742 | 161,963 | **over both** |
+| `lib` | 742 | 161,963 | **over both** — round 14 measured **748**; re-count, do not copy |
 | `lib/lain/frontend` | 52 | 13,578 | fits |
 | `lib/lain/review` | 45 | 10,722 | fits |
 | `lib/lain/survey` | 9 | 1,343 | fits |

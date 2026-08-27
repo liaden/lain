@@ -140,6 +140,18 @@ git -C "$LAIN_REPO" status --porcelain   # the OTHER close-out: must be empty
 #    obvious "cleanup" response would commit the operator's .envrc and local settings.
 ```
 
+**P16's false positives CAMOUFLAGE true ones, and that is the half round 14 had to learn.** The
+warning above says a sandbox-env shell reports globally-ignored files as untracked. The consequence
+nobody wrote down is that a real leak sitting in that same list reads as more of the same noise.
+Round 14 found `not/absolute/.local/state/nvim/nvim.log` and `.local/state/nvim/nvim.log` in the
+checkout, dated **four days earlier** -- a round-11/12 probe that gave `XDG_STATE_HOME` a RELATIVE
+value, so nvim resolved its log dir against the cwd. Neither is gitignored; both had been sitting in
+`git status` through two rounds' close-outs, indistinguishable from `.envrc` and friends.
+
+So: take the baseline in a clean shell, compare in a clean shell, and **diff against the baseline
+rather than reading the list**. A diff of two clean lists has no P16 noise in it at all, which is the
+whole reason to take a baseline before act 0.
+
 **And a THIRD close-out check, because the two above are BOTH blind to it (P11, round 9).**
 `Project` writes `.lain/state.json` into the **cwd lain was launched from**, which for an agent
 driving non-interactive probes is usually the lain checkout itself. `find ~/.local/state/lain`
@@ -151,6 +163,13 @@ negatives reported clean. Either `cd` into the sandbox project for every probe, 
 ```bash
 ls -d "$LAIN_REPO"/.lain 2>/dev/null && echo "LEAKED: remove it"   # must print nothing
 ```
+
+**Keep this check, but know its rationale changed (round 13).** The status feed no longer lands in
+`.lain/`, so the specific leak P11 described — `Project` writing `.lain/state.json` into the launch
+cwd — is gone. `.lain/` is still where `config.toml`, `slots/`, `skills/`, `prompt.toml` and
+`epics/` live, and a remembered approval persisted into `.lain/config.toml` in the lain checkout is
+exactly the kind of durable state this check exists to catch. It is still invisible to
+`git status` (`.gitignore:22`).
 
 **The warning that prevents it: never put a `GEM_HOME` on a path `exe/lain` will inherit.**
 `exe/lain:28-32` pins `BUNDLE_GEMFILE` to lain's own Gemfile and requires `bundler/setup` — so a
@@ -233,6 +252,15 @@ only worth having if it is read rather than skimmed:
 
   This is also the cheapest explanation for an nvim RPC that hangs: check the pane geometry
   (`list-panes -a -F '#{pane_width}x#{pane_height}'`) before hunting anything subtler.
+- **Run ONE cockpit at a time (round 13, F73).** A second concurrent `lain up` — even on a
+  different project, with its own hash and its own nvim socket — deadlocks its nvim on an
+  `E325: ATTENTION` swap-file modal for `lain-cockpit://start`, whose swap path is a constant and
+  therefore shared. The modal blocks before nvim serves RPC, so `lain://approval` and
+  `:LainApprove` are unreachable while the chat pane looks perfectly healthy. Kill the previous
+  session, kill any surviving cockpit nvim, and remove
+  `$XDG_STATE_HOME/nvim/swap/lain-cockpit*.sw?` before bringing the next one up. A stale
+  `$XDG_RUNTIME_DIR/lain/nvim-*.sock` from the killed cockpit also makes `nv.sh` refuse on an
+  ambiguous glob (correctly) — remove it too.
 - **`remain-on-exit on` for every window the DRIVER opens**, or a crash erases its own evidence:
   `tmux -L lain-qa set-option -w -t <window> remain-on-exit on`.
 - **Chat input needs `-l`**: `send-keys -t <chat> -l '<text>'` then `send-keys -t <chat> Enter`.
@@ -421,6 +449,18 @@ reading:
 $QA/peek.sh 2 | tail -1        # `you>` or `human>`?
 ```
 
+### `peek.sh` filters blank lines, so a stale tail reads like a frozen pane
+
+`peek.sh <n>` pipes through `command grep -v '^$'` before `tail -n`, which is usually what you want
+— but it means a pane whose visible rows have gone BLANK (the TUI between renders, or a prompt that
+has not been redrawn) returns the same trailing text call after call. Round 13 read that as a wedged
+session three times before capturing the pane raw and finding rows 29-50 were simply empty. When a
+pane looks frozen, capture it without the filter and count the lines before diagnosing anything:
+
+```bash
+tmux -L "$QA_SOCK" capture-pane -p -t "$PANE" | cat -n | tail -25
+```
+
 ### Read the `lain://` buffers, not just `capture-pane`
 
 They are a richer evidence surface, and **where they disagree with the pane, that disagreement is
@@ -601,7 +641,10 @@ Per act, with literal spellings:
   Compute the hash ahead of the act:
   `ruby -rdigest -e 'puts Digest::SHA256.hexdigest(File.realpath(ARGV[0]))[0,12]' <dir>`
   (kernel-resolved, so a symlinked sandbox names a different directory than the editor serves).
-- **`.lain/state.json`**, and **`.lain/config.toml`** for the approval-persistence check.
+- **The status feed**, at `$XDG_STATE_HOME/lain/status/<project_hash>/state.json` — **not**
+  `.lain/state.json`, which `ProjectDir` retired (round 13 lost a cross-check to the old spelling).
+  `lain up` prints the resolved path on its `HUD state:` line; read it from there.
+  And **`.lain/config.toml`** for the approval-persistence check, which is still under `.lain/`.
 - **`capture-pane -p` for BOTH panes** at the moment of a finding.
 - **`ollama ps`** — residency is a precondition for the cold-start reading and is not recoverable
   after the fact.
@@ -791,6 +834,28 @@ ps -eo pid,args | grep '[b]ench arms' | grep -v zsh   # bracket AND drop the she
 ls -l /proc/<pid>/exe                                 # what it really is
 ```
 
+**A driver script with an UNSET `$QA_SOCK` aims at the operator's own tmux, and that is the same
+family of hazard one step out (round 14).** A helper invoked without `$QA` exported ran
+`tmux -L "" kill-server`, which resolves to the **default** socket rather than the round's. It
+errored harmlessly here only because `/tmp/tmux-1000` is a directory; on a box where the operator
+had a server on the default socket it would have killed it, mid-round, with no warning. The fix is
+the same shape as the `pgrep` one -- refuse rather than guess:
+
+```bash
+: "${QA_SOCK:?refusing: QA_SOCK is unset -- an empty -L targets the DEFAULT tmux server}"
+```
+
+Put that line at the top of every helper that takes `-L "$QA_SOCK"`, not only the ones that kill.
+
+**Round 13 hit it an EIGHTH time**, spelling it `pkill -u "$(id -u)" -f 'nvim.*lain-cockpit'` to
+clear cockpit nvims: the pattern matched the issuing shell's own command line and killed it (exit
+144). It also came within one broadened pattern of killing the operator's own unrelated `nvim`. The
+form that worked first try, and the one to copy:
+
+```bash
+for p in $(ps -eo pid,args | command grep '[l]ain-cockpit://start' | awk '{print $1}'); do kill -9 $p; done
+```
+
 **Round 9 hit it a SIXTH time, having read this section**, reaching for `pkill -f` reflexively to
 clear a hung `ollama run`: the pattern matched the agent shell's own command line and killed the
 command issuing it (exit 144). Treat it as a standing hazard, not a lesson anyone has absorbed --
@@ -848,6 +913,47 @@ explicit arguments or an array; and when a refusal's WORDING is the assertion, c
   waited 35.8s for its first byte while an unjournaled sibling held the only slot", and it is the
   only way to count lain's real model calls against the journal's. `$QA/proxy.rb` ships with the
   sandbox; `failure-injection.md` §12 drives it.
+
+## "Unreachable" is a claim about the bench, and it is checked, not assumed
+
+Recorded because round 14 got it wrong four times in one round, and because the cost of the mistake
+is invisible: a scenario written off as unreachable stops being a gap anyone can see, exactly like
+one skipped by convention.
+
+**The bench that is already up is the default answer.** `bench.md` brings up a local ollama with
+`qwen3-coder:30b` resident, and most scenarios in `scenarios/` say in their own `Needs:` line that
+this is all they want. Round 14 wrote "not driven — needs a model" against `subagents-and-backends`,
+`memory-and-dogfood` and `rails-blog`, all three of which drive against exactly that bench, and
+against `ollama-cloud-arm`, whose `OLLAMA_API_KEY` was in the repo's own `.envrc`. The second pass
+drove all four and reached `rails-blog` §2, which thirteen rounds had not.
+
+**Separate the two reasons, because only one of them is free to assert.**
+
+| reason | how it is established |
+|---|---|
+| **budget** — "the round ran out of patience or wall-clock" | self-evident; say it and move on |
+| **capability** — "this box cannot do X" | a CHECK, named in the findings beside the claim |
+
+The capability checks are seconds each, and they are:
+
+```bash
+command grep -n 'Needs:' planning/qa/scenarios/<scenario>.md    # the scenario states its own preconditions
+command grep -oE '[A-Z_]*(KEY|TOKEN)[A-Z_]*' .envrc             # names only -- NEVER print a value
+command -v <the binary the scenario names>                      # rails, docker, cargo
+curl -s localhost:11434/api/tags                                # is the local arm actually up?
+```
+
+**A local model call is a budget cost, not a capability gap.** It spends patience and GPU seconds and
+nothing else — no quota, no key, no network. Writing "needs a model" as though it were a wall is the
+specific error to avoid; write "did not fit the round" if that is what happened, which is honest and
+leaves the scenario visible as a debt.
+
+**And read the scenario for the way around its own precondition before accepting it.** `rails-blog`
+§2 wants tool results of real size and names `rails new` as the way to get them -- but the section
+itself says "a non-minimal app, **or a directive that reads large generated files back**". Round 14
+took the second clause, generated a tree, and reached a 120,045-byte tool result with no Rails on the
+box at all. A scenario's stated subject is usually one way to satisfy its premise, not the only one;
+the premise is what the round owes.
 
 ## Budget the round around the harness's own limits
 

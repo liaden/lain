@@ -131,8 +131,15 @@ Expected banner: `walk it in lain://review; <CR> opens a row beside you, <C-w>l<
 the file where :LainNote annotates, :LainReviewVerdict approve hands it back`.
 
 The walk is named in the banner because `<CR>` lands the cursor in the **sidebar**, not in the
-file -- and `:LainNote` reads the current buffer, so from the sidebar it correctly refuses. Two
-`<C-w>l`, not one: the slots are sidebar, OLD, NEW, so a single motion reaches the history side.
+file -- and `:LainNote` reads the current buffer, so from the sidebar it correctly refuses.
+
+**The motion count depends on the SOURCE, and the banner adapts -- round 14 measured both.** A
+**changeset** has an old side, so the slots are sidebar, OLD, NEW: three windows, and the banner
+says `<C-w>l<C-w>l` because a single motion reaches only the history side. A **survey** has no old
+side (`changeset-review.md` says so in its own opening), so the slots are sidebar, NEW: two windows,
+and the banner correctly says one `<C-w>l`. This section's own example is `/survey ./lib`, so
+following it literally over a survey counts one window too many. Read the banner the run printed and
+`winnr("$")`, rather than either number quoted here.
 
 Then, over RPC, verifying focus at every step:
 

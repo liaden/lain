@@ -41,8 +41,14 @@ below appears in it, and that nothing appears in it that has no implementation. 
 is the listing order — a `/help` sorted alphabetically has been re-sorted somewhere, and that is a
 small finding worth recording because it means a second ordering exists.
 
-`/nosuchcommand` must reach the model as prose, **not** produce an "unknown command" error. That is
-the whole point of the fallthrough: the namespace stays open for skills.
+**`/nosuchcommand` refuses by name — it does NOT reach the model, and this paragraph said the
+opposite until round 14.** An unregistered `/word` produces `unknown skill "nosuchcommand", expected
+one of [...]` with the journal unchanged; bare prose is what reaches the model. Measured with a
+control (round 14: journal 55->55 on the slash form, 55->62 on the same words without the slash),
+and `spec/lain/middleware/skill_dispatch_spec.rb:103` pins it by name -- "an unknown skill is
+reported, not sent to the model". A silent fallthrough would be the `StringInquirer` shape this
+codebase rejects: a typo answered quietly. What the fallthrough still protects is the *skill*
+namespace -- a registered skill's `/word` dispatches, and only an unknown one refuses.
 
 **The one collision guarantee** is a wiring-time refusal, not a last-write-wins — two commands
 claiming one name raise at assembly. Nothing a driver types can provoke it, so note it as

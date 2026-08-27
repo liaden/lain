@@ -21,37 +21,52 @@ components disagreeing with each other, and for the moments a human would be mis
 
 ## Phase 1 — Scope, and say what you chose
 
-**Enumerate `planning/qa/scenarios/` — never work from a remembered list.** Fourteen files as of
-2026-08-25, and a round that runs a hard-coded five silently stops covering the sixth. A scenario in
-neither README's tiers nor your round is one somebody added and nobody scheduled: say so.
+**Enumerate `planning/qa/scenarios/` — never work from a remembered list, a count, or a list written
+into any document, this one included.** Do it first, every round:
 
-**README sorts the fourteen into three tiers, and that sorting — not the directory listing — is what
-a round follows.** It carries the reasoning for each; this is the shape:
+```bash
+ls planning/qa/scenarios/
+```
 
-| tier | what |
+**That listing is the authority on the SET.** Any count written down goes stale the day somebody adds
+a scenario, and a round working from a stale one silently stops covering the new file — which has
+already happened here more than once, in both directions.
+
+**With no scope named, the round drives EVERY scenario in that listing.** Not a tier, not a subset.
+README's tiers are **ordering and budgeting** — what to drive first, what piggybacks on what, which
+scenarios bring up their own subject — and they are **not a filter that drops scenarios**. Read
+README for the reasoning; this is the shape:
+
+| tier | what it means |
 |---|---|
-| **full round** | `session-and-window` → `rust-cli` → **a SUBJECT with `cockpit-surfaces` piggybacked** → `bench-arms` → `failure-injection` |
-| **regression gate** | `failure-injection` + `session-and-window` + `repl-commands` + `epic-tier` — cheap, deterministic, run after any chunk |
-| **owned rounds** | `rails-blog`, `secret-boundary`, `changeset-review`, `subagents-and-backends`, `memory-and-dogfood` — each drives its OWN round in its OWN context, because each brings up its own subject and interleaving them half-builds a precondition |
+| **the spine, first** | `session-and-window` → `rust-cli` → **a SUBJECT with `cockpit-surfaces` piggybacked** → `bench-arms` → `failure-injection`. Everything else reads better once the loop is known good. |
+| **own-subject, sequenced after** | `secret-boundary`, `changeset-review`, `subagents-and-backends`, `memory-and-dogfood`, `rails-blog` — each gets its **own bring-up and its own subject tree inside this round**. They are sequenced rather than interleaved because each half-builds a precondition the others trip over. |
+| **cheap deterministic, anywhere** | `failure-injection`, `session-and-window`, `repl-commands`, `epic-tier`, `survey`, `prompt-slots-and-roles`, `shell-term-approval` — also the standalone regression gate when the USER scopes the round to one. |
 
-**With no scope named, run the full round.** Two traps in that sequence, both of which have already
-cost a round: `rust-cli` is the smoke test and is **not** a subject — the subjects are
-`bowling-ruby` and `rails-blog` — and `cockpit-surfaces` piggybacks on the **subject** session, not
-on the smoke test. Rounds 7 and 8 collapsed those two steps and neither noticed.
+Two traps in the spine, both of which have already cost a round: `rust-cli` is the smoke test and is
+**not** a subject — the subjects are `bowling-ruby` and `rails-blog` — and `cockpit-surfaces`
+piggybacks on the **subject** session, not on the smoke test. Rounds 7 and 8 collapsed those two
+steps and neither noticed.
 
-**An owned round needs a separate invocation and you cannot start one.** So say it in the **opening
-plan**, not only in the findings: *"this context runs the full round; `<owned>` is scheduled for this
-round and needs a second `/manual-qa <owned>` invocation, which I cannot start."* Round 9 named it
-only at the end and `secret-boundary` slipped anyway — the same way `rails-blog` slipped for three
-rounds. When one does slip, **the rotation does not advance**: record the slip in README so the next
-round takes the same scenario rather than the next one along.
+**There is no such thing as a scenario that "needs a second invocation".** That convention is what
+caused scenarios to slip round after round while the documents read as though they were covered:
+round 9 named `secret-boundary` as owed and it slipped anyway, `rails-blog` slipped for three rounds
+the same way, and round 13 settled it by driving everything in one context and reaching
+`rails-blog`'s compaction act for the first time in the bench's history. An own-subject scenario
+gets its own bring-up and its own tree **within this round** — start those early enough that they are
+not what the budget runs out on.
 
-If the user named a scenario, use it. If they asked for a regression gate after a chunk, that is the
-cheap set above; README says which to cut first if it will not fit.
+**Dropping a scenario is a DECISION you name in the findings, with its reason** — never a default and
+never silent. That includes `bowling-ruby`, `rails-blog`, and anything you ran out of budget for.
+A scenario skipped by convention stops being a gap anyone can see. If a scenario appears in the
+listing but in none of README's tiers, that is one somebody added and nobody placed: drive it anyway,
+and say so.
 
-**Dropping a scenario from a full round is a decision, not a default** — name which and why, in the
-findings, so the gap is legible rather than looking like coverage. Do not block on the question:
-state the plan in one or two lines with its rough cost, and start.
+If the user named a scenario, use that. If they asked for a regression gate after a chunk, that is
+the cheap deterministic set above, and README says which to cut first if it will not fit — **that
+licence belongs to the scoped gate alone and never to a full round.**
+
+Do not block on the question: state the plan in one or two lines with its rough cost, and start.
 
 ## Phase 2 — Bring up the bench, and prove the sandbox
 
@@ -100,9 +115,12 @@ approvals are raised `-u critical` and never auto-expire — any that fired woul
 
 Also record the round's start time — you need it for the close-out negative check.
 
-## Phase 3 — Run the scenario
+## Phase 3 — Run the scenarios
 
-Follow the scenario's own steps. Four rules override any impulse to improvise:
+Follow each scenario's own steps, in the order Phase 1 settled. A scenario that brings up its own
+subject gets that bring-up **here**, in this round — do not carry a previous scenario's tree into one
+that specifies its own, and do not interleave two bring-ups. Four rules override any impulse to
+improvise:
 
 - **Send Enter ONCE, then poll the journal.** Never retry on the status line. The old
   "retry until it leaves idle" rule turned one prompt into four journaled turns. `$QA/drive.sh`
@@ -181,6 +199,39 @@ reproduction, and the evidence that distinguishes it from the nearest innocent e
 
 Also record, deliberately: **which of the previous round's defects behave differently now**, and for
 each, whether differently means better. A fix that turned a hang into a crash is a finding.
+
+**And a coverage table over the full directory listing** — every scenario Phase 1 enumerated, with
+what was driven and, for anything not driven, the reason. "Ran out of budget" is an acceptable
+reason; omission is not. A round whose findings do not account for a scenario has made that scenario
+invisible, which is the failure this bench has re-learned more times than any other.
+
+**A reason of the form "it needs X" is a CLAIM, and you check it before writing it.** Budget and
+wall-clock are self-evident; a capability is not. Round 14 wrote "not driven" against four scenarios
+and was wrong about all four: three (`subagents-and-backends`, `memory-and-dogfood`, `rails-blog`)
+run on the **local ollama bench that was already up and warm**, and the fourth
+(`ollama-cloud-arm`) needed a key that was sitting in the repo's own `.envrc`. The driver had
+conflated *"this scenario spends model calls"* with *"this scenario is out of reach"*. The user asked
+one question and the second pass reached all four — including `rails-blog` §2, unreached in
+**thirteen** rounds.
+
+So before "not reached — needs X" goes in the table, do these three, and they cost seconds:
+
+```bash
+ls planning/qa/scenarios/<the one you are about to drop>.md   # what does it SAY it needs?
+command grep -n 'Needs:' planning/qa/scenarios/*.md           # every scenario states its own preconditions
+command grep -oE '[A-Z_]*(KEY|TOKEN)[A-Z_]*' .envrc           # names only -- never print a value
+```
+
+**The default answer is the bench you already brought up.** Most scenarios in this directory say so
+in their own `Needs:` line — README's own words are that the six added 2026-08-23 are "all driveable
+against the **local** bench — ollama, `git`, `docker`, the filesystem — and none needs a remote
+provider or a forge". A scenario that spends *local* model calls costs patience, not capability, and
+patience is a budget reason you state as one.
+
+**A genuine capability gap is provable and you prove it.** Round 14's one real gap was
+`prompt-slots` §6's paid half: `ANTHROPIC_API_KEY` is on no shell and in no `.envrc` on that box, and
+the findings say exactly that. Write the gap the way you would write a finding — with the check that
+established it.
 
 ## Phase 6 — Close out
 

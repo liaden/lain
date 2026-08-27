@@ -93,39 +93,76 @@ that had never been measured against a real prefix:
 |---|---|---|
 | [`prompt-slots-and-roles.md`](scenarios/prompt-slots-and-roles.md) | Does a project's own `.lain/slots/` tree actually reach the model — does a top-level or role override land verbatim, does a typo'd filename refuse loudly **by name** at every level (`UnknownSlot`) rather than being silently ignored, and does the shipped 364-byte default system slot actually miss Anthropic's 4096-token cache floor on the wire, not just on paper? | cheap (one step paid) |
 
+**PLACED, as of round 13: it joins the REGRESSION GATE**, on the same standing rule as
+`repl-commands`, `epic-tier` and `survey` — anything deterministic belongs in the cheap set even
+when the feature it guards is not. Until round 13 it sat in no tier at all: described here,
+scheduled nowhere, which is exactly the "somebody added it and nobody scheduled it" case the skill
+tells a round to name. Its first drive (round 13) found §1's instrument was not executable as
+written — `slot_fills` is a **bench** record and a plain `lain chat` writes zero — which is a fair
+argument for driving a new scenario promptly rather than letting it age unrun.
+
 Almost all of it is a zero-model-turn refusal or `/ruby` inspection path, on `repl-commands.md`'s
 shape. The one exception is its §6 second half: confirming the shipped default actually misses the
 cache on a real round trip costs **2 completions against a live Anthropic key** — the free half of
 §6 (the byte count against the published floor) costs nothing and is not a substitute for it.
 
-**Fifteen scenarios do not fit in one round, and pretending otherwise is how a slot gets
-substituted** — that is the failure rounds 7 and 8 made with `cockpit-surfaces`, one level out. So
-the six above are **not appended to the full round below**. They are placed:
+**Added 2026-08-27** — the first scenario over `lib/lain/shell/`, written because the subsystem that
+decides, per gated call, whether a command runs as reconstructed argv or as a string handed to
+`sh -c` had **no** manual coverage at all and was not in this file's Known gaps either. The gap was
+invisible:
 
-- `repl-commands` and `epic-tier` are cheap and fully deterministic, so they join the
-  **regression gate** (see below) on the standing rule that anything deterministic belongs in the
-  cheap set even when the feature it guards is not. **`survey` joins them as of 2026-08-25** on the
-  same rule: §1–§6 are zero-model, and §7's one local call is what stops the docent debt being
-  deferred a fifth time.
-- `secret-boundary`, `changeset-review`, `subagents-and-backends` and `memory-and-dogfood` are
-  **owned rounds**, on `rails-blog`'s precedent: a scenario that owns its context has no position in
-  a list to be unlucky about. Schedule one per round alongside the full round, rotating.
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`shell-term-approval.md`](scenarios/shell-term-approval.md) | Does the **parse boundary** refuse what it claims to (the 4096-byte cap reporting *both* broken and not-covered, the newline that has no separator node and is caught by arithmetic instead), do the **verdict arms** land where they say — `git` abstaining deliberately, `deny` existing and being **unreachable in production** — and **can a driver tell from the outside which arm ran**? Runs entirely on the **local** arm. | cheap |
 
-  **`secret-boundary` is DISCHARGED as of round 10.** It slipped round 9, carried, and round 10
-  drove §3, §4 and §5 — so the three-place split is now **3 of 3 driven** rather than resting on
-  specs, and §5 produced the round's HIGH finding (F63). The rotation may now advance.
+**It joins the REGRESSION GATE**, on the standing rule stated twice below: anything deterministic
+belongs in the cheap set even when the feature it guards is not. §1, §2, §4a, §6 and §10 are
+zero-model `/ruby` reads; the rest is under fifteen local completions.
 
-  **The rotation slot for round 11 is `rails-blog`**, which is the only scenario still driven **zero
-  times end to end**, and whose §2 (unbounded tool output) no round has ever reached. It has a real
-  precondition round 11 must handle deliberately rather than improvise: **`rails` is absent from
-  this box** (not on `PATH`, gem not installed), and installing it collides with P15's `GEM_HOME`
-  question. Budget the install as part of that round, or say plainly that it slipped again.
+**Roughly half of it is written against an unlanded chunk and says so, section by section.**
+`planning/specs/chunk-shell-term-approval.md` is `status: draft`, so the config deny path, the rule
+that auto-approves an all-allowlisted term, the term-carrying `Rule::Call`, the journal record naming
+the arm and `web_fetch`'s non-routable refusal are all marked **blocked on** the card they wait for,
+with the pre-state to confirm today instead. Driving a blocked section and filing the absence is the
+one way that scenario's first round wastes itself.
 
-**A full round — the default when no scope is named** (`.claude/skills/manual-qa` defers to this
-line for the order): `session-and-window` → `rust-cli` → a subject with `cockpit-surfaces`
-piggybacked → `bench-arms` → `failure-injection`.
+## What a full round drives, and in what order
 
-**That is FIVE steps, and `rust-cli` is not one of the subjects.** It is the smoke test; the subjects
+**A full round — the default when no scope is named — drives EVERY scenario in
+`planning/qa/scenarios/`.** `.claude/skills/manual-qa` defers to this section for the order, and the
+**directory listing is the authority on the set**: enumerate it fresh at the start of every round,
+never from a count or a list written down anywhere, including here. A scenario added since the last
+round is in scope the moment it exists.
+
+**The tiers below are ORDERING AND BUDGETING, not a filter.** That is the correction round 13 forced:
+this file used to describe the full round as a five-step subset with everything else "placed" into a
+regression gate and rotating owned rounds needing separate invocations, and the predictable result
+was that scenarios slipped round after round while the document read as though they were covered.
+Round 13 drove everything in one context at the user's explicit instruction and reached
+`rails-blog`'s compaction act for the first time in the bench's history — which settled the question.
+**Nothing is deferred by convention any more. Dropping a scenario is a decision to name in the
+findings, with its reason.**
+
+**The spine, and it goes first**, because everything else reads better once the loop is known good:
+`session-and-window` → `rust-cli` → **a SUBJECT with `cockpit-surfaces` piggybacked** →
+`bench-arms` → `failure-injection`.
+
+**Then the scenarios that bring up their own subject**, each with its own bring-up and its own tree —
+`secret-boundary`, `changeset-review`, `subagents-and-backends`, `memory-and-dogfood`,
+`rails-blog` — and **that reasoning is still sound and is why they are sequenced last rather than
+interleaved**: each half-builds a precondition the others would trip over, and interleaving them is
+how a round ends with three fixtures and no result. Sequencing them is the answer; deferring them to
+a round that never comes is not. `rails-blog` is the most expensive and needs a real precondition
+handled deliberately rather than improvised: **`rails` may be absent from the box**, and installing
+it collides with the `GEM_HOME` question — round 13 installed Rails 8.1.3.1 into the sandbox and the
+close-out negatives held, so that recipe is known to work.
+
+**And the cheap deterministic set can go anywhere**, which is what makes it useful as a standalone
+regression gate after a chunk: `failure-injection`, `session-and-window`, `repl-commands`,
+`epic-tier`, `survey`, `prompt-slots-and-roles`, `shell-term-approval`. Running one of these early
+costs almost nothing and catches a broken bench before a subject session is spent on it.
+
+**`rust-cli` is NOT one of the subjects.** It is the smoke test; the subjects
 are `bowling-ruby` and `rails-blog`, and the third step is a SUBJECT with `cockpit-surfaces` riding
 on it. **Rounds 7 and 8 both collapsed steps 2 and 3** — each piggybacked `cockpit-surfaces` onto the
 `rust-cli` crate, each wrote "the `rust-cli` crate served as this round's subject", and neither
@@ -144,20 +181,25 @@ say "one subject", and the predictable consequence is that the cheaper one alway
 consequence recurs one level out** when the smoke test is allowed to stand in for a subject, which is
 what the paragraph above exists to stop.
 
-**But `rails-blog` gets its OWN round, in its own driver context** — it is not the tail of the
-sequence above, and it is not something a full round "reaches" if there is budget left. Rounds 4, 5
-and 6 each ended without it, always for the same reason: one context carried every scenario and was
-spent by the time the expensive one came up. **Reordering is not the fix** — it only moves which
-scenario starves. A scenario that owns its context has no position in the list to be unlucky about.
+**`rails-blog` gets its own bring-up and its own subject tree, inside the one round** — not its own
+invocation. Rounds 4, 5 and 6 each ended without it, always for the same reason: one context carried
+every scenario and was spent by the time the expensive one came up, and the fix this file reached for
+then was to schedule it separately. **That fix failed for three more rounds**, because a separate
+invocation is one nobody starts. Round 13 drove it in the same context as the spine and reached its
+compaction act. So: **reordering is not the fix and neither is deferral** — what is left is budget.
+Start `rails-blog`'s bring-up early enough that it is not what the round runs out of time on, and if
+the budget really will not stretch, say which scenario is being dropped and why **before** the round
+ends rather than reconstructing it afterwards.
 
-So: dropping `bowling-ruby` from a round is a decision to name in the findings. `rails-blog` is not
-dropped, because it was never in that budget — it is **owed**, and a round should say so. A scenario
-skipped by convention stops being a gap anyone can see; one that is separately scheduled stays
-visible as an outstanding debt instead.
+So: dropping ANY scenario from a round is a decision to name in the findings, `bowling-ruby` and
+`rails-blog` included. A scenario skipped by convention stops being a gap anyone can see; one named
+in the findings stays visible as an outstanding debt instead.
 
-**A suggested regression gate after a chunk lands:** `failure-injection` + `session-and-window`,
-and since 2026-08-23 also `repl-commands` + `epic-tier`, and since 2026-08-25 `survey`.
-All five are cheap, deterministic, and cover the paths most chunks touch. As of 2026-08-18 the first pair
+**A suggested regression gate after a chunk lands** — this is a *scoped* invocation, named by the
+user, and never what a round with no scope named runs: `failure-injection` + `session-and-window`,
+and since 2026-08-23 also `repl-commands` + `epic-tier`, since 2026-08-25 `survey`, and since
+2026-08-27 `prompt-slots-and-roles` + `shell-term-approval`.
+All are cheap, deterministic, and cover the paths most chunks touch. As of 2026-08-18 the first pair
 also covers **most of a chunk that was mostly not about the cockpit at all** — the price table and
 its lint, `--compact-strategy` resolution, both tool-bound shapes, the `edit_file` refusal
 vocabulary, the summarizer's ceilings, the per-ask iteration ceiling and the `lain up`
@@ -168,10 +210,14 @@ entirely zero-model-turn refusal paths, and `epic-tier` is deterministic except 
 `survey` is there on the same rule again, with a caveat that is the point of adding it: **cut its
 §7 last, not first.** Every other section in it is deterministic and will keep; §7 is the one thing
 in this whole directory that has been dropped by three consecutive rounds, and it is only ever
-dropped because it is the section at the end that needs a model.
+dropped because it is the section at the end that needs a model. `shell-term-approval` is there on
+the rule twice over: most of it is `/ruby` against the loaded library, and the half of it that is
+already shipped guards a subsystem with **zero** manual coverage before this.
 
-**If the gate is too long to run every time, cut `epic-tier` first** — say so in the findings rather
-than letting it drop quietly, which is the failure mode this whole file keeps re-learning.
+**If the GATE is too long to run in a scoped invocation, cut `epic-tier` first** — say so in the
+findings rather than letting it drop quietly, which is the failure mode this whole file keeps
+re-learning. **That licence is the gate's alone.** It is not a licence to trim a full round, which
+drives everything in the directory.
 
 The corollary is the one thing the gate cannot do: **nothing deterministic can tell you a
 compaction strategy works**, because a compaction needs volume that a cheap scenario cannot
@@ -186,6 +232,31 @@ discharged, and git history is the archive: `git log --diff-filter=D --stat -- p
 commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
 stays here only while it is still in flight:
 
+- [`../qa-findings-round14-2026-08-27.md`](../qa-findings-round14-2026-08-27.md) — round 14, the
+  first round driven under the corrected skill contract (every scenario in the directory, no
+  preplanned subset), and the round that **wrote the seventeenth scenario**
+  (`shell-term-approval`) because the shell subsystem had none and the draft chunk's own card for it
+  had never run. **F79 (HIGH)**: a session whose subagent asked a question can be neither forked nor
+  resumed — F23's failure returning through the `message_replay` index space, reproduced on two
+  sessions with a clean control. **F78 (MED-HIGH)**: a zero-usage `turn_usage` zeroes both the feed's
+  `occupancy` and `last_turn_usage`, which is compaction's own input. **F73 reproduces unfixed.**
+  Eleven of seventeen scenarios driven; the six that were not are named in the findings.
+- [`../qa-findings-round13-2026-08-25.md`](../qa-findings-round13-2026-08-25.md) — round 13, the
+  full round **plus every other scenario in one context at the user's explicit instruction**, which
+  overrode the owned-round convention and finally put `rails-blog` in a driver's hands. **That
+  convention has since been retired** — the round default above is now every scenario in the
+  directory, and round 13 is why.
+  **`rails-blog` §0/§1 reached COMPACTION AT SCALE for the first time in this bench's history** — 5
+  compactions of 38 decisions, each roughly halving the span, under exactly the composed strategy
+  the flags asked for, with the round-2 rewrite F-series absent and no summarizer eviction. Rails
+  8.1.3.1 was installed into the sandbox and **P9/P15 held** (`Gemfile.lock` byte-identical). Two
+  new HIGH defects: **F73** (a second concurrent cockpit deadlocks its nvim on an E325 swap modal,
+  killing the approval surface) and **F74** (`stalled_stream` kills healthy turns; the server was
+  exonerated four ways and the code itself flags the landing site as unwanted). F29's `/inbox`-drain
+  fix, F16, F17, the round-2 F-series and the UTF-8 prime crash all verified fixed.
+  **Four scenarios were not driven at all** (`repl-commands`, `survey`, and the owned
+  `changeset-review` / `subagents-and-backends` / `memory-and-dogfood` / `secret-boundary`) — named
+  in the findings rather than left to look like coverage.
 - [`../specs/chunk-qa-round11-survey-surfaces.md`](../specs/chunk-qa-round11-survey-surfaces.md)
   — the chunk that discharges round 11, following the round-7 precedent below: fourteen cards,
   F64–F70 plus the corpus ceiling, verified by round 12
@@ -197,6 +268,18 @@ stays here only while it is still in flight:
 
 Per-section coverage a scenario file cannot state about itself, because it is about which round
 first exercised the section rather than what the section asks for:
+
+- **The scenarios that were once "owed" and are no longer.** `secret-boundary` slipped round 9,
+  carried, and round 10 drove §3/§4/§5 — the three-place split is **3 of 3 driven** rather than
+  resting on specs, and §5 produced that round's HIGH finding. `rails-blog` was driven end to end
+  for the first time by **round 13**, reaching the compaction act that was its whole reason for
+  existing. `prompt-slots-and-roles` sat in no tier at all until round 13 — described here,
+  scheduled nowhere — and its first drive found §1's instrument was not executable as written
+  (`slot_fills` is a **bench** record; a plain `lain chat` writes zero). That is the argument for
+  driving a new scenario promptly rather than letting it age unrun, and it is why the round default
+  above is now every scenario rather than a subset.
+- **`memory-and-dogfood` has never been driven end to end**, and neither has `shell-term-approval`,
+  which was written 2026-08-27. Both are coverage on paper until a round says otherwise.
 
 - **Round 9 (2026-08-23) drove six of the thirteen** — `session-and-window`, `rust-cli`,
   **`bowling-ruby` as the subject with `cockpit-surfaces` piggybacked on it** (the first round since
@@ -247,6 +330,15 @@ first exercised the section rather than what the section asks for:
   **`rails-blog.md` §2 (unbounded tool output) was NOT reached even then** — largest tool result
   4,713 bytes, zero caps disclosed. §1's volume came from turn COUNT, not result SIZE; do not read a
   pass on one as a pass on the other.
+  **§2 was finally reached on 2026-08-27 (round 14), and WITHOUT Rails** — largest single tool result
+  **120,045 bytes**, 25x round 8's, admitted rather than refused because it sits just under `bash`'s
+  131,072 ceiling, which is the volume the section wanted. The way in was the section's own second
+  clause: "a non-minimal app, **or a directive that reads large generated files back**". A generated
+  tree satisfied the premise on a box with no Rails installed. The bounding half was confirmed
+  separately — `grep` over ~2,400 matches returns `... capped at 200 matches`. **This does not
+  discharge §1** (round 13 did), and it does not discharge §0/§3/§4/§5, which still want the install.
+  The lesson generalised into `method.md`: **a scenario's stated subject is usually one way to satisfy
+  its premise, not the only one.**
 - **`bowling-ruby.md` was last driven on 2026-08-21** (round 8, second pass): 5/5 oracles, and §2's
   F23 fork/resume regression step passed with a valid control pair. Before that it had been dropped
   by rounds 7 and 8's first pass — see the subject-slot guard above, which exists because of it.
@@ -284,10 +376,11 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   journals through it (refuses by name, exit 1, no backtrace). Still undriven is `repl-commands.md`
   §4's loop `/btw` → `/keep` → `lain sessions` → `--resume`, which asks a question whose answer
   depends on the carried-over turns — the half that tests continuity rather than refusal.
-- **The secret boundary — written 2026-08-23, still undriven.** `secret-boundary.md` was scheduled as
-  round 9's owned round; **round 9 did not run it**, so it carries to round 10 and the rotation must
-  not advance past it. Every claim about the three-place split rests on specs alone, and a written
-  scenario is not coverage.
+- **The shell subsystem — `shell-term-approval.md` written 2026-08-27, undriven.** Every string in
+  it is a prediction, and roughly half its sections are written against an unlanded chunk and marked
+  as such. The half that is shipped guards a subsystem that had **no** manual coverage at all before
+  it, so a first drive is worth scheduling promptly rather than letting the document age — that is
+  the lesson `prompt-slots-and-roles` taught the hard way.
 - **Isolation backends — `subagents-and-backends.md` §3 written 2026-08-23, undriven.** It carries an
   open question to settle by driving: the `--isolation` flag's help text says it "is inert in chat
   today" because no chat path spawns an actor-mode subagent, but `CLI::Wiring` builds a real
@@ -327,7 +420,14 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   across a fleet — which is what T13 owes; one lineage at a time is not it.
 
 Still uncovered as of 2026-08-23, and **not** addressed by the six scenarios added that day, so that
-"thirteen scenarios" does not read as completeness:
+a full directory does not read as completeness:
+
+- **Program identity on the term arm.** `shell-term-approval.md` covers arm *selection*; nothing
+  covers *which binary ran*. `PATH` is inherited and uncontrolled, `execvp` honours its order, and
+  `cat /tmp/evil/cat f` is a measured `allow` with the written word as argv0. No surface records the
+  resolved path, so no scenario can ask the question — the chunk's Open decisions carry the
+  four-rung ladder that would make it askable, and rung 1 (resolve and journal the absolute path) is
+  the cheap one.
 
 - **`Toolset::Disclosure`, both arms.** `Upfront` vs `Deferred` (+ the `tool_search` tool) is a
   headline context-strategy axis and `Bench::DisclosureSweep` exists to compare them — but **there is
