@@ -386,6 +386,67 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         end
       end
     end
+
+    # The finding this pair answers: `approve_in_editor` (below) reads a call
+    # back with `buffer_lines(...).join`, and a wrapped item's continuation
+    # lines carry {ApprovalView::INDENT} -- so joining puts two spaces in the
+    # middle of what was one contiguous run of bytes in the command, and a
+    # substring match on the ORIGINAL command misses. The fix is not to stop
+    # wrapping (`approval_view_spec.rb` pins the hard wrap, mid-token, on
+    # purpose) -- it is to hand the reader a copy that was never cut.
+    #
+    # TWO variables, not one: `lain_approval_calls` is one entry per PARKED
+    # CALL and `lain_approval_call_index` resolves a cursor line to its member
+    # -- {Lain::Frontend::Neovim::ApprovalView::Rendering}'s own comment is
+    # where that shape and the reason (a linear wire payload, not one
+    # quadratic in a wrapped call's length) are derived. `call_for_row` below
+    # is the lua consumer's own resolution, `calls[call_index[row]]`.
+    it "carries the wrapped command unwrapped, with the rendered lines unchanged" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+      long_command = "x" * 200
+      full_call = "bash(#{{ "command" => long_command }.inspect})"
+
+      frontend.run do |handle|
+        with_parked_approval(handle, input: { "command" => long_command }, grace: 0.1) do
+          wait_until { (approval_state["rows"] || 0).positive? }
+          lines = buffer_lines("lain://approval")
+
+          # The rendered bytes are exactly what a hard, mid-token wrap always
+          # produced here -- this card changes no rendered byte.
+          expect(lines.first.length).to eq(Lain::Frontend::Neovim::ApprovalView::WIDTH)
+          expect(lines[1]).to start_with(Lain::Frontend::Neovim::ApprovalView::INDENT)
+          expect(lines.join).not_to include(long_command)
+
+          # ONE parked call, so `calls` holds exactly one entry -- not one per
+          # row it wraps into -- and every row's index resolves back to it.
+          expect(approval_calls).to eq([full_call])
+          expect(approval_call_index.uniq).to eq([1])
+          expect(approval_call_index.size).to eq(approval_state["rows"])
+          expect(call_for_row(1)).to eq(full_call)
+          expect(call_for_row(approval_state["rows"])).to eq(full_call)
+        end
+      end
+    end
+
+    it "resolves one unwrapped call per answerable row, in queue order, for two parked approvals" do
+      frontend = described_class.new(channel:, socket_path: @socket)
+      settled = Thread::Queue.new
+      pwd_call = "bash(#{{ "command" => "pwd" }.inspect})"
+      whoami_call = "bash(#{{ "command" => "whoami" }.inspect})"
+
+      frontend.run do |handle|
+        worker = Thread.new { two_parked_approvals(handle, settled) }
+        wait_until { (approval_calls || []).size >= 2 }
+
+        expect(approval_calls).to eq([pwd_call, whoami_call])
+        expect(approval_call_index.size).to eq(approval_state["rows"])
+        expect(call_for_row(1)).to eq(pwd_call)
+        expect(call_for_row(2)).to eq(whoami_call)
+
+        Timeout.timeout(20) { settled.pop }
+        raise "the approval consumer thread never stopped" unless worker.join(20)
+      end
+    end
   end
 
   # THE REACHABILITY HALF, and the one this chunk keeps failing: every example
@@ -523,6 +584,31 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
     LUA
   end
 
+  # The unwrapped call per PARKED CALL, beside {#approval_state}'s row count
+  # for the same reason 62_approval.lua's own comment gives: joining rendered
+  # lines embeds INDENT mid-token, so a reader wanting the command back reads
+  # this variable rather than the buffer's own text. One entry per call, not
+  # per row -- {#approval_call_index} is what resolves a row to its member.
+  def approval_calls
+    inspector.exec_lua("return vim.b[vim.fn.bufnr('lain://approval')].lain_approval_calls", [])
+  end
+
+  def approval_call_index
+    inspector.exec_lua("return vim.b[vim.fn.bufnr('lain://approval')].lain_approval_call_index", [])
+  end
+
+  # The lua consumer's OWN resolution, `calls[call_index[row]]`, both
+  # 1-based as nvim stores them -- read this way rather than indexed by hand
+  # on the Ruby side, so the example proves what a real reader does, not an
+  # arithmetic restatement of it.
+  def call_for_row(row)
+    inspector.exec_lua(<<~LUA, [row])
+      local buf = vim.fn.bufnr("lain://approval")
+      local index = vim.b[buf].lain_approval_call_index[...]
+      return vim.b[buf].lain_approval_calls[index]
+    LUA
+  end
+
   # The approval round trip's own consumer thread, and it is a THREAD for the
   # reason `with_consumer` records at length: a gem call issued from inside an
   # Async task takes the neovim gem's fiber-yielding branch and raises
@@ -555,6 +641,28 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       gated = task.async { queue.call(effect, nil) }
       settled.push(within(task, grace) { gated.finished? } ? gated.wait : :unsettled)
       (surfaces + [gated]).each(&:stop)
+    end
+  end
+
+  # {#serve_approval}'s shape, widened to the pair {#parked_pair} admits.
+  def two_parked_approvals(frontend, settled)
+    Sync do |task|
+      queue = Lain::Approval::Queue.new(journal:, timeout: 60)
+      surfaces = approval_surfaces(task, frontend, queue)
+      gated = parked_pair(task, queue)
+      settled.push(within(task, 0.1) { gated.all?(&:finished?) } ? gated.map(&:wait) : :unsettled)
+      (surfaces + gated).each(&:stop)
+    end
+  end
+
+  # Two independent gated fibers admitted to the SAME queue without either
+  # awaiting the other -- what "two parked approvals" needs, and what the
+  # sequential loop in the repl seam above deliberately does not give (only
+  # one pending is ever parked there at a time).
+  def parked_pair(task, queue)
+    %w[pwd whoami].each_with_index.map do |command, index|
+      effect = ApprovalSeamSupport::Effect.new("bash", { "command" => command }, "tu_#{index + 1}")
+      task.async { queue.call(effect, nil) }
     end
   end
 
@@ -657,12 +765,12 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   end
 
   describe "protocol lockstep" do
-    it "bumps PROTOCOL to 13 and attaches without a mismatch warning" do
+    it "bumps PROTOCOL to 14 and attaches without a mismatch warning" do
       frontend = described_class.new(channel:, socket_path: @socket)
 
       frontend.run do
-        wait_until { inspector.get_var("lain_rpc_version") == "13" }
-        expect(described_class::PROTOCOL).to eq("13")
+        wait_until { inspector.get_var("lain_rpc_version") == "14" }
+        expect(described_class::PROTOCOL).to eq("14")
         messages = inspector.exec_lua("return vim.api.nvim_exec2('messages', { output = true }).output", [])
         expect(messages).not_to include("mismatch")
       end

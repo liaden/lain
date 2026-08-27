@@ -106,7 +106,8 @@ local function close_opened_windows(buf)
   end
 end
 
--- Whole-buffer replace for the parked list, stamped twice.
+-- Whole-buffer replace for the parked list, stamped twice and carrying two
+-- more variables beside them.
 --
 -- b:lain_view_generation is the RENDERING STAMP, and it is REQUIRED here where
 -- set_view's is optional: this buffer's rows move the instant ANY call is
@@ -129,6 +130,13 @@ end
 -- that says which. Counting CALLS gives a keypress that does nothing on every
 -- line but the first, which here would be a lie: the line does hold a record.
 --
+-- b:lain_approval_calls and b:lain_approval_call_index are for a reader
+-- rather than a keymap -- ApprovalView::Rendering's own comment derives why
+-- joining rendered lines cannot recover a wrapped command and what the two
+-- variables carry instead; this is that shape crossing into lua. `calls` is
+-- one entry per PARKED CALL, `call_index` is b:lain_approval_rows-shaped
+-- (1-based), and `calls[call_index[N]]` is row N's command in full.
+--
 -- IT TAKES THE WINDOW, and only on the way IN: lain is PARKED on the answer with
 -- a clock running, and an editor showing nothing while the chat pane waited is
 -- the defect this module exists to fix. Focus is taken only when no window is
@@ -141,10 +149,12 @@ end
 --
 -- Written BEFORE the placement (46_sidebar's ordering), so the window never
 -- shows a half-drawn buffer.
-function _G.__lain.set_approval(lines, gen, rows)
+function _G.__lain.set_approval(lines, gen, rows, calls, call_index)
   local buf = lain_approval.buf()
   vim.b[buf].lain_view_generation = gen
   vim.b[buf].lain_approval_rows = rows
+  vim.b[buf].lain_approval_calls = calls
+  vim.b[buf].lain_approval_call_index = call_index
   local shown = vim.fn.win_findbuf(buf)[1]
   set_lines(buf, 0, -1, lines)
   if rows > 0 and shown == nil then
