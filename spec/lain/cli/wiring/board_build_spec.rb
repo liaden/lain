@@ -177,14 +177,15 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
 
     # The two vocabularies, asserted apart. A project that RESTRICTS paths and
-    # grants no call shapes must come back with a live path boundary and an
-    # EMPTY approval rung -- the `[sensitivity]` table must never arrive at the
-    # deterministic rung as a remembered answer.
+    # grants no call shapes must come back with a live path boundary and NO
+    # remembered answer -- the `[sensitivity]` table must never arrive at the
+    # deterministic rung as one. The term-approval rule is unconditional and is
+    # the whole chain here, which is what makes its absence readable.
     it "keeps the sensitivity table out of the approval rung" do
       in_tree(config: "[sensitivity]\ndenied = [\"*.secret\"]\n") do |root, home|
         board = board_for(root, home)
 
-        expect(board.instance_variable_get(:@rules)).to be_empty
+        expect(board.instance_variable_get(:@rules).map(&:name)).to eq(%w[composed_term])
         expect(board.sensitivity.denial(read_of(File.join(root, "a.secret")))&.reason).to eq(:configured)
       end
     end
@@ -420,9 +421,16 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       in_tree do |root, home|
         board = board_for(root, home)
 
-        while_parked(board, bash_of("cat .kube/config", "cwd" => root)) do
-          expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
-        end
+        answer = board.policy_switch.call(bash_of("cat .kube/config", "cwd" => root), nil)
+
+        expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
+        # And what the abstention now COSTS, said out loud rather than left to a
+        # discarded return value: anchored on the project root this path is
+        # ordinary, so the term rule approves it with no human. Anchored on home
+        # it would have DENIED at triage, which is what makes this the example
+        # that can tell the two cwds apart.
+        expect(answer).to be(true)
+        expect(rulings.last).to include("rung" => "rules", "verdict" => "allow")
       end
     end
 
@@ -440,6 +448,117 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         expect(triage.name).to eq("triage")
         expect(factory).not_to be_a(Lain::Approval::Escalation::Triage::AnyPath)
         expect(factory).to be_a(described_class::Classifiers)
+      end
+    end
+  end
+
+  # The rung that can APPROVE, driven through a real assembled ladder rather
+  # than against the rule. What is under test here is the WIRING: a rule built
+  # but never appended, or appended holding a classifier that protects nothing,
+  # passes every example in composed_term_spec.rb and decides nothing in a live
+  # session -- which is how the three unwired guards in this codebase shipped.
+  describe "the term-approval rule, on the production path" do
+    it "approves a fully safe pipeline at the rules rung, with no human asked" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+
+        expect(board.policy_switch.call(bash_of("cat README.md | head -20", "cwd" => root), nil)).to be(true)
+        expect(rulings.last).to include("rung" => "rules", "verdict" => "allow", "faulted" => false)
+        expect(rulings.last["reason"]).to start_with("composed_term:")
+        expect(board.approvals.each.count).to eq(0)
+      end
+    end
+
+    # The motivating pipeline from the Intent, and the one the `-r` refusal
+    # narrowed: `grep -rn foo lib | wc -l` no longer qualifies, `grep -n` does.
+    it "approves the non-recursive pipeline and leaves the recursive one to a human" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+
+        expect(board.policy_switch.call(bash_of("grep -n foo lib | wc -l", "cwd" => root), nil)).to be(true)
+        while_parked(board, bash_of("grep -rn foo lib | wc -l", "cwd" => root)) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    # The blocker, through the shipped ladder: triage DOWNGRADES a bare denied
+    # word to an abstention, so this rung is the only thing standing between
+    # `cat .netrc` and an approval nobody made.
+    it "leaves a denied path written as a bare word parking for a human" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+
+        while_parked(board, bash_of("cat .netrc", "cwd" => root)) do
+          expect(rulings.map { |ruling| ruling["rung"] }).to eq(%w[triage rules])
+          expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain")
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    it "leaves a gated credential parking for a human, though nothing denies it" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+
+        while_parked(board, bash_of("cat .env", "cwd" => root)) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    # THE BLOCKER, pinned where the review round found it: through the real
+    # assembled ladder, not against the rule. `/proc/self/root` aliases `/`, so
+    # a home-anchored DENIED path wearing that prefix stops matching every
+    # `Rule.homed` entry -- and the deny that the plain spelling earns at triage
+    # simply does not happen. Measured before the fix: approved, rules:allow,
+    # no human.
+    it "does not approve a denied path reached through the /proc/self/root alias" do
+      in_tree do |root, home|
+        board = board_over(root, home)
+        aliased = bash_of("cat /proc/self/root#{home}/.kube/config", "cwd" => root)
+
+        expect(board.policy_switch.call(bash_of("cat #{home}/.kube/config", "cwd" => root), nil)).to be(false)
+        while_parked(board, aliased) do
+          expect(rulings.last).to include("rung" => "rules", "verdict" => "abstain")
+        end
+      end
+    end
+
+    # IDENTITY at the construction site, on the triage-factory example's shape:
+    # every behavioural example above still passes on a board whose rule was
+    # handed a classifier refusing nothing, so the object is asserted directly.
+    it "appends the rule to the chain Project::Consent supplied, holding the real factory" do
+      in_tree do |root, home|
+        rules = board_over(root, home).ladder.to_a[1].instance_variable_get(:@rules)
+
+        expect(rules.map(&:name)).to eq(%w[composed_term])
+        expect(rules.last.instance_variable_get(:@sensitivity)).to be_a(described_class::Classifiers)
+      end
+    end
+
+    # APPENDED and not prepended, which is the precedence: a human's remembered
+    # refusal of the whole tool still wins over an allowlisted pipeline.
+    it "keeps a remembered answer ahead of it, so a human's refusal still wins" do
+      in_tree(config: %([[approval.deny_tool]]\ntool = "bash"\n)) do |root, home|
+        board = board_over(root, home)
+        rules = board.ladder.to_a[1].instance_variable_get(:@rules)
+
+        expect(rules.map(&:name)).to eq(%w[remembered composed_term])
+        expect(board.policy_switch.call(bash_of("cat README.md | head -20", "cwd" => root), nil)).to be(false)
+        expect(rulings.last["reason"]).to start_with("remembered:")
+      end
+    end
+
+    # The exclusion reaches this rule as a verdict DENY carrying no term, so
+    # predicate 1 refuses it -- and triage answers first regardless, which is
+    # what makes the ordering a convenience rather than the safety property.
+    it "does not approve an excluded program that is on the allowlist" do
+      in_tree(config: %([shell]\nexclude = ["cat"]\n)) do |root, home|
+        board = board_over(root, home)
+
+        expect(board.policy_switch.call(bash_of("cat README.md | head -20", "cwd" => root), nil)).to be(false)
+        expect(rulings.map { |ruling| ruling["rung"] }).to eq(%w[triage])
       end
     end
   end

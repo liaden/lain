@@ -8,7 +8,9 @@ module Lain
       # question: {Project::Consent} says which remembered answers this root
       # may contribute, the path boundary below says which paths it gates and
       # which it refuses outright, and {.shell_verdict} says which programs it
-      # refuses by name.
+      # refuses by name. {.approving} is where the path boundary comes back as
+      # an authority of a different kind: the same classifier factory, handed to
+      # the one rule that can APPROVE a command rather than refuse one.
       #
       # That last one is the odd member and is here anyway, because this is
       # where a project's config becomes an authority. It is the only one the
@@ -69,10 +71,35 @@ module Lain
           # second call would parse the same file twice and tell the operator
           # the same thing twice for one broken config.
           table = rules(project:, notice:)
+          # The SAME factory reaches both the triage rung and the approving
+          # rule, so the two rungs cannot disagree about where a relative word
+          # in one command's argv lands.
+          factory = classifiers(project:, paths:, table:)
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
-                          rules: Project::Consent.for(project:, notice:).rules,
+                          rules: approving(Project::Consent.for(project:, notice:).rules, factory),
                           sensitivity: policy(project:, paths:, table:),
-                          classifiers: classifiers(project:, paths:, table:))
+                          classifiers: factory)
+        end
+
+        # The deterministic rung's chain: this root's remembered answers, and
+        # then the rule that can approve a parsed term with no human.
+        #
+        # APPENDED, and the order is the precedence. {Approval::RuleChain}
+        # settles on the first rule with an opinion, so a human's remembered
+        # `deny` -- or a `deny_tool` on `bash` -- still outranks anything the
+        # allowlist would have approved. Prepending would silently overturn an
+        # answer a person gave.
+        #
+        # The chain is {Project::Consent}'s; this adds to it and does not own
+        # it, which is why the consented rules are threaded through rather than
+        # rebuilt here.
+        #
+        # @param remembered [Array<Lain::Approval::Rule>] {Project::Consent#rules}
+        # @param factory [#call] the `cwd -> #classify` factory, on
+        #   {Lain::Approval::ComposedTerm}'s terms
+        # @return [Array<Lain::Approval::Rule>]
+        def approving(remembered, factory)
+          [*remembered, Lain::Approval::ComposedTerm.new(sensitivity: factory)].freeze
         end
 
         # The session's ONE {Lain::Shell::Verdict}, over the programs this

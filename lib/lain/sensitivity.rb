@@ -350,7 +350,40 @@ module Lain
           .npmrc .pypirc .gitconfig terraform.tfstate *.tfvars]
         .map { |name| Rule.named(name, level: :gated, reason: :credential) },
       *%w[Downloads Documents Desktop Pictures]
-        .map { |dir| Rule.homed(dir, level: :gated, reason: :out_of_scope) }
+        .map { |dir| Rule.homed(dir, level: :gated, reason: :out_of_scope) },
+      # The process filesystem, and these two files only. MEASURED, not
+      # reasoned about: a child spawned the way this codebase spawns one
+      # inherits the session's `ANTHROPIC_API_KEY`, because {Exec.child_env}
+      # scrubs `FRAMEWORK_ENV` -- bundler and rspec variables -- and nothing
+      # else. A canary key set on the session was read straight back out of the
+      # child's own `/proc/self/environ`. So this is a live credential read
+      # rather than a theoretical one, and `credential` is its true reason.
+      #
+      # `cmdline` is here on its own measurement: it is mode 444 and owned by
+      # the reader, so a same-user process invoked with `--api-key=...` hands
+      # its whole argv to anything that opens it -- verified on this box with a
+      # canary argument. Lain deliberately keeps its own key OFF argv
+      # (`up.rb`, `pane_command.rb`, `docker.rb` all say so), so what this
+      # guards is the OTHER processes a session can see, not one of ours.
+      #
+      # GATED and not DENIED, on this tier's own criterion: someone debugging
+      # their own process may legitimately read an environ, and being wrong
+      # costs one prompt. Nothing here claims all of `/proc` is off limits --
+      # `maps` leaks address-space layout rather than credentials and is
+      # deliberately untouched, because no tier moves on an unmeasured argument.
+      #
+      # {Rule.within} matches a `proc` SEGMENT anywhere, so `vendor/proc/environ`
+      # in a checkout is gated too. Over-broad, failing closed, one prompt --
+      # which is the bargain this whole half of the table is written on.
+      *%w[environ cmdline]
+        .map { |name| Rule.within("proc", name:, level: :gated, reason: :credential) },
+      # A repository's own config, which routinely carries a token inside a
+      # remote URL (`https://x-access-token:TOKEN@host/...`). `.gitconfig` was
+      # already gated for that shape and this was not, which was an asymmetry in
+      # the table rather than a considered position. Anchored on the `.git`
+      # SEGMENT, on {Rule.within}'s shape, because a bare `config` basename is a
+      # plausible name in any checkout.
+      Rule.within(".git", name: "config", level: :gated, reason: :credential)
     ].freeze
 
     # The Null Object at the end of the chain, so no caller and no branch here

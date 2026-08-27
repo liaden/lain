@@ -269,6 +269,21 @@ RSpec.describe Lain::Sensitivity do
       end
     end
 
+    # `.gitconfig` was already gated for its credential shape while `.git/config`
+    # -- which routinely carries a token in a remote URL -- was ordinary. An
+    # asymmetry in the table, not a position anybody took.
+    it "gates a repository's own .git/config, as it already gated .gitconfig" do
+      expect(classify(".git/config")).to be_gated
+      expect(classify("vendor/dep/.git/config").reason).to eq(:credential)
+      expect(classify("#{home}/work/repo/.git/modules/x/config")).to be_gated
+    end
+
+    it "leaves an ordinary config outside a .git directory alone" do
+      expect(classify("config")).to be_ordinary
+      expect(classify("app/config")).to be_ordinary
+      expect(classify(".git/HEAD")).to be_ordinary
+    end
+
     it "gates a dotenv variant wherever it sits, root or nested" do
       expect(classify(".env")).to be_gated
       expect(classify("services/api/.env.local")).to be_gated
@@ -277,6 +292,57 @@ RSpec.describe Lain::Sensitivity do
     it "does not gate a name that merely starts the same way" do
       expect(classify("lib/environment.rb")).to be_ordinary
       expect(classify("doc/envrc.md")).to be_ordinary
+    end
+  end
+
+  # A live credential read, MEASURED rather than reasoned about: a child spawned
+  # the way this codebase spawns one -- `Exec.child_env` over `WorkerEnv#env` --
+  # inherits `ANTHROPIC_API_KEY`, because that scrub names only bundler and rspec
+  # variables. A canary key set on the session was read straight back out of the
+  # child's own `/proc/self/environ`. And `/proc/PID/cmdline` is mode 444 and
+  # owned by the reader, so a same-user process invoked with `--api-key=...`
+  # hands its argv to anything that opens it -- verified on this box.
+  #
+  # GATED and not DENIED on the tier's own stated criterion: someone debugging
+  # their own process may legitimately read an environ, and being wrong here
+  # costs one prompt. Nothing here claims all of `/proc` is off limits.
+  describe "gated, the process filesystem" do
+    %w[environ cmdline].each do |name|
+      it "gates /proc/self/#{name}, which carries the session's own credentials" do
+        verdict = classify("/proc/self/#{name}")
+
+        expect(verdict).to be_gated
+        expect(verdict.reason).to eq(:credential)
+        expect(verdict).to be_credential
+      end
+
+      it "gates another process's /proc/PID/#{name} too, not only self's" do
+        expect(classify("/proc/1/#{name}")).to be_gated
+        expect(classify("/proc/12345/#{name}")).to be_gated
+      end
+    end
+
+    # The rule is {Rule.within}, so it matches a `proc` SEGMENT anywhere rather
+    # than an absolute prefix -- `./proc/environ` in a checkout is gated too.
+    # Over-broad, failing closed, and costing one prompt, which is this tier's
+    # whole bargain; contorting the pattern to dodge it would buy nothing.
+    it "also gates a proc/environ that is not the real one, and that is the trade" do
+      expect(classify("vendor/proc/environ")).to be_gated
+    end
+
+    # Deliberately UNCHANGED. `/proc/self/maps` leaks address-space layout, not
+    # credentials, and no tier here moves on an argument nobody measured.
+    it "leaves the rest of /proc ordinary, including maps" do
+      expect(classify("/proc/self/maps")).to be_ordinary
+      expect(classify("/proc/self/status")).to be_ordinary
+      expect(classify("/proc/cpuinfo")).to be_ordinary
+    end
+
+    # The neighbouring name test, on `environment.rb`'s precedent: a whole
+    # basename, never a prefix.
+    it "does not gate a name that merely starts the same way" do
+      expect(classify("/proc/self/environment")).to be_ordinary
+      expect(classify("lib/cmdline_parser.rb")).to be_ordinary
     end
   end
 
