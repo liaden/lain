@@ -160,8 +160,14 @@ module Lain
         # @param parent [#call] a thunk reading the live parent Timeline --
         #   the subagent tool reads the head at SPAWN time, so this must stay
         #   late-bound.
-        # @param journal [#<<] where a spawned child's lifecycle events land
-        #   ({Tools::Subagent#journal_lifecycle})
+        # @param journal [#<<] the journal {Wiring} hands down, and two things
+        #   ride it from here: a spawned child's lifecycle events
+        #   ({Tools::Subagent#journal_lifecycle}), and the record
+        #   {Lain::Tools::Bash} writes of which arm each shell command ran on,
+        #   which {BaseTools} takes as its own keyword. Kept in the spawn seam
+        #   and read back off it rather than also held in an ivar here: the
+        #   {Tools::Subagent::Seam} member is this same object, and a second
+        #   holder would be a second thing to keep in step.
         # @param library [Skill::Library] the run's ONE skill library -- required, not
         #   defaulted, so nothing here can silently disagree with /help's read of
         #   the same tree
@@ -242,7 +248,7 @@ module Lain
         #   replier fiber parks on the same object
         # @return [Lain::Toolset]
         def build(recorder, ask_human:)
-          base = Lain::Toolset.new(BaseTools.build(recorder, exec: @exec, verdict: @verdict))
+          base = capability_floor(recorder)
           @role_spawn = role_spawn_seam(base)
           @docent = Lain::Review::Docent::Answerer.new(spawn: @role_spawn)
           @auto_surface = (Lain::Approval::AutoSurface.new(role_spawn: @role_spawn) if options[:auto_approve])
@@ -252,6 +258,16 @@ module Lain
         private
 
         attr_reader :backend, :library, :options, :seam, :epic, :askers
+
+        # The floor, and the session-wide objects that reach it: where a command
+        # becomes a process, which programs the project ruled out, and where the
+        # bash tool's record of the arm it chose lands. The journal is read off
+        # the spawn seam because {Tools::Subagent::Seam} is a Data that stores
+        # what it was given -- the member IS the object handed to this
+        # constructor, so a second ivar would be a second thing to keep in step.
+        def capability_floor(recorder)
+          Lain::Toolset.new(BaseTools.build(recorder, exec: @exec, verdict: @verdict, journal: seam.journal))
+        end
 
         # The ONE {Lain::Tools::Subagent::Seam} every child spawn is built
         # over. Both posture axes arrive as delegators over the switchboard

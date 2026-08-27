@@ -145,7 +145,14 @@ RSpec.describe "Tool#parallel_safe? across the shipped toolset" do
     it "runs `cd` inside the subprocess only -- Dir.pwd in the harness is unchanged" do
       original_pwd = Dir.pwd
 
-      result = Lain::Tools::Bash.new.call({ command: "cd /tmp && pwd" }, Lain::Tool::Invocation.new)
+      # Named, where this once passed a bare Invocation: the tool now writes a
+      # {Lain::Telemetry::ShellArm} record on every call, and that record refuses
+      # to be built without the call it is about. The bare form is a fixture
+      # shape -- the one place `lib/` builds an {Lain::Effect::ToolCall}
+      # ({Lain::Agent::ToolRunner}) names it from the provider's `tool_use.id`,
+      # and {Lain::Effect::Handler::Live} hands that straight to the invocation.
+      result = Lain::Tools::Bash.new.call({ command: "cd /tmp && pwd" },
+                                          Lain::Tool::Invocation.new(tool_use_id: "tu_pwd"))
 
       expect(result).to be_ok
       expect(result.content).to include("/tmp")

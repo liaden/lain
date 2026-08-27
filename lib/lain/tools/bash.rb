@@ -155,10 +155,15 @@ module Lain
       # @param verdict [#call] `String -> Shell::Verdict::Decision`, the choice
       #   of arm, injected so a spec can pin either arm for one command and
       #   compare their bytes
-      def initialize(exec: Exec::Local.new, verdict: Shell::Verdict.new)
+      # @param journal [#<<] where every call's {Telemetry::ShellArm} record
+      #   lands. Null by default, so a tool built with no session around it --
+      #   {Subagent} runs an ungated handler, and `bash_spec` constructs this
+      #   tool alone -- writes nowhere and no caller guards on nil.
+      def initialize(exec: Exec::Local.new, verdict: Shell::Verdict.new, journal: Channel::Null.instance)
         super()
         @exec = exec
         @verdict = verdict
+        @journal = journal
       end
 
       def name = "bash"
@@ -196,7 +201,10 @@ module Lain
       # the tool itself could not produce a result -- a timeout, or output too
       # large to hand back -- never a subprocess's own exit code.
       def perform(input, invocation)
-        capture = @exec.call(command: arm_for(input.command), **runtime(input, invocation))
+        decision = @verdict.call(input.command)
+        arm = arm_for(decision)
+        journal_arm(decision, arm, invocation)
+        capture = @exec.call(command: on_arm(arm, input.command, decision), **runtime(input, invocation))
         self.class.render_output(exit_status: capture.exit_status,
                                  stdout: capture.stdout, stderr: capture.stderr)
       rescue Exec::Timeout => e
@@ -205,18 +213,53 @@ module Lain
 
       private
 
+      # The Journal's only account of arm selection when no ladder ran: the
+      # approval gate journals a `shell verdict` line from inside its escalation
+      # record, but `/mode auto` resolves the gate to
+      # {Effect::Handler::Gate::ApproveAll}, which consults no rung and writes
+      # nothing -- so before this record an `auto` session recorded nothing at
+      # all about which arm its commands ran on.
+      #
+      # Written BEFORE the command runs, so a call that times out still leaves
+      # an account of the arm it chose. And written on EVERY call, both arms:
+      # what a bench asks of these records is what FRACTION of commands earn the
+      # deterministic arm, which a denominator missing the uninteresting calls
+      # cannot answer.
+      #
+      # It carries BOTH questions, because they have different answers: the
+      # `verdict` is what was decided -- the object the approval ladder judged
+      # the same command with -- and the `arm` is what ran. An allow whose
+      # backend had no shape for the term reaches a shell, and under
+      # `--exec docker` that is every allowed pipe.
+      #
+      # The arm is the value #perform already resolved and is about to hand the
+      # backend, passed in rather than re-derived here. Re-asking `takes_term?`
+      # would make the record a SECOND derivation of what ran, and nothing makes
+      # the two agree by construction: {Lain::Exec} is a duck with three
+      # implementations and its contract asks a backend for an answer, never for
+      # a pure function of the term. The three that ship would agree today. That
+      # is the same argument the shared {Shell::Verdict} rests on one seam
+      # further out -- one object consulted once, rather than two readings whose
+      # agreement is a coincidence nothing enforces.
+      def journal_arm(decision, arm, invocation)
+        @journal << Telemetry::ShellArm.new(tool_use_id: invocation.tool_use_id, verdict: decision.name,
+                                            arm:, reason: decision.reason, term: decision.term)
+      end
+
       # ASK BEFORE OFFERING. An allow yields a term, but a backend may have no
       # shape for that term, and hearing so as an {Exec::Unsupported} mid-call
       # is how `--exec docker` used to answer an ordinary pipeline with a tool
-      # error nobody wrote. The fallback is `input.command` itself -- never the
-      # term rejoined -- so the string arm sees exactly the bytes the model
-      # wrote, under the same gate.
-      def arm_for(command)
-        decision = @verdict.call(command)
-        return command unless decision.allow? && @exec.takes_term?(decision.term)
+      # error nobody wrote.
+      #
+      # @return [Symbol] `:term` or `:string`, resolved ONCE per call and read
+      #   twice -- by the backend and by the record.
+      def arm_for(decision) = decision.allow? && @exec.takes_term?(decision.term) ? :term : :string
 
-        decision.term
-      end
+      # What the backend is handed on the resolved arm. The string arm's is
+      # `input.command` itself -- never the term rejoined, which would give
+      # `sh -c` a command this tool composed -- so it sees exactly the bytes the
+      # model wrote, under the same gate.
+      def on_arm(arm, command, decision) = arm == :term ? decision.term : command
 
       # Cwd resolution lives on {WorkerEnv#resolve} -- one rule shared with
       # {CoreExec}.

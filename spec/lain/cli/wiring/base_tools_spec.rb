@@ -21,6 +21,34 @@ RSpec.describe Lain::CLI::Wiring::BaseTools do
     Lain::Shell::Verdict.new(capability_set: Lain::Shell::Exclusions.new(patterns: programs))
   end
 
+  # The keyword carrying the session's journal has a Null default too, and a
+  # permissive default is exactly how a wired-looking guard ships doing nothing.
+  # So this is driven through {Lain::CLI::Wiring::ToolsetBuild} -- the object
+  # that assembles this floor for every chat -- with the real bash tool running
+  # a real command and NO double anywhere below the assembler. What is asserted
+  # is that the record lands in the journal that session was built with.
+  describe "the journal a live session's assembler hands the floor" do
+    let(:backend) { Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }) }
+    let(:chronicle) { Lain::CLI::Chronicle::Null.new }
+    let(:journal) { RecordingChannel.new }
+    let(:parent) { -> { Lain::Timeline.new } }
+    let(:assembler) do
+      Lain::CLI::Wiring::ToolsetBuild.new(backend:, provider: backend.provider(spool: chronicle.spool),
+                                          chronicle:, options: {}, supervisor: Lain::Supervisor.new(journal:),
+                                          parent:, journal:, library: backend.library,
+                                          epic: Lain::CLI::EpicMount::NoEpic, root: Dir.pwd)
+    end
+
+    def live_bash = assembler.build(recorder, ask_human: Lain::Tools::AskHuman.new(parent:)).fetch("bash")
+
+    it "lands the bash tool's arm record in that session's journal" do
+      live_bash.call({ command: "ls -la" }, Lain::Tool::Invocation.new(tool_use_id: "tu_live", channel:))
+
+      expect(journal.events.grep(Lain::Telemetry::ShellArm).map { |arm| [arm.tool_use_id, arm.verdict] })
+        .to eq([["tu_live", :allow]])
+    end
+  end
+
   describe ".build" do
     it "hands the bash tool the verdict it was built with, by identity" do
       chosen = excluding("curl")

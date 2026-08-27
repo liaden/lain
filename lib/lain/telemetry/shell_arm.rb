@@ -11,20 +11,30 @@ module Lain
       #
       # `term` is checked for SHAPE and for agreement with the verdict, which is
       # the record's whole content: a stage list is an argv list, and only an
-      # allow ever chose one.
+      # allow ever authorised one.
+      #
+      # `arm` is enumerated the same way and for the same reason, over the two
+      # shapes {Tools::Bash} can hand a backend. It is held VERBATIM here too:
+      # a third arm added at the tool and not here refuses the record loudly
+      # rather than journalling a name nothing runs.
       class ShellArm < Declarative::Carrier
         attribute :tool_use_id
         attribute :verdict
+        attribute :arm
         attribute :reason
         attribute :term
         validates :tool_use_id,
                   presence: { message: "must name the call this record is about, got nil" }
-        validates :verdict, presence: { message: "must name the arm the call ran on, got nil" },
+        validates :verdict, presence: { message: "must name the verdict the call was given, got nil" },
                             inclusion: { in: %i[allow deny abstain],
                                          message: "must be allow, deny or abstain, got %<value>s" }
+        validates :arm, presence: { message: "must name the arm the command ran on, got nil" },
+                        inclusion: { in: %i[term string],
+                                     message: "must be term or string, got %<value>s" }
         validates :reason, presence: { message: "must carry the verdict's reason, got nil" }
         validate :term_is_argv_stages
         validate :term_absent_unless_allowed
+        validate :term_arm_needs_an_authorised_term
 
         private
 
@@ -47,24 +57,47 @@ module Lain
 
           errors.add(:term, "must be empty unless the verdict allows, got #{term.inspect}")
         end
+
+        # The term arm runs the reconstructed argv, and only an allow ever
+        # authorises one, so a record claiming a call ran as a term under a
+        # verdict that produced none describes something that cannot have
+        # happened. The CONVERSE is deliberately unchecked: an allow that ran on
+        # the string arm is the exact divergence `arm` exists to record.
+        def term_arm_needs_an_authorised_term
+          return if errors[:term].any? || arm != :term || (verdict == :allow && !term.empty?)
+
+          errors.add(:arm, "must be string unless the verdict allows and authorised a term, got term")
+        end
       end
     end
     # Which arm a gated shell call ran on, and why -- the Journal's only account
     # of arm selection when no ladder ran. The gate journals a `shell verdict`
-    # line from inside its escalation record, but `/mode auto` replaces the
-    # ladder wholesale, so an unattended run records nothing about the choice at
-    # all. That is the mode a long bench run uses, which is what makes it the
-    # mode the record most needs to cover.
+    # line from inside its escalation record, but `/mode auto` resolves the gate
+    # to {Effect::Handler::Gate::ApproveAll}, which consults no rung and writes
+    # no escalation record, so without this one an `auto` session records nothing
+    # about the choice at all.
     #
-    # The record is named for the ARM and its field for the VERDICT, so: `allow`
-    # ran the reconstructed term as argv with no shell anywhere, and both other
-    # names ran the model's own string through a shell, because `Tools::Bash`
-    # chooses on `decision.allow?` and nothing else. Whether a non-allow ran at
-    # all is a separate question this record does not answer -- the attended
-    # ladder refuses a deny, while `/mode auto` approves it and the string arm runs.
+    # TWO QUESTIONS, TWO MEMBERS, and the whole point is that they can disagree.
+    # `verdict` is what {Shell::Verdict} DECIDED about the command; `arm` is what
+    # actually ran. Only an allow ever authorises a term, but an allow does not
+    # mean one was taken: {Tools::Bash} offers the term only where the backend
+    # has a shape for it, and {Exec::Docker#takes_term?} is `term.size == 1` --
+    # so under `--exec docker` every allowed PIPE, `cat README.md | head -20`
+    # included, falls back to the model's own string and runs as
+    # `["sh", "-c", command]` inside the container. A record carrying the verdict
+    # alone said `allow` there, and a reader who took that to mean "no shell
+    # anywhere" was wrong on this chunk's own headline command.
     #
-    # The field names are {Shell::Verdict::Decision#record}'s, so a reader
-    # joining the two accounts of one call keys on the same words in both.
+    # `arm` is therefore written from the tool's OWN resolved choice -- the same
+    # value it hands the backend, never a second derivation of the same
+    # predicate, which could disagree with what ran. Whether a non-allow ran at
+    # all is a further question this record does not answer: the attended ladder
+    # refuses a deny, while `/mode auto` approves it and the string arm runs.
+    #
+    # `verdict`, `reason` and `term` are {Shell::Verdict::Decision#record}'s own
+    # names, so a reader joining the two accounts of one call keys on the same
+    # words in both. `arm` has no counterpart there, and cannot: a Decision does
+    # not know which backend was handed it.
     #
     # `claim` is not a constructor argument: it rides on every record the shell
     # verdict hands a journal so no allow can be read as a claim about safety,
@@ -78,23 +111,45 @@ module Lain
     # `Ractor.shareable?` and what makes the repetition free: a term read back off
     # the Journal arrives as fresh mutable Strings, and a bench run's terms are
     # the same few program names many thousands of times over.
-    ShellArm = Data.define(:tool_use_id, :verdict, :reason, :term, :claim) do
+    ShellArm = Data.define(:tool_use_id, :verdict, :arm, :reason, :term, :claim) do
       include Journalable
 
       # @param tool_use_id [String] the `tool_use` block this call answers
       # @param verdict [Symbol, String] `:allow`, `:deny` or `:abstain`
+      # @param arm [Symbol, String] `:term` if the reconstructed argv is what
+      #   ran, `:string` if the model's own command reached a shell. Required,
+      #   with no default and no derivation from `verdict`: which arm ran is the
+      #   one question this record exists to answer, and a guess at it would be
+      #   wrong for every allowed pipe under `--exec docker`.
       # @param reason [String] the decision's own reason, verbatim
       # @param term [Array<Array<String>>] the argv stages an allow authorised
-      def initialize(tool_use_id:, verdict:, reason:, term: Shell::Verdict::NO_TERM)
+      def initialize(tool_use_id:, verdict:, arm:, reason:, term: Shell::Verdict::NO_TERM)
         verdict = verdict.to_s.to_sym
-        Carriers::ShellArm.check!(tool_use_id:, verdict:, reason:, term:)
+        arm = arm.to_s.to_sym
+        Carriers::ShellArm.check!(tool_use_id:, verdict:, arm:, reason:, term:)
 
-        super(tool_use_id: -tool_use_id.to_s, verdict:, reason: -reason.to_s,
+        super(tool_use_id: -tool_use_id.to_s, verdict:, arm:, reason: -reason.to_s,
               term: interned_term(term), claim: Shell::Verdict::CLAIM)
       end
 
-      # @return [Boolean] whether the call ran as a reconstructed term.
+      # THE TWO PREDICATES, and the difference between them is the whole reason
+      # this record has two members. `allow?` is the DECISION -- {Shell::Verdict}
+      # understood the command and authorised a term. `term_arm?` is what RAN --
+      # that term was actually spawned as argv, with no shell anywhere. Every
+      # `term_arm?` is an `allow?`; the reverse fails wherever the backend had no
+      # shape for the term, which under `--exec docker` is every allowed pipe.
+      #
+      # SO: counting how many commands ran deterministically is `term_arm?`, and
+      # `allow?` overcounts it. That asymmetry is why the predicate exists rather
+      # than a note telling a reader to compare `arm` by hand.
+      #
+      # @return [Boolean] whether the shell verdict allowed the command, whatever
+      #   then ran it.
       def allow? = verdict == :allow
+
+      # @return [Boolean] whether the reconstructed term is what actually ran,
+      #   which is the question "did this command avoid a shell" asks.
+      def term_arm? = arm == :term
 
       private
 

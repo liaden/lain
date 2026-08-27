@@ -66,11 +66,20 @@ module Lain
         #   "understood commands run as reconstructed argv; everything else
         #   through `sh -c`": the rung after it is a deny that does not fall
         #   through to the string arm.
-        def build(recorder, exec: Lain::Exec::Local.new, verdict: Lain::Shell::Verdict.new)
+        # @param journal [#<<] the session's journal, where {Lain::Tools::Bash}
+        #   writes the {Lain::Telemetry::ShellArm} record of every call's arm.
+        #   Handed down by {Lain::CLI::Wiring::ToolsetBuild}, which holds the
+        #   run's one journal already. Null by default for the same reason
+        #   `verdict:` is permissive by default -- a floor built with no session
+        #   behind it must still work -- and, for the same reason, the default is
+        #   what a spec has to drive PAST rather than through, or arm selection
+        #   would go unrecorded in every real session while looking wired here.
+        def build(recorder, exec: Lain::Exec::Local.new, verdict: Lain::Shell::Verdict.new,
+                  journal: Lain::Channel::Null.instance)
           [Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new, Lain::Tools::Grep.new,
            Lain::Tools::EditFile.new, Lain::Tools::WriteFile.new, Lain::Tools::TodoWrite.new,
            Lain::Tools::MemoryWrite.new(recorder:), Lain::Tools::MemoryRead.new(index: recorder),
-           Lain::Tools::Bash.new(exec:, verdict:), Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
+           Lain::Tools::Bash.new(exec:, verdict:, journal:), Lain::Tools::WebFetch.new, Lain::Tools::WebSearch.new,
            Lain::Tools::AstDump.new, Lain::Tools::TestPattern.new, Lain::Tools::AstSearch.new,
            Lain::Tools::CodeOutline.new, Lain::Tools::FileSymbols.new]
         end

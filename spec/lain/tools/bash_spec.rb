@@ -620,4 +620,198 @@ RSpec.describe Lain::Tools::Bash do
       expect(rendered.content).to include("exit status: 3", (ceiling + 1).to_s)
     end
   end
+
+  # Which arm ran is a decision this tool makes on every call, and until now
+  # nothing wrote it down where no ladder ran: the gate journals a `shell
+  # verdict` line from inside its escalation record, but `/mode auto` resolves
+  # the gate to ApproveAll, which consults no rung. So the tool records the
+  # decision itself, on both arms -- an abstention that went through `sh -c` is
+  # as much a datapoint as an allow that ran as argv.
+  describe "journalling which arm ran" do
+    let(:journal) { RecordingChannel.new }
+
+    def arms = journal.events.grep(Lain::Telemetry::ShellArm)
+
+    it "records the allow verdict, the call it belongs to, and the term it authorised" do
+      described_class.new(journal:).call({ command: "cat README.md | head -20" },
+                                         invocation(tool_use_id: "tu_term"))
+
+      expect(arms.map { |arm| [arm.tool_use_id, arm.verdict, arm.arm, arm.term] })
+        .to eq([["tu_term", :allow, :term, [%w[cat README.md], %w[head -20]]]])
+    end
+
+    # The decision's own sentence, verbatim, rather than one composed here: a
+    # reader joining this record to the gate's `shell verdict` line is reading
+    # two accounts of ONE Decision, and a paraphrase would make them look like
+    # two judgements that happened to agree.
+    it "carries the decision's own reason" do
+      described_class.new(journal:).call({ command: "ls -la" }, invocation)
+
+      expect(arms.map(&:reason)).to eq([Lain::Shell::Verdict.new.call("ls -la").reason])
+    end
+
+    it "records an abstention, which carries no term because no arm chose one" do
+      described_class.new(journal:).call({ command: "echo a && echo b" }, invocation)
+
+      expect(arms.map { |arm| [arm.verdict, arm.arm, arm.term] }).to eq([[:abstain, :string, []]])
+    end
+
+    # What a bench asks of these records is what FRACTION of commands earn the
+    # deterministic arm, so a denominator missing every uninteresting call
+    # cannot answer it.
+    it "writes exactly one record per call, on both arms" do
+      tool = described_class.new(journal:)
+      ["ls -la", "echo a && echo b", "printf hi"].each { |command| tool.call({ command: }, invocation) }
+
+      expect(arms.map(&:verdict)).to eq(%i[allow abstain allow])
+    end
+
+    # The record is about the DECISION and not the outcome: a nonzero exit
+    # rides in the tool result's content and `is_error` means the tool could not
+    # produce a result, so neither is a fact about which arm was chosen.
+    it "holds nothing about how the command came out" do
+      described_class.new(journal:).call({ command: "grep -q lain-no-such-pattern /dev/null" }, invocation)
+
+      expect(arms.map { |arm| arm.to_h.keys }).to eq([%i[tool_use_id verdict arm reason term claim]])
+    end
+
+    # A REAL {Exec::Docker} -- the predicate and the fallback under test are its
+    # own -- with only the docker client's spawn recorded, so these examples need
+    # no container and no client on PATH.
+    def recording_docker
+      inner = Class.new do
+        attr_reader :command
+
+        def call(command:, **)
+          @command = command
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+        end
+      end.new
+      [Lain::Exec::Docker.new(project: Dir.pwd, image: "img:1", exec: inner,
+                              prober: ->(_timeout) { "Docker version 27.3.1" }), inner]
+    end
+
+    # THE CASE A VERDICT ALONE GETS WRONG, and it is this chunk's own headline
+    # command. {Exec::Docker#takes_term?} is `term.size == 1`, so under
+    # `--exec docker` an allowed PIPE falls back to the model's own string and
+    # runs as `["sh", "-c", command]` inside the container -- a shell, on a
+    # record that named only the allow. The verdict is still an allow, because
+    # the verdict is what was DECIDED; the arm is the string one, because that
+    # is what RAN. Keeping both is what makes the divergence readable.
+    it "records the string arm for an allowed pipe whose backend refused the term" do
+      backend, inner = recording_docker
+
+      described_class.new(exec: backend, journal:).call({ command: "cat README.md | head -20" }, invocation)
+
+      expect(inner.command.first.last(3)).to eq(["sh", "-c", "cat README.md | head -20"])
+      expect(arms.map { |arm| [arm.verdict, arm.arm] }).to eq([%i[allow string]])
+    end
+
+    # The same backend, one stage: docker DOES have a shape for this term, so it
+    # runs as argv with no shell in the container and the record says so. The
+    # pair of examples is what pins the arm to the backend's real answer rather
+    # than to the verdict.
+    it "records the term arm on the same backend where the term was taken" do
+      backend, inner = recording_docker
+
+      described_class.new(exec: backend, journal:).call({ command: "ls -la" }, invocation)
+
+      expect(inner.command.first.last(3)).to eq(["img:1", "ls", "-la"])
+      expect(arms.map { |arm| [arm.verdict, arm.arm] }).to eq([%i[allow term]])
+    end
+
+    # The third verdict, which the group tested nowhere. A deny is on the STRING
+    # arm at this tool -- #arm_for offers a term only on an allow -- so deny and
+    # abstain reach the same arm by different decisions, and only the pair of
+    # members tells them apart.
+    it "records a denied command, on the string arm" do
+      denying = Lain::Shell::Verdict.new(capability_set: Lain::Shell::Exclusions.new(patterns: ["curl"]))
+      seen = []
+      backend = Lain::Exec::Local.new(shell_out_factory: lambda { |command, **opts|
+        seen << command
+        Mixlib::ShellOut.new("true", **opts)
+      })
+
+      described_class.new(exec: backend, verdict: denying, journal:)
+                     .call({ command: "curl http://example.com" }, invocation)
+
+      expect(seen).to eq(["curl http://example.com"])
+      expect(arms.map { |arm| [arm.verdict, arm.arm, arm.term] }).to eq([[:deny, :string, []]])
+    end
+
+    # The record names the verdict, which is the decision the gate and the tool
+    # share, and it is NOT a second account of what the backend then did with
+    # it: a backend with no shape for a multi-stage term runs the model's own
+    # string under that same allow. Pinned rather than left to be discovered.
+    it "records the allow even where the backend had no shape for the term" do
+      string_only = Class.new do
+        def takes_term?(_term) = false
+        def call(command:, **) = Lain::Exec::Capture.new(exit_status: 0, stdout: command.to_s, stderr: "")
+      end.new
+
+      result = described_class.new(exec: string_only, journal:).call({ command: "grep -r foo . | wc -l" }, invocation)
+
+      expect(result.content).to include("grep -r foo . | wc -l")
+      expect(arms.map { |arm| [arm.verdict, arm.arm] }).to eq([%i[allow string]])
+    end
+
+    # `/mode auto` resolves the gate to ApproveAll, so no rung of the ladder
+    # runs and nothing above the tool writes anything about the choice of arm --
+    # which is what leaves this record as an `auto` session's only account of
+    # it. Driven through the real resolution rather than through ApproveAll
+    # named by hand: which policy `auto` names is the fact the example rests on.
+    it "still records under /mode auto, where no ladder runs" do
+      tool = described_class.new(journal:)
+      resolution = Lain::Mode::Resolution.for(mode: Lain::Mode.new(posture: :auto),
+                                              base: Lain::Toolset.new([tool]),
+                                              queue: Lain::Effect::Handler::Gate::DenyAll.new)
+      gate = Lain::Effect::Handler::Gate.new(
+        policy: resolution.gate_policy,
+        inner: Lain::Effect::Handler::Live.new(toolset: resolution.toolset, channel:)
+      )
+
+      result = gate.call(Lain::Effect::ToolCall.new(tool_use_id: "tu_auto", name: "bash",
+                                                    input: { "command" => "ls -la" }))
+
+      expect(resolution.gate_policy).to be_a(Lain::Effect::Handler::Gate::ApproveAll)
+      expect(result).to be_ok
+      expect(arms.map { |arm| [arm.tool_use_id, arm.verdict] }).to eq([["tu_auto", :allow]])
+    end
+
+    # {Telemetry::ShellArm} refuses a record that cannot name the call it is
+    # about, and this tool does not soften that into a dropped record -- which
+    # would be the silence the whole card exists to end. It holds with the Null
+    # journal too, because the record is BUILT on every call and only its
+    # destination is Null. The one place `lib/` builds an {Effect::ToolCall}
+    # ({Agent::ToolRunner}) names it from the provider's `tool_use.id`, and
+    # {Effect::Handler::Live} hands that straight to the invocation, so what
+    # this pins is a shape only a caller assembling one by hand can produce.
+    it "refuses a call that does not name itself, rather than recording nothing" do
+      expect { described_class.new.call({ command: "ls -la" }, Lain::Tool::Invocation.new) }
+        .to raise_error(ArgumentError, /must name the call this record is about/)
+    end
+
+    # The record is written before the command runs, so a call that never
+    # produced a result still left an account of the arm it chose -- which is
+    # the datapoint a bench most wants for a command that hung.
+    it "records the arm of a call that timed out and produced no result" do
+      backend = Lain::Exec::Local.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1),
+                                      shell_out_factory: ->(*, **) { raise "the term arm must not reach a shell" })
+
+      result = described_class.new(exec: backend, journal:).call({ command: "sleep 5", timeout: 1 }, invocation)
+
+      expect(result).to be_error
+      expect(arms.map(&:verdict)).to eq([:allow])
+    end
+
+    # The Null default: {Tools::Subagent} runs an ungated handler and this file
+    # constructs the tool alone, so a build with no journal has to write nowhere
+    # rather than raise or fall back to the invocation's output channel.
+    it "runs the command and writes nowhere when no journal is injected" do
+      result = described_class.new.call({ command: "ls -la" }, invocation)
+
+      expect(result).to be_ok
+      expect(channel.events.grep(Lain::Telemetry::ShellArm)).to be_empty
+    end
+  end
 end
