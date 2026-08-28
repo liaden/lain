@@ -278,17 +278,15 @@ module Lain
       # closed spawn is whichever windowed digest the record's causal_parents
       # name. Deleting the window entry makes a redelivered terminal a no-op,
       # so the rename never fires twice at a title that no longer matches.
+      # {Telemetry::SpawnLifecycle} is asked rather than tested inline, so
+      # {StatusFeed} can ask the same question of the same records instead of
+      # growing its own copy of it.
       def observe_close(record)
-        return unless terminal?(record)
+        return unless Telemetry::SpawnLifecycle.new(record).terminal?
 
         digest = Array(record.causal_parents).find { |parent| @windows.key?(parent) }
         released = digest && @windows.delete(digest)
         @pump.enqueue(Pump::Mark.new(target: mark_target(released), title: "#{released} #{DONE_MARK}")) if released
-      end
-
-      def terminal?(record)
-        payload = record.payload
-        payload.is_a?(Hash) && (payload.key?("result") || payload["lifecycle"] == "stopped")
       end
 
       def turn_boundary

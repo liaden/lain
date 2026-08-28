@@ -279,6 +279,57 @@ RSpec.describe Lain::CLI::FleetWindows do
     end
   end
 
+  # The lifecycle vocabulary's five acceptance criteria, restated here as a
+  # direct record of each scenario. The first three restate coverage that
+  # already exists above under other names (farewell, one-shot result,
+  # tell-is-not-terminal). The fourth and fifth are the ones this substitution
+  # actually adds: a completion can carry both vocabularies at once, and the
+  # predicate itself must have exactly one definition in the tree.
+  describe "the lifecycle vocabulary FleetWindows asks" do
+    it "closes the window on an actor farewell" do
+      fleet << spawn_record
+      fleet << farewell_record
+      fleet.drain_pending
+
+      expect(rename_argvs.size).to eq(1)
+    end
+
+    it "closes the window on a one-shot result" do
+      fleet << spawn_record
+      fleet << result_record
+      fleet.drain_pending
+
+      expect(rename_argvs.size).to eq(1)
+    end
+
+    it "closes nothing on an ordinary tell" do
+      fleet << spawn_record
+      fleet << tell_record
+      fleet.drain_pending
+
+      expect(rename_argvs).to be_empty
+    end
+
+    it "closes its window exactly once for a completion carrying both a result and a lifecycle mark" do
+      both = Lain::Telemetry::Message.new(
+        digest: "blake3:b0b0111122223333", kind: :message, from: spawn_digest, to: parent,
+        payload: { "result" => "found 3 papers", "lifecycle" => "stopped", "final" => "blake3:f1na" },
+        causal_parents: [spawn_digest, "blake3:f1na"], correlation: spawn_digest
+      )
+      fleet << spawn_record
+      fleet << both
+      fleet << both
+      fleet.drain_pending
+
+      expect(rename_argvs.size).to eq(1)
+    end
+
+    it "defines no terminal predicate of its own -- FleetWindows asks Telemetry::SpawnLifecycle instead" do
+      path, = described_class.instance_method(:observe_close).source_location
+      expect(File.read(path)).not_to include("def terminal?")
+    end
+  end
+
   describe "hostile role names" do
     # tmux format-expands `new-window -n` names (a role "#{pane_pid}" renders
     # as a PID) and `.`/`:` are separators inside a `=name` rename target --
