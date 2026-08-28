@@ -139,6 +139,20 @@ qa_panes_running() {
   done < <(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id} #{pane_pid} #{pane_current_command}')
 }
 
+# Is <pane id> one of the <candidate>s? Three sites ask it -- both helpers'
+# liveness checks and the kind check peek.sh puts a pin through -- and this file
+# exists so they ask one question one way. No pipe into `grep`, which is how the
+# three hand-rolled copies were spelled: a pipeline's exit status is the last
+# command's, so those would silently invert the day anything turns on pipefail.
+qa_pane_member() {
+  local want="$1" c
+  shift
+  for c in "$@"; do
+    if [ "$c" = "$want" ]; then return 0; fi
+  done
+  return 1
+}
+
 # What a refusal prints: a bare pane id does not say which one to pin, and the
 # whole point of refusing is that the operator has to choose. `dead` is in there
 # because `lain up` deliberately KEEPS a failed chat pane, so a refusal can
@@ -150,13 +164,16 @@ qa_pane_label() {
     '#{pane_id} cmd=#{pane_current_command} dead=#{pane_dead} pid=#{pane_pid} win=#{window_name}'
 }
 
-# The remedy a refusal offers, and it is deliberately NOT `export`: peek.sh
-# reads LAIN_QA_PANE before it decides whether it was asked for the chat or the
-# editor, so an exported pin makes `peek.sh <n> nvim` read the pinned CHAT and
-# exit 0 as if it had read the editor. Per invocation, the pin dies with the
-# call it aimed.
+# The remedy a refusal offers, and it is deliberately per invocation rather than
+# an `export`: one scalar aims BOTH helpers and BOTH roles, so a pin left in the
+# environment outlives the call that wanted it. What that used to cost was a
+# reading of the wrong surface -- a chat pin answered `peek.sh <n> nvim` with the
+# chat's screen, exit 0 and all -- and peek.sh now checks the pin against the
+# kind it was asked for and refuses instead. Loud beats wrong, but a refusal on
+# the next unrelated read is still a round interrupted for nothing. Per
+# invocation, the pin dies with the call it aimed.
 qa_pane_pin_hint() {
-  echo "  aim ONE call: LAIN_QA_PANE=<pane id> $1 ...  (do not export it -- an exported pin also re-aims peek.sh's nvim read)"
+  echo "  aim ONE call: LAIN_QA_PANE=<pane id> $1 ...  (per invocation, not exported -- one pin aims both helpers)"
 }
 EOF
 
@@ -171,9 +188,10 @@ cat > "$QA/drive.sh" <<'EOF'
 # drive.sh "<text>" [quiet_seconds] [max_seconds]
 #   requires $LAIN_QA_JOURNAL -- pin it to the COCKPIT's journal, e.g.
 #   export LAIN_QA_JOURNAL="$XDG_STATE_HOME/lain/sessions/<hash>/<file>.ndjson"
-#   optionally pin the pane too, per invocation and NOT exported:
-#   LAIN_QA_PANE="%3" drive.sh '...' -- an exported pin also re-aims peek.sh's
-#   nvim read. Same reason as pinning the journal, see below.
+#   optionally pin the pane too, per invocation rather than exported:
+#   LAIN_QA_PANE="%3" drive.sh '...' -- an exported pin aims peek.sh at the same
+#   pane as well, which peek honours for the kind it fits and refuses for the
+#   other one. Same reason as pinning the journal, see below.
 . "$(dirname "$0")/env.sh"
 . "$(dirname "$0")/panes.sh"
 # Called HERE and not from inside the resolver: every resolver call happens in a
@@ -204,8 +222,13 @@ if [ -n "${LAIN_QA_PANE:-}" ]; then
   # a shared shell is the same class of leftover state this whole card exists
   # to stop guessing past.
   mapfile -t LIVE_PANES < <(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id}')
-  printf '%s\n' "${LIVE_PANES[@]}" | command grep -qxF "$LAIN_QA_PANE" \
+  qa_pane_member "$LAIN_QA_PANE" "${LIVE_PANES[@]}" \
     || { echo "pinned pane does not exist: $LAIN_QA_PANE on tmux -L $QA_SOCK" >&2; exit 1; }
+  # Liveness and nothing else, deliberately: a pin is the ONLY way to drive a
+  # pane the resolver cannot classify -- a chat under a wrapper with no `lain`
+  # word in its argv is exactly that pane -- and a kind check here would take
+  # the send side away too. peek.sh can afford to be strict because a read has
+  # a raw fallback; a send has none.
   CHAT="$LAIN_QA_PANE"
 else
   mapfile -t CHAT_CANDIDATES < <(qa_panes_running ruby)
@@ -271,21 +294,65 @@ cat > "$QA/peek.sh" <<'EOF'
 # needs -e instead, never -p. See method.md's "What a text read cannot verify"
 # for the recipe this wraps and a real measurement. -e output is for a human or
 # a decoder, not for grep -- it is unusable as plain text by design.
-#   optionally pin the pane, per invocation and NOT exported:
-#   LAIN_QA_PANE="%3" peek.sh 20 -- an exported pin is read before the chat/nvim
-#   choice below, so it re-aims `peek.sh <n> nvim` at the pinned pane. Same
-#   escape hatch as drive.sh, and for the same reason: see the refusal below.
+#   optionally pin the pane, per invocation rather than exported:
+#   LAIN_QA_PANE="%3" peek.sh 20 -- the pin is checked against the KIND asked
+#   for, so a chat pin plus `peek.sh <n> nvim` is a refusal rather than a chat
+#   read wearing an editor read's clothes. An exported pin therefore aims every
+#   later call at one pane and earns a refusal wherever it does not fit; per
+#   invocation it dies with the call it aimed. Same escape hatch as drive.sh:
+#   see the refusal below.
 . "$(dirname "$0")/env.sh"
 . "$(dirname "$0")/panes.sh"
 qa_panes_require_sock   # abort HERE; inside the resolver it would only kill a subshell
-WHICH="${2:-chat}"; PAT=ruby; [ "$WHICH" = nvim ] && PAT=nvim
+# `$2` names a KIND, and the pin check below asks the resolver about that kind,
+# so an unknown word must not fall through to the chat the way `[ "$WHICH" =
+# nvim ]` did: `peek.sh 20 editor` read a CHAT pane, and with a chat pin it did
+# it at exit 0 -- this script's own defect, one typo away from the gate meant to
+# close it. The unpinned path lied in the same direction, counting `ruby` panes
+# and calling them `editor` ones, because the message was built from $WHICH and
+# the query from $PAT with nothing forcing the two to agree.
+WHICH="${2:-chat}"
+case "$WHICH" in
+  chat) PAT=ruby ;;
+  nvim) PAT=nvim ;;
+  *) echo "peek.sh: unknown kind '$WHICH' -- expected chat or nvim" >&2; exit 2 ;;
+esac
 if [ -n "${LAIN_QA_PANE:-}" ]; then
   # Same validation as drive.sh, same reason: capture-pane on a dead pane
   # writes "can't find pane" to stderr and returns success with EMPTY stdout,
   # which is indistinguishable from a pane that exists and is genuinely blank.
   mapfile -t LIVE_PANES < <(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id}')
-  printf '%s\n' "${LIVE_PANES[@]}" | command grep -qxF "$LAIN_QA_PANE" \
+  qa_pane_member "$LAIN_QA_PANE" "${LIVE_PANES[@]}" \
     || { echo "pinned pane does not exist: $LAIN_QA_PANE on tmux -L $QA_SOCK" >&2; exit 1; }
+  # A pin names a PANE; this script is also asked for a ROLE, and one scalar
+  # cannot answer both. The pin used to be taken before the chat/nvim argument
+  # was read at all, so a driver pinned to the chat and asking for the editor
+  # got the chat's screen with plausible text and exit 0 -- the exact shape of a
+  # real editor read, and the escape hatch meant to make an ambiguous round
+  # drivable was what aimed it wrong. So the pin faces the same question the
+  # unpinned path asks: being live is not enough, the pane has to be running the
+  # kind that was asked for. Correcting a refused pin is cheap; a reading of the
+  # wrong surface is not, because nothing about it looks wrong.
+  mapfile -t KIND_PANES < <(qa_panes_running "$PAT")
+  if ! qa_pane_member "$LAIN_QA_PANE" "${KIND_PANES[@]}"; then
+    echo "REFUSING to read: the pinned pane is not a $WHICH pane on tmux -L $QA_SOCK:" >&2
+    echo "  pinned: $(qa_pane_label "$LAIN_QA_PANE")" >&2
+    for c in "${KIND_PANES[@]}"; do echo "  $WHICH:   $(qa_pane_label "$c")" >&2; done
+    [ "${#KIND_PANES[@]}" -gt 0 ] || echo "  and no $WHICH pane here at all" >&2
+    # A refusal that closes the escape hatch has to leave one open, or a driver
+    # who is right and a resolver that is wrong end in a standoff -- and this is
+    # the arm a pane nothing can classify lands on, where there is no other pane
+    # to re-aim at. `qa_pane_pin_hint` is the wrong remedy here (pinning is what
+    # just failed), so this branch carries its own. Raw capture does not filter
+    # blank rows the way this script does; that is the point of it -- and `cat
+    # -n` is what stops the unfiltered read from lying in the other direction.
+    # A tail of a mostly-blank pane is otherwise blank lines at exit 0, which
+    # answers nothing while looking like an answer, and is indistinguishable
+    # from the frozen-pane misdiagnosis method.md documents. Numbered, the same
+    # result reads "rows 21-40 are empty, the content is above you".
+    echo "  read it raw if you are sure: tmux -L $QA_SOCK capture-pane -p -t $LAIN_QA_PANE | cat -n | tail -n ${1:-12}" >&2
+    exit 2
+  fi
   P="$LAIN_QA_PANE"
 else
   # Candidates come from panes.sh, which counts a chat or an editor running

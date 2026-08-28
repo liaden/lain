@@ -558,9 +558,30 @@ wrong surface returns plausible text rather than an error.
   with nothing telling them apart — and they send or read nothing. Kill probe windows before
   bringing the cockpit up, same as ever, but the refusal is now the backstop rather than the only
   guard. **Aim a single call rather than exporting a pin**: `LAIN_QA_PANE=%3 "$QA/drive.sh" '…'`.
-  An EXPORTED `LAIN_QA_PANE` is read by `peek.sh` before it decides whether it was asked for the
-  chat or the editor, so it silently re-aims `peek.sh <n> nvim` at the pinned chat pane, exit 0
-  and all — measured.
+  - **A pin names a pane; `peek.sh` is also asked for a role, and one scalar cannot answer both.**
+    The pin used to be taken before the `chat|nvim` argument was read at all, so a chat pin plus
+    `peek.sh <n> nvim` returned the **chat's** screen — plausible text about a surface the driver
+    was not asking about, exit 0 and all, measured. `peek.sh` now checks the pin against the kind
+    it was asked for and **refuses** (exit 2, naming the pinned pane and every pane of the kind it
+    wanted) rather than reading it. `peek.sh` also refuses a kind word it does not know rather than
+    treating it as `chat`: `peek.sh 20 editor` used to read the chat, and with a chat pin it did so
+    at exit 0 — the same defect one typo away.
+  - **`drive.sh`'s pin is deliberately NOT checked that way, and the reason is the opposite of
+    "it has no kind".** It resolves `ruby` candidates like everything else; a pin naming a pane
+    running neither a chat nor an editor is honoured and sent to. That is on purpose: **a pin is
+    the only way to drive a pane the resolver cannot classify** — a chat under a wrapper with no
+    `lain` word in its argv is exactly that pane — and a kind check on the send side would take it
+    away. `peek.sh` can afford to be strict because a read has a raw fallback and a send has none.
+    The cost is worth saying out loud: such a pane is now **drivable but not readable** through the
+    helpers. When a kind refusal is wrong and you are sure of the pane, read it raw — the refusal
+    prints this line itself:
+
+    ```bash
+    # numbered, and with no blank-line filter: unlike peek.sh, so blank rows stay visible AS rows
+    tmux -L "$QA_SOCK" capture-pane -p -t "$PANE" | cat -n | tail -n 12
+    ```
+  - An exported pin is now loud rather than wrong, and it is still worth avoiding — it aims every
+    later call in that shell at one pane, and the refusals it earns interrupt a round for nothing.
 - **Resolving a pane by WINDOW name gets nvim, not the repl.** `lain up` puts nvim *and* the chat
   process in ONE window called `chat`, so `list-panes -F '#{window_name} #{pane_id}' | awk '$1=="chat"'`
   returns the editor. Everything then reads an editor pane that never shows an approval prompt.
