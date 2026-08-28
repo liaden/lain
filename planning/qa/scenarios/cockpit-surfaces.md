@@ -422,7 +422,7 @@ the surfaces for the *second* call:
 |---|---|
 | chat pane | does an `<requester> asks: approve …? [y/N]` prompt render at all? |
 | chat pane | does typing `y` get **consumed**, or merely echoed? |
-| `lain://approval` | does it hold the full command text and the `y approve, n deny` affordance? |
+| `lain://approval` | the `y approve, n deny` affordance, and the full command — read from `b:lain_approval_calls`, **not** from the rendered rows, which are elided and wrapped on purpose (see *Reading a long command back*, below) |
 | `.lain/state.json` | `approvals_pending` |
 | journal | `approval_pending` with `requester` |
 | journal | the `escalation` ladder — see below; it is the surface that settles F40 |
@@ -453,6 +453,84 @@ with `fleet 2` on the status line you otherwise cannot tell a parent from its ch
 **Run this on `--no-nvim` too.** In the cockpit `:LainApprove` is a recovery path; on plain
 `lain chat` there is no second surface, and round 4 found that neither `y` nor `/approve` was
 consumed — a permanent wedge. The plain path is where this defect is fatal.
+
+### Reading a long command back: the rows are cut on purpose
+
+**Two shapes on this buffer look like truncation and are not.** Both are the design, and neither
+is a finding. **Do not re-file either.**
+
+- **The summary row ends in `...`.** An item that overruns 96 columns is drawn as a *cut prefix*
+  over a foldable body carrying the whole row beneath it —
+  `summary[0, WIDTH - ELISION.length] + ELISION` at
+  `lib/lain/frontend/neovim/approval_view.rb:433`, with `ELISION = "..."` at `:87`. So every long
+  call shows a trailing `...` on its first line. That is a fold, not a loss: open the fold (§8) and
+  the rest is directly below it.
+- **The body below it splits mid-token.** `BODY = /.{1,#{WIDTH - INDENT.length}}/m` (`:105`,
+  indented with two spaces by `#body_for` at `:443`) cuts on the column and never on a word
+  boundary. That is deliberate: the bytes on screen are the bytes a `y` releases, so a
+  word-boundary wrap would move spaces and show the human something other than what runs. Rounds
+  13, 14 and 15 each filed this split (round 15 quoted `bundle install` / `--quiet` across the
+  break) as F76, and each time the wrap was the design rather than the defect.
+
+What *was* the defect is that a reader could not get the command back: joining the rendered lines
+leaves the two-space indent lodged mid-token, so a substring match against the original command
+misses. That is fixed, and the fix is a second publication rather than a change to what is drawn.
+Ruby computes one unwrapped string per **parked call** — `calls = parked.map { |pending|
+call_of(pending) }` at `approval_view.rb:407` — and ships it beside the row count from
+`#posted` (`approval_view.rb:385`) through `RpcThread#set_approval`
+(`lib/lain/frontend/neovim/rpc_thread.rb:444-445`). The runtime stamps both onto the buffer:
+`b:lain_approval_calls` and `b:lain_approval_call_index` at
+`lib/lain/frontend/neovim/runtime/62_approval.lua:156-157`. **Read those. Never the rendered
+text.**
+
+```bash
+# every parked call, uncut, one per line
+nvim --server "$S" --remote-expr \
+  "join(getbufvar(bufnr('lain://approval'), 'lain_approval_calls', []), \"\n\")"
+# -> bash({"command" => "cd /path && bundle install --quiet"})
+
+# how many rows are ANSWERABLE -- the bound on N below
+nvim --server "$S" --remote-expr "getbufvar(bufnr('lain://approval'), 'lain_approval_rows', 0)"
+
+# the call a given ROW belongs to; N is the 1-based buffer line
+nvim --server "$S" --remote-expr \
+  "getbufvar(bufnr('lain://approval'),'lain_approval_calls',[])[getbufvar(bufnr('lain://approval'),'lain_approval_call_index',[])[N-1] - 1]"
+```
+
+**N must be `<= b:lain_approval_rows`.** The buffer holds two lines past the last answerable row —
+a blank and the `-- y approve, n deny` hint — and `call_index` is rows-shaped, so a driver who
+counts lines rather than reading the row count and asks for one line too many gets
+`E684: List index out of range` rather than an answer. Read `b:lain_approval_rows` first; it is
+the same count the runtime's keymaps are inert outside.
+
+**The `, []` and `, 0` defaults are load-bearing, and the reason is the failure mode below.**
+Without them, `join(getbufvar(…), "\n")` against an *unset* variable answers `E714: List required`
+and exits 2. That error is a true signal — it is exactly the "absent while rows is positive" case
+— but a bare error reads to a driver as a broken recipe, and the round is then spent on the
+recipe instead of on the finding. With the default, absence prints **empty**, which compares
+directly against the row count and reads as data. If you do run the bare form, treat `E714` as the
+finding, not as your own mistake.
+
+`call_index` is **1-based**, because the lua side indexes `calls` with it directly, while
+vimscript's `getbufvar` hands back a 0-based List — which is where the `[N-1]` and the trailing
+`- 1` come from. From lua the same read is `calls[call_index[N]]` with no arithmetic at all; that
+is what the live-nvim example does at `spec/lain/frontend/neovim_runtime_spec.rb:404`, which
+asserts in one breath that the rendered lines still do **not** contain the command and that
+`b:lain_approval_calls` does.
+
+Two things to know before matching on the result:
+
+- **It is the whole call, not the bare command.** An entry is `<tool>(<input>.inspect)`
+  (`approval_view.rb:445`), so a command containing `"` or `\` comes back escaped the way Ruby
+  inspects it. A plain shell command matches literally; anything quote-heavy, compare against the
+  inspected form.
+- **One entry per parked call, never one per row.** A 200-character command wrapping into three
+  rows still yields a single entry — which is the whole reason the row → call map exists. Two
+  parked calls give two entries, in queue order.
+
+**What a real finding looks like here**, as opposed to an elided or wrapped row: `b:lain_approval_calls`
+absent or empty while `b:lain_approval_rows` is positive; an entry that does not carry the command
+in full; or a `b:lain_approval_call_index` whose length disagrees with `b:lain_approval_rows`.
 
 ### The precondition that decides whether this test tests anything
 
