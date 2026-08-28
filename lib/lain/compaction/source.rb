@@ -46,6 +46,14 @@ module Lain
       # byte-NEUTRAL rewrite is declined too, and calling that inflation would
       # be a claim the measurement never made.
       #
+      # `nothing_droppable` names the other unreadable defer: `#decide` returns
+      # before {Need} is even consulted when {Head#empty?}, so a signal that
+      # fired reads back as `signals: []` exactly like a turn nowhere near
+      # threshold, and `ctx 100%` cannot be told from `ctx 100% and nothing
+      # left to cut`. Set from {Head#empty?} alone, on every decision including
+      # a compacting one, so the field says what it always could have said
+      # rather than only on the turns a reader happens to suspect.
+      #
       # `window_tokens`/`used_tokens` are the denominator and the numerator
       # `:approaching_window` fired (or did not) on; without them a journal
       # from an ollama run reading `approaching_window` every turn was
@@ -63,7 +71,7 @@ module Lain
       # same turn while compaction can never fire.
       CompactionDecision = Data.define(:compacted, :signals, :head_bytes,
                                        :summary_hits, :summary_misses, :cold, :would_not_shrink,
-                                       :window_tokens, :used_tokens, :provenance) do
+                                       :window_tokens, :used_tokens, :provenance, :nothing_droppable) do
         include Telemetry::Journalable
       end
 
@@ -482,7 +490,8 @@ module Lain
                                            summary_hits: outcome.hits, summary_misses: outcome.misses,
                                            cold: @cold.cold?, would_not_shrink:,
                                            window_tokens: occupancy.window_tokens,
-                                           used_tokens: occupancy.used_tokens, provenance:)
+                                           used_tokens: occupancy.used_tokens, provenance:,
+                                           nothing_droppable: head.empty?)
       end
 
       # A fresh Scheduler per turn, because the combinator it is frozen around

@@ -1502,6 +1502,31 @@ RSpec.describe Lain::Compaction::Source do
       expect(decisions.first["head_bytes"])
         .to eq(Lain::Compaction::Head.new(messages: messages_of(line), keep_last:).bytesize)
     end
+
+    # An empty head defers regardless of the signals -- `#decide` returns
+    # before {Need} is consulted -- so a reader could not otherwise tell this
+    # defer apart from an ordinary one where the signals simply never fired.
+    it "reports nothing droppable when the head is empty and a signal fires" do
+      built = source(need: build_need(byte_threshold: 1), hard_cap: 1, keep_last: 6)
+
+      context_for(built, timeline(5))
+
+      expect(decisions.first).to include("nothing_droppable" => true, "compacted" => false)
+    end
+
+    it "does not report nothing droppable when the head is real" do
+      context_for(source, timeline)
+
+      expect(decisions.first).to include("nothing_droppable" => false, "compacted" => false)
+    end
+
+    it "does not report nothing droppable when the turn compacts" do
+      built = source(need: build_need(byte_threshold: 100), hard_cap: 100)
+
+      context_for(built, timeline)
+
+      expect(decisions.first).to include("nothing_droppable" => false, "compacted" => true)
+    end
   end
 
   # A walk and its projection are O(n) in history length, and a compacting
