@@ -6,6 +6,15 @@ home for the three things the small scenarios structurally cannot reach:
 
 1. **Compaction at scale** — filling the context until a compaction actually fires. Rounds 3 and 4
    both failed to reach this, making it the least-exercised path in the whole QA suite.
+
+   **Round 15 correction: "hundreds of files" is no longer what `rails new` produces.** Rails
+   **8.1.3.1** with `--skip-bundle` yields **78 files, 20 of them `.rb`, 440 KB** — the framework got
+   smaller, not the scenario wrong. The premise still holds, but it is carried by tool-result
+   **size**, not file **count**, so reach it the way §2's own second clause says (a directive that
+   reads large generated files back) rather than by counting the tree. Round 15 hit 99.93% occupancy
+   from a single 112 KB `read_file` — and see **F82**: at that point the compactable head was
+   `head_bytes: 2`, because the oversized result sits in the tail `keep_last` retains. **A round that
+   wants compaction to FIRE needs many medium results across many turns, not one enormous one.**
 2. **Unbounded tool output.** `rails new` emits an enormous `bash` result; `list_files` on
    `app/`, `glob '**/*.rb'` and `read_file` on a schema are all large. Fourteen tools bound nothing
    today, and `arXiv:2508.21433` measures observation tokens at ~84% of an average agent turn.

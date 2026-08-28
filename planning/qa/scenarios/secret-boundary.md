@@ -17,9 +17,20 @@ need a model behind them. Round 10 drove them against `--provider ollama --model
 §6 additionally needs `bench.md` up and the ollama default model; §7 is a `grep` and costs nothing.
 
 **Needs:** a scratch project. **A `$HOME` you are willing to have probed** — several rules are
-home-anchored, so `method.md`'s sandbox `HOME` is what they resolve against, and a driver who
-exports a `HOME` of `""` or `/` silently disables every home-anchored rule (the constructor refuses
-`/` outright; `""` is the one to watch).
+home-anchored, so `method.md`'s sandbox `HOME` is what they resolve against.
+
+**CORRECTED, round 15: neither dangerous `HOME` is silent any more — both refuse loudly at
+construction.** This paragraph used to warn that a `HOME` of `""` or `/` "silently disables every
+home-anchored rule (the constructor refuses `/` outright; `""` is the one to watch)". Measured
+against `Lain::Sensitivity.new`:
+
+```
+home: "/"  -> ArgumentError: home must not be the filesystem root, got "/"
+home: ""   -> ArgumentError: home must be an absolute path, got ""
+```
+
+So the silent-disable failure mode is gone in both directions. Keep redirecting `HOME` deliberately
+— the fixture writes fake keys under it — but a mistyped one is now loud rather than vacuous.
 
 **Why it is worth a scenario:** as of round 8 this surface had **zero** manual coverage and the
 README named it the largest untested one. Every claim below rests on specs alone until a round
@@ -46,6 +57,22 @@ export GEM_PATH=/home/tara/.gem/ruby/4.0.0:$GEM_HOME
 `HOME` is **not** in `PANE_ENV`, so export it before the tmux server starts and verify per pane. And
 take the close-out `git status` in a shell that has NOT sourced this — a redirected `HOME` hides
 git's global ignore and reports false untracked files (P16).
+
+**Round 15: the four exports above did NOT work on this box, and §1 does not need them.** With them
+set exactly as written, `bundle exec` failed
+`Could not find rubocop-thread_safety-0.7.3 in locally installed gems (Bundler::GemNotFound)` — the
+redirect moves rubygems' user-gem root out from under the toolchain, and the `GEM_PATH` line does not
+put it back. Two consequences worth carrying:
+
+- **§1's classifier needs no `HOME` redirect at all.** `Lain::Sensitivity.new` takes `home:` as an
+  explicit keyword, so the whole verdict table can be driven against a sandbox home passed in:
+  `Lain::Sensitivity.new(home: "$QA/home", cwd: "$QA/secrets").classify(path)`. That is both safer
+  (the operator's real `~/.ssh` is never in the frame) and free of the toolchain problem. Round 15
+  drove all seven rows this way. Say which you used: this reads the LIBRARY, where `/ruby` inside a
+  live session reads the process.
+- **The sections that genuinely need a redirected `HOME`** are the ones where a *tool call* resolves
+  a home-anchored path (§3's listing, §4's read). Those still want the tmux-server-level redirect —
+  and if the exports above fail the same way, that is the thing to report, not to work around.
 
 ```bash
 S="$(mktemp -d)/secrets"; mkdir -p "$S"; cd "$S"; git init -q .

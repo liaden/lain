@@ -82,10 +82,28 @@ Bring the cockpit up on `$T` at `accept_edits`, per `method.md`.
 
 **The arm oracle, and it is the thing that makes this whole scenario checkable.** `Tools::Bash`
 picks its arm silently (`bash.rb:139-141`: `decision.allow? ? decision.term : input.command`) and
-**journals nothing about the choice** — that record is T5/T7's work and does not exist yet (§8). So
-until it does, the only way to know which arm ran is a command whose two arms *disagree*, and
-`Shell::Pipeline`'s class doc names exactly one such family: a **shell builtin with no binary on
-disk**.
+**journals nothing about the choice** — that dedicated record is T5/T7's work and does not exist yet
+(§8). So the belt-and-braces oracle is a command whose two arms *disagree*, and `Shell::Pipeline`'s
+class doc names exactly one such family: a **shell builtin with no binary on disk**.
+
+**⚠️ CORRECTED, round 15 — the arm IS observable from the outside today, and this section used to say
+it was not.** The dedicated arm record is still missing, but the **Triage rung journals the shell
+verdict**, and verdict→arm is deterministic (`bash.rb:139-141`: allow→term, anything else→string).
+`escalation.rb:538` builds the reason as `"shell verdict #{decision.name} -- …"`, so:
+
+```bash
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
+  next unless r["type"]=="escalation" && r["rung"]=="triage"
+  puts "#{r["tool_use_id"]} #{r["reason"][/shell verdict \w+/]}"}' "$LAIN_QA_JOURNAL"
+```
+
+Confirmed in both directions in one round-15 session: `exit 3` journalled `shell verdict allow` and
+produced 127 (term); `echo "hello world"` journalled
+`shell verdict abstain -- not fully understood -- node kinds …` and produced exit 0 with the quotes
+consumed (string). **So a round can answer this document's own headline question — "can a driver tell
+from the outside which arm ran?" — with YES, from the journal**, and use `exit 3` as corroboration
+rather than as the only instrument. What T5/T7 still buy is a record that names the arm *directly*
+rather than one a reader has to derive.
 
 ```
 you> run: exit 3
@@ -299,6 +317,20 @@ allows and runs, because `nl` is on `STDIN_SAFE`.
 
 **What wrong looks like:** `tee` writing `out.txt`. Check the file's absence, not only the message —
 a refusal delivered after the write is the same bytes on screen and a different outcome on disk.
+
+**Drive this through `/ruby`, not through the model (round 15).** Asked for
+`cat README.md | tee out.txt`, `qwen3-coder:30b` silently ran `cat README.md` — the probe then reads
+`exit status: 0` and asserts nothing about `tee` at all. The deterministic form, with the two
+corrections round 15 had to make to this snippet — the member is **`exit_status`**, not `status`, and
+`Pipeline#call` requires **`env:` and `timeout:`**:
+
+```bash
+$QA/drive.sh '/ruby Lain::Shell::Pipeline.new.call([["cat","README.md"],["tee","out.txt"]], cwd: Dir.pwd, env: {}, timeout: 10).to_h.reject{|k,_| k==:stdout}.inspect' 6 30 >/dev/null; $QA/peek.sh 6
+```
+
+Measured round 15, verbatim:
+`{exit_status: 126, stderr: "lain: tee: not permitted downstream of a pipe\n"}`, `out.txt` absent,
+`STDIN_SAFE.include?("tee")` false, `STDIN_SAFE.size` **46**.
 
 **Note the asymmetry deliberately, because it is a limit and not a bug:** `refused_downstream`
 applies to `@term.drop(1)` only. Stage 0's argv is nobody's business here — `curl -o FILE`,
