@@ -1,9 +1,11 @@
 # Scenario: every command at the `you>` prompt
 
-**What it exercises:** `Command::Registry` and the ten commands nothing else drives — `/help`,
-`/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/fork`, `/goal`, `/meta`, `/review-submit` —
-alongside the ten that other scenarios touch only in passing (`/status`, `/sessions`, `/mode`,
-`/model`, `/approve`, `/quit`, `/ruby`, `/inbox`, `/review`, `/survey`).
+**What it exercises:** `Command::Registry` and the eleven commands nothing else drives — `/help`,
+`/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/fork`, `/goal`, `/meta`, `/review-submit`,
+`/introspect` — alongside the ten that other scenarios touch only in passing (`/status`,
+`/sessions`, `/mode`, `/model`, `/approve`, `/quit`, `/ruby`, `/inbox`, `/review`, `/survey`).
+Eleven plus ten is the whole registry — twenty-one commands, pinned as a literal roster at
+`spec/lain/cli/command/surface_spec.rb:143-147`.
 
 **The question it answers:** does the command surface do what it says, and does it refuse in
 sentences a human can act on? Every command below is a **zero-model-turn** path — the registry is
@@ -54,9 +56,9 @@ namespace -- a registered skill's `/word` dispatches, and only an unknown one re
 claiming one name raise at assembly. Nothing a driver types can provoke it, so note it as
 spec-covered and move on rather than hunting for it.
 
-## 1 — `/status`, `/sessions`, `/model`, `/mode`
+## 1 — `/status`, `/sessions`, `/model`, `/mode`, `/introspect`
 
-The read-only four. Drive each before any turn is committed, and again after — an empty session is
+The read-only five. Drive each before any turn is committed, and again after — an empty session is
 where these break.
 
 ```
@@ -64,7 +66,20 @@ you> /status
 you> /sessions
 you> /model
 you> /mode
+you> /introspect
 ```
+
+**`/introspect` is the human-facing half of a pair whose model-facing half is `session_usage`** —
+drive it in both states, because it exists to answer a question honestly rather than plausibly.
+Before any turn: occupancy reads "no turn yet in this run" and review reads "none held by /review or
+/survey". After a turn: occupancy is a percentage, the token rows are populated, and the cache-hit
+row reads a ratio or "nothing billed on the way in yet" if nothing was. **Check the `unreported`
+row names all three gaps by word, every time** — which provider is answering, how large the window
+is and whether that size was measured or guessed, and a review the agent opened for itself via
+`request_review` (the outbox `/introspect` reads holds only what `/review` and `/survey` put there).
+A row that goes quiet instead of naming its gap, or a number that looks measured but was guessed, is
+the failure this command exists to catch — read `cli/command/introspect.rb`'s class doc for the
+fabrication this was written against.
 
 `/mode` reports the posture and its active layers. The postures, most restrictive first, are
 `plan`, `manual`, `accept_edits`, `auto`; the layers are `auto_approve`, `goal`, `notify`, `vi`.
@@ -80,13 +95,17 @@ you> /mode !              reset -- most restrictive posture, NO layers
 ```
 
 **`/mode !` is a reset, not a step**, and the design note says why it leads: like `<Esc><Esc>` in
-vim, its promise is that afterwards you know where you are. Set `auto` plus two layers, then `!`,
-then `/mode` — the report must show `plan` with **no** layers. A reset that keeps a layer, or that
-walks the posture down one rung, is the finding.
+vim, its promise is that afterwards you know where you are. Set `accept_edits` plus two layers, then
+`!`, then `/mode` — the report must show `plan` with **no** layers. `accept_edits` is not the top
+rung, but it is two rungs above the floor, so the same reset still proves that `/mode !` drops every
+layer **and** walks the posture all the way to `plan` in one move, not merely off whatever rung it
+was on. (`method.md` sanctions raising the posture to `auto` in exactly two places, and §1 is
+neither — see §6 for that drive.) A reset that keeps a layer, or that walks the posture down one
+rung at a time, is the finding.
 
-**And check the switch writes ONE record, not an intermediate ladder.** A `/mode !` from `auto`
-that journals `accept_edits` and `manual` on the way down has written postures the session was never
-really in, and every later fold reads them as real.
+**And check the switch writes ONE record, not an intermediate ladder.** A `/mode !` from
+`accept_edits` that journals `manual` on the way down to `plan` has written a posture the session was
+never really in, and every later fold reads it as real.
 
 ## 2 — `/pin` and `/unpin`
 
