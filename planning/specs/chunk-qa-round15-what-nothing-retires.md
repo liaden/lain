@@ -1498,3 +1498,35 @@ rather than an incidental fix, and the raw output carries no trailing newline ei
 `nv.sh msgs` calls concatenate exactly like the pre-fix `expr` defect. So the finding was **wider
 than both the round-15 filing and this plan's correction of it**: six subcommands were affected, not
 five and not one. Recorded here because the plan asserted the exemption and a card relied on it.
+
+## Open decisions added during execution
+
+7. **The consumption record is one-shot where `TurnUsage` is self-healing, and the code remedy is
+   deferred.** `CLI::LiveViews#initialize` puts `Channel::DropOldest` (capacity 1024) and the
+   `StatusFeed` in the tee as **sibling** sinks: the feed never drops, the nvim view can. A dropped
+   `TurnUsage` self-heals, because `cited_by_chain` re-walks the whole chain on every later commit
+   and re-retires everything ever cited. A dropped `QuestionsConsumed` is **unrecoverable** — it
+   names one turn's edges, no later record names them again, and nothing consumes
+   `Telemetry::Dropped` to force a resync. The failure mode is `lain://inbox` listing a relayed
+   question for the rest of the session while `inbox_count` reads 0: this chunk's own defect class,
+   in a narrower window. T2's parity spec cannot see it, because it drives both surfaces off one
+   lossless stream. **What T2 lands is the fact in words at both arms**; a resync path (a consumer
+   for `Telemetry::Dropped`, or a periodic reconciliation) is a Channel-and-tee decision, not a
+   status-feed one, and is owed to a later chunk. Recorded so this is a decision with a stated cost
+   rather than an oversight.
+
+8. **`QuestionsConsumed` does not coerce its `digests`, and today the never-raise promise is held up
+   elsewhere.** `Canonical.normalize` does not coerce, so `digests: nil` and `digests: "blake3:q1"`
+   are both constructible and both make the new inbox arms raise `NoMethodError` into
+   `CLI::JournalTee`, which re-raises into the agent loop and costs a turn. **Not
+   production-reachable**: the only producer is `Scribe#consumption` → `from_event`, and
+   `Event#normalize_causal` always yields a frozen, sorted, uniq'd Array of Strings — frozen arrays,
+   non-String members and a 200,000-element array all pass cleanly, and the raise is symmetric
+   across both surfaces so it cannot cause a divergence. The coercion belongs on
+   `QuestionsConsumed#initialize`. Left alone here because that is T1's landed file and the invariant
+   holds; recorded so the next writer of a `QuestionsConsumed` knows what is holding it up.
+
+**A citation this chunk could not fix, for the round-14 chunk's records.** `2398ec2d` added 45 lines
+above `spec/lain/frontend/neovim/approval_view_spec.rb:554-557`, so the round-14 chunk's pointer at
+that range (`chunk-qa-round14-escalation-and-isolation.md:539`) now lands in an unrelated block; the
+comment it meant is at `:583-586`. T9 correctly edited neither side under its escalation trigger.
