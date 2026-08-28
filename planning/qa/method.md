@@ -134,10 +134,15 @@ negative check cannot see it because the repo is outside `~/.local/state/lain`.
 ```bash
 LAIN_REPO=/home/tara/dev/lain   # the lain checkout itself, NOT $QA -- the repo the run launched from
 git -C "$LAIN_REPO" status --porcelain   # the OTHER close-out: must be empty
-# ^^ RUN THIS IN A SHELL THAT HAS NOT SOURCED THE SANDBOX ENV. A redirected HOME (which
-#    secret-boundary REQUIRES) hides git's global ignore at $HOME/.config/git/ignore, so every
-#    globally-ignored file reports as untracked -- four false positives in round 9 (P16), and the
-#    obvious "cleanup" response would commit the operator's .envrc and local settings.
+# ^^ RUN THIS IN A SHELL THAT HAS NOT SOURCED THE SANDBOX ENV, or strip the vars:
+#      env -u XDG_CONFIG_HOME git -C "$LAIN_REPO" status --porcelain
+#    Git resolves its global ignore as $XDG_CONFIG_HOME/git/ignore FIRST and only falls back to
+#    $HOME/.config/git/ignore -- so `env.sh` alone breaks this check even though HOME is untouched,
+#    and every globally-ignored file reports as untracked. Four false positives in round 9 (P16),
+#    which named only the redirected-HOME case that secret-boundary requires; round 16 hit the same
+#    gate through XDG_CONFIG_HOME, which is what qa-sandbox.sh redirects on EVERY round. The obvious
+#    "cleanup" response would commit the operator's .envrc and local settings.
+#    Take the baseline and the close-out reading under the SAME env, whichever you choose.
 ```
 
 **P16's false positives CAMOUFLAGE true ones, and that is the half round 14 had to learn.** The
