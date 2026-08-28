@@ -1453,3 +1453,38 @@ drift is at most two lines (`scribe.rb`'s `#child_turn` doc block runs 252-276 r
 `StatusFeed` measures **115** non-comment non-blank lines from `status_feed.rb:151` against
 `.rubocop.yml:161`'s `Max: 125`, and `bundle exec rubocop --only Metrics/ClassLength` reports zero
 offenses — T18's premise confirmed rather than assumed.
+
+### Landed
+
+| card | commit | verdict |
+|---|---|---|
+| T3 | `28da0ca4` | APPROVE |
+| T14 | `282e6e84` | APPROVE |
+| T17 | `4d7bc855` | APPROVE |
+| T18 | `e36ae777` | APPROVE |
+| T13 | `38ca9130` | APPROVE |
+
+### Corrections this run made to the plan's own figures
+
+**`Metrics/ClassLength` on `StatusFeed` is 109, not 115, and the headroom is 16, not 10.** T18's
+implementer and its review panel measured it independently and agree: RuboCop reports **109 before
+the extraction and 109 after**, against `.rubocop.yml`'s `Max: 125`. The plan's 115 was a hand-count
+artifact — counting `status_feed.rb:151` to end-of-file sweeps in four `require_relative` lines and
+their trailing `end`s, which sit outside the `class` node RuboCop actually measures. **Integration
+check 10 compares against 109.** The extraction saves zero body lines today by design; what it buys
+is that T8's retirement grows inside `status_feed/fleet.rb` rather than in the feed.
+
+**T13 found the `unterminated` variant is not drivable at all**, which is stronger than the card
+anticipated. `max_retries: 3` is not `ENV`-overridable on the completion path, the retry tap resets
+the assembler before a retry's data lands, and exhausted retries raise before `note_truncated_stream`
+runs — so a severed stream yields either a clean retry (no record) or no turn at all. The scenario
+now states that as the rule rather than offering a recipe for a record that cannot exist. Corroborated
+at the seam by `spec/lain/provider/ollama_streaming_spec.rb`'s real-socket examples.
+
+**A defect was caught in T5 before its consumers were written.** `Telemetry::SpawnLifecycle` first
+read a record's body as `record.payload`, which is right for a `Telemetry::Message` but wrong for a
+raw `Lain::Event` — `Event#payload` is the content-address envelope and deliberately omits the body,
+which lives at `Event#body`. Since `status_feed.rb` dispatches on `#kind` alone, raw Events reach the
+arm T8 will hook, so the predicate would have answered "not finished" for every real farewell
+arriving in that shape — F83 reintroduced one layer down, silent because the object never raises.
+Fixed in T5 rather than in each consumer, which is the whole point of the card.
