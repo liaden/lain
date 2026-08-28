@@ -1,6 +1,6 @@
 # Chunk: round-14 — who a question is addressed to, and where a child's files live
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (with real Lua in the nvim runtime)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson, TJ DeVries (Neovim seat, added for T1 and T2 on the round-11 precedent)
@@ -174,8 +174,281 @@ says inert / the wiring is live, one of the two is wrong"; the shipped text no l
   `adopt_actor` refuses only `unless supervisor.running?`, and a chat wires a live `Supervisor`
   (`wiring.rb:184`); what actually closes the route is `Input` carrying no `mode`. Either way this
   chunk delivers subagent isolation without it, synchronously, via T9.
+- **CORRECTION, 2026-08-27: BOTH cards gate on `total_input_tokens`, and the card's ban on that
+  spelling was wrong.** T4's panel found it and drove it end to end; I reproduced it on both types.
+  The cards write a quantity over **three** fields (`total_input_tokens` = input + cache_creation +
+  cache_read) but gated on a predicate over **four** (`Usage#zero?`, and my own earlier ruling's
+  `total_tokens.positive?`, which is its negation). A response with `input: 0, output: N` therefore
+  passes the gate and writes a **zero reading over a real one** — the exact defect the chunk exists to
+  fix, surviving at both readers of `last_turn_usage` (`agent.rb:248`, and the value `agent.rb:406`
+  hands `Compaction::Source#context_for`) and at `StatusFeed#occupancy_of`, which divides
+  `total_input_tokens` by the window. Measured against a 90%-full window: reading `900000 → 0`,
+  occupancy `0.9 → 0.0`, `ApproachingWindow` stops firing.
+  **That shape is one absent key away**: `Ollama::Decoding#build_usage` is
+  `Usage.new(input_tokens: body["prompt_eval_count"], output_tokens: body["eval_count"])`, and a missing
+  `prompt_eval_count` coerces to 0.
+  **The ban's stated reason — "which ignores output" — does not survive the arithmetic.** Ignoring
+  output is *correct* here: occupancy asks what filled the window on the way IN, and this turn's output
+  is accounted as the NEXT turn's input. The gate must match the quantity written.
+  **Ruled: both cards gate on `total_input_tokens`** — `usage.total_input_tokens.zero?` in `Accounting`,
+  `usage.total_input_tokens.positive?` in `StatusFeed`. This is also the only genuinely **non-drifting**
+  choice: `Usage` and `JournaledUsage` both answer `#total_input_tokens` over the same three fields, so
+  unlike `zero?` (which `JournaledUsage` does not implement at all) the plan's anti-drift instruction
+  becomes satisfiable rather than unsatisfiable as written.
+- **Attribution for the `.positive?` gate, since it passed through three hands and was miscredited
+  twice.** The **quantity** (`total_input_tokens`, not the four-field `zero?`) came from T4's panel,
+  as a BLOCKER driven end to end. The **spelling** (`.positive?` rather than `!zero?`) came from
+  **T3's** panel, finding 3(b), which observed that the two are exact complements only while the sum
+  is non-negative and that neither type forbids a negative; the orchestrator relayed it into T4's fix
+  round. T4's own panel had proposed `.zero?` and stopped there. What T4's **implementer** contributed
+  unprompted is the shape that matters most: `reading = usage.total_input_tokens` into ONE local,
+  assigned `if reading.positive?`, so gate and written value are the same expression and cannot drift
+  by editing -- stronger than the "match the spellings across both cards" that was asked for. T4's
+  panel then verified the boundary, confirming the two spellings disagree only at negatives and that
+  both `Usage` and `JournaledUsage` really admit one.
+- **Integration check 3 discharged**: `git diff --stat 8e057af6..HEAD -- ext/ crates/` is empty across
+  the whole chunk. Nothing reached Rust.
+- **Integration check 6 is PARTIALLY discharged, and the remainder is honestly manual.** What the suite
+  now covers, which it could not before: `subagent_spec.rb` gained a `parked_journal` helper that drives
+  a genuinely parked question through the real path -- real `Provider::Mock`, real `ask_human` dispatch,
+  real arrival queue, nobody answering, the fiber stopped where it stands -- writes the closed journal
+  bytes to a real session file, and reopens them through **live `CLI::Resume`**, asserting fork and
+  resume both succeed at depths 1, 2 **and** 3, with the answered spawn as the control. `chat_launch_spec.rb`
+  separately covers the `resume_factory` wiring that stands between the CLI and `Resume`.
+  **What remains owed to a manual pass**: the literal `exe/lain chat --fork SESSION@HEAD` and
+  `--resume SESSION` processes exiting 0 against a session produced by a **live model**. Only Thor
+  option parsing and `ChatLaunch`'s composition sit in that gap, and both are separately spec'd -- but
+  round 14 found this defect by driving a spawn by hand precisely because every fixture then in the
+  suite either answered the question or hand-built the records, so the manual door should be opened
+  once more rather than reasoned about.
+- **PLAN DEFECT: T7 and T8 are both scoped so that NEITHER can wire the address they exist to
+  introduce.** Both Files lists are `ask_human.rb` plus its spec. But a child's asker is constructed at
+  the enrolment site -- `subagent.rb:361`, `Enrolled.new(asker: AskHuman.new(parent:), ...)` -- which is
+  in neither card. T7 delivered the `to:` keyword correctly, defaulting to `HUMAN`, and threaded it
+  through `#recorded_reply`'s `from:` so a question and its answer close as one identity; but with no
+  production caller passing it, **a child's question in a real run is addressed exactly as before, and
+  AC 1 is satisfiable only by a spec that hand-constructs `AskHuman` with `to:`.** That is the same
+  shape T9's own trigger forbids -- a card proving an INJECTED collaborator behaves, while production
+  still passes the default, ships the gap again green.
+  **Resolution:** T7 is held, not landed -- an unwired keyword no caller passes is dead code, and
+  landing it would let the chunk claim a behaviour it does not have. `subagent.rb` is held by T9, so
+  T7 resumes with that file added to its scope once T9 lands, wiring `to: correlation_of(parent)` at
+  the enrolment site and re-pointing AC 1 at the real construction. **T7 therefore now depends on T9
+  as well as T6**, and T8 inherits the same dependency.
+- **Integration check 4 discharged 2026-08-27, through real tmux, with both controls reproducing.**
+  Against a planted DIRTY `lain-cockpit:%%start.swp`: pre-card argv `rpc=NO E325=yes`; flag AFTER
+  `:file` `rpc=NO E325=yes`; **flag BEFORE `:file` `rpc=YES E325=no`**. Negative confirmed in the same
+  nvim -- a real file opened afterwards has `&l:swapfile=1`, `&g:swapfile=1`, and its `.swp` lands on
+  disk beside the planted one. **Three harness corrections were needed first, each producing a false
+  result:** pane targets were wrong because this box has `base-index 1`, so both arms read `rpc=NO` for
+  a reason unrelated to the code; the control did not reproduce because "old ordering" was conflated
+  with "pre-card" -- in the old-ordering arm the FIRST cockpit's own `setlocal` still deletes its
+  swapfile, leaving nothing to collide with, so the realistic producer is a cockpit with **no flag at
+  all**; and the swapfile could not be planted with `:qa!`, which removes it on clean exit. **A stale
+  swapfile is what a CRASH leaves**, so the seed nvim has to be killed. That last point is the durable
+  one: the defect needs a swapfile that outlived its owner, and every clean shutdown erases it.
+- **The parallel-spawn `catch_up` hazard is real but bounded, and the reason is stronger than first
+  given.** `Subagent#parallel_safe?` is `true`, so two `subagent` calls in one assistant turn genuinely
+  fan out over the same child `Chain` and two fibers can be inside one `TurnFeed#catch_up`. In
+  `catch_up`, `@stop = turn.digest` executes only **after** that turn's `@observer.call` returns, so no
+  interleaving can advance `@stop` past a turn the observer never saw -- **a dropped turn is
+  unrepresentable, not merely unlikely.** What interleaving can do is move `@stop` *backward* (a fiber
+  yielding inside the journal write resumes and re-assigns an older digest), whose cost is strictly
+  MORE re-walking -- more duplicate `@observer.call`s, never fewer records. `Diverged` cannot fire
+  either, since every value `@stop` takes is a digest at or above the feed's base.
+  **The caveat that makes it worth carrying: the guarantee is the OBSERVER'S, not `TurnFeed`'s.**
+  `Scribe#child_turn` drops the duplicate by digest deliberately; `TurnFeed` accepts any `#call`, so a
+  bench collector or counting sink would see duplicate records from the same interleaving. That is an
+  argument for the guard living in `turn_feed.rb` -- outside T6's Files, and owed to whichever card
+  owns nested spawning.
+- **A review panel that runs only the tools it already trusts misses the defects living outside them.**
+  T5's first commit was refused by `yard-lint` for `Unknown tag @scanned` -- CLAUDE.md's documented trap
+  that YARD reads a line-initial `@word` as a tag. Six agents and seven review passes had read that
+  comment; two panels had measured its density against `timeline.rb` and grepped it for banned ticket
+  references. **All of them treated prose as inert rather than as parsed input.** The seam commit was
+  then refused again for rubocop layout. Three gates, three distinct catches, none of them the suite.
+  **`pre-commit run --all-files` belongs in a panel's verification set**, not just `pspec` and
+  `rubocop` -- and it is the hook running against the STAGED TREE that makes it a different question
+  from anything a worktree run can answer.
+- **The comment-mass rule is a test of whether a reason was EARNED, not a line budget.** T1's block ran
+  29 lines against the 24-line exemplar bound. The orchestrator argued to keep all of it -- every reason
+  paid for by a wrong fix -- and the panel drew the better distinction: the **ordering** and
+  **dirty-vs-busy** paragraphs were each bought with a wrong fix and stay; the `annotate_spec.rb`
+  passage was **never paid for** (the implementer never reached for `-n`; the defect was ordering, not
+  scope) and it is **lib narrating spec**, which goes stale silently rather than loudly. Cut from lib,
+  kept in the spec where the same contrast is in-layer. Lands at 25 lines with no reason lost.
+- **`unmeasured_turns` reaches the record but not the bar.** Neither `Up::Hud::JQ_FILTER` nor
+  `plugin/tmux/scripts/lain-status` reads it, so it is a `state.json` and `/status` artefact rather than
+  a live signal. Correct for T3 -- putting a staleness marker on the status bar is a HUD ruling, not
+  this card's -- but it should not be mistaken for one.
+- **Two operational traps this run surfaced, both worth the trap list.** (1) **`pgrep -f '[p]re-commit'`
+  false-positives on a SIBLING AGENT'S command line** that merely contains the string; the bracket trick
+  prevents a pattern matching itself, not another process's argv. `ps aux` is the disambiguator.
+  Confirmed with the offending argv: the match was a **sibling agent's own monitoring loop**, whose
+  command line contains the literal pattern text because it is running CLAUDE.md's prescribed check.
+  **Every agent following the rule is therefore a false positive for every other agent**, so the rate
+  scales with the number of agents on the box. **And the obvious fix fails the same way**:
+  `pgrep -f 'hooks/pre-commit|pre-commit run'` was proposed, tried, and matched three processes -- all
+  wrapper shells, no real hook -- because ANY pattern you type lands in your own and your siblings'
+  argv. **The reliable checks are `pgrep -x pre-commit`, `pgrep -f '^/.*/pre-commit'`, or reading each
+  match's `/proc/PID/cmdline`**: require an actual binary, not a string that appears in a command line.
+  (2) A **load-induced flake**, recorded by NAME per CLAUDE.md since a line number reads as "not a
+  known flake" within days:
+  **`Lain::CLI::Up against a real tmux server --nvim cockpit splits the chat window into an nvim pane
+  and a chat pane sharing one socket and one cwd`**.
+  Established over **17 full suite runs** alternating arms with the tree checksummed between: card
+  applied, 8 runs, 4 red -- all four clustered in the first four, the first with a sibling suite live --
+  then 4 green; HEAD, 9 runs, 9 green. Same code red and green by *when* it ran. Mechanism from the
+  failure text: `live_cwds` returned the tmux **server's** cwd for a pane whose `pane_dead` still read
+  0 -- a startup race where `list-panes` runs before the chat pane's process owns a cwd, which the
+  example's own comment already names. **The caveat that makes this entry worth writing: it goes red in
+  RUNS, not singletons.** Four consecutive full-suite reds is not the one-in-nine shape the other
+  entries describe, so "it passed on the re-run" is NOT a safe dismissal here -- check box load first.
+- **A bare `bundle exec rubocop` lints untracked scratch.** It reported 29 offences that were all in a
+  review agent's own probe directory. `bundle exec rubocop lib spec bin` is the form that answers the
+  question being asked. Sits alongside the existing rule never to name a `.toml` on that command line.
+- **A telemetry record whose purpose is diagnosability needs the join key, and T5's first attempt had
+  none.** The journalled line's whole key set was `type / kind / model / frames / accumulated_bytes /
+  ts` -- nothing identifying the round trip. NDJSON adjacency is not a sound fallback and the codebase
+  says so itself: `RetryTap`'s docstring records that a Provider is constructed once and reused, one
+  instance serving the chat tier and the summariser tier for a session, so more than one round trip can
+  be in flight through the same tap and their records interleave on one channel; `journal:` and
+  `channel:` are separate keyword arguments with separate defaults besides. `request_digest` follows
+  `Telemetry::Salvaged`'s precedent by name.
+- **`accumulated_bytes` counts prose only, and a severed TOOL-CALL stream is the dangerous shape.**
+  Three tool-call frames then a sever journalled `frames: 3, accumulated_bytes: 0` -- indistinguishable
+  from three empty keepalives, while the caller may hold a half-formed call. Ruled: a **separate**
+  `tool_calls:` count rather than folding the bytes in, because folding would make `accumulated_bytes`
+  mean prose-the-user-sees and wire JSON at once, and a reader checking it against the turn's text
+  would find it inflated.
+- **Kept, twice: `#reset`'s collapsed nil chain.** Offered back for revision and declined -- it is pure
+  literal assignment, the panel approved it, and churning a twice-reviewed method to satisfy a line
+  count is motion. **ROADMAP note, not this chunk:** the four done-line fields (`@model`,
+  `@done_reason`, `@prompt_eval_count`, `@eval_count`) are a `DoneLine` value waiting to be named, and
+  extracting it would dissolve the `Metrics/MethodLength` pressure honestly rather than by collapsing --
+  `@done_line = nil` is still a literal assignment, so the card's contract would survive it.
+- **The parked-question fix has to reach DEPTH 2, and the card's ACs never said so.** T6's panel
+  reproduced, through the real path, that a **grandchild** parking still leaves an unforkable and
+  unresumable session: the fix closes the citation on the *question*, but the identical dangle survives
+  one level up on the **`:spawn`** record. A grandchild parking means the CHILD's iteration never
+  returns either, so the child's head turn is never promoted, and the grandchild's `:spawn` cites
+  exactly that digest. Both doors refuse with the same sentence round 14 saw.
+  Pre-existing rather than a regression -- the first attempt halved it -- but **ruled in scope**: the
+  chunk's headline claim is that a parked-question session forks, a depth qualifier nobody wrote is not
+  a scope boundary, Integration check 6 drives a real spawn and would hit it, and T9 makes nested
+  spawning a first-class concern in this same chunk, so a depth-1-only causal fix would be incoherent
+  beside it. The machinery (`Chain#promote`) is already in the card and `subagent.rb` already in Files.
+- **"The head cited is the head promoted" must be structural, not a caller's discipline.** `Parent#settled`
+  read the live parent **twice** -- `@settle.call`, then `timeline` again -- while `Chain#promote` did its
+  own independent `timeline.call`. Nothing in the type held the two reads to one Timeline; only the fact
+  that today's caller is single-fiber and not `parallel_safe?`. Read once, hand that value to the settler,
+  cite that value.
+- **Informational, deliberately not changed:** the answered path's journal record **order** moved -- a
+  child's turn record now precedes the Q record where it used to follow. `MessageReplay`'s retry sweep
+  tolerates it and the suite is green, but anything reading the NDJSON **sequentially** rather than by
+  digest (transcript views, telemetry replay) sees a different interleaving after this chunk than before.
+- **T1's first attempt was green, argv-correct, and did not fix the bug** -- the record of why this
+  card's verification is a live nvim and not the suite. `:file lain-cockpit://start` creates the
+  swapfile **immediately**, so a `-c 'setlocal noswapfile'` placed *after* it runs one command too
+  late: nvim is already on "Press ENTER" during command-line processing, before it serves the socket.
+  Measured matrix -- `OLD -> NEW` still E325 and still no RPC, byte-identical to the unpatched control;
+  `OLD -> setlocal-first` clean. The flag goes **before** `SCRATCH_BUFFER`.
+  The first attempt's comment argued the opposite and was **empirically false**: `'swapfile'` is
+  attached to the BUFFER, not to its name, and `:file` renames in place without resetting buffer-local
+  options, so a `setlocal` issued first survives the rename (`l:swapfile=0`, `swapname('')` empty).
+  Both orderings preserve the scoping the card demanded -- a normal file opened later still gets its
+  swapfile -- so only the ordering decides whether the defect is fixed.
+- **The E325 trigger is a DIRTY swapfile, not a busy one.** `live+clean` and `stale+clean` collisions
+  fall silently to `.swo`; `live+dirty` and `stale+dirty` block. The cockpit's scratch buffer is dirty
+  as soon as a view lands, so dirty is its steady state -- but a manual check run against a clean
+  buffer passes on the bug, which is why Integration check 4 now names it.
+- **Owed to ROADMAP, not to this chunk:** the shared cause is that `SCRATCH_BUFFER` is a process-global
+  constant, so its swap path is too. A per-project suffix would make the collision unrepresentable with
+  no option at all. The card ruled the name load-bearing for snacks' guard, so it is correctly out of
+  scope -- but `noswapfile` also removes the cockpit's recovery story for that buffer, and that trade
+  should be recorded somewhere rather than nowhere.
+- **The seam that was supposed to hold T3 and T4 equal cannot catch a divergence, and repairing it is
+  ORCHESTRATOR work after both land.** `spec/lain/seams/window_self_correction_spec.rb:266-267` asserts
+  `agent.occupancy` equals the published occupancy, and both cards' escalation triggers lean on it. But
+  the seam converses at `input_tokens` of 15,000 and 4,000, so **neither guard ever fires** and the
+  assertion is true on a shape where the predicates are irrelevant. It stays green through any
+  divergence — a false sense of coverage on the one invariant the two cards jointly own. It cannot be
+  fixed inside either card: a zero-input example would need T3's fix and T4's fix present together, and
+  each worktree has only its own. **Owed: one example driving a zero-input turn through both paths,
+  added against the merged tree.** The seam already builds a real `StatusFeed` on a real `JournalTee`,
+  so it is one example, not new machinery.
+- **`.positive?` is the shared spelling on both producers**, not `.zero?` on one and `.positive?` on the
+  other. They are exact complements only while the sum is non-negative, and neither type enforces that:
+  `Usage.new(input_tokens: -10)` is accepted because `Integer()` takes a negative, and
+  `JournaledUsage#tokens` is a bare `.to_i`. Unreachable through a real provider, so not a live defect —
+  but it is the last drift surface between the two, and one word closes it.
+- **T3 owes an absence guard as well as the predicate.** `occupancy_of` rescues `UnknownModel`/
+  `ArgumentError` to `nil` and that `nil` is **assigned**, so a record with real tokens but an
+  unresolvable model erases a good reading — the card's own thesis one field over. `@occupancy` has
+  three writers with three ad-hoc policies (`start_empty` nil, the new guard's skip, the rescue's nil)
+  and nothing owns the rule; the fix is the object that is missing, not a fourth branch.
+- **T5's spec file did not exist, and the mirrored path is the right home anyway.** The card's Files
+  list said "modify `spec/lain/provider/ollama/stream_assembler_spec.rb`"; that file was never there —
+  the assembler is spec'd today as a nested `describe` at `ollama_streaming_spec.rb:114-229`, inside an
+  otherwise scenario-flavoured 724-line file. A plan grounding slip, not an implementer deviation.
+  **Ruled: create the mirrored-path file and leave the old block alone.** `spec/lain/provider/ollama/`
+  already holds `encoding_spec.rb`, `retry_tap_spec.rb`, `transport_spec.rb` and
+  `streamed_failure_spec.rb`, so the new file joins an established convention rather than inventing one.
+  **Follow-up, NOT this card:** moving the existing 115-line block to the mirrored file would leave one
+  subject in one file as CLAUDE.md wants, but it is a pure test-move touching a file outside the card's
+  scope, so it buys tidiness rather than correctness and does not ride a green card.
+- **T5 may collapse `#reset`'s four nil assignments onto one chain.** Adding the terminal-frame flag
+  tripped `Metrics/MethodLength`; extraction is forbidden by the card (the contract at
+  `stream_assembler.rb:70-76` requires literal assignment and nothing more, because `RetryTap#retry_block`
+  abandons before it journals and a raise there loses that attempt's `Telemetry::ProviderRetry`), and
+  loosening a `Metrics/*` limit is forbidden by CLAUDE.md. Collapsing is what remains, it is still pure
+  literal assignment that cannot raise, and `nil` is immutable so the chain cannot alias a shared
+  accumulator the way the `String` initialisations above it could.
+- **SUPERSEDED, see the next entry — T3 may spell the predicate `JournaledUsage#total_tokens.positive?`.**
+  Ruled 2026-08-27 on the implementer's escalation, and the card's Reuse line is amended to match.
+  `StatusFeed` is handed the journaled String-keyed Hash, never the `Usage` value: `JournaledUsage`
+  **deliberately restates** the arithmetic instead of rebuilding one, because `Usage.from_anthropic_wire`
+  goes through `Integer()` and `StatusFeed` rides `CLI::JournalTee`, which re-raises a sink's failure
+  into the agent loop — so a malformed record would cost the turn rather than a status line. That
+  refusal is documented in `journaled_usage.rb` and held by two "cannot drift apart" spec pins.
+  **The two spellings are provably the same predicate**: `Usage` is a four-field `Data` of
+  non-negative counts, `#total_tokens` sums all four, and `JournaledUsage::TOKEN_FIELDS` is exactly
+  those four names — so `total_tokens.positive?` is `!zero?` on this path. The card's drift fear was
+  semantic divergence, not literal spelling, and the existing pins are what guard a fifth field.
+- **A nested spawn takes a SIBLING checkout from the host repo root, not a worktree branched from
+  its parent.** T9's card deferred this to the orchestrator; settled 2026-08-27 against
+  `lib/lain/isolation/worktree.rb`. Three reasons, all from the class's own stated contracts:
+  `#acquire` is `git worktree add --detach` against a **fixed** `@repo_root` (`:98-108`) and git
+  registers every linked worktree in the ONE admin dir, so a worktree-of-a-worktree is a peer in
+  git's registry regardless — the nesting would be cosmetic; release force-removes (`:26-32`), so a
+  grandchild rooted inside a parent's tree is either destroyed by the parent's release or blocks it,
+  which is a new failure mode bought for nothing; and the detached-HEAD ruling (`:14-24`) means a
+  parent that has committed nothing offers the same commit the host root does. **So: one backend
+  instance threaded down through `descend`, with a DISTINCT worker_id per dispatch.**
+- **Worker ids come from a monotone per-dispatch counter**, mirroring `Supervisor`'s `@worker_seq` /
+  `#next_worker_id(role)` (`supervisor.rb:55-57`, whose comment already states the reason: "two live
+  leases at one path is a refusal"). T9 acquires from the backend directly rather than through
+  `#adopt`, so it needs its own allocator; `#fan_out`'s concurrent siblings are what it must survive.
+- **T9's third AC asserts against the PARENT'S leased path, not the host's.** A sibling checkout is
+  trivially "not the host's", so an assertion against the host would pass on the bug. The grandchild's
+  cwd must differ from **both** its parent's leased path and the host cwd.
 - **Whether a parent that cannot answer should spend a model call deciding to escalate** is settled in
   T8 as "no": the parent relays without a round trip. Revisit only with a measurement.
+
+## Execution log
+
+**Base branch: `survey/dogfood-2026-08-25`.** Every worktree is cut from that branch's head,
+never from `origin/main` (49 commits behind at the start of the run).
+
+- **2026-08-27 — the tree the plan was grounded on was not committed.** Grounding was verified
+  against `12e5715c` *plus the working tree*, and the difference was load-bearing: `method.md`'s
+  "Run ONE cockpit at a time" rule that T10 retires existed **only** in the uncommitted tree, and
+  `subagent.rb` sat two lines off HEAD. Worktrees cut from `12e5715c` would have opened trees with
+  T10's whole subject missing. Committed the tree first, on the user's ruling, as three commits
+  (`7c8cf528` the `delegate` sweep, `8f93c869` the QA method and scenarios, `8e057af6` the findings
+  and plan docs) and re-verified every wave-1 citation against the new head `8e057af6`. They hold.
+- **Suite baseline before any card: 16176 examples, 0 failures, 15 pendings.** Integration check 1
+  compares the example COUNT against this number, not just the failure count.
 
 ## Waves
 
@@ -818,6 +1091,75 @@ Scenario: the bench confirms a spawned child leased, from a chat
   writing this card shows the manual reproduction is redundant, say so — a suite pin is better than a
   manual one and the doc should point at it rather than duplicate it.
 
+- **T7 and T8 are MERGED: a child that addresses its parent, with no parent that relays, is a wedge.**
+  T7 wired the address for real and three pre-existing `subagent_spec.rb` examples went red -- correctly.
+  `Event::Projection#mailbox` filters `event.to == wanted` **literally** (`projection.rb:33`), and both
+  discovery surfaces are hard-wired to the human: `InboxView::RECIPIENT = "human"`
+  (`inbox_view.rb:115`, named rather than imported on purpose) and `StatusFeed`'s `inbox_count`,
+  documented as "what is still addressed to `Tools::AskHuman::HUMAN`" and held to the nvim buffer's
+  answer **by a parity spec**.
+  So once a child addresses its parent, its question stays *answerable* -- TTY and Directory routing are
+  digest-based -- while vanishing from `lain://inbox` and from the HUD's count. **That is this chunk's
+  own failure class**: the surface looks healthy while something is parked behind it.
+  And the deeper reading is worse than invisibility. Without a parent that relays, T7 creates a question
+  **nobody is responsible for**: the child addresses a parent, and no parent ever reads. The plan split
+  "a child addresses its parent" and "the parent relays" into two cards, which is fine as description
+  and wrong as a landing boundary. **They land as one.**
+
+## Cards added mid-execution (2026-08-27), on the user's rulings
+
+T9's panel found two BLOCKERs whose root causes the plan had not anticipated. The user settled both.
+The work is split into units rather than piled onto T9.
+
+### T13 — Retire Redis as an isolation service; a container is the route   [risk: medium]
+
+**Depends on:** none. **Files:** delete `lib/lain/isolation/services/redis.rb`; `lib/lain/isolation/db_index.rb`
+(drop `Pool` and the `claim_index`/`release_index` context methods); `lib/lain/isolation/services/builder.rb`;
+`lib/lain/isolation.rb` (manifest); `lib/lain/telemetry/isolation_lease.rb` if it names redis;
+`spec/lain/isolation/db_index_spec.rb`, `spec/lain/isolation/services_spec.rb`, `spec/support/tags.rb`.
+
+**Why.** Every other isolation path derives its resource name from the worker: Postgres is
+`"#{prefix}_#{worker_key}"` (`postgres.rb:25`), Compose is `"lain_#{project_hash(worker_id)}"`
+(`compose.rb:215`). **Redis alone allocates from shared mutable state** -- `context.claim_index(max)`
+into a per-`Pool` `@claimed` Set -- which is precisely why it was the only service to break when a
+second backend appeared. Redis's own ceiling is 16 logical DBs, low enough to be a real constraint
+rather than a theoretical one, and exhaustion accounting doubled under two pools. **A container is the
+isolation route**: Compose is already worker-keyed and has no such ceiling.
+`Pool` has exactly one consumer, so it goes with Redis and `DbIndex` keeps only worker-keyed provisioning.
+
+### T14 — A leased checkout outlives its dispatch, with the metadata to audit it   [risk: high]
+
+**Depends on:** T9. **Files:** `lib/lain/tools/subagent.rb`, `lib/lain/isolation/worktree.rb`,
+a new retention record under `lib/lain/telemetry/`, its manifest line, specs.
+
+**T9 does NOT wait for this card.** The orchestrator proposed holding T9 until T14 landed, since T9
+alone leaves a write-capable child's uncommitted work force-removed on release. **The user ruled
+otherwise: land T9 when it is ready.** The window is real but bounded -- this is an unreleased branch
+and T14 is committed work inside the same chunk. **If the chunk stalls before T14 lands, that window
+stops being bounded**, so a stall is the condition under which this ruling should be revisited rather
+than inherited.
+
+Release currently force-removes, so a child's uncommitted work is destroyed at the one moment it could
+still be recovered. **The checkout is retained instead**, and what is recorded must be enough to audit
+it later: **which agent and session the work belongs to** (so the conversation around it can be found),
+the close-out time, and a **TTL/expiry**. A reaper reclaims what has expired. `Handback` already
+anchors commits under `refs/lain/worker/<worker>` *before* release for exactly this instinct --
+"reclaim can take the checkout, the ref keeps the work" -- and retention extends it to files that were
+never committed.
+
+### T15 — A child declares what happens to its work   [risk: high]
+
+**Depends on:** T14. **Files:** `lib/lain/tools/subagent.rb`, the child's prompt/contract, specs.
+
+Three parts, balanced rather than choosing one:
+1. **Ephemera go to a temp dir by instruction** -- a child told up front where scratch belongs does not
+   put it where retention has to reason about it.
+2. **The child declares on completion**: `discard-local`, or `return-scratch` when the parent needs to
+   audit what it did.
+3. **Committed work is anchored** through `Isolation::WorkerHandoff` / `Worktree::Handback`, matching
+   what `Supervisor`'s arms already do. `Handback` states that uncommitted work stays scratch, which is
+   why parts 1 and 2 exist rather than relying on it alone.
+
 ## Integration checks
 
 After the last wave:
@@ -829,6 +1171,9 @@ After the last wave:
 3. **Rust untouched** — `git diff --stat ext/ crates/` must be empty; nothing here reaches it.
 4. **The manual check T1 cannot automate**, because seven spec harnesses pass `-n` and the suite
    structurally cannot reproduce F73: bring up **two concurrent cockpits on two different projects**
+   **with the first cockpit's scratch buffer made DIRTY before the second is launched** -- the panel
+   measured that a live-but-unmodified peer collides silently onto `.swo` and only a **modified**
+   buffer's swapfile raises `E325`, so a check run against a clean buffer passes on the bug --
    and assert the second's nvim answers `--remote-expr '1+1'` within 15s, its pane carries no `E325`,
    and `$XDG_STATE_HOME/nvim/swap/` holds no `lain-cockpit*` entry. **T10 must not land until this
    passes.** Then confirm the negative the fix must not buy: open a real file in the review tab and
