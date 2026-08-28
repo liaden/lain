@@ -219,8 +219,14 @@ So before "not reached — needs X" goes in the table, do these three, and they 
 ```bash
 ls planning/qa/scenarios/<the one you are about to drop>.md   # what does it SAY it needs?
 command grep -n 'Needs:' planning/qa/scenarios/*.md           # every scenario states its own preconditions
-command grep -oE '[A-Z_]*(KEY|TOKEN)[A-Z_]*' .envrc           # names only -- never print a value
+command grep -nE '^[[:space:]]*export[[:space:]]+[A-Z_]*(KEY|TOKEN)' .envrc   # names only -- never print a value
 ```
+
+**Grep for an `export`, not for the NAME.** The loose form (`grep -oE '[A-Z_]*(KEY|TOKEN)[A-Z_]*'`)
+matches **comments**: round 15 got `ANTHROPIC_API_KEY` back out of a comment reading "This desktop
+has no ANTHROPIC_API_KEY anywhere", so the check written to prevent a false *unreachable* produced a
+false *reachable*. A name in a file is not a key. When it matters, test the variable:
+`[ -n "${ANTHROPIC_API_KEY:-}" ]`.
 
 **The default answer is the bench you already brought up.** Most scenarios in this directory say so
 in their own `Needs:` line — README's own words are that the six added 2026-08-23 are "all driveable
