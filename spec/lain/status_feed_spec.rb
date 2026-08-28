@@ -158,6 +158,12 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
+  # The ROUTING and what the feed publishes from it -- not the set itself. The
+  # standing set, and the digest keying that makes a replay idempotent, belong
+  # to {Lain::StatusFeed::Fleet} and are pinned in
+  # spec/lain/status_feed/fleet_spec.rb. Every example here goes through the
+  # feed's public surface on purpose: that is what makes them a check on the
+  # delegation as well as on the derivation.
   describe "fleet" do
     it "reflects exactly the :spawn events observed, appended in order" do
       feed = described_class.new(path:)

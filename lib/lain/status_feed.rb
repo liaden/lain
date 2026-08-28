@@ -26,8 +26,9 @@ module Lain
   #   The TTL comes from the injected `cache_profile:`, never a constant, so a
   #   swept provider arm slides its own real window. A turn showing no cache
   #   activity leaves the deadline exactly where it was.
-  # * `fleet` -- the digests of every DISTINCT `:spawn`, keyed so a redelivered
-  #   event (a journal replay) never grows a phantom second entry.
+  # * `fleet` -- the digests of every DISTINCT `:spawn`. {Fleet} owns the
+  #   standing set, and the keying that makes a redelivered event a no-op
+  #   rather than a phantom second entry.
   # * `inbox_count` -- what is still addressed to {Tools::AskHuman::HUMAN} and
   #   not yet named a causal parent by a committed turn. {Inbox} owns the
   #   projection, the fold, and the {Store} the live carrier's chain resolves
@@ -206,9 +207,7 @@ module Lain
       @approvals_pending = 0
       @compactions = 0
       @derivation_refusal_streak = 0
-      # A Hash keyed by digest, not an Array: that is what makes a redelivered
-      # :spawn a no-op update instead of a second entry.
-      @fleet = {}
+      @fleet = Fleet.new
     end
     private :start_empty
 
@@ -406,7 +405,7 @@ module Lain
 
     def observe(event)
       case event.kind
-      when :spawn then @fleet[event.digest] = true
+      when :spawn then @fleet.launched(event)
       when :message then @inbox.arrived(event)
       when :turn then @inbox.retire(event.causal_parents)
       end
@@ -448,7 +447,7 @@ module Lain
     #
     # @return [Hash] string-keyed, JSON-shaped
     def observed
-      { "cache_deadline" => @cache_deadline, "fleet" => @fleet.keys, "inbox_count" => @inbox.pending_size,
+      { "cache_deadline" => @cache_deadline, "fleet" => @fleet.digests, "inbox_count" => @inbox.pending_size,
         "approvals_pending" => @approvals_pending, "occupancy" => @occupancy,
         "unmeasured_turns" => @unmeasured_turns,
         "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak,
@@ -478,10 +477,11 @@ module Lain
   end
 end
 
-# This file is `status_feed/`'s index. All four children reopen the class above,
+# This file is `status_feed/`'s index. All five children reopen the class above,
 # so they load AFTER the class body -- `effect/handler.rb`'s ordering, for the
 # same reason (CLAUDE.md, Requires).
 require_relative "status_feed/publication"
 require_relative "status_feed/mode_state"
 require_relative "status_feed/journaled_usage"
 require_relative "status_feed/inbox"
+require_relative "status_feed/fleet"
