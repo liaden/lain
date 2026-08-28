@@ -89,11 +89,35 @@ the stream died — counted separately, because those carry no message text and 
 look like empty keepalives), and `request_digest`, the join key back to the round trip the
 stream was answering.
 
-**To provoke it:** the same severing proxy, in the two shapes the record distinguishes —
+**To provoke it:** the same severing proxy, but only one of the record's two `kind`s is reachable
+this way — the other is a rule about what does NOT get journaled, not a recipe for a record.
 
-- sever before ANY frame carrying `done: true` arrives, for `kind: "unterminated"`;
-- let the stream reach a `done: true` frame but strip its `prompt_eval_count`/`eval_count`, for
-  `kind: "counts_absent"`.
+- **`kind: "counts_absent"` is the drivable half.** Let the stream reach a `done: true` frame with
+  `prompt_eval_count`/`eval_count` stripped, **then close the connection** — do not merely stop
+  sending bytes and leave the socket open. `StreamAssembler#truncation` is only read after
+  `Transport#stream`'s `connection.post` call returns (`lib/lain/provider/ollama.rb:446-450`), and
+  that call does not return until the response ends. A terminal frame sitting on a connection that
+  stays open is a stream still waiting for more: past `stream_stall_timeout` (30s default,
+  `lib/lain/provider/http/configuration.rb:110`) it raises `"stalled stream: … with the connection
+  still open"` (`lib/lain/provider/http/streaming/faraday_handlers.rb:396-399`) instead of ever
+  reaching `note_truncated_stream` — the exact failure round 15 hit driving this shape.
+- **`kind: "unterminated"` is not drivable through the live path at all**, and "sever before ANY
+  frame carrying `done: true`" is not a recipe for it — it is a recipe for a clean retry, which
+  journals nothing. `:post` is retryable (`max_retries: 3`,
+  `lib/lain/provider/http/configuration.rb:111` — four attempts total, and not operator-tunable the
+  way `stream_stall_timeout` is), and `RetryTap#retry_block` abandons the dying attempt and resets
+  the assembler before the retry's first chunk lands
+  (`lib/lain/provider/ollama/retry_tap.rb:111-119`, `lib/lain/provider/ollama/stream_assembler.rb:76-90`).
+  So a severed connection either gets retried into a clean completion — nothing to report — or every
+  attempt fails and `stream_body` raises before `note_truncated_stream` ever runs
+  (`lib/lain/provider/ollama.rb:446-453`). This is pinned as deliberate, not a gap:
+  `spec/lain/provider/ollama/stream_assembler_spec.rb:244-251` — *"A mid-stream sever is cleanly
+  RETRIED, so the abandoned attempt is not the turn — a record for it is noise"* — asserts an empty
+  journal for exactly this shape, and `lib/lain/provider/ollama.rb:467-471` states the same rule
+  where the record is cut: *"a severed attempt that faraday-retry cleanly replaced has nothing left
+  here to record."* Round 15 confirmed it empirically driving this exact recipe: four attempts,
+  `end of file reached`, **no turn committed** — not a record withheld, but no record and no turn,
+  which is what "cleanly retried" means end to end.
 
 **To confirm it:**
 
@@ -103,10 +127,13 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["t
        "tool_calls=#{r["tool_calls"]} digest=#{r["request_digest"]}"}' "$JOURNAL"
 ```
 
-Join `request_digest` against the `turn_usage` record it explains — expect exactly one
-`TruncatedStream` per severed request, with `kind` matching the variant driven. A silent
-all-zero turn with no matching record here is the old, undiagnosable shape — the producer not
-saying anything is itself the regression to watch for.
+Join `request_digest` against the `turn_usage` record it explains. Driving `counts_absent`
+correctly (terminal frame delivered, connection closed) is expected to produce exactly one
+`TruncatedStream` naming that request. Driving the sever-before-`done:true` shape is expected to
+produce **none** — that is the correct reading of a cleanly retried attempt, not the old
+undiagnosable failure. A silent all-zero `turn_usage` with no `truncated_stream` explaining it is
+still the regression to watch for; an absent record after a sever that also committed no turn at
+all is not that regression.
 
 ## 2 — A torn `turn` record
 
