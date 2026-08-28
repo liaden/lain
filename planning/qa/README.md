@@ -62,7 +62,7 @@ had driven were the parts nobody owned:
 
 | Scenario | The question it answers | Cost |
 |---|---|---|
-| [`survey.md`](scenarios/survey.md) | Does `/survey` refuse honestly at a **size no round has driven** (lain's own `lib/` is 742 files / 161,963 lines against ceilings of 300 / 30,000), does the **walk** admit and withhold the right paths — gated is *listed and masked*, only denied is withheld — and is the **docent thread reachable at all**? Runs entirely on the **local** arm. | cheap |
+| [`survey.md`](scenarios/survey.md) | Does `/survey` refuse honestly at a **size no round has driven** (lain's own `lib/` is ~750 files / ~153,000 lines against ceilings of 300 / 30,000 -- re-count it, the figure drifts every round), does the **walk** admit and withhold the right paths — gated is *listed and masked*, only denied is withheld — and is the **docent thread reachable at all**? Runs entirely on the **local** arm. | cheap |
 
 It takes the **docent thread pane** off `cockpit-surfaces` §4b, which is where that debt had sat
 **undriven since round 7** — dropped by rounds 8, 9 and 10, and named "3rd round owed" in round 10's
@@ -232,6 +232,19 @@ discharged, and git history is the archive: `git log --diff-filter=D --stat -- p
 commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
 stays here only while it is still in flight:
 
+- [`../qa-findings-round15-2026-08-27.md`](../qa-findings-round15-2026-08-27.md) — round 15, the
+  **first round to drive all seventeen scenarios**, none dropped. **F79 is FIXED** (a session whose
+  subagent parked a question forks and resumes, both doors exit 0, 0 unresolved causal refs) — but
+  the relay that fixes it introduced **F81 (MED-HIGH)**: a relayed child question is journalled
+  **twice**, so every answered subagent question leaves a permanently stale `lain://inbox` row and an
+  `inbox_count` that never returns to 0. **F81 is round 11's F64 generalised** — the disagreement is
+  not docent-specific and does not need a stall. **F82 (MEDIUM)**: one oversized tool result pins
+  occupancy at 100% with `head_bytes: 2`, so `approaching_window` fires with nothing to compact and
+  nothing tells the human — filed only after the decision path was cleared four ways. **F80 is
+  fixed on both halves** (help text corrected, and a spawned child was observed running in a real
+  leased worktree). First drives for **`shell-term-approval`** and **`memory-and-dogfood`**, and
+  **`survey` §7 — the docent thread, owed since round 7 and dropped by rounds 8, 9 and 10 — passes.**
+  Three findings **withdrawn on the mechanism**, and nine scenario corrections filed.
 - [`../qa-findings-round14-2026-08-27.md`](../qa-findings-round14-2026-08-27.md) — round 14, the
   first round driven under the corrected skill contract (every scenario in the directory, no
   preplanned subset), and the round that **wrote the seventeenth scenario**
@@ -278,8 +291,18 @@ first exercised the section rather than what the section asks for:
   (`slot_fills` is a **bench** record; a plain `lain chat` writes zero). That is the argument for
   driving a new scenario promptly rather than letting it age unrun, and it is why the round default
   above is now every scenario rather than a subset.
-- **`memory-and-dogfood` has never been driven end to end**, and neither has `shell-term-approval`,
-  which was written 2026-08-27. Both are coverage on paper until a round says otherwise.
+- **`memory-and-dogfood` and `shell-term-approval` are no longer coverage on paper — round 15 drove
+  both for the first time.** `shell-term-approval` reproduced every measured value in §0–§3a,
+  including the newline row (`separators=0`, the arithmetic that stops `echo hi | rm -rf /tmp/x`) and
+  `PROGRAM_RUNNERS` at exactly 92, and it corrected its own §0/§8 claim that the arm is unobservable.
+  `memory-and-dogfood` reached the manifest, all three passes and `bench sweep`'s offline five-arm
+  recall@k. **Every scenario in this directory has now been driven at least once.**
+
+- **`survey` §7's four-round debt is DISCHARGED (round 15).** The docent thread pane was owed since
+  round 7 and dropped by rounds 8, 9 and 10; it now passes end to end — the answer renders in the
+  thread pane while RPC gestures still land in 0s, the duplicate `:w` refuses in words, and both
+  `docent_asked` and `docent_answered` are journalled. The standing instruction to **cut §7 last,
+  not first** is what finally got it driven; keep it.
 
 - **Round 9 (2026-08-23) drove six of the thirteen** — `session-and-window`, `rust-cli`,
   **`bowling-ruby` as the subject with `cockpit-surfaces` piggybacked on it** (the first round since
