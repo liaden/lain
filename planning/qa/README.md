@@ -38,7 +38,7 @@ provider or a forge:
 
 | Scenario | The question it answers | Cost |
 |---|---|---|
-| [`repl-commands.md`](scenarios/repl-commands.md) | Does the **command surface** do what `/help` says — `/help`, `/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/fork`, `/goal`, `/meta`, `/review-submit` and the ten others? Ten of the twenty had never been typed in a round. Every refusal path is a **zero-model-turn** path. | cheap |
+| [`repl-commands.md`](scenarios/repl-commands.md) | Does the **command surface** do what `/help` says — `/help`, `/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/fork`, `/goal`, `/meta`, `/review-submit`, `/introspect` and the ten others? Eleven of the twenty-one are driven by nothing else. Every refusal path is a **zero-model-turn** path. **RE-DERIVE the count from the registry** — the literal roster at `spec/lain/cli/command/surface_spec.rb` — never from this row: it read "twenty" from the day `/introspect` shipped (2026-08-26) until 2026-08-28. | cheap |
 | [`epic-tier.md`](scenarios/epic-tier.md) | Does a four-stage pipeline stay honest when only a journal remembers where it is — the stage-boundary ruling, all four gate policies, the drain-is-journaling fold, and the fail-**closed** abort on a damaged record? ~4,100 lines with no prior coverage at all. | cheap |
 | [`secret-boundary.md`](scenarios/secret-boundary.md) | Does the **three-place split** hold — gate on the effect, filter on the result, mask on the content — with a real model pulling on it, and is a denial actually unliftable (including under `/mode auto`, the approve-all posture)? `--secret-oracle` is a local model by construction. | cheap |
 | [`changeset-review.md`](scenarios/changeset-review.md) | Does a review of a **real diff** tell the truth? `cockpit-surfaces` drives the review rails over `/survey`, which has no old side, no base ref and no commits — everything that makes a changeset a changeset is untouched by it. Local branches only; no forge. | cheap |
@@ -106,51 +106,49 @@ shape. The one exception is its §6 second half: confirming the shipped default 
 cache on a real round trip costs **2 completions against a live Anthropic key** — the free half of
 §6 (the byte count against the published floor) costs nothing and is not a substitute for it.
 
-**Also added 2026-08-26** — the shell subsystem, which had **zero** manual-QA coverage: no scenario
-mentioned `Shell::Verdict`, `Parse`, `Pipeline`, the term arm or arm selection, and the five
-scenarios that touch `bash` all use it as a vehicle for something else. It was not in Known gaps
-either, so the gap was invisible:
+**Added 2026-08-26 and 2026-08-27 — the shell subsystem, in the two scenarios that divide it.**
+`lib/lain/shell/` is ~1,300 lines deciding, per gated call, whether a command runs as reconstructed
+argv with no shell anywhere or as a string handed to `sh -c`, and it had **zero** manual-QA
+coverage: no scenario mentioned `Shell::Verdict`, `Parse`, `Pipeline`, the term arm or arm
+selection, and the five scenarios that touch `bash` all use it as a vehicle for something else. It
+was not in Known gaps either, **so the gap was invisible** — which is why this file now declares it
+once, here, rather than twice in adjacent sections as it did until 2026-08-28.
 
 | Scenario | The question it answers | Cost |
 |---|---|---|
-| [`shell-terms.md`](scenarios/shell-terms.md) | Does the **deterministic half of the shell subsystem** decide the way it says it does — which commands earn the no-shell **term arm**, which a project's `[shell] exclude` table refuses **by name** (a deny path that had never been driven), which are approved by `Approval::ComposedTerm` with **nobody asked**, and — the half that matters more — which still reach a human? Plus the `web_fetch` egress floor and the `shell_arm` record in **both** attended and `/mode auto`. | cheap (one step paid) |
+| [`shell-terms.md`](scenarios/shell-terms.md) | Does the **deterministic half of the shell subsystem** decide the way it says it does — which commands earn the no-shell **term arm**, which a project's `[shell] exclude` table refuses **by name** (a deny path that had never been driven), which are approved by `Approval::ComposedTerm` with **nobody asked**, and — the half that matters more — which still reach a human? Plus the `web_fetch` egress floor, the `shell_arm` record in **both** attended and `/mode auto`, and the one instrument nothing else here has: a paid measurement of the arm *distribution* over a real session. | cheap (one step paid) |
+| [`shell-term-approval.md`](scenarios/shell-term-approval.md) | Does the **parse boundary** refuse what it claims to (the 4096-byte cap reporting *both* broken and not-covered, the newline that has no separator node and is caught by arithmetic instead), do the **verdict arms** land where they say — `git` abstaining deliberately, `deny` existing and being **unreachable in production** — and **can a driver tell from the outside which arm ran**? Plus the `Triage` rung's own reasoning over a resolved term, `STDIN_SAFE`, and the recursive-read hazard a term-shaped rule cannot see. Runs entirely on the **local** arm. | cheap |
 
-Six of its ten sections are **zero-model `/ruby` inspection**, on `prompt-slots-and-roles.md`'s
-shape; three spend local completions; §9 alone is metered. Its §0 names the **three postures**
-(attended ladder, `/mode auto`'s `ApproveAll`, the one-rung unattended deny-all) because they
-decide differently and a driver who conflates them files a false finding.
-Cut its §9 first (it is the only metered step) and its §7 second (it needs a docker
-daemon); **do not cut §5**, which holds every negative control.
+**They DIVIDE the subsystem; neither is retired.** Ruled 2026-08-28 under the standing rule that one
+subsystem does not get two scenarios silently. The two were written a day apart, independently, on
+branches that only met at the merge `9ead317c`, and they did overlap heavily. **Each now carries a
+"What it deliberately does NOT own" section naming what the other owns**, so the division is stated
+in both files rather than inferred from this one: `shell-terms` owns the wide command-by-command
+sweep (§1/§4), the both-postures `shell_arm` check (§6) and the metered arm-distribution
+measurement (§9); `shell-term-approval` owns the mechanism underneath it — the parse boundary (§1),
+the `Triage` rung's rung-by-rung table (§4a/§4b), `STDIN_SAFE` (§3a), the recursive-read hazard (§5)
+and whether `deny` is reachable in production at all. **Where they land on the same ground — the
+config-deny table, the approval rule's "no prompt" case, the docker pipeline, the `web_fetch`
+refusal strings — drive it once, at `shell-term-approval.md`, and skip the duplicate.** Each file
+says so at the point it happens. Driving both in full is no longer duplicated work; driving both
+without reading those two sections still is.
 
-**Added 2026-08-27** — the first scenario over `lib/lain/shell/`, written because the subsystem that
-decides, per gated call, whether a command runs as reconstructed argv or as a string handed to
-`sh -c` had **no** manual coverage at all and was not in this file's Known gaps either. The gap was
-invisible:
+**Both are in the REGRESSION GATE**, on the standing rule below: anything deterministic belongs in
+the cheap set even when the feature it guards is not. `shell-terms` §0–§4 and §8 are zero-model
+`/ruby` reads, §5–§7 spend local completions, and **§9 alone is metered** — cut §9 first, §7 second
+(it needs a docker daemon), and **do not cut §5**, which holds every negative control. In
+`shell-term-approval`, §1, §2, §4a, §6 and §10 are zero-model; the rest is under fifteen local
+completions. `shell-terms` §0 names the **three postures** (attended ladder, `/mode auto`'s
+`ApproveAll`, the one-rung unattended deny-all) because they decide differently and a driver who
+conflates them files a false finding.
 
-| Scenario | The question it answers | Cost |
-|---|---|---|
-| [`shell-term-approval.md`](scenarios/shell-term-approval.md) | Does the **parse boundary** refuse what it claims to (the 4096-byte cap reporting *both* broken and not-covered, the newline that has no separator node and is caught by arithmetic instead), do the **verdict arms** land where they say — `git` abstaining deliberately, `deny` existing and being **unreachable in production** — and **can a driver tell from the outside which arm ran**? Runs entirely on the **local** arm. | cheap |
-
-**It joins the REGRESSION GATE**, on the standing rule stated twice below: anything deterministic
-belongs in the cheap set even when the feature it guards is not. §1, §2, §4a, §6 and §10 are
-zero-model `/ruby` reads; the rest is under fifteen local completions.
-
-**Roughly half of it was written against an unlanded chunk and says so, section by section** — the
-config deny path, the rule that auto-approves an all-allowlisted term, the term-carrying
-`Rule::Call`, the journal record naming the arm and `web_fetch`'s non-routable refusal are each
-marked **blocked on** the card they wait for, with a pre-state to confirm instead. **That framing is
-now stale in the scenario's favour: `planning/specs/chunk-shell-term-approval.md` is `status: done`,
-so every one of those sections is drivable for real.** Read a `blocked on` marker as "drive the
-landed behaviour", not as licence to file the absence.
-
-**Two scenarios now cover this one subsystem, and nobody has decided which survives.**
-`shell-terms.md` and `shell-term-approval.md` were written a day apart, independently, and they
-overlap heavily — the config deny table, the approval rule, the arm record, the docker pipeline, the
-`web_fetch` floor and `/mode auto` are in both. Each also holds material the other does not:
-`shell-terms` §9 measures the arm distribution off a real session's journal, and
-`shell-term-approval` has the parse boundary, `deny` being unreachable in production, the `Triage`
-rung over the term, and the recursive-read hazard. **Until they are consolidated, driving both is
-duplicated work** — pick one per round and say which, or fold them and delete the loser.
+**`shell-term-approval`'s `blocked on` markers are spent.**
+`planning/specs/chunk-shell-term-approval.md` is `status: done`, and every section in the scenario
+now reads DRIVABLE NOW — the config deny path, the auto-approving rule, the term-carrying
+`Rule::Call`, the arm record and `web_fetch`'s non-routable refusal all shipped. Read a surviving
+`blocked on` sentence as history, never as licence to file the absence. (Its preamble still opens by
+calling that chunk `draft` and unlanded; that line is stale and is owed a correction in the
+scenario.)
 
 ## What a full round drives, and in what order
 
@@ -184,9 +182,27 @@ it collides with the `GEM_HOME` question — round 13 installed Rails 8.1.3.1 in
 close-out negatives held, so that recipe is known to work.
 
 **And the cheap deterministic set can go anywhere**, which is what makes it useful as a standalone
-regression gate after a chunk: `failure-injection`, `session-and-window`, `repl-commands`,
-`epic-tier`, `survey`, `prompt-slots-and-roles`, `shell-term-approval`. Running one of these early
-costs almost nothing and catches a broken bench before a subject session is spent on it.
+regression gate after a chunk. **This is the one authority on that set** — the gate paragraph below
+argues for it and deliberately does not re-list it, because until 2026-08-28 there were two
+enumerations here and they disagreed: this one omitted `shell-terms` while the gate's named it, and
+a scenario placed in one list and not the other reads as unplaced from whichever one you happen to
+read. The set, with the date each joined:
+
+`failure-injection` and `session-and-window` from the start; `repl-commands` and `epic-tier` since
+2026-08-23; `survey` since 2026-08-25; `shell-terms` since 2026-08-26; `prompt-slots-and-roles` and
+`shell-term-approval` since 2026-08-27.
+
+Running one of these early costs almost nothing and catches a broken bench before a subject session
+is spent on it.
+
+**`ollama-cloud-arm` has a placement too, in two halves.** It sat in no tier at all until
+2026-08-28 — described in the table above, scheduled nowhere, which is the same "somebody added it
+and nobody scheduled it" case `prompt-slots-and-roles` already taught this file once. **Its steps
+1–4 cost nothing** (the missing-key refusal, the plaintext-key refusal, admission and window
+resolution, all before a byte is spent) and run with the cheap set; **the rest needs the remote
+metered provider** and is budgeted at the expensive end of the round beside `rails-blog`. It is not
+on the dated gate roster above — the gate is a scoped invocation over deterministic scenarios and
+this one's second half is neither — but a full round drives both halves or names the drop.
 
 **`rust-cli` is NOT one of the subjects.** It is the smoke test; the subjects
 are `bowling-ruby` and `rails-blog`, and the third step is a SUBJECT with `cockpit-surfaces` riding
@@ -222,10 +238,9 @@ So: dropping ANY scenario from a round is a decision to name in the findings, `b
 in the findings stays visible as an outstanding debt instead.
 
 **A suggested regression gate after a chunk lands** — this is a *scoped* invocation, named by the
-user, and never what a round with no scope named runs: `failure-injection` + `session-and-window`,
-and since 2026-08-23 also `repl-commands` + `epic-tier`, since 2026-08-25 `survey`, since
-2026-08-26 `shell-terms`, and since 2026-08-27 `prompt-slots-and-roles` + `shell-term-approval`.
-All are cheap, deterministic, and cover the paths most chunks touch. As of 2026-08-18 the first pair
+user, and never what a round with no scope named runs. **Its membership is the cheap deterministic
+set enumerated above and nowhere else** — one list, so the two cannot drift apart again. All of it
+is cheap, deterministic, and covers the paths most chunks touch. As of 2026-08-18 the first pair
 also covers **most of a chunk that was mostly not about the cockpit at all** — the price table and
 its lint, `--compact-strategy` resolution, both tool-bound shapes, the `edit_file` refusal
 vocabulary, the summarizer's ceilings, the per-ask iteration ceiling and the `lain up`
@@ -262,7 +277,10 @@ commit that removed them, and `git show <commit>^:<path>` reads any of them back
 stays here only while it is still in flight:
 
 - [`../qa-findings-round15-2026-08-27.md`](../qa-findings-round15-2026-08-27.md) — round 15, the
-  **first round to drive all seventeen scenarios**, none dropped. **F79 is FIXED** (a session whose
+  round that drove **seventeen scenarios and reported "all 17 … none dropped" against a directory
+  that held eighteen** — `shell-terms.md` had landed through the merge the previous day and the
+  round counted a list instead of enumerating the directory, which is the failure the standing rule
+  above exists to prevent and the reason it is restated here. **F79 is FIXED** (a session whose
   subagent parked a question forks and resumes, both doors exit 0, 0 unresolved causal refs) — but
   the relay that fixes it introduced **F81 (MED-HIGH)**: a relayed child question is journalled
   **twice**, so every answered subagent question leaves a permanently stale `lain://inbox` row and an
@@ -276,9 +294,11 @@ stays here only while it is still in flight:
   Three findings **withdrawn on the mechanism**, and nine scenario corrections filed.
 - [`../qa-findings-round14-2026-08-27.md`](../qa-findings-round14-2026-08-27.md) — round 14, the
   first round driven under the corrected skill contract (every scenario in the directory, no
-  preplanned subset), and the round that **wrote the seventeenth scenario**
-  (`shell-term-approval`) because the shell subsystem had none and the draft chunk's own card for it
-  had never run. **F79 (HIGH)**: a session whose subagent asked a question can be neither forked nor
+  preplanned subset), and the round that **wrote `shell-term-approval`** because the shell subsystem
+  had none and the draft chunk's own card for it had never run. It was the seventeenth scenario **on
+  its own branch and the eighteenth once merged**: `shell-terms.md` had already landed on `main` the
+  previous evening (`4357a2d9`), and the two lineages only met at `9ead317c` — which is where round
+  15's miscount came from. **F79 (HIGH)**: a session whose subagent asked a question can be neither forked nor
   resumed — F23's failure returning through the `message_replay` index space, reproduced on two
   sessions with a clean control. **F78 (MED-HIGH)**: a zero-usage `turn_usage` zeroes both the feed's
   `occupancy` and `last_turn_usage`, which is compaction's own input. **F73 reproduces unfixed.**
@@ -325,7 +345,11 @@ first exercised the section rather than what the section asks for:
   including the newline row (`separators=0`, the arithmetic that stops `echo hi | rm -rf /tmp/x`) and
   `PROGRAM_RUNNERS` at exactly 92, and it corrected its own §0/§8 claim that the arm is unobservable.
   `memory-and-dogfood` reached the manifest, all three passes and `bench sweep`'s offline five-arm
-  recall@k. **Every scenario in this directory has now been driven at least once.**
+  recall@k. **Every scenario in this directory has now been driven at least once EXCEPT
+  `shell-terms`** — round 15 wrote "every scenario" against a seventeen-item list while the
+  directory held eighteen, and that sentence is corrected here rather than deleted, because the
+  overcount is the interesting part: a coverage claim taken from a list is how a scenario becomes
+  invisible.
 
 - **`survey` §7's four-round debt is DISCHARGED (round 15).** The docent thread pane was owed since
   round 7 and dropped by rounds 8, 9 and 10; it now passes end to end — the answer renders in the
@@ -359,7 +383,12 @@ first exercised the section rather than what the section asks for:
   a wrong expectation in a scenario and a defect in lain look identical from the driver's seat, and
   telling them apart is the first round's real job. Until then they are coverage on paper only.
 
-- **`shell-terms.md` has been driven ZERO times.** Written 2026-08-26 from the code — every
+- **`shell-terms.md` has been driven ZERO times — still true as of round 15, and it is the only
+  scenario in the directory of which that is true.** Round 15's own coverage table names seventeen
+  scenarios and this is the one absent from it; the round reported "none dropped" because it counted
+  its list rather than the directory. **It is in the regression gate and in a full round both**, so
+  the next round of either kind drives it, and a first drive is worth taking early. Written
+  2026-08-26 from the code — every
   expected string in it was read through a real object in a real process at the merged tree, which
   makes each one a claim about *that* checkout on *that* box and not a round's finding. Two things
   in it are the likeliest to be wrong first, and both are hand-maintained tables: `ComposedTerm`'s
@@ -423,10 +452,16 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   it refuses cleanly (`lain: :LainReviewDone needs an open EPIC review, and this buffer is not one
   -- a changeset review or a survey hands back with :LainReviewVerdict {verdict} instead`), with no
   `stack traceback:`, `nvim_get_mode()` not blocking, and the journal unchanged; at 161 characters
-  against a measured `v:echospace` of 88 it exercised the width rail too. **The other leg is still
-  owed:** `51_thread.lua:639` deliberately raises out of a `BufWriteCmd`, so the traceback-and-modal
-  shape survives there. Reaching it needs `cockpit-surfaces.md` §4b's thread pane, which no round has
-  driven — rounds 8 and 9 both stopped short of it.
+  against a measured `v:echospace` of 88 it exercised the width rail too. **The other leg is no
+  longer owed, and this entry is kept only so the discharge is on the record.** It said the thread
+  pane's `BufWriteCmd` raises, that the traceback-and-modal shape survives there, and that reaching
+  it needs `cockpit-surfaces.md` §4b's thread pane which no round had driven. All three have moved:
+  the thread pane was taken off `cockpit-surfaces` §4b into `survey.md` §7; round 11 drove it (F31
+  fixed at the site) and round 15 drove it again end to end, with the duplicate `:w` refusing in
+  words; and round 14 measured the refusal at **123ms, 0 tracebacks, no modal**, `nvim_get_mode()`
+  answering. `51_thread.lua`'s callback now says in its own comment that it answers rather than
+  raises. What no round's record shows is `:LainReviewDone` typed *from a thread buffer* — a
+  narrower question than this entry ever asked, and not a gap in the same sense.
 - **The plain, non-cockpit path — narrowed by round 9, not closed.** Almost every scenario runs under
   `lain up --nvim`. **The `--no-nvim` approval path now works**: round 9 drove it and the prompt
   renders naming the requester, `y` is consumed, and the turn completes, so round 4's permanent wedge
@@ -436,11 +471,19 @@ Worth stating plainly, because "every defect behaves differently now" reads as c
   journals through it (refuses by name, exit 1, no backtrace). Still undriven is `repl-commands.md`
   §4's loop `/btw` → `/keep` → `lain sessions` → `--resume`, which asks a question whose answer
   depends on the carried-over turns — the half that tests continuity rather than refusal.
-- **The shell subsystem — `shell-term-approval.md` written 2026-08-27, undriven.** Every string in
-  it is a prediction, and roughly half its sections are written against an unlanded chunk and marked
-  as such. The half that is shipped guards a subsystem that had **no** manual coverage at all before
-  it, so a first drive is worth scheduling promptly rather than letting the document age — that is
-  the lesson `prompt-slots-and-roles` taught the hard way.
+- **The shell subsystem — half covered, and the uncovered half is `shell-terms.md`.**
+  `shell-term-approval.md` is **no longer a gap**: round 15 gave it its first drive (§0, §1, §2,
+  §2a, §2b, §3, §3a), reproduced every measured value including the newline row and `PROGRAM_RUNNERS`
+  at exactly 92, and corrected the document's own §0/§8 claim in the process; its `blocked on`
+  framing is spent too, since `chunk-shell-term-approval.md` is `status: done`. What is still owed
+  is **`shell-terms.md`, written 2026-08-26 and never driven** — every string in it is a prediction
+  measured off one checkout on one box, and the two hand-maintained tables (`ComposedTerm`'s
+  program allowlist with its per-program disqualifying flags, and `web_fetch`'s blocked-range list)
+  are the likeliest to be wrong first. Its sections not shared with `shell-term-approval` —
+  the wide command sweep (§1/§4), the both-postures `shell_arm` check (§6) and the metered
+  arm-distribution measurement (§9) — have no coverage anywhere else in this directory. A first
+  drive is worth scheduling promptly rather than letting the document age; that is the lesson
+  `prompt-slots-and-roles` taught the hard way and `shell-terms` is now teaching a second time.
 - **Isolation backends — `subagents-and-backends.md` §3 written 2026-08-23, undriven.** It carries an
   open question to settle by driving: the `--isolation` flag's help text says it "is inert in chat
   today" because no chat path spawns an actor-mode subagent, but `CLI::Wiring` builds a real

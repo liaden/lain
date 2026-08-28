@@ -201,10 +201,42 @@ only worth having if it is read rather than skimmed:
    (everything, `queue`), `accept_edits` (everything, `queue`, `shadow_git`), `auto` (`approve_all`).
    Confirm with `/mode`. **Never `/mode auto` or `/mode +auto_approve`** — the posture and the layer
    are two ways to the same approve-all gate, and either one silently answers every question this
-   method exists to ask. `/mode !` resets to the floor. The only sanctioned exceptions are the two
-   sections written to watch what an approve-all gate does — `repl-commands.md` §6 and
-   `secret-boundary.md` §5 — each scoped to a throwaway tree and each ending with `/mode !` before
-   anything else in the round.
+   method exists to ask. `/mode !` resets to the floor.
+
+   **What sanctions a section is three conditions, not its appearance on a list.** A section may
+   raise the posture only if it (a) names an approve-all gate as its own subject in its heading,
+   (b) is scoped to a throwaway tree, and (c) ends with `/mode !` before anything else in the
+   round. A section that types `/mode auto` without all three is a defect in that scenario, not a
+   licence to drive it.
+
+   **The list of such sections is DERIVED, never copied** — the same rule `README.md` states for
+   the scenario set itself. Re-derive it at the start of every round:
+
+   ```bash
+   grep -rn '/mode auto' planning/qa/scenarios/
+   ```
+
+   As of 2026-08-28 that finds **four** sections, not the two this rule used to name:
+   `repl-commands.md` §6, `secret-boundary.md` §5, `shell-terms.md` §6 (which drives one pipeline
+   attended and again under `auto`, to prove the `shell_arm` record survives a posture that writes
+   no `escalation`) and `shell-term-approval.md` §11. The last two arrived with the shell scenarios
+   and this list was never updated, so the rule forbade what two shipped sections
+   instruct — which is how a standing rule stops being read at all.
+
+   **`shell-terms.md` §6 does not carry (b) or (c) in its own text**: it raises the posture for the
+   second half of its `shell_arm` comparison, never says to reset, and states a throwaway tree only
+   for its §2/§3. Scope it and type `/mode !` at the end of it anyway — the conditions bind the
+   driver, not the document — and the two missing lines are owed as a correction to that scenario.
+
+   **RECOMMENDATION, pending the human's ruling: bind harder rather than keep sanctioning.** Four
+   exceptions across eighteen scenarios is a list growing by accretion, and a hand-maintained roster
+   of section numbers is exactly what drifted here — in both directions at once, since the roster
+   also survives a section being renumbered or merged away. The stronger form is to drop the
+   enumeration entirely and keep only (a)/(b)/(c) plus the grep, so a new approve-all section is
+   admitted by satisfying the conditions rather than by an edit to this file nobody remembers to
+   make. The enumeration is kept until that is ruled on, because deleting it without one would
+   silently narrow a rule the bench depends on.
+
    `accept_edits`'s lighter is deliberately the empty string, so its prompt is byte-identical to one
    with no mode support at all — you cannot tell the posture by looking.
 5. **Answering "always" writes durable state.** `Approval::Remembered` persists a pre-approval into
