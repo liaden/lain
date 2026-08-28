@@ -200,14 +200,40 @@ case "${#NVSOCKS[@]}" in
      printf '  %s\n' "${NVSOCKS[@]}" >&2
      exit 1 ;;
 esac
+# --remote-expr writes the evaluated result with no terminator at all, so two
+# back-to-back reads run together on whatever they are captured into -- round 15
+# read `tab2=4` immediately followed by a bare `4` as `tab2=44` and briefly
+# believed in a 44-window review tab, a finding that had to be withdrawn.
+# Capturing into a variable and printing it back with printf adds exactly one
+# newline at the end and touches nothing else -- any newlines already embedded
+# in a multi-line value (a buffer read) survive as they were. The exception is
+# `expr` itself: $(...) trims ALL trailing newlines a driver-supplied expression
+# may genuinely return, not just the one nvim omits, so a value ending in several
+# blank lines reads as only one fewer than it should.
+# `rc` is captured on the line right after the assignment, before printf can
+# overwrite $? with its own (always-zero) status -- otherwise a dead server or a
+# bad expression, which real nvim reports with a non-zero exit and empty stdout,
+# would come back through this wrapper looking like a successful empty read.
+remote_expr() {
+  local out rc
+  out=$(nvim --server "$S" --remote-expr "$1")
+  rc=$?
+  printf '%s\n' "$out"
+  return "$rc"
+}
 case "${1:-}" in
-  expr) nvim --server "$S" --remote-expr "$2" ;;
+  expr) remote_expr "$2" ;;
   send) nvim --server "$S" --remote-send "$2" ;;
-  bufs) nvim --server "$S" --remote-expr "join(map(getbufinfo({'buflisted':0}), {_,b -> b.name.' ('.b.linecount.')'}), '\n')" ;;
-  tabs) nvim --server "$S" --remote-expr "join(map(gettabinfo(), {_,t -> 'tab'.t.tabnr.'='.len(t.windows)}), ' ')" ;;
-  msgs) nvim --server "$S" --remote-expr "execute('messages')" | tr '\\' '\n' ;;
-  buf)  nvim --server "$S" --remote-expr "join(getbufline(bufnr('$2'), 1, ${3:-20}), '\n')" ;;
-  fold) nvim --server "$S" --remote-expr "'level='.foldlevel($2).' closed='.foldclosed($2).' closedend='.foldclosedend($2)" ;;
+  bufs) remote_expr "join(map(getbufinfo({'buflisted':0}), {_,b -> b.name.' ('.b.linecount.')'}), '\n')" ;;
+  tabs) remote_expr "join(map(gettabinfo(), {_,t -> 'tab'.t.tabnr.'='.len(t.windows)}), ' ')" ;;
+  # :messages already separates its entries with real newlines and nvim never
+  # escapes a literal backslash in message text -- piping through `tr '\\' '\n'`
+  # was a no-op on ordinary content and active corruption on a message that
+  # legitimately contains one (a Windows-shaped path, a regex in an error).
+  # remote_expr's own terminator is what this arm was missing, not translation.
+  msgs) remote_expr "execute('messages')" ;;
+  buf)  remote_expr "join(getbufline(bufnr('$2'), 1, ${3:-20}), '\n')" ;;
+  fold) remote_expr "'level='.foldlevel($2).' closed='.foldclosed($2).' closedend='.foldclosedend($2)" ;;
   *)    echo "usage: nv.sh {expr|send|bufs|tabs|msgs|buf|fold} ..." >&2; exit 2 ;;
 esac
 EOF

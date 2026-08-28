@@ -499,9 +499,14 @@ wrong surface returns plausible text rather than an error.
     | command grep -qE '\[y/N\][[:space:]]*$'
   ```
 
-**And `nv.sh expr` prints no trailing newline**, so two consecutive reads run together in a
-transcript. Round 15 read `tab2=4` immediately followed by a bare `4` as `tab2=44` and briefly had a
-44-window review tab. Echo a newline after each `expr`, or read one value per command.
+**`nv.sh` reads now terminate themselves, so two consecutive reads land on separate lines rather
+than running together.** Round 15 read `tab2=4` immediately followed by a bare `4` as `tab2=44` and
+briefly had a 44-window review tab — a finding that had to be withdrawn. `expr`, `bufs`, `tabs`,
+`buf`, `fold`, and `msgs` all add the missing terminator now. `msgs`'s old `tr '\\' '\n'` was never
+what supplied one — `:messages` already separates its own entries with real newlines, so the `tr`
+was a no-op against ordinary content and silently split a message that legitimately contained a
+backslash (a Windows-shaped path, a regex in an error) into extra lines; it has been dropped rather
+than trusted. No manual echo is needed, and adding one yourself would double-space the read.
 
 They are a richer evidence surface, and **where they disagree with the pane, that disagreement is
 itself the finding** (F17, F18). Cheap staleness probe:
