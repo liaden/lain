@@ -1,12 +1,18 @@
 # frozen_string_literal: true
 
-# The causal record a spawn leaves behind, and the vocabulary its bodies
-# speak. A one-shot's completion used to be recognisable only by the presence
-# of a "result" key while every other transition carried a body-level
-# lifecycle mark; these pin that the completion now speaks the same closed
-# vocabulary, and that closing it moved nothing else -- the :spawn's bytes and
-# the completion's causal edges are both asserted unchanged, because a spawn
-# digest is an actor's address and both live-fleet readers key on it.
+require "async"
+
+# The causal record a spawn leaves behind, the vocabulary its bodies speak,
+# and the identity an adopted actor is addressed by. A one-shot's completion
+# used to be recognisable only by the presence of a "result" key while every
+# other transition carried a body-level lifecycle mark; these pin that the
+# completion now speaks the same closed vocabulary.
+#
+# A spawn digest IS an actor's address, which is what makes the rest of this
+# file's shape load-bearing in both directions: the ACTOR path must separate
+# two live children launched from one head, and the ONE-SHOT path -- adopted by
+# nobody, addressed by nobody -- must stay byte-identical to the journals
+# already on disk.
 RSpec.describe Lain::Tools::Subagent::Lineage do
   subject(:lineage) { described_class.new(policy:) }
 
@@ -59,6 +65,84 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
     it "writes the mark an actor asks for, so only the actor path pays the byte change" do
       expect(lineage.spawn(parent, lifecycle: "launched").body)
         .to include("lifecycle" => Lain::Telemetry::SpawnLifecycle::LAUNCHED)
+    end
+
+    # The same asymmetry the lifecycle mark is written under: a one-shot is
+    # never adopted, nothing routes on its digest, and so its bytes -- and
+    # every journal already holding them -- stay exactly where they were.
+    it "gives a one-shot no adoption identity" do
+      expect(lineage.spawn(parent).body).not_to have_key("adoption")
+    end
+
+    # An actor's address IS its :spawn digest, and two launches of one arm from
+    # one head are otherwise byte-identical. Without a per-adoption mark the
+    # two live children share one address, which is what folds them into a
+    # single fleet entry and lets either child's farewell retire both.
+    it "gives two actors launched from one head different addresses" do
+      first = lineage.spawn(parent, lifecycle: "launched")
+      second = lineage.spawn(parent, lifecycle: "launched")
+
+      expect(second.body.fetch("adoption")).not_to eq(first.body.fetch("adoption"))
+      expect(second.digest).not_to eq(first.digest)
+    end
+
+    # Deterministic is the binding constraint, and it is why the mark is a
+    # counter rather than a nonce: a nonce would separate the twins just as
+    # well and cost exactly this, so two runs of one bench arm could no longer
+    # be joined on a spawn digest.
+    it "re-derives the same address for the same adoption in an identical run" do
+      first_run = lineage.spawn(parent, lifecycle: "launched")
+
+      other_store = Lain::Store.new
+      other_parent = Lain::Timeline.empty(store: other_store)
+                                   .commit(role: :user, content: text("hi"))
+                                   .commit(role: :assistant, content: text("yo"))
+      second_run = described_class.new(policy:).spawn(other_parent, lifecycle: "launched")
+
+      expect(second_run.digest).to eq(first_run.digest)
+    end
+
+    # The counter is keyed by the head, so a second head starts its own
+    # sequence -- what makes the mark a property of the scope collisions happen
+    # in rather than of how many spawns this writer has ever made.
+    it "counts per head, so an advanced parent starts over" do
+      lineage.spawn(parent, lifecycle: "launched")
+      advanced = parent.commit(role: :user, content: text("again"))
+
+      expect(lineage.spawn(advanced, lifecycle: "launched").body.fetch("adoption"))
+        .to eq(lineage.spawn(parent, lifecycle: "launched").body.fetch("adoption") - 1)
+    end
+
+    # Replay rebuilds an event from the record's OWN recorded body rather than
+    # re-deriving the mark, so the identity has to survive that round trip --
+    # this is the shape {Bench::Session::MessageReplay} verifies every journaled
+    # :spawn with.
+    it "still re-derives its recorded digest when rebuilt from its own recorded body" do
+      spawn = lineage.spawn(parent, lifecycle: "launched")
+      payload = Lain::Event::Payload.new(kind: spawn.kind, body: spawn.body)
+      rebuilt = Lain::Event.new(kind: spawn.kind, carried_payload: payload, from: spawn.from,
+                                to: spawn.to, render_parent: spawn.render_parent,
+                                causal_parents: spawn.causal_parents, correlation: spawn.correlation)
+
+      expect(rebuilt.digest).to eq(spawn.digest)
+    end
+  end
+
+  # What makes the adoption count safe without a lock: nothing between its read
+  # and its write suspends the fiber, so async's cooperative scheduler cannot
+  # put a second adoption in the middle. Nothing else in the suite states that,
+  # and losing it is silent -- two live twins handed one ordinal and one address
+  # again, with nothing raised. Two REAL fibers, because the sequential pair
+  # elsewhere in this file cannot fail this way.
+  describe "two concurrent adoptions through one writer" do
+    it "hands each fiber an ordinal of its own, so the twins still take distinct addresses" do
+      spawns = Sync do |task|
+        [task.async { lineage.spawn(parent, lifecycle: "launched") },
+         task.async { lineage.spawn(parent, lifecycle: "launched") }].map(&:wait)
+      end
+
+      expect(spawns.map { |spawn| spawn.body.fetch("adoption") }).to contain_exactly(1, 2)
+      expect(spawns.map(&:digest).uniq.size).to eq(2)
     end
   end
 

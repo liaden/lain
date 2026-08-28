@@ -18,6 +18,7 @@ module Lain
         def initialize(policy:, log: Log::Null, observer: Event::ChainWriter::Null.new)
           @policy = policy
           @log = log
+          @adoptions = Hash.new(0)
           @chain_writer = Event::ChainWriter.new(observer: lambda { |event|
             @log << event
             observer.call(event)
@@ -29,16 +30,32 @@ module Lain
         # with the parent's. Put into the SHARED Store, where H already lives,
         # so referential integrity holds.
         #
-        # `lifecycle` and `unattended` are both written CONDITIONALLY, so a
-        # one-shot spawn's bytes -- and every digest derived from them -- are
-        # unchanged. `unattended` belongs in the record because without it the
-        # recorded spawn no longer determines the child's toolset, which is the
-        # one property a bench reader replays a spawn to check.
+        # `lifecycle`, `adoption` and `unattended` are written CONDITIONALLY, so
+        # only the actor path pays a byte change and every one-shot digest on
+        # disk stays as it was. `unattended` is in the record because without it
+        # a recorded spawn no longer determines the child's toolset, the one
+        # property a bench reader replays a spawn to check.
+        #
+        # `adoption` is the identity two live children cannot share: an adopted
+        # actor's ADDRESS is this event's digest, and two launches of one arm
+        # from one head are otherwise byte-identical, so the fleet, the journal
+        # and a `tell` would read the twins as one. A one-shot is adopted by
+        # nobody and addressed by nobody, hence the condition above.
+        #
+        # A COUNTER, not a nonce, and that is the binding constraint: a nonce
+        # would not break replay (a record rebuilds from its own recorded body)
+        # but would break CROSS-RUN reproducibility, and two runs of one bench
+        # arm could then not be joined on a spawn digest.
+        #
+        # Its scope is this WRITER; {#next_adoption} says what that leaves open.
         def spawn(parent, lifecycle: nil)
           head = parent.head_digest
           body = { "prefix" => @policy.prefix.label, "posture" => @policy.posture.label,
                    "only" => @policy.only, "spawned_from" => head }
-          body["lifecycle"] = lifecycle unless lifecycle.nil?
+          unless lifecycle.nil?
+            body["adoption"] = next_adoption(head)
+            body["lifecycle"] = lifecycle
+          end
           body["unattended"] = true if @policy.unattended
           put(parent, kind: :spawn, from: correlation_of(parent), to: nil,
                       causal_parents: [head].compact, body:)
@@ -90,6 +107,27 @@ module Lain
         def correlation_of(timeline) = Event::ChainWriter.correlation_of(timeline)
 
         private
+
+        # Keyed by the head, the scope a collision lives in: two adoptions from
+        # ONE head. Different heads already differ in `spawned_from`, and a
+        # per-head sequence is what makes an identical second run replay the
+        # same numbers in the same order.
+        #
+        # Scoped to THIS writer, which is what it leaves open. A cockpit builds
+        # one {Tools::Subagent} and memoizes its Lineage, so every actor it
+        # launches counts off this one sequence -- but a SECOND writer over the
+        # same head starts again and re-collides, as a resumed run does. Both
+        # want an identity minted outside this object.
+        #
+        # Unsynchronized, and safe only because nothing between the read and the
+        # write suspends the fiber; behind an await it would issue duplicates
+        # with nothing raised.
+        #
+        # One entry per head ever actor-spawned from, never evicted: O(actor
+        # launches), a session-sized Hash rather than a leak.
+        def next_adoption(head)
+          @adoptions[head] += 1
+        end
 
         # The payload-then-envelope write, delegated so @chain_writer is its
         # one home.

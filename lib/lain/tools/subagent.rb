@@ -237,8 +237,12 @@ module Lain
 
       # {Lineage} writes the :spawn and :message events; the causal-edge and
       # correlation-join reasoning lives there. Memoized rather than built in
-      # #initialize only to keep the wiring point within its Metrics budget --
-      # Lineage is pure over the frozen policy, so late construction is safe.
+      # #initialize only to keep the wiring point within its Metrics budget.
+      # Late construction is safe, but no longer because Lineage is pure -- it
+      # now carries the adoption count that keeps two live actors' addresses
+      # apart. It is safe because this memo is the ONE Lineage a Subagent ever
+      # has, so every actor it launches counts off the same sequence; a second
+      # Subagent would be a second count.
       def lineage = @lineage ||= Lineage.new(policy:, log: @log, observer: lineage_observer)
 
       # An actor's lifecycle rides the journal: every {Lineage} event is

@@ -21,9 +21,14 @@ module Lain
     #
     # == Identity
     #
-    # A restart never looks an actor up by address: registry addresses are
-    # :spawn digests and legitimately collide for identical spawns. A restart's
-    # identity is the RECORD handed in, and what it creates is a NEW adoption;
+    # A restart never looks an actor up by address, and the reason is in this
+    # class: {Revived} is built with `address: head` -- the replayed HEAD
+    # digest, because a revived actor has no :spawn event of its own -- so two
+    # restarts of one recording carry the same address by construction, with no
+    # spawn writer in it at all. (Registry addresses that ARE :spawn digests now
+    # carry a per-adoption ordinal, but its scope is one writer, so those can
+    # still collide across a second writer or a resume.) A restart's identity is
+    # the RECORD handed in, and what it creates is a NEW adoption;
     # the dead registration stays in the registry as the honest history of the
     # first life.
     class Restart

@@ -144,13 +144,16 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     end
   end
 
-  # ---- (b) Registry Array semantics under an address collision --------------
+  # ---- (b) Registry Array semantics under twinned actors --------------------
   #
-  # Two spawns of the same arm from the same head are byte-identical :spawn
-  # events (ChainWriter has no nonce), so they SHARE one content digest ==
-  # address. The Array keeps both (the Hash-drop fix). What remains collapsed
-  # is everything ADDRESS-grain.
-  it "identical spawns share an address -- both enumerate and object routing works" do
+  # Two adoptions of one arm from one head used to be byte-identical :spawn
+  # events and so SHARED one content digest == address. The actor :spawn now
+  # carries a per-adoption ordinal, so the twins are separable at address
+  # grain. What this pins is that separating them changed nothing about how the
+  # registry works: the Array still keeps both rows and routing is still by
+  # OBJECT, because unique addresses are an identity fix and not a licence to
+  # start looking rows up by address.
+  it "twinned actors take distinct addresses -- both enumerate and object routing works" do
     journal = Lain::Channel.new
     twin_a = twin_b = nil
     Sync do |task|
@@ -160,8 +163,8 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
       twin_b = supervisor.adopt(role: "twin-b") { tool.launch_actor("go") }
       [twin_a, twin_b].each(&:settle)
 
-      expect(twin_a.address).to eq(twin_b.address)  # the collision is real
-      expect(supervisor.count).to eq(2)             # both enumerate
+      expect(twin_a.address).not_to eq(twin_b.address)  # separable at address grain
+      expect(supervisor.count).to eq(2)                 # both enumerate
 
       twin_a.stop                                   # routing is by OBJECT -- stops only twin-a
       expect(supervisor.map(&:state)).to eq(%i[stopped running])

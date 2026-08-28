@@ -47,8 +47,12 @@ module Lain
       @isolation = isolation
       @handoff = handoff
       # An Array, not an address-keyed Hash: an address is the :spawn event's
-      # CONTENT digest, and two spawns of the same arm from the same head
-      # legitimately share one, so a collision must not drop a live actor.
+      # CONTENT digest. An adopted actor's spawn carries a per-adoption ordinal,
+      # so two live twins launched through ONE {Tools::Subagent::Lineage} no
+      # longer share an address -- but that count's scope is the WRITER. A
+      # second writer over the same head starts the count again, and a resumed
+      # run does too. A collision is rarer than it was and is not gone, and it
+      # must never drop a live actor.
       @registry = []
       @task = nil
       # Distinct per adoption even when two share a role: a Worktree backend keys
