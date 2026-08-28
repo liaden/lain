@@ -1,8 +1,9 @@
 # Scenario: a Rails blog (long-horizon, high-volume)
 
-**Why this one exists:** bowling is a single small file. This scenario is the only one that
-generates **hundreds of files, very large tool results, and dozens of turns**, so it is the natural
-home for the three things the small scenarios structurally cannot reach:
+**Why this one exists:** bowling is a single small file. This scenario is the one built to reach
+**tool-result size** the small scenarios cannot, over a run that stretches across **dozens of
+turns** — so it is the natural home for the three things the small scenarios structurally cannot
+reach:
 
 1. **Compaction at scale** — filling the context until a compaction actually fires. Rounds 3 and 4
    both failed to reach this, making it the least-exercised path in the whole QA suite.
