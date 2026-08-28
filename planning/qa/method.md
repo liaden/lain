@@ -215,8 +215,11 @@ only worth having if it is read rather than skimmed:
    ```bash
    # 1. every candidate -- BOTH routes to the gate, because the rule above bans both
    grep -rnE '/mode (auto|\+auto_approve)' planning/qa/scenarios/
-   # 2. keep only the hits a driver TYPES: a `you> ` prompt line or a fenced drive block.
-   #    Most hits are prose ABOUT the posture, and a mention is not a drive.
+   # 2. keep the hits that INSTRUCT, and drop the ones that merely describe.
+   #    Do NOT filter on `you> ` -- shell-terms.md 6 raises the posture in an ordinary
+   #    sentence ("then `/mode auto` and again") and names it in its own heading, so a
+   #    prompt-line grep silently loses it. Read each hit; a heading or an imperative
+   #    counts, a table row explaining what the posture DOES does not.
    ```
 
    As of 2026-08-28 that finds **four** sections, not the two this rule used to name:
