@@ -1,6 +1,6 @@
 # Chunk: round-15 — what nothing ever takes out of the set
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby (plus the QA bench's `bash` driver heredocs and its scenario prose)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -1550,3 +1550,23 @@ says a raw `Lain::Event` "answers `#kind` and `#body` but **not** `#payload`" �
 `shell-terms.md` §6 raises the posture in an ordinary sentence rather than at a `you> ` prompt, so
 it is invisible to a prompt-anchored grep — which is why `method.md`'s re-derivation now says in
 words not to filter that way.
+
+### Closed out
+
+All eighteen cards landed on `main`, `9ead317c..e87d28bd`. Integration checks 1, 2, 3, 4, 9 and 10
+pass: the suite reads **16595 examples, 0 failures, 15 pendings** against a pre-chunk baseline of
+16503/0/15 (+92 examples, pendings unchanged — the twinned-actor spec is still `pending`, as Open
+decision 3 requires); bare `rubocop` is clean over 1421 files; `pre-commit run --all-files` passes
+every hook including the Rust ones; `git diff --stat ext/ crates/` over the whole chunk is empty;
+the `lain://inbox`/`StatusFeed` parity group is 6 green; no `Tools::` reference appears in
+`status_feed`, `event` or `session_record` outside YARD links; and `Metrics/ClassLength` on
+`StatusFeed` finishes at **115 of 125** — the number to budget against for the next card is not that
+one but `StatusFeed#<<`'s `MethodLength`, which sits at **10/10, zero headroom**.
+
+**Checks 5, 6, 7, 8 and 11 are the manual round and are still owed** — they need a real cockpit with
+tmux, nvim and a live model, which this chunk did not have. They are the round's actual verdict:
+check 5 requires all four inbox readers to agree at zero for a relayed subagent question with the
+parent's own `ask_human` as control, 6 requires the HUD's `fleet` segment absent and `state.json`'s
+`fleet` empty once every child has finished, 7 requires the chat pane to *say* the context is full
+and uncompactable under `rails-blog`'s reproduction, 8 drives the bench's own scripts plus
+`--windows` inside tmux, and 11 is the regression gate over the six scenarios two cards edited.
