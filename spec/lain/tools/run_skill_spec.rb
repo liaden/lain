@@ -127,6 +127,150 @@ RSpec.describe Lain::Tools::RunSkill do
     end
   end
 
+  describe "AC: an oversized expansion is bounded" do
+    # A tiny ceiling, so an oversized fixture costs a few bytes rather than the
+    # 64 KiB the shipped one would need. The bound is injected as the tool takes
+    # it, so the seam the wiring would use is the seam under test.
+    def bounded(renderer, limit)
+      ceiling = described_class::Ceiling.new(bound: Lain::Tool::Bounds::Handback.new(limit:))
+      described_class.new(renderer:, ceiling:)
+    end
+
+    # Under the ceiling: nothing about the bound is visible on the ordinary
+    # path, which is the whole point of it.
+    it "hands back an ordinary expansion unchanged" do
+      with_renderer(shipped: critique) do |renderer|
+        result = described_class.new(renderer:).call({ name: "critique" })
+
+        expect(result).to have_attributes(is_error: false)
+        expect(result.content).to eq("# Critique\n\nReview the target rigorously.")
+      end
+    end
+
+    it "answers an oversized expansion with its size, the ceiling and something narrower to do" do
+      with_renderer(shipped: critique(body: "short")) do |renderer|
+        result = bounded(renderer, 64).call({ name: "critique", args: "z" * 200 })
+
+        expect(result).to have_attributes(is_error: true)
+        expect(result.content).to include("207 bytes")
+        expect(result.content).to include("ceiling of 64")
+        expect(result.content).to include("critique")
+        expect(result.content).to include("run_skill again with shorter args")
+      end
+    end
+
+    # The scaffold overran on its own, so the args are not the lever and saying
+    # they are would name the very call that was just refused. The renderer is
+    # pure, so this refusal is permanent for this skill and the sentence says so.
+    it "offers no args advice when the scaffold alone overran" do
+      with_renderer(shipped: critique(body: "y" * 200)) do |renderer|
+        result = bounded(renderer, 64).call({ name: "critique" })
+
+        expect(result).to have_attributes(is_error: true)
+        expect(result.content).to include("200 bytes")
+        expect(result.content).to include("renders the same bytes every time")
+        expect(result.content).to include("run a narrower skill")
+        expect(result.content).not_to include("args")
+      end
+    end
+
+    # The general case of the same defect, and the one a real invocation hits:
+    # run_skill exists to pull guidance in against a concrete target, so an
+    # oversized skill is usually called WITH args. Emptiness is the wrong
+    # question -- three bytes of args on a scaffold that overruns on its own is
+    # still a scaffold that overruns.
+    it "offers no args advice when dropping every arg would still overrun" do
+      with_renderer(shipped: critique(body: "y" * 200)) do |renderer|
+        result = bounded(renderer, 64).call({ name: "critique", args: "abc" })
+
+        expect(result).to have_attributes(is_error: true)
+        expect(result.content).to include("renders the same bytes every time")
+        expect(result.content).not_to include("args")
+      end
+    end
+
+    # The size it is told is the one it cannot get below. 205 would name a total
+    # the model could shave three bytes off and be refused all over again.
+    it "reports the scaffold's own size, not the total it cannot reach" do
+      with_renderer(shipped: critique(body: "y" * 200)) do |renderer|
+        result = bounded(renderer, 64).call({ name: "critique", args: "abc" })
+
+        expect(result.content).to include("200 bytes")
+        expect(result.content).not_to include("205")
+      end
+    end
+
+    # The refusal exists to keep the bytes OUT of the context, so a message that
+    # quoted or previewed them would defeat it exactly.
+    it "returns none of the oversized bytes" do
+      with_renderer(shipped: critique(body: "MARKER-#{"y" * 200}")) do |renderer|
+        result = bounded(renderer, 64).call({ name: "critique" })
+
+        expect(result.content).not_to include("MARKER")
+        expect(result.content).not_to include("yyyy")
+      end
+    end
+
+    # The args the model supplies are part of what lands in context, so they are
+    # part of what is measured -- which is what makes "call it with shorter args"
+    # a move the model can actually take.
+    it "measures the args along with the scaffold" do
+      with_renderer(shipped: critique(body: "short")) do |renderer|
+        tool = bounded(renderer, 64)
+
+        expect(tool.call({ name: "critique" })).to have_attributes(is_error: false)
+        expect(tool.call({ name: "critique", args: "z" * 200 })).to have_attributes(is_error: true)
+      end
+    end
+
+    # BYTES, not characters. Every other fixture here is ASCII, where the two
+    # agree; this one is the difference, and without it the ceiling could
+    # silently loosen severalfold for non-Latin guidance.
+    it "measures bytes rather than characters" do
+      with_renderer(shipped: critique(body: "é" * 33)) do |renderer|
+        result = bounded(renderer, 64).call({ name: "critique" })
+
+        expect(result).to have_attributes(is_error: true)
+        expect(result.content).to include("66 bytes")
+      end
+    end
+
+    it "refuses at the shipped ceiling with nothing injected" do
+      limit = Lain::Tools::RunSkill::EXPANSION_BOUND.limit
+      with_renderer(shipped: critique(body: "y" * (limit + 1))) do |renderer|
+        result = described_class.new(renderer:).call({ name: "critique" })
+
+        expect(result).to have_attributes(is_error: true)
+        expect(result.content).to include("ceiling of #{limit}")
+      end
+    end
+
+    # A model told the number can shorten its args and never issue the refused
+    # call at all; one told only "too large" has to discover it by being refused.
+    it "names the ceiling in the description the model reads" do
+      with_renderer(shipped: critique) do |renderer|
+        expect(described_class.new(renderer:).description)
+          .to include(Lain::Tools::RunSkill::EXPANSION_BOUND.limit.to_s)
+      end
+    end
+
+    it "is a value object two tools may share" do
+      expect(Ractor.shareable?(described_class::Ceiling.new)).to be(true)
+    end
+
+    # A bound is not an exception: the refusal is an answer the loop continues
+    # past, so the very next call still works.
+    it "leaves the tool usable after a refusal" do
+      shipped = { "huge/skill.md" => "y" * 200, "small/skill.md" => "SMALL" }
+      with_renderer(shipped:) do |renderer|
+        tool = bounded(renderer, 64)
+
+        expect(tool.call({ name: "huge" })).to have_attributes(is_error: true)
+        expect(tool.call({ name: "small" })).to have_attributes(is_error: false, content: "SMALL")
+      end
+    end
+  end
+
   describe "AC: dispatch-time recursion is bounded (a per-run invocation budget)" do
     it "refuses a further run_skill once the configured budget is exhausted" do
       with_renderer(shipped: critique) do |renderer|
