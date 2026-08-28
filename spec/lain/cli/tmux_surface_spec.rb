@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "open3"
 
 # TmuxSurface -- one object opening windows, popups, and detached
@@ -40,12 +41,35 @@ RSpec.describe Lain::CLI::TmuxSurface do
       example.run
     ensure
       system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL)
+      sweep_sockets
+    end
+
+    # `kill-server` stops the server and leaves its socket inode behind, so a
+    # scratch `-L` name is one more file per example in a directory shared with
+    # every other spec and every real session on the box -- 13,668 of them had
+    # accumulated there when this was noticed. Swept by GLOB rather than by the
+    # one name this example used: the client returns as soon as the server is
+    # told to exit, so a socket can outlive the example that made it and a
+    # later example is the only thing left to clear it. Scoped to this
+    # process's pid, so it can never touch a concurrent run's server or a real
+    # session.
+    def sweep_sockets
+      FileUtils.rm_f(Dir.glob(File.join(ENV.fetch("TMUX_TMPDIR", "/tmp"), "tmux-#{Process.uid}",
+                                        "tmux-surface-spec-#{Process.pid}-*")))
     end
 
     def tmux_windows
       Open3.capture2("tmux", "-L", socket, "list-windows", "-t", "lain", "-F",
                      WINDOW_NAME_FORMAT).first.lines.map(&:strip)
     end
+
+    # The server reaps a pane asynchronously to the client that opened the
+    # window, so what a pane exited with is something to wait for rather than
+    # to read the instant #window returns -- measured here at roughly one
+    # premature read in ten. That asymmetry is why the pair of methods below
+    # exists at all, and why {FleetWindows} holds its check for a whole turn
+    # instead of issuing it behind the open.
+    def settle = sleep(0.25)
 
     it "opens a real window" do
       placement = surface.window(command: "sleep 60", name: "probe", target_session: "lain")
@@ -103,6 +127,176 @@ RSpec.describe Lain::CLI::TmuxSurface do
 
       expect { broken_socket_surface.window(command: "echo hi") }
         .to raise_error(described_class::TmuxUnavailable, /error connecting to socket/)
+    end
+
+    # `new-window` exits 0 the moment the SERVER accepts the request, so a
+    # command that cannot start leaves a window the client was told nothing
+    # about. tmux destroys that pane within milliseconds; `keep_failed:` is
+    # the only thing that leaves a corpse to read a status off, and it works
+    # only because it rides the SAME invocation -- sending the option after
+    # the open lost this race 2 times in 20 when measured here.
+    it "holds the corpse of a window whose command exited non-zero, and names the status it died with" do
+      surface.window(command: "exit 42", name: "corpse", target_session: "lain", keep_failed: true)
+      settle
+
+      state = surface.window_state(target: "lain:=corpse")
+      expect(state.survived).to be(false)
+      expect(state.status).to eq(42)
+    end
+
+    it "wins that race every time over a burst, so a status is never a coin flip" do
+      20.times { |i| surface.window(command: "exit 42", name: "burst#{i}", target_session: "lain", keep_failed: true) }
+      settle
+
+      statuses = Array.new(20) { |i| surface.window_state(target: "lain:=burst#{i}").status }
+      expect(statuses).to all(eq(42))
+    end
+
+    it "reports a window whose command keeps running as survived, carrying no status" do
+      surface.window(command: "sleep 60", name: "alive", target_session: "lain", keep_failed: true)
+
+      expect(surface.window_state(target: "lain:=alive"))
+        .to eq(described_class::WindowState.new(target: "lain:=alive", survived: true, status: nil))
+    end
+
+    it "reports a window that is not there as not survived, rather than answering for some other pane" do
+      # Verified against this tmux: `display-message -p` resolves an
+      # unfindable target to the CURRENT pane and still exits 0, so it would
+      # have reported the session's healthy first window as this one's state.
+      # `list-panes` refuses the target instead, which is why the query is
+      # built on it.
+      state = surface.window_state(target: "lain:=never-opened")
+
+      expect(state.survived).to be(false)
+      expect(state.status).to be_nil
+    end
+
+    it "keeps a cleanly exiting window's pane out of the way -- `failed`, not `on`" do
+      surface.window(command: "true", name: "clean", target_session: "lain", keep_failed: true)
+      settle
+
+      expect(tmux_windows).not_to include("clean")
+    end
+  end
+
+  describe "keep_failed: and #window_state (FakeTmuxShellOut)" do
+    def factory_for(calls, reply)
+      lambda do |*args|
+        calls << args
+        args.include?("list-panes") ? reply : FakeTmuxShellOut.new(0, "%1\n", "")
+      end
+    end
+
+    it "chains the pane-holding request into the SAME invocation as the open" do
+      calls = []
+      surface = described_class.new(shell_out_factory: factory_for(calls, FakeTmuxShellOut.new(0, "", "")))
+
+      surface.window(command: "lain watch abc", name: "researcher-5aaa1111", target_session: "lain",
+                     keep_failed: true)
+
+      expect(calls).to eq([["tmux", "new-window", "-P", "-t", "lain", "-n", "researcher-5aaa1111",
+                            "lain watch abc", ";", "set-window-option", "-t", "lain:=researcher-5aaa1111",
+                            "remain-on-exit", "failed"]])
+    end
+
+    it "leaves an ordinary window's request untouched -- no -P, no tail" do
+      calls = []
+      surface = described_class.new(shell_out_factory: factory_for(calls, FakeTmuxShellOut.new(0, "", "")))
+
+      surface.window(command: "lain chat --fork", name: "fork-abc", target_session: "lain")
+
+      expect(calls).to eq([["tmux", "new-window", "-t", "lain", "-n", "fork-abc", "lain chat --fork"]])
+    end
+
+    it "ignores keep_failed: without a name -- the request that holds the pane names the window back" do
+      calls = []
+      surface = described_class.new(shell_out_factory: factory_for(calls, FakeTmuxShellOut.new(0, "", "")))
+
+      surface.window(command: "echo hi", keep_failed: true)
+
+      expect(calls).to eq([["tmux", "new-window", "echo hi"]])
+    end
+
+    it "is best-effort about the tail: a tmux too old for the `failed` value still opens the window" do
+      # tmux prints the new window's target from `-P` before it reaches the
+      # refused option, so the open is provably the half that succeeded.
+      old_tmux = ->(*_args) { FakeTmuxShellOut.new(1, "lain:2.0\n", "unknown value: failed") }
+      surface = described_class.new(shell_out_factory: old_tmux)
+
+      expect { surface.window(command: "echo hi", name: "probe", keep_failed: true) }.not_to raise_error
+    end
+
+    # A caller that asked for the pane-hold and did not get it now runs a
+    # detector with its instrument switched off: every death will read as a
+    # status-less "gone". The Placement is where it finds that out.
+    it "says the window is degraded, and why, when the pane-hold was refused" do
+      old_tmux = ->(*_args) { FakeTmuxShellOut.new(1, "lain:2.0\n", "unknown value: failed") }
+      surface = described_class.new(shell_out_factory: old_tmux)
+
+      expect(surface.window(command: "echo hi", name: "probe", keep_failed: true))
+        .to eq(described_class::Placement.new(kind: :window, target: "probe", degraded: true,
+                                              reason: "no_pane_hold"))
+    end
+
+    it "reports an undegraded window when the pane-hold landed" do
+      surface = described_class.new(shell_out_factory: factory_for([], FakeTmuxShellOut.new(0, "", "")))
+
+      expect(surface.window(command: "echo hi", name: "probe", keep_failed: true).degraded).to be(false)
+    end
+
+    # Mixlib::ShellOut#exitstatus is `@status&.exitstatus`, so a tmux client
+    # killed by a signal answers nil rather than a number. Asking `.zero?` of
+    # that raises NoMethodError out of a queued pump command.
+    it "survives a signalled tmux client rather than raising NoMethodError on a nil exit status" do
+      signalled = ->(*_args) { FakeTmuxShellOut.new(nil, "", "") }
+      surface = described_class.new(shell_out_factory: signalled)
+
+      expect(surface.window_state(target: "lain:=probe").survived).to be(false)
+      expect { surface.window(command: "echo hi", name: "probe", keep_failed: true) }
+        .to raise_error(described_class::TmuxUnavailable)
+    end
+
+    it "fails CLOSED on an answer it cannot read -- an unreadable pane is not a healthy one" do
+      surface = described_class.new(shell_out_factory: factory_for([], FakeTmuxShellOut.new(0, "\n", "")))
+
+      expect(surface.window_state(target: "lain:=probe"))
+        .to eq(described_class::WindowState.new(target: "lain:=probe", survived: false, status: nil))
+    end
+
+    it "is still loud when the OPEN itself failed -- nothing printed, so nothing opened" do
+      broken = ->(*_args) { FakeTmuxShellOut.new(1, "", "error connecting to socket") }
+      surface = described_class.new(shell_out_factory: broken)
+
+      expect { surface.window(command: "echo hi", name: "probe", keep_failed: true) }
+        .to raise_error(described_class::TmuxUnavailable, /error connecting to socket/)
+    end
+
+    it "reads the pane's death flag and status off list-panes" do
+      surface = described_class.new(shell_out_factory: factory_for([], FakeTmuxShellOut.new(0, "1:127\n", "")))
+
+      expect(surface.window_state(target: "lain:=probe"))
+        .to eq(described_class::WindowState.new(target: "lain:=probe", survived: false, status: 127))
+    end
+
+    it "reads a live pane as survived" do
+      surface = described_class.new(shell_out_factory: factory_for([], FakeTmuxShellOut.new(0, "0:\n", "")))
+
+      expect(surface.window_state(target: "lain:=probe").survived).to be(true)
+    end
+
+    it "reads a refused target as a window that did not survive, with no status to report" do
+      gone = ->(*_args) { FakeTmuxShellOut.new(1, "", "can't find window: probe") }
+      surface = described_class.new(shell_out_factory: gone)
+
+      state = surface.window_state(target: "lain:=probe")
+      expect(state.survived).to be(false)
+      expect(state.status).to be_nil
+    end
+
+    it "reads only the first pane's line -- a window split by hand still answers for the command's pane" do
+      surface = described_class.new(shell_out_factory: factory_for([], FakeTmuxShellOut.new(0, "1:127\n0:\n", "")))
+
+      expect(surface.window_state(target: "lain:=probe").status).to eq(127)
     end
   end
 

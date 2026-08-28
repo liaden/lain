@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "open3"
 
 # FleetWindows -- a `#<<` tee sink (StatusFeed's observe pattern) that
@@ -93,8 +94,9 @@ RSpec.describe Lain::CLI::FleetWindows do
       expect(recorded).to be_empty
 
       fleet.drain_pending
-      expect(open_argvs).to eq([["tmux", "new-window", "-n", "researcher-5aaa1111",
-                                 "lain watch #{spawn_digest}"]])
+      expect(open_argvs.first).to eq(["tmux", "new-window", "-P", "-n", "researcher-5aaa1111",
+                                      "lain watch #{spawn_digest}", ";", "set-window-option", "-t",
+                                      "=researcher-5aaa1111", "remain-on-exit", "failed"])
     end
 
     it "starts its pump fiber through the injected spawner, and respawns one that finished" do
@@ -114,8 +116,9 @@ RSpec.describe Lain::CLI::FleetWindows do
       fleet << spawn_record
       fleet.drain_pending
 
-      expect(open_argvs).to eq([["tmux", "new-window", "-n", "researcher-5aaa1111",
-                                 "lain watch #{spawn_digest}"]])
+      expect(open_argvs.first).to eq(["tmux", "new-window", "-P", "-n", "researcher-5aaa1111",
+                                      "lain watch #{spawn_digest}", ";", "set-window-option", "-t",
+                                      "=researcher-5aaa1111", "remain-on-exit", "failed"])
     end
 
     it "falls back to the subagent tool's own name when no role seam is wired" do
@@ -188,6 +191,214 @@ RSpec.describe Lain::CLI::FleetWindows do
       fleet.drain_pending
 
       expect(recorded).to be_empty
+    end
+  end
+
+  # `new-window` exits 0 as soon as the tmux SERVER accepts the request, so
+  # whether the pane lived is invisible to the client that opened it -- which
+  # is how a `lain` missing from a non-interactive `$SHELL -c` PATH stayed
+  # unreported for the life of the feature. The pump asks the server once,
+  # behind the open, and says so when the answer is "gone".
+  describe "a window that did not survive" do
+    def dead_pane_factory(status: "127")
+      pane_factory("1:#{status}\n")
+    end
+
+    def live_pane_factory = pane_factory("0:\n")
+
+    def pane_factory(answer)
+      lambda do |*args|
+        recorded << args
+        FakeFleetShellOut.new(0, args.include?("list-panes") ? answer : "", "")
+      end
+    end
+
+    def fleet_over(factory)
+      described_class.new(surface: Lain::CLI::TmuxSurface.new(shell_out_factory: factory),
+                          role_for: ->(_record) { "researcher" }, notice: notices, spawner:)
+    end
+
+    def check_argvs = recorded.select { |argv| argv.include?("list-panes") }
+    def deaths = notices.select { |record| record.to_journal["type"] == "window_died" }
+
+    it "reports the spawn whose window did not survive" do
+      fleet = fleet_over(dead_pane_factory)
+      fleet << spawn_record
+      fleet << usage_record
+      fleet.drain_pending
+
+      expect(deaths.map(&:digest)).to eq([spawn_digest])
+    end
+
+    it "writes no such record for a window whose command keeps running" do
+      fleet = fleet_over(live_pane_factory)
+      fleet << spawn_record
+      fleet << usage_record
+      fleet.drain_pending
+
+      expect(deaths).to be_empty
+      expect(check_argvs.size).to eq(1)
+    end
+
+    it "carries the command that was attempted and the status the pane died with" do
+      fleet = fleet_over(dead_pane_factory(status: "42"))
+      fleet << spawn_record
+      fleet << usage_record
+      fleet.drain_pending
+
+      record = deaths.first
+      expect(record.command).to eq("lain watch #{spawn_digest}")
+      expect(record.status).to eq(42)
+      expect(record.window).to eq("researcher-5aaa1111")
+    end
+
+    # A pane held by `remain-on-exit failed` ALWAYS leaves a status behind, so
+    # "gone" never means "died" -- it means a clean exit or a human who closed
+    # the window. Journalling that as a death would put a lie in the
+    # experiment record, which is worse than putting nothing there.
+    it "writes nothing for a window merely gone -- a corpse's status is the only evidence of a death" do
+      vanished = lambda do |*args|
+        recorded << args
+        FakeFleetShellOut.new(args.include?("list-panes") ? 1 : 0, "", "can't find window")
+      end
+      fleet = fleet_over(vanished)
+      fleet << spawn_record
+      fleet << usage_record
+
+      expect { fleet.drain_pending }.not_to raise_error
+      expect(deaths).to be_empty
+    end
+
+    it "writes nothing when the window is there and healthy" do
+      fleet = fleet_over(live_pane_factory)
+      fleet << spawn_record
+      fleet << usage_record
+      fleet.drain_pending
+
+      expect(deaths).to be_empty
+    end
+
+    # Chained into the open, not sent after it: tmux destroys a pane whose
+    # command could not start before a second client can connect, so the tail
+    # has to ride the same invocation to leave anything to ask about.
+    it "asks tmux to hold the failed pane in the very request that opens the window" do
+      fleet << spawn_record
+      fleet.drain_pending
+
+      expect(open_argvs).to eq([["tmux", "new-window", "-P", "-n", "researcher-5aaa1111",
+                                 "lain watch #{spawn_digest}", ";", "set-window-option", "-t",
+                                 "=researcher-5aaa1111", "remain-on-exit", "failed"]])
+    end
+
+    it "does the asking on the pump, never inside the tee fan-out" do
+      dying = fleet_over(dead_pane_factory)
+      dying << spawn_record
+      dying << usage_record
+
+      expect(recorded).to be_empty
+      expect(notices).to be_empty
+    end
+
+    # The server reaps a pane asynchronously to the client that opened it, so
+    # a check issued behind the open reads a pane that has not died yet. The
+    # wait is a turn, not a timer -- and on a real reactor that is a whole
+    # model round trip of slack for nothing but a queue.
+    it "does not let the check ride the open: the pump opens the window and asks nothing yet" do
+      Sync do
+        live = described_class.new(surface: Lain::CLI::TmuxSurface.new(shell_out_factory: dead_pane_factory),
+                                   role_for: ->(_record) { "researcher" }, notice: notices)
+        live << spawn_record
+        sleep(0)
+        expect(open_argvs.size).to eq(1)
+        expect(check_argvs).to be_empty
+
+        live << usage_record
+        sleep(0)
+        expect(check_argvs.size).to eq(1)
+      end
+    end
+
+    it "checks a window once, not once per record the sink sees afterwards" do
+      fleet = fleet_over(dead_pane_factory)
+      fleet << spawn_record
+      fleet << spawn_record
+      fleet << tell_record
+      fleet << usage_record
+      fleet << usage_record
+      fleet.drain_pending
+
+      expect(check_argvs.size).to eq(1)
+      expect(deaths.size).to eq(1)
+    end
+
+    # A done-marked window can still be holding a corpse: an actor whose watch
+    # command never started can have its lineage close before the turn ends,
+    # and the pane sits there reading `[done]` over a status nobody was told
+    # about. The status is unambiguous evidence, so a closed lineage is no
+    # reason to stop asking.
+    it "still reports a window that is holding a corpse, even once its actor is done-marked" do
+      fleet = fleet_over(dead_pane_factory)
+      fleet << spawn_record
+      fleet << farewell_record
+      fleet << usage_record
+      fleet.drain_pending
+
+      expect(check_argvs.size).to eq(1)
+      expect(deaths.map(&:digest)).to eq([spawn_digest])
+    end
+
+    it "writes nothing for a done-marked window whose watch simply finished and closed" do
+      vanished = lambda do |*args|
+        recorded << args
+        FakeFleetShellOut.new(args.include?("list-panes") ? 1 : 0, "", "can't find window")
+      end
+      fleet = fleet_over(vanished)
+      fleet << spawn_record
+      fleet << farewell_record
+      fleet << usage_record
+      fleet.drain_pending
+
+      expect(deaths).to be_empty
+    end
+
+    # A session can end without any boundary record ever reaching this sink,
+    # and what is lost then is everything: no record, and an operator whose
+    # only signal is a corpse pane they may never look at.
+    it "releases a held check on the teardown drain when no boundary ever arrived" do
+      fleet = fleet_over(dead_pane_factory)
+      fleet << spawn_record
+      fleet.drain_pending
+
+      expect(deaths.map(&:digest)).to eq([spawn_digest])
+    end
+
+    # {Pump::Mark}'s sanctioned swallow, for the same reason: a check that
+    # cannot ask tmux anything has no evidence, which is the same as no
+    # record. Unrescued it escapes `drain_pending` -- performed on the
+    # CALLER's stack -- and replaces whatever exception was already unwinding
+    # ChatLaunch's teardown.
+    it "swallows a tmux that has gone away rather than raising out of the teardown drain" do
+      # Only the QUESTION loses its tmux; the window opened normally, which is
+      # what puts the raise on the check rather than on the open.
+      no_tmux = lambda do |*args|
+        raise Errno::ENOENT, "no such file or directory - tmux" if args.include?("list-panes")
+
+        FakeFleetShellOut.new(0, "", "")
+      end
+      fleet = described_class.new(surface: Lain::CLI::TmuxSurface.new(shell_out_factory: no_tmux),
+                                  notice: notices, spawner:)
+      fleet << spawn_record
+
+      expect { fleet.drain_pending }.not_to raise_error
+      expect(deaths).to be_empty
+    end
+
+    it "checks nothing for a capped actor -- no window was opened to survive" do
+      6.times { |i| fleet << spawn_record(digest: format("blake3:%04x111122223333", i)) }
+      fleet << usage_record
+      fleet.drain_pending
+
+      expect(check_argvs.size).to eq(described_class::CAP_PER_TURN)
     end
   end
 
@@ -419,6 +630,21 @@ RSpec.describe Lain::CLI::FleetWindows do
       example.run
     ensure
       system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL)
+      sweep_sockets
+    end
+
+    # `kill-server` stops the server and leaves its socket inode behind, so a
+    # scratch `-L` name is one more file per example in a directory shared with
+    # every other spec and every real session on the box -- 13,668 of them had
+    # accumulated there when this was noticed. Swept by GLOB rather than by the
+    # one name this example used: the client returns as soon as the server is
+    # told to exit, so a socket can outlive the example that made it and a
+    # later example is the only thing left to clear it. Scoped to this
+    # process's pid, so it can never touch a concurrent run's server or a real
+    # session.
+    def sweep_sockets
+      FileUtils.rm_f(Dir.glob(File.join(ENV.fetch("TMUX_TMPDIR", "/tmp"), "tmux-#{Process.uid}",
+                                        "fleet-windows-spec-#{Process.pid}-*")))
     end
 
     def window_names
@@ -439,6 +665,42 @@ RSpec.describe Lain::CLI::FleetWindows do
       fleet << farewell_record
       fleet.drain_pending
       expect(window_names).to include("researcher-5aaa1111 [done]")
+    end
+
+    # On the PRODUCTION spawner, so the turn of slack between the open and the
+    # check is the real thing rather than a spec's two calls in a row: the pump
+    # fiber opens the window, the server reaps the pane at its own pace, and
+    # only the next turn boundary releases the question.
+    it "reports the window whose command a real tmux pane could not run" do
+      # No `#` comment this time: the digest rides along and the whole line is
+      # what a real pane's non-interactive `$SHELL -c` cannot find -- exactly
+      # the 127 a `lain` off that PATH produces.
+      Sync do
+        fleet = described_class.new(surface: real_surface, watch_command: "no-such-command-on-this-path",
+                                    role_for: ->(_record) { "researcher" }, notice: notices, session: "lain")
+        fleet << spawn_record
+        sleep(0.3)
+
+        fleet << usage_record
+        sleep(0.3)
+
+        death = notices.find { |record| record.to_journal["type"] == "window_died" }
+        expect(death).to have_attributes(digest: spawn_digest, status: 127,
+                                         command: "no-such-command-on-this-path #{spawn_digest}")
+      end
+    end
+
+    it "stays silent about a real window whose command is still running" do
+      fleet = described_class.new(surface: real_surface, watch_command: "sleep 60 #",
+                                  role_for: ->(_record) { "researcher" }, notice: notices,
+                                  spawner:, session: "lain")
+      fleet << spawn_record
+      fleet.drain_pending
+      fleet << usage_record
+      fleet.drain_pending
+
+      expect(notices).to be_empty
+      expect(window_names).to include("researcher-5aaa1111")
     end
   end
 end

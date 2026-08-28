@@ -23,6 +23,23 @@ module Lain
     # `notice` sink naming each actor and the exact `lain watch <digest>`
     # command that window would have run.
     #
+    # Opening a window is not the same as the window working. tmux answers the
+    # instant its SERVER accepts `new-window`, so a watch command a pane cannot
+    # run leaves a window that blinks out with the client told nothing -- how a
+    # `lain` absent from a pane's non-interactive `$SHELL -c` PATH went
+    # unreported for the life of this feature. Each opened window is therefore
+    # asked about once, a turn later, and a {WindowDied} record names the ones
+    # that did not survive.
+    #
+    # That readability is bought with screen space, and the bill lands on the
+    # human named above as the one who closes windows. A watch command that
+    # fails now leaves its pane on screen reading `Pane is dead (status ...)`
+    # instead of vanishing, and nothing here reaps it: one corpse per FAILED
+    # spawn, up to {CAP_PER_TURN} a turn and unbounded across a session, all
+    # of it cleared by hand. `failed` and not `on` is what keeps the bill
+    # proportional -- a watch that exits cleanly still closes its own window,
+    # so a healthy fleet accumulates nothing and only a broken one litters.
+    #
     # The spawn record carries no role name, so "named for its role" rides the
     # injected `role_for:` seam; unwired, windows fall back to
     # {FALLBACK_ROLE} plus the digest short form.
@@ -65,6 +82,19 @@ module Lain
         def initialize(actors:) = super(actors: Canonical.normalize(actors))
       end
 
+      # The one attributed record for a window that did not outlive its own
+      # opening: the spawn it was for, the window name that carried the role,
+      # the command tmux was asked to run, and the status the pane died with.
+      # Written only when there IS a status -- see {Pump::Check} for why that
+      # is the whole evidence. Without this record, a `lain` missing from a
+      # pane's non-interactive `$SHELL -c` PATH is a window that blinks out
+      # with nobody told.
+      WindowDied = Data.define(:digest, :window, :command, :status) do
+        include Telemetry::Journalable
+
+        def initialize(**fields) = super(**fields.transform_values { |value| Canonical.normalize(value) })
+      end
+
       # The execution half. Everything here happens OFF the tee fan-out path
       # -- that separation is this object's whole reason to exist apart from
       # the sink.
@@ -78,9 +108,42 @@ module Lain
           Async::Task.current?&.async(transient: true, &pump)
         end
 
-        # One queued window-open.
+        # One queued window-open, asking the surface to hold the pane if its
+        # command exits non-zero -- a pane that cannot start is destroyed in
+        # milliseconds, and holding it is the only thing that leaves {Check}
+        # anything to read.
         Open = Data.define(:command, :name, :session) do
-          def perform(pump) = pump.surface.window(command:, name:, target_session: session)
+          def perform(pump)
+            pump.surface.window(command:, name:, target_session: session, keep_failed: true)
+          end
+        end
+
+        # One queued liveness question, and the record it may produce. Held
+        # back a whole turn by {FleetWindows#release_checks} before it is
+        # queued -- see there for why the wait is a turn and not a timer.
+        #
+        # The evidence is the STATUS, never the window's presence. A pane held
+        # by `remain-on-exit failed` always leaves a status behind when its
+        # command died, so a window merely gone is a clean exit or a human who
+        # closed it -- and journalling either as a death would put a lie in
+        # the experiment record, which is worse there than a gap. Keying on
+        # the status is also what lets a done-marked window still be asked
+        # about: a `[done]` title sitting over a dead pane is exactly the case
+        # presence cannot tell apart and a status can.
+        #
+        # {Mark}'s rescue, for {Mark}'s reason, and here it is load-bearing
+        # twice over: a check that cannot ask tmux anything has no evidence,
+        # which is the same as no record -- and {FleetWindows#drain_pending}
+        # performs on the CALLER's stack, which at teardown is an `ensure`
+        # that may already be unwinding another exception.
+        Check = Data.define(:target, :digest, :window, :command) do
+          def perform(pump)
+            status = pump.surface.window_state(target:).status
+            pump.notice << WindowDied.new(digest:, window:, command:, status:) if status
+            self
+          rescue TmuxSurface::TmuxUnavailable
+            self
+          end
         end
 
         # One queued done-marker rename. A vanished target means the human
@@ -200,6 +263,7 @@ module Lain
         @seen = Set.new
         @windows = {}
         @overflow = []
+        @unverified = []
         @opened = 0
       end
 
@@ -218,16 +282,20 @@ module Lain
         @pump.notice = sink
       end
 
-      # The teardown flush: release any still-held {WindowsCapped} notice
-      # FIRST, because a session can end without any boundary record reaching
-      # this sink at all (the closers land in the raw session journal, not the
-      # tee) and the cap notice must never be stranded. See
+      # The teardown flush: release any still-held {WindowsCapped} notice and
+      # any held liveness check FIRST, because a session can end without any
+      # boundary record reaching this sink at all (the closers land in the raw
+      # session journal, not the tee) and neither must be stranded. A session
+      # that ends between a window opening and the next boundary would
+      # otherwise lose the death record permanently, leaving an operator whose
+      # only signal is a corpse pane they may never look at. See
       # {Pump#drain_pending} for why the drain is safe beside a live pump
       # fiber.
       #
       # @return [self]
       def drain_pending
         release_notice
+        release_checks
         @pump.drain_pending
         self
       end
@@ -263,9 +331,11 @@ module Lain
 
       def open_window(record, digest)
         name = "#{window_role(record)}-#{short(digest)}"
+        command = "#{@watch_command} #{digest}"
         @windows[digest] = name
         @opened += 1
-        @pump.enqueue(Pump::Open.new(command: "#{@watch_command} #{digest}", name:, session: @session))
+        @pump.enqueue(Pump::Open.new(command:, name:, session: @session))
+        @unverified << Pump::Check.new(target: window_target(name), digest:, window: name, command:)
       end
 
       def hold_back(record, digest)
@@ -286,12 +356,13 @@ module Lain
 
         digest = Array(record.causal_parents).find { |parent| @windows.key?(parent) }
         released = digest && @windows.delete(digest)
-        @pump.enqueue(Pump::Mark.new(target: mark_target(released), title: "#{released} #{DONE_MARK}")) if released
+        @pump.enqueue(Pump::Mark.new(target: window_target(released), title: "#{released} #{DONE_MARK}")) if released
       end
 
       def turn_boundary
         @opened = 0
         release_notice
+        release_checks
       end
 
       def release_notice
@@ -299,6 +370,23 @@ module Lain
 
         @pump.enqueue(Pump::Notice.new(record: WindowsCapped.new(actors: @overflow)))
         @overflow = []
+      end
+
+      # A window is asked about ONCE, and not until the turn that opened it
+      # has ended. The tmux server reaps a pane asynchronously to the client
+      # that opened it, so a question issued straight behind the open reads a
+      # pane that has not died yet -- measured at roughly one miss in eight
+      # against a real server. A turn is slack enough, and it is slack the
+      # sink already has: no timer, no second fiber, and nothing that polls.
+      #
+      # Every held check is released, none filtered. Asking too soon cannot
+      # lie -- an undead pane reads alive and writes nothing -- while not
+      # asking loses the record permanently, and these windows outlive the
+      # sink that opened them, so there is no teardown during which the
+      # question stops being fair.
+      def release_checks
+        @unverified.each { |check| @pump.enqueue(check) }
+        @unverified = []
       end
 
       def role_of(record) = @role_for.call(record) || FALLBACK_ROLE
@@ -313,9 +401,10 @@ module Lain
       # in a status line; the watch COMMAND keeps the full digest.
       def short(digest) = digest.to_s.split(":").last.to_s[0, SHORT]
 
-      # tmux's `=` target syntax pins an exact window-name match; prefix
-      # matching would let "researcher-5aaa" rename "researcher-5aaa1111".
-      def mark_target(name) = [@session, "=#{name}"].compact.join(":")
+      # One spelling for every question this sink asks about a window it
+      # opened -- the done-marker rename and the liveness check both. See
+      # {TmuxSurface.exact_window} for why the match has to be exact.
+      def window_target(name) = TmuxSurface.exact_window(name, session: @session)
     end
   end
 end

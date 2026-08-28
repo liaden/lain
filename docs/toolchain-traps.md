@@ -434,6 +434,51 @@ the cop.
   second cancel arriving inside the region falls through to an immediate `Fiber.scheduler.raise`.
   A `defer_stop` region is a shield against *an* interrupt, never against a storm of them.
 
+- **`remain-on-exit` sent as a SECOND tmux invocation loses the race against a pane that dies
+  immediately — 6 losses in 20.** tmux answers `new-window` the moment its SERVER accepts the
+  request, and it reaps a pane on its own event loop afterwards, so a `set-window-option -t ...
+  remain-on-exit failed` sent after the open arrives at a window that is sometimes already gone.
+  Measured 2026-08-28 on tmux 3.7b through the real `Mixlib::ShellOut` path, 20 windows running
+  `exit 42`: the open took 8-16ms and the option another 8-18ms, and **6 of 20 read back no
+  corpse at all**. Chained into the SAME command list —
+  `new-window ... <command> ';' set-window-option -t =name remain-on-exit failed` as one argv —
+  the loss is **0 in 30**, because tmux runs a command list to completion before it processes
+  the pane's death. A raw shell loop reproduces the race perfectly well — 4/30, 5/30 and 3/30 over
+  three runs, about 13%, comparable to the Mixlib path's 6/20 — so any harness will do. What will
+  NOT show it is measuring the wrong thing: asking whether `set-window-option` itself was *refused*
+  answers 0/30 even while a third of the corpses are already gone, because on a window tmux has
+  destroyed the option call still succeeds against the session. Measure the status you can read
+  back, not the exit code of the call that was supposed to preserve it.
+
+  Note what this means for the older entry above about `keep_failed_pane` writing `remain-on-exit`
+  last: ordering the option EARLIER was the right fix there and is not sufficient here. `Up`'s
+  chat pane runs a REPL that lives for minutes; a fleet window runs a command that can exit in
+  under a millisecond, and nothing short of the same invocation is early enough.
+
+  Chaining costs one thing: a non-zero exit no longer says which half failed. `-P` recovers it
+  for free — tmux prints the new window's target only when `new-window` itself ran, so an empty
+  stdout beside a non-zero exit means the OPEN failed (be loud) and a printed target means only
+  the option was refused, which is what a tmux older than 3.2 does with the `failed` value.
+
+- **`display-message -p` answers for the CURRENT pane when its target does not exist, and exits
+  0.** Asked about a window that is gone, `tmux display-message -p -t 'lain:=nope'
+  '#{pane_dead}:#{pane_dead_status}'` does not fail and does not answer empty: measured on 3.7b it
+  printed `1:42` — *another* window's corpse status — at exit 0. Any liveness or exit-status check
+  built on it will confidently report an unrelated pane's fate as the one you asked about.
+  `list-panes -t <target> -F ...` refuses instead (`can't find window: nope`, exit 1), and that
+  refusal is the honest answer; use it for every question about a specific window's pane.
+
+  Two more edges on the same call, both real: `Mixlib::ShellOut#exitstatus` is `@status&.exitstatus`
+  and so is **nil for a signalled client**, where `.zero?` raises `NoMethodError` out of whatever
+  is asking — use `&.zero?`. And parse the answer so it fails CLOSED (`survived = dead == "0"`,
+  not `dead != "1"`): an unreadable reply becoming "healthy" is the one direction a liveness check
+  must never round toward.
+
+  Related, and it bites every scratch-socket spec in this repo: **`kill-server` does not unlink the
+  socket.** `/tmp/tmux-1000/` held 13,668 leftover `*-spec-*` inodes when this was found. Unlink
+  `File.join(ENV.fetch("TMUX_TMPDIR", "/tmp"), "tmux-#{Process.uid}", socket)` in the same `ensure`
+  that kills the server.
+
 ## CI is a different box, and both of these were green here and red there
 
 Two examples went red on every GitHub runner while passing on every developer machine, for three
