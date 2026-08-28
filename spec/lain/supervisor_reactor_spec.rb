@@ -174,25 +174,43 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     end
   end
 
-  # The downstream symptom of that collision, stated as what SHOULD hold rather than
-  # as what does. Inverted and pending on purpose: a probe that asserts the buggy
-  # behavior goes RED on the day someone fixes it and reads as a regression. This one
-  # goes GREEN, and RSpec then fails on the stale marker -- which is the signal we want.
-  it "twinned actors are distinguishable at address grain" do
-    pending "Two spawns of one arm from the same head are byte-identical :spawn events " \
-            "(ChainWriter has no nonce), so they share a digest == address. StatusFeed folds " \
-            "the twins into ONE fleet entry, and EITHER farewell -- attributable only to that " \
-            "shared address -- now retires it, so the HUD reads fleet:0 while the surviving " \
-            "twin is still running. A live child vanishing from the roster, not an undercount. " \
-            "The fix belongs in ChainWriter."
+  # The same separation carried all the way to what a human reads: the HUD's
+  # fleet segment, through a real journal and an unmodified StatusFeed. While
+  # the collision stood this example was written INVERTED and left pending, per
+  # the discipline at the top of this file -- but the inversion is NOT what
+  # retired the marker, and a reader should not take this as the case where it
+  # worked. The example asserted the right thing about the wrong drain: it read
+  # the fleet only after `supervisor.stop`, which is a moment when an empty one
+  # is correct, so the fix landing under it changed nothing it could see. It
+  # went green when the reading below was restructured, not when behavior
+  # flipped.
+  #
+  # The journal is drained TWICE, and that split is the whole method. One drain
+  # taken after `supervisor.stop` carries both farewells behind both spawns, and
+  # a feed folding all four correctly publishes an EMPTY fleet -- true, and
+  # silent about the twins. Reading the fleet while both are live and again
+  # after exactly one has stopped is what separates "two members" from "the
+  # survivor stayed", which are the two claims worth making.
+  #
+  # Both readings are non-blocking snapshots, so each depends on every record it
+  # counts having been pushed on the caller's fiber before the drain runs. That
+  # holds all the way down today -- the `:spawn` is emitted before `launch_actor`
+  # returns, `adopt` is synchronous, and `stop` writes the farewell before
+  # cancelling the task -- and a future deferral anywhere on that path would show
+  # up here as a flake rather than as a meaningful failure.
+  it "twinned actors are two fleet members, and one farewell retires only that twin" do
     journal = Lain::Channel.new
     twin_a = twin_b = nil
+    both_live = after_one_farewell = nil
     Sync do |task|
       supervisor = described_class.new.run(task)
       tool = actor_tool(provider: mock(text_response("one"), text_response("two")), journal:, supervisor:)
       twin_a = supervisor.adopt(role: "twin-a") { tool.launch_actor("go") }
       twin_b = supervisor.adopt(role: "twin-b") { tool.launch_actor("go") }
       [twin_a, twin_b].each(&:settle)
+      both_live = journal.drain
+      twin_a.stop
+      after_one_farewell = journal.drain
       supervisor.stop
     end
 
@@ -201,8 +219,11 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     Dir.mktmpdir("w3-probe-b") do |dir|
       path = File.join(dir, "state.json")
       feed = Lain::StatusFeed.new(path:)
-      journal.drain.each { |record| feed << record }
-      expect(JSON.parse(File.read(path))["fleet"].size).to eq(2)
+      both_live.each { |record| feed << record }
+      expect(JSON.parse(File.read(path))["fleet"]).to eq([twin_a.address, twin_b.address])
+
+      after_one_farewell.each { |record| feed << record }
+      expect(JSON.parse(File.read(path))["fleet"]).to eq([twin_b.address])
     end
   end
 

@@ -13,6 +13,27 @@ RSpec.describe Lain::StatusFeed::Fleet do
     Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-#{id}", from: "parent", to: nil)
   end
 
+  # One of a pair of twins: two adoptions of one arm from one head, whose
+  # bodies differ in nothing but the per-adoption ordinal
+  # {Lain::Tools::Subagent::Lineage} writes into an actor's `:spawn`. The
+  # payload is addressed the way {Lain::Event::ChainWriter} addresses one --
+  # digest OF the body -- rather than by a hand-written literal, because the
+  # ordinal is only a separator if a real hash carries it that far, and a
+  # fixture that stamped its own distinct digests would prove nothing. Only the
+  # addressing is borrowed: the envelope fields ChainWriter also stamps
+  # (`causal_parents`, `correlation`) are omitted, since twins would share them
+  # and they cannot separate anything.
+  def adoption(ordinal)
+    payload = Lain::Event::Payload.new(
+      kind: :spawn,
+      body: { "prefix" => "fresh", "posture" => "schema", "only" => [],
+              "spawned_from" => "blake3:head", "adoption" => ordinal,
+              "lifecycle" => Lain::Telemetry::SpawnLifecycle::LAUNCHED }
+    )
+    Lain::Event.new(kind: :spawn, from: "parent", to: nil,
+                    payload_digest: payload.digest, body: payload.body)
+  end
+
   def message_event(id, body:, causal_parents:)
     Lain::Event.new(kind: :message, payload_digest: "blake3:msg-#{id}", body:, causal_parents:,
                     from: "child", to: "parent")
@@ -66,6 +87,26 @@ RSpec.describe Lain::StatusFeed::Fleet do
       fleet = described_class.new
       first = spawn_event("a")
       second = spawn_event("b")
+
+      fleet.launched(first)
+      fleet.launched(second)
+
+      expect(fleet.digests).to eq([first.digest, second.digest])
+    end
+
+    # The other side of the dedup below, and the one that used to be missing:
+    # two spawns separated by nothing but the ordinal are TWO members. What this
+    # pins is the FOLD, not what the actor path feeds it -- the fixture builds
+    # the pair directly and never routes through {Lain::Tools::Subagent::Lineage},
+    # so stripping the ordinal from an actor's spawn body would leave this green
+    # and redden the end-to-end example in
+    # spec/lain/supervisor_reactor_spec.rb instead. Here the claim is narrower
+    # and worth its own line: a difference that small IS a difference to a set
+    # keyed by content address.
+    it "carries two adoptions of one arm as two members, ordinal apart" do
+      fleet = described_class.new
+      first = adoption(1)
+      second = adoption(2)
 
       fleet.launched(first)
       fleet.launched(second)
@@ -143,6 +184,22 @@ RSpec.describe Lain::StatusFeed::Fleet do
       fleet.launched(spawn_event("a"))
 
       expect(fleet.digests).to eq([])
+    end
+
+    # Retirement is attributable, not fleet-wide. The example above it has a
+    # roster of one, so it cannot tell "the right member left" from "a member
+    # left"; twins can, and they are the pair where getting it wrong costs a
+    # live child its place on the HUD rather than merely an undercount.
+    it "retires only the twin its farewell names, leaving the survivor on the roster" do
+      fleet = described_class.new
+      first = adoption(1)
+      second = adoption(2)
+      fleet.launched(first)
+      fleet.launched(second)
+
+      fleet.completed(farewell(first))
+
+      expect(fleet.digests).to eq([second.digest])
     end
 
     it "leaves a member alone when the completion names some other spawn" do

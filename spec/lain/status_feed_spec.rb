@@ -1396,11 +1396,30 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
-  # The two NON-GOALS, pinned so a later change cannot make either worse
-  # without a spec saying so: the live inbox over-count (the :turn that would
-  # retire a question never reaches this sink -- see the class doc) and the
-  # fleet undercount (identical spawns share one content address, by design).
-  describe "the two known defects, unchanged by the wider state" do
+  # One NON-GOAL and one pinned fold, both held here so a later change cannot
+  # move either without a spec saying so.
+  #
+  # The NON-GOAL is the live inbox over-count: the :turn that would retire a
+  # question never reaches this sink -- see the class doc.
+  #
+  # The fleet reading beside it was once listed as an undercount too, and is
+  # not one. Two BYTE-IDENTICAL :spawn events are one member, because the fleet
+  # keys on content address and identical bytes name one spawn; the fixtures
+  # below construct that pair directly and never route through
+  # Tools::Subagent::Lineage, so what this pins is the FOLD, not what the actor
+  # path feeds it. The actor path stopped feeding it identical bytes when a
+  # per-adoption ordinal entered an actor spawn's body -- two live twins are
+  # two members now, pinned at unit grain in spec/lain/status_feed/fleet_spec.rb
+  # and end to end in spec/lain/supervisor_reactor_spec.rb.
+  #
+  # Not an absolute, and the caveat belongs beside the claim rather than only in
+  # Tools::Subagent::Lineage's doc, which is where it is argued: that ordinal is
+  # scoped to the WRITER, so a SECOND writer over one head starts its count
+  # again and re-collides. No production actor path reaches that today -- a
+  # cockpit memoizes one Subagent -- but a resumed run or any second writer
+  # would put identical bytes back on this sink, and the fold below is what it
+  # would meet.
+  describe "the known defect and the fold beside it, unchanged by the wider state" do
     it "reports inbox_count and fleet exactly as it did before the new fields" do
       feed = described_class.new(path:)
 
