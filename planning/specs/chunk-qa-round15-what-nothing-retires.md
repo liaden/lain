@@ -1488,3 +1488,13 @@ which lives at `Event#body`. Since `status_feed.rb` dispatches on `#kind` alone,
 arm T8 will hook, so the predicate would have answered "not finished" for every real farewell
 arriving in that shape — F83 reintroduced one layer down, silent because the object never raises.
 Fixed in T5 rather than in each consumer, which is the whole point of the card.
+
+**T11's review falsified this plan's own grounding about `msgs`.** The Grounding section and T11's
+Reuse note both say `msgs` (`qa-sandbox.sh:159`) escapes the missing-terminator defect "incidentally
+through its `tr`". Against a live nvim it does not: `execute('messages')` output carries **no literal
+backslash bytes** in ordinary use — no `0x5c` anywhere under `xxd`, for a plain `echomsg` or for
+nvim's own buffer-read notification — so `tr '\\' '\n'` is a **no-op on realistic message text**
+rather than an incidental fix, and the raw output carries no trailing newline either. Two consecutive
+`nv.sh msgs` calls concatenate exactly like the pre-fix `expr` defect. So the finding was **wider
+than both the round-15 filing and this plan's correction of it**: six subcommands were affected, not
+five and not one. Recorded here because the plan asserted the exemption and a card relied on it.
