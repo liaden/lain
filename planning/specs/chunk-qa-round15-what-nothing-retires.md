@@ -1530,3 +1530,23 @@ five and not one. Recorded here because the plan asserted the exemption and a ca
 above `spec/lain/frontend/neovim/approval_view_spec.rb:554-557`, so the round-14 chunk's pointer at
 that range (`chunk-qa-round14-escalation-and-isolation.md:539`) now lands in an unrelated block; the
 comment it meant is at `:583-586`. T9 correctly edited neither side under its escalation trigger.
+
+**Open decision 3's symptom changed direction, and round 16 should expect the new one.** The
+twinned-actor collision is still unfixed and `spec/lain/supervisor_reactor_spec.rb:178` is still
+`pending`, as required — but retirement inverts what an operator sees. Two spawns of one arm from
+the same head are byte-identical `:spawn` events sharing a digest, so they fold into one fleet
+entry; **one farewell now retires that shared entry while the second twin is still running.** The
+old failure was `fleet 1` with two children alive (an undercount); the new one is `fleet 0` with one
+child alive (a roster that has lost a live member). Both are the same `ChainWriter` defect and the
+fix is still a Timeline decision, not a status-feed one. Recorded because a round driving twinned
+actors will see a different wrong number than the one the round-11 and round-15 notes describe.
+
+**Two of this plan's own claims were wrong and the cards caught them.** Escalation trigger 4 on T8
+says a raw `Lain::Event` "answers `#kind` and `#body` but **not** `#payload`" — it does answer
+`#payload`, which returns the content-address *envelope* with the body deliberately absent
+(`event.rb:108-124`). That is why `Telemetry::SpawnLifecycle` reads `#body` first and falls back to
+`#payload`, a distinction found during T5 and confirmed independently by T8's panel. And the
+`/mode auto` sanction roster is **four** sections, not the three this plan reasoned about:
+`shell-terms.md` §6 raises the posture in an ordinary sentence rather than at a `you> ` prompt, so
+it is invisible to a prompt-anchored grep — which is why `method.md`'s re-derivation now says in
+words not to filter that way.
