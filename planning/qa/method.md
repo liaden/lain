@@ -473,7 +473,31 @@ pane looks frozen, capture it without the filter and count the lines before diag
 tmux -L "$QA_SOCK" capture-pane -p -t "$PANE" | cat -n | tail -25
 ```
 
-### Read the `lain://` buffers, not just `capture-pane`
+### Three ways a driver aims at the wrong pane, all of them silent (round 15)
+
+Each of these cost a probe in one round, and none of them announces itself — a helper aimed at the
+wrong surface returns plausible text rather than an error.
+
+- **`drive.sh` and `peek.sh` resolve the chat pane as `grep -w ruby | head -1`, so any leftover
+  probe session steals the drive.** Round 15 sent a prompt intended for a `lain chat` probe and it
+  landed in the **cockpit**, adding a turn to the subject session. Kill probe windows before
+  bringing the cockpit up (`method.md` already says to pin the JOURNAL for the same class of
+  reason; this is the same hazard one surface over), or resolve the pane explicitly and pass it in.
+- **Resolving a pane by WINDOW name gets nvim, not the repl.** `lain up` puts nvim *and* the chat
+  process in ONE window called `chat`, so `list-panes -F '#{window_name} #{pane_id}' | awk '$1=="chat"'`
+  returns the editor. Everything then reads an editor pane that never shows an approval prompt.
+- **An approval detector that greps the WHOLE pane false-positives forever after the first
+  approval.** An answered `[y/N]` line stays on screen, so `capture-pane | grep '\[y/N\]'` keeps
+  matching history. Read only the **last non-blank line**:
+
+  ```bash
+  tmux -L "$QA_SOCK" capture-pane -p -t "$PANE" | command grep -v '^$' | tail -1 \
+    | command grep -qE '\[y/N\][[:space:]]*$'
+  ```
+
+**And `nv.sh expr` prints no trailing newline**, so two consecutive reads run together in a
+transcript. Round 15 read `tab2=4` immediately followed by a bare `4` as `tab2=44` and briefly had a
+44-window review tab. Echo a newline after each `expr`, or read one value per command.
 
 They are a richer evidence surface, and **where they disagree with the pane, that disagreement is
 itself the finding** (F17, F18). Cheap staleness probe:
@@ -967,10 +991,18 @@ The capability checks are seconds each, and they are:
 
 ```bash
 command grep -n 'Needs:' planning/qa/scenarios/<scenario>.md    # the scenario states its own preconditions
-command grep -oE '[A-Z_]*(KEY|TOKEN)[A-Z_]*' .envrc             # names only -- NEVER print a value
+command grep -nE '^[[:space:]]*export[[:space:]]+[A-Z_]*(KEY|TOKEN)' .envrc   # names only -- NEVER print a value
 command -v <the binary the scenario names>                      # rails, docker, cargo
 curl -s localhost:11434/api/tags                                # is the local arm actually up?
 ```
+
+**Grep for an `export`, not for the NAME — round 15 got the opposite answer from the loose form.**
+This recipe used to be `grep -oE '[A-Z_]*(KEY|TOKEN)[A-Z_]*' .envrc`, which matches **comments**. On
+this box that reports `ANTHROPIC_API_KEY`, out of a comment reading "This desktop has no
+ANTHROPIC_API_KEY anywhere" -- so the check written to prevent a false *unreachable* manufactured a
+false *reachable*, in a round that then had to disprove it three ways. A name in a file is not a key;
+an `export` of it, or the variable being set, is. When it matters, test the variable rather than the
+file: `[ -n "${ANTHROPIC_API_KEY:-}" ]`.
 
 **A local model call is a budget cost, not a capability gap.** It spends patience and GPU seconds and
 nothing else — no quota, no key, no network. Writing "needs a model" as though it were a wall is the
