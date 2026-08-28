@@ -44,7 +44,12 @@ README for the reasoning; this is the shape:
 |---|---|
 | **the spine, first** | `session-and-window` → `rust-cli` → **a SUBJECT with `cockpit-surfaces` piggybacked** → `bench-arms` → `failure-injection`. Everything else reads better once the loop is known good. |
 | **own-subject, sequenced after** | `secret-boundary`, `changeset-review`, `subagents-and-backends`, `memory-and-dogfood`, `rails-blog` — each gets its **own bring-up and its own subject tree inside this round**. They are sequenced rather than interleaved because each half-builds a precondition the others trip over. |
-| **cheap deterministic, anywhere** | `failure-injection`, `session-and-window`, `repl-commands`, `epic-tier`, `survey`, `prompt-slots-and-roles`, `shell-term-approval` — also the standalone regression gate when the USER scopes the round to one. README says which to cut first if it will not fit (`epic-tier`), and which sections of `survey` and `shell-term-approval` to cut before the whole file. |
+| **cheap deterministic, anywhere** | `failure-injection`, `session-and-window`, `repl-commands`, `epic-tier`, `survey`, `prompt-slots-and-roles`, `shell-terms`, `shell-term-approval` — also the standalone regression gate when the USER scopes the round to one. README says which to cut first if it will not fit (`epic-tier`), and which sections of `survey` and `shell-term-approval` to cut before the whole file. |
+
+**README is the authority on that set, and this table is a mirror that has drifted before.** It
+lost `shell-terms` for a while — the one scenario in the directory that has never been driven, so
+a scoped gate read from here dropped precisely the file most owed a run. Read the roster out of
+README rather than out of this row, and if the two disagree, README wins and this row is the bug.
 
 Two traps in the spine, both of which have already cost a round: `rust-cli` is the smoke test and is
 **not** a subject — the subjects are `bowling-ruby` and `rails-blog` — and `cockpit-surfaces`

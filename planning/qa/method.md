@@ -213,7 +213,10 @@ only worth having if it is read rather than skimmed:
    the scenario set itself. Re-derive it at the start of every round:
 
    ```bash
-   grep -rn '/mode auto' planning/qa/scenarios/
+   # 1. every candidate -- BOTH routes to the gate, because the rule above bans both
+   grep -rnE '/mode (auto|\+auto_approve)' planning/qa/scenarios/
+   # 2. keep only the hits a driver TYPES: a `you> ` prompt line or a fenced drive block.
+   #    Most hits are prose ABOUT the posture, and a mention is not a drive.
    ```
 
    As of 2026-08-28 that finds **four** sections, not the two this rule used to name:
