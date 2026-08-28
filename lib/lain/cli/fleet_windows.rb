@@ -23,13 +23,24 @@ module Lain
     # `notice` sink naming each actor and the exact `lain watch <digest>`
     # command that window would have run.
     #
-    # Opening a window is not the same as the window working. tmux answers the
-    # instant its SERVER accepts `new-window`, so a watch command a pane cannot
-    # run leaves a window that blinks out with the client told nothing -- how a
-    # `lain` absent from a pane's non-interactive `$SHELL -c` PATH went
-    # unreported for the life of this feature. Each opened window is therefore
-    # asked about once, a turn later, and a {WindowDied} record names the ones
-    # that did not survive.
+    # A pane cannot run a bare `lain watch`. tmux hands its command to a
+    # NON-interactive `$SHELL -c`, where zsh reads `.zshenv` and never
+    # `.zshrc`, direnv's hook does not run, and nothing has put lain on PATH
+    # -- measured, a window that died of status 127 within milliseconds of
+    # opening. So the command is {Up.pane_command}'s recipe, the same one
+    # /fork's window and /btw's popup carry, and the window opens in a
+    # working directory the same way both of those do, so the pane resolves
+    # the project its parent was looking at. The bare line survives in one
+    # place only: the {WindowsCapped} notice, which is read by a human who
+    # will type it into their own shell.
+    #
+    # Opening a window is still not the same as the window working. tmux
+    # answers the instant its SERVER accepts `new-window`, so a command a
+    # pane cannot run leaves a window that blinks out with the client told
+    # nothing -- which is how the PATH failure above went unreported for the
+    # life of this feature. Each opened window is therefore asked about once,
+    # a turn later, and a {WindowDied} record names the ones that did not
+    # survive.
     #
     # That readability is bought with screen space, and the bill lands on the
     # human named above as the one who closes windows. A watch command that
@@ -54,6 +65,11 @@ module Lain
       # The digest-hex width a window name carries -- enough to disambiguate
       # siblings, short enough for a tmux status line.
       SHORT = 8
+
+      # What a fleet window runs, ahead of the spawn digest. An ARRAY, not a
+      # shell line: it is composed into {Up.pane_command}'s recipe, which
+      # escapes every argument itself.
+      WATCH_ARGV = %w[watch].freeze
 
       # The {Tools::Subagent} tool's own default name, restated rather than
       # imported: reaching into the Tools tree from the CLI would invert a
@@ -89,6 +105,16 @@ module Lain
       # is the whole evidence. Without this record, a `lain` missing from a
       # pane's non-interactive `$SHELL -c` PATH is a window that blinks out
       # with nobody told.
+      #
+      # `command` is the whole {Up.pane_command} recipe, which puts a few
+      # hundred bytes of environment into a durable NDJSON record -- GEM_HOME
+      # and GEM_PATH, so the home directory and the username, plus every
+      # allowlisted LAIN_ value. Weighed and kept, because the preamble IS the
+      # evidence: a 127 is a question about what the pane could and could not
+      # resolve, and a record naming only the subcommand cannot answer it.
+      # {Up::PaneCommand} already keeps secrets out of that string on the
+      # stronger ground that it is legible from `tmux list-panes` and the
+      # process table, so what lands here is bounded by that same rule.
       WindowDied = Data.define(:digest, :window, :command, :status) do
         include Telemetry::Journalable
 
@@ -112,9 +138,9 @@ module Lain
         # command exits non-zero -- a pane that cannot start is destroyed in
         # milliseconds, and holding it is the only thing that leaves {Check}
         # anything to read.
-        Open = Data.define(:command, :name, :session) do
+        Open = Data.define(:command, :name, :session, :cwd) do
           def perform(pump)
-            pump.surface.window(command:, name:, target_session: session, keep_failed: true)
+            pump.surface.window(command:, name:, target_session: session, cwd:, keep_failed: true)
           end
         end
 
@@ -239,8 +265,9 @@ module Lain
       end
 
       # @param surface [TmuxSurface] the one object that shells out to tmux
-      # @param watch_command [String] the command prefix a window runs; the
-      #   spawn digest is appended
+      # @param watch_argv [Array<String>] the lain subcommand a window runs;
+      #   the spawn digest is appended and the whole thing composed by
+      #   {Up.pane_command}
       # @param cap [Integer] windows allowed per turn before capping
       # @param role_for [#call] record -> role name (nil for no role); the
       #   seam a roster-aware wiring can fill later
@@ -248,23 +275,25 @@ module Lain
       # @param session [String, nil] tmux session to open windows in; nil
       #   lets tmux pick the current one (the production case -- this sink
       #   only constructs live inside $TMUX)
+      # @param cwd [String] the pane's start directory, pinning the project
+      #   the watch resolves against exactly as /fork and /btw pin theirs
       # @param spawner [#call] takes the pump block, answers a task duck
       #   (#finished?) or nil; injectable so specs drain deterministically
-      def initialize(surface:, watch_command: "lain watch", cap: CAP_PER_TURN, role_for: ROLELESS,
-                     notice: Channel::Null.instance, session: nil, spawner: Pump::DEFAULT_SPAWNER)
-        @watch_command = watch_command
+      def initialize(surface:, watch_argv: WATCH_ARGV, cap: CAP_PER_TURN, role_for: ROLELESS,
+                     notice: Channel::Null.instance, session: nil, cwd: Dir.pwd,
+                     spawner: Pump::DEFAULT_SPAWNER)
+        @watch_argv = watch_argv
         @cap = cap
         @role_for = role_for
-        @session = session
+        # Both deduped-frozen, the house idiom for a value a Data will carry
+        # ({TmuxSurface::WindowState}). These two reach a queued command from
+        # HERE rather than from {#open_window}, which freezes the rest -- see
+        # there for what the pair of them is for. Dedup is right for both: a
+        # session name and a working directory repeat across every window.
+        @session = session && -session
+        @cwd = -cwd
         @pump = Pump.new(surface:, notice:, spawner:)
-        # Every spawn digest ever observed, windowed or capped, open or closed
-        # -- membership, not state, so it never shrinks. @windows holds only
-        # the OPEN windows and their names.
-        @seen = Set.new
-        @windows = {}
-        @overflow = []
-        @unverified = []
-        @opened = 0
+        start_ledgers
       end
 
       # The tee leg: duck-typed recognition exactly like {StatusFeed}.
@@ -302,6 +331,18 @@ module Lain
 
       private
 
+      # Every spawn digest ever observed, windowed or capped, open or closed
+      # -- membership, not state, so @seen never shrinks, and @windows holds
+      # only the OPEN windows and their names. The remaining three are the
+      # per-turn ones {#turn_boundary} clears.
+      def start_ledgers
+        @seen = Set.new
+        @windows = {}
+        @overflow = []
+        @unverified = []
+        @opened = 0
+      end
+
       # A turn ends in one of three records: the {Telemetry::TurnUsage} a
       # successful round trip journals, or the `#head`-anchoring closers a
       # failure path writes instead ({Telemetry::RunInterrupted} for Ctrl-C or
@@ -329,19 +370,36 @@ module Lain
         @opened < @cap ? open_window(record, digest) : hold_back(record, digest)
       end
 
+      # Every string a queued command carries is frozen at this one boundary,
+      # which is what makes {Pump::Open} and {Pump::Check} answer
+      # `Ractor.shareable?` -- this codebase's mechanical statement that a
+      # value object reaches no mutable state. Freezing three of the four and
+      # calling it done is the trap: the predicate is all-or-nothing, so a
+      # single fresh String anywhere in the Data answers false for the whole.
+      #
+      # `.freeze` here and NOT `-@`, which is where the two differ in
+      # consequence: dedup-freezing interns a string in the global fstring
+      # table, and every string built here is unique per spawn digest, so it
+      # would grow that table once per spawn and never give any of it back.
+      # The two members that DO dedup are the ones that repeat across every
+      # window, and they are frozen in {#initialize} instead.
       def open_window(record, digest)
-        name = "#{window_role(record)}-#{short(digest)}"
-        command = "#{@watch_command} #{digest}"
+        name = "#{window_role(record)}-#{short(digest)}".freeze
+        command = Up.pane_command(*@watch_argv, digest).freeze
         @windows[digest] = name
         @opened += 1
-        @pump.enqueue(Pump::Open.new(command:, name:, session: @session))
+        @pump.enqueue(Pump::Open.new(command:, name:, session: @session, cwd: @cwd))
         @unverified << Pump::Check.new(target: window_target(name), digest:, window: name, command:)
       end
 
       def hold_back(record, digest)
-        @overflow << { "digest" => digest, "role" => @role_for.call(record),
-                       "watch" => "#{@watch_command} #{digest}" }
+        @overflow << { "digest" => digest, "role" => @role_for.call(record), "watch" => watch_line(digest) }
       end
+
+      # The bare line, for a human to type. The window itself runs the pane
+      # recipe instead -- unreadable in a notice, and useless in a shell that
+      # already has lain on its PATH.
+      def watch_line(digest) = "lain #{(@watch_argv + [digest]).join(" ")}"
 
       # A lineage closes on a terminal message -- the actor farewell's
       # `lifecycle: "stopped"` marker, or a one-shot's `result` body -- and the
@@ -404,7 +462,7 @@ module Lain
       # One spelling for every question this sink asks about a window it
       # opened -- the done-marker rename and the liveness check both. See
       # {TmuxSurface.exact_window} for why the match has to be exact.
-      def window_target(name) = TmuxSurface.exact_window(name, session: @session)
+      def window_target(name) = TmuxSurface.exact_window(name, session: @session).freeze
     end
   end
 end

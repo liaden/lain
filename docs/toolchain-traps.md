@@ -479,6 +479,38 @@ the cop.
   `File.join(ENV.fetch("TMUX_TMPDIR", "/tmp"), "tmux-#{Process.uid}", socket)` in the same `ensure`
   that kills the server.
 
+- **A tmux pane inherits the spec runner's PATH, so a pane spec can pass on a binary production
+  never sees.** tmux hands a new pane the environment of the SERVER it runs under — with exactly
+  one carve-out among the names you set. Measured on 3.7b, setting the same name on the server and
+  on the client that asks for the window (`TERM`, `TMUX` and `TMUX_PANE` are outside this: tmux
+  synthesises those rather than inheriting them from either side):
+
+  | set on | the pane reads |
+  |---|---|
+  | server vs client `PATH` | **the CLIENT's** |
+  | server vs client `LAIN_MODEL` | the SERVER's |
+  | server-only `LAIN_PREFLIGHT` | the SERVER's |
+  | `new-window -e LAIN_MODEL=…` | the `-e` value |
+
+  A spec is the client. So a pane opened from the suite gets `bundle exec`'s PATH, which carries
+  the gem bindir, which carries an **installed** `lain` — and the bare `lain watch <digest>` a
+  fleet window used to run therefore worked in every spec while dying of status 127 in a real
+  cockpit, where nothing has put lain on a pane's non-interactive `$SHELL -c` PATH. That defect
+  survived the whole life of the feature with green specs sitting over it.
+
+  So: **any spec that opens a real pane and asserts on what the command did must first drop, from
+  `ENV["PATH"]`, every directory holding the executable under test** — on the server it starts
+  *and* on the client it shells from, since the two disagree. `fleet_windows_spec.rb`'s
+  `#lainless_path` is the worked example. Without it the spec is exercising a binary the product
+  cannot reach, and the greener it looks the less it means.
+
+  Two corollaries for `Up::PaneCommand`. Its `gem_exports` PATH re-export stays necessary and
+  correct — a client that never ran chruby hands a pane the same half-PATH a stale server does —
+  but the reason is the carve-out, not the server's staleness. And its "there is no pushing one in
+  at spawn time" is too strong: the shell-prefix form that claim was measured against really does
+  not reach the pane, but `new-window -e NAME=value` does — though `-e` can only SET, never unset,
+  so it could not carry the recipe's `unset` preamble even if every surface grew the parameter.
+
 ## CI is a different box, and both of these were green here and red there
 
 Two examples went red on every GitHub runner while passing on every developer machine, for three

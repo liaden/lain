@@ -110,6 +110,22 @@ module Lain
         # RUNNING interpreter, never a pinned version literal: the pin is a
         # moving floor (4.0.5 to 4.0.6 already happened, for a Ractor VM crash).
         #
+        # PATH is the one INHERITED name tmux does not take from the server, so
+        # the paragraph above is right about the failure and one step off about
+        # the mechanism. Re-measured on 3.7b: set a name on the server AND on
+        # the client asking for the window, and a pane reads the SERVER's value
+        # -- except PATH, which tmux carves out and copies from the CLIENT.
+        # (TERM, TMUX and TMUX_PANE answer to neither side: tmux synthesises
+        # those, so they are outside the question a caller pushing a variable
+        # is asking.) The
+        # re-export stays necessary either way, because a client that never ran
+        # chruby hands a pane the same half-PATH a stale server does. What the
+        # carve-out changes is who else is exposed: a spec is a client, so a
+        # pane opened from the suite inherits the RUNNER's PATH and can find a
+        # binary production never sees. That trap has its own entry in
+        # docs/toolchain-traps.md, because it makes a pane spec pass over a
+        # defect.
+        #
         # UNquoted and Shellwords-escaped rather than wrapped in double quotes:
         # those backslashes are only correct as a bare shell word, and inside
         # double quotes a backslash before anything but dollar, backtick,
@@ -129,8 +145,22 @@ module Lain
         # re-derive these for itself. Measured 2026-08-06: a pane on a
         # pre-existing server read an EMPTY value even with the variable set on
         # the `tmux new-window` invocation itself, because tmux hands a pane the
-        # SERVER's environment rather than the client's. There is no pushing one
-        # in at spawn time.
+        # SERVER's environment rather than the client's -- every name that
+        # matters here, PATH being the single carve-out {.gem_exports} now
+        # documents. Pushing one in at spawn time is not impossible though,
+        # only unavailable through the shell prefix that measurement used:
+        # `new-window -e NAME=value` does reach the pane on 3.7b. It still
+        # could not replace this line, and the reason is harder than
+        # ergonomics: `-e` can only SET. Measured against a server holding
+        # LAIN_PREFLIGHT=1, `-e LAIN_PREFLIGHT=` leaves the pane an EMPTY
+        # value rather than an unset one, and a bare `-e LAIN_PREFLIGHT` is
+        # accepted and ignored -- so {.scrubbed}'s contract, the variables in
+        # UNSET order, has no `-e` spelling at all. Not live today, because
+        # the one reader tolerates an empty value; the next name added to that
+        # list whose reader tests PRESENCE would be silently unscrubbed.
+        # Keeping the recipe one opaque string every caller already passes,
+        # rather than an argv every tmux surface would grow a parameter for,
+        # is then the cheaper half of the answer rather than the whole of it.
         #
         # An explicit allowlist, NOT a `LAIN_` prefix sweep: the prefix is shared
         # with the suite's own controls (LAIN_INTEGRATION, LAIN_LIVE, LAIN_NVIM

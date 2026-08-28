@@ -261,6 +261,9 @@ Headlines only. Every one is verified, and the full account of each is in
   load is an unrun one, not a surviving one.
 - **A generic filename in a shared scratchpad is shared mutable state between agents.** Name
   scratch files uniquely; the failure mode is a confident green from the wrong tree.
+- **A tmux pane inherits the SPEC RUNNER's PATH, so a pane spec can pass on a binary production
+  never sees.** `bundle exec` puts an installed `lain` on it, and a bare `lain watch` therefore
+  worked in every spec for the life of a feature while dying of status 127 in a real cockpit.
 - **Do not read the tree while a suite run is in flight** — a read can miss edits already on
   disk. Re-check after the run, not during.
 - **`ls-files` truncates against the PROCESS directory.** `-C <dir>` is the fix; `--full-name`

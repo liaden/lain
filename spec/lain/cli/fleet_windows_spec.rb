@@ -87,6 +87,15 @@ RSpec.describe Lain::CLI::FleetWindows do
   def open_argvs = recorded.select { |argv| argv.include?("new-window") }
   def rename_argvs = recorded.select { |argv| argv.include?("rename-window") }
 
+  # The whole tmux request a fleet window is opened with, spelled once: a
+  # pane-runnable command from {Up::PaneCommand}, a start directory, the
+  # role-named window, and the pane-hold tail chained into the same list.
+  def expected_open_argv(name, digest: spawn_digest, cwd: Dir.pwd)
+    ["tmux", "new-window", "-P", "-c", cwd, "-n", name,
+     Lain::CLI::Up.pane_command("watch", digest), ";",
+     "set-window-option", "-t", "=#{name}", "remain-on-exit", "failed"]
+  end
+
   describe "the sink only enqueues" do
     it "shells nothing out inside the tee fan-out; the window opens only when the queue drains" do
       fleet << spawn_record
@@ -94,9 +103,7 @@ RSpec.describe Lain::CLI::FleetWindows do
       expect(recorded).to be_empty
 
       fleet.drain_pending
-      expect(open_argvs.first).to eq(["tmux", "new-window", "-P", "-n", "researcher-5aaa1111",
-                                      "lain watch #{spawn_digest}", ";", "set-window-option", "-t",
-                                      "=researcher-5aaa1111", "remain-on-exit", "failed"])
+      expect(open_argvs.first).to eq(expected_open_argv("researcher-5aaa1111"))
     end
 
     it "starts its pump fiber through the injected spawner, and respawns one that finished" do
@@ -116,9 +123,7 @@ RSpec.describe Lain::CLI::FleetWindows do
       fleet << spawn_record
       fleet.drain_pending
 
-      expect(open_argvs.first).to eq(["tmux", "new-window", "-P", "-n", "researcher-5aaa1111",
-                                      "lain watch #{spawn_digest}", ";", "set-window-option", "-t",
-                                      "=researcher-5aaa1111", "remain-on-exit", "failed"])
+      expect(open_argvs.first).to eq(expected_open_argv("researcher-5aaa1111"))
     end
 
     it "falls back to the subagent tool's own name when no role seam is wired" do
@@ -247,7 +252,7 @@ RSpec.describe Lain::CLI::FleetWindows do
       fleet.drain_pending
 
       record = deaths.first
-      expect(record.command).to eq("lain watch #{spawn_digest}")
+      expect(record.command).to eq(Lain::CLI::Up.pane_command("watch", spawn_digest))
       expect(record.status).to eq(42)
       expect(record.window).to eq("researcher-5aaa1111")
     end
@@ -285,9 +290,7 @@ RSpec.describe Lain::CLI::FleetWindows do
       fleet << spawn_record
       fleet.drain_pending
 
-      expect(open_argvs).to eq([["tmux", "new-window", "-P", "-n", "researcher-5aaa1111",
-                                 "lain watch #{spawn_digest}", ";", "set-window-option", "-t",
-                                 "=researcher-5aaa1111", "remain-on-exit", "failed"]])
+      expect(open_argvs).to eq([expected_open_argv("researcher-5aaa1111")])
     end
 
     it "does the asking on the pump, never inside the tee fan-out" do
@@ -399,6 +402,74 @@ RSpec.describe Lain::CLI::FleetWindows do
       fleet.drain_pending
 
       expect(check_argvs.size).to eq(described_class::CAP_PER_TURN)
+    end
+  end
+
+  # A tmux pane runs its command under a NON-interactive `$SHELL -c`, and
+  # `lain` is on no PATH there: the bare line a fleet window used to carry
+  # died of status 127 in milliseconds and the window blinked out with it.
+  # The recipe that answers this is not new -- /fork's window and /btw's popup
+  # already compose theirs with it, and already open in a working directory
+  # so the pane resolves the same project the parent did.
+  describe "a command a pane can actually run" do
+    def opened_argv = open_argvs.first
+
+    def opened_command = opened_argv[opened_argv.index(";") - 1]
+
+    def opened_cwd
+      index = opened_argv.index("-c")
+      index && opened_argv[index + 1]
+    end
+
+    it "composes the window command with the collaborator /fork and /btw compose theirs with" do
+      fleet << spawn_record
+      fleet.drain_pending
+
+      expect(opened_command).to eq(Lain::CLI::Up.pane_command("watch", spawn_digest))
+    end
+
+    it "opens the window in a working directory, never leaving the pane's start dir to tmux" do
+      fleet << spawn_record
+      fleet.drain_pending
+
+      expect(opened_cwd).to eq(Dir.pwd)
+    end
+
+    it "opens in the directory it was given, so a caller can pin the project root" do
+      elsewhere = described_class.new(surface:, notice: notices, spawner:, cwd: Dir.tmpdir)
+      elsewhere << spawn_record
+      elsewhere.drain_pending
+
+      expect(opened_cwd).to eq(Dir.tmpdir)
+    end
+
+    it "still names the actor's window itself, so the done marker's exact-match target survives" do
+      fleet << spawn_record
+      fleet << farewell_record
+      fleet.drain_pending
+
+      expect(opened_argv).to include("-n", "researcher-5aaa1111")
+      expect(rename_argvs).to eq([["tmux", "rename-window", "-t", "=researcher-5aaa1111",
+                                   "researcher-5aaa1111 [done]"]])
+    end
+
+    it "composes whatever subcommand it is given, so the watch argv is named in one place" do
+      elsewhere = described_class.new(surface:, notice: notices, spawner:,
+                                      watch_argv: %w[watch --session /tmp/somewhere.ndjson])
+      elsewhere << spawn_record
+      elsewhere.drain_pending
+
+      expect(opened_command)
+        .to eq(Lain::CLI::Up.pane_command("watch", "--session", "/tmp/somewhere.ndjson", spawn_digest))
+    end
+
+    it "keeps the capped actor's printed line the bare one a human types, not the pane recipe" do
+      6.times { |i| fleet << spawn_record(digest: format("blake3:%04x111122223333", i)) }
+      fleet << usage_record
+      fleet.drain_pending
+
+      expect(notices.first.actors.map { |actor| actor["watch"] })
+        .to eq(["lain watch blake3:0004111122223333", "lain watch blake3:0005111122223333"])
     end
   end
 
@@ -624,12 +695,73 @@ RSpec.describe Lain::CLI::FleetWindows do
     let(:real_surface) { Lain::CLI::TmuxSurface.new(socket:) }
     # tmux's OWN format syntax, not Ruby interpolation (the pinned trap).
     let(:name_format) { '#{window_name}' } # rubocop:disable Lint/InterpolationCheck
+    # Where the PANE will look for a session. XDG_STATE_HOME goes on the
+    # SERVER because that is the side a pane reads every name but PATH from
+    # (the carve-out the trap entry tabulates), and it is what lets these
+    # examples run the real `lain watch` against a session of their own rather
+    # than whatever this box has recorded.
+    let(:pane_state_home) { Dir.mktmpdir("fleet-windows-state") }
+
+    # A PATH with no `lain` on it, and it is what makes every example below
+    # honest: a pane opened from a spec otherwise finds a `lain` no production
+    # pane can see, and the suite watches a bare `lain watch` work while the
+    # real thing dies of status 127. The full measurement, the server/client
+    # carve-out behind it and the rule for every future pane spec are in
+    # docs/toolchain-traps.md, "A tmux pane inherits the spec runner's PATH".
+    # Dropped from BOTH the server's environment and, inside
+    # {#as_a_pane_would}, this process's, because the two disagree.
+    #
+    # Two portability gaps, neither reachable on this box: an empty PATH entry
+    # means the working directory, which is not checked here, and a layout
+    # putting gem binstubs in the same directory as `ruby` would take the
+    # interpreter out with them.
+    def lainless_path
+      ENV.fetch("PATH", "").split(File::PATH_SEPARATOR)
+         .reject { |dir| File.executable?(File.join(dir, "lain")) }
+         .join(File::PATH_SEPARATOR)
+    end
+
+    # The two things a spec has to say before {Up::PaneCommand}'s recipe can
+    # be run for real. `$PROGRAM_NAME` is read when the recipe is composed and
+    # under rspec it is the rspec binary, so the program a pane would exec has
+    # to be named; and PATH has to become the one a pane really gets, per
+    # {#lainless_path}. Both are process-global and both are put back.
+    def as_a_pane_would(program:)
+      program_was = $PROGRAM_NAME
+      path_was = ENV.fetch("PATH", "")
+      $PROGRAM_NAME = program
+      ENV["PATH"] = lainless_path
+      yield
+    ensure
+      $PROGRAM_NAME = program_was
+      ENV["PATH"] = path_was
+    end
+
+    # The lain a pane would exec.
+    def lain_exe = File.expand_path("../../../exe/lain", __dir__)
+
+    # A session for the pane's own `lain watch` to find, planted where the
+    # PANE will look: {Lain::Paths} keys the sessions directory on
+    # XDG_STATE_HOME and on a hash of the working directory, and the pane has
+    # the first from the server's environment and the second from the `-c`
+    # this sink now passes. The record is not a closer, so the tail runs for
+    # as long as the example needs -- which is what lets the REAL command run
+    # rather than a stand-in that steps around the thing under test.
+    def plant_session
+      dir = File.join(pane_state_home, "lain", "sessions", Lain::Paths.new.project_hash(Dir.pwd))
+      FileUtils.mkdir_p(dir)
+      File.write(File.join(dir, "20260828T000000-1.ndjson"), %({"type":"session_started"}\n))
+    end
+
+    def deaths_seen = notices.select { |record| record.to_journal["type"] == "window_died" }
 
     around do |example|
-      system("tmux", "-L", socket, "new-session", "-d", "-s", "lain", out: File::NULL, err: File::NULL)
+      system({ "PATH" => lainless_path, "XDG_STATE_HOME" => pane_state_home },
+             "tmux", "-L", socket, "new-session", "-d", "-s", "lain", out: File::NULL, err: File::NULL)
       example.run
     ensure
       system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL)
+      FileUtils.remove_entry(pane_state_home)
       sweep_sockets
     end
 
@@ -652,19 +784,22 @@ RSpec.describe Lain::CLI::FleetWindows do
            .first.lines.map(&:strip)
     end
 
+    # The done marker's target is built from the window NAME, so a command
+    # that changed how a window is named would break the rename in silence.
+    # Asserted over the real composed command for exactly that reason.
     it "opens a role-named window on spawn and retitles it done on the farewell, leaving it open" do
-      # `sleep 60 #` comments the digest out of the shell command, so the pane
-      # outlives both assertions without needing a lain exe on this PATH.
-      fleet = described_class.new(surface: real_surface, watch_command: "sleep 60 #",
-                                  role_for: ->(_record) { "researcher" }, notice: notices,
-                                  spawner:, session: "lain")
-      fleet << spawn_record
-      fleet.drain_pending
-      expect(window_names).to include("researcher-5aaa1111")
+      plant_session
+      as_a_pane_would(program: lain_exe) do
+        fleet = described_class.new(surface: real_surface, role_for: ->(_record) { "researcher" },
+                                    notice: notices, spawner:, session: "lain")
+        fleet << spawn_record
+        fleet.drain_pending
+        expect(window_names).to include("researcher-5aaa1111")
 
-      fleet << farewell_record
-      fleet.drain_pending
-      expect(window_names).to include("researcher-5aaa1111 [done]")
+        fleet << farewell_record
+        fleet.drain_pending
+        expect(window_names).to include("researcher-5aaa1111 [done]")
+      end
     end
 
     # On the PRODUCTION spawner, so the turn of slack between the open and the
@@ -672,35 +807,67 @@ RSpec.describe Lain::CLI::FleetWindows do
     # fiber opens the window, the server reaps the pane at its own pace, and
     # only the next turn boundary releases the question.
     it "reports the window whose command a real tmux pane could not run" do
-      # No `#` comment this time: the digest rides along and the whole line is
-      # what a real pane's non-interactive `$SHELL -c` cannot find -- exactly
-      # the 127 a `lain` off that PATH produces.
-      Sync do
-        fleet = described_class.new(surface: real_surface, watch_command: "no-such-command-on-this-path",
-                                    role_for: ->(_record) { "researcher" }, notice: notices, session: "lain")
-        fleet << spawn_record
-        sleep(0.3)
+      # A lain that is not installed anywhere, which is the production
+      # failure exactly: the pane's shell cannot find the program to exec and
+      # answers 127. The rest of the recipe is the real one.
+      as_a_pane_would(program: "/nonexistent/lain") do
+        Sync do
+          fleet = described_class.new(surface: real_surface, role_for: ->(_record) { "researcher" },
+                                      notice: notices, session: "lain")
+          fleet << spawn_record
+          sleep(0.3)
 
-        fleet << usage_record
-        sleep(0.3)
+          fleet << usage_record
+          sleep(0.3)
 
-        death = notices.find { |record| record.to_journal["type"] == "window_died" }
-        expect(death).to have_attributes(digest: spawn_digest, status: 127,
-                                         command: "no-such-command-on-this-path #{spawn_digest}")
+          # `eq`, not a partial match: {Up::PaneCommand} is a pure function of
+          # ENV, `Gem.paths` and `$PROGRAM_NAME`, and {#as_a_pane_would} pins
+          # all three -- so a dropped `exec` or a lost `unset` in the preamble
+          # has to fail the one example that runs a real pane.
+          expect(deaths_seen.first).to have_attributes(
+            digest: spawn_digest, status: 127, command: Lain::CLI::Up.pane_command("watch", spawn_digest)
+          )
+        end
       end
     end
 
-    it "stays silent about a real window whose command is still running" do
-      fleet = described_class.new(surface: real_surface, watch_command: "sleep 60 #",
-                                  role_for: ->(_record) { "researcher" }, notice: notices,
-                                  spawner:, session: "lain")
-      fleet << spawn_record
-      fleet.drain_pending
-      fleet << usage_record
-      fleet.drain_pending
+    # The headline: the same pane environment that answers 127 to a bare
+    # `lain watch` runs the composed command and keeps running it. On the
+    # PRODUCTION spawner and the real turn of slack, so this is the death
+    # detector above asked the same question and falling silent.
+    # Nothing else would notice a {FleetWindows::WATCH_ARGV} naming a
+    # subcommand that does not exist: no argv is injected here, so the default
+    # is what a real pane resolves, and the example above points at a program
+    # that is never reached.
+    it "leaves a window running the default watch subcommand alive, with nothing reported dead" do
+      plant_session
+      as_a_pane_would(program: lain_exe) do
+        Sync do
+          fleet = described_class.new(surface: real_surface, role_for: ->(_record) { "researcher" },
+                                      notice: notices, session: "lain")
+          fleet << spawn_record
+          # Longer than the pane interpreter's own boot, measured at 1.13s to
+          # the point a wrong subcommand exits -- 1.00-1.16s idle and
+          # 1.25-1.31s at load average 41 on 16 cores, because the cost is
+          # page-cache-bound boot rather than CPU. Asking sooner cannot lie
+          # about a death, but it CAN lie about life, and this example's whole
+          # job is the second one: a check released before the command has had
+          # its chance would pass over a default naming nothing.
+          #
+          # Calibrated on one box, so read it as a measurement rather than a
+          # guess -- and if it ever misses, the fix is a control window
+          # running a knowingly-wrong subcommand through the same recipe,
+          # polled until ITS corpse appears, which scales with the machine
+          # instead of against it.
+          sleep(2.0)
 
-      expect(notices).to be_empty
-      expect(window_names).to include("researcher-5aaa1111")
+          fleet << usage_record
+          sleep(0.5)
+
+          expect(deaths_seen).to be_empty
+          expect(window_names).to include("researcher-5aaa1111")
+        end
+      end
     end
   end
 end
