@@ -516,20 +516,51 @@ pane looks frozen, capture it without the filter and count the lines before diag
 tmux -L "$QA_SOCK" capture-pane -p -t "$PANE" | cat -n | tail -25
 ```
 
-### Three ways a driver aims at the wrong pane, one of them now refuses loudly (round 15)
+### Three ways a driver aims at the wrong pane, one of them now refuses loudly
 
 Each of these cost a probe in one round, and none of them announces itself — a helper aimed at the
 wrong surface returns plausible text rather than an error.
 
-- **`drive.sh` and `peek.sh` now refuse rather than guess when more than one candidate pane
-  matches.** Round 15 sent a prompt intended for a `lain chat` probe and it landed in the
-  **cockpit**, adding a turn to the subject session, because both helpers resolved the chat pane
-  with `grep -w ruby | head -1` and silently took the first match. They now enumerate every
-  matching pane: exactly one, and they proceed against it as before; two or more, and they exit
-  non-zero naming every candidate and send or read nothing. Kill probe windows before bringing the
-  cockpit up, same as ever, but the refusal is now the backstop rather than the only guard. Pin
-  the pane explicitly to skip resolution altogether — `export LAIN_QA_PANE="%3"` — the same
-  pattern as pinning the journal above.
+- **`drive.sh` and `peek.sh` refuse rather than guess when more than one pane is RUNNING a chat,
+  and "running" means the pane's process TREE, not its foreground command.** Round 15 sent a
+  prompt intended for a `lain chat` probe and it landed in the **cockpit**, adding a turn to the
+  subject session, because both helpers resolved the chat pane with `grep -w ruby | head -1` and
+  silently took the first match. The refusal that answered it compared only
+  `#{pane_current_command}`, which reads as a far stronger guard than it was, and the same send
+  went astray again: `lain up`'s pane command ends in `exec`, so the cockpit's own chat pane
+  genuinely reads `ruby` — but a chat that is *not* its pane's foreground process, one under a
+  shell wrapper, reads `zsh`, contributed no candidate at all, and an ambiguous send therefore
+  looked unambiguous and went to the other chat with the refusal never firing. Both helpers now
+  build the candidate set in `$QA/panes.sh`: for every pane, walk the tree rooted at its own
+  `#{pane_pid}` and compare `/proc/<pid>/comm`.
+  - **The rooting is what makes the walk safe, not the field it reads.** A helper's own shell is
+    not a descendant of any pane on the round's server, so the walk never visits it; a driver run
+    from INSIDE a pane on this socket would be matched by a `comm` comparison alone, which is why
+    "the name, not the argv" is the smaller half of the argument. Neither half is a bare
+    `pgrep -f` — the ban further down still stands.
+  - **A `ruby` process is not a chat, so the tree branch requires the descendant to be the lain
+    exe.** This sandbox ships `counter.rb`, `pathcount.rb` and `proxy.rb`, and scenarios start
+    them with `&`; without that requirement one listener backgrounded in a pane on `$QA_SOCK`
+    makes the bootstrap pane a candidate and refuses every send for the rest of the round —
+    measured. Matching the string `lain` is not enough either: the sandbox lives under
+    `~/tmp/lain-qa-<tag>`, so `ruby $QA/counter.rb` mentions it in its own path. What is matched
+    is an argv WORD that is `lain` or ends in `/lain`. The FOREGROUND branch stays unconditional,
+    so a degraded chat pane — `ruby` with no `lain chat` in its argv — still resolves, as does a
+    `--no-nvim` single-pane cockpit. **Start the listeners from a shell outside the QA socket
+    anyway**: they are not chats, and a rule that has to decide is a rule that can be wrong.
+  - **The foreground comparison is now exact** where the old resolver said `grep -w`, so a pane
+    reading `ruby-lsp` or `ruby-4.0.6` no longer matches there. Narrower on purpose: it fails
+    loud — a refusal, or "no chat pane" — rather than aiming a send somewhere plausible.
+
+  Exactly one candidate and they proceed against it as before; two or more, and they exit non-zero
+  naming every candidate with its command, pid, window and `dead` flag — `lain up` keeps a failed
+  chat pane on purpose, so a refusal must not ask you to choose between a live chat and a corpse
+  with nothing telling them apart — and they send or read nothing. Kill probe windows before
+  bringing the cockpit up, same as ever, but the refusal is now the backstop rather than the only
+  guard. **Aim a single call rather than exporting a pin**: `LAIN_QA_PANE=%3 "$QA/drive.sh" '…'`.
+  An EXPORTED `LAIN_QA_PANE` is read by `peek.sh` before it decides whether it was asked for the
+  chat or the editor, so it silently re-aims `peek.sh <n> nvim` at the pinned chat pane, exit 0
+  and all — measured.
 - **Resolving a pane by WINDOW name gets nvim, not the repl.** `lain up` puts nvim *and* the chat
   process in ONE window called `chat`, so `list-panes -F '#{window_name} #{pane_id}' | awk '$1=="chat"'`
   returns the editor. Everything then reads an editor pane that never shows an approval prompt.

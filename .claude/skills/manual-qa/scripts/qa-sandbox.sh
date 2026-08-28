@@ -40,6 +40,126 @@ exec "$REPO/exe/lain" "\$@"
 EOF
 chmod +x "$QA/shim/lain"
 
+# --- which pane is the chat? which is the editor? ----------------------------
+# Sourced by BOTH drive.sh and peek.sh so aiming a send and aiming a read cannot
+# drift apart -- they are the same question asked twice.
+cat > "$QA/panes.sh" <<'EOF'
+# shellcheck shell=bash   # sourced, never run, so it carries no shebang
+# Resolve panes by what is RUNNING in them, process tree and all.
+#
+# `#{pane_current_command}` answers "what is this pane's FOREGROUND process",
+# which is not the same question. The cockpit's own launch line ends in `exec`,
+# so its chat pane genuinely reads `ruby` and its editor pane reads `nvim` --
+# but a chat that is NOT its pane's foreground process, one under a shell
+# wrapper, reads `zsh`, contributed no candidate at all, and the ambiguity that
+# should have refused the send looked like a clean single match. Measured live:
+# a prompt meant for one chat landed in the cockpit, past a refusal that only
+# ever compared foreground commands and so read as far stronger than it was.
+#
+# What keeps this walk off the shell that ASKS the question is that it is ROOTED
+# at each pane's own pid -- a helper's shell is not a descendant of any pane on
+# this server, so it is never visited at all. That rooting is the load-bearing
+# part, not the choice of field: comparing /proc/<pid>/comm rather than matching
+# a pattern over argv is a second, smaller guard, and a driver that runs INSIDE
+# a pane on this socket would be found by a comm comparison alone. Neither is a
+# bare `pgrep -f`, which has twice killed the command issuing it, mid-heredoc.
+#
+# For the `ruby` query ONLY, a wrapped descendant additionally has to look like
+# lain, because a `ruby` process is not a chat: this sandbox ships three ruby
+# listeners of its own -- counter.rb, pathcount.rb, proxy.rb -- that scenarios
+# start with `&`, and one of them backgrounded in a pane on this socket would
+# otherwise make the whole server ambiguous and disable driving for the rest of
+# the round. Matching the mere STRING `lain` does not do it: this sandbox lives
+# under `~/tmp/lain-qa-<tag>`, so `ruby $QA/counter.rb` mentions `lain` in its
+# path and stays a phantom candidate. What is matched is an argv WORD that is
+# `lain` or ends in `/lain` -- which is a good proxy for the exe and not a proof
+# of it (`ruby -e '...' lain` would pass), and it is deliberately not narrowed
+# to argv[1], because `bundle exec lain` is a legitimate spelling.
+#
+# The `nvim` query gets NO such test, and that scoping is load-bearing: the
+# cockpit editor's argv carries `plugin/nvim` and a socket path but no `lain`
+# word at all, so requiring one made the editor's tree branch dead and quietly
+# reverted `peek.sh <n> nvim` to foreground-command matching -- this card's own
+# defect, reintroduced on the read side, and invisible because `lain up` always
+# execs nvim into the foreground. There is no phantom to exclude there: nothing
+# else on the round's server is nvim.
+#
+# The FOREGROUND branch of both queries stays unconditional, so the degraded
+# launch a chat can have (a `ruby` pane with no `lain chat` in its argv at all)
+# still resolves.
+
+qa_panes_require_sock() {
+  : "${QA_SOCK:?refusing: QA_SOCK is unset -- an empty -L targets the DEFAULT tmux server}"
+}
+
+# Is this pid the lain exe, however its path was spelled?
+qa_is_lain() {
+  # `-z` makes the NUL that separates argv words the LINE terminator, so `^...$`
+  # anchors to one whole argv word -- which is the difference between matching
+  # the exe and matching any path that merely contains the four letters.
+  command grep -qzaE '^(.*/)?lain$' "/proc/$1/cmdline" 2>/dev/null
+}
+
+# Only the interpreter query has to prove itself; see the header.
+qa_descendant_qualifies() {
+  [ "$2" != ruby ] || qa_is_lain "$1"
+}
+
+# Is a matching <command-name> anywhere in the process tree rooted at <pid>?
+qa_tree_has() {
+  local frontier=("$1") kids=() nxt=() pid comm
+  while [ "${#frontier[@]}" -gt 0 ]; do
+    nxt=()
+    for pid in "${frontier[@]}"; do
+      # The redirections apply left to right, so `2>` has to be installed
+      # BEFORE the read: a pane that exits mid-walk otherwise puts a "No such
+      # file or directory" on the driver's own stderr, and unexplained stderr
+      # in a QA round gets read as a finding.
+      comm=""
+      read -r comm 2>/dev/null < "/proc/$pid/comm" || comm=""
+      [ "$comm" = "$2" ] && qa_descendant_qualifies "$pid" "$2" && return 0
+      mapfile -t kids < <(pgrep -P "$pid" 2>/dev/null)
+      nxt+=("${kids[@]}")
+    done
+    frontier=("${nxt[@]}")
+  done
+  return 1
+}
+
+# Every pane on THIS round's server running <command-name>, one pane id a line.
+# The foreground comparison is EXACT where the old resolver said `grep -w`, so a
+# pane whose command reads `ruby-lsp` or `ruby-4.0.6` no longer matches on that
+# branch. Narrower on purpose, and it fails loud -- a refusal, or "no chat pane"
+# -- rather than aiming a send somewhere plausible.
+qa_panes_running() {
+  qa_panes_require_sock
+  local id pid cmd
+  while IFS=' ' read -r id pid cmd; do
+    if [ "$cmd" = "$1" ] || qa_tree_has "$pid" "$1"; then printf '%s\n' "$id"; fi
+  done < <(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id} #{pane_pid} #{pane_current_command}')
+}
+
+# What a refusal prints: a bare pane id does not say which one to pin, and the
+# whole point of refusing is that the operator has to choose. `dead` is in there
+# because `lain up` deliberately KEEPS a failed chat pane, so a refusal can
+# otherwise ask an operator to choose between a live chat and a corpse with
+# nothing on screen telling them apart.
+qa_pane_label() {
+  qa_panes_require_sock
+  tmux -L "$QA_SOCK" display-message -p -t "$1" \
+    '#{pane_id} cmd=#{pane_current_command} dead=#{pane_dead} pid=#{pane_pid} win=#{window_name}'
+}
+
+# The remedy a refusal offers, and it is deliberately NOT `export`: peek.sh
+# reads LAIN_QA_PANE before it decides whether it was asked for the chat or the
+# editor, so an exported pin makes `peek.sh <n> nvim` read the pinned CHAT and
+# exit 0 as if it had read the editor. Per invocation, the pin dies with the
+# call it aimed.
+qa_pane_pin_hint() {
+  echo "  aim ONE call: LAIN_QA_PANE=<pane id> $1 ...  (do not export it -- an exported pin also re-aims peek.sh's nvim read)"
+}
+EOF
+
 # --- send ONE prompt, then wait for the PINNED journal to go quiet -----------
 # The journal is PINNED via $LAIN_QA_JOURNAL and never resolved with `ls -t`:
 # every non-interactive probe writes a journal NEWER than the cockpit's, so an
@@ -51,18 +171,30 @@ cat > "$QA/drive.sh" <<'EOF'
 # drive.sh "<text>" [quiet_seconds] [max_seconds]
 #   requires $LAIN_QA_JOURNAL -- pin it to the COCKPIT's journal, e.g.
 #   export LAIN_QA_JOURNAL="$XDG_STATE_HOME/lain/sessions/<hash>/<file>.ndjson"
-#   optionally pin the pane too: export LAIN_QA_PANE="%3" -- same reason as
-#   pinning the journal, see below.
+#   optionally pin the pane too, per invocation and NOT exported:
+#   LAIN_QA_PANE="%3" drive.sh '...' -- an exported pin also re-aims peek.sh's
+#   nvim read. Same reason as pinning the journal, see below.
 . "$(dirname "$0")/env.sh"
+. "$(dirname "$0")/panes.sh"
+# Called HERE and not from inside the resolver: every resolver call happens in a
+# `$( )` or a process substitution, where `${QA_SOCK:?}` kills only the subshell
+# and the caller carries on to report "no chat pane on tmux -L " at exit 1.
+qa_panes_require_sock
 TXT="$1"; QUIET="${2:-60}"; MAX="${3:-900}"
 J="${LAIN_QA_JOURNAL:?LAIN_QA_JOURNAL is not pinned -- see method.md, 'Pin the journal'}"
 [ -f "$J" ] || { echo "pinned journal does not exist: $J" >&2; exit 1; }
 
 # Pin the pane the same way the journal above is pinned, or refuse rather than
 # guess: several agents share this box, and a leftover probe session with its
-# own `ruby` pane makes `grep -w ruby` match more than one candidate. Picking
-# the first one (`head -1`) used to send a probe's prompt into the cockpit and
-# add a turn to the subject session with no error at all -- round 15's finding.
+# own chat pane makes more than one candidate. Picking the first one (`head -1`)
+# used to send a probe's prompt into the cockpit and add a turn to the subject
+# session with no error at all. Candidates come from panes.sh, which sees a chat
+# running under a shell wrapper as well as one that is its pane's foreground
+# process: matching the foreground command alone missed exactly that pane, so an
+# ambiguous send read as unambiguous and went to the wrong chat with the refusal
+# below never firing at all. A wrapped candidate has to be a lain process, not
+# merely a `ruby` one, or this sandbox's own backgrounded listeners would make
+# every pane ambiguous and refuse every send for the rest of the round.
 if [ -n "${LAIN_QA_PANE:-}" ]; then
   # A pin is only as good as the pane behind it -- `tmux send-keys` into a dead
   # pane writes "can't find pane" to stderr and returns success, so an unchecked
@@ -76,12 +208,13 @@ if [ -n "${LAIN_QA_PANE:-}" ]; then
     || { echo "pinned pane does not exist: $LAIN_QA_PANE on tmux -L $QA_SOCK" >&2; exit 1; }
   CHAT="$LAIN_QA_PANE"
 else
-  mapfile -t CHAT_CANDIDATES < <(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id} #{pane_current_command}' | command grep -w ruby | cut -d' ' -f1)
+  mapfile -t CHAT_CANDIDATES < <(qa_panes_running ruby)
   case "${#CHAT_CANDIDATES[@]}" in
     0) echo "no chat pane on tmux -L $QA_SOCK" >&2; exit 1 ;;
     1) CHAT="${CHAT_CANDIDATES[0]}" ;;
     *) echo "REFUSING to send: ${#CHAT_CANDIDATES[@]} chat panes on tmux -L $QA_SOCK -- ambiguous, not guessing:" >&2
-       printf '  %s\n' "${CHAT_CANDIDATES[@]}" >&2
+       for c in "${CHAT_CANDIDATES[@]}"; do echo "  $(qa_pane_label "$c")" >&2; done
+       qa_pane_pin_hint "$0" >&2
        exit 2
        ;;
   esac
@@ -138,9 +271,13 @@ cat > "$QA/peek.sh" <<'EOF'
 # needs -e instead, never -p. See method.md's "What a text read cannot verify"
 # for the recipe this wraps and a real measurement. -e output is for a human or
 # a decoder, not for grep -- it is unusable as plain text by design.
-#   optionally pin the pane: export LAIN_QA_PANE="%3" -- same escape hatch as
-#   drive.sh, and for the same reason: see the refusal below.
+#   optionally pin the pane, per invocation and NOT exported:
+#   LAIN_QA_PANE="%3" peek.sh 20 -- an exported pin is read before the chat/nvim
+#   choice below, so it re-aims `peek.sh <n> nvim` at the pinned pane. Same
+#   escape hatch as drive.sh, and for the same reason: see the refusal below.
 . "$(dirname "$0")/env.sh"
+. "$(dirname "$0")/panes.sh"
+qa_panes_require_sock   # abort HERE; inside the resolver it would only kill a subshell
 WHICH="${2:-chat}"; PAT=ruby; [ "$WHICH" = nvim ] && PAT=nvim
 if [ -n "${LAIN_QA_PANE:-}" ]; then
   # Same validation as drive.sh, same reason: capture-pane on a dead pane
@@ -151,12 +288,17 @@ if [ -n "${LAIN_QA_PANE:-}" ]; then
     || { echo "pinned pane does not exist: $LAIN_QA_PANE on tmux -L $QA_SOCK" >&2; exit 1; }
   P="$LAIN_QA_PANE"
 else
-  mapfile -t CANDIDATES < <(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id} #{pane_current_command}' | command grep -w "$PAT" | cut -d' ' -f1)
+  # Candidates come from panes.sh, which counts a chat or an editor running
+  # under a shell wrapper too -- a pane's foreground command alone misses one,
+  # and a read aimed at the surviving pane answers about the wrong session
+  # without ever looking wrong.
+  mapfile -t CANDIDATES < <(qa_panes_running "$PAT")
   case "${#CANDIDATES[@]}" in
     0) echo "no $WHICH pane on tmux -L $QA_SOCK" >&2; exit 1 ;;
     1) P="${CANDIDATES[0]}" ;;
     *) echo "REFUSING to read: ${#CANDIDATES[@]} $WHICH panes on tmux -L $QA_SOCK -- ambiguous, not guessing:" >&2
-       printf '  %s\n' "${CANDIDATES[@]}" >&2
+       for c in "${CANDIDATES[@]}"; do echo "  $(qa_pane_label "$c")" >&2; done
+       qa_pane_pin_hint "$0" >&2
        exit 2
        ;;
   esac
@@ -360,5 +502,6 @@ verify isolation BEFORE act 1:
 PIN THE JOURNAL before driving anything -- drive.sh refuses without it:
   export LAIN_QA_JOURNAL=\$(ls -t "\$XDG_STATE_HOME/lain/sessions"/*/*.ndjson | head -1)
 
-helpers: \$QA/drive.sh  \$QA/peek.sh  \$QA/nv.sh  \$QA/counter.rb  \$QA/pathcount.rb  \$QA/proxy.rb
+helpers: \$QA/drive.sh  \$QA/peek.sh  \$QA/nv.sh  (\$QA/panes.sh: pane resolution, sourced by the first two)
+other:   \$QA/counter.rb  \$QA/pathcount.rb  \$QA/proxy.rb
 EOF
