@@ -245,11 +245,95 @@ RSpec.describe Lain::SessionRecord::Scribe do
       expect(sink.map(&:kind)).to eq(%i[spawn message])
     end
 
-    it "moves a real StatusFeed's inbox not at all, while the spawn still registers" do
+    # Conditional now, and the condition is in the name: a spawned session whose
+    # child cited nothing still moves nothing. The turn that DOES cite something
+    # publishes its edges, one describe below.
+    it "moves a real StatusFeed's inbox not at all for turns citing nothing, while the spawn registers" do
       spawned_session
 
       expect(status.state.fetch("inbox_count")).to eq(0)
       expect(status.state.fetch("fleet").size).to eq(1)
+    end
+
+    # WHY a child's turn owes the tee anything at all: its `ask_human` is relayed
+    # under the PARENT's correlation, so the child's own answering turn is the
+    # only turn that can consume the row a human sees. The transcript still may
+    # not route; the edges alone do.
+    describe "a child turn's consumption edges" do
+      let(:question) do
+        Lain::Event::ChainWriter.new(observer: ->(event) { scribe.call(event) })
+                                .put(parent, kind: :message, from: "child", to: "human",
+                                             causal_parents: [], body: { "question" => "which db?" })
+      end
+
+      # The head Event of a two-turn child chain, the second turn citing +cited+.
+      def child_answering(cited)
+        Lain::Timeline.empty(store:)
+                      .commit(role: :user, content: text("child ask"))
+                      .commit(role: :user, content: text("answer folded"), causal_parents: cited)
+                      .ancestors.first
+      end
+
+      it "publishes the digests the turn consumed, while the file still gets the turn" do
+        asked = question
+        scribe.call(child_answering([asked.digest]))
+
+        expect(sink.map(&:journal_type)).to eq(%w[message questions_consumed])
+        expect(sink.last.digests).to eq([asked.digest])
+        expect(of_type(Lain::SessionRecord::CHILD_TURN_TYPE).size).to eq(1)
+      end
+
+      it "publishes nothing for an ordinary child turn that cites nothing" do
+        scribe.call(child_answering([]))
+
+        expect(sink).to be_empty
+        expect(of_type(Lain::SessionRecord::CHILD_TURN_TYPE).size).to eq(1)
+      end
+
+      it "still keeps the turn record itself off the tee" do
+        scribe.call(child_answering([question.digest]))
+
+        expect(sink.map(&:journal_type)).to contain_exactly("message", "questions_consumed")
+        expect(sink.grep(Lain::Telemetry::ChildTurn)).to be_empty
+      end
+
+      # A review probe, kept as a spec. The tee write is the first thing in
+      # {Lain::SessionRecord::Scribe#child_turn} that can reach a live sink, and
+      # a live sink raises for real -- a StatusFeed that cannot write its state
+      # file, a FleetWindows whose tmux call fails. {Lain::CLI::JournalTee} lands
+      # the journal leg FIRST and re-raises anything but a closed queue, so both
+      # records are on disk when the failure surfaces; the redelivery that
+      # follows must add neither, which it only does if `@spawned` was armed
+      # before the write rather than after it.
+      it "arms its once-per-digest guard before the tee, so a raising sink cannot duplicate the turn" do
+        asked = question
+        turn = child_answering([asked.digest])
+        deaf = Class.new do
+          def <<(_record)
+            raise IOError, "live sink down"
+          end
+        end.new
+        scribe = described_class.new(journal:, context:, toolset:, workspace:,
+                                     message_journal: Lain::CLI::JournalTee.new(journal, deaf))
+
+        expect { scribe.call(turn) }.to raise_error(IOError)
+        expect { scribe.call(turn) }.not_to raise_error
+
+        expect(of_type(Lain::SessionRecord::CHILD_TURN_TYPE).size).to eq(1)
+        expect(of_type("questions_consumed").size).to eq(1)
+      end
+
+      # The parent's own answering turn reaches the surfaces as a
+      # {Lain::Telemetry::TurnUsage} naming the committed head, which is the
+      # carrier {Lain::StatusFeed::Inbox#committed} already reads. It has no
+      # relay hop and needs no promotion, so `catch_up` must stay silent.
+      it "publishes nothing for the parent's own turn that answered a question" do
+        asked = question
+        scribe.catch_up(parent.commit(role: :user, content: text("folded"), causal_parents: [asked.digest]))
+
+        expect(sink.map(&:journal_type)).to eq(%w[message])
+        expect(of_type("questions_consumed")).to be_empty
+      end
     end
   end
 

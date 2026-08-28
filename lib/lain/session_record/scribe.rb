@@ -132,7 +132,12 @@ module Lain
       #   so the file still gets each record exactly once. Defaults to the
       #   journal itself; turn records never route -- they are record data,
       #   not live-view telemetry -- and that holds for the {Telemetry::ChildTurn}
-      #   records {#call} promotes as much as for {#catch_up}'s own.
+      #   records {#call} promotes as much as for {#catch_up}'s own. What DOES
+      #   route off a spawned turn is which questions it consumed, as a
+      #   {Telemetry::QuestionsConsumed} -- and that record IS redundant in the
+      #   file, carrying edges the ChildTurn beside it already holds for the same
+      #   digest. It earns its place on the WIRE, not in the record; the
+      #   duplicated bytes are the accepted price of not routing the wide one.
       def initialize(journal:, context:, toolset:, workspace: Workspace.empty, resumed_from: nil, written: [],
                      message_journal: nil)
         @journal = journal
@@ -253,9 +258,15 @@ module Lain
       #
       # It lands on `@journal`, never the tee. Turn records are RECORD DATA, not
       # live-view telemetry -- the invariant #initialize's `message_journal:`
-      # note states -- and it is what keeps a {StatusFeed}, whose observe is
-      # duck-typed on `#kind`, from retiring an inbox question because a subagent
-      # committed a turn.
+      # note states -- and the price of routing THIS one is the child's whole
+      # transcript, measured on {Telemetry::ChildTurn} itself.
+      #
+      # That rule once carried a second reason: keeping a {StatusFeed} from
+      # retiring an inbox question because a subagent committed a turn. It no
+      # longer holds. Once a child's question is relayed under its parent's
+      # correlation, the child's own answering turn is the ONLY turn that can
+      # consume it, so that retirement is wanted -- and {#consumption} is how it
+      # arrives without the transcript behind it.
       #
       # And it is written ONCE per digest. Content addressing means equal turns
       # are ONE event: a `:fresh` child seeded with the text the human opened
@@ -275,6 +286,27 @@ module Lain
 
         @journal << Telemetry::ChildTurn.from_event(event)
         @spawned << event.digest
+        consumption(event)
+      end
+
+      # The consumption edges of a spawned turn, promoted onto the tee alone --
+      # the live inbox surfaces retire off these, and nothing else of the turn
+      # is theirs to see. Silent for a turn citing nothing, which is every
+      # ordinary child turn, so the tee pays only where there is something to
+      # retire.
+      #
+      # IT RUNS LAST, AFTER THE GUARD IS ARMED, and that ordering is the whole
+      # reason this is a method rather than two lines inline. `@message_journal`
+      # is a {CLI::JournalTee} in production, which swallows only
+      # `ClosedQueueError` -- a {StatusFeed} that cannot write its state file or
+      # a `FleetWindows` whose tmux call fails raises straight through here. Arm
+      # first and such a raise costs at most a stale inbox row; arm after and the
+      # next delivery of the same event re-writes the child's whole transcript,
+      # which is the multiplication {#child_turn}'s guard exists to prevent.
+      def consumption(event)
+        return if event.causal_parents.empty?
+
+        @message_journal << Telemetry::QuestionsConsumed.from_event(event)
       end
 
       def recorded_turn?(digest) = @written.include?(digest) || @spawned.include?(digest)
