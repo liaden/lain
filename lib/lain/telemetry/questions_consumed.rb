@@ -25,7 +25,11 @@ module Lain
       def self.from_event(event) = new(turn: event.digest, digests: event.causal_parents)
 
       def initialize(turn:, digests:)
-        super(turn: Canonical.normalize(turn), digests: Canonical.normalize(digests))
+        # The producer's shape (a list) is not enforced by `Canonical.normalize`
+        # alone, so the constructor enforces it here instead of trusting the
+        # next caller to match it.
+        super(turn: Canonical.normalize(turn),
+              digests: Array(digests).map { |digest| Canonical.normalize(digest) }.uniq.freeze)
       end
     end
   end
