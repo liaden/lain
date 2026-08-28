@@ -55,12 +55,13 @@ module Lain
         # `registration.actor.stop`. So the release rides the same lease
         # teardown that reaps this fiber, with no timeout and no reaper.
         def initialize(agent:, lineage:, parent:, journal: Channel::Null.instance,
-                       registration: AskHuman::Directory::Unheld)
+                       registration: AskHuman::Directory::Unheld, answer: ANSWER)
           @agent = agent
           @lineage = lineage
           @parent = parent
           @journal = journal
           @registration = registration
+          @answer = answer
           @park = Async::Notification.new
           @ready = Async::Variable.new
           @stopped = false
@@ -176,9 +177,13 @@ module Lain
 
         # The child Agent runs to settle over its fresh-root Timeline, and its
         # answer rides back as a message marked "settled".
+        #
+        # Bounded on the way out for the reason a one-shot's is, and the actor
+        # needs it MORE: a note's text is folded into the parent's render by
+        # {Context::Mailbox} every turn until a commit consumes it, so an
+        # unbounded reply here is unbounded in a context nothing can compact.
         def process(prompt)
-          response = @agent.ask(prompt)
-          reply(response.text, lifecycle: "settled")
+          reply(@answer.bounded(@agent, @agent.ask(prompt), journal: @journal).text, lifecycle: "settled")
         end
 
         # actor -> parent, naming the spawn and the child's head among its

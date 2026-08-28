@@ -57,10 +57,11 @@ module Lain
       # schema bytes.
       def initialize(toolset:, policy:, seam: nil, budget: Agent::Budget.new,
                      max_depth: 1, name: "subagent", announces_as: name, mode: :one_shot,
-                     log: Log::Null, persona: Role::Persona::Null, **spawn_over)
+                     log: Log::Null, persona: Role::Persona::Null, answer: ANSWER, **spawn_over)
         super()
         @seam = Seam.resolve(seam, **spawn_over)
         @announces_as = announces_as
+        @answer = answer
         @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, name: announces_as)
         seed_config(max_depth, name, mode, log)
       end
@@ -137,7 +138,7 @@ module Lain
         # `deregister` there rides the same lease teardown that reaps the fiber.
         # {ChildBuilder::Child} owns the case where no actor comes out at all.
         build_child(parent, worker_env).launched do |agent, registration|
-          Actor.new(agent:, registration:, lineage:, parent:, journal:).launch(prompt)
+          Actor.new(agent:, registration:, lineage:, parent:, journal:, answer: @answer).launch(prompt)
         end
       end
 
@@ -153,7 +154,7 @@ module Lain
       def descend(parent:, escalation:, ceiling:)
         config = @builder.config(parent:, escalation:)
         self.class.new(**config, max_depth: [@max_depth, ceiling].min, name: @name,
-                                 announces_as: @announces_as, mode: @mode, log: @log)
+                                 announces_as: @announces_as, mode: @mode, log: @log, answer: @answer)
       end
 
       protected
@@ -191,6 +192,14 @@ module Lain
       # resuming mid-flight cannot make `message` name the wrong spawn or child.
       # The ivars are written once at the end, together, with no yield between
       # the three.
+      #
+      # WHAT THE RECORD MEANS ON A BOUNDED SPAWN, since two fields change sense
+      # and nothing else says so: `last_message.body["result"]` holds what the
+      # parent was GIVEN, which is the child's own summary or the floor sentence
+      # rather than the answer it first produced; and `"final"` names the head
+      # AFTER the summarizing ask, because that ask is a real turn on the
+      # child's Timeline. The full original answer is not lost -- it is a turn
+      # on that Timeline, reachable from `"final"`.
       def spawn_one_shot(prompt, on_stream_started: nil)
         # Per spawn, not per tool, so a fan-out's record shows WHICH spawns
         # ran un-cacheable.
@@ -225,9 +234,19 @@ module Lain
       # The journal is the SEAM's, read through the same delegator every other
       # record on this path uses, so the lease lifecycle cannot end up writing
       # to a different channel than the spawn it belongs to.
+      #
+      # The answer is bounded HERE, inside the block, for two reasons that
+      # agree. It is the only place the child AGENT is in scope -- `answered`
+      # hands back its Timeline, not itself -- and the summarizing ask has to
+      # run while the child is still alive, under this lease and this
+      # registration. It also leaves the `@last_*` write sequence untouched: a
+      # second ask yields at the yield point this method ALREADY had, so no new
+      # suspension appears between here and the one place those ivars are set.
       def run_child(prompt, parent, on_stream_started: nil)
         isolation.hold(@name, journal:) do |worker_env|
-          build_child(parent, worker_env).answered { |child| child.ask(prompt, on_stream_started:) }
+          build_child(parent, worker_env).answered do |child|
+            @answer.bounded(child, child.ask(prompt, on_stream_started:), journal:)
+          end
         end
       end
 
@@ -393,6 +412,192 @@ module Lain
         def self.inspect = "Lain::Tools::Subagent::NoAskers"
         def self.to_s = inspect
       end
+
+      # The ceiling one child answer may occupy in the parent's context, in
+      # bytes: roughly 4,000 tokens of prose, which is Anthropic's whole minimum
+      # cacheable prefix. An answer past it is no longer a result the parent
+      # reads alongside its own work -- it IS the parent's turn. And a parent
+      # cannot drop a tool_result, so one oversized answer pins occupancy with
+      # nothing compactable underneath it, which is the shape a live session was
+      # measured stuck in.
+      #
+      # A FIXED figure, where the thing it protects is not: the harness knows
+      # the live window through {ContextWindow}, and 16 KiB is ~2% of a 200k
+      # window but about a third of the 8k one a local model is driven at. A
+      # window-relative ceiling is the better answer and needs the model in
+      # scope here, which a spawn does not have; until then this is deliberately
+      # the conservative end, and `bounds:` is injectable for an arm that wants
+      # its own.
+      ANSWER_BOUND = Tool::Bounds::Artifact.new(limit: 16 * 1024)
+
+      # How much of a failure's own message may ride into a refusal sentence and
+      # an NDJSON line. An exception message is unbounded and is written by
+      # whatever raised: a provider error carrying a response body, a
+      # `JSON::ParserError` echoing its document, a `NoMethodError` inspecting a
+      # large receiver. {Approval::Gate::Adjudicator}'s `note` clamps for this
+      # reason and at this size -- the head is where the diagnosis is.
+      MAX_FAILURE_REASON = 500
+
+      # Where a parent can go instead when no summary could be delivered.
+      # {Tool::Bounds::Artifact#message} refuses to build a refusal without
+      # one -- advice naming nowhere to go leaves the model to re-issue the
+      # same call and be refused identically.
+      NARROWER_ASKS = ["spawn one subagent per part of the task",
+                       "ask it for the specific finding you need"].freeze
+
+      # That a child's answer did not fit ("answer_bounded" on the wire):
+      # `outcome` is `summarized` when the child's own summary was delivered and
+      # `floor` when none could be, with `reason` naming which of the several
+      # ways that happened. Journaled for {Tool::SpawnPolicy}'s floor-note
+      # reason, which this sits two lines away from at both spawn sites: a
+      # decision this consequential must not be legible ONLY as English inside a
+      # result the model consumes, or "how often does bounding fire, and how
+      # often does it floor" costs a grep over prose.
+      AnswerBounded = Data.define(:size, :limit, :outcome, :reason) do
+        include Telemetry::Journalable
+
+        # `-@` and not `#freeze`, because interpolation hands back a MUTABLE
+        # String and a record must stay `Ractor.shareable?`.
+        def initialize(size:, limit:, outcome:, reason: "")
+          super(size:, limit:, outcome: -outcome.to_s, reason: -reason.to_s)
+        end
+      end
+
+      # A child's answer, kept under {ANSWER_BOUND} by asking the CHILD to
+      # summarize it. Its context already holds the answer, so that ask is the
+      # cheapest summarizer available and the only one that cannot mistake what
+      # the answer meant. Neither shape {Tool::Bounds} offers fits alone here:
+      # truncating leaves an answer that reads complete and is wrong, and
+      # refusing outright throws away work the run has already paid for.
+      #
+      # Everything it hands back is a real {Response} -- the child's own, with
+      # its text replaced -- never a stand-in that answers only `text`. That
+      # keeps `stop_reason`, `usage`, `model` and `id` intact for whoever reads
+      # the record, keeps the value `Ractor.shareable?` (an interpolated String
+      # on a bare Data is not), and leaves {ChildBuilder::Child#answered}'s
+      # documented `[timeline, response]` seam a single type.
+      Answer = Data.define(:bounds) do
+        def initialize(bounds: ANSWER_BOUND)
+          super
+        end
+
+        # @param agent [#ask] the child that gave the answer, still live
+        # @param response [Response] what it answered
+        # @param journal [#<<] where the bounding decision is recorded
+        # @return [Response] the response itself when it fits, else the same
+        #   response carrying what the parent is given instead
+        def bounded(agent, response, journal: Channel::Null.instance)
+          size = response.text.bytesize
+          return response if bounds.admits?(size)
+
+          condensed(agent, response, size, journal)
+        end
+
+        private
+
+        # ONE further ask, never a loop: a child whose summary is ALSO over the
+        # ceiling has shown it will not shrink, and asking again would spend
+        # another turn to learn the same thing. Note that one ASK is not one
+        # provider call -- the child holds tools and its loop re-seeds its
+        # iteration count, so the ask is a whole agentic run under the lease
+        # this dispatch is still holding.
+        #
+        # `StandardError` and not the budget alone: a 429, a 529 or a socket
+        # reset from the second ask would otherwise escape and destroy an answer
+        # the run has already paid for -- on the one-shot path past `remember`,
+        # so no :message is written at all, and on the actor path into `@failure`,
+        # so no settled note ever reaches the parent's mailbox. {Agent}'s own
+        # torn-turn rule is the governing one: work that was paid for stays in
+        # the record rather than vanishing with the raise. `Async::Stop` is not
+        # a StandardError, so cancellation still flows past this untouched.
+        def condensed(agent, response, size, journal)
+          summary = agent.ask(request(size))
+          reason = undeliverable(summary)
+          reason.nil? ? summarized(response, summary, size, journal) : floor(response, size, reason, journal)
+        rescue StandardError => e
+          floor(response, size, "the summarizing ask itself failed -- #{failure(e)}", journal)
+        end
+
+        # The class leads because it stays diagnostic when the message is cut,
+        # and the message is cut because it is written by whatever raised and
+        # lands in both a model-facing sentence and a journal line.
+        def failure(error) = "#{error.class}: #{error.message.to_s[0, MAX_FAILURE_REASON]}"
+
+        # Why this summary cannot be delivered, or nil when it can. Four ways a
+        # second ask succeeds and still has nothing to deliver, each of which
+        # would otherwise be published UNDER A NOTE PROMISING A SUMMARY: an
+        # empty answer, a `:max_tokens` stop, a `:refusal`, and a summary still
+        # over the ceiling. Two of them are the reason `stop_reason` is read at
+        # all -- a sentence cut off mid-word is precisely the silent truncation
+        # this whole path exists to avoid, and "I decline." labelled as a
+        # summary tells the parent the decline IS the answer it asked for.
+        def undeliverable(summary)
+          text = summary.text
+          return "it answered nothing when asked" if text.empty?
+          return "the summary stopped at the model's own token ceiling" if summary.stop_reason == StopReason::MAX_TOKENS
+          return "the child declined to summarize it" if summary.stop_reason == StopReason::REFUSAL
+          return if bounds.admits?(text.bytesize)
+
+          "the summary was #{text.bytesize} #{bounds.unit}, over the ceiling too"
+        end
+
+        # The parent is TOLD what it is holding. "Shorter than it might have
+        # been" and "the child's whole answer" are different claims, and a
+        # reader acting on the second while the first is true is the failure
+        # this line exists to prevent.
+        #
+        # So the ceiling governs the SUMMARY, not the delivery: one number then
+        # means one thing in the decision and in the sentence a reader is given,
+        # at the cost of the note's own hundred-odd bytes riding on top. A
+        # summary at exactly the ceiling therefore delivers slightly over it,
+        # and a spawn chain compounds that once per hop -- which is the trade,
+        # stated, rather than a measurement that quietly disagrees with itself.
+        def summarized(response, summary, size, journal)
+          journal << AnswerBounded.new(size:, limit: bounds.limit, outcome: :summarized)
+          delivered(response, "[summarized by the subagent itself: its full answer was #{size} " \
+                              "#{bounds.unit}, over the ceiling of #{bounds.limit}]\n#{summary.text}")
+        end
+
+        # No summary could be delivered, so none is promised. The sentence is
+        # {Tool::Bounds::Artifact}'s own refusal: it names the size and the
+        # ceiling, says WHICH way the summarizing failed, and offers somewhere
+        # to go.
+        #
+        # `#message`'s SIGNATURE takes no content, which is what keeps the
+        # answer's own bytes out. It is not what keeps this sentence bounded:
+        # `subject:` is prose {Tool::Bounds} states it deliberately does not
+        # police, and `reason` is the one part of it that is not a fixed string.
+        # So every reason reaching here is bounded before it arrives -- three
+        # are literals plus a byte count, and the fourth is clamped by
+        # {#failure}. A floor that blew through the ceiling it enforces would be
+        # the exact hazard {Tool::Bounds.ceiling} names: a message that echoes
+        # its argument hands the model the bytes a refusal exists to withhold.
+        def floor(response, size, reason, journal)
+          journal << AnswerBounded.new(size:, limit: bounds.limit, outcome: :floor, reason:)
+          delivered(response, bounds.message(subject: "the subagent's answer, which could not be " \
+                                                      "summarized (#{reason})", size:, narrower: NARROWER_ASKS))
+        end
+
+        # The child's own Response, carrying what the parent is given in place
+        # of the text it gave. `Data#with` re-runs {Response}'s own constructor,
+        # so the content comes back normalized and deeply frozen.
+        def delivered(response, text) = response.with(content: [{ "type" => "text", "text" => text }])
+
+        # The child is told the size, the ceiling and what to keep: a bare
+        # "shorten it" invites a summary of the narration rather than of the
+        # findings, which is the half the parent spawned it for.
+        def request(size)
+          "Your answer was #{size} #{bounds.unit}, over this harness's ceiling of #{bounds.limit} for a " \
+            "subagent's answer, so it was not delivered to the agent that spawned you. Answer again under " \
+            "that ceiling: keep every conclusion and every fact you were asked for, and drop the narration " \
+            "of how you reached them. Reply with that shorter answer alone."
+        end
+      end
+
+      # ONE shared, frozen collaborator, not a fresh one per spawn: it holds
+      # only the ceiling, so there is no per-spawn state for one to carry. The
+      # default a tool takes, and injectable past it.
+      ANSWER = Answer.new
 
       # A lease a dispatch could not give back. Its own record because the
       # tolerance below must not be silent: the checkout is still on disk, it

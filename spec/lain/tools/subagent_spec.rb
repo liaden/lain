@@ -231,6 +231,282 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
+  # ---- Scenario: an answer too large for the parent's context ---------------
+  #
+  # A parent cannot drop a tool_result, so ONE oversized child answer pins its
+  # occupancy with nothing compactable underneath it -- the mechanism behind a
+  # live finding of a context at ~100% with an empty compactable head. The
+  # ruling is neither truncation nor refusal: the child summarizes its OWN
+  # answer, which is cheap because its context already holds it.
+
+  describe "a child answer over the ceiling" do
+    let(:ceiling) { Lain::Tools::Subagent::ANSWER_BOUND.limit }
+    let(:oversized) { "narration " * ((ceiling / 10) + 1) }
+
+    it "returns an ordinary answer as it was, asking the child nothing further" do
+      provider = mock(text_response("child answer"))
+
+      result = build_subagent(provider:).call({ "prompt" => "go" }, invocation)
+
+      expect(result.content).to eq("child answer")
+      expect(provider.call_count).to eq(1)
+    end
+
+    # The SAME child, not a fresh spawn: the summarizing ask lands as a second
+    # user turn on the child's own Timeline, which is what makes it cheap.
+    it "comes back shorter, summarized by that same child" do
+      provider = mock(text_response(oversized), text_response("the short version"))
+      tool = build_subagent(provider:)
+
+      result = tool.call({ "prompt" => "go" }, invocation)
+
+      expect(result).to be_ok
+      expect(result.content).to include("the short version")
+      expect(result.content.bytesize).to be < oversized.bytesize
+      # Two provider calls is a property of THIS provider, not of production:
+      # `ask` is a whole agentic run, and a child with tools spends as many
+      # calls as its loop takes. What the tool guarantees is one further ASK.
+      expect(provider.call_count).to eq(2)
+      expect(tool.last_child.to_a.map(&:role)).to eq(%w[user assistant user assistant])
+    end
+
+    it "tells the parent it is reading a summary, naming the size and the ceiling" do
+      provider = mock(text_response(oversized), text_response("the short version"))
+
+      result = build_subagent(provider:).call({ "prompt" => "go" }, invocation)
+
+      expect(result.content).to match(/summar/i)
+      expect(result.content).to include(oversized.bytesize.to_s)
+      expect(result.content).to include(ceiling.to_s)
+    end
+
+    # The floor: a child that will not shrink is not asked a third time, and
+    # what the parent gets DISCLOSES -- it names the size and the ceiling and
+    # offers a narrower move -- rather than carrying a silent prefix of the
+    # payload.
+    it "answers without asking again when the summary is itself over the ceiling" do
+      provider = mock(text_response(oversized), text_response(oversized))
+
+      result = build_subagent(provider:).call({ "prompt" => "go" }, invocation)
+
+      expect(provider.call_count).to eq(2)
+      expect(result.content.bytesize).to be < ceiling
+      expect(result.content).to include(ceiling.to_s)
+      expect(result.content).not_to include("narration narration")
+    end
+
+    # The actor path is the one with no ceiling at all today: `reply` puts the
+    # child's whole answer into a note that {Context::Mailbox} folds straight
+    # into the parent's render, so it is bounded on the same rule.
+    it "bounds an actor's oversized reply the same way before it folds into the parent" do
+      log = Lain::Tools::Subagent::Log.new
+      tool = described_class.new(
+        provider: mock(text_response(oversized), text_response("the short version")),
+        context_factory: -> { child_context }, toolset: union, policy: spawn_policy,
+        parent:, mode: :actor, log:
+      )
+
+      Sync do
+        actor = tool.launch_actor("go")
+        actor.settle
+        actor.stop
+      end
+
+      settled = log.to_a.find { |event| event.body["lifecycle"] == "settled" }
+      expect(settled.body.fetch("text")).to include("the short version")
+      expect(settled.body.fetch("text")).to match(/summar/i)
+      expect(settled.body.fetch("text").bytesize).to be < oversized.bytesize
+    end
+
+    # The summarizing ask is a real model call on the child, so the child's own
+    # ceilings can refuse it. Losing an answer already paid for is the outcome
+    # this must not have: the parent is answered, and told why it is short.
+    it "still answers the parent when the child's budget refuses the summarizing ask" do
+      child = instance_double(Lain::Agent)
+      allow(child).to receive(:ask).and_raise(Lain::Agent::Budget::Exceeded, "loop ran 25 iterations")
+      response = Lain::Response.new(content: [{ "type" => "text", "text" => oversized }], stop_reason: :end_turn)
+
+      bounded = Lain::Tools::Subagent::Answer.new.bounded(child, response)
+
+      expect(bounded.text).to include(ceiling.to_s)
+      expect(bounded.text).to include("loop ran 25 iterations")
+      expect(bounded.text.bytesize).to be < ceiling
+    end
+
+    # A provider that answers once and then fails, which is what a 429, a 529 or
+    # a socket reset looks like from inside the summarizing ask. The first
+    # answer was already paid for: a transient blip on the second call must not
+    # be able to destroy it.
+    def failing_second_call(*responses)
+      mock(*responses).tap do |provider|
+        calls = 0
+        allow(provider).to receive(:complete).and_wrap_original do |original, *args, **kwargs|
+          calls += 1
+          raise Lain::Error, "529 overloaded" if calls > 1
+
+          original.call(*args, **kwargs)
+        end
+      end
+    end
+
+    # Without the floor this raises past `remember`: no :message is written, and
+    # the parent is handed an error instead of work the child had finished.
+    it "floors rather than raising when the summarizing ask fails, keeping the spawn's record" do
+      tool = build_subagent(provider: failing_second_call(text_response(oversized)))
+
+      result = tool.call({ "prompt" => "go" }, invocation)
+
+      expect(result).to be_ok
+      expect(result.content).to include("529 overloaded")
+      expect(result.content).to include(ceiling.to_s)
+      expect(tool.last_message.kind).to eq(:message)
+      expect(tool.last_message.body.fetch("result")).to eq(result.content)
+    end
+
+    # The same failure on the actor path used to end the fiber with nothing
+    # settled at all -- `process` raised, `run` stored it as `@failure`, and the
+    # parent's mailbox saw a launch and then a farewell.
+    it "keeps an actor's answer when its summarizing ask fails, and leaves it alive to settle" do
+      log = Lain::Tools::Subagent::Log.new
+      tool = described_class.new(
+        provider: failing_second_call(text_response(oversized)),
+        context_factory: -> { child_context }, toolset: union, policy: spawn_policy,
+        parent:, mode: :actor, log:
+      )
+
+      Sync do
+        actor = tool.launch_actor("go")
+        actor.settle
+        actor.stop
+      end
+
+      settled = log.to_a.find { |event| event.body["lifecycle"] == "settled" }
+      expect(settled.body.fetch("text")).to include("529 overloaded")
+      expect(settled.body.fetch("text")).to include(ceiling.to_s)
+    end
+
+    # Zero bytes fits any ceiling, so the naive size check delivers the note and
+    # nothing under it -- a disclosure promising a summary that is not there,
+    # which is worse than the floor it skipped. A child that settled `:refusal`
+    # is re-askable, so this is live rather than theoretical.
+    it "floors an empty summary rather than delivering a note with nothing under it" do
+      provider = mock(text_response(oversized), text_response(""))
+
+      result = build_subagent(provider:).call({ "prompt" => "go" }, invocation)
+
+      expect(result.content).not_to include("summarized by the subagent itself")
+      expect(result.content).to include("it answered nothing when asked")
+      expect(result.content).to include(ceiling.to_s)
+    end
+
+    # The card's own criterion: the floor must not be a silent truncation. A
+    # summary cut off at the model's token ceiling is exactly that, and only
+    # `stop_reason` can tell it apart from a short answer.
+    it "floors a summary the model cut off at :max_tokens instead of labelling it a summary" do
+      provider = mock(text_response(oversized), text_response("half a sen", stop_reason: :max_tokens))
+
+      result = build_subagent(provider:).call({ "prompt" => "go" }, invocation)
+
+      expect(result.content).not_to include("half a sen")
+      expect(result.content).to include("token ceiling")
+      expect(result.content).to include(ceiling.to_s)
+    end
+
+    # A real Response, not a stand-in that answers only `text`: the members a
+    # reader of the record needs survive, and the value stays shareable, which
+    # a bare Data carrying an interpolated String does not.
+    it "delivers the child's own Response, shareable, with its other members intact" do
+      child = instance_double(Lain::Agent)
+      allow(child).to receive(:ask).and_return(text_response("the short version"))
+      answered = text_response(oversized, model: "child-model", id: "msg_1")
+
+      bounded = Lain::Tools::Subagent::Answer.new.bounded(child, answered)
+
+      expect(bounded).to be_a(Lain::Response)
+      expect(Ractor.shareable?(bounded)).to be(true)
+      expect(bounded.model).to eq("child-model")
+      expect(bounded.id).to eq("msg_1")
+      expect(bounded.text).to include("the short version")
+    end
+
+    # The bench's deliverable is that strategies be swappable, OBSERVABLE and
+    # comparable. Without this record an operator has two blind channels -- a
+    # silent journal and an `is_error` of false -- and the only signal left is
+    # English inside a result meant for the model.
+    it "journals the bounding decision, and which way it went" do
+      journal = Lain::Channel.new
+      build_subagent(provider: mock(text_response(oversized), text_response("short")),
+                     journal:).call({ "prompt" => "go" }, invocation)
+      summarized = journal.drain.map(&:to_journal).find { |row| row["type"] == "answer_bounded" }
+
+      floored = Lain::Channel.new
+      build_subagent(provider: mock(text_response(oversized), text_response("")),
+                     journal: floored).call({ "prompt" => "go" }, invocation)
+      floor = floored.drain.map(&:to_journal).find { |row| row["type"] == "answer_bounded" }
+
+      expect(summarized).to include("outcome" => "summarized", "limit" => ceiling,
+                                    "size" => oversized.bytesize, "reason" => "")
+      expect(floor).to include("outcome" => "floor", "reason" => "it answered nothing when asked")
+    end
+
+    # The ceiling is injectable, and the injection has to REACH the two places a
+    # spawn actually happens -- a descended copy and a launched actor -- or the
+    # seam reads as tested while only the constructor is.
+    it "hands an injected ceiling to a descended child and to an actor it launches" do
+      log = Lain::Tools::Subagent::Log.new
+      tool = described_class.new(
+        provider: mock(text_response("an answer well over eight bytes")),
+        context_factory: -> { child_context }, toolset: union, policy: spawn_policy,
+        parent:, log:, answer: Lain::Tools::Subagent::Answer.new(bounds: Lain::Tool::Bounds::Artifact.new(limit: 8))
+      )
+
+      expect(tool.run("go").content).to include("over the ceiling of 8")
+      descended = tool.descend(parent:, escalation: [], ceiling: 1)
+      expect(descended.run("go").content).to include("over the ceiling of 8")
+
+      Sync do
+        actor = tool.launch_actor("go")
+        actor.settle
+        actor.stop
+      end
+
+      settled = log.to_a.find { |event| event.body["lifecycle"] == "settled" }
+      expect(settled.body.fetch("text")).to include("over the ceiling of 8")
+    end
+
+    # A refusal is not a summary. `stop_reason` survives on the returned
+    # Response so a reader can recover the truth, but the LABEL is the part the
+    # model reads, and "[summarized by the subagent itself]\nI decline." tells
+    # it the decline is the answer it asked for.
+    it "floors a summary the child refused instead of labelling the refusal a summary" do
+      provider = mock(text_response(oversized), text_response("I decline.", stop_reason: :refusal))
+
+      result = build_subagent(provider:).call({ "prompt" => "go" }, invocation)
+
+      expect(result.content).not_to include("summarized by the subagent itself")
+      expect(result.content).to include("declined")
+      expect(result.content).to include(ceiling.to_s)
+    end
+
+    # An exception message is unbounded, and it rides into BOTH the model-facing
+    # floor and an NDJSON journal line: a provider error carrying a response
+    # body, a `JSON::ParserError` echoing its document, a `NoMethodError`
+    # inspecting a large receiver. Unclamped, the sentence built to withhold
+    # oversized bytes carries them itself -- through `subject:`, which
+    # {Lain::Tool::Bounds} states is prose by design and deliberately unpoliced.
+    it "clamps a failure's own message, so the floor cannot blow through the ceiling it enforces" do
+      journal = Lain::Channel.new
+      child = instance_double(Lain::Agent)
+      allow(child).to receive(:ask).and_raise(Lain::Error, "response body: #{"x" * 60_000}")
+
+      bounded = Lain::Tools::Subagent::Answer.new.bounded(child, text_response(oversized), journal:)
+
+      expect(Lain::Tools::Subagent::ANSWER_BOUND.admits?(bounded.text.bytesize)).to be(true)
+      expect(bounded.text).to include("Lain::Error")
+      expect(journal.drain.map(&:to_journal).last.fetch("reason").bytesize).to be < 1024
+    end
+  end
+
   # ---- Provenance at correlation grain (panel ruling) -------------------------
 
   describe "provenance at correlation grain" do
