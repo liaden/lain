@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "pp"
+
 RSpec.describe Lain::Tool::Bounds do
   describe Lain::Tool::Bounds::Enumeration do
     subject(:bound) { described_class.new(limit: 200, unit: "matches") }
@@ -206,6 +208,308 @@ RSpec.describe Lain::Tool::Bounds do
 
     it "is a deeply frozen value object" do
       expect(Ractor.shareable?(bound)).to be(true)
+    end
+  end
+
+  describe Lain::Tool::Bounds::Handback do
+    subject(:bound) { described_class.new(limit: 32_768) }
+
+    let(:oversized) { "x" * 40_000 }
+    let(:actions) { ["send it anyway", "shorten it and send that"] }
+
+    # Scenario: a thing under the ceiling is admitted unchanged
+    it "admits content under the ceiling" do
+      expect(bound.admits?("a short answer".bytesize)).to be(true)
+    end
+
+    it "admits a size at exactly the ceiling" do
+      expect(bound.admits?(32_768)).to be(true)
+    end
+
+    it "does not admit a size over the ceiling" do
+      expect(bound.admits?(32_769)).to be(false)
+    end
+
+    # Scenario: an oversized thing is not refused outright
+    it "hands the oversized content back rather than discarding it" do
+      handed = bound.overrun(subject: "your reply", content: oversized, actions:)
+
+      expect(handed.content).to eq(oversized)
+    end
+
+    it "hands back every byte, never a preview" do
+      handed = bound.overrun(subject: "your reply", content: oversized, actions:)
+
+      expect(handed.content.bytesize).to eq(40_000)
+    end
+
+    it "measures the content itself rather than trusting a count it was handed" do
+      handed = bound.overrun(subject: "your reply", content: oversized, actions:)
+
+      expect(handed.size).to eq(40_000)
+    end
+
+    # The measurement cannot disagree with the content, because there is nowhere
+    # to hand a size in. A tool holding both an output String and its bytesize is
+    # one character from passing the wrong one; here the wrong one is unsayable.
+    it "takes no size, so no caller can pass content where a count belongs" do
+      expect(described_class.instance_method(:overrun).parameters.map(&:last))
+        .to contain_exactly(:subject, :content, :actions)
+    end
+
+    # Scenario: the bound refuses to report without an action to offer
+    it "refuses to hand anything back with no action named" do
+      expect { bound.overrun(subject: "your reply", content: oversized, actions: []) }
+        .to raise_error(ArgumentError, /action/)
+    end
+
+    # An overrun names something that overran. A caller reaching for one over
+    # content that fits has confused its two branches, and a value that agreed
+    # would report a ceiling breach that did not happen.
+    it "refuses to call a thing that fits an overrun" do
+      expect { bound.overrun(subject: "your reply", content: "short", actions:) }
+        .to raise_error(ArgumentError, /fits/)
+    end
+
+    # `Effect::Handler::Live` turns that raise into `Result.error(e.message)`, so
+    # a sentence measuring the content would reach the model looking exactly like
+    # a bound's refusal while asserting the opposite of one.
+    it "reports that raise as a bug in the call, not as a measurement" do
+      expect { bound.overrun(subject: "your reply", content: "short", actions:) }
+        .to raise_error(ArgumentError, /Handback#measure|#admits\?/)
+    end
+
+    it "names no measurement in that raise" do
+      raised = begin
+        bound.overrun(subject: "your reply", content: "short", actions:)
+      rescue ArgumentError => e
+        e
+      end
+
+      expect(raised.message).not_to match(/\d/)
+    end
+
+    # Scenario: measuring in one call, with no guard for a caller to forget
+    it "reports nothing when the content fits" do
+      expect(bound.measure(subject: "your reply", content: "short", actions:)).to be_nil
+    end
+
+    it "hands back an overrun when the content does not fit" do
+      expect(bound.measure(subject: "your reply", content: oversized, actions:))
+        .to be_a(Lain::Tool::Bounds::Overrun)
+    end
+
+    it "measures the same boundary as admits? does, from the other side" do
+      expect(bound.measure(subject: "your reply", content: "x" * 32_768, actions:)).to be_nil
+    end
+
+    it "reports the first byte over" do
+      expect(bound.measure(subject: "your reply", content: "x" * 32_769, actions:).size).to eq(32_769)
+    end
+
+    # The guard has to sit on the door the consumers are told to use, and the
+    # example for `#overrun` does not reach it: `#measure` asks for a byte count
+    # before it decides whether to keep anything, so an unguarded one would die
+    # at `bytesize` and reach the model as a crash-shaped sentence.
+    it "refuses content that is not a String at the primary door too" do
+      expect { bound.measure(subject: "your reply", content: 40_000, actions:) }
+        .to raise_error(ArgumentError, /Integer/)
+    end
+
+    it "refuses nil content at the primary door, naming the class" do
+      expect { bound.measure(subject: "your reply", content: nil, actions:) }
+        .to raise_error(ArgumentError, /NilClass/)
+    end
+
+    it "refuses actions that are not a list, rather than dying inside the map" do
+      expect { bound.overrun(subject: "your reply", content: oversized, actions: "send it anyway") }
+        .to raise_error(ArgumentError, /Array/)
+    end
+
+    it "refuses no actions at all, naming the class rather than failing obscurely" do
+      expect { bound.overrun(subject: "your reply", content: oversized, actions: nil) }
+        .to raise_error(ArgumentError, /NilClass/)
+    end
+
+    it "names no byte of the content when it refuses" do
+      raised = begin
+        bound.overrun(subject: "your reply", content: "SECRETPAYLOAD", actions:)
+      rescue ArgumentError => e
+        e
+      end
+
+      expect("#{raised.class}: #{raised.message}").not_to include("SECRETPAYLOAD")
+    end
+
+    it "refuses a ceiling that is not an Integer" do
+      expect { described_class.new(limit: "lots") }.to raise_error(ArgumentError, /String/)
+    end
+
+    it "is a deeply frozen value object" do
+      expect(Ractor.shareable?(bound)).to be(true)
+    end
+  end
+
+  describe Lain::Tool::Bounds::Overrun do
+    subject(:overrun) { bound.overrun(subject: "your reply", content:, actions:) }
+
+    let(:bound) { Lain::Tool::Bounds::Handback.new(limit: 32_768) }
+    let(:content) { "x" * 40_000 }
+    let(:actions) { ["send it anyway", "shorten it and send that"] }
+    let(:payloaded) { bound.overrun(subject: "your reply", content: "SECRETPAYLOAD" * 5_000, actions:) }
+
+    # Scenario: the report names the measurement and the ceiling
+    it "states the measurement" do
+      expect(overrun.message).to include("40000")
+    end
+
+    it "states the ceiling" do
+      expect(overrun.message).to include("32768")
+    end
+
+    it "names what overran, in the reader's terms" do
+      expect(overrun.message).to include("your reply")
+    end
+
+    it "names every action the caller offered" do
+      expect(overrun.message).to include("send it anyway", "shorten it and send that")
+    end
+
+    it "reports the ceiling it overran, for a caller composing its own sentence" do
+      expect(overrun.limit).to eq(32_768)
+    end
+
+    # The sentence and the payload are separate readers, and this is the
+    # mechanical statement of it: a method with no parameters cannot be handed
+    # the content by a caller that meant to hand it the count.
+    it "builds its sentence from no arguments at all" do
+      expect(described_class.instance_method(:message).parameters).to be_empty
+    end
+
+    it "keeps the payload out of the sentence it composes" do
+      payload = "SECRETPAYLOAD" * 5_000
+
+      expect(bound.overrun(subject: "your reply", content: payload, actions:).message)
+        .not_to include("SECRETPAYLOAD")
+    end
+
+    # The caller picks the affordance: a channel with a human offers the
+    # sentence and can still send `content`; one without turns the same sentence
+    # into an error Result and sends nothing.
+    it "composes an error Result for a caller with no one to ask" do
+      expect(overrun.refusal).to be_a(Lain::Tool::Result).and be_error
+    end
+
+    it "carries the same sentence into that Result" do
+      expect(overrun.refusal.content).to eq(overrun.message)
+    end
+
+    it "keeps the payload out of that Result too" do
+      payload = "SECRETPAYLOAD" * 5_000
+
+      expect(bound.overrun(subject: "your reply", content: payload, actions:).refusal.content)
+        .not_to include("SECRETPAYLOAD")
+    end
+
+    it "still offers the content to a caller that asks for it by name" do
+      expect(overrun.content).to eq(content)
+    end
+
+    it "refuses content that is not a String, naming the class rather than the value" do
+      expect { bound.overrun(subject: "your reply", content: 40_000, actions:) }
+        .to raise_error(ArgumentError, /Integer/)
+    end
+
+    it "cannot be built with no action, whichever door it is built through" do
+      expect { described_class.new(bound:, subject: "your reply", content:, actions: []) }
+        .to raise_error(ArgumentError, /action/)
+    end
+
+    it "is a deeply frozen value object" do
+      expect(Ractor.shareable?(overrun)).to be(true)
+    end
+
+    # A bound is not type-checked anywhere else in this file, and here it must be:
+    # every shape answers `admits?` and `limit`, so an enumeration's row cap would
+    # be printed as a byte ceiling and read as one.
+    it "refuses a bound that counts something other than bytes" do
+      rows = Lain::Tool::Bounds::Enumeration.new(limit: 10, unit: "rows")
+
+      expect { described_class.new(bound: rows, subject: "your reply", content:, actions:) }
+        .to raise_error(ArgumentError, /Handback/)
+    end
+
+    it "refuses a bare Integer where a bound belongs" do
+      expect { described_class.new(bound: 32_768, subject: "your reply", content:, actions:) }
+        .to raise_error(ArgumentError, /Integer/)
+    end
+
+    # Scenario: the payload does not walk out through a printer
+    #
+    # `Data` renders every member, so the default `#inspect` puts the whole
+    # payload into any `"#{over}"` a consumer writes -- and the Journal is NDJSON,
+    # where one oversized line is the failure this bound exists to prevent.
+    it "withholds the content from #inspect" do
+      expect(payloaded.inspect).not_to include("SECRETPAYLOAD")
+    end
+
+    it "keeps #inspect a constant size however large the content is" do
+      expect(payloaded.inspect.bytesize).to be < 200
+    end
+
+    it "still names the measurement, the ceiling and the subject when inspected" do
+      expect(payloaded.inspect).to include("32768", "65000", "your reply")
+    end
+
+    it "says the content is withheld rather than pretending there is none" do
+      expect(payloaded.inspect).to include("WITHHELD")
+    end
+
+    it "withholds it from #to_s too, which is what interpolation reaches" do
+      # The interpolation is the subject, not a long way of writing `to_s`: the
+      # leak this guards is `log << "bounded: #{over}"`, so the cop is answered
+      # rather than obeyed.
+      expect("#{payloaded}").not_to include("SECRETPAYLOAD") # rubocop:disable Style/RedundantInterpolation
+    end
+
+    it "withholds it from a format specifier" do
+      expect(format("%s", payloaded)).not_to include("SECRETPAYLOAD")
+    end
+
+    # An inspector that walks members itself never calls `#inspect`, which is the
+    # gap `Provider::Ollama::Deployment::Cloud` records for a live credential.
+    # `pp` is that shape, and so is the suite's own object formatter.
+    it "withholds it from pp, which walks the members rather than asking" do
+      expect(PP.pp(payloaded, +"")).not_to include("SECRETPAYLOAD")
+    end
+
+    it "withholds it from the formatter a failing example prints its subject with" do
+      expect(RSpec::Support::ObjectFormatter.format(payloaded)).not_to include("SECRETPAYLOAD")
+    end
+
+    # Stated as the boundary rather than as a leak: `Data` gives every value
+    # `#to_h`, pattern matching and whole-object serialisation, none of which is
+    # reached without naming the payload or asking for the whole object.
+    it "still yields the content to a caller that destructures for it" do
+      expect(payloaded.to_h[:content].bytesize).to eq(65_000)
+    end
+
+    # Frozen on both sides of the handback, and the symmetry is the point: a
+    # caller that goes on mutating its own buffer must not be able to change
+    # what the overrun says it holds.
+    it "does not hand back the caller's own String" do
+      expect(overrun.content).not_to be(content)
+    end
+
+    it "stays shareable when its subject arrives as a Symbol" do
+      expect(Ractor.shareable?(bound.overrun(subject: :reply, content:, actions:))).to be(true)
+    end
+
+    it "stays shareable when its actions arrive interpolated" do
+      limit = 32_768
+
+      expect(Ractor.shareable?(bound.overrun(subject: "your reply", content:, actions: ["trim to #{limit}"])))
+        .to be(true)
     end
   end
 
