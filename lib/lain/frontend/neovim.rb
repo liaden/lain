@@ -104,7 +104,19 @@ module Lain
       #   opens the navigator plus the round's sides and leaves the rest of the
       #   slot vocabulary unopened. The vocabulary itself is unchanged at
       #   sidebar/old/new.
-      PROTOCOL = "13"
+      # "14": __lain.set_approval gained TWO more arguments, `calls` and
+      #   `call_index`, stamping b:lain_approval_calls and
+      #   b:lain_approval_call_index. A wrapped item's command is cut and
+      #   re-indented across several of lain://approval's rendered lines, so a
+      #   reader who reassembles one by joining them gets INDENT lodged
+      #   mid-token; these two variables are the reader's own unbroken copy.
+      #   `calls` is ONE ENTRY PER PARKED CALL, never per row -- msgpack does
+      #   not dedupe shared objects, so a copy per row a wrapped item spans
+      #   made the wire payload quadratic in that call's length. `call_index`
+      #   is b:lain_approval_rows-shaped (one entry per row, 1-based) and
+      #   names which member of `calls` the row resolves to --
+      #   `calls[call_index[N]]` is row N's command in full.
+      PROTOCOL = "14"
 
       # Seconds teardown waits on the resend worker before giving up the join. A
       # bridged offer holds that worker for a whole model round trip, so a bare

@@ -43,14 +43,24 @@ lain chat --root "$(pwd)" --provider ollama --model qwen3-coder:30b < /dev/null
 
 Confirm two things, neither needing a model call:
 
-- The journal carries exactly **one** `slot_fills` record (session-start attribution, PS-2), and
-  its `fills["system"]` is the override verbatim while `digests["system"]` is
-  `Canonical.digest` of the rendered bytes:
+- **`slot_fills` is a BENCH record, not a chat one — round 13 drove this and a plain `lain chat`
+  writes ZERO of them.** It is emitted by `Bench::CLI::RunRecorder` (`lib/lain/bench/cli/
+  run_recorder.rb`) and read back by `Bench::Session::Loader`; nothing on the ordinary chat path
+  writes it. A driver who counts `slot_fills` after `lain chat` reads 0 and either files a false
+  defect or passes vacuously. Reach for it only when the session under test was produced by
+  `lain bench`.
+
+  For a plain chat session, the override's landing is visible on the **`session`** record, whose
+  `system` field carries the fully rendered prompt — the shipped default with the override appended
+  verbatim:
 
   ```bash
-  ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
-    puts r.to_json if r["type"]=="slot_fills"}' "$JOURNAL"
+  ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next; next unless r["type"]=="session";
+    puts r["system"]}' "$JOURNAL"
   ```
+
+  Round 13 read `PROJECT GUIDANCE 42: prefer terse commit messages.` there, appended after the
+  default system slot, with no model call.
 
 - The first `request_sent`'s system blocks contain the override text — the record is attribution,
   not a second copy of the prompt, so this is where the actual rendered bytes live.

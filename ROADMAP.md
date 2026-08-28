@@ -685,6 +685,57 @@ on tmux-native placement, with the desktop-config findings kept as a historical 
   is now a subagent as often as the session's own agent. Orchestrator escalations with an urgency
   field remain `[exp]`.
 
+**The remote surface — the human who is not at the desk** `[exp]` (research:
+[`planning/remote-surface-research-2026-08.md`](planning/remote-surface-research-2026-08.md))
+- The inbox above assumes the human is *at* the machine. A sideloaded Android app (Rust/Dioxus, the
+  `../pitchcraft` build) reaching the desktop over Tailscale makes them an actor from anywhere:
+  approve a parked tier-3 call, answer an `ask_human`, watch the run. **The approval seam already
+  admits it** — `Approval::Queue` is N-surface by construction, `Pending#decide` takes a free
+  `surface:` String (`queue.rb:184`), and `Lain::Notify` is a shipped out-of-band surface with
+  dispatch, self-chosen correlation ids and `withdraw_settled` (`notify.rb:498`) to copy from. **A
+  remote surface must not subclass `Approval::QueueSurface`** — that class exists so
+  `AutoSurface`/`SecretSurface` *partition* the parked set (`auto_surface.rb:58` /
+  `secret_surface.rb:107`, with a spec asserting the exclusive-or); a human surface races instead.
+- **It is `auto_approve`'s missing half, and the posture `auto` is a different thing entirely.**
+  `AutoSurface` settles only on confidence; a `defer` "leaves the pending for the human surface or
+  the fail-closed timeout" — and away from the desk there *is* no human surface, so every defer is
+  300s of wall clock (`queue.rb:40`) followed by a denial. The run pays the latency and gets the
+  refusal, on exactly the calls where judgement was worth having. Posture `auto` (`approve_all`,
+  `posture.rb:171`) parks nothing at all and the app is inert under it, so the away-from-desk
+  combination is `accept_edits` + `+auto_approve` + a remote layer — and that layer answers
+  `alters_outcome?` **true**, so `Layer::Declaration` requires it to carry a lighter (`layer.rb:58`).
+- **Two prerequisites fall out, both worth landing on their own.** `AutoSurface#settle` is a no-op on
+  `:defer` (`auto_surface.rb:64`), so an abstention is journaled nowhere: the bench cannot count what
+  the oracle punted on, and a remote surface has no honest "the oracle has had its say" trigger. And
+  the `notify` mode layer is declared `alters_outcome: false` with **no consumer anywhere in `lib/` or
+  `exe/`** (`layer.rb:86`) while dunstify's Approve button is the third *deciding* surface — the
+  silently-active policy `Layer::Declaration` exists to prevent, sitting inert in the tree.
+- **Scope is a frontend, not an approval remote** (ruled 2026-08-26). Visibility, history and remote
+  chat are wanted too, and the two want different wires: an approval surface is request/response, a
+  frontend is a durable subscription with backpressure and resume. Three tiers — **watch** (one more
+  sink on `CLI::JournalTee`, at `CLI::Watch`'s read-only-by-construction posture), **answer** (the
+  queue, plus a third producer on the rail `HumanReplies` and `Neovim::CommandInbox` already share),
+  and **drive** (a `you>` line, which *extends* the Timeline and so routes as an inbox item that seeds
+  a turn, never as a second prompt racing `Conductor`). Lain keeps the loop; the phone submits intent.
+- **The wire is the one decision everything hangs on**, and the placement rule rules out `ext/lain`
+  immediately. Leaning: `crates/lain-relay` reusing `rpc.rs`'s `Codec`, plus a shared
+  `crates/lain-wire` so the pending/verdict schema cannot drift between daemon and app, with Ruby
+  staying the dial-out `Core::Client` it already is. **The contract grows either way** — `rpc.rs`
+  refuses msgpack-RPC notifications today and a subscription needs server push. Reconnect is the part
+  already solved: durable sessions, `--resume`, the response WAL, and a content-addressed head the
+  phone can name.
+- **Blast radius is bounded twice before anything new is written.** `Escalation::Triage` is wired
+  since F63 (`switchboard.rb:299`), so a protected path denies *above* the surfaces rung and can never
+  reach a phone; and excluding region-carrying pendings is a one-line predicate. `Approval::Risk`
+  (321 lines, built, **unwired** — item 29's "stays dead, as scoped") is the natural third bound and
+  this is its first real consumer. The status screen owes `/introspect`'s discipline: render the
+  `unreported` rows, because a plausible number read 20 miles from the terminal is F77 with better
+  manners. `Review` stays at the desk — a phone should see *that* a review blocks, and no more.
+- **Unmeasured, and named as such** (research § 8): the Dioxus Android build on this toolchain, the
+  wake path (a foreground service vs. an ntfy buzz that opens the app), and real buzz-to-verdict
+  latency against the 300s window — the number that decides whether a paired device earns its own
+  timeout constant.
+
 **Prompting-area autocomplete** `[exp]` (TODO 31)
 - The ollama meta-task arm (M3b fold-in) names "local autocomplete / interactive prompting" but not
   its surface. Near-term: Reline's `completion_proc` (history, slot names, `@file` paths) — no ghost
@@ -1562,6 +1613,20 @@ XDG path relative, which put machine state back inside the user's repository)
 
 ---
 
+39. **Planned (2026-08-27, panel-reviewed)** —
+    `planning/specs/chunk-qa-round14-escalation-and-isolation.md`: the QA round-14 discharge. Two
+    session-killers and three smaller defects, plus the subagent isolation the `--isolation` flag has
+    always promised and never delivered. **F79**: a spawn that parks a human question leaves a
+    `causal_parents` edge no record carries, so `--fork` and `--resume` both refuse — reproduced on two
+    independent sessions against a control that forks at exit 0. **F80**: a chat's subagents always ran
+    in the host cwd and ENV, because `Subagent::Seam` carries no isolation member at all; the fix wires
+    one and leases the one-shot child synchronously, which also reaches the DB-name and compose-service
+    decorators the backend stack already composes. **F73** (a second cockpit deadlocks its nvim on a
+    swap modal) reproduces from round 13 and is fixed at the scratch buffer. The readers/writers
+    isolation strategy was cut to its own chunk on a panel finding that the toolset cannot answer
+    "may this child write" — `Tool` deliberately carries no such axis. 12 cards, 4 waves.
+
+
 ## Map of the documents
 
 - **Architecture & why:** `~/.claude/plans/jiggly-greeting-avalanche.md` (approved).
@@ -1572,7 +1637,10 @@ XDG path relative, which put machine state back inside the user's repository)
   `specs/cache-economics.md`), `hn-agent-landscape-2026-07.md` (broader HN scan — graders,
   guardrail stack, control-flow axis, Journal-native retrieval; Tier-1 → `specs/graders.md` + M3c/M5/M6
   fold-ins), `orchestration-experiments.md`, `first-class-concepts.md`, `crdt-exploration.md`,
-  `merge-conflict-handling.md` (how lain merges its own workers' work — item 28).
+  `merge-conflict-handling.md` (how lain merges its own workers' work — item 28),
+  `human-in-the-loop-review-research-2026-08.md` (the diff-review surface, 7 measured spikes),
+  `remote-surface-research-2026-08.md` (the phone as a third frontend: the approval queue's
+  spare seam, the two `auto`s, and the wire that decides it — § Interface & UX).
 - **Grounding sources:** `references/` — `INDEX.md`, `SCOPE.md`, `memory-and-retrieval.md`,
   `oss-inspiration.md`, `prompt-caching-mechanics.md`, `firecracker-microvm-isolation.md`,
   26 papers in `papers/rst/`, reference impls in `repos/`, and the recurring HN scans

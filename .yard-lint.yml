@@ -25,6 +25,13 @@ AllValidators:
     - 'spec/**/*'
     - 'test/**/*'
     - 'spike/**/*'
+    # Same exclusion rubocop makes, for a sharper reason here: a hand-run oracle
+    # under planning/ is often a verbatim SNAPSHOT of a lib file at some commit,
+    # kept beside a QA handback so a later round can re-drive rather than
+    # re-derive. YARD merges it into one registry with the file it copies, so
+    # every namespace in it reads as documented twice. Nothing under lib/ or
+    # spec/ loads these, and they are not shipped.
+    - 'planning/**/*'
   FailOnSeverity: warning
 
 # --- coverage policy: off, see the header ---

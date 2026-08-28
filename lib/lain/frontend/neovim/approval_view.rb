@@ -130,7 +130,7 @@ module Lain
         module Detached
           module_function
 
-          def set_approval(_lines, _generation, _rows) = DETACHED
+          def set_approval(_lines, _generation, _rows, _calls, _call_index) = DETACHED
         end
 
         # A keypress turned into a decided pending, or into the sentence saying
@@ -154,7 +154,29 @@ module Lain
         #
         # BUILT IN ONE PASS with the lines it maps, so an index built by a
         # second walk cannot disagree with the rendering the first one drew.
-        Rendering = Data.define(:lines, :owners) do
+        #
+        # `calls` AND `call_index` exist for a reader OUTSIDE Ruby -- `owners`
+        # already answers "which pending" for every caller in this file, so
+        # these two are for the editor, and specifically for the wrap
+        # `#body_for` draws HARD, mid-token: every continuation line opens
+        # with {INDENT}, so a reader who reassembles a command by
+        # concatenating rendered lines puts two spaces in the middle of what
+        # was one contiguous run of bytes, and a substring match against the
+        # ORIGINAL command misses (measured live -- the runtime spec's
+        # `buffer_lines(...).join` is exactly that reader). `calls` is
+        # {#call_of}'s unwrapped string, ONE PER PARKED CALL rather than one
+        # per line: an item's `.inspect` runs once here no matter how many
+        # rows it wraps into, and the msgpack payload this crosses stays
+        # linear in the number of parked calls rather than quadratic in one
+        # call's length times its row count -- object sharing does not dedupe
+        # msgpack, so a duplicate-per-line array re-serializes the same bytes
+        # on every wire crossing. `call_index` is `owners`' own shape (one
+        # entry per LINE) holding not the pending but WHICH member of `calls`
+        # names it, 1-based for the lua table that indexes it, so a cursor on
+        # any of an item's rows still resolves the identical unbroken copy --
+        # at the cost of one small integer per line instead of the string
+        # itself.
+        Rendering = Data.define(:lines, :owners, :calls, :call_index) do
           # The 1-based/0-based seam is guarded here rather than at the call
           # site: line 0 would index -1, the LAST answerable line, so a cursor
           # nvim never reports would silently answer the wrong call. An
@@ -192,8 +214,10 @@ module Lain
         SETTLED = "%<surface>s %<decision>s #{BUFFER} line %<line>s first, and that stands".freeze
 
         # @param rpc [#set_approval] the editor's render inlet ({RpcThread}):
-        #   takes the lines, the stamp to write onto the buffer, and how many
-        #   of those lines are rows, and answers why the rendering did not land
+        #   takes the lines, the stamp to write onto the buffer, how many of
+        #   those lines are rows, the unwrapped call per PARKED CALL, and the
+        #   row->call index that resolves one from a cursor line, and answers
+        #   why the rendering did not land
         # @param poll_interval [Numeric] seconds between sweeps of the parked
         #   set
         def initialize(rpc: Detached, poll_interval: DEFAULT_POLL_INTERVAL)
@@ -358,7 +382,8 @@ module Lain
         def posted(parked)
           rendering = rendering_of(parked)
           generation = @generation + 1
-          return nil unless @rpc.set_approval(rendering.lines, generation, rendering.rows).nil?
+          return nil unless @rpc.set_approval(rendering.lines, generation, rendering.rows, rendering.calls,
+                                              rendering.call_index).nil?
 
           @generation = generation
           @renderings[generation] = rendering
@@ -369,19 +394,40 @@ module Lain
         # Rows FIRST and nothing above them, which is what lets the editor's
         # keys be inert outside the list from a COUNT alone rather than from a
         # pattern match on rendered text kept in step with this method.
+        #
+        # `calls` IS COMPUTED ONCE PER PENDING, here, and threaded into
+        # {#lines_for}/{#summary_for} rather than re-derived from the rendered
+        # text: {#call_of} runs `.inspect` over a tool's whole input, and
+        # calling it again per LINE a wrapped item spans -- once measured at a
+        # 64KB heredoc wrapping to 699 rows -- is 699 allocations of a string
+        # that size for one command nobody asked to see re-cut.
         def rendering_of(parked)
-          return Rendering.new(lines: EMPTY.dup, owners: []) if parked.empty?
+          return Rendering.new(lines: EMPTY.dup, owners: [], calls: [], call_index: []) if parked.empty?
 
-          items = parked.map { |pending| lines_for(pending) }
-          Rendering.new(lines: items.flatten(1) + ["", HINT],
-                        owners: items.zip(parked).flat_map { |lines, pending| Array.new(lines.size, pending) })
+          calls = parked.map { |pending| call_of(pending) }
+          items = parked.zip(calls).map { |pending, call| lines_for(pending, call) }
+          Rendering.new(lines: items.flatten(1) + ["", HINT], owners: owners_for(items, parked),
+                        calls:, call_index: call_index_for(items))
+        end
+
+        # One entry per LINE, the pending it belongs to -- {Rendering#at}'s
+        # own lookup, and never sent across the wire itself.
+        def owners_for(items, parked)
+          items.zip(parked).flat_map { |lines, pending| Array.new(lines.size, pending) }
+        end
+
+        # {#owners_for}'s shape, holding not the pending but its 1-based
+        # position in `calls` -- the lua side's own resolution; {Rendering}'s
+        # doc derives why it rides separately from `owners`.
+        def call_index_for(items)
+          items.each_with_index.flat_map { |lines, index| Array.new(lines.size, index + 1) }
         end
 
         # A summary line and -- only where it had to be cut -- the call in full
         # beneath it, foldable away, so the ordinary list is still one line per
         # call and stays quiet at rest.
-        def lines_for(pending)
-          summary = summary_for(pending)
+        def lines_for(pending, call)
+          summary = summary_for(pending, call)
           return [summary] if summary.length <= WIDTH
 
           [summary[0, WIDTH - ELISION.length] + ELISION] + body_for(summary)
@@ -419,8 +465,13 @@ module Lain
         # here and not a tidying: that prefix is the runtime's whole test for a
         # continuation line, so a context naming NOBODY would draw a summary the
         # fold surface reads as part of the item above it.
-        def summary_for(pending)
-          "#{pending.requester}  #{pending.outstanding.preamble}#{call_of(pending)}".lstrip
+        #
+        # `call` arrives COMPUTED rather than being `call_of(pending)` again --
+        # {#rendering_of} calls {#call_of} exactly once per pending and threads
+        # the result through here and through {#lines_for}, so an item that
+        # wraps into many rows still runs `.inspect` on its input once.
+        def summary_for(pending, call)
+          "#{pending.requester}  #{pending.outstanding.preamble}#{call}".lstrip
         end
       end
     end

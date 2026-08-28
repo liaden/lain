@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 module Lain
   module Review
     class Prefill
@@ -50,10 +52,7 @@ module Lain
       # the whole reason this object exists is to keep the critique's claim and
       # the human's words distinguishable after the edit.
       Promoted = Data.define(:origin, :text) do
-        def path = origin.path
-        def side = origin.side
-        def line = origin.line
-        def rank = origin.rank
+        delegate :path, :side, :line, :rank, to: :origin
 
         # @return [String] the annotation kind, from the finding's rank
         def kind = origin.kind

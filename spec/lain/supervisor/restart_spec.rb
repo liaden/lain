@@ -91,7 +91,11 @@ RSpec.describe Lain::Supervisor::Restart do
   end
   # ---- Scenario: crash and resume --------------------------------------------
 
-  let(:leased_env) { Lain::WorkerEnv.new(cwd: File.join(dir, "worker-checkout"), env: { "REDIS_URL" => "redis://1" }) }
+  # The var is arbitrary -- the example proves a leased WorkerEnv's vars survive
+  # a crash, not what any one of them means.
+  let(:leased_env) do
+    Lain::WorkerEnv.new(cwd: File.join(dir, "worker-checkout"), env: { "CACHE_URL" => "tcp://localhost:6379" })
+  end
 
   def spawn_policy = Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
 

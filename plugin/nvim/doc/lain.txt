@@ -11,7 +11,7 @@ CONTENTS                                                       *lain-contents*
   3. Configuration ..................... |lain-configuration|
   4. The server socket ................. |lain-socket|
   5. Commands and functions ............ |lain-api|
-  6. The attach contract (protocol 13) . |lain-contract|
+  6. The attach contract (protocol 14) . |lain-contract|
      6.1 User events ................... |lain-events|
      6.2 Buffers and b:lain_view ....... |lain-buffers|
      6.3 Highlight groups .............. |lain-highlights|
@@ -151,7 +151,7 @@ lain.status()           The decoded contents of |lain.state_path()| (the
 lain.setup({opts})      See |lain-setup| and |lain-configuration|.
 
 ==============================================================================
-6. THE ATTACH CONTRACT (PROTOCOL 13)                           *lain-contract*
+6. THE ATTACH CONTRACT (PROTOCOL 14)                           *lain-contract*
 
 Everything below is provided by the gem's injected runtime, not by this
 plugin, and works without the plugin installed. It is documented here because
@@ -498,7 +498,7 @@ says so rather than acting when there is no review diff under you, and says so
 when the line under you carries no thread.
 
 ------------------------------------------------------------------------------
-6.5 COMPOSING A MESSAGE (PROTOCOL 13)                           *lain-compose*
+6.5 COMPOSING A MESSAGE (PROTOCOL 14)                           *lain-compose*
                                                               *lain://compose*
 
 Press CTRL-G at lain's terminal prompt and whatever you have typed so far
@@ -532,7 +532,7 @@ even with 'autowriteall': the buffer is hidden, not abandoned, so no write
 fires.
 
 ------------------------------------------------------------------------------
-6.6 ANSWERING A QUESTION SET (PROTOCOL 13)                     *lain-question*
+6.6 ANSWERING A QUESTION SET (PROTOCOL 14)                     *lain-question*
                                                              *lain://question*
 
 The agent asks in SETS: one question or several in a single ask, each with a
@@ -603,7 +603,7 @@ document and reads a typed reply, which answers the WHOLE set in prose rather
 than by selection. Ticking is the editor's gesture, and the only one.
 
 ------------------------------------------------------------------------------
-6.7 APPROVING A TOOL CALL (PROTOCOL 13)                         *lain-approval*
+6.7 APPROVING A TOOL CALL (PROTOCOL 14)                         *lain-approval*
                                                              *lain://approval*
                                                                *:LainApprove*
                                                                   *:LainDeny*
@@ -656,6 +656,10 @@ the one you meant. The gesture carries your cursor's line AND the rendering the
 buffer is holding (`b:lain_view_generation`), which is what makes that true; a
 gesture from a rendering lain no longer holds is refused and says so.
 `b:lain_approval_rows` is how many of the leading lines are rows.
+`b:lain_approval_calls` holds each parked call's command whole and unwrapped,
+and `b:lain_approval_call_index` names which of them a given row belongs to
+(`calls[call_index[N]]`), so a command cut and re-indented across several
+rows can still be read back in one piece.
 
                                                           *lain-approval-race*
 THE EDITOR IS NOT THE ONLY ANSWERER, and this buffer never pretends it is. The
@@ -669,7 +673,7 @@ lain never writes this buffer's answer for you and never pre-selects one: an
 unanswered window denies, so there is no default to press <CR> on.
 
 ------------------------------------------------------------------------------
-6.8 REVIEWING A DOCUMENT (PROTOCOL 13)                           *lain-review*
+6.8 REVIEWING A DOCUMENT (PROTOCOL 14)                           *lain-review*
                                                               *:LainAnnotate*
                                                              *:LainReviewDone*
 
@@ -700,7 +704,7 @@ contract your config can already hook (the buffer variables above are set, and
 the commands exist at attach), not as a workflow you can start today.
 
 ------------------------------------------------------------------------------
-6.9 READING A CHANGESET (PROTOCOL 13)                       *lain-review-diff*
+6.9 READING A CHANGESET (PROTOCOL 14)                       *lain-review-diff*
 
 A changeset review opens each changed file as a PAIR. On the right is the real
 file: 'buftype' is empty, so your language server and treesitter attach to it

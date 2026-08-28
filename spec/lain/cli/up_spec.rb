@@ -1444,10 +1444,51 @@ RSpec.describe Lain::CLI::Up do
         # `Up::Cockpit::LAIN_START`.
         expect(first_pane_call(calls).last)
           .to eq(Shellwords.join(["nvim", "--cmd", "set rtp+=#{paths.nvim_plugin_root}", "--listen", socket,
+                                  "-c", Lain::CLI::Up::Cockpit::NO_SWAPFILE,
                                   "-c", Lain::CLI::Up::Cockpit::SCRATCH_BUFFER,
                                   "-c", Lain::CLI::Up::Cockpit::LAIN_START]))
         expect(split_call(calls).last).to end_with("chat --nvim #{Shellwords.escape(socket)}")
       end
+    end
+
+    # The bug this guards: the scratch buffer's name is a CONSTANT
+    # (`SCRATCH_BUFFER`), so two cockpits on two different projects collide on
+    # one swap path. The scratch buffer is DIRTY as soon as a view lands --
+    # its steady state -- and that is exactly what trips nvim's E325 recovery
+    # prompt on a second cockpit; it blocks the pane before it serves RPC, so
+    # `lain://approval`/`:LainApprove` are unreachable while the chat pane
+    # looks healthy from outside. The fix has to be scoped to the buffer, not
+    # the process: the neighbouring `annotate_spec.rb`'s editor `around` block
+    # reaches for the process-wide `-n`/`set noswapfile` form, on purpose, for
+    # its own unrelated reason -- a live demonstration of the shape this must
+    # NOT copy, since that one would silently kill swap recovery for every
+    # file a human later opens in the review tab.
+    #
+    # Presence alone is not the bug: `:file` is what CREATES the buffer's
+    # swapfile, so a `setlocal noswapfile` placed AFTER `SCRATCH_BUFFER` in
+    # the argv is too late -- the collision with a dirty peer has already
+    # happened and nvim is blocked on "Press ENTER" before that `-c` is ever
+    # reached. The property that actually decides this card is order, not
+    # membership -- measured directly against a real nvim, `OLD -> NEW`
+    # (flag after) still reproduces the collision, `OLD -> FIRST` (flag
+    # before) does not.
+    it "disables the swapfile for the scratch buffer before the buffer is opened, not for the whole process" do
+      calls = []
+
+      cockpit_up(calls, nvim: "").call
+
+      tokens = Shellwords.split(first_pane_call(calls).last)
+      expect(tokens.index(Lain::CLI::Up::Cockpit::NO_SWAPFILE))
+        .to be < tokens.index(Lain::CLI::Up::Cockpit::SCRATCH_BUFFER)
+    end
+
+    # The other half of the same AC: the fix must not touch the name snacks'
+    # guard reads for (see `SCRATCH_BUFFER`'s docstring) -- this is a live
+    # re-check of that constant alongside the swapfile change, not a new rule.
+    it "keeps the scratch buffer's name and scheme unchanged by the swapfile fix" do
+      expect(Lain::CLI::Up::Cockpit::SCRATCH_BUFFER).to start_with("file ")
+      expect(Lain::CLI::Up::Cockpit::SCRATCH_BUFFER).to include("lain-cockpit://")
+      expect(Lain::CLI::Up::Cockpit::SCRATCH_BUFFER).not_to include("lain://")
     end
 
     # A dashboard plugin (snacks.nvim here, but alpha/dashboard-nvim/

@@ -11,12 +11,29 @@ RSpec.describe Lain::Agent::Accounting do
     journal_io.string.each_line.map { |line| JSON.parse(line) }
   end
 
-  def response(input: 10, output: 5, model: "claude-opus-4-8", stop_reason: :end_turn)
+  def response(input: 10, output: 5, model: "claude-opus-4-8", stop_reason: :end_turn,
+               usage: Lain::Usage.new(input_tokens: input, output_tokens: output))
     Lain::Response.new(
       content: [{ "type" => "text", "text" => "hi" }],
-      stop_reason:, model:,
-      usage: Lain::Usage.new(input_tokens: input, output_tokens: output)
+      stop_reason:, model:, usage:
     )
+  end
+
+  # A real Ollama `/api/chat` body that finished a turn without reporting what
+  # the prompt cost -- the field is simply absent, which the streaming assembler
+  # is separately pinned to reproduce. Routed through the real decoder rather
+  # than hand-built, because the Usage shape this yields (a zero input beside a
+  # large output) is the one a hand-written fixture does not think to try.
+  def ollama_body_missing_prompt_eval_count
+    { "model" => "qwen3:4b", "created_at" => "2026-08-17T23:28:20.042698269Z",
+      "message" => { "role" => "assistant", "content" => "done" },
+      "done" => true, "done_reason" => "stop",
+      "total_duration" => 1_292_212_105, "load_duration" => 224_965_477,
+      "eval_count" => 250, "eval_duration" => 929_828_000 }
+  end
+
+  def ollama_usage(body)
+    Object.new.extend(Lain::Provider::Ollama::Decoding).send(:build_usage, body)
   end
 
   it "starts at Usage.zero" do
@@ -83,6 +100,75 @@ RSpec.describe Lain::Agent::Accounting do
 
       expect(accounting.last_turn_usage).to eq(250)
       expect(accounting.usage.total_input_tokens).to eq(350)
+    end
+
+    context "when a response reports no usage at all" do
+      it "leaves the last real reading standing rather than reading as an empty context" do
+        accounting = described_class.new
+        accounting.observe(response(input: 100, output: 5), digest: "blake3:one")
+        accounting.observe(response(input: 0, output: 0), digest: "blake3:zero")
+
+        expect(accounting.last_turn_usage).to eq(100)
+      end
+
+      it "still folds the zero turn into the cumulative total" do
+        accounting = described_class.new
+        accounting.observe(response(input: 100, output: 5), digest: "blake3:one")
+        accounting.observe(response(input: 0, output: 0), digest: "blake3:zero")
+
+        expect(accounting.usage).to eq(Lain::Usage.new(input_tokens: 100, output_tokens: 5))
+      end
+
+      it "still journals a turn_usage record for the turn, which was paid for either way" do
+        accounting = described_class.new(journal:)
+        accounting.observe(response(input: 100, output: 5), digest: "blake3:one")
+        accounting.observe(response(input: 0, output: 0), digest: "blake3:zero")
+
+        expect(records.map { |record| record["type"] }).to eq(%w[turn_usage turn_usage])
+        expect(records.last["digest"]).to eq("blake3:zero")
+        expect(records.last["usage"]).to include("input_tokens" => 0, "output_tokens" => 0)
+      end
+
+      it "is still absent when the very first response reports no usage" do
+        accounting = described_class.new
+        accounting.observe(response(input: 0, output: 0), digest: "blake3:zero")
+
+        expect(accounting.last_turn_usage).to be_nil
+      end
+
+      it "is the shape Ollama yields when the body omits prompt_eval_count" do
+        usage = ollama_usage(ollama_body_missing_prompt_eval_count)
+
+        expect(usage.total_input_tokens).to eq(0)
+        expect(usage.output_tokens).to eq(250)
+      end
+
+      it "leaves a real reading standing when Ollama reports output but no prompt cost" do
+        accounting = described_class.new
+        accounting.observe(response(input: 900_000, output: 5), digest: "blake3:one")
+        accounting.observe(
+          response(usage: ollama_usage(ollama_body_missing_prompt_eval_count)),
+          digest: "blake3:two"
+        )
+
+        expect(accounting.last_turn_usage).to eq(900_000)
+      end
+
+      it "leaves the reading standing on a negative input sum, which neither type forbids" do
+        accounting = described_class.new
+        accounting.observe(response(input: 900_000, output: 5), digest: "blake3:one")
+        accounting.observe(response(input: -10, output: 5), digest: "blake3:two")
+
+        expect(accounting.last_turn_usage).to eq(900_000)
+      end
+
+      it "takes the reading when only the output tokens are zero" do
+        accounting = described_class.new
+        accounting.observe(response(input: 100, output: 5), digest: "blake3:one")
+        accounting.observe(response(input: 7, output: 0), digest: "blake3:two")
+
+        expect(accounting.last_turn_usage).to eq(7)
+      end
     end
   end
 end

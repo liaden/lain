@@ -85,10 +85,10 @@ with `git ls-files --cached --others --exclude-standard` before trusting a count
 
 | target | files | lines | |
 |---|---:|---:|---|
-| `lib` | 742 | 161,963 | **over both** |
-| `lib/lain/frontend` | 52 | 13,578 | fits |
-| `lib/lain/review` | 45 | 10,722 | fits |
-| `lib/lain/survey` | 9 | 1,343 | fits |
+| `lib` | ~750 | ~153,000 | **over both** — 742/161,963 (r11), 748 (r14), **749 / 152,909 (r15)**; RE-COUNT, never copy |
+| `lib/lain/frontend` | 53 | 13,801 | fits |
+| `lib/lain/review` | 45 | 9,663 | fits |
+| `lib/lain/survey` | 9 | 1,278 | fits |
 
 ```
 you> /survey ./lib
@@ -105,7 +105,7 @@ Check **four** things about the refusal, not one:
    reached on a count alone; a multi-second refusal means something read hunks it had already
    decided not to present.
 
-Then `--unbounded` over the same tree. It lifts two of the three ceilings. Whether 742 files at
+Then `--unbounded` over the same tree. It lifts two of the three ceilings. Whether ~750 files at
 162k lines is *usable* is a separate question from whether it is *permitted* — record the wall
 time and what the sidebar does, and file the usability half separately from any correctness half.
 

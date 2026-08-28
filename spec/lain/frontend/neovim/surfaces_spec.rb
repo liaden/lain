@@ -35,7 +35,9 @@ RSpec.describe Lain::Frontend::Neovim::Surfaces do
       # from it, and a buffer primed through `set_view` would have no row count
       # at all -- so its `y`/`n` gestures would be inert on a list that looks
       # answerable ({Lain::Frontend::Neovim::ApprovalView}'s own note).
-      def set_approval(lines, generation, rows) = @approvals << { lines:, generation:, rows: }
+      def set_approval(lines, generation, rows, calls, call_index)
+        @approvals << { lines:, generation:, rows:, calls:, call_index: }
+      end
 
       def names = @views.map(&:first)
       def stamps = @views.to_h { |posted| [posted.first, posted.last] }

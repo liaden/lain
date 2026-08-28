@@ -35,17 +35,17 @@ RSpec.describe Lain::Isolation::Services do
       expect(services.first).to be_a(Lain::Isolation::Services::Postgres)
     end
 
-    it "declares a Redis service from a bare `redis` line" do
-      services = load_services("redis\n")
+    it "declares a compose service from a `compose` line" do
+      services = load_services(%(compose service: "cache", container_port: 6379, env_var: "CACHE_URL"\n))
 
-      expect(services.to_a.map(&:name)).to eq([:redis])
-      expect(services.first).to be_a(Lain::Isolation::Services::Redis)
+      expect(services.to_a.map(&:name)).to eq([:compose_cache])
+      expect(services.first).to be_a(Lain::Isolation::Services::Compose)
     end
 
-    it "declares both services in declaration order" do
-      services = load_services("postgres\nredis\n")
+    it "declares several services in declaration order" do
+      services = load_services(%(postgres\ncompose service: "cache", container_port: 6379, env_var: "CACHE_URL"\n))
 
-      expect(services.map(&:name)).to eq(%i[postgres redis])
+      expect(services.map(&:name)).to eq(%i[postgres compose_cache])
     end
 
     it "threads declared options through to the service value object" do
@@ -58,7 +58,7 @@ RSpec.describe Lain::Isolation::Services do
     end
 
     it "is deeply frozen -- the collection and its declarations" do
-      services = load_services("postgres\nredis\n")
+      services = load_services(%(postgres\ncompose service: "cache", container_port: 6379, env_var: "CACHE_URL"\n))
 
       expect(services).to be_frozen
       expect(services.map(&:frozen?)).to all(be(true))
@@ -66,7 +66,37 @@ RSpec.describe Lain::Isolation::Services do
 
     it "refuses an unknown service verb loudly, naming the known services" do
       expect { load_services("mongodb\n") }
-        .to raise_error(Lain::Isolation::Services::Builder::Unknown, /mongodb.*postgres.*redis/m)
+        .to raise_error(Lain::Isolation::Services::Builder::Unknown, /mongodb.*postgres.*compose/m)
+    end
+
+    # Redis was a real verb once, so a `.lain/services.rb` that worked before an
+    # upgrade hits this line. A bare "unknown service" would strand its author
+    # with no route, which is why the retired verb keeps a method of its own.
+    it "refuses a retired `redis` line by name rather than as an unknown verb" do
+      expect { load_services("redis\n") }
+        .to raise_error(Lain::Isolation::Services::Builder::Retired, /redis/)
+    end
+
+    it "names the container route in the refusal, so an upgraded project knows what to declare instead" do
+      expect { load_services("redis\n") }
+        .to raise_error(Lain::Isolation::Services::Builder::Retired, /container.*compose|compose.*container/mi)
+    end
+
+    it "quotes the whole replacement declaration, so the refusal is copy-pasteable rather than a hint" do
+      expect { load_services("redis\n") }
+        .to raise_error(Lain::Isolation::Services::Builder::Retired,
+                        a_string_including(Lain::Isolation::Services::Builder::REDIS_REPLACEMENT))
+    end
+
+    # Advice a spec cannot falsify is advice that rots, so the refusal's
+    # replacement line is DECLARED here through the real DSL and the URL it
+    # yields is checked -- `scheme:` is what stands between this and a
+    # `tcp://host:port` no redis client parses.
+    it "hands over a replacement line that really works, yielding a URL a redis client can parse" do
+      services = load_services("#{Lain::Isolation::Services::Builder::REDIS_REPLACEMENT}\n")
+
+      expect(services.first.name).to eq(:compose_redis)
+      expect(services.first.url(32_768)).to eq("redis://localhost:32768")
     end
 
     it "refuses a duplicate service declaration loudly (a second one would silently clobber its URL)" do
@@ -108,18 +138,6 @@ RSpec.describe Lain::Isolation::Services do
       # No `user:password@` form -- the authority carries a username at most.
       expect(pg.url("abc123")).not_to match(%r{//[^/@]*:[^/@]*@})
       expect(pg.url("abc123")).to eq("postgresql://worker@db/lain_worker_abc123")
-    end
-  end
-
-  describe Lain::Isolation::Services::Redis do
-    subject(:redis) { described_class.new }
-
-    it "defaults to 16 databases (the redis default) so index 0 is the reserved default" do
-      expect(redis.max_databases).to eq(16)
-    end
-
-    it "builds a REDIS_URL selecting the given DB-index" do
-      expect(redis.url(3)).to eq("redis://localhost:6379/3")
     end
   end
 end

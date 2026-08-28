@@ -129,8 +129,14 @@ module Lain
         # count Ruby mints is the only thing that says so without lua pattern
         # matching text Ruby drew. The stamp is REQUIRED like {SET_REVIEW}'s: a
         # row moves the instant any other call is answered.
-        SET_APPROVAL = "local lines, gen, rows = ...; " \
-                       "if _G.__lain then _G.__lain.set_approval(lines, gen, rows) end"
+        #
+        # `calls` and `call_index` ride beside `rows` because lua cannot
+        # recover either from `lines` -- {ApprovalView::Rendering}'s own
+        # comment is where the shape and the reason both live. `calls` is one
+        # entry per PARKED CALL and `call_index` is `rows`-shaped, resolving a
+        # cursor line to its member of `calls`.
+        SET_APPROVAL = "local lines, gen, rows, calls, call_index = ...; " \
+                       "if _G.__lain then _G.__lain.set_approval(lines, gen, rows, calls, call_index) end"
 
         # `args` is exactly what the entry point named by `lua` takes, already in
         # order. Holding the argument LIST rather than named fields is what lets
@@ -259,8 +265,8 @@ module Lain
         # blocking push against a full queue would park the fiber that is the
         # editor's only view of a PARKED AGENT -- while the queue's fail-closed
         # clock ran down underneath it.
-        def post_approval(lines, generation, rows)
-          @queue.push(Command.new(args: [lines, generation, rows], lua: SET_APPROVAL), true)
+        def post_approval(lines, generation, rows, calls, call_index)
+          @queue.push(Command.new(args: [lines, generation, rows, calls, call_index], lua: SET_APPROVAL), true)
         end
 
         # Send everything currently queued, one nvim_exec_lua notify per
@@ -435,8 +441,8 @@ module Lain
         # {ApprovalView} withholds the stamp of a rendering nothing took, so a
         # keypress citing one is refused instead of resolving against rows nobody
         # can see.
-        def set_approval(lines, generation, rows)
-          refusable(ApprovalView::DETACHED) { @queue.post_approval(lines, generation, rows) }
+        def set_approval(lines, generation, rows, calls, call_index)
+          refusable(ApprovalView::DETACHED) { @queue.post_approval(lines, generation, rows, calls, call_index) }
         end
 
         private

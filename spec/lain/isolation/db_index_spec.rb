@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
 # The DB-index isolation strategy: decorates an inner isolation backend and,
-# for each service a project declares, provisions a per-worker Postgres DB and
-# assigns a distinct Redis DB-index, injecting DATABASE_URL/REDIS_URL into the
-# lease's WorkerEnv and reclaiming both on release.
+# for each service a project declares, provisions a per-worker Postgres DB named
+# from the worker key, injecting DATABASE_URL into the lease's WorkerEnv and
+# dropping the database again on release.
 #
 # The default suite runs against an INJECTED fake shell factory and a stub Paths
-# -- deterministic, no Postgres or Redis needed. The real end-to-end round trip
-# is the :api_integration context at the bottom (guarded on pg/redis being present).
+# -- deterministic, no Postgres needed. The real end-to-end round trip is the
+# :services context at the bottom (guarded on the pg CLI tools being present).
 # Records every argv it is asked to run and hands back a fake shell whose exit
 # status is scripted -- so a spec asserts the exact createdb/dropdb command
 # line, and drives the collision path by scripting a nonzero exit.
@@ -74,7 +74,6 @@ RSpec.describe Lain::Isolation::DbIndex do
       lease = backend.acquire("w1")
 
       expect(lease.worker_env.env).not_to have_key("DATABASE_URL")
-      expect(lease.worker_env.env).not_to have_key("REDIS_URL")
       expect(shell.calls).to be_empty
       expect(lease.release).to be(true)
     end
@@ -129,83 +128,73 @@ RSpec.describe Lain::Isolation::DbIndex do
     end
   end
 
-  describe "a declared Redis service" do
-    subject(:backend) { build([redis]) }
-
-    let(:redis) { Lain::Isolation::Services::Redis.new }
-
-    it "gives two workers distinct Redis DB-indices off the default 0" do
-      one = backend.acquire("w1")
-      two = backend.acquire("w2")
-
-      expect(one.worker_env.env.fetch("REDIS_URL")).to eq("redis://localhost:6379/1")
-      expect(two.worker_env.env.fetch("REDIS_URL")).to eq("redis://localhost:6379/2")
-    end
-
-    it "returns a released index to the pool for reuse" do
-      one = backend.acquire("w1")
-      one.release
-      two = backend.acquire("w2")
-
-      expect(two.worker_env.env.fetch("REDIS_URL")).to eq("redis://localhost:6379/1")
-    end
-
-    it "refuses LOUDLY on pool exhaustion rather than wrapping into a used index" do
-      backend = build([Lain::Isolation::Services::Redis.new(max_databases: 2)])
-      backend.acquire("w1") # claims the sole index (1), leaving none
-
-      expect { backend.acquire("w2") }.to raise_error(Lain::Isolation::DbIndex::Refused, /exhaust/i)
-    end
-  end
-
-  describe "both services declared" do
-    subject(:backend) do
-      build([Lain::Isolation::Services::Postgres.new, Lain::Isolation::Services::Redis.new])
+  # Two services in one lease, which is where ROLLBACK and INDEPENDENT TEARDOWN
+  # live. DbIndex is kind-agnostic -- it provisions whatever answers
+  # `#provision` -- so distinct prefixes and env vars are all that make these
+  # two.
+  #
+  # NOT REACHABLE THROUGH THE DSL, and that is worth stating plainly rather than
+  # leaving as a smell. Postgres is the only class answering `#provision` today,
+  # and `Builder#refuse_duplicate_name` REFUSES a second postgres line
+  # (`Builder::Duplicate`), because `Postgres#name` is `:postgres` whatever its
+  # prefix. This block is therefore not a depiction of a configuration a user
+  # can write; it keeps DbIndex's N-service contract honest for the next class
+  # that provisions, since nothing else would fail if that contract broke.
+  #
+  # One consequence to know before reading the assertions: every surviving
+  # `Provisioned` releases through `dropdb`, so both legs here are shell-backed
+  # and the non-shell release lambda -- a teardown that fails without a
+  # subprocess, which the retired index-release was -- is no longer exercised
+  # alongside one that shells out.
+  describe "two declared services" do
+    def two_postgres
+      [Lain::Isolation::Services::Postgres.new(prefix: "primary"),
+       Lain::Isolation::Services::Postgres.new(prefix: "reporting", env_var: "REPORTING_URL")]
     end
 
     it "injects both URLs into one lease's WorkerEnv" do
-      lease = backend.acquire("w1")
+      lease = build(two_postgres).acquire("w1")
 
-      expect(lease.worker_env.env.fetch("DATABASE_URL")).to eq("postgresql:///lain_worker_hashw1")
-      expect(lease.worker_env.env.fetch("REDIS_URL")).to eq("redis://localhost:6379/1")
+      expect(lease.worker_env.env.fetch("DATABASE_URL")).to eq("postgresql:///primary_hashw1")
+      expect(lease.worker_env.env.fetch("REPORTING_URL")).to eq("postgresql:///reporting_hashw1")
     end
 
-    it "rolls back the created DB when a later service fails to provision" do
-      # Redis capped at 1 usable index; a second acquire exhausts the pool AFTER
-      # createdb ran, so the created DB must be dropped on the failed acquire.
-      backend = build([Lain::Isolation::Services::Postgres.new,
-                       Lain::Isolation::Services::Redis.new(max_databases: 2)])
-      backend.acquire("w1")
-      shell.calls.clear
+    it "rolls back the first created DB when a later service fails to provision" do
+      # Only the SECOND createdb collides, so the first database is already made
+      # when the acquire fails -- and must be dropped rather than left behind.
+      collide = FakeShellFactory.new(exit_for: lambda { |argv|
+        argv.first == "createdb" && argv.last.start_with?("reporting_") ? 1 : 0
+      })
+      backend = described_class.new(services: two_postgres, inner: Lain::Isolation::Null.new,
+                                    paths: stub_paths, shell_out_factory: collide)
 
-      expect { backend.acquire("w2") }.to raise_error(Lain::Isolation::DbIndex::Refused)
-      expect(shell.calls).to include(%w[dropdb --if-exists lain_worker_hashw2])
+      expect { backend.acquire("w1") }.to raise_error(Lain::Isolation::DbIndex::Refused)
+      expect(collide.calls).to include(%w[dropdb --if-exists primary_hashw1])
     end
 
     it "frees every service on release even when one teardown raises, then re-raises loudly" do
-      # Postgres is declared FIRST, so its dropdb runs first on release; scripting
-      # it to fail proves the Redis index behind it is still freed (a later worker
-      # reuses index 1) AND that the failure still propagates.
-      dropdb_fails = FakeShellFactory.new(exit_for: ->(argv) { argv.first == "dropdb" ? 1 : 0 })
-      backend = described_class.new(
-        services: [Lain::Isolation::Services::Postgres.new, Lain::Isolation::Services::Redis.new],
-        inner: Lain::Isolation::Null.new, paths: stub_paths, shell_out_factory: dropdb_fails
-      )
+      # The FIRST dropdb fails, so an aborting loop would strand the second
+      # database; every teardown must still be attempted before the raise.
+      dropdb_fails = FakeShellFactory.new(exit_for: lambda { |argv|
+        argv.first == "dropdb" && argv.last.start_with?("primary_") ? 1 : 0
+      })
+      backend = described_class.new(services: two_postgres, inner: Lain::Isolation::Null.new,
+                                    paths: stub_paths, shell_out_factory: dropdb_fails)
       lease = backend.acquire("w1")
 
       expect { lease.release }.to raise_error(Lain::Isolation::DbIndex::Refused, /dropdb/)
-      expect(backend.acquire("w2").worker_env.env.fetch("REDIS_URL")).to eq("redis://localhost:6379/1")
+      expect(dropdb_fails.calls).to include(%w[dropdb --if-exists reporting_hashw1])
     end
   end
 
-  # The real thing: a live Postgres and Redis. Opt-in via the dedicated :services
-  # tag (LAIN_SERVICES=1 -- see spec/support/tags.rb); additionally SKIPS when the
-  # CLI tools are absent, so an opted-in run on a machine without pg/redis reports
-  # a gap, not a failure.
+  # The real thing: a live Postgres. Opt-in via the dedicated :services tag
+  # (LAIN_SERVICES=1 -- see spec/support/tags.rb); additionally SKIPS when the
+  # CLI tools are absent, so an opted-in run on a machine without postgres
+  # reports a gap, not a failure.
   describe "end to end", :services do
     before do
-      %w[createdb dropdb redis-cli].each do |tool|
-        skip("#{tool} not on PATH -- install postgres/redis to run this :services spec") \
+      %w[createdb dropdb].each do |tool|
+        skip("#{tool} not on PATH -- install postgres to run this :services spec") \
           unless system("sh", "-c", "command -v #{tool}", out: File::NULL, err: File::NULL)
       end
     end

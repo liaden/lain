@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+
 module Lain
   class Mode
     # One composable, orthogonal toggle -- Emacs' minor mode. A layer is
@@ -114,11 +116,9 @@ module Lain
 
       def self.empty = EMPTY
 
-      def each(&block) = names.each(&block)
-
-      def empty? = names.empty?
-
-      def size = names.size
+      # The set IS its names, in declaration order, so the Enumerable surface
+      # is theirs rather than a walk this object reimplements.
+      delegate :each, :empty?, :size, to: :names
 
       def layers = names.map { |name| Layer.for(name) }
 

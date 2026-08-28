@@ -39,8 +39,18 @@ home = "xdg"
 TOML
 ```
 
-Then create the home's layout — `research.md`, `epic.md`, `issues/<id>.md`, `plans/<id>.md` — under
-the resolved home. **`lain epic status` prints the home it resolved**, so run it once with an empty
+Then create the home's layout under the resolved home.
+
+**The issues live INSIDE `epic.md`, in that document's own markdown grammar — NOT as
+`issues/<id>.md` files with status frontmatter.** This paragraph said otherwise until round 13,
+which hand-wrote the layout as described, got a silent **zero** issues out of a non-empty `epic.md`,
+and then read `Epic::Document.parse_markdown` (`lib/lain/epic/document.rb:142`) —
+`Graph.new(issues: Reader.new(source).issues)`, parsed from the epic document, with everything above
+the first heading dropped as preamble. Write `epic.md` to that grammar (`Epic::Document::Writer` is
+the reference for what it emits) and verify the count in `lain epic status` before building
+anything on top of it: a driver following the old wording gets `0/0 done` and
+`remaining: nothing -- every issue is done`, which reads like a finished epic rather than an
+unparsed one. **`lain epic status` prints the home it resolved**, so run it once with an empty
 home first and write into the path it names rather than reconstructing
 `<state_home>/epics/<project_hash>/` by hand. That path is a hash; a driver that guesses it writes a
 second epic nobody reads and then files "status shows nothing" as a defect.

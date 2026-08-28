@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/module/delegation"
+require "monitor"
+
 module Lain
   module Tools
     class Subagent < Tool # rubocop:disable Style/Documentation -- doc lives on the reopen below; see .rubocop.yml's note
@@ -139,14 +142,16 @@ module Lain
       end
 
       # A nested copy of this tool, for a child's union: same {Seam} and config,
-      # rebinding only the seam's parent handle to the CHILD so the grandchild's
-      # lineage names the child's head. The ceiling is capped, never RAISED past
-      # this tool's own, so a tool wired never to spawn (max_depth 0) stays that
-      # way whatever the spawner had left. Public only for {ChildBuilder}, which
-      # is not a Subagent, so `protected` can no longer say "only the spawn
-      # machinery".
-      def descend(parent:, ceiling:)
-        config = @builder.config(parent:)
+      # rebinding the seam's parent handle to the CHILD so the grandchild's
+      # lineage names the child's head, and its escalation road to the CHILD's
+      # OWN ({ChildBuilder#config}) so a grandchild's question relays through
+      # the child rather than skipping it. The ceiling is capped, never RAISED
+      # past this tool's own, so a tool wired never to spawn (max_depth 0)
+      # stays that way whatever the spawner had left. Public only for
+      # {ChildBuilder}, which is not a Subagent, so `protected` can no longer
+      # say "only the spawn machinery".
+      def descend(parent:, escalation:, ceiling:)
+        config = @builder.config(parent:, escalation:)
         self.class.new(**config, max_depth: [@max_depth, ceiling].min, name: @name,
                                  announces_as: @announces_as, mode: @mode, log: @log)
       end
@@ -208,8 +213,22 @@ module Lain
 
       # `ask` seeds the prompt as the child's first user turn: fresh starts it
       # as a root, inherit starts it on the parent's head (an O(1) fork).
+      #
+      # Every one-shot dispatch runs in a leased environment, and the lease is
+      # taken UNCONDITIONALLY: {Isolation::Null} hands back {WorkerEnv.default}
+      # and reclaims nothing, so an unisolated run is the run it always was and
+      # there is no `if isolation` here to get the sense of backwards. The
+      # ACTOR path does not come through here -- {Supervisor#adopt} acquires
+      # that lease and hands its env to {#launch_actor}, and leasing twice for
+      # one worker would be two checkouts where the operator asked for one.
+      #
+      # The journal is the SEAM's, read through the same delegator every other
+      # record on this path uses, so the lease lifecycle cannot end up writing
+      # to a different channel than the spawn it belongs to.
       def run_child(prompt, parent, on_stream_started: nil)
-        build_child(parent, WorkerEnv.default).answered { |child| child.ask(prompt, on_stream_started:) }
+        isolation.hold(@name, journal:) do |worker_env|
+          build_child(parent, worker_env).answered { |child| child.ask(prompt, on_stream_started:) }
+        end
       end
 
       def build_child(parent, worker_env) = @builder.build(parent, ceiling: @max_depth - 1, worker_env:)
@@ -258,9 +277,9 @@ module Lain
         handle.respond_to?(:call) ? handle.call : handle
       end
 
-      def journal = @seam.journal
-      def observer = @seam.observer
-      def supervisor = @seam.supervisor
+      # The seam's collaborators, passed through untouched -- only
+      # {#parent_timeline} needs the thunk-or-value reading above.
+      delegate :journal, :observer, :supervisor, :isolation, to: :@seam
     end
 
     # A subagent as an ordinary tool: possessing it is the authorization to
@@ -335,15 +354,17 @@ module Lain
       # there. The word is taken twice; read which object is being asked.
       GENERIC_DENIAL = -> { Effect::Handler::Gate::DENIAL }
 
-      # The ask-the-human seam a spawn was never taught about. It enrols a bare
-      # {AskHuman}: the child HOLDS the capability and writes its Q into the
-      # shared Store, but announcement lives in {AskHuman::Notifying} so the
-      # question reaches no queue and no desktop, and the registration is
-      # {AskHuman::Directory::Unheld} so no answer can be routed back.
+      # The ask-the-human seam a spawn was never taught about: there is no
+      # queue and no desktop for a question to reach, at ANY depth an
+      # escalation might relay through, so it enrols an {AskHuman::Unattended}
+      # rather than a bare {AskHuman} -- the refusal a spawn under it gets is
+      # immediate and names why, instead of writing a Q that parks forever
+      # with nobody able to see it. The registration stays
+      # {AskHuman::Directory::Unheld}: nothing is ever outstanding to route an
+      # answer back to.
       #
-      # NOT a sanctioned production state -- a child parked on a question nobody
-      # can see is the exact failure the arrival seam exists to prevent, and the
-      # exe passes the run's own askers. It duplicates
+      # NOT a sanctioned production state -- the exe always passes the run's
+      # own askers, wired to a real queue. It duplicates
       # {CLI::Wiring::Askers.unwired} because `lain.rb` loads `lain/cli` before
       # `lain/tools`, so this file cannot name that class -- and neither should
       # it: a spawn asks for an enrolment, not for the CLI's way of making one.
@@ -355,13 +376,124 @@ module Lain
         Enrolled = Data.define(:asker, :registration)
 
         # `**` and not `agent:`, because there is nobody to name an asker TO.
+        # `text: AskHuman::Unattended::NO_MAILBOX` rather than the class
+        # default: this seam was never wired to a queue, which is not what
+        # `--non-interactive` means, so the DEFAULT wording (accurate for
+        # {CLI::Wiring::Askers#asker_over}'s own case) would state a false
+        # reason here.
         def self.enrol(parent, **)
-          Enrolled.new(asker: AskHuman.new(parent:), registration: AskHuman::Directory::Unheld)
+          asker = AskHuman::Unattended.new(parent:, text: AskHuman::Unattended::NO_MAILBOX)
+          Enrolled.new(asker:, registration: AskHuman::Directory::Unheld)
         end
 
         def self.inspect = "Lain::Tools::Subagent::NoAskers"
         def self.to_s = inspect
       end
+
+      # A lease a dispatch could not give back. Its own record because the
+      # tolerance below must not be silent: the checkout is still on disk, it
+      # will defeat the next acquire at that path, and `worker_key` is how a
+      # human finds it. {Stagger}'s records are the shape -- a tool-local Data
+      # on the tool's own journal.
+      LeaseNotReclaimed = Data.define(:worker_key, :error) do
+        include Telemetry::Journalable
+
+        def initialize(worker_key:, error:)
+          super(worker_key: worker_key.to_s.dup.freeze, error: error.to_s.dup.freeze)
+        end
+      end
+
+      # Where a child's execution environment is leased FROM, and how the
+      # workers leasing it are named. The two travel as one object because the
+      # NAME is what a backend keys its resource on: {Isolation::Worktree}
+      # derives a checkout path from the worker id and refuses a path a live
+      # lease already holds, so an id handed out twice is a refused spawn or a
+      # shared working tree, depending on which backend the run wired. The
+      # backend arrives INJECTED -- a run resolves exactly one, and the
+      # {Supervisor} is handed that same instance -- because two backends over
+      # one project each allocate from state the other cannot see.
+      #
+      # ONE PER SEAM, which is one per run, and that is what makes the sequence
+      # correct rather than merely monotonic. A nested spawn's tool is a
+      # {Subagent#descend} copy built from `Seam#with`, and {Skill::RoleSpawn}
+      # builds a FRESH Subagent per call over the seam it holds -- so parent,
+      # child, grandchild and two concurrent role spawns all draw from this one
+      # sequence. A counter owned by the tool instead would hand two of them the
+      # same number, since each of those tools is a different object that never
+      # meets the others.
+      #
+      # The SPELLING of the id is not here: {Supervisor} numbers the actors an
+      # operator adopts off a sequence this one cannot see, and the two lanes
+      # must not be able to name one resource, so {Isolation::WorkerId} owns
+      # both spellings and the proof that they cannot meet. This object owns
+      # only the sequence its own lane counts along.
+      #
+      # Monitor-guarded because {Subagent#fan_out} dispatches siblings
+      # concurrently: two fibers really are inside `#hold` at once, and `+= 1`
+      # is a read and a write with a suspension point available between them.
+      class Leases
+        # @param backend [#acquire] the {Isolation} backend a dispatch leases
+        #   from; the shared-process baseline by default, whose lease is
+        #   {WorkerEnv.default} and whose release reclaims nothing -- which is
+        #   what lets every spawn lease unconditionally
+        def initialize(backend: Isolation::Null.new)
+          @backend = backend
+          @monitor = Monitor.new
+          @count = 0
+        end
+
+        # One dispatch's whole lease lifetime: mint a worker, acquire, run the
+        # block under the leased environment, give it back.
+        #
+        # `ensure` and not `rescue StandardError`, because a cancelled dispatch
+        # raises `Async::Stop`, which is not a StandardError, and a child
+        # cancelled mid-ask has left its checkout as unreachable as one that
+        # returned. `&.` covers the acquire itself refusing, which provisioned
+        # nothing to reclaim.
+        #
+        # @param role [String] what this worker is for, so a checkout left
+        #   behind names the spawn it belonged to
+        # @param journal [#<<] where a failed reclaim is recorded
+        # @yieldparam worker_env [WorkerEnv] the leased cwd and env
+        # @return whatever the block returns
+        def hold(role, journal:)
+          worker = Isolation::WorkerId.spawned(role:, ordinal: next_ordinal)
+          lease = @backend.acquire(worker.to_s)
+          yield(lease.worker_env)
+        ensure
+          reclaim(lease, worker, journal)
+        end
+
+        private
+
+        # A teardown that cannot reclaim must not eat a completed child's
+        # answer. {Isolation::Worktree#remove} raises deliberately rather than
+        # leave a checkout standing, and `Tool#call` does not rescue -- so a
+        # raise on the way out of a finished dispatch hands the parent the
+        # teardown failure in place of work it has already paid for.
+        # {Supervisor#reap} carries the same tolerance at the same shape of
+        # seam: attempt it, then let the record say what happened.
+        def reclaim(lease, worker, journal)
+          lease&.release
+        rescue StandardError => e
+          journal << LeaseNotReclaimed.new(worker_key: worker, error: e.message)
+        end
+
+        # Monitor-guarded: {Subagent#fan_out} dispatches siblings concurrently,
+        # so two fibers really are inside this at once and `+= 1` is a read and
+        # a write with a suspension point available between them.
+        def next_ordinal = @monitor.synchronize { @count += 1 }
+      end
+
+      # The isolation a seam was never taught about: the shared-process
+      # baseline, so a spawn over an unwired seam resolves its paths exactly
+      # where it did before a lease was ever taken.
+      #
+      # Shared for {NO_OBSERVER}'s equality reason, and NOT frozen for a reason
+      # of its own: it owns a worker-id sequence, and a frozen counter cannot
+      # count. Sharing one sequence across every unwired seam costs nothing --
+      # {Isolation::Null} ignores the id it is handed.
+      NO_ISOLATION = Leases.new
 
       # What a child spawn is built OVER: the collaborators every spawn needs
       # and no single spawn chooses. Three adopters ({Subagent},
@@ -384,15 +516,23 @@ module Lain
       # new. This bundles collaborators -- it is not a value in the
       # {Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :journal, :supervisor, :observer,
-                         :gate_policy, :permits, :askers, :sensitivity, :denial) do
+                         :gate_policy, :permits, :askers, :sensitivity, :denial, :isolation, :escalation) do
         # Everything after `parent` defaults to its Null object; {UNGATED} and
         # {Mode::Posture::Permits::All} are the two that say "no posture has
         # been bound to this seam". The first three stay required, so Data's own
         # missing-keyword error is the loud failure, unwritten.
+        #
+        # `escalation` defaults to `[AskHuman::HUMAN]`: absent a spawn, `parent`
+        # IS the run's own chat, so a question asked FROM it need go no further
+        # once it is addressed there. A seam a spawn built over
+        # ({ChildBuilder#own_chain}) replaces this with whatever `parent`'s OWN
+        # further hops are, so a grandchild's relay carries the whole road
+        # rather than only its immediate parent's name.
         def initialize(provider:, context_factory:, parent:, journal: Channel::Null.instance,
                        supervisor: Supervisor::Null, observer: NO_OBSERVER,
                        gate_policy: UNGATED, permits: Mode::Posture::Permits::All, askers: NoAskers,
-                       sensitivity: UNJUDGED, denial: GENERIC_DENIAL)
+                       sensitivity: UNJUDGED, denial: GENERIC_DENIAL, isolation: NO_ISOLATION,
+                       escalation: [AskHuman::HUMAN].freeze)
           super
         end
 
@@ -457,6 +597,74 @@ module Lain
           end
         end
 
+        # One spawn's own chain: where the child STARTS, how to read its live
+        # head, how its committed turns reach the session record, and the
+        # whole road a question the child asks travels before it reaches a
+        # human -- the parent's own correlation first, then wherever THAT
+        # parent's own questions would go, which {#own_chain} reads off the
+        # seam being spawned INTO rather than recomputing. The four travel
+        # together because the asker needs the other three before the Agent
+        # that owns them exists.
+        Chain = Data.define(:base, :timeline, :feed, :escalation) do
+          # A correlation is a chain's ROOT digest, and an `:inherit` spawn is
+          # `parent.fork`, so child and parent share a root PERMANENTLY -- the
+          # child's own future correlation is therefore the SAME STRING as
+          # `parent`'s, computable here from `base` before the child's own
+          # Timeline exists (a fork's root never changes as later turns land
+          # on it). Left uncollapsed, a hop would address a chain to ITSELF:
+          # the child's own Q writes `from:` that string and {#asking_handle}
+          # would hand it right back as `to:`. `base` carries no head at all
+          # under `fresh`/`sibling_template` (a brand-new root), so
+          # `correlation_of` reads nil there and nothing collapses -- the
+          # ordinary, already-correct case.
+          #
+          # `chunk_while` collapses every RUN of equal addresses to one --
+          # not just the leading self-address, because an `:inherit` chain
+          # several spawns deep can repeat the SAME root at every hop -- and
+          # `drop(1)` removes the leading entry, which is always the child's
+          # own identity rather than an address the record should carry.
+          #
+          # A class method rather than an instance one: {ChildBuilder#own_chain}
+          # needs this value BEFORE a Chain exists to call it on.
+          def self.escalation_road(base, parent, beyond)
+            road = [Event::ChainWriter.correlation_of(base), Event::ChainWriter.correlation_of(parent), *beyond]
+            road.chunk_while { |a, b| a == b }.map(&:first).drop(1)
+          end
+
+          # What a child's asker is handed instead of a bare timeline thunk:
+          # the same live head, the promotion that has to happen before a
+          # question cites it, and the escalation road so the Q names who it
+          # was actually put to and {AskHuman} can relay it the rest of the
+          # way without ever touching an ancestor's own dispatch.
+          # {Middleware::JournalTurns} promotes when an iteration RETURNS, and
+          # a parked ask never returns from the one it asked in -- so
+          # unpromoted, the question named a turn no record carried and the
+          # session refused to fork or resume.
+          def asking_handle
+            AskHuman::Parent.new(read: timeline, settle: method(:promote),
+                                 to: escalation.first, escalation: escalation.drop(1))
+          end
+
+          # And what a NESTED spawn's seam is handed, for the same defect one
+          # record up: a grandchild's :spawn cites the child's live head
+          # exactly as a question cites its asker's, and a grandchild parked
+          # mid-iteration leaves the CHILD's iteration unreturned too. A thunk
+          # rather than the handle above, because {Seam}'s `parent` member is a
+          # Timeline or a thunk and this seam gains no new duck.
+          def spawning_handle = -> { settled }
+
+          # ONE read, promoted and then cited: a record names the head that was
+          # promoted because it is the same value, not because nothing could
+          # advance between two reads.
+          def settled = timeline.call.tap { |live| promote(live) }
+
+          # Idempotent through {TurnFeed}'s stop digest, which advances per
+          # turn: the catch-up the iteration runs afterwards re-walks nothing,
+          # so this cannot double-record and cannot re-enter the middleware it
+          # shares a feed with.
+          def promote(live) = feed.catch_up(live)
+        end
+
         attr_reader :policy, :toolset
 
         # `name` is what a human is TOLD is asking when this child puts a
@@ -476,10 +684,16 @@ module Lain
         # or nested spawns vanish from the session record, and its actors the
         # same reactor.
         #
-        # `parent` is the ONE member a copy does not inherit: it points at the
-        # CHILD, so the grandchild's lineage names the child's live head.
-        def config(parent:)
-          { seam: @seam.with(parent:), toolset: @toolset, policy: @policy,
+        # `parent` and `escalation` are the two members a copy does NOT
+        # inherit: `parent` points at the CHILD, so the grandchild's lineage
+        # names the child's live head, and `escalation` becomes the CHILD's
+        # OWN full road ({Chain#escalation}, computed by the `#own_chain` call
+        # that is spawning THIS child) rather than staying `@seam.escalation`
+        # -- the road as it looked one hop further out. Passing the unchanged
+        # value here would let a grandchild's question skip straight past its
+        # own parent to wherever ITS grandparent's mailbox is.
+        def config(parent:, escalation:)
+          { seam: @seam.with(parent:, escalation:), toolset: @toolset, policy: @policy,
             budget: @budget, persona: @persona }
         end
 
@@ -494,23 +708,52 @@ module Lain
         # method can name a child that does not exist yet.
         def build(parent, ceiling:, worker_env: WorkerEnv.default)
           child = nil
-          handle = -> { child.timeline }
-          union = child_union(handle, ceiling)
-          spawned(@seam.askers.enrol(handle, agent: @name), parent, union, worker_env)
+          chain = own_chain(parent) { child.timeline }
+          union = child_union(chain.spawning_handle, chain.escalation, ceiling)
+          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, worker_env)
             .tap { |built| child = built.agent }
         end
 
         private
 
+        # One spawn's own chain, built HERE rather than at the Agent, because
+        # the asker is enrolled before the Agent exists and needs the feed.
+        # Per SPAWN and never memoized on the builder: a fan-out runs sibling
+        # spawns concurrently over one of these, so a shared feed would promote
+        # one sibling's turns against another's stop digest.
+        #
+        # Hoisting the base above {#permitted}'s refusal and the attenuation is
+        # free because every {Tool::SpawnPolicy::PrefixStrategy} builds one
+        # purely -- `Timeline.empty` or an O(1) `parent.fork` -- so a spawn that
+        # goes on to raise merely discards it.
+        #
+        # The escalation road: `parent`'s own correlation first -- the chain
+        # being spawned FROM, not the child's own, exactly as {Lineage#message}
+        # names its `to:`, so a child's question and the spawn's own result
+        # message address the same identity by the same derivation -- then
+        # `@seam.escalation`, which is `parent`'s OWN further road (defaulted
+        # to `[HUMAN]` when `parent` is the run's own chat, or set by an
+        # ENCLOSING `#own_chain` call when `parent` is itself a spawned child;
+        # see {ChildBuilder#config}). {Chain.escalation_road} collapses a run
+        # this may create for an `:inherit` spawn; read here rather than
+        # inside {Chain#asking_handle} because that method's receiver is the
+        # CHILD's own chain, which has no way back to the parent it was
+        # spawned under.
+        def own_chain(parent, &timeline)
+          base = @policy.prefix.base_timeline(parent:, store: parent.store)
+          Chain.new(base:, timeline:, escalation: Chain.escalation_road(base, parent, @seam.escalation),
+                    feed: TurnFeed.new(observer: @seam.observer, base: base.head_digest))
+        end
+
         # A spawn that raises past this point ({NoCapability}, a Context that
         # will not render) leaves no lifetime for anyone to hang a `deregister`
         # on, and retention runs from `register` to `deregister` and nothing
         # else -- so this method is the only place that release can live.
-        def spawned(enrolled, parent, union, worker_env)
+        def spawned(enrolled, chain, union, worker_env)
           child = nil
           asker = enrolled.asker
           allowed = granted(permitted(@policy.attenuate(union)), asker)
-          child = Child.new(agent: spawn_agent(parent, granted(union, asker), allowed, worker_env),
+          child = Child.new(agent: spawn_agent(chain, granted(union, asker), allowed, worker_env),
                             registration: enrolled.registration)
         ensure
           # Keyed on the handle rather than `rescue StandardError`, so a
@@ -599,9 +842,9 @@ module Lain
         # constructing ceiling, and recursion would never terminate via the cap.
         # The copy's schema bytes are identical, so the rendered tools block --
         # and with it the cache prefix -- is unchanged.
-        def child_union(parent_handle, ceiling)
+        def child_union(parent_handle, escalation, ceiling)
           Toolset.new(@toolset.map do |tool|
-            tool.is_a?(Subagent) ? tool.descend(parent: parent_handle, ceiling:) : tool
+            tool.is_a?(Subagent) ? tool.descend(parent: parent_handle, escalation:, ceiling:) : tool
           end)
         end
 
@@ -612,13 +855,11 @@ module Lain
         # sibling's reads into the next. This builder is never handed the
         # parent's Session, so the child's read-set starts empty by
         # construction.
-        def spawn_agent(parent, union, allowed, worker_env)
-          agent = nil
-          base = @policy.prefix.base_timeline(parent:, store: parent.store)
-          agent = Agent.new(
+        def spawn_agent(chain, union, allowed, worker_env)
+          Agent.new(
             provider: @seam.provider, context: child_context,
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: child_handler(union, allowed),
-            timeline: base, turn_middleware: recorded_turns(base.head_digest) { agent.timeline },
+            timeline: chain.base, turn_middleware: recorded_turns(chain),
             session: Session.new(worker_env:), budget: @budget, journal: @seam.journal
           )
         end
@@ -627,13 +868,15 @@ module Lain
         # per settle: a child's `ask_human` question is written DURING an
         # iteration and cites the head that iteration committed, so a feed that
         # waited for the child to settle would record the turn AFTER the
-        # question naming it. `agent.timeline` rides a thunk because the turn
-        # env carries the PRE-step snapshot, and is late-bound because the
+        # question naming it. The timeline rides a thunk because the turn env
+        # carries the PRE-step snapshot, and is late-bound because the
         # middleware must exist before the Agent that runs it.
-        def recorded_turns(base, &timeline)
-          Middleware::Stack.new(
-            [Middleware::JournalTurns.new(scribe: TurnFeed.new(observer: @seam.observer, base:), timeline:)]
-          )
+        #
+        # Per-iteration is still not often enough for a question that PARKS --
+        # that iteration never returns -- which is what {Chain#asking_handle}
+        # covers, on the same feed.
+        def recorded_turns(chain)
+          Middleware::Stack.new([Middleware::JournalTurns.new(scribe: chain.feed, timeline: chain.timeline)])
         end
 
         # Two composed reshapes over the factory's Context: PERSONA first, then

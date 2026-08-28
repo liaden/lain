@@ -89,8 +89,36 @@ module Lain
         # the runtime never created.
         SCRATCH_BUFFER = "file lain-cockpit://start"
 
+        # Scoped to the ONE buffer this pane just named, not the whole nvim
+        # process: `:h 'swapfile'` is local to buffer, so a bare `set
+        # noswapfile` (`--cmd`/`-c` alike) or the `-n` startup flag -- which
+        # resets the GLOBAL default rather than scoping anything -- would
+        # silently disable swap recovery for every file a human later opens
+        # in the review tab.
+        #
+        # BEFORE `SCRATCH_BUFFER`, not after: measured directly against nvim
+        # 0.12.4, `:file` renames the buffer in place without touching its
+        # buffer-local options, so a `setlocal` issued first survives the
+        # rename. Issued after is too late regardless -- `:file` is what
+        # CREATES the buffer's swapfile, so by the time a trailing `setlocal
+        # noswapfile` would run, a second cockpit's `-c SCRATCH_BUFFER` has
+        # already collided with a dirty peer's and nvim is blocked on "Press
+        # ENTER", never reaching this `-c` at all.
+        #
+        # Two cockpits on two different projects otherwise collide on this
+        # one swap path -- `SCRATCH_BUFFER` is a constant, not derived from
+        # cwd -- and the cockpit's scratch buffer is DIRTY as soon as a view
+        # lands, which is its steady state and exactly what trips `E325`
+        # (dirty, not "busy": an unmodified peer's swapfile collides onto
+        # `.swo` in silence instead). nvim's own recovery prompt for that
+        # blocks the pane before it serves RPC, so `lain://approval`/
+        # `:LainApprove` are unreachable while the chat pane looks healthy
+        # from outside.
+        NO_SWAPFILE = "setlocal noswapfile"
+
         def nvim_pane_command
-          Shellwords.join(["nvim", *rtp_flag, "--listen", socket, "-c", SCRATCH_BUFFER, "-c", LAIN_START])
+          Shellwords.join(["nvim", *rtp_flag, "--listen", socket,
+                           "-c", NO_SWAPFILE, "-c", SCRATCH_BUFFER, "-c", LAIN_START])
         end
 
         def chat_flags = ["--nvim", socket]

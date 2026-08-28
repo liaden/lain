@@ -98,16 +98,15 @@ aside, a memory item — and confirm it is absent from the child's request.
 
 ## 3 — `actor` mode, and `--isolation worktree`
 
-This is the section the scenario exists for, and it is the one with a documentation discrepancy to
-settle first.
+This is the section the scenario exists for, and the question it used to open with is closed now.
 
-**`--isolation`'s help text says the flag "is inert in chat today" because "no chat path spawns an
-actor-mode subagent yet".** That statement appears to predate OM-6: `CLI::Wiring` now builds a real
-`Supervisor` with `isolation: fleet_isolation(options[:isolation])`, `Repl` hosts that reactor
-across asks, and `Subagent#adopt_actor` refuses only `unless supervisor.running?`. **Settle it by
-driving it, and record which is true** — if actors do lease, the help text is a defect (it tells an
-operator a flag does nothing when it governs where their files go); if they do not, the wiring is
-dead and that is the finding.
+**Leasing by a model-dispatched spawn is no longer open** — `--isolation`'s help text and
+`CLI::Wiring` agree: the flag is resolved exactly once per launch (`Wiring#fleet_isolation`) and
+that one backend is shared between the `Supervisor` an actor adopts onto and the
+`Tools::Subagent::Leases` a **one-shot** dispatch holds through too (`Tools::Subagent#run_child`),
+including a nested spawn (`Subagent#descend` carries the same seam down). So this section is not
+about settling which of two claims is true; it is about **confirming a spawned child actually
+leased**, and the checks below are how a driver does that rather than takes the claim on trust.
 
 ```bash
 cd "$REPO"; lain chat --provider ollama --model qwen3-coder:30b --isolation worktree
@@ -123,12 +122,22 @@ What to check, in order:
    actor without a running Supervisor — and it emits no event, so a driver reading only the journal
    cannot tell a refusal from a spawn that never happened. Read the `tool_result`: an adopted launch
    carries **the actor's address (its `:spawn` digest), the stable name a caller tells it by**.
-2. **`git worktree list`** must show a detached checkout while the actor holds its lease.
+2. **`git worktree list` while the dispatch is live, and again once it settles.** Empty before,
+   one checkout while the actor (or a plain one-shot spawn) holds its lease, empty again after
+   release — that appear/disappear pair is the whole of what "actually leased" means to a driver
+   watching from outside the process, and it is the check that catches a lease acquired but never
+   reclaimed as cleanly as one never taken at all.
 3. **The `isolation_lease` records.** They must name the concrete backend that actually isolated the
    worker (`Isolation::Worktree`) rather than a decorator over it — the journal wraps **nearest** the
    concrete backend, exactly **once**. A doubled lease record is the second-wrap bug, and it corrupts
-   lease accounting silently.
-4. **`--isolation none` produces an `Isolation::Null` and not a stack of pass-throughs.** By-need
+   lease accounting silently. Confirm one acquire/release pair per dispatch, and that an ordinary
+   one-shot `subagent` call the model made on its own — not only the adopted actor above — leaves the
+   same pair, since both paths now lease from the one resolved backend.
+4. **A nested spawn's checkout lands at a THIRD path.** Have the actor spawn a grandchild subagent
+   and read `git worktree list` again: the grandchild's lease must be its own entry, distinct from
+   both the human's own working tree and the parent actor's checkout — a grandchild sharing either
+   would mean it escaped into a tree it was never leased.
+5. **`--isolation none` produces an `Isolation::Null` and not a stack of pass-throughs.** By-need
    decoration is a legibility policy: what it buys is that an undecorated run stays identifiable.
    Check the two runs' records differ in shape, not just in a name field.
 

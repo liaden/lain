@@ -1,9 +1,94 @@
 # frozen_string_literal: true
 
 require "async"
+require "fileutils"
+require "json"
+require "monitor"
 require "stringio"
 require "tmpdir"
 require "timeout"
+
+# A REAL isolation backend, small enough to live beside the examples that drive
+# it: every acquire provisions an actual directory named for the worker and
+# hands back a lease whose cwd points there, and release removes it. Not a
+# stand-in for the duck -- a child dispatched under one of these leases really
+# does resolve its relative paths inside that directory, which is what makes
+# "the grandchild ran somewhere else" an assertion rather than string math over
+# a path nothing ever used. {Lain::Isolation::Worktree} is the concrete backend,
+# and spec/lain/cli/wiring_spec.rb drives THAT one end to end through the real
+# `--isolation` wiring; it costs five git subprocesses per lease, where what
+# these examples are about is the lease LIFECYCLE.
+#
+# It keeps Worktree's one-live-lease-per-path refusal, so a worker-id allocator
+# that handed two live spawns one id fails as loudly here as it would there.
+class SubagentSpecIsolation
+  # `high_water` is how many leases were live at once at the busiest moment --
+  # the only way an example can tell genuine simultaneity from N dispatches that
+  # merely happened in one reactor, and what arms the already-leased refusal.
+  attr_reader :worker_ids, :leased, :released, :high_water
+
+  # `reclaim: :refuse` is {Lain::Isolation::Worktree}'s real teardown failure:
+  # `#remove` raises rather than leave a checkout it could not reclaim standing.
+  def initialize(root, reclaim: :succeed)
+    @root = root
+    @reclaim = reclaim
+    @worker_ids = []
+    @leased = []
+    @released = []
+    @live = []
+    @high_water = 0
+    @monitor = Monitor.new
+  end
+
+  def acquire(worker_id)
+    path = File.join(@root, worker_id.to_s)
+    @monitor.synchronize do
+      raise Lain::Error, "#{path} is already leased" if @live.include?(path)
+
+      claim(path, worker_id)
+    end
+    Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default.with(cwd: path),
+                               on_release: -> { give_back(path) })
+  end
+
+  private
+
+  def claim(path, worker_id)
+    FileUtils.mkdir_p(path)
+    @live << path
+    @worker_ids << worker_id.to_s
+    @leased << path
+    @high_water = [@high_water, @live.size].max
+  end
+
+  def give_back(path)
+    @monitor.synchronize do
+      @live.delete(path)
+      raise Lain::Error, "could not reclaim #{path}" if @reclaim == :refuse
+
+      @released << path
+    end
+  end
+end
+
+# Reports the working directory of the Session it was dispatched under, and
+# records every one it saw. A child's cwd is otherwise unobservable from
+# outside: a spawn hands back a Timeline, never the Agent, so where a GRANDchild
+# ran has to be asked from inside its own dispatch.
+class SubagentSpecCwdTool < Lain::Tool
+  def initialize(seen)
+    super()
+    @seen = seen
+  end
+
+  def name = "cwd"
+  def description = "Reports the directory this session resolves relative paths against."
+  def input_schema = { type: :object, properties: {} }
+
+  def perform(_input, invocation)
+    session_of(invocation).worker_env.cwd.tap { |cwd| @seen << cwd }.then { |cwd| Lain::Tool::Result.ok(cwd) }
+  end
+end
 
 RSpec.describe Lain::Tools::Subagent do
   # A shared Store, and a two-turn parent chain whose head is H.
@@ -635,6 +720,189 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
+  # ---- A child runs in a LEASED environment ---------------------------------
+  #
+  # `--isolation worktree` used to reach only an actor an OPERATOR adopted:
+  # #run_child hard-coded {Lain::WorkerEnv.default}, so a model-dispatched child
+  # worked in the human's own checkout however the run was started. The lease is
+  # taken per DISPATCH now, and taken UNCONDITIONALLY -- {Lain::Isolation::Null}
+  # hands back WorkerEnv.default and reclaims nothing, so an unisolated run pays
+  # one object and there is no `if isolation` anywhere to get backwards.
+  describe "the isolation lease a child runs under" do
+    around do |example|
+      Dir.mktmpdir("lain-subagent-leases") do |dir|
+        @leases_root = dir
+        example.run
+      end
+    end
+
+    attr_reader :leases_root
+
+    let(:backend) { SubagentSpecIsolation.new(leases_root) }
+    let(:leases) { Lain::Tools::Subagent::Leases.new(backend:) }
+    let(:seen) { [] }
+    let(:cwd_tool) { SubagentSpecCwdTool.new(seen) }
+
+    def reports_cwd = mock(tool_response(["c1", "cwd", {}]), text_response("done"))
+
+    def cwd_only(*names) = Lain::Toolset.new([cwd_tool, *names])
+
+    # Sibling fan-out only pays under a shared template prefix, so the policy
+    # says so -- what this file's fan-out group uses, narrowed to the one tool.
+    def staggered_policy
+      Lain::Tool::SpawnPolicy.new(
+        prefix: Lain::Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate.new(template: "one shared brief. " * 20),
+        posture: :handler_union, only: %i[cwd]
+      )
+    end
+
+    it "runs in the host working directory when no isolation is wired" do
+      tool = build_subagent(provider: reports_cwd, toolset: cwd_only, policy: spawn_policy(only: %i[cwd]))
+
+      expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+      expect(seen).to eq([Dir.pwd])
+    end
+
+    it "runs the child in the leased directory, and releases the lease when it returns" do
+      tool = build_subagent(provider: reports_cwd, toolset: cwd_only,
+                            policy: spawn_policy(only: %i[cwd]), isolation: leases)
+
+      expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+      expect(seen).to eq(backend.leased)
+      expect(seen).not_to eq([Dir.pwd])
+      expect(backend.released).to eq(backend.leased)
+    end
+
+    # The other exit. A context that will not render is {ChildBuilder#spawned}'s
+    # own named example of a spawn raising past the acquire, and a lease held by
+    # a raise is a leaked checkout that defeats the NEXT acquire at that path.
+    it "releases the lease when the spawn raises, not only when the child returns" do
+      tool = described_class.new(provider: mock(text_response("unused")),
+                                 context_factory: -> { raise "this child gets no context" },
+                                 toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
+                                 parent:, isolation: leases, budget: Lain::Agent::Budget.new)
+
+      expect { tool.run("go") }.to raise_error("this child gets no context")
+      expect(backend.leased.size).to eq(1)
+      expect(backend.released).to eq(backend.leased)
+    end
+
+    # A grandchild takes a SIBLING checkout, never one nested inside its
+    # parent's: a worktree-of-a-worktree is a peer in git's one registry anyway,
+    # and the parent's release force-removes its tree, which would either
+    # destroy the grandchild's or be blocked by it. So "did not escape" is
+    # asserted against the PARENT's leased path as well as the host's -- a
+    # sibling is trivially not the host's cwd, so the host alone would pass on
+    # the bug this pins.
+    it "gives a nested child a leased directory of its own -- neither the host's nor its parent's" do
+      provider = mock(
+        tool_response(["c1", "subagent", { "prompt" => "deeper" }]),
+        tool_response(["g1", "cwd", {}]),
+        text_response("grandchild done"),
+        tool_response(["c2", "cwd", {}]),
+        text_response("child done")
+      )
+      inner = build_subagent(provider:, toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
+                             max_depth: 9, isolation: leases)
+      tool = build_subagent(provider:, toolset: cwd_only(inner), max_depth: 2,
+                            policy: spawn_policy(only: %i[cwd subagent]), isolation: leases)
+
+      expect(tool.call({ "prompt" => "start" }, invocation)).to be_ok
+
+      grandchild, child = seen
+      expect(seen.size).to eq(2)
+      expect(grandchild).not_to eq(child)
+      expect(seen).not_to include(Dir.pwd)
+      expect(seen.sort).to eq(backend.leased.sort)
+    end
+
+    # The teardown that FAILS. {Lain::Isolation::Worktree#remove} raises rather
+    # than leave a checkout it could not reclaim, and `Tool#call` does not
+    # rescue -- so a bare `ensure lease.release` hands the parent the teardown
+    # failure instead of the answer a completed child already paid for. The
+    # tolerance is {Lain::Supervisor#reap}'s, at the seam with the same shape:
+    # the failure is journaled rather than swallowed, because a checkout that
+    # outlived its lease is a real leak and the record is where its key is
+    # found.
+    it "returns the child's answer when the lease cannot be reclaimed, journaling the leak" do
+      journal = Lain::Channel.new
+      unreclaimable = SubagentSpecIsolation.new(leases_root, reclaim: :refuse)
+      tool = build_subagent(provider: mock(text_response("child answer")), toolset: cwd_only,
+                            policy: spawn_policy(only: %i[cwd]), journal:,
+                            isolation: Lain::Tools::Subagent::Leases.new(backend: unreclaimable))
+
+      result = tool.call({ "prompt" => "go" }, invocation)
+
+      expect(result).to be_ok
+      expect(result.content).to eq("child answer")
+      leaks = journal.drain.grep(Lain::Tools::Subagent::LeaseNotReclaimed)
+      expect(leaks.map(&:worker_key)).to eq(unreclaimable.worker_ids)
+      # `error` is the half a human can act on: the worker key is hashed into
+      # the path, so what names the directory still standing is the backend's
+      # own message.
+      expect(leaks.map(&:error)).to all(include(leases_root))
+    end
+
+    # #fan_out dispatches siblings concurrently over one tool, so two fibers are
+    # really inside the allocator at once. A shared counter that lost an
+    # increment would hand two live siblings one worker id, and a backend that
+    # keys a checkout on it refuses the second -- which is why the id allocation
+    # is the thing under test here, not the refusal.
+    it "allocates a distinct worker id per dispatch, so concurrent siblings never share one" do
+      provider = mock(text_response("a"), text_response("b"), text_response("c"))
+      tool = build_subagent(provider:, toolset: cwd_only, policy: staggered_policy, isolation: leases)
+
+      results = tool.fan_out(%w[alpha beta gamma])
+
+      expect(results).to all(be_ok)
+      expect(backend.worker_ids.uniq.size).to eq(3)
+      expect(backend.released.sort).to eq(backend.leased.sort)
+    end
+
+    # The allocator under real contention, driven directly rather than through a
+    # spawn: `+= 1` is a read and a write with a suspension point available
+    # between them, and a lost increment is two workers sent to one checkout
+    # path. 64 rather than a handful because a dropped increment under a Monitor
+    # is not a failure a three-way race reproduces.
+    #
+    # The block PARKS until every sibling holds its own lease, and that park is
+    # what makes the example honest: a block with no suspension point runs to
+    # completion before the next task starts, so 64 tasks would be 64 SEQUENTIAL
+    # holds, the live high-water mark would be one, and the backend's
+    # already-leased refusal would never be armed at all.
+    it "keeps every concurrently held lease on a path of its own" do
+      Sync do
+        arrived = 0
+        Array.new(64) do
+          Async do
+            leases.hold("hammer", journal: Lain::Channel::Null.instance) do
+              arrived += 1
+              Async::Task.current.yield while arrived < 64
+            end
+          end
+        end.each(&:wait)
+      end
+
+      expect(backend.high_water).to eq(64)
+      expect(backend.worker_ids.uniq.size).to eq(64)
+      expect(backend.released.sort).to eq(backend.leased.sort)
+    end
+
+    # Minted through the ONE object both allocators draw from, never spelled
+    # here: {Lain::Supervisor} numbers the actors an operator adopts off a
+    # sequence this one cannot see, and a spawn that spelled its own id would
+    # put the disjointness of the two in a string convention neither asserts.
+    it "mints its worker ids in the spawned lane of the shared allocator" do
+      tool = build_subagent(provider: mock(text_response("done")), toolset: cwd_only,
+                            policy: spawn_policy(only: %i[cwd]), isolation: leases, name: "researcher")
+
+      tool.call({ "prompt" => "go" }, invocation)
+
+      expect(backend.worker_ids)
+        .to eq([Lain::Isolation::WorkerId.spawned(role: "researcher", ordinal: 1).to_s])
+    end
+  end
+
   # ---- The PATH boundary reaches a child, or it is a privilege inversion ------
   #
   # A child's gate is built HERE ({ChildBuilder#gated}), from the seam. So a
@@ -929,6 +1197,35 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
+  # ---- A child's escalation, with no queue for a human to answer from -------
+  #
+  # {Tools::Subagent::Seam}'s DEFAULT `askers:` is
+  # {Tools::Subagent::NoAskers} -- every fixture above this line spawns over
+  # it, since none of them wires a real {CLI::Wiring::Askers}. A child
+  # enrolled that way used to hold a bare {AskHuman} that wrote its Q and then
+  # parked FOREVER: nothing was ever going to answer it, because nothing
+  # announced it to anyone. {NoAskers} now enrols an
+  # {Tools::AskHuman::Unattended} instead, so the refusal is immediate and the
+  # child's own dispatch never blocks on a human it had no way to reach.
+  describe "a child's escalation with nowhere to relay to" do
+    def asks_with_no_queue = tool_response(["c1", "ask_human", { "question" => "which db?" }])
+
+    it "refuses the escalation by name, and hands the child that refusal as its answer rather than waiting" do
+      tool = build_subagent(provider: mock(asks_with_no_queue, text_response("proceeded without an answer")))
+
+      result = tool.call({ "prompt" => "go" }, invocation)
+
+      # The child's own loop survived the refusal and went on to its final
+      # turn -- nothing about the escalation being unreachable stops the spawn
+      # itself from completing.
+      expect(result).to be_ok
+      refusal = tool.last_child.to_a.flat_map(&:content).find { |block| block["type"] == "tool_result" }
+      expect(refusal["is_error"]).to be(true)
+      expect(refusal["content"]).to include("no human mailbox is reachable")
+      expect(refusal["content"]).not_to include("--non-interactive")
+    end
+  end
+
   # ---- A child of its own may ask the human ---------------------------------
   #
   # The capability policy this chunk reverses. A subagent used to be denied
@@ -1058,20 +1355,71 @@ RSpec.describe Lain::Tools::Subagent do
       # askers' Q/A included.
       let(:askers) { Lain::CLI::Wiring::Askers.new(notifier:, observer:) }
 
-      def recorded_tool
+      def recorded_tool(provider: mock(asks, text_response("done")), toolset: union,
+                        policy: spawn_policy(only: []), max_depth: 1)
         described_class.new(
-          seam: Lain::Tools::Subagent::Seam.new(provider: mock(asks, text_response("done")),
-                                                context_factory: -> { child_context }, parent:, askers:, observer:),
-          toolset: union, policy: spawn_policy(only: []), max_depth: 1
+          seam: Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { child_context },
+                                                parent:, askers:, observer:),
+          toolset:, policy:, max_depth:
         )
       end
 
-      def recorded_session
+      # A spawn TWO deep, where the parking is the grandchild's. The exposure
+      # moves one record up with it: a grandchild's :spawn cites the CHILD's
+      # live head exactly as a question cites its asker's, and a grandchild
+      # parked mid-iteration means the child's iteration never returns either,
+      # so that head is unpromoted for the same reason.
+      def nested_tool
+        inner = recorded_tool(provider: mock(asks("which db?"), text_response("inner done")), max_depth: 3)
+        recorded_tool(provider: mock(tool_response(["s1", "subagent", { "prompt" => "deeper" }]),
+                                     text_response("outer done")),
+                      toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new, inner]), max_depth: 3)
+      end
+
+      # A closed file for a run that ASKED and was answered: the shape every
+      # fixture here had before the parked one below it.
+      def answered_journal
         answered(recorded_tool)
+        settled_journal
+      end
+
+      # And the shape none of them had: the question reaches the queue, nobody
+      # answers, and the child's fiber is stopped where it stands -- a Ctrl-C,
+      # or a run that outlived the human. The turn the question cites is
+      # COMMITTED but unpromoted, because {Middleware::JournalTurns} catches up
+      # when an iteration RETURNS and a parked ask never returns from the one it
+      # was asked in. Every fixture that answers the question hides that, which
+      # is why the suite could not have caught this.
+      def parked_journal(tool = recorded_tool)
+        Sync { |task| spawning(task, tool) { arrival(task) } }
+        settled_journal
+      end
+
+      def cited_by(bytes)
+        recording = Lain::Bench::Session.load(bytes.each_line)
+        [recording, recording.messages.flat_map(&:causal_parents).uniq]
+      end
+
+      def settled_journal
         scribe.catch_up(parent)
         scribe.close(reason: :exit)
-        Lain::Bench::Session.load(journal_io.string.each_line)
+        journal_io.string
       end
+
+      def recorded_session = Lain::Bench::Session.load(answered_journal.each_line)
+
+      # The two doors a human reloads a session through. The refusal lives at
+      # LOAD, so `--fork` and `--resume` meet it alike -- and both read a FILE,
+      # which is the one shape neither can be driven without.
+      def reopened(bytes)
+        Dir.mktmpdir do |state_home|
+          paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home })
+          File.write(File.join(paths.sessions_dir, "20260101T000000-1.ndjson"), bytes)
+          yield Lain::CLI::Resume.new(paths:)
+        end
+      end
+
+      def fork_selector = "20260101@#{parent.head_digest.delete_prefix("blake3:")[0, 12]}"
 
       it "reloads, and the fork point checks out, with no dangling causal parent" do
         recording = nil
@@ -1086,6 +1434,126 @@ RSpec.describe Lain::Tools::Subagent do
         cited = recording.messages.flat_map(&:causal_parents).uniq
 
         expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+      end
+
+      # The answered path, at the doors themselves rather than at the load
+      # alone: it worked before this card and has to go on working.
+      it "forks and resumes when the question was answered" do
+        reopened(answered_journal) do |resume|
+          expect(resume.fork(selector: fork_selector).timeline.head_digest).to eq(parent.head_digest)
+          expect(resume.call.timeline.head_digest).to eq(parent.head_digest)
+        end
+      end
+
+      # The promotion a parked ask forces and the one its iteration runs
+      # afterwards share ONE feed, and the stop digest advancing per turn is
+      # the whole of why the second walks nothing. Doubled records would be
+      # this file's own claim about the run, told twice.
+      it "journals each child turn exactly once when the question was answered" do
+        answered_journal
+        recorded = journal_io.string.each_line.filter_map do |line|
+          record = JSON.parse(line)
+          record["digest"] if record["type"] == "child_turn"
+        end
+
+        expect(recorded).to eq(recorded.uniq)
+        expect(recorded).not_to be_empty
+      end
+
+      describe "when the question is never answered" do
+        it "carries every digest the parked question cites" do
+          recording, cited = cited_by(parked_journal)
+
+          expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+        end
+
+        it "forks at its head" do
+          reopened(parked_journal) do |resume|
+            expect(resume.fork(selector: fork_selector).timeline.head_digest).to eq(parent.head_digest)
+          end
+        end
+
+        it "resumes onto that head" do
+          reopened(parked_journal) do |resume|
+            expect(resume.call.timeline.head_digest).to eq(parent.head_digest)
+          end
+        end
+
+        # `fresh` gives the child a root with no render edge out of it;
+        # `inherit` forks the parent, so the child's first turn RENDERS onto a
+        # parent head whose own turn record is not written yet either.
+        it "carries every cited digest under an inherit prefix too" do
+          inheriting = recorded_tool(policy: spawn_policy(prefix: :inherit, only: []))
+          recording, cited = cited_by(parked_journal(inheriting))
+
+          expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+        end
+
+        # The other disposition a parked question can end in: nobody COULD
+        # answer it, so the record is an `unanswered` message rather than an A.
+        it "carries every cited digest when the question ends unanswered" do
+          tool = recorded_tool
+          Sync do |task|
+            spawning(task, tool) do |run|
+              item = arrival(task)
+              askers.directory.reply(Lain::Tools::AskHuman::Unanswered.new, item.digest)
+              run.wait
+            end
+          end
+          recording, cited = cited_by(settled_journal)
+
+          expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+        end
+
+        # One builder, two children parked at once. The chain a spawn promotes
+        # against is built PER SPAWN for exactly this: a shared feed would walk
+        # one sibling's turns against the other's stop digest.
+        it "carries every cited digest when two siblings park at once" do
+          tool = recorded_tool(provider: mock(asks("first?"), asks("second?"), text_response("done")))
+          Sync do |task|
+            siblings = [task.async { tool.call({ "prompt" => "a" }, invocation) },
+                        task.async { tool.call({ "prompt" => "b" }, invocation) }]
+            pumped_until(task) { askers.questions.size >= 2 }
+            siblings.each(&:stop)
+          end
+          recording, cited = cited_by(settled_journal)
+
+          expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+        end
+
+        # The SECOND question parks, so this promotion runs on a feed whose
+        # stop digest the first iteration's catch-up already advanced.
+        it "carries every cited digest when a child parks on its second question" do
+          tool = recorded_tool(provider: mock(asks("first?"), asks("second?"), text_response("done")))
+          Sync do |task|
+            spawning(task, tool) do
+              askers.directory.reply("postgres", arrival(task).digest)
+              arrival(task)
+            end
+          end
+          recording, cited = cited_by(settled_journal)
+
+          expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+        end
+      end
+
+      # One level up, where the record's exposure is the grandchild's :spawn
+      # rather than its question -- the same unpromoted head, cited by a
+      # different record. A depth qualifier nobody wrote is not a scope
+      # boundary, so this door has to open too.
+      describe "when the parked question is a GRANDchild's" do
+        it "carries every digest its records cite" do
+          recording, cited = cited_by(parked_journal(nested_tool))
+
+          expect(cited).to all(satisfy { |digest| recording.timeline.store.key?(digest) })
+        end
+
+        it "forks and resumes" do
+          reopened(parked_journal(nested_tool)) do |resume|
+            expect(resume.fork(selector: fork_selector).timeline.head_digest).to eq(parent.head_digest)
+            expect(resume.call.timeline.head_digest).to eq(parent.head_digest)
+          end
+        end
       end
     end
 
@@ -1209,6 +1677,82 @@ RSpec.describe Lain::Tools::Subagent do
 
       delivered = tool.last_child.to_a.flat_map(&:content).select { |block| block["type"] == "tool_result" }
       expect(delivered.map { |block| block["content"] }).to eq(["postgres, it is already provisioned"])
+    end
+
+    # Driven through the REAL enrolment path -- {Lain::CLI::Wiring::Askers}, the
+    # same seam every example above spawns a child over -- rather than through a
+    # hand-built {Tools::AskHuman}: a spec that constructs the asker itself
+    # proves the relay mechanism works, not that a child asker built the way
+    # {Tools::Subagent::ChildBuilder#build} builds one actually relays.
+    #
+    # `item.digest` -- what the queue announced and what a reply would name --
+    # is the OUTERMOST hop, addressed to the literal human so `pending("human")`
+    # still finds it; the child's OWN question, addressed to the parent, is
+    # its causal parent. Both hops are in the record, which is the whole of
+    # what "reaches the human through its parent" means.
+    it "reaches the human through its parent, and the record shows both hops" do
+      tool = asking_subagent(mock(asks, text_response("done")))
+      parent_correlation = Lain::Event::ChainWriter.correlation_of(parent)
+
+      _dispatched, item = answered(tool, answer: "postgres")
+      relayed = store.fetch(item.digest)
+      own_question = store.fetch(relayed.causal_parents.first)
+
+      expect(relayed.to).to eq(Lain::Tools::AskHuman::HUMAN)
+      expect(relayed.from).to eq(parent_correlation)
+      expect(own_question.to).to eq(parent_correlation)
+      expect(own_question.from).not_to eq(parent_correlation)
+    end
+
+    # The pair must stay legible however far it relayed: a reader walking Q to
+    # A finds the answer attributed to the SAME address the outermost Q was
+    # sent to -- the literal human, since that is who actually typed it --
+    # never the parent it passed through on the way. {Directory#reply} hands
+    # back the A event it wrote, so this reads the attribution off the real
+    # reply path rather than re-deriving it.
+    it "answers a child's question from the address its outermost hop was sent to" do
+      tool = asking_subagent(mock(asks, text_response("done")))
+
+      Sync do |task|
+        spawning(task, tool) do |run|
+          item = arrival(task)
+          a = askers.directory.reply("postgres", item.digest)
+
+          expect(a.from).to eq(Lain::Tools::AskHuman::HUMAN)
+          expect(a.causal_parents).to include(item.digest)
+          run.wait
+        end
+      end
+    end
+
+    # Two hops deep: a GRANDchild relays through the child that spawned it,
+    # which relays through the run's own chat. {ChildBuilder#config} is what
+    # carries the road that far -- a child's OWN escalation ({Chain#escalation})
+    # becomes the escalation a NESTED seam hands to whatever it spawns, so a
+    # grandchild's question passes through its immediate parent rather than
+    # skipping straight to whichever ancestor happens to be attended. The
+    # SAME body rides every hop, {Tools::AskHuman::ASKED_BY} included, so the
+    # human learns which ROLE originally asked -- "researcher" -- never
+    # "subagent", the name of whichever tool relayed it.
+    it "tells the human which role originally asked, two relay hops deep" do
+      grandchild = asking_subagent(mock(asks, text_response("grandchild done")),
+                                   name: "researcher", announces_as: "researcher", max_depth: 3)
+      middle = asking_subagent(mock(tool_response(["m1", "researcher", { "prompt" => "deeper" }]),
+                                    text_response("middle done")),
+                               toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new, grandchild]), max_depth: 3)
+
+      Sync do |task|
+        spawning(task, middle) do |run|
+          item = arrival(task)
+          relayed = store.fetch(item.digest)
+
+          expect(relayed.to).to eq(Lain::Tools::AskHuman::HUMAN)
+          expect(relayed.body.fetch(Lain::Tools::AskHuman::ASKED_BY)).to eq("researcher")
+
+          askers.directory.reply("postgres", item.digest)
+          run.wait
+        end
+      end
     end
 
     it "keeps the parent and the child pending at once, and the inbox projection lists both" do
@@ -1685,6 +2229,14 @@ RSpec.describe Lain::Tools::Subagent do
       expect(seam.askers).to be(Lain::Tools::Subagent::NoAskers)
     end
 
+    # The isolation member, and the same singleton rule for the same reason: it
+    # owns a worker-id sequence, so it cannot be frozen, but it must still be
+    # the SAME object every time or two otherwise identical seams compare
+    # unequal.
+    it "defaults isolation to the shared unisolated lease source" do
+      expect(seam.isolation).to be(Lain::Tools::Subagent::NO_ISOLATION)
+    end
+
     # A value object whose `==` depends on WHICH member the caller let default is
     # a trap: `observer:` used to default to a FRESH ChainWriter::Null, so two
     # seams over identical collaborators compared unequal while their two
@@ -1731,19 +2283,21 @@ RSpec.describe Lain::Tools::Subagent do
         .to raise_error(ArgumentError, "unknown keywords: :max_dept, :nam")
     end
 
-    # A descended copy re-injects the seam verbatim EXCEPT the parent handle: a
-    # grandchild's lineage must name the CHILD's head, while the observer and
-    # supervisor must stay the same objects or a nested spawn's record vanishes
-    # one level up.
-    it "descends the seam onto the child, rebinding only the parent" do
+    # A descended copy re-injects the seam verbatim EXCEPT the parent handle
+    # and the escalation road: a grandchild's lineage must name the CHILD's
+    # head and a grandchild's question must relay through the CHILD rather
+    # than skip it, while the observer and supervisor must stay the same
+    # objects or a nested spawn's record vanishes one level up.
+    it "descends the seam onto the child, rebinding only the parent and the escalation road" do
       wired = seam.with(observer: ->(_event) {}, supervisor: Lain::Supervisor.new, journal: Lain::Channel.new)
       tool = described_class.new(seam: wired, toolset: union, policy: spawn_policy, max_depth: 3)
       child_handle = -> { parent }
 
-      copy = tool.descend(parent: child_handle, ceiling: 1)
+      copy = tool.descend(parent: child_handle, escalation: ["a-parent-correlation"], ceiling: 1)
 
       expect(copy.seam.parent).to be(child_handle)
-      expect(copy.seam.to_h.except(:parent)).to eq(wired.to_h.except(:parent))
+      expect(copy.seam.escalation).to eq(["a-parent-correlation"])
+      expect(copy.seam.to_h.except(:parent, :escalation)).to eq(wired.to_h.except(:parent, :escalation))
     end
 
     # The union a child attenuates FROM, published. It was reachable only by a

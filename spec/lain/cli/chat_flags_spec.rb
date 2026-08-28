@@ -243,6 +243,21 @@ RSpec.describe "lain chat's flag surface" do
       expect(help).not_to match(/inert|no chat path|does nothing/i)
     end
 
+    # Model-dispatched spawns now lease too (Tools::Subagent#run_child, via
+    # Tools::Subagent::Leases#hold), not only an adopted actor -- "actor-mode
+    # subagents" undersold the flag the same way "inert" once did.
+    it "says spawned subagents lease from it, not only actor-mode ones" do
+      help = LainCLI.commands.fetch("chat").options.fetch(:isolation).description
+      expect(help).to match(/spawned subagents lease/i)
+    end
+
+    # The one claim that has NOT changed: a leased checkout is where a spawned
+    # child works, never where the human's own edits land.
+    it "still says the main chat's own session is never isolated" do
+      help = LainCLI.commands.fetch("chat").options.fetch(:isolation).description
+      expect(help).to match(/main chat.*own session is never isolated/i)
+    end
+
     it "reaches the resolver as a backend selection" do
       Dir.mktmpdir do |root|
         expect(Lain::CLI::IsolationBackend.resolve(parse[:isolation], root:)).to be_a(Lain::Isolation::Null)

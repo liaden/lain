@@ -80,6 +80,60 @@ RSpec.describe Lain::Tools::AskHuman do
     end
   end
 
+  # ---- Scenario: the head a question cites is already in the record ---------
+  #
+  # A Q cites the head its asker stood at when it asked, and on reload that
+  # citation resolves only if the record already CARRIES that head. For the
+  # chat's own asker it always does -- {CLI::Repl::Ask} catches the record up
+  # per ask, before it anchors anything. For a child's it does not: a child's
+  # turns reach the record when its ITERATION returns, and a question that
+  # parks never returns from the one it was asked in. So the handle a spawn
+  # hands over settles the record first, and the citation is what says it did.
+  describe "the head a question cites" do
+    it "is the parent handle's live head" do
+      Sync { tool.ask("which file?") }
+
+      expect(tool.last_question.causal_parents).to eq([parent.head_digest])
+    end
+
+    # The invariant is "the head cited IS the head promoted", and it has to be
+    # structural rather than a courtesy of the caller: the settler is HANDED
+    # the Timeline, so a second read cannot answer something else and no
+    # discipline about single fibers is load-bearing.
+    it "hands the settler the very Timeline whose head it then cites" do
+      promoted = []
+      live = parent.commit(role: :user, content: [{ "type" => "text", "text" => "mid-iteration" }])
+      settling = described_class::Parent.new(read: -> { live }, settle: ->(timeline) { promoted << timeline })
+
+      asking = described_class.new(parent: settling)
+      Sync { asking.ask("which file?") }
+
+      expect(promoted.map(&:head_digest)).to eq(asking.last_question.causal_parents)
+    end
+
+    # A settle CAN raise -- {Tools::Subagent::TurnFeed} refuses a rewound
+    # timeline -- and it now runs inside a tool dispatch. Nothing may be half
+    # open afterwards: no Q in the append-only Store, and no set outstanding.
+    it "leaves no question set open when the settle raises" do
+      boom = described_class::Parent.new(read: parent, settle: ->(_timeline) { raise "the feed diverged" })
+      asking = described_class.new(parent: boom)
+
+      expect { Sync { asking.ask("which file?") } }.to raise_error("the feed diverged")
+      expect(asking.pending?).to be(false)
+      expect(asking.last_question).to be_nil
+    end
+
+    # A handle nobody taught to settle is the common case and stays a bare
+    # thunk at every call site: whoever owns ITS record catches it up already.
+    it "reads a plain thunk exactly as it reads a Timeline" do
+      thunked = described_class.new(parent: -> { parent })
+
+      Sync { thunked.ask("which file?") }
+
+      expect(thunked.last_question.causal_parents).to eq([parent.head_digest])
+    end
+  end
+
   # ---- Scenario: await parks the fiber, not the reactor ---------------------
 
   it "parks the awaiting fiber while a concurrent fiber does work" do
@@ -151,6 +205,60 @@ RSpec.describe Lain::Tools::AskHuman do
       expect { tool.reply("config.rb, again", tool.last_question.digest) }.to raise_error(Lain::Promise::AlreadyResolved)
       expect(store.size).to eq(after_first)
       expect(tool.last_answer.body.fetch("answer")).to eq("config.rb")
+    end
+  end
+
+  # ---- Scenario: a child addresses its parent, not the human -----------------
+  #
+  # Every asker's `from:` is already its own chain's correlation -- a child
+  # addresses a question FROM itself exactly as the chat's own asker does.
+  # `to:` was not: every asker, child included, wrote `to: HUMAN` regardless
+  # of who spawned it, so the record could never say a question went to a
+  # parent rather than straight to a human. `to:` gives a caller that
+  # recipient explicitly; unset, an asker keeps addressing the human, which
+  # is what the run's own asker (wiring.rb) still does.
+  describe "addressing (who a question is sent to, and a reply comes from)" do
+    let(:grandparent) do
+      Lain::Timeline.empty(store:)
+                    .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
+    end
+    let(:parent_correlation) { Lain::Event::ChainWriter.correlation_of(grandparent) }
+    let(:child) { described_class.new(parent:, to: parent_correlation) }
+
+    it "addresses a child's question to the parent it was spawned under, not the literal human" do
+      Sync { child.ask("which file?") }
+
+      expect(child.last_question.to).to eq(parent_correlation)
+      expect(child.last_question.to).not_to eq(described_class::HUMAN)
+    end
+
+    it "still addresses the run's own asker to the human, unchanged" do
+      Sync { tool.ask("which file?") }
+
+      expect(tool.last_question.to).to eq(described_class::HUMAN)
+    end
+
+    # The escalation chain a later card builds has nowhere to answer a
+    # question addressed away from HUMAN unless the reply names the same
+    # identity the question named -- otherwise a reader walking Q to A would
+    # find two different addressees closing one exchange.
+    it "answers a child's question from the same identity it was addressed to" do
+      Sync { child.ask("which file?") }
+
+      child.reply("config.rb", child.last_question.digest)
+
+      expect(child.last_answer.from).to eq(parent_correlation)
+    end
+
+    # Routing `to:` a parent must not cost the human the one thing a
+    # notification exists to say: which ROLE is asking, not which parent
+    # relayed it.
+    it "still announces which role is asking, unaffected by who the question is addressed to" do
+      named = described_class.new(parent:, agent: "researcher", to: parent_correlation)
+
+      Sync { named.ask("which file?") }
+
+      expect(named.last_question.body.fetch(described_class::ASKED_BY)).to eq("researcher")
     end
   end
 

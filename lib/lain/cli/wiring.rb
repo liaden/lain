@@ -132,9 +132,8 @@ module Lain
       # to the frontend. The conductor slot is set BEFORE the repl blocks, so the
       # exe's ensure can close it even when the repl raises mid-run.
       def run(backend:, resumed:, nvim:, &notice)
-        channel = Lain::Channel.new
         recorder, session = run_state(resumed)
-        agent = wire_agent(channel:, recorder:, session:, backend:, resumed:, views: nvim, notice:)
+        agent = wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:, resumed:, views: nvim, notice:)
         resumed&.notices&.each(&notice)
         tty = @tty_factory.call(channel:, prompt_renderer: prompt_renderer(agent, notice))
         @conductor = open_conductor(tty)
@@ -167,6 +166,11 @@ module Lain
       def chat_env = Lain::WorkerEnv.default.with(cwd: project.cwd)
 
       def wire_agent(channel:, recorder:, session:, backend:, resumed: nil, views: nil, notice: nil)
+        # The run's ONE Channel, in a slot for the reason `@agent` carries below:
+        # the collaborators that journal onto it are assembled across three
+        # methods here, so a value threaded through each of them is a promise
+        # every caller has to keep where the slot is a fact this object holds.
+        @channel = channel
         parent = -> { @agent.timeline }
         # Desktop notification is CONSENT and is never inferred: `Notify.for`
         # once read dunstify-on-PATH as permission, so every spec and probe
@@ -181,9 +185,9 @@ module Lain
         @notifier = Lain::Notify.for(desktop: options[:desktop], journal: channel)
         # The reactor above the Agent that un-refuses model-dispatched actors.
         # The exe runs it under a chat-level reactor that outlives asks.
-        @supervisor = Lain::Supervisor.new(journal: channel, isolation: fleet_isolation(channel))
+        @supervisor = Lain::Supervisor.new(journal: channel, isolation: fleet_isolation)
         @ask_human = wire_askers(parent)
-        toolset = build_toolset(recorder, backend:, parent:, journal: channel, ask_human: @ask_human, notice:)
+        toolset = build_toolset(recorder, backend:, parent:, ask_human: @ask_human, notice:)
         # Resolved BEFORE the record opens, and the statement order IS the
         # guarantee -- see #switchboard for what can refuse here and why a
         # refusal must land ahead of the header.
@@ -221,19 +225,45 @@ module Lain
       # command that happens to answer -- a query name would hide the write.
       def bind_hud_store(agent) = agent.timeline.store.tap { |store| @status_feed.bind_store(store) }
 
-      # The backend each ADOPTION leases a WorkerEnv from. Only actor-mode
-      # subagents lease; the main chat's Session is built on {WorkerEnv.default}
-      # deliberately, because the user's own edits belong in the user's own tree.
+      # The backend a run leases every worker's WorkerEnv from -- the actors a
+      # {Supervisor} adopts AND the children a model dispatches, which
+      # {ToolsetBuild} is handed this same instance for. The main chat's Session
+      # is built on {WorkerEnv.default} deliberately, because the user's own
+      # edits belong in the user's own tree.
       #
-      # Resolved HERE, before the chronicle pins its header, so an unrecognized
-      # name refuses while the session record is still empty -- the
+      # MEMOIZED, and the sharing is not an optimization. Every consumer keys
+      # its resources on a worker id and allocates from per-INSTANCE state: a
+      # {Isolation::Worktree}'s `@leased` Set and Monitor serialize one object,
+      # so two backends cannot refuse each other's checkout paths, and a
+      # service pool that allocates without a worker key in it hands the same
+      # slot out twice. `.lain/services.rb` is read once for the reason
+      # {IsolationBackend#services} gives about a file edited mid-resolution.
+      #
+      # It takes NO argument, and that is the memo's own honesty: a `journal:`
+      # parameter would be honoured on the first call and silently discarded on
+      # every later one, so the signature would promise a choice the object does
+      # not offer. The run's one Channel is a slot instead.
+      #
+      # Resolved on the first call, before the chronicle pins its header, so an
+      # unrecognized name refuses while the session record is still empty -- the
       # refusal-before-journal ordering --resume already keeps.
       #
       # The root is the {Project}'s, not `Dir.pwd`: it is what
       # `.lain/services.rb` is read from and where the repository search starts,
       # so a run from a subdirectory declares the services its PROJECT
       # declares.
-      def fleet_isolation(journal) = IsolationBackend.resolve(options[:isolation], root: project.root, journal:)
+      def fleet_isolation = @fleet_isolation ||= IsolationBackend.resolve(options[:isolation], root:, journal: channel)
+
+      # The run's ONE Channel, and {Lain::Channel::Null} until {#wire_agent} has
+      # opened one: a Wiring driven straight at a private assembly seam -- which
+      # two specs do -- journals nowhere rather than handing a collaborator nil
+      # to push records onto.
+      def channel = @channel || Lain::Channel::Null.instance
+
+      # The PROJECT's root, which is what every collaborator below is handed:
+      # never `Dir.pwd`, so a chat started in a subdirectory still resolves
+      # against the project it belongs to.
+      def root = project.root
 
       # Assembled HERE because this is the only object holding the live Agent,
       # the run's RunClock and the StatusFeed at once -- the three things a
@@ -298,12 +328,12 @@ module Lain
       # nil`. Nothing is invented either way -- `Lain::Usage.zero` is truthy, so
       # a run that has spent nothing still reports zero and cannot be confused
       # with an unassigned slot.
-      def build_toolset(recorder, backend:, parent:, journal:, ask_human:, notice: nil)
+      def build_toolset(recorder, backend:, parent:, ask_human:, notice: nil)
         @toolset_build = ToolsetBuild.new(backend:, provider: AgentBuild.spooled_provider(backend, chronicle:),
-                                          chronicle:, options:, root: project.root, usage: -> { @agent&.usage },
-                                          supervisor: @supervisor, parent:, journal:, library: backend.library,
-                                          switchboard: -> { @switchboard }, askers: @askers,
-                                          epic: epic_mount(notice), verdict: verdict(notice))
+                                          chronicle:, options:, root:, usage: -> { @agent&.usage }, askers: @askers,
+                                          supervisor: @supervisor, parent:, library: backend.library,
+                                          switchboard: -> { @switchboard }, journal: channel, verdict: verdict(notice),
+                                          isolation: fleet_isolation, epic: epic_mount(notice))
         @toolset_build.build(recorder, ask_human:)
       end
 
@@ -311,8 +341,8 @@ module Lain
       # the epic its project declares rather than whichever the working
       # directory happened to name.
       def epic_mount(notice)
-        EpicMount.for(chronicle:, options:, notice:, notify: @notifier, root: project.root,
-                      bindings: replies, **ReviewSeams.for(replies, root: project.root))
+        EpicMount.for(chronicle:, options:, notice:, notify: @notifier, root:,
+                      bindings: replies, **ReviewSeams.for(replies, root:))
       end
 
       # The run's ONE live {HumanReplies}, late: it is built in #build_repl,

@@ -26,8 +26,8 @@ module ApprovalViewSpecSupport
       @refusal = refusal
     end
 
-    def set_approval(lines, generation, rows)
-      @posts << { lines:, generation:, rows: }
+    def set_approval(lines, generation, rows, calls, call_index)
+      @posts << { lines:, generation:, rows:, calls:, call_index: }
       @refusal
     end
 
@@ -492,6 +492,35 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       expect(rpc.last[:lines].last).to include("LainApprove", "LainDeny")
     end
 
+    # {Lain::Frontend::Neovim::ApprovalView::Rendering}'s own property, pinned
+    # at the layer it lives at rather than only through a live editor: `calls`
+    # is one entry per PARKED CALL, not one per row, so a single item wrapping
+    # into several rows still gets exactly one. `call_index` is `rows`-shaped
+    # and every one of its entries names that same, only member.
+    it "carries one calls entry per parked call, and every row of a wrapped item resolves to it" do
+      gated(timeout: window, calls: [long_call("tu_1")]) { |_queue| nil }
+
+      expect(rpc.last[:calls].size).to eq(1)
+      expect(rpc.last[:calls].first).to include(long_command)
+      expect(rpc.last[:call_index].size).to eq(rpc.last[:rows])
+      expect(rpc.last[:call_index].uniq).to eq([1])
+    end
+
+    # Three items, three `calls` entries, and `call_index` a CONSECUTIVE run
+    # per item -- built from the SAME walk that draws `item_starts`, so a row
+    # answering the wrong call here would be the identical defect the
+    # cursor-resolution examples above already guard, seen from the wire
+    # payload's own shape instead of a decided verdict.
+    it "keeps call_index's runs lined up with which of three parked calls each row belongs to" do
+      gated(timeout: window, calls: three_long_calls) { |_queue| nil }
+
+      expect(rpc.last[:calls].size).to eq(3)
+      item_starts.each_with_index do |start, position|
+        run = rpc.last[:call_index][start - 1, item_at(start).size]
+        expect(run.uniq).to eq([position + 1])
+      end
+    end
+
     it "answers the item the summary line belongs to, never its neighbour" do
       result = gated(timeout: window, calls: three_long_calls) do |_queue|
         view.decide(item_starts.last, "approve", generation:)
@@ -683,6 +712,16 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       view.prime
 
       expect(rpc.last[:rows]).to eq(0)
+    end
+
+    # The empty rendering's OTHER two members, so a nil creeping into either
+    # crosses the wire silently: an unparked list has no calls to publish and
+    # nothing for its (also empty) call_index to point into.
+    it "carries no calls or call_index either, agreeing with the empty row count" do
+      view.prime
+
+      expect(rpc.last[:calls]).to eq([])
+      expect(rpc.last[:call_index]).to eq([])
     end
 
     # The escalation trigger this card was given, pinned so it cannot rot: the
@@ -1176,7 +1215,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
 
   describe "the surface nobody wired" do
     it "refuses the render honestly rather than reporting one that never happened" do
-      expect(described_class::Detached.set_approval([], 1, 0)).to eq(described_class::DETACHED)
+      expect(described_class::Detached.set_approval([], 1, 0, [], [])).to eq(described_class::DETACHED)
     end
 
     it "is the DEFAULT, so an unwired view can never claim a row is on screen" do

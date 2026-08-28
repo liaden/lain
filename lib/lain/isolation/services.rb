@@ -25,9 +25,8 @@ module Lain
   end
 end
 
-# All four are nested INSIDE the class above, so they load after its body --
+# All three are nested INSIDE the class above, so they load after its body --
 # which is why {Services.builder} names {Builder} in a method, not a constant.
 require_relative "services/postgres"
-require_relative "services/redis"
 require_relative "services/compose"
 require_relative "services/builder"
