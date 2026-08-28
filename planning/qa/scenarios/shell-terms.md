@@ -20,6 +20,36 @@ that shares its queue all belong to [`cockpit-surfaces.md`](cockpit-surfaces.md)
 This scenario asks only **whether a call reaches a human at all**, and reads that off the
 journal rather than off a buffer.
 
+**Nor does it own the layers immediately behind the verdict, or the mechanism that makes any
+of this observable in the first place.** `Shell::Parse`'s own boundary — the tree-sitter
+reading, the 4096-byte cap, the `broken?`/`covered?` pair that keeps a refusal from reading as
+"everything accounted for," and its total-ness over `nil`/empty/NUL input — belongs to
+[`shell-term-approval.md`](shell-term-approval.md) §1; this scenario reads `Parse` only
+through `Verdict`'s answer, never directly. So does the `Triage` rung's own mechanics once a
+term exists — its rung-by-rung verdict table, `Sensitivity::Policy::PATH_FIELDS["bash"]`, and
+the three-reason argument for downgrading a bare protected word — `shell-term-approval.md`
+§4a/§4b. So does `Shell::Pipeline`'s `STDIN_SAFE` downstream predicate (its §3a) and the
+recursive-read hazard a term-shaped rule cannot see (its §5) — this scenario's §4/§5 test the
+allowlist a rule approves *against*, never the read set standing behind an allowed program.
+And so is the belt-and-braces arm oracle itself — a command whose two arms disagree, used before
+the dedicated `shell_arm` record existed: `shell-term-approval.md` §0 is where the `exit
+3`/quoted-string probe was built and corrected in round 15 to read "the arm IS observable, for an
+attended session." This scenario's §6 does not need that oracle — it reads `Telemetry::ShellArm`
+directly — but it is the section §0's correction cites as the record that superseded it.
+
+**Where the two files land on the same ground, drive it once, at `shell-term-approval.md`'s
+section, and skip the duplicate here.** The config-deny table's core claims (deny-not-abstain,
+qualified-name evasion, the `["*"]` wildcard, a loud malformed-file refusal — this scenario's
+§2/§3) restate `shell-term-approval.md` §6's claims 1–4; the approval rule's headline "no
+prompt" claim (this scenario's §5 opening) restates `shell-term-approval.md` §7's positive
+case; the docker single-argv-runs/piped-term-falls-back-to-a-string claim (this scenario's §7)
+restates `shell-term-approval.md` §9; the `web_fetch` refusal-string table (this scenario's
+§8) restates `shell-term-approval.md` §10. `shell-term-approval.md` points back here for the
+parts it does not re-derive. What stays unique to this scenario in those same sections is the
+broader sweep — the full sixteen-command `ComposedTerm` predicate audit in §4, the
+both-postures `shell_arm` record check in §6 — and, with no counterpart anywhere else in the
+directory, **§9's paid arm-distribution measurement off a real session's journal.**
+
 **The question it answers:** *does the deterministic half of the shell subsystem decide the
 way it says it does?* Which commands earn the no-shell arm, which a project's config can
 refuse by name, which are approved with nobody asked — and, the half that matters more,
@@ -411,7 +441,7 @@ entry for it would test the config rather than the floor.
 ## 6 — the shell-arm record, in attended **and** in `/mode auto` *(cheap — local model)*
 
 `Telemetry::ShellArm` journals as `"type": "shell_arm"` and is written on **every** gated
-`bash` call, both arms, before the command runs (`bash.rb:236-239`). Its six fields, from a
+`bash` call, both arms, before the command runs (`bash.rb:256-259`). Its six fields, from a
 real allowed pipeline:
 
 ```json
@@ -585,7 +615,9 @@ bought. Do not report a local number as the paid one.
 - **`Shell::Parse` itself.** Which node kinds the tree-sitter grammar reports, and the
   silent-misparse class a second parser would make observable, are a deferred chunk
   (`chunk-shell-term-approval.md`, Open decisions). Everything here reads `Parse`'s answer
-  through `Verdict` and never asks it directly.
+  through `Verdict` and never asks it directly — the boundary itself (the byte cap,
+  `broken?`/`covered?`, total-ness over `nil`/empty/NUL input) is driven directly by
+  [`shell-term-approval.md`](shell-term-approval.md) §1.
 - **Program identity.** `PATH` is inherited and uncontrolled, and no rung asks whether the
   binary `execvp` finds is the program the allowlist vouched for. §4 drives the one thing
   that *is* checked — that argv0 is a bare name — and the four costed rungs above it
