@@ -127,7 +127,7 @@ only ever looks after attach will see a correct-looking screen either way. Look 
 `/survey ./lib` — a **subdirectory** survey specifically; the project-root case behaves differently
 and is what hid an earlier defect.
 
-Expected banner: `walk it in lain://review; <CR> opens a row beside you, <C-w>l<C-w>l reaches
+Expected banner: `walk it in lain://review; <CR> opens a row beside you, <C-w>l reaches
 the file where :LainNote annotates, :LainReviewVerdict approve hands it back`.
 
 The walk is named in the banner because `<CR>` lands the cursor in the **sidebar**, not in the
@@ -148,16 +148,20 @@ nvim --server "$S" --remote-send ':tabnext 3<CR>'    # the review tab
 nvim --server "$S" --remote-send ':1wincmd w<CR>'    # the sidebar
 nvim --server "$S" --remote-expr 'bufname()'         # MUST print lain://review
 nvim --server "$S" --remote-send '2G'
-nvim --server "$S" --remote-send '<CR>'              # opens sidebar | OLD | NEW
+nvim --server "$S" --remote-send '<CR>'              # opens sidebar | NEW -- a survey has no old side
+nvim --server "$S" --remote-expr 'winnr("$")'        # MUST print 2, not 3
 ```
 
-After `<CR>` the tab holds **three** windows and **focus is TAKEN to the sidebar** (T10, round-7 fix
-for F34), even from another tab — it does not follow the cursor into NEW. **The NEW window is
-modifiable**, not a `nomodifiable` copy: `47_diff.lua:188` sets its `buftype` conditionally
-(`filereadable(absolute) == 1 and "" or "nowrite"`) — `""` when reviewing a live file, so LSP and
-treesitter attach, or `nowrite` when the file was deleted, which blocks `:w` but not editing. Either
-way `x` there is vim's delete-character and will edit the human's source, not mark the row. Stay on
-window 1 to press `x`.
+After `<CR>` the tab holds **two** windows, sidebar and NEW, because this round is a survey:
+`Source::Corpus#sides` (`review/source/corpus.rb:320`) never claims the old slot, so `47_diff.lua`
+builds no OLD window for it (`sided = review_panes.holds("old")` at `:722` is false here, which
+leaves `old_win` `nil` and hands `pair` the one-element `{ new_win }` at `:733-744`). **Focus is
+TAKEN to the sidebar** (T10, round-7 fix for F34), even from another tab — it does not follow the
+cursor into NEW. **The NEW window is modifiable**, not a `nomodifiable` copy: `47_diff.lua:188` sets
+its `buftype` conditionally (`filereadable(absolute) == 1 and "" or "nowrite"`) — `""` when
+reviewing a live file, so LSP and treesitter attach, or `nowrite` when the file was deleted, which
+blocks `:w` but not editing. Either way `x` there is vim's delete-character and will edit the
+human's source, not mark the row. Stay on window 1 to press `x`.
 
 Check, in order:
 
@@ -350,13 +354,18 @@ Then, from the sidebar (window 1 of the review tab, per §4's focus discipline):
 ```bash
 nvim --server "$S" --remote-send ':1wincmd w<CR>'
 nvim --server "$S" --remote-expr 'search("tally.rb")'   # the row, by name, never by line
-nvim --server "$S" --remote-send '<CR>'                 # opens sidebar | OLD | NEW
+nvim --server "$S" --remote-send '<CR>'                 # opens sidebar | NEW -- a survey has no old side
+nvim --server "$S" --remote-expr 'winnr("$")'           # MUST print 2 -- read this and the banner
+                                                         # above, not a fixed motion count
 ```
 
-**The OLD window is empty and that is correct here** — a corpus has no base (`old_start`/`old_count`
-are fixed at `0,0`, every line carries its `+`), so there is nothing to diff against. Note it and
-move on; it is §4b's expected state, not a defect. Whether it should be *drawn* that way is a
-separate question and a separate finding.
+**There is no OLD window here, not an empty one — this is §4's two-window case, not its three.** A
+corpus's every row is a fixed `old_start`/`old_count` of `0,0` (`review/source/corpus.rb:35,88-89`),
+so there is nothing to diff against, and `Source::Corpus#sides` (`:320`) never claims the old slot in
+the first place. `47_diff.lua` only ever builds a window for a slot the round asked for
+(`sided = review_panes.holds("old")` at `:722`; a `nil` `old_win` and the one-element `pair` at
+`:733-744` — the identical mechanism §4 measures), so there is nothing sitting empty beside the
+sidebar to note and move past. Sidebar and NEW are the whole tab.
 
 ### The checks
 
