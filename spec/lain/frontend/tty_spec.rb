@@ -59,6 +59,15 @@ RSpec.describe Lain::Frontend::TTY do
     Lain::Tools::AskHuman::Announcement.new(Lain::Question::Set.new(questions:))
   end
 
+  # The OTHER value this seam carries: a human's own reply, measured and
+  # handed back. Built exactly as `AskHuman#reopened` builds it, because what
+  # is being pinned is how the surfaces render the production value.
+  def handed_back(bytes)
+    Lain::Tools::AskHuman::Ceiling.handback(Lain::Tools::AskHuman::Ceiling.overrun("L" * bytes))
+  end
+
+  def ceiling = Lain::Tools::AskHuman::Ceiling::BOUND.limit
+
   describe "#drain_and_render" do
     it "renders every currently-queued event and returns how many it rendered" do
       channel.push(tool_output(bytes: "first\n"))
@@ -589,6 +598,30 @@ RSpec.describe Lain::Frontend::TTY do
       expect(output.string).to include("researcher").and include("(/inbox")
     end
 
+    # A handback's BYTES are the measurement followed by every byte of the
+    # reply -- the payload has to reach the notifier and the document below --
+    # so the note reads its `#summary` like an Announcement's. Read as a bare
+    # String it printed the whole reply as one unwrapped terminal line: 64 KiB
+    # for the smallest overrun there is, and megabytes for a pasted log.
+    it "states a handback's measurement in a note far smaller than the reply it measured" do
+      handback = handed_back(ceiling + 1)
+
+      tty.render_arrival(handback, from: "chat")
+
+      expect(output.string).to include("over the ceiling of #{ceiling}").and include("type `send`")
+      expect(output.string.bytesize).to be < (handback.bytesize / 100)
+      expect(output.string.chomp).not_to match(line_break)
+    end
+
+    # The width is bounded by the digits in a byte count rather than by the
+    # payload, so five megabytes costs the same line as sixty-four kilobytes.
+    it "stays the same bounded line for a five-megabyte reply" do
+      tty.render_arrival(handed_back(5 * 1024 * 1024), from: "chat")
+
+      expect(output.string.bytesize).to be < 400
+      expect(output.string.chomp).not_to match(line_break)
+    end
+
     it "clamps a long asker name to the width the sender column already uses" do
       tty.render_arrival(announced("db"), from: "an-agent-with-a-very-long-name-indeed")
 
@@ -684,6 +717,22 @@ RSpec.describe Lain::Frontend::TTY do
 
       expect(resolved).to eq(["from-conductor"])
       expect(prompts).to eq(["human> "])
+    end
+
+    # Where "shown their own text again" is served, and the split that makes
+    # it safe: the ROW stays one bounded line, and the block below it carries
+    # every byte, because a human typed `/inbox` to see exactly what they are
+    # about to confirm. Type-tested for an Announcement, the block was empty
+    # and the drain offered a confirmation with nothing to confirm.
+    it "lists a handback in one line and prints the whole reply in the document below" do
+      input.string = "send\n"
+      handback = handed_back(ceiling + 1)
+
+      drain_tty.drain_inbox([item(question: handback)]) { |_answer| nil }
+
+      expect(output.string.lines.first.bytesize).to be < 400
+      expect(output.string.lines.first).to include("over the ceiling of #{ceiling}")
+      expect(output.string.bytesize).to be > ceiling
     end
 
     # A set carries more than a line, so the drain prints the same

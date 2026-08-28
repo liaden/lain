@@ -488,6 +488,38 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       expect(output.string).to include("? #{ask_human.last_question.from.to_s[0, 19]} which db?")
     end
+
+    # ONE set can arrive TWICE: a reply too long for the tool's ceiling is
+    # handed back on the digest already announced, so the human keeps one
+    # inbox row. Keyed on that digest alone the second arrival was swallowed,
+    # and somebody who typed 65 KB got a bare `human> ` back with nothing on
+    # screen to say why. Keyed on the arrival -- the digest and the stamp
+    # `InboxItem.asked` takes -- both are said.
+    it "announces a second arrival for a set already announced" do
+      typed = ["config.rb"]
+      allow(conductor).to receive(:read_reply) { typed.shift || Async::Task.current.sleep(30) }
+      item = announced(ask_human, "which db?")
+      questions.enqueue(Lain::CLI::HumanReplies::InboxItem.new(question: "too long -- type `send`",
+                                                               from: item.from, digest: item.digest,
+                                                               asked_at: item.asked_at + 1))
+
+      with_surfaces { output.string.include?("type `send`") }
+
+      expect(output.string.scan("which db?").size).to eq(1)
+    end
+
+    # And the half the key must not lose: a re-queued item -- the same arrival,
+    # dequeued again by the next dispatched line -- is still announced once.
+    it "does not re-announce the same arrival when it is re-queued" do
+      allow(conductor).to receive(:read_reply) { Async::Task.current.sleep(30) }
+      item = announced(ask_human, "which db?")
+
+      with_surfaces { output.string.include?("which db?") }
+      questions.enqueue(item)
+      surfaces_settle
+
+      expect(output.string.scan("which db?").size).to eq(1)
+    end
   end
 
   # The sharpest edge this chunk opened. The drain prints a whole

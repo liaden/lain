@@ -538,9 +538,11 @@ module Lain
         end
 
         # One line, never {TTY#render_question}'s modal block -- and one line
-        # whatever the set's size, because what is announced is
-        # {Announcement#summary}, already clamped and already the row the
-        # editor's inbox shows.
+        # whatever the arrival's size, because what is announced is the value's
+        # own `#summary`: {Announcement#summary} for a question set, already
+        # the row the editor's inbox shows, and
+        # {Tools::AskHuman::Handback#summary} for a reply handed back, which is
+        # the bound's one-sentence measurement rather than the reply itself.
         def arrival(question, from: nil)
           @output.puts(@pastel.yellow(one_line("? #{asker(from)}#{summarized(question)}  (#{POINTER})")))
           @output.flush
@@ -613,13 +615,21 @@ module Lain
           [*items.map { |item| line_for(item) }, *document_for(answering.question)]
         end
 
-        # The same markdown the editor opens the set in, so the two surfaces
-        # show one document rather than two renderings that can disagree. A
-        # question that carries no set (a bare String on this seam) has none.
+        # The block below the listing, asked OF the value rather than
+        # assembled here: a question set renders the same markdown the editor
+        # opens it in, so the two surfaces show one document rather than two
+        # renderings that can disagree, and a handback of the human's own
+        # oversized reply renders that reply -- which is where "shown their own
+        # text again" is served, the one-line row above being the wrong place
+        # for it. Type-tested for the set alone, this drew nothing at all for a
+        # handback, so `/inbox` offered a confirmation with nothing to confirm.
+        #
+        # A bare String on this seam has no document, which is a documented
+        # case rather than an oversight.
         def document_for(question)
-          return [] unless question.is_a?(Tools::AskHuman::Announcement)
+          return [] unless question.respond_to?(:document)
 
-          ["", Question::Document.unanswered(question.set).chomp, "", @pastel.dim(GESTURE)]
+          ["", question.document.chomp, "", @pastel.dim(GESTURE)]
         end
 
         # A typed reply answers the WHOLE set in prose, and the caller resolves
@@ -653,9 +663,17 @@ module Lain
         # An {Announcement}'s BYTES are a lone question's body verbatim -- a
         # table or a fenced diff, deliberately, because the document below
         # renders them -- so every one-line surface reads the summary it
-        # derived instead. Clamped there, never re-clamped here.
+        # derived instead. Bounded there, never re-clamped here.
+        #
+        # Asked by MESSAGE, not by class, and the class test is what broke:
+        # {Tools::AskHuman::Handback} is a String subclass too, and its bytes
+        # are the measurement followed by the entire oversized reply. Passed
+        # through as a bare String it printed 64 KiB -- or 5 MiB -- as one
+        # unwrapped terminal line, where the same seam clamps a 5,000-byte
+        # {Announcement} to under 200. A genuinely bare String is still its own
+        # summary: that is what a caller announcing prose meant.
         def summarized(question)
-          question.is_a?(Tools::AskHuman::Announcement) ? question.summary : question
+          question.respond_to?(:summary) ? question.summary : question
         end
 
         def one_line(text) = text.gsub(BREAKS, " ")

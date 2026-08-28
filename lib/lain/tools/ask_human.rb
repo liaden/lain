@@ -36,6 +36,15 @@ module Lain
     # decision. A set collapses that to one, and the price is that it resolves
     # as a whole.
     #
+    # == An answer that costs more than it is worth
+    #
+    # A reply lands straight in the asker's context, so an unmeasured one is
+    # the largest thing a turn can spend. {ANSWER_BOUND} measures it, and
+    # because this is the one tool with somebody there to be asked, an overrun
+    # is HANDED BACK rather than refused: the human is shown the measurement
+    # and their own words and decides. The handback re-opens the set already in
+    # the record instead of asking again -- see {#reopened}.
+    #
     # == Injection, and the single-question invariant
     #
     # `parent:` is the live parent-Timeline handle (a Timeline or a thunk, since
@@ -67,6 +76,79 @@ module Lain
       # one -- so the name has to be IN the record for the two surfaces to name
       # an asker the same way.
       ASKED_BY = "asked_by"
+
+      # What a human's own reply may cost the context it lands in, and what an
+      # overrun is put back to them as. Its own object because measuring an
+      # answer and reading what a human's next line MEANS are one
+      # responsibility, and parking on an answer and writing the record is
+      # another -- which is all the rest of this class does.
+      #
+      # A HANDBACK rather than a cap or a refusal, which is {Tool::Bounds}'
+      # third shape and the reason it exists: the words are the human's, they
+      # are still theirs after a bound has measured them, and this tool is the
+      # only one holding a channel back to whoever wrote them. So the question
+      # is not "does this fit" but "does this fit, and do you still want it".
+      #
+      # It does not bind an unattended run at all, and that is worth stating
+      # rather than discovering: {Unattended#perform} is a full override that
+      # refuses without ever calling {AskHuman#perform}, so nothing there
+      # measures anything -- and nothing there can park on a confirm either.
+      module Ceiling
+        # {Question::Answer::MAX_COMMENT}, and taking it from there rather than
+        # picking a number is the argument: the STRUCTURED answer path already
+        # refuses past that byte count, so free text was one arm of one tool
+        # where a human could put a megabyte into a parent's context with
+        # nothing to say so. Read from the constant, the two arms cannot drift.
+        BOUND = Tool::Bounds::Handback.new(limit: Question::Answer::MAX_COMMENT)
+
+        # What the human is told overran, in their own terms.
+        SUBJECT = "your reply"
+
+        # The whole line a human types to send an oversized reply as it stands.
+        CONFIRMATION = "send"
+
+        # {Tool::Bounds::Overrun#actions} are AUDIENCE-BOUND and nothing in the
+        # bound can check it: these are read at a `human> ` prompt by the person
+        # who typed the reply, never by a model being refused, so they name
+        # keystrokes rather than narrower tool calls.
+        #
+        # Frozen through {Tool::Bounds.offer} rather than by `#freeze`, which
+        # would leave the ELEMENTS mutable: `# frozen_string_literal: true` does
+        # not reach an INTERPOLATED literal, so the first of these was a mutable
+        # String reachable from a constant, and appending to it changed what
+        # every later handback said. That is the trap {Tool::Bounds.phrase}'s own
+        # comment names, and `spec/value_object_shareability_spec.rb` sweeps
+        # value objects rather than constants, so nothing else would have caught
+        # it.
+        ACTIONS = Tool::Bounds.offer(["type `#{CONFIRMATION}` to send it anyway",
+                                      "type a shorter reply instead"])
+
+        # The door {Tool::Bounds::Handback} tells both its consumers to use:
+        # one call, `nil` when it fits, no guard to forget.
+        #
+        # @param answer [String] what the human typed
+        # @return [Tool::Bounds::Overrun, nil]
+        def self.overrun(answer) = BOUND.measure(subject: SUBJECT, content: answer, actions: ACTIONS)
+
+        # What the human is shown, as the value the arrival seam carries. It
+        # names {Tool::Bounds::Overrun#message} and `#content` deliberately and
+        # never interpolates the {Tool::Bounds::Overrun} itself, whose
+        # `#inspect` is redacted for the Journal's sake.
+        def self.handback(over) = Handback.new(over)
+
+        # The whole line, so a reply that merely CONTAINS the word is a reply
+        # and never consent. Case and surrounding space are how somebody types,
+        # not what they mean.
+        def self.confirmed?(answer) = answer.strip.casecmp?(CONFIRMATION)
+      end
+
+      # Where an arrival goes when nobody wired one. The seam is outbound-only
+      # and String-shaped, exactly as {Notifying}'s is, so a tool built without
+      # a queue announces to nothing rather than guarding at the one call site
+      # that reaches it.
+      module NoArrival
+        def self.call(_text) = nil
+      end
 
       # The answer nobody gave, riding the seam an answer rides.
       #
@@ -183,6 +265,11 @@ module Lain
         # Open a set for answering, the Q event's digest coming from the block.
         # The guard runs BEFORE the block, so a refused ask writes no Q to the
         # append-only Store and leaves nothing for a later reply to cite.
+        #
+        # The block yields a digest rather than writing one, which is what lets
+        # {AskHuman#reopened} re-open the set already in the record when an
+        # answer is handed back: a second answerable set, one Q event, one
+        # inbox row.
         def open
           raise QuestionOutstanding, still_outstanding if pending?
 
@@ -196,6 +283,27 @@ module Lain
           raise Promise::AlreadyResolved, "the question set #{digest} was already answered" if @pending.resolved?
 
           @pending
+        end
+
+        # Open a set and hand it to the block, letting go of it again if the
+        # block raises. What follows an open is the ARRIVAL that tells a human
+        # the set is there, and an arrival that raises with the set already
+        # claimed leaves this asker holding a question nobody can answer for
+        # the rest of its life -- every later ask refused as outstanding, with
+        # no park to run {AskHuman#awaited}'s `ensure`. Reachable because a
+        # handback puts an unbounded payload on that seam: an argv too long for
+        # `execve` raises there.
+        #
+        # {Notifying#ask} has the same shape and is not fixed here, being a
+        # different file and a pre-existing one -- but it is the same hazard,
+        # and whoever closes it should close it through this.
+        def opened(digest)
+          pending = open { digest }
+          yield pending
+          pending
+        rescue StandardError
+          abandon(pending)
+          raise
         end
 
         # Identity, not digest: only the opener may abandon what it opened, and
@@ -229,6 +337,22 @@ module Lain
 
           "no question set #{digest} is awaiting a reply -- this asker holds #{@pending.held}"
         end
+      end
+
+      # The questions whose answers passed the sync gate since the last
+      # hand-over, waiting for the one commit that delivers them. Its own
+      # object because the nil-then-Array dance it replaces was a guard at
+      # every touch: `@answered_questions ||= []` at the push and `.to_a` at
+      # the take, both of which read as though a missing list were a state
+      # rather than an empty one.
+      class Answered
+        def initialize = @digests = []
+
+        def push(digest) = @digests << digest
+
+        # Emptied as it is read: the edge belongs to the ONE commit that
+        # delivers these answers, so a second reader must find nothing.
+        def take = @digests.slice!(0..)
       end
 
       # The live parent-Timeline handle, and the ONE thing a handle can be
@@ -375,6 +499,14 @@ module Lain
         def set = carried!(@set, "question set")
         def summary = carried!(@summary, "summary line")
 
+        # The third rendering: the block a surface shows BELOW its one-line
+        # row, and the same markdown the editor opens the set in, so the two
+        # never drift. Asked for by message rather than assembled by whoever is
+        # drawing, because {Handback} answers it too with something that is not
+        # a question document at all -- and a surface that type-tested for one
+        # of them silently drew nothing for the other.
+        def document = Question::Document.unanswered(set)
+
         private
 
         # {#ask}'s refusal sends callers straight here, so it has to answer a
@@ -405,6 +537,46 @@ module Lain
           line = body.each_line.lazy.map(&:strip).find { |text| !Blankness.blank?(text) }.to_s
           line.length <= WIDTH ? line : "#{line[0, WIDTH - ELLIPSIS.length]}#{ELLIPSIS}"
         end
+      end
+
+      # What a human is shown when their OWN reply overran, on the seam an
+      # arrival rides. A String subclass for {Announcement}'s reason: the value
+      # this seam carries is handed to the notifier verbatim, reaching a
+      # dunstify argv and a TTY line, so a Data value would render there as an
+      # inspect.
+      #
+      # THREE renderings, derived once, because the surfaces cannot be allowed
+      # to drift:
+      #
+      # * the BYTES are the whole thing -- the measurement, then every byte of
+      #   the reply -- which is what the desktop notification carries and what
+      #   a caller wanting the payload reads;
+      # * {#summary} is the one line every one-line surface shows. Unclamped
+      #   and needing no clamp, unlike {Announcement#summary}: it is
+      #   {Tool::Bounds::Overrun#message}, composed from a constant subject,
+      #   two integers and constant actions, so its width is bounded by the
+      #   digits in a byte count. Announced UNSUMMARIZED it printed 5 MiB as a
+      #   single terminal line, which is what this rendering exists to prevent.
+      # * {#document} is the block `/inbox` draws below its listing -- the
+      #   whole thing again, deliberately, because that surface's job is to
+      #   show what is about to be confirmed and a preview there would be
+      #   truncation wearing a refusal's clothes.
+      #
+      # Both are DERIVED from the bytes rather than carried in ivars, so the
+      # husk `+str` and `String#encode` leave behind -- this class with every
+      # ivar dropped, the failure {Announcement#carried!} exists for -- cannot
+      # arise here at all.
+      class Handback < String
+        def initialize(over)
+          super("#{over.message}\n\n#{over.content}")
+          freeze
+        end
+
+        # The first line, which IS the bound's sentence: the bytes are that
+        # sentence, a blank line, and the reply.
+        def summary = each_line.first.to_s.chomp
+
+        def document = self
       end
 
       # Two spellings, because they are two different asks. A bare `question`
@@ -476,6 +648,13 @@ module Lain
       # value the TTY and desktop were already announced, so every surface reads
       # one name. Absent, the envelope's correlation stands in.
       #
+      # `notify` is where an arrival goes -- the run's own question queue, or
+      # {NoArrival}. It is declared HERE rather than only on {Notifying}
+      # because {Notifying} announces every ASK and a handback is not one: the
+      # set is already in the record, and re-announcing it is how the human is
+      # re-prompted for a reply they were just shown the measurement of.
+      # {Notifying} still overwrites it, so an enrolled asker is unchanged.
+      #
       # `to` is who the Q is addressed to and who the eventual A is
       # attributed FROM -- one value for both ends, so a reader walks Q to A
       # and finds the same identity closing the loop rather than two
@@ -483,7 +662,8 @@ module Lain
       # handle instead of defaulting here a second way -- see {Parent#to} for
       # who inherits what. Passing `to:` explicitly still overrides, for a
       # caller with no handle worth carrying an address on at all.
-      def initialize(parent:, name: "ask_human", agent: nil, observer: Event::ChainWriter::Null.new, to: nil)
+      def initialize(parent:, name: "ask_human", agent: nil, observer: Event::ChainWriter::Null.new, to: nil,
+                     notify: NoArrival)
         super()
         @parent = Parent.over(parent)
         @name = name
@@ -491,6 +671,8 @@ module Lain
         @to = to || @parent.to
         @chain_writer = Event::ChainWriter.new(observer:)
         @outstanding = Outstanding.new
+        @notify = notify
+        @answered = Answered.new
       end
 
       # Hoisted out of the method so a paragraph the model actually needs is
@@ -578,11 +760,7 @@ module Lain
       # edge belongs to the one commit that delivers the answer.
       #
       # @return [Array<String>] the answered questions' digests, in ask order
-      def take_answered_questions
-        answered = @answered_questions.to_a
-        @answered_questions = nil
-        answered
-      end
+      def take_answered_questions = @answered.take
 
       protected
 
@@ -596,14 +774,65 @@ module Lain
       # record {#recorded_reply} writes is what says what became of the Q.
       def perform(input, _invocation)
         pending = ask(Announcement.new(requested_set(input)))
-        answer = awaited(pending)
-        return Tool::Result.error(Unanswered::REFUSAL) if answer.is_a?(Unanswered)
-
-        (@answered_questions ||= []) << pending.digest
-        Tool::Result.ok(answer)
+        settled(awaited(pending), pending)
       end
 
       private
+
+      # What became of one answer, whichever park it arrived at. An
+      # {Unanswered} is the one thing that is not an answer at all, so it is
+      # asked about before anything measures it; anything else that overran is
+      # put back to the human rather than refused.
+      def settled(answer, pending)
+        return Tool::Result.error(Unanswered::REFUSAL) if answer.is_a?(Unanswered)
+
+        over = Ceiling.overrun(answer)
+        return delivered(answer, pending) if over.nil?
+
+        reconsidered(over, awaited(reopened(over, pending)), pending)
+      end
+
+      # The human decided. Confirming sends the words they already wrote --
+      # {Tool::Bounds::Overrun#content}, the frozen whole copy, never a
+      # preview. Anything else is a REPLACEMENT answer and is measured like any
+      # other, so a human who retypes something just as long is asked again
+      # rather than sneaking past a bound they were just shown. Each pass costs
+      # one human decision, so nothing here loops on its own.
+      def reconsidered(over, answer, pending)
+        Ceiling.confirmed?(answer) ? delivered(over.content, pending) : settled(answer, pending)
+      end
+
+      # The digest the delivery commit cites, recorded at the ONE exit that
+      # carries an answer into the conversation -- so a question handed back
+      # three times is still retired exactly once. Recorded AFTER the result is
+      # built, so an answer the result refuses (`Tool::Result.ok` takes a String
+      # and nothing else) is not booked as delivered on its way out.
+      def delivered(answer, pending)
+        Tool::Result.ok(answer).tap { @answered.push(pending.digest) }
+      end
+
+      # The SAME set, put back to the human. Deliberately not a second {#ask}:
+      # an ask writes a second Q event, and {Parent#escalate} relays that one
+      # too, so one question would leave two human-addressed records and list
+      # two inbox rows. Re-opening on the digest already in the record leaves
+      # the record saying what is true -- one question, asked once, answered
+      # more than once -- and the arrival that re-prompts the human carries
+      # that same digest, so the row they answer is the row they were already
+      # holding.
+      #
+      # {#awaited}'s `ensure` has already abandoned the first park, which is
+      # what lets {Outstanding#open} claim the set again, and it gives the
+      # second park the same treatment: a stop raised while parked here
+      # withdraws the set rather than leaving a question outstanding forever.
+      #
+      # Opened BEFORE the arrival goes out, the ordering {Notifying#ask} keeps
+      # for the same reason: a human who could answer faster than the set was
+      # re-opened would be refused as naming nothing -- and through
+      # {Outstanding#opened}, so an arrival that RAISES does not leave the set
+      # claimed with no park to release it.
+      def reopened(over, pending)
+        @outstanding.opened(pending.digest) { @notify.call(Ceiling.handback(over)) }
+      end
 
       # A stop raised while parked here -- Ctrl-C, or a caller's timeout --
       # means nobody will ever deliver this answer, so the set stops being

@@ -577,10 +577,21 @@ module Lain
         # they could type into it. The read still opens on every serve, so a
         # line they linger on is answerable; only the arrival claim is spent.
         #
-        # Keyed on the digest, so it is per SET rather than per fiber, and
-        # bounded by the questions a session asks.
+        # Keyed on the ARRIVAL rather than on the set, and that distinction is
+        # load-bearing now that ONE set can arrive twice: a reply handed back
+        # for being too long carries the digest of the set already announced --
+        # deliberately, so one question keeps one inbox row -- but it is a new
+        # thing to tell the human, their own words measured and what to type.
+        # Keyed on the digest alone it was suppressed, so somebody who typed 65
+        # KB got a bare prompt back with nothing to say anything had happened.
+        #
+        # The stamp is what tells an arrival from a re-queue: `InboxItem.asked`
+        # takes it once, at the instant that arrival was built, and a re-queue
+        # carries the same item and so the same stamp. The pair holds no
+        # question bytes, which the item itself would -- and a handback's bytes
+        # are the whole oversized reply, held for the life of the session.
         def announce(item)
-          @tty.render_arrival(item.question, from: item.from) if @announced.add?(item.digest)
+          @tty.render_arrival(item.question, from: item.from) if @announced.add?([item.digest, item.asked_at])
         end
 
         # Back where a later surface can reach it. Off the list FIRST, because

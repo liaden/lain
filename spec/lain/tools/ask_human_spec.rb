@@ -292,6 +292,361 @@ RSpec.describe Lain::Tools::AskHuman do
     end
   end
 
+  # ---- Scenario: an answer that is too long comes back to the human ---------
+
+  # A human's reply lands straight in the parent's context, and until now
+  # nothing measured it: one pasted log pinned occupancy near 100% with an
+  # empty compactable head and nothing able to drop it. The ruling was not to
+  # refuse the words -- they are the human's -- but to put the measurement back
+  # to them and let them send it anyway.
+  #
+  # The handback reuses the set that is ALREADY in the record. A second #ask
+  # would write a second Q, which past a relay is a second human-addressed
+  # record and a second inbox row for one question.
+  describe "an answer that is too long to hand straight to the model" do
+    let(:ceiling) { described_class::Ceiling::BOUND.limit }
+    let(:oversized) { "x" * (ceiling + 1) }
+    let(:announced) { [] }
+    let(:confirmations) { [] }
+
+    # The arrival seam, standing in for the run's own queue. It answers the
+    # handback INLINE, which is deterministic rather than lucky: the set is
+    # re-opened before the arrival goes out, so a reply written from here
+    # resolves the confirm before the gate parks on it. That ordering is the
+    # contract -- a human who answers faster than the re-open would be refused
+    # as naming nothing.
+    let(:tool) do
+      described_class.new(parent:, notify: lambda { |text|
+        announced << text
+        tool.reply(confirmations.shift, tool.last_question.digest) if confirmations.any?
+      })
+    end
+
+    def asked_and_answered(answer)
+      Sync do |task|
+        run = task.async { tool.call({ "question" => "which file?" }, invocation) }
+        answered(tool, answer)
+        run.wait
+      end
+    end
+
+    it "returns an ordinary answer as it was typed, with nothing handed back" do
+      result = asked_and_answered("config.rb")
+
+      expect(result).to be_ok
+      expect(result.content).to eq("config.rb")
+      expect(announced).to be_empty
+    end
+
+    # `#admits?` is `<=`, so the byte exactly at the ceiling fits. Pinned
+    # because an off-by-one here is a handback nobody can explain.
+    it "returns an answer exactly at the ceiling untouched" do
+      result = asked_and_answered("x" * ceiling)
+
+      expect(result.content.bytesize).to eq(ceiling)
+      expect(announced).to be_empty
+    end
+
+    it "hands an oversized answer back with its size, the ceiling and their own words" do
+      confirmations << "config.rb"
+
+      asked_and_answered(oversized)
+
+      expect(announced.size).to eq(1)
+      expect(announced.first).to include(oversized)
+      expect(announced.first).to include(oversized.bytesize.to_s).and include(ceiling.to_s)
+    end
+
+    it "phrases the choice for the human who typed it, not for the model" do
+      confirmations << "config.rb"
+
+      asked_and_answered(oversized)
+
+      expect(announced.first).to include(described_class::Ceiling::CONFIRMATION)
+      expect(announced.first).to include("shorter")
+    end
+
+    it "returns the original text when the human sends it anyway" do
+      confirmations << described_class::Ceiling::CONFIRMATION
+
+      result = asked_and_answered(oversized)
+
+      expect(result).to be_ok
+      expect(result.content).to eq(oversized)
+    end
+
+    # Case and surrounding space are the human's typing, not their meaning;
+    # a line that merely CONTAINS the word is a reply, never consent.
+    it "reads the confirmation whatever case it was typed in" do
+      confirmations << "  SeNd  "
+
+      expect(asked_and_answered(oversized).content).to eq(oversized)
+    end
+
+    it "does not send the text when the human replies with something else" do
+      confirmations << "config.rb"
+
+      result = asked_and_answered(oversized)
+
+      expect(result.content).to eq("config.rb")
+      expect(result.content).not_to eq(oversized)
+    end
+
+    # The replacement is an answer like any other, so it is measured like any
+    # other -- a human who retypes something just as long is asked again
+    # rather than sneaking past a bound they were just shown.
+    it "measures the replacement too, and hands that back as well" do
+      confirmations.push("y" * (ceiling + 1), described_class::Ceiling::CONFIRMATION)
+
+      result = asked_and_answered(oversized)
+
+      expect(announced.size).to eq(2)
+      expect(result.content).to eq("y" * (ceiling + 1))
+    end
+
+    it "delivers the question exactly once, however many times it was handed back" do
+      confirmations << described_class::Ceiling::CONFIRMATION
+      asked_and_answered(oversized)
+
+      expect(tool.take_answered_questions).to eq([tool.last_question.digest])
+      expect(tool.take_answered_questions).to eq([])
+    end
+
+    # A stop raised while parked on the CONFIRM needs the treatment the first
+    # park already has: nobody will deliver that answer, so the set stops
+    # being outstanding and the asker can ask again.
+    it "stops holding the set when the confirm park unwinds" do
+      Sync do |task|
+        run = task.async { tool.call({ "question" => "which file?" }, invocation) }
+        answered(tool, oversized)
+        task.sleep(0.01)
+
+        expect(announced.size).to eq(1)
+        expect(tool.pending?).to be(true)
+
+        run.stop
+        task.sleep(0.01)
+        expect(tool.pending?).to be(false)
+      end
+    end
+
+    # A read that ends under the confirm prompt is nobody answering, exactly
+    # as it is under the first one.
+    it "releases the call with the unanswered refusal when the confirm read ends" do
+      confirmations << described_class::Unanswered.new
+
+      result = asked_and_answered(oversized)
+
+      expect(result).to be_error
+      expect(result.content).to eq(described_class::Unanswered::REFUSAL)
+      expect(tool.take_answered_questions).to eq([])
+    end
+
+    it "returns an answer one byte under the ceiling untouched" do
+      result = asked_and_answered("x" * (ceiling - 1))
+
+      expect(result.content.bytesize).to eq(ceiling - 1)
+      expect(announced).to be_empty
+    end
+
+    # BYTES decide, never characters -- the bound counts what the context
+    # actually costs, and a multibyte reply well under the ceiling in
+    # characters is over it in the unit that matters.
+    it "measures bytes rather than characters" do
+      confirmations << described_class::Ceiling::CONFIRMATION
+      multibyte = "\u00e9" * ((ceiling / 2) + 1)
+
+      result = asked_and_answered(multibyte)
+
+      expect(multibyte.length).to be < ceiling
+      expect(announced.size).to eq(1)
+      expect(result.content).to eq(multibyte)
+    end
+
+    # A blank line at a reply prompt is a decision, not an absence -- it is how
+    # a human declines -- so it is delivered rather than measured into a
+    # handback nobody asked for.
+    it "delivers an empty answer rather than handing it back" do
+      result = asked_and_answered("")
+
+      expect(result).to be_ok
+      expect(announced).to be_empty
+    end
+
+    # Consent is a WORD, and whitespace around it is typing. A line that is
+    # only whitespace -- an ordinary space, or the non-breaking space a paste
+    # can carry -- says nothing, so it can never send bytes on a human's
+    # behalf. It is still a reply, exactly as a blank line at this prompt has
+    # always been; what it is not is a yes.
+    it "never reads whitespace alone as consent" do
+      confirmations << "\u00a0"
+
+      result = asked_and_answered(oversized)
+
+      expect(result.content).not_to eq(oversized)
+      expect(result.content).to eq("\u00a0")
+    end
+
+    # The whole claim of the re-open, stated over the record rather than over
+    # the digest: one question written, two answers chained to it, and nothing
+    # else. A second ask would put a fourth event here and a second question
+    # in the human's mailbox.
+    it "writes one question and two answers, and no second question" do
+      seen = []
+      confirmations << described_class::Ceiling::CONFIRMATION
+      asker = nil
+      asker = described_class.new(parent:, observer: seen.method(:push),
+                                  notify: lambda { |_text|
+                                    asker.reply(confirmations.shift, asker.last_question.digest)
+                                  })
+
+      Sync do |task|
+        run = task.async { asker.call({ "question" => "which file?" }, invocation) }
+        asker.reply(oversized, asker.last_question.digest)
+        run.wait
+      end
+
+      expect(seen.size).to eq(3)
+      expect(seen.count { |event| event.to == described_class::HUMAN }).to eq(1)
+      expect(seen.drop(1).map(&:causal_parents)).to all(eq([seen.first.digest]))
+    end
+
+    # ---- The value the arrival seam carries ---------------------------------
+
+    # Two renderings, because the surfaces need different things and neither
+    # may derive its own: the note above the prompt gets one bounded sentence,
+    # the document a human opens gets every byte.
+    describe "the handback itself" do
+      let(:over) { described_class::Ceiling.overrun(oversized) }
+      let(:handback) { described_class::Ceiling.handback(over) }
+
+      it "carries the measurement and the whole reply in its bytes" do
+        expect(handback).to include(over.message).and include(oversized)
+      end
+
+      it "summarizes to the bound's one sentence and nothing of the reply" do
+        expect(handback.summary).to eq(over.message)
+        expect(handback.summary).not_to include(oversized)
+      end
+
+      # Bounded by the digits in a byte count rather than by the payload, which
+      # is why it needs no clamp where an Announcement's summary does.
+      it "keeps that sentence one line and bounded whatever the reply's size" do
+        huge = described_class::Ceiling.handback(described_class::Ceiling.overrun("x" * (5 * 1024 * 1024)))
+
+        expect(huge.summary.lines.size).to eq(1)
+        expect(huge.summary.bytesize).to be < 200
+      end
+
+      it "documents as the whole thing, for the surface whose job is to show it" do
+        expect(handback.document).to eq(handback)
+      end
+
+      # `+str` and String#encode copy the bytes and drop every ivar, which is
+      # the husk {Announcement#carried!} exists to refuse. Derived rather than
+      # carried, there is nothing here for them to drop.
+      it "still summarizes after a copy that would strip an ivar" do
+        expect((+handback).summary).to eq(over.message)
+      end
+    end
+
+    # `# frozen_string_literal: true` does not reach an INTERPOLATED literal,
+    # so this constant held a mutable String reachable from a class -- append
+    # to it and every later handback said something else. The sweep in
+    # `spec/value_object_shareability_spec.rb` walks value objects, not
+    # constants, so nothing else asks this.
+    it "offers actions that are deeply frozen, not merely a frozen Array" do
+      expect(Ractor.shareable?(described_class::Ceiling::ACTIONS)).to be(true)
+    end
+
+    # An arrival can raise -- the seam ends in an `execve` whose argv this
+    # payload can overrun -- and the set is claimed BEFORE it goes out. Raising
+    # with the set claimed and no park to reach `awaited`'s ensure left this
+    # asker holding a question nobody could answer for the rest of its life:
+    # every later ask refused as outstanding.
+    it "lets go of the re-opened set when the arrival raises" do
+      exploding = described_class.new(parent:, notify: ->(_text) { raise Errno::E2BIG })
+
+      expect do
+        Sync do |task|
+          run = task.async { exploding.call({ "question" => "which file?" }, invocation) }
+          exploding.reply(oversized, exploding.last_question.digest)
+          run.wait
+        end
+      end.to raise_error(Errno::E2BIG)
+
+      expect(exploding.pending?).to be(false)
+      Sync { expect { exploding.ask("which port?") }.not_to raise_error }
+    end
+
+    # ---- The relay, which is where a second ask would show ------------------
+
+    # Chain#asking_handle addresses a child's question to its PARENT's
+    # correlation and relays it one hop further, so only the outermost hop
+    # carries `to: "human"`. A handback that opened a new set would write a
+    # second Q and relay it too -- a second human-addressed record, and a
+    # second inbox row for one question.
+    describe "a relayed question, handed back" do
+      let(:grandparent) do
+        Lain::Timeline.empty(store:)
+                      .commit(role: :user, content: [{ "type" => "text", "text" => "spawn a child" }])
+      end
+      let(:parent_correlation) { Lain::Event::ChainWriter.correlation_of(grandparent) }
+      let(:relaying) do
+        described_class::Parent.new(read: parent, to: parent_correlation,
+                                    escalation: [described_class::HUMAN])
+      end
+
+      # The delivery commit the Agent's tool_runner writes: a :turn citing the
+      # answered questions, the edge that retires them.
+      def delivery(answered)
+        parent.commit(role: :user, content: [{ "type" => "text", "text" => "tool_result" }],
+                      causal_parents: answered).head
+      end
+
+      # Declared before the lambda that reads it, for the reason
+      # CLI::Wiring::Askers writes out: a name first mentioned inside a block
+      # parses as a method call.
+      def relayed_asker(seen)
+        asker = nil
+        asker = described_class.new(parent: relaying, observer: seen.method(:push),
+                                    notify: lambda { |text|
+                                      announced << text
+                                      asker.reply(described_class::Ceiling::CONFIRMATION, asker.last_question.digest)
+                                    })
+      end
+
+      it "puts the same question back without writing a second one to the human" do
+        seen = []
+        asker = relayed_asker(seen)
+
+        result = Sync do |task|
+          run = task.async { asker.call({ "question" => "which file?" }, invocation) }
+          asker.reply(oversized, asker.last_question.digest)
+          run.wait
+        end
+
+        expect(result.content).to eq(oversized)
+        expect(announced.size).to eq(1)
+        expect(seen.count { |event| event.to == described_class::HUMAN }).to eq(1)
+      end
+
+      it "leaves the human's inbox empty once the delivery commit lands" do
+        seen = []
+        asker = relayed_asker(seen)
+
+        Sync do |task|
+          run = task.async { asker.call({ "question" => "which file?" }, invocation) }
+          asker.reply(oversized, asker.last_question.digest)
+          run.wait
+        end
+
+        inbox = Lain::Event::Projection.new([*seen, delivery(asker.take_answered_questions)])
+        expect(inbox.pending(described_class::HUMAN).to_a).to be_empty
+      end
+    end
+  end
+
   # ---- The delivery-commit consumption seam ----------------------------------
 
   # The sync gate completing means THIS tool_result carries the answer into
@@ -482,20 +837,23 @@ RSpec.describe Lain::Tools::AskHuman do
       expect(result.content).to include("sqlite")
     end
 
-    # NOT coverage of anything AskHuman owns -- this pins `Tool::Result.ok`'s
-    # String contract (tool.rb:248), and it passes with every question-set line
-    # reverted. It is here to mark the seam a later card lands on: when the
-    # answer path stops resolving with a typed String and starts resolving with
-    # a Question::AnswerSet, `perform`'s last line must call `#render` on it,
-    # and this is what fails if it does not.
-    it "pins Tool::Result's String contract, which is where an answer set must be rendered" do
+    # NOT coverage of anything AskHuman owns. It marks the seam a later card
+    # lands on: when the answer path stops resolving with a typed String and
+    # starts resolving with a Question::AnswerSet, `perform` must call
+    # `#render` on it, and this is what fails if it does not.
+    #
+    # The refusal now arrives one frame EARLIER than `Tool::Result.ok`'s String
+    # contract (tool.rb:248, pinned in `spec/lain/tool_spec.rb`): a bound
+    # measures bytes, so Ceiling has to be handed a String before anything
+    # downstream can be. Same seam, louder door.
+    it "refuses an answer that is not a String, which is where an answer set must be rendered" do
       expect do
         Sync do |task|
           run = task.async { tool.call(set_input, invocation) }
           answered(tool, { "db" => "sqlite" })
           run.wait
         end
-      end.to raise_error(Lain::Tool::InvalidResult)
+      end.to raise_error(ArgumentError, /hands back a String, got Hash/)
     end
 
     it "still takes a bare free-text question, and the typed reply resolves it" do
