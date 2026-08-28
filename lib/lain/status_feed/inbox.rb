@@ -33,9 +33,17 @@ module Lain
     # record data, not live-view telemetry -- so a count that waited for the
     # Event only ever climbed (2 published against a `lain://inbox` drawing one,
     # measured live). The usage record names the committed head, so the cited
-    # digests are read off that head's chain in the run's {Store}. Both carriers
-    # write the same standing {#consumed} set, so a replay delivering both
-    # retires once.
+    # digests are read off that head's chain in the run's {Store}.
+    #
+    # A SPAWNED chain's turn is a third carrier and it names its edges directly:
+    # {StatusFeed} hands them to {#retire} off a {Telemetry::QuestionsConsumed},
+    # whose own doc holds why the turn itself cannot be routed. It exists because
+    # a question a subagent RELAYED -- re-addressed to the human under its
+    # parent's correlation -- can be consumed only by the child's own turn, so no
+    # other carrier could ever retire it.
+    #
+    # All three write the same standing {#consumed} set, so a replay delivering
+    # more than one retires once.
     class Inbox
       # @param store [Store] where a committed head's chain is resolved. Defaulted
       #   to an EMPTY one rather than required: `ChatLaunch` builds the feed that

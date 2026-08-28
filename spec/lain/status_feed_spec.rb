@@ -401,6 +401,81 @@ RSpec.describe Lain::StatusFeed do
         expect(published["occupancy"]).to eq(1_128.fdiv(Lain::ContextWindow::CONSERVATIVE_FALLBACK))
       end
     end
+
+    # A RELAYED question -- one a subagent asked, re-addressed to the human
+    # under its parent's correlation -- is retired by the CHILD's own answering
+    # turn, and that turn never reaches this tee: SessionRecord::Scribe keeps a
+    # spawned chain's turns in the session file, because routing one costs the
+    # child's whole transcript. So the count climbed forever, measured live: a
+    # question the human had answered stayed listed for the rest of the session.
+    #
+    # What the Scribe promotes instead is the one fact this sink needs and a
+    # turn record is not -- the digests that turn consumed -- as a
+    # Telemetry::QuestionsConsumed. It is admitted BY CLASS, like every other
+    # closed-vocabulary record here: a record that merely ANSWERED the right
+    # methods would retire on one inbox surface and not the other, which is
+    # exactly what the nvim view's parity spec exists to forbid.
+    describe "retiring a relayed subagent question" do
+      let(:store) { Lain::Store.new }
+
+      def stored_question(question: "which db?", from: "orchestrator")
+        parent = Lain::Timeline.empty(store:).commit(role: :user, content: text("seed #{question}"))
+        Lain::Event::ChainWriter.new.put(parent, kind: :message, from:, to: "human",
+                                                 causal_parents: [], body: { "question" => question })
+      end
+
+      def commit_citing(*digests)
+        Lain::Timeline.empty(store:)
+                      .commit(role: :user, content: text("hi"))
+                      .commit(role: :assistant, content: text("asking"), causal_parents: digests)
+                      .head_digest
+      end
+
+      # Built through the record's own `from_event`, over a real `:turn` Event,
+      # so this drives the promotion the Scribe performs rather than a hand-made
+      # value that could drift from it.
+      def consumption(*digests) = Lain::Telemetry::QuestionsConsumed.from_event(turn_event(causal_parents: digests))
+
+      it "drops a relayed question from the count once the child's turn publishes its consumption edges" do
+        feed = described_class.new(path:)
+        question = message_event("q1", to: "human")
+        feed << question
+        expect(published["inbox_count"]).to eq(1)
+
+        feed << consumption(question.digest)
+
+        expect(published["inbox_count"]).to eq(0)
+      end
+
+      # The run's own question has no relay hop and retires off its own
+      # committed turn's usage record. Both carriers write the one standing
+      # consumed set, so driving both through ONE feed is what shows the new arm
+      # settles the relayed question WITHOUT disturbing the parent's.
+      it "leaves the run's own question retiring off its committed turn, in the same feed" do
+        feed = described_class.new(path:, store:)
+        relayed = message_event("q1", to: "human")
+        own = stored_question
+        feed << relayed
+        feed << own
+        expect(published["inbox_count"]).to eq(2)
+
+        feed << consumption(relayed.digest)
+        expect(published["inbox_count"]).to eq(1)
+
+        feed << turn_usage(digest: commit_citing(own.digest))
+        expect(published["inbox_count"]).to eq(0)
+      end
+
+      it "keeps a relayed question counted when a child turn consumed something else" do
+        feed = described_class.new(path:)
+        question = message_event("q1", to: "human")
+        feed << question
+
+        feed << consumption(message_event("q2", to: "human").digest)
+
+        expect(published["inbox_count"]).to eq(1)
+      end
+    end
   end
 
   # The one state a human is actually asked to ACT on. The park record and

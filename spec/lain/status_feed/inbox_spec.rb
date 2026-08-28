@@ -79,6 +79,44 @@ RSpec.describe Lain::StatusFeed::Inbox do
     end
   end
 
+  # The THIRD carrier, and the one this object needs no new code to admit. A
+  # relayed subagent question is consumed by the child's own answering turn,
+  # which never reaches the tee -- what reaches it is that turn's consumption
+  # edges alone, and they are already the Enumerable of digests `#retire` takes.
+  # Pinned here so the reuse is a contract rather than an accident: an arm that
+  # grew its own retirement path would be free to drift from the nvim view's,
+  # which is the one thing the parity spec next door cannot tolerate.
+  describe "a spawned turn's consumption edges" do
+    def child_consumption(*digests)
+      base = Lain::Event.turn(role: "assistant", content: [{ "type" => "text", "text" => "answered" }])
+      Lain::Telemetry::QuestionsConsumed.from_event(
+        Lain::Event.new(kind: :turn, payload_digest: base.payload_digest, body: base.body, causal_parents: digests)
+      )
+    end
+
+    it "retires through the same standing set the committed head's chain writes" do
+      inbox = described_class.new(store:)
+      question = stored_question
+      inbox.arrived(question)
+
+      inbox.retire(child_consumption(question.digest).digests)
+
+      expect(inbox.pending_size).to eq(0)
+    end
+
+    # The out-of-order case, for the carrier a spawned chain uses: a replayed
+    # log can deliver the child's turn before the question it relayed.
+    it "never lists a question a spawned turn's edges already named" do
+      inbox = described_class.new(store:)
+      question = stored_question
+      inbox.retire(child_consumption(question.digest).digests)
+
+      inbox.arrived(question)
+
+      expect(inbox.pending_size).to eq(0)
+    end
+  end
+
   describe "#committed" do
     it "retires the questions the committed head's chain cites -- the live chat's carrier (F76)" do
       inbox = described_class.new(store:)

@@ -36,6 +36,10 @@ module Lain
   #   ANSWER needs a collaborator this object cannot be given at construction
   #   (see {#bind_store}), and it is held to the nvim `lain://inbox` buffer's
   #   answer by a parity spec.
+  #
+  #   THREE CARRIERS NAME THE CONSUMING EDGES and {Inbox}'s doc has them. The
+  #   third exists because a question a subagent RELAYED had none at all, and so
+  #   stood in the count for the rest of the session.
   # * `occupancy` -- how full the live model's context window the LAST MEASURABLE
   #   turn left it, 0..1, nil until one happens. A turn this feed cannot measure
   #   leaves the previous reading exactly where it was rather than replacing it
@@ -212,10 +216,10 @@ module Lain
     private :start_empty
 
     # @param event [Object] a record this sink recognizes, or anything at all.
-    #   The recognized set is the class doc's: five journal records matched by
+    #   The recognized set is the class doc's: six journal records matched by
     #   CLASS, plus the {Approval::Queue} pair, plus anything answering `#kind`.
     #
-    #   A LOOKALIKE IS NOT ENOUGH for the class-matched five. An object merely
+    #   A LOOKALIKE IS NOT ENOUGH for the class-matched six. An object merely
     #   answering `#usage` and `#stop_reason` is silently inert rather than read
     #   as a turn's payment -- deliberately, because reading it as one is the
     #   defect {#turn_usage?} documents. Send the real record.
@@ -236,7 +240,7 @@ module Lain
       # about a number the Source owns.
       @derivation_refusal_streak = event.consecutive if event.is_a?(Compaction::Source::DerivationRefused)
       @derivation_refusal_streak = 0 if event.is_a?(Telemetry::ContextDerived)
-      observe_commit(event) if turn_usage?(event)
+      observe_consumption(event)
       observe(event) if event.respond_to?(:kind)
       # Matched by class rather than on `#to`/`#to_layers`, which would also
       # catch an {Event}, whose `#to` is a message recipient.
@@ -275,6 +279,27 @@ module Lain
     # record carrying both fields, with every spec here still green. `is_a?`
     # makes that impossible rather than unlikely.
     def turn_usage?(event) = event.is_a?(Telemetry::TurnUsage)
+
+    # The two carriers that name a turn's CONSUMING EDGES, gathered so `#<<` reads
+    # as one question and shaped like {Frontend::Neovim::InboxView#consume}: one
+    # contract, one idiom, because two idioms is where the drift each file's
+    # comment forbids begins. Both arms are CLASS checks, for {#turn_usage?}'s
+    # reason; {Telemetry::QuestionsConsumed} holds why the second is narrow. It
+    # needs no chain walk and so no rescue -- a second, narrower promise beside
+    # {Inbox#committed}'s wide one is how the two surfaces start disagreeing.
+    #
+    # THE RULE IS THE SAME; THE RECOVERABILITY IS NOT. A dropped TurnUsage
+    # SELF-HEALS -- the next commit re-walks the chain and re-retires everything
+    # ever cited -- and a dropped QuestionsConsumed cannot: it names one turn's
+    # edges and no later record names them again. This sink never drops;
+    # `lain://inbox` rides a bounded Channel beside it and can, and nothing
+    # resyncs off a {Telemetry::Dropped} today, so a loss there diverges the two
+    # permanently and silently. Known and deferred.
+    def observe_consumption(event)
+      return observe_commit(event) if turn_usage?(event)
+
+      @inbox.retire(event.digests) if event.is_a?(Telemetry::QuestionsConsumed)
+    end
 
     # A committed turn's one record and the two unrelated debts it settles: what
     # the turn PAID ({#observe_usage}) and which questions it CONSUMED

@@ -94,6 +94,17 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
                           causal_parents: digests)
   end
 
+  # A spawned chain's answering turn, promoted to the one record the tee carries
+  # for it. Built through the record's own `from_event` over a real `:turn`
+  # Event, so this drives the promotion SessionRecord::Scribe performs rather
+  # than a hand-made value free to drift from it.
+  def consumption_of(*digests)
+    base = Lain::Event.turn(role: "assistant", content: text("answered"))
+    Lain::Telemetry::QuestionsConsumed.from_event(
+      Lain::Event.new(kind: :turn, payload_digest: base.payload_digest, body: base.body, causal_parents: digests)
+    )
+  end
+
   describe "#initial" do
     it "exists from attach with the at-rest empty note" do
       expect(view.initial).to eq(described_class::NAME => ["(no questions pending)"])
@@ -178,6 +189,47 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
 
       expect { view.update(turn_usage("blake3:absent")) }.not_to raise_error
       expect(view.update(turn_usage("blake3:absent"))).to be_nil
+    end
+  end
+
+  # A RELAYED question -- asked by a subagent, re-addressed to the human under
+  # its parent's correlation -- is consumed by the CHILD's own answering turn,
+  # and that turn is deliberately kept off the tee both inbox surfaces ride. So
+  # nothing ever retired it and the row stood for the rest of the session. What
+  # the tee carries instead is that turn's consumption edges alone, as a
+  # {Lain::Telemetry::QuestionsConsumed}. The pinned rule above is unchanged --
+  # this is a :turn's edges arriving under a different name, not a reply
+  # retiring anything -- which is why these live in their own group.
+  #
+  # ADMITTED BY CLASS, for the same reason the TurnUsage is: this record answers
+  # neither `#usage` nor `#digest`, so no duck could reach it here without also
+  # readmitting the lookalike the parity tripwire forbids.
+  describe "the spawned chain's carrier (a relayed subagent question)" do
+    it "retires a relayed question off the consumption edges its child's turn published" do
+      question = stored_question
+      view.update(Lain::Telemetry::Message.from_event(question))
+
+      lines = view.update(consumption_of(question.digest))
+
+      expect(lines).to eq(["(no questions pending)"])
+    end
+
+    # The row is gone as a ROW, not merely as text: `:LainReply` resolves the
+    # line through the same rendering index the `<CR>` gesture uses, and a
+    # placeholder owns no set -- so the affordance is refused rather than
+    # handing the human a document over a question already answered.
+    it "offers no reply affordance on the placeholder the retirement leaves" do
+      question = stored_question
+      view.update(Lain::Telemetry::Message.from_event(question))
+      view.update(consumption_of(question.digest))
+
+      expect(view.answering(1, generation: view.generation)).not_to be_opened
+    end
+
+    it "leaves a relayed question listed when a child turn consumed something else" do
+      view.update(question_record("blake3:q1"))
+
+      expect(view.update(consumption_of("blake3:other"))).to be_nil
     end
   end
 
@@ -1087,6 +1139,42 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
 
       expect(view.update(lookalike)).to be_nil
       expect(inbox_count).to eq(1)
+    end
+
+    # The relayed question's own stream. Its carrier is neither of the two above
+    # -- not a :turn Event, not a TurnUsage -- and it is the carrier that
+    # actually moved live, so the parity claim has to be made over it too.
+    it "agrees over the stream a relayed question arrives and is consumed on" do
+      question = stored_question(question: folding_question)
+      arrival = Lain::Telemetry::Message.from_event(question)
+      consumed = consumption_of(question.digest)
+
+      feed << arrival
+      lines = view.update(arrival)
+      expect(lines.size).to be > 1
+      expect(questions_in(lines)).to eq(inbox_count).and eq(1)
+
+      feed << consumed
+      expect(questions_in(view.update(consumed))).to eq(inbox_count).and eq(0)
+    end
+
+    # And over the same stream REVERSED, which a replayed log produces: the
+    # child's turn is drained before the question it consumed. Both surfaces
+    # answer it from a standing consumed set rather than by removing a row, and
+    # a surface that got that wrong would list a question nothing could retire
+    # a second time -- the very defect this carrier exists to close.
+    it "agrees when the consumption of a relayed question is drained before its arrival" do
+      question = stored_question
+      arrival = Lain::Telemetry::Message.from_event(question)
+      consumed = consumption_of(question.digest)
+
+      feed << consumed
+      expect(view.update(consumed)).to be_nil
+      expect(inbox_count).to eq(0)
+
+      feed << arrival
+      expect(view.update(arrival)).to be_nil
+      expect(inbox_count).to eq(0)
     end
 
     # The tripwire for the day that gap could re-open: every Telemetry record

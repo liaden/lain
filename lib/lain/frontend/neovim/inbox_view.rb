@@ -11,17 +11,22 @@ module Lain
     class Neovim
       # The human inbox as a projection: lain://inbox IS
       # {Event::Projection#pending}("human") rendered -- {Buffers}' fourth
-      # view, PULL-shaped like its siblings, fed the two record shapes the
+      # view, PULL-shaped like its siblings, fed the three record shapes the
       # telemetry tee actually carries:
       #
       # * a {Telemetry::Message} addressed to the human lists (sender, age,
-      #   question), and
+      #   question),
       # * a {Telemetry::TurnUsage} retires whatever the named head's chain has
       #   cited among its turns' causal_parents -- the delivery commit's edge
       #   ({Agent#perform_tools}), which is the ONLY consumption the pending
       #   projection counts. A REPLY :message alone never retires an item;
       #   that pinned rule is what keeps this view and {StatusFeed}'s
-      #   inbox_count in agreement (the parity spec holds them to it).
+      #   inbox_count in agreement (the parity spec holds them to it), and
+      # * a {Telemetry::QuestionsConsumed} retires the digests it names outright:
+      #   the SPAWNED chain's carrier, whose own doc holds why the child's turn
+      #   cannot ride this tee. The same :turn-edges-only rule under a different
+      #   name -- but NOT the same delivery guarantee; {#consume} says what that
+      #   costs.
       #
       # Consumption is a standing digest Set, {StatusFeed}'s own shape, so a
       # replayed log that delivers the consuming turn before the question
@@ -310,10 +315,36 @@ module Lain
         # status sink for a predicate is the worse coupling, and the parity spec
         # carries a tripwire that fails the day a second dual-field record
         # exists.
+        #
+        # A SPAWNED chain's turn brings its edges under its own name, as a
+        # {Lain::Telemetry::QuestionsConsumed}, whose doc holds why it is narrow.
+        # It needs no chain walk and so no rescue: a second, narrower never-raise
+        # promise here is how the two surfaces start disagreeing. Shaped like
+        # {Lain::StatusFeed#observe_consumption} for that same reason.
+        #
+        # THE RULE IS THE SAME; THE RECOVERABILITY IS NOT. A dropped TurnUsage
+        # SELF-HEALS -- the next commit re-walks the chain and re-retires
+        # everything ever cited -- and a dropped QuestionsConsumed cannot: it
+        # names one turn's edges and no later record names them again. THIS view
+        # is the surface that can lose one: it rides a bounded
+        # {Channel::DropOldest} while {Lain::StatusFeed} sits in the same tee and
+        # never drops, and nothing resyncs off a {Telemetry::Dropped} today. A
+        # loss here lists a question forever against a count reading zero --
+        # permanent, silent, known and deferred.
         def consume(event)
-          return false unless event.is_a?(Lain::Telemetry::TurnUsage)
+          return retire(cited_by_chain(event.digest)) if event.is_a?(Lain::Telemetry::TurnUsage)
+          return retire(event.digests) if event.is_a?(Lain::Telemetry::QuestionsConsumed)
 
-          cited_by_chain(event.digest).inject(false) do |moved, digest|
+          false
+        end
+
+        # {Lain::StatusFeed::Inbox#retire}'s counterpart, and every carrier above
+        # ends here for that reason -- one expression, so no carrier can retire
+        # on terms the other surface does not share.
+        #
+        # @return [Boolean] whether the listed set actually moved
+        def retire(digests)
+          digests.inject(false) do |moved, digest|
             @consumed << digest
             # The tombstone dies with the row it was standing in for. It exists
             # only to stop an answered-but-not-yet-retired set being offered
