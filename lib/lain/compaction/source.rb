@@ -183,6 +183,122 @@ module Lain
       end
       private_constant :Scheduling
 
+      # Is this session STALLED -- a compaction it was told to want, and
+      # nothing it can do about it -- on what evidence, and what a human gets
+      # told. Its own value rather than two predicates inside {Reporting}
+      # because the question is answerable independently of the routing, and a
+      # truth reachable only through the object that routes it can only be
+      # tested through that object.
+      #
+      # ONLY `:approaching_window` counts as warrant, and the narrowness is the
+      # whole point. {Need} runs four detectors and three of them say nothing
+      # about how full the window is -- {Need::PlanStepCompletion} in
+      # particular is a plain boolean independent of history size, which
+      # {Source#weigh} says "reaches it in an ordinary chat, with compaction on
+      # by default". Keyed on any signal, a three-turn session using 10 of
+      # 1,000,000 tokens is told its context is full on every completed plan
+      # step.
+      #
+      # Keying on that one signal also makes the guessed-window guarantee
+      # STRUCTURAL. {Source#need_for} withdraws `:approaching_window` when the
+      # denominator was guessed, but the withdrawal is scoped to that signal
+      # and not to this report: a second detector firing over the same turn
+      # would otherwise quote {ContextWindow::CONSERVATIVE_FALLBACK}'s 8,192 at
+      # a human as though it were the model's window, which is the defect that
+      # withdrawal exists to prevent, one surface further out.
+      class Diagnosis
+        # @param decision [CompactionDecision] this turn's, as it is journalled
+        # @param head [Head] the span it was taken over, asked for
+        #   {Head#declined?} alone -- the one cause of an empty head this
+        #   object can ESTABLISH rather than guess
+        # @return [Diagnosis]
+        def self.of(decision:, head:) = new(decision:, declined: head.declined?)
+
+        def initialize(decision:, declined:)
+          @decision = decision
+          @declined = declined
+          freeze
+        end
+
+        # @return [CompactionDecision] what the journal is owed regardless
+        attr_reader :decision
+
+        # @return [Boolean]
+        def stalled? = @decision.nothing_droppable && warranted?
+
+        # What an operator is told. Two clauses and a remedy, because the
+        # report is useless without the last one: a human reading "nothing can
+        # be compacted" still has to guess between unpinning, `--compact-keep`
+        # and starting over.
+        #
+        # @return [String]
+        def line = "compaction is warranted (#{@decision.signals.join(", ")}) #{cause}. #{occupancy}; #{remedy}"
+
+        private
+
+        def warranted? = @decision.signals.include?(Need::ApproachingWindow::KIND)
+
+        # {Head#empty?} is true for THREE unrelated reasons and this object can
+        # only establish one of them. A declined boundary says so itself; the
+        # other two -- a history shorter than `keep_last`, and a droppable span
+        # every message of which was pinned -- are indistinguishable from a
+        # {Head}, which exposes no count of what it had before the pin filter.
+        # So they are named as the disjunction they are. Asserting either would
+        # be a sentence the measurement does not support, and the pinned case
+        # is the one whose remedy the other sentence points away from.
+        #
+        # A decline is unreachable through a {Derivation} today ({Boundary}
+        # argues why), so that clause is written for a {Head} taken over a raw
+        # history rather than for a shape this path is expected to meet.
+        def cause
+          return "but the boundary declined the only legal cut -- it would split a tool-use pair" if @declined
+
+          "and nothing is droppable -- every earlier turn is either inside keep_last or pinned"
+        end
+
+        # `--` for an unmeasured numerator is {ContextWindow::Occupancy}'s own
+        # render of absence, which is not zero.
+        def occupancy = "#{@decision.used_tokens || "--"}/#{@decision.window_tokens} tokens"
+
+        def remedy
+          return "lower --compact-keep so the cut falls clear of the pair, or start a new session" if @declined
+
+          "unpin a turn, lower --compact-keep, or start a new session"
+        end
+      end
+
+      # Where a turn's decision goes, to both of its audiences: the journal
+      # takes EVERY decision -- an unrecorded one is a missing measurement --
+      # while an operator is told only when the fact changes.
+      #
+      # Holding that difference is why this is an object rather than two ivars.
+      # {Source} decides per turn and records unconditionally, so it has no
+      # place to remember that a human has already been told, and repeating one
+      # line every turn of a stuck session is how a line that matters becomes
+      # one a human scrolls past. Latched on the EDGE and re-armed when the
+      # condition clears rather than counted: a session that recovers and
+      # stalls again is two separate facts worth one line each.
+      #
+      # It decides nothing and words nothing -- {Diagnosis} owns both.
+      class Reporting
+        def initialize(journal:, sink:)
+          @journal = journal
+          @sink = sink
+          @stalled = false
+        end
+
+        # @param diagnosis [Diagnosis] this turn's
+        # @return [self]
+        def record(diagnosis)
+          @journal << diagnosis.decision
+          stalled = diagnosis.stalled?
+          @sink.puts(diagnosis.line) if stalled && !@stalled
+          @stalled = stalled
+          self
+        end
+      end
+      private_constant :Reporting
+
       # The run's shared summary store; readable so callers can check they hold
       # the same one the tool observer fires into.
       attr_reader :eager
@@ -229,15 +345,21 @@ module Lain
       #   {CLI::Backend#context_window} instead -- the SAME instance
       #   {Agent#occupancy} and the {StatusFeed} divide by, so this record's
       #   threshold and the figure a human reads are one calculation.
+      # @param sink [Lain::Sink] where an operator is told that a warranted
+      #   compaction had nothing to drop. The Null sink by default, so a
+      #   headless caller writes no guard and changes no bytes. It arrives HERE
+      #   rather than staying with the collapse policy because {Head}
+      #   disclaims the judgement and {Boundary} refuses to raise: this is the
+      #   only object holding the head, the need and the occupancy at once.
       def initialize(need:, cold:, hard_cap:, keep_last:, eager: NoSummaries, strategy: nil,
                      journal: Channel::Null.instance, model: nil, price_book: PriceBook.default,
-                     clock: -> { Time.now }, context_window: ContextWindow.default)
+                     clock: -> { Time.now }, context_window: ContextWindow.default, sink: Sink::Null.new)
         arm = Collapse.of(strategy)
         @need = need
         @context_window = context_window
         @cold = cold
         @eager = eager
-        @journal = journal
+        @reporting = Reporting.new(journal:, sink:)
         @collapse_strategy = arm.name
         @idle = IdleGap.new(clock:)
         @scheduling = Scheduling.new(hard_cap:, journal:, model:, price_book:)
@@ -481,17 +603,21 @@ module Lain
       # -- which keeps `/model` switchable from the next turn on.
       def flattened_twin(base) = base.with_model(base.model)
 
+      # Built here, judged by {Diagnosis} and routed by {Reporting} -- the
+      # record every turn, the operator only when the fact moves.
+      #
       # `summary_hits`/`summary_misses` are the collapse POLICY's, not a
       # snapshot's: a model-backed strategy reports its OWN content-address hit
       # rate, which is the only count a mis-keyed address shows up in -- as a
       # number that never rises.
       def record(need:, head:, compacted:, outcome:, occupancy:, provenance:, would_not_shrink: false)
-        @journal << CompactionDecision.new(compacted:, signals: need.signals, head_bytes: head.bytesize,
-                                           summary_hits: outcome.hits, summary_misses: outcome.misses,
-                                           cold: @cold.cold?, would_not_shrink:,
-                                           window_tokens: occupancy.window_tokens,
-                                           used_tokens: occupancy.used_tokens, provenance:,
-                                           nothing_droppable: head.empty?)
+        decision = CompactionDecision.new(compacted:, signals: need.signals, head_bytes: head.bytesize,
+                                          summary_hits: outcome.hits, summary_misses: outcome.misses,
+                                          cold: @cold.cold?, would_not_shrink:,
+                                          window_tokens: occupancy.window_tokens,
+                                          used_tokens: occupancy.used_tokens, provenance:,
+                                          nothing_droppable: head.empty?)
+        @reporting.record(Diagnosis.of(decision:, head:))
       end
 
       # A fresh Scheduler per turn, because the combinator it is frozen around

@@ -1326,6 +1326,53 @@ RSpec.describe Lain::CLI::Backend do
         expect(strategy_of(backend)).to be(strategy_of(backend))
       end
     end
+
+    # The sink already reaches {SpanSummarizer}; what it did not reach is the
+    # Source, which is the object that discovers a warranted compaction with
+    # nothing to drop and could not say so. A hand-built Source proves nothing
+    # about that wire, so this drives {CLI::CompactionMount} -- the one caller
+    # that mints the run's diagnostics sink -- and reads the attribution off
+    # the event a frontend would render.
+    describe "an operator's report from a full, uncompactable context" do
+      let(:surface) { RecordingChannel.new }
+
+      def mounted(backend)
+        Lain::CLI::CompactionMount.new(
+          backend:, provider: Lain::Provider::Mock.new, channel: surface,
+          chronicle: Lain::CLI::Chronicle.new(journal:, journal_path: "backend-spec-compaction.ndjson")
+        ).instrumentation.pipeline_source
+      end
+
+      def reported = surface.events.grep(Lain::Telemetry::ToolOutput)
+
+      # A REAL occupancy, not a one-byte threshold. The first draft of this
+      # example lowered --compact-bytes so that `:token_threshold` fired over a
+      # two-byte empty head, which exercised the wire and hid the fact that the
+      # report fired on warrants that say nothing about a full window. The
+      # fixture has to be the condition the report claims to be about: two
+      # turns under the default keep_last of 20 leaves the head empty, and
+      # 950,000 of this model's PUBLISHED 1,000,000-token window is over the
+      # 0.9 ratio, so `:approaching_window` fires and survives #need_for.
+      it "carries the report on the run's own channel, attributed to compaction" do
+        backend = compacting_backend
+
+        mounted(backend).context_for(base: backend.context, timeline: history(2), usage: 950_000, session:)
+
+        expect(reported.map(&:tool_use_id)).to eq(["lain:compaction"])
+        expect(reported.first.bytes).to include("compaction is warranted (approaching_window)")
+      end
+
+      # The same construction, one turn that is merely busy rather than full.
+      # Without this the example above passes against a Source wired to report
+      # on any signal at all, which is what it did.
+      it "says nothing through that channel when the window is nowhere near full" do
+        backend = compacting_backend
+
+        mounted(backend).context_for(base: backend.context, timeline: history(2), usage: 10, session:)
+
+        expect(reported).to be_empty
+      end
+    end
   end
 
   # {Backend#chat_name?} compares the RAW `--provider` value rather than

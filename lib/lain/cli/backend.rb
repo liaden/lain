@@ -307,10 +307,24 @@ module Lain
       #   TTL-less provider confirms cold off the zero cache-read alone)
       # @param journal [#<<] where the per-turn decision and the cold
       #   confirmation land
-      # @param sink [Lain::Sink] where a `--compact-strategy`-selected policy
-      #   reports a tier that is DOWN. Not bound by {#bind_once}: it changes
-      #   nothing about which Source gets built, and it is the one argument a
-      #   caller may reasonably not have
+      # @param sink [Lain::Sink] where compaction reports what an operator has
+      #   no other way to see: a `--compact-strategy` policy whose tier is
+      #   DOWN, and a warranted compaction with nothing left to drop. It is
+      #   still the one argument a caller may reasonably not have, so it keeps
+      #   its Null default.
+      #
+      #   NOT bound by {#bind_once}, and that is now a GAP rather than the free
+      #   choice it was. The justification used to be that this argument
+      #   changes nothing about which Source gets built; it now decides whether
+      #   the run can speak at all, so a second call with a different sink
+      #   silently keeps the first and the operator goes permanently quiet with
+      #   no error -- the same silence the sink was added to break.
+      #   Unreachable today: {CLI::CompactionMount#source} memoizes and is the
+      #   only production caller. Closing it is not a one-word change --
+      #   `bind_once` compares argument VALUES and two default `Sink::Null.new`
+      #   instances are not `==`, so listing `sink:` there raises {Rebound} on
+      #   ordinary repeat calls until the Null answers value equality the way
+      #   {ContextWindow::Occupancy::None} had to.
       # @raise [Rebound] on a second call with different arguments
       def pipeline_source(cache_profile:, journal: Channel::Null.instance, sink: Sink::Null.new)
         bind_once(:pipeline_source, cache_profile:, journal:)
@@ -460,12 +474,17 @@ module Lain
       # fetched per turn, because a model-backed strategy holds a memo whose
       # absence turns one range's two questions into two model calls.
       # {SpanSummarizer} owns what an unset flag means.
+      #
+      # The sink goes to BOTH -- the strategy reports a summarizer tier that is
+      # down, the Source reports a warranted compaction with nothing to drop,
+      # and either of them going silent leaves an operator unable to tell a stuck
+      # session from a quiet one.
       def compaction_source(cache_profile:, journal:, sink:)
         Compaction::Source.new(
           need: Compaction::Need.new(byte_threshold: knob(:compact_bytes, DEFAULT_BYTE_THRESHOLD)),
           cold: Compaction::Cold.new(cache_profile:, journal:),
           hard_cap: knob(:compact_cap, DEFAULT_HARD_CAP), keep_last: knob(:compact_keep, DEFAULT_KEEP_LAST),
-          eager:, journal:, model:, price_book: COMPACTION_PRICES, context_window:,
+          eager:, journal:, model:, price_book: COMPACTION_PRICES, context_window:, sink:,
           strategy: SpanSummarizer.resolve(backend: self, options: @options, sink:)
         )
       end

@@ -1529,6 +1529,200 @@ RSpec.describe Lain::Compaction::Source do
     end
   end
 
+  # The record above is written for a journal reader after the fact. A human
+  # watching a session that has gone full and cannot shrink gets nothing from
+  # it: the HUD clamps at 100% deliberately, so "full" and "full with nothing
+  # left to cut" are the same reading, and the second one never recovers on its
+  # own. This object is the only one holding the head, the need, the occupancy
+  # and the provenance together, so it is the only one that can tell them apart
+  # out loud.
+  describe "what it tells an operator when a warranted compaction has nothing to drop" do
+    let(:surface) { RecordingChannel.new }
+
+    # The run's real sink shape: {Lain::Sink::IOAdapter} over a Channel is the
+    # one route from `lib/` to a frontend. A Sink::Null here would leave this
+    # group proving the turn survives while proving nothing about the operator
+    # being told, which is the whole of the sink's justification.
+    def sink = Lain::Sink::IOAdapter.new(surface, tool_use_id: "spec:compaction", stream: :stderr)
+
+    def reported = surface.events.grep(Lain::Telemetry::ToolOutput).map(&:bytes)
+
+    # Five turns under a keep_last of six: {Lain::Compaction::Boundary} cuts
+    # nothing, so the head is empty while the window says the prompt is nearly
+    # full. The published book is what makes the signal survive #need_for --
+    # see the guessed case below.
+    def stalling(book: window_book(8_192))
+      source(need: build_need(approaching_ratio: 0.9), keep_last: 6, context_window: book, sink:)
+    end
+
+    it "says the context is full and that there is nothing left to compact" do
+      context_for(stalling, timeline(5), usage: 7_500)
+
+      expect(reported.join)
+        .to include("approaching_window").and include("nothing").and include("7500/8192")
+    end
+
+    it "says nothing on a deferring turn whose signals never fired" do
+      context_for(stalling(book: window_book(1_000_000)), timeline(5), usage: 10)
+
+      expect(reported).to be_empty
+    end
+
+    it "says nothing about an empty head on a turn that really compacts" do
+      built = source(need: build_need(byte_threshold: 100), hard_cap: 100, sink:)
+
+      context_for(built, timeline, usage: 7_500)
+
+      expect(reported).to be_empty
+    end
+
+    # The occupancy that would have triggered this report is measured against a
+    # denominator nobody vouched for, and #need_for has already withdrawn
+    # `:approaching_window` for exactly that reason. Reporting anyway would put
+    # a human-facing alarm on a number the rest of the object refuses to act
+    # on -- the same defect, one surface further out.
+    it "says nothing when the window it would be full against was only guessed" do
+      context_for(stalling(book: guessed_window_book(8_192)), timeline(5), usage: 7_500)
+
+      expect(reported).to be_empty
+    end
+
+    # {Need} has four detectors and only ONE of them is about a full window.
+    # {Need::PlanStepCompletion} is a plain boolean independent of history
+    # size, and #weigh's own comment says it "reaches it in an ordinary chat,
+    # with compaction on by default" -- so a warrant that is not
+    # `:approaching_window` is not evidence that a context is full.
+    def plan_stepped = session_pinning(plan_step_completed: true)
+
+    it "says nothing about a full context on a session using a millionth of its window" do
+      built = stalling(book: window_book(1_000_000))
+
+      context_for(built, timeline(3), usage: 10, session: plan_stepped)
+
+      expect(reported).to be_empty
+    end
+
+    # The trigger the card names, held as a GUARANTEE rather than as an
+    # accident of #need_for's scope. The withdrawal there removes one signal;
+    # it does not stop a DIFFERENT signal firing over the same turn, and a
+    # report keyed on "any signal" then quotes the guessed denominator at a
+    # human -- 8,192 being {ContextWindow::CONSERVATIVE_FALLBACK}, which is the
+    # round-3 defect verbatim.
+    it "says nothing when a second signal fires over a window that was only guessed" do
+      built = stalling(book: guessed_window_book(8_192))
+
+      context_for(built, timeline(3), usage: 7_500, session: plan_stepped)
+
+      expect(reported).to be_empty
+    end
+
+    # The OTHER way a head comes back empty, and the reason the line may not
+    # hard-code one cause: the droppable span existed and every message in it
+    # was pinned. This is the case whose one available action is UNPINNING, so
+    # a sentence blaming keep_last sends the operator the other way.
+    it "does not blame keep_last when the droppable span was pinned away" do
+      line = timeline(8)
+      pinned = session_pinning(*line.to_a.first(2).map(&:digest))
+      built = source(need: build_need(approaching_ratio: 0.9), keep_last: 6,
+                     context_window: window_book(8_192), sink:)
+
+      context_for(built, line, usage: 7_500, session: pinned)
+
+      expect(reported.join).to include("pinned")
+    end
+
+    # ONCE, and why it is a latch rather than a line per turn: this condition
+    # does not clear on its own -- the human has to act -- so a per-turn report
+    # would repeat until the one that mattered had scrolled out of reach.
+    it "tells them once, not once per turn, while the condition holds" do
+      built = stalling
+
+      2.times { context_for(built, timeline(5), usage: 7_500) }
+
+      expect(reported.size).to eq(1)
+    end
+
+    # Re-armed rather than spent. A session that recovers and stalls again is
+    # two separate facts, and the second one is worth the same line as the
+    # first -- a counter would have said "still", which is not the same claim.
+    it "tells them again after the condition clears and returns" do
+      built = stalling
+
+      context_for(built, timeline(5), usage: 7_500)
+      context_for(built, timeline(5), usage: 10)
+      context_for(built, timeline(5), usage: 7_500)
+
+      expect(reported.size).to eq(2)
+    end
+  end
+
+  # The TRUTH half of the report, addressable on its own. It used to be two
+  # private methods inside the routing class, which is why the latch could only
+  # ever be tested through the thing that routes it -- and why the predicate
+  # below could over-fire for a whole round without an example able to say so.
+  describe Lain::Compaction::Source::Diagnosis do
+    def decision(signals:, nothing_droppable: true, used: 7_500, window: 8_192)
+      Lain::Compaction::Source::CompactionDecision.new(
+        compacted: false, signals:, head_bytes: 2, summary_hits: 0, summary_misses: 0,
+        cold: false, would_not_shrink: false, window_tokens: window, used_tokens: used,
+        provenance: :published, nothing_droppable:
+      )
+    end
+
+    def over(head, **fields) = Lain::Compaction::Source::Diagnosis.of(decision: decision(**fields), head:)
+
+    def empty_head = Lain::Compaction::Head.new(messages: [], keep_last: 2)
+
+    def tool_pair
+      [{ "role" => "assistant",
+         "content" => [{ "type" => "tool_use", "id" => "call-1", "name" => "read", "input" => {} }] },
+       { "role" => "user",
+         "content" => [{ "type" => "tool_result", "tool_use_id" => "call-1", "content" => "x" }] }]
+    end
+
+    # The only legal cut is at 1 and it splits the pair; moving off it lands on
+    # 0, so {Lain::Compaction::Boundary} declines. Empty head, different cause.
+    def declined_head = Lain::Compaction::Head.new(messages: tool_pair, keep_last: 1)
+
+    it "is stalled when the window signal fired over a head with nothing to drop" do
+      expect(over(empty_head, signals: [:approaching_window])).to be_stalled
+    end
+
+    it "is not stalled on a warrant that says nothing about how full the window is" do
+      expect(over(empty_head, signals: [:plan_step_completion])).not_to be_stalled
+    end
+
+    it "is not stalled while the head still had something to drop" do
+      expect(over(empty_head, signals: [:approaching_window], nothing_droppable: false)).not_to be_stalled
+    end
+
+    it "names the boundary's refusal, and not keep_last, when the cut was declined" do
+      line = over(declined_head, signals: [:approaching_window]).line
+
+      expect(line).to include("declined")
+      expect(line).not_to include("inside keep_last")
+      # The REMEDY has to differ too, and `--compact-keep` cannot gate it --
+      # both strings name that flag. {Lain::Compaction::Boundary} takes pins
+      # "for interface parity ... and never consulted", so telling this
+      # operator to unpin a turn is advice that cannot work. What can: a lower
+      # keep_last raises the naive split past 1 and gives the cut room to move
+      # off the pair.
+      expect(line).to include("falls clear of the pair")
+      expect(line).not_to include("unpin")
+    end
+
+    it "names both causes it cannot tell apart rather than asserting one" do
+      line = over(empty_head, signals: [:approaching_window]).line
+
+      expect(line).to include("pinned")
+      expect(line).to include("keep_last")
+    end
+
+    it "gives the operator something to do about it" do
+      expect(over(empty_head, signals: [:approaching_window]).line).to include("--compact-keep")
+    end
+  end
+
   # A walk and its projection are O(n) in history length, and a compacting
   # turn used to pay for THREE of each over the source chain: this object's own,
   # the {Lain::Compaction::Derivation}'s, and -- built, discarded unread --
