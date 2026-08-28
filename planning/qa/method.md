@@ -473,16 +473,20 @@ pane looks frozen, capture it without the filter and count the lines before diag
 tmux -L "$QA_SOCK" capture-pane -p -t "$PANE" | cat -n | tail -25
 ```
 
-### Three ways a driver aims at the wrong pane, all of them silent (round 15)
+### Three ways a driver aims at the wrong pane, one of them now refuses loudly (round 15)
 
 Each of these cost a probe in one round, and none of them announces itself — a helper aimed at the
 wrong surface returns plausible text rather than an error.
 
-- **`drive.sh` and `peek.sh` resolve the chat pane as `grep -w ruby | head -1`, so any leftover
-  probe session steals the drive.** Round 15 sent a prompt intended for a `lain chat` probe and it
-  landed in the **cockpit**, adding a turn to the subject session. Kill probe windows before
-  bringing the cockpit up (`method.md` already says to pin the JOURNAL for the same class of
-  reason; this is the same hazard one surface over), or resolve the pane explicitly and pass it in.
+- **`drive.sh` and `peek.sh` now refuse rather than guess when more than one candidate pane
+  matches.** Round 15 sent a prompt intended for a `lain chat` probe and it landed in the
+  **cockpit**, adding a turn to the subject session, because both helpers resolved the chat pane
+  with `grep -w ruby | head -1` and silently took the first match. They now enumerate every
+  matching pane: exactly one, and they proceed against it as before; two or more, and they exit
+  non-zero naming every candidate and send or read nothing. Kill probe windows before bringing the
+  cockpit up, same as ever, but the refusal is now the backstop rather than the only guard. Pin
+  the pane explicitly to skip resolution altogether — `export LAIN_QA_PANE="%3"` — the same
+  pattern as pinning the journal above.
 - **Resolving a pane by WINDOW name gets nvim, not the repl.** `lain up` puts nvim *and* the chat
   process in ONE window called `chat`, so `list-panes -F '#{window_name} #{pane_id}' | awk '$1=="chat"'`
   returns the editor. Everything then reads an editor pane that never shows an approval prompt.

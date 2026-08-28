@@ -51,12 +51,41 @@ cat > "$QA/drive.sh" <<'EOF'
 # drive.sh "<text>" [quiet_seconds] [max_seconds]
 #   requires $LAIN_QA_JOURNAL -- pin it to the COCKPIT's journal, e.g.
 #   export LAIN_QA_JOURNAL="$XDG_STATE_HOME/lain/sessions/<hash>/<file>.ndjson"
+#   optionally pin the pane too: export LAIN_QA_PANE="%3" -- same reason as
+#   pinning the journal, see below.
 . "$(dirname "$0")/env.sh"
 TXT="$1"; QUIET="${2:-60}"; MAX="${3:-900}"
 J="${LAIN_QA_JOURNAL:?LAIN_QA_JOURNAL is not pinned -- see method.md, 'Pin the journal'}"
 [ -f "$J" ] || { echo "pinned journal does not exist: $J" >&2; exit 1; }
-CHAT=$(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id} #{pane_current_command}' | command grep -w ruby | head -1 | cut -d' ' -f1)
-[ -n "$CHAT" ] || { echo "no chat pane on tmux -L $QA_SOCK" >&2; exit 1; }
+
+# Pin the pane the same way the journal above is pinned, or refuse rather than
+# guess: several agents share this box, and a leftover probe session with its
+# own `ruby` pane makes `grep -w ruby` match more than one candidate. Picking
+# the first one (`head -1`) used to send a probe's prompt into the cockpit and
+# add a turn to the subject session with no error at all -- round 15's finding.
+if [ -n "${LAIN_QA_PANE:-}" ]; then
+  # A pin is only as good as the pane behind it -- `tmux send-keys` into a dead
+  # pane writes "can't find pane" to stderr and returns success, so an unchecked
+  # pin would make the quiet-wait loop run out against a journal that never
+  # moved and print the ordinary success summary at exit 0: the exact shape of
+  # a delivered send. A stale LAIN_QA_PANE surviving from an earlier sandbox in
+  # a shared shell is the same class of leftover state this whole card exists
+  # to stop guessing past.
+  mapfile -t LIVE_PANES < <(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id}')
+  printf '%s\n' "${LIVE_PANES[@]}" | command grep -qxF "$LAIN_QA_PANE" \
+    || { echo "pinned pane does not exist: $LAIN_QA_PANE on tmux -L $QA_SOCK" >&2; exit 1; }
+  CHAT="$LAIN_QA_PANE"
+else
+  mapfile -t CHAT_CANDIDATES < <(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id} #{pane_current_command}' | command grep -w ruby | cut -d' ' -f1)
+  case "${#CHAT_CANDIDATES[@]}" in
+    0) echo "no chat pane on tmux -L $QA_SOCK" >&2; exit 1 ;;
+    1) CHAT="${CHAT_CANDIDATES[0]}" ;;
+    *) echo "REFUSING to send: ${#CHAT_CANDIDATES[@]} chat panes on tmux -L $QA_SOCK -- ambiguous, not guessing:" >&2
+       printf '  %s\n' "${CHAT_CANDIDATES[@]}" >&2
+       exit 2
+       ;;
+  esac
+fi
 
 # NEVER type while an approval is parked: at a `[y/N]` prompt the Enter below IS
 # the answer, and the default is DENY. One round denied a call by accident this
@@ -109,9 +138,29 @@ cat > "$QA/peek.sh" <<'EOF'
 # needs -e instead, never -p. See method.md's "What a text read cannot verify"
 # for the recipe this wraps and a real measurement. -e output is for a human or
 # a decoder, not for grep -- it is unusable as plain text by design.
+#   optionally pin the pane: export LAIN_QA_PANE="%3" -- same escape hatch as
+#   drive.sh, and for the same reason: see the refusal below.
 . "$(dirname "$0")/env.sh"
 WHICH="${2:-chat}"; PAT=ruby; [ "$WHICH" = nvim ] && PAT=nvim
-P=$(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id} #{pane_current_command}' | command grep -w "$PAT" | head -1 | cut -d' ' -f1)
+if [ -n "${LAIN_QA_PANE:-}" ]; then
+  # Same validation as drive.sh, same reason: capture-pane on a dead pane
+  # writes "can't find pane" to stderr and returns success with EMPTY stdout,
+  # which is indistinguishable from a pane that exists and is genuinely blank.
+  mapfile -t LIVE_PANES < <(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id}')
+  printf '%s\n' "${LIVE_PANES[@]}" | command grep -qxF "$LAIN_QA_PANE" \
+    || { echo "pinned pane does not exist: $LAIN_QA_PANE on tmux -L $QA_SOCK" >&2; exit 1; }
+  P="$LAIN_QA_PANE"
+else
+  mapfile -t CANDIDATES < <(tmux -L "$QA_SOCK" list-panes -a -F '#{pane_id} #{pane_current_command}' | command grep -w "$PAT" | cut -d' ' -f1)
+  case "${#CANDIDATES[@]}" in
+    0) echo "no $WHICH pane on tmux -L $QA_SOCK" >&2; exit 1 ;;
+    1) P="${CANDIDATES[0]}" ;;
+    *) echo "REFUSING to read: ${#CANDIDATES[@]} $WHICH panes on tmux -L $QA_SOCK -- ambiguous, not guessing:" >&2
+       printf '  %s\n' "${CANDIDATES[@]}" >&2
+       exit 2
+       ;;
+  esac
+fi
 FLAGS=(-p); [ -n "${3:-}" ] && FLAGS=(-e -p)
 tmux -L "$QA_SOCK" capture-pane "${FLAGS[@]}" -t "$P" | command grep -v '^$' | tail -"${1:-12}"
 EOF
