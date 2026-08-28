@@ -198,7 +198,11 @@ RSpec.describe Lain::Tools::Subagent do
   # ---- Scenario: the return is an ordinary tool_result (5-1.1) ---------------
 
   describe "the child's result comes back as a tool_result" do
-    it "returns the final text, and a :message event names the :spawn and F among its causal parents" do
+    # The `lifecycle` expectation rides HERE rather than in a dispatch of its
+    # own: the completion is written on the real dispatch path, and what the
+    # mark has to cost the parent is nothing -- so the pin belongs beside the
+    # result it must not have disturbed.
+    it "returns the final text, marked terminal, and names the :spawn and F among its causal parents" do
       tool = build_subagent(provider: mock(text_response("child answer")))
       result = tool.call({ "prompt" => "go" }, invocation)
 
@@ -208,6 +212,7 @@ RSpec.describe Lain::Tools::Subagent do
       final = tool.last_child.head_digest
       message = tool.last_message
       expect(message.kind).to eq(:message)
+      expect(message.body.fetch("lifecycle")).to eq(Lain::Telemetry::SpawnLifecycle::STOPPED)
       expect(message.causal_parents).to include(tool.last_spawn.digest)
       expect(message.causal_parents).to include(final)
     end

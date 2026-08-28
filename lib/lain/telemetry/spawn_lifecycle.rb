@@ -7,10 +7,11 @@ module Lain
     # so a tmux window or a published roster can drop it?
     #
     # Three marks ride a `:spawn` or `:message` body's `"lifecycle"` field --
-    # `"launched"`, `"settled"`, `"stopped"` -- and a one-shot's completion
-    # speaks none of them, carrying a `"result"` key instead. That asymmetry
-    # is history, not a defect this object corrects: a mark added to future
-    # completions cannot be backfilled onto journals already on disk, since
+    # `"launched"`, `"settled"`, `"stopped"`. A one-shot's completion now
+    # speaks `"stopped"` like any other transition, but LEGACY completions do
+    # not: they carry a `"result"` key and no mark. That asymmetry could not
+    # be swept, only ended -- a mark added to the writer cannot be
+    # backfilled onto journals already on disk, since
     # `Bench::Session::MessageReplay` re-derives a historical digest from the
     # historical body. So both shapes are read here, by name, rather than one
     # reader growing its own copy of this test and the next growing another.
@@ -67,16 +68,16 @@ module Lain
         # {Tools::Subagent::Lineage#message} ever writes one, and it always
         # writes a finished child), so its presence is read as terminal ON
         # ITS OWN -- never conditioned on which mark, if any, rides beside
-        # it. That is deliberate slack for a future writer: today's body
-        # carries no mark at all, and a later one is free to add any mark
-        # from {MARKS} (or none) without this object's reading of it
-        # changing. The one thing a "result" body can never mean is
-        # "settled" -- an actor's settled reply and a one-shot's completion
-        # are written by different methods and never share a key. This
-        # reading rests on convention, not on type: nothing stops a FUTURE
-        # `:message` writer from emitting its own "result" key, and whoever
-        # adds the next one should read this comment before assuming the
-        # inference still holds.
+        # it. That slack is what let the writer start marking its
+        # completions {STOPPED} without this object changing: a legacy
+        # result-only body and a marked one answer alike, and the same holds
+        # for whatever a later writer adds. The one thing a "result" body can
+        # never mean is "settled" -- an actor's settled reply and a one-shot's
+        # completion are written by different methods and never share a key.
+        # This reading rests on convention, not on type: nothing stops a
+        # FUTURE `:message` writer from emitting its own "result" key, and
+        # whoever adds the next one should read this comment before assuming
+        # the inference still holds.
         @result = body.key?("result")
         freeze
       end

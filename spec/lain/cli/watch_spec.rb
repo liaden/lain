@@ -117,6 +117,45 @@ RSpec.describe Lain::CLI::Watch do
     end
   end
 
+  # A one-shot's completion carries a terminal lifecycle mark now, and this
+  # view prefixes any mark it finds -- so an operator tailing a one-shot reads
+  # "(stopped) <result>" where the line used to be bare. That is the same
+  # shape an actor's farewell already rendered in, which is the point, but a
+  # line an operator reads is not allowed to change unpinned: nothing else in
+  # this file renders a `result` body at all.
+  describe "a one-shot child's completion" do
+    subject(:watch) { described_class.new(selector:, path:, sink: output, paths:) }
+
+    # The BODY comes from the real writer rather than being spelled out here,
+    # unlike every other record in this file: what this example is about is
+    # that what {Tools::Subagent::Lineage#message} writes today renders with a
+    # mark, so a hand-written body would pin the renderer and miss the change.
+    # Only the chaining fields are synthetic, so it reaches the watched spawn.
+    let(:completion_body) do
+      policy = Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: [])
+      lineage = Lain::Tools::Subagent::Lineage.new(policy:)
+      child = Lain::Timeline.empty(store: parent_chain.store)
+                            .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+      lineage.message(parent_chain, lineage.spawn(parent_chain), child,
+                      Data.define(:text).new(text: "child answer")).body
+    end
+
+    let(:completion) do
+      Lain::Telemetry::Message.new(
+        digest: "5fff#{s_reply_digest[4..]}", kind: :message, from: s_spawn_digest,
+        to: parent_correlation, payload: completion_body,
+        causal_parents: [s_spawn_digest], correlation: parent_correlation
+      ).to_journal
+    end
+    let!(:path) { write_journal(opening_records + [completion, closed_record]) }
+
+    it "renders the result behind its terminal mark" do
+      watch.run
+
+      expect(output.string).to include("(stopped) child answer")
+    end
+  end
+
   describe "tailing a live file" do
     it "picks up records appended after EOF and exits 0 once the closer lands" do
       path = write_journal(opening_records)

@@ -54,9 +54,19 @@ module Lain
         # this seam. A walk therefore enters at the correlation, finds this
         # :message, and descends to the :spawn and F. Edge-grain linkage is
         # deliberately not built here.
+        #
+        # The completion is a TRANSITION, so it carries the same discriminator
+        # every other transition does -- STOPPED, because a one-shot child is
+        # done for good, exactly as an actor's farewell is. Written
+        # UNCONDITIONALLY: future completions hash differently from the ones
+        # on disk, which is safe because a recorded journal re-derives its
+        # digest from its own recorded body. This closes the vocabulary's
+        # TERMINAL end only -- a one-shot's :spawn still writes no "launched"
+        # (see {#spawn}), so "did this spawn start" is still `kind == :spawn`.
         def message(parent, spawn, child, response)
           final = child.head_digest
-          body = { "result" => response.text, "final" => final }
+          body = { "result" => response.text, "final" => final,
+                   "lifecycle" => Telemetry::SpawnLifecycle::STOPPED }
           put(parent, kind: :message, from: correlation_of(child), to: correlation_of(parent),
                       causal_parents: [spawn.digest, final].compact, body:)
         end

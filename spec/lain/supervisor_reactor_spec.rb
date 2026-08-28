@@ -291,9 +291,15 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
       # in this card BY DESIGN -- its "lifecycle events will later enrich this"
       # comment is now TRUE rather than stale, because a review fix landed the
       # machine-readable body-level discriminator a later enrichment keys on
-      # (launched/settled/stopped; tells carry none). Landing it now was the
-      # cheap moment: events are content-addressed, so a later marker would
-      # have changed digests under recorded journals.
+      # (launched/settled/stopped; tells carry none). Landing it here was
+      # convenient, not forced. The argument that it HAD to land now -- that
+      # events are content-addressed, so a later marker would have changed
+      # digests under recorded journals -- turned out not to bind:
+      # {Bench::Session::MessageReplay} rebuilds every Event from the record's
+      # OWN recorded body and compares against the recorded digest, so a
+      # journal on disk re-derives its historical digest whatever the writers
+      # do afterwards. Only future records change. A one-shot's completion
+      # marker did land later, on exactly that evidence.
       expect(fleet_after_each).to eq([[actor.address]] * 3)
       expect(records.first.payload["lifecycle"]).to eq("launched")
       farewell = records.last
