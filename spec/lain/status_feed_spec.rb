@@ -30,6 +30,24 @@ RSpec.describe Lain::StatusFeed do
     Lain::Event.new(kind: :spawn, payload_digest: "blake3:spawn-#{id}", from: "parent", to: nil)
   end
 
+  # A one-shot's completion, shaped as Tools::Subagent::Lineage#message writes
+  # one: the result, the child's final head and the terminal mark, citing the
+  # :spawn among its causal parents.
+  def spawn_completion(spawn)
+    Lain::Event.new(kind: :message, payload_digest: "blake3:msg-completion",
+                    body: { "result" => "the answer", "final" => "blake3:final",
+                            "lifecycle" => Lain::Telemetry::SpawnLifecycle::STOPPED },
+                    causal_parents: [spawn.digest, "blake3:final"], from: "child", to: "parent")
+  end
+
+  # An actor's reply, shaped as Tools::Subagent::Actor#reply writes one: no
+  # result key, only the mark, citing the address -- which IS the spawn digest.
+  def actor_reply(spawn, lifecycle:)
+    Lain::Event.new(kind: :message, payload_digest: "blake3:msg-#{lifecycle}",
+                    body: { "text" => "from the child", "lifecycle" => lifecycle },
+                    causal_parents: [spawn.digest, "blake3:head"], from: "child", to: "parent")
+  end
+
   def message_event(id, to: "human", from: "orchestrator")
     Lain::Event.new(kind: :message, payload_digest: "blake3:msg-#{id}", from:, to:)
   end
@@ -176,7 +194,7 @@ RSpec.describe Lain::StatusFeed do
       expect(published["fleet"]).to eq([first.digest, second.digest])
     end
 
-    it "does not grow on a :message or :turn event -- only :spawn names a fleet member" do
+    it "grows on neither an ordinary :message nor a :turn -- only a :spawn names a fleet member" do
       feed = described_class.new(path:)
 
       feed << message_event("q")
@@ -207,6 +225,39 @@ RSpec.describe Lain::StatusFeed do
       feed << spawn_event("a") # a fresh Event object, same content address
 
       expect(published["fleet"]).to eq([spawn_event("a").digest])
+    end
+
+    # The delegation on the OTHER side: until a spawn's completion could be
+    # recognised, `fleet` was the one published field that was a set of
+    # identities with an add path and no remove path.
+    it "retires a spawn on the completion that names it, so a finished child leaves the roster" do
+      feed = described_class.new(path:)
+      launch = spawn_event("a")
+      feed << launch
+
+      feed << spawn_completion(launch)
+
+      expect(published["fleet"]).to eq([])
+    end
+
+    it "keeps an actor that has only settled a turn -- settled rides every reply, not just the last" do
+      feed = described_class.new(path:)
+      launch = spawn_event("a")
+      feed << launch
+
+      feed << actor_reply(launch, lifecycle: Lain::Telemetry::SpawnLifecycle::SETTLED)
+
+      expect(published["fleet"]).to eq([launch.digest])
+    end
+
+    it "retires an actor on its farewell, which names the spawn digest it took as its address" do
+      feed = described_class.new(path:)
+      launch = spawn_event("a")
+      feed << launch
+
+      feed << actor_reply(launch, lifecycle: Lain::Telemetry::SpawnLifecycle::STOPPED)
+
+      expect(published["fleet"]).to eq([])
     end
   end
 

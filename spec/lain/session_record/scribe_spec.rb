@@ -248,11 +248,19 @@ RSpec.describe Lain::SessionRecord::Scribe do
     # Conditional now, and the condition is in the name: a spawned session whose
     # child cited nothing still moves nothing. The turn that DOES cite something
     # publishes its edges, one describe below.
-    it "moves a real StatusFeed's inbox not at all for turns citing nothing, while the spawn registers" do
+    #
+    # The fleet reads EMPTY rather than at one because a one-shot's completion is
+    # terminal and this child ran to completion. This example cannot tell that
+    # from a fleet that registered nothing -- it can only read the roster after
+    # the whole session -- and it does not try: the registration-then-retirement
+    # is pinned where it can be stepped record by record, in
+    # spec/lain/supervisor_reactor_spec.rb and spec/lain/status_feed_spec.rb.
+    # What is asserted here is only that this path moves the INBOX not at all.
+    it "moves a real StatusFeed's inbox not at all for turns citing nothing" do
       spawned_session
 
       expect(status.state.fetch("inbox_count")).to eq(0)
-      expect(status.state.fetch("fleet").size).to eq(1)
+      expect(status.state.fetch("fleet")).to eq([])
     end
 
     # WHY a child's turn owes the tee anything at all: its `ask_human` is relayed

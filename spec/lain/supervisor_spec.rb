@@ -376,18 +376,29 @@ RSpec.describe Lain::Supervisor do
       expect(farewell.payload).to eq({ "text" => "actor stopped", "lifecycle" => "stopped" })
     end
 
-    it "feeds the fleet field with no StatusFeed changes: the :spawn lands, the messages pass through inertly" do
+    # The published roster stepped record by record, not just at the end: this
+    # example asserted `[actor.address]` for as long as the feed had an arrival
+    # side and no retirement side. Reading it after EVERY record is what keeps
+    # the empty tail a retirement rather than an absence -- a feed that observed
+    # nothing publishes an empty fleet too.
+    #
+    # Narrowed to the Telemetry::Message records, as the sibling example above
+    # does, so the four readings are the four lifecycle records and not the
+    # fifth thing the raw drain also carries.
+    it "feeds the fleet field: the :spawn lands, a settle and a tell pass through inertly, the farewell retires it" do
       journal = Lain::Channel.new
       actor = journaled_lifecycle(journal)
 
       Dir.mktmpdir("supervisor-spec") do |dir|
         path = File.join(dir, "state.json")
         feed = Lain::StatusFeed.new(path:)
-        journal.drain.each { |event| feed << event }
+        fleet_after_each = journal.drain.grep(Lain::Telemetry::Message).map do |event|
+          feed << event
+          JSON.parse(File.read(path))["fleet"]
+        end
 
-        published = JSON.parse(File.read(path))
-        expect(published["fleet"]).to eq([actor.address])
-        expect(published["inbox_count"]).to eq(0)
+        expect(fleet_after_each).to eq(([[actor.address]] * 3) + [[]])
+        expect(JSON.parse(File.read(path))["inbox_count"]).to eq(0)
       end
     end
   end

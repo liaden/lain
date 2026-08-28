@@ -177,9 +177,11 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
   # goes GREEN, and RSpec then fails on the stale marker -- which is the signal we want.
   it "twinned actors are distinguishable at address grain" do
     pending "Two spawns of one arm from the same head are byte-identical :spawn events " \
-            "(ChainWriter has no nonce), so they share a digest == address. Farewells are " \
-            "attributable only to that shared address, and StatusFeed folds the twins into " \
-            "one fleet entry, so the HUD undercounts. The fix belongs in ChainWriter."
+            "(ChainWriter has no nonce), so they share a digest == address. StatusFeed folds " \
+            "the twins into ONE fleet entry, and EITHER farewell -- attributable only to that " \
+            "shared address -- now retires it, so the HUD reads fleet:0 while the surviving " \
+            "twin is still running. A live child vanishing from the roster, not an undercount. " \
+            "The fix belongs in ChainWriter."
     journal = Lain::Channel.new
     twin_a = twin_b = nil
     Sync do |task|
@@ -264,7 +266,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
   end
 
   # ---- (d) The REAL journaled lifecycle through an unmodified StatusFeed ----
-  it ":spawn lands the fleet entry; settle and stop pass through inertly -- stop never RETIRES the entry" do
+  it ":spawn lands the fleet entry, a settle passes through inertly, and the stop RETIRES it" do
     journal = Lain::Channel.new
     actor = nil
     Sync do |task|
@@ -287,20 +289,26 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
         feed << record
         JSON.parse(File.read(path))["fleet"]
       end
-      # Appears at :spawn and (still) never retires: StatusFeed is unchanged
-      # in this card BY DESIGN -- its "lifecycle events will later enrich this"
-      # comment is now TRUE rather than stale, because a review fix landed the
-      # machine-readable body-level discriminator a later enrichment keys on
-      # (launched/settled/stopped; tells carry none). Landing it here was
-      # convenient, not forced. The argument that it HAD to land now -- that
-      # events are content-addressed, so a later marker would have changed
-      # digests under recorded journals -- turned out not to bind:
+      # THE WHOLE SEQUENCE, not just its end. An empty fleet at the end proves
+      # nothing on its own -- a feed that never observed anything publishes an
+      # empty fleet too, which is why the middle readings are asserted here.
+      # The entry appears on the :spawn, SURVIVES the settled reply (that mark
+      # rides every actor turn, so retiring on it would drop a long-lived actor
+      # at its first answer), and leaves only on the farewell. It is empty
+      # because this journal said so.
+      #
+      # This example asserted `[[actor.address]] * 3` for as long as the feed
+      # had an arrival side and no retirement side. The discriminator it keys
+      # on (launched/settled/stopped; tells carry none) landed with the actor,
+      # and the argument that it HAD to land then -- that events are
+      # content-addressed, so a later marker would have changed digests under
+      # recorded journals -- turned out not to bind:
       # {Bench::Session::MessageReplay} rebuilds every Event from the record's
       # OWN recorded body and compares against the recorded digest, so a
       # journal on disk re-derives its historical digest whatever the writers
       # do afterwards. Only future records change. A one-shot's completion
       # marker did land later, on exactly that evidence.
-      expect(fleet_after_each).to eq([[actor.address]] * 3)
+      expect(fleet_after_each).to eq([[actor.address], [actor.address], []])
       expect(records.first.payload["lifecycle"]).to eq("launched")
       farewell = records.last
       expect(farewell.kind).to eq(:message)

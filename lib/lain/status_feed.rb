@@ -26,9 +26,10 @@ module Lain
   #   The TTL comes from the injected `cache_profile:`, never a constant, so a
   #   swept provider arm slides its own real window. A turn showing no cache
   #   activity leaves the deadline exactly where it was.
-  # * `fleet` -- the digests of every DISTINCT `:spawn`. {Fleet} owns the
-  #   standing set, and the keying that makes a redelivered event a no-op
-  #   rather than a phantom second entry.
+  # * `fleet` -- the digests of every DISTINCT `:spawn` that has not yet been
+  #   ended by a record naming it. {Fleet} owns both sides: the keying that
+  #   makes a redelivered event a no-op rather than a phantom second entry, and
+  #   the lifecycle reading that lets a finished child leave the roster.
   # * `inbox_count` -- what is still addressed to {Tools::AskHuman::HUMAN} and
   #   not yet named a causal parent by a committed turn. {Inbox} owns the
   #   projection, the fold, and the {Store} the live carrier's chain resolves
@@ -218,6 +219,12 @@ module Lain
     # @param event [Object] a record this sink recognizes, or anything at all.
     #   The recognized set is the class doc's: six journal records matched by
     #   CLASS, plus the {Approval::Queue} pair, plus anything answering `#kind`.
+    #
+    #   WHAT A `#kind`-ANSWERING RECORD OWES BEYOND `#kind`: a `:spawn` owes
+    #   `#digest`; a `:message` owes `#to`, `#digest` and `#causal_parents`,
+    #   because {Fleet} reads the last of those to retire a finished spawn; a
+    #   `:turn` owes `#causal_parents`. Today only {Event} and
+    #   {Telemetry::Message} reach these arms and both answer all of it.
     #
     #   A LOOKALIKE IS NOT ENOUGH for the class-matched six. An object merely
     #   answering `#usage` and `#stop_reason` is silently inert rather than read
@@ -431,7 +438,12 @@ module Lain
     def observe(event)
       case event.kind
       when :spawn then @fleet.launched(event)
-      when :message then @inbox.arrived(event)
+      when :message
+        # A `:message` carries two independent facts, so it is read twice: what
+        # it says to the human, and whether it is the record that ended a
+        # spawn's lifecycle. {Fleet} owns the second reading.
+        @fleet.completed(event)
+        @inbox.arrived(event)
       when :turn then @inbox.retire(event.causal_parents)
       end
     end
