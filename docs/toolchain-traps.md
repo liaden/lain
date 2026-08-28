@@ -238,6 +238,18 @@ the cop.
   does not re-place the diff on every further move once it is back`; and
   `isolation/worktree_handback_spec`'s `Dir.mktmpdir` teardown racing git maintenance.
 
+  Added 2026-08-28, and it is the one shape this ledger did not yet carry: two examples in
+  `neovim_runtime_spec`'s `answering a parked approval in the editor, end to end` group fail
+  **in isolation** while the same file passes inside a full `pspec` run --
+  `resolves one unwrapped call per answerable row, in queue order, for two parked approvals` and
+  `carries the wrapped command unwrapped, with the rendered lines unchanged`. Measured at
+  `428d662b`: 1 failure on 3 of 3 solo runs of the file, a different example each time, against a
+  whole-suite run of the same tree at 0 failures. So the usual reflex is inverted here -- solo is
+  the unreliable reading and the suite is the trustworthy one, which is the opposite of what the
+  TMPDIR note above trains you to do. Do not take a red from
+  `rspec spec/lain/frontend/neovim_runtime_spec.rb` as evidence of anything; re-run it under the
+  whole suite before believing it, and expect a `pspec` to trip it occasionally too.
+
   Added 2026-08-23: the entry above still under-describes this file. Two MORE of its examples have
   been observed red and green on the same box within minutes, both in the `#continue refuses a
   resolution that is not one` describe block that no entry here names: `Lain::Isolation::Worktree::Handback
