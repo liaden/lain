@@ -276,11 +276,16 @@ module Lain
       #   lets tmux pick the current one (the production case -- this sink
       #   only constructs live inside $TMUX)
       # @param cwd [String] the pane's start directory, pinning the project
-      #   the watch resolves against exactly as /fork and /btw pin theirs
+      #   the watch resolves against exactly as /fork and /btw pin theirs.
+      #   The resolved project answers this, not `Dir.pwd`: a window opened in
+      #   the working directory is a window whose watch resolves against a
+      #   project the chat itself never agreed to, and nothing about it looks
+      #   wrong from inside the pane.
       # @param spawner [#call] takes the pump block, answers a task duck
       #   (#finished?) or nil; injectable so specs drain deterministically
       def initialize(surface:, watch_argv: WATCH_ARGV, cap: CAP_PER_TURN, role_for: ROLELESS,
-                     notice: Channel::Null.instance, session: nil, cwd: Dir.pwd,
+                     notice: Channel::Null.instance, session: nil,
+                     cwd: Project::Resolver.default_project.cwd,
                      spawner: Pump::DEFAULT_SPAWNER)
         @watch_argv = watch_argv
         @cap = cap
