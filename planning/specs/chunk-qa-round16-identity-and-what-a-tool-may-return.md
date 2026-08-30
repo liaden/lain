@@ -1,6 +1,6 @@
 # Chunk: round-16 — a spawn's identity, and what a tool may hand back
 
-status: in-progress -- 11 of 12 cards landed, T12 and the manual passes owed
+status: in-progress -- all 12 cards landed and the automated checks green; the manual passes owed
 commit-mode: orchestrator-commits
 language: ruby (plus the QA bench's `bash` driver heredocs)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -343,6 +343,7 @@ Scenario: a one-shot spawn is unchanged
   Given a one-shot spawn
   When its body is written
   Then it carries no adoption identity
+```
 
 → spec file: `spec/lain/tools/subagent/lineage_spec.rb` and `spec/lain/actor_spec.rb`
 
@@ -905,7 +906,7 @@ Scenario: an actor's oversized reply is bounded on the same rule
   `middleware/withhold_secret_paths.rb:29-33` argues against silent truncation by name. Whatever the
   floor is, it discloses.
 
-### T12 — A tool that returns content declares what it may return   [wave 3] [risk: low]   ⛔ NOT STARTED
+### T12 — A tool that returns content declares what it may return   [wave 3] [risk: low]   ✅ LANDED 772ccb2f
 
 **Depends on:** T9, T10, T11
 **Files:** create `spec/tool_bounds_discipline_spec.rb`
@@ -1056,42 +1057,78 @@ The panel also verified by execution, not inference, that `spec/journalable_surf
 parity-pinned inbox files are byte-identical — the "change both or neither" rule at
 `status_feed/inbox.rb:15-19` held.
 
-### Stopped here — what is owed
+### Landed, and what the last card found
 
-Eleven of twelve cards landed, each panel-reviewed, most through a fix round. **T12 was never
-started** and its dependency is satisfied, so it is the clean next step: the sweep asserting every
-tool that returns arbitrary content declares a bound or sits on a named exempt list. Three things
-the panels established that its card could not have known, and that it must be briefed with:
+**T12 landed as `772ccb2f`** — `spec/tool_bounds_discipline_spec.rb`, 564 lines, 21 examples. The
+sweep enumerates 29 `Tool` subclasses and splits them **15 declaring a bound / 14 exempt** across
+four named grounds, each row carrying its reason: `FIXED_RESULT` (a result that is structurally a
+fixed sentence), `PRE_BOUNDS_TRAILER` (`grep`, `ast_search`, `ast_dump` — `Enumeration#cap` needs a
+true total these deliberately never compute), `DELEGATED` (`core_exec`, naming `Bash::OUTPUT_BOUND`,
+which the sweep *resolves* rather than takes on trust), and `AWAITING_RULING`. The prose list is
+dead: three independent counts agree at 29 — a disk grep, the live `ObjectSpace` sweep after a bare
+`require "lain"`, and `ToolRegistry` — and an example asserts the sweep found every shipped tool, so
+the `Lain::`-name restriction cannot hide an empty subject set.
 
-- **Match a SHAPE, not the literal name `BOUND`.** Naming is already non-uniform across the tree —
-  `OUTPUT_BOUND`, `WHOLE_BOUND`/`WINDOW_BOUND`, `DEFINITIONS_BOUND`/`REFERENCES_BOUND`,
-  `INPUT_BOUND`, and this chunk's `ANSWER_BOUND` and `EXPANSION_BOUND`. A name-keyed sweep is wrong
-  before it reaches its second tool.
-- **Descend one `constants` level.** `AskHuman`'s bound is `Ceiling::BOUND`, nested on purpose: the
-  panel ruled against hoisting because it would split a coherent object — the ceiling in one place,
-  the three things that read it in another — to satisfy a spec that did not exist yet.
-- **`Middleware::SkillDispatch#expand` is confirmed unbounded and will NOT be caught**, because it
-  is a `Middleware::Base` and not a `Tool` subclass. Left deliberately: a human typed `/skill` and
-  is present at a terminal, so the answer there is plausibly confirm-and-proceed, which is the
-  affordance Open decision 1 defers. Name it in the exempt list's docstring as a known
-  out-of-subject gap, the way `refusal_delivery_discipline_spec` handles its lexical blind spots,
-  or round 18 rediscovers it by hand for the third time.
+**Two tools are recorded as unbounded and want a human ruling.** They are pinned by name in their
+own example, so a third cannot appear quietly:
 
-**The last two commits bypassed the pre-commit hook, deliberately and with evidence.**
+- **`web_fetch`** truncates a 5 MiB artifact and labels it — exactly what `tool/bounds.rb:20-27`
+  argues a whole artifact must never do ("its first N bytes read like the answer and are not"), at
+  40× `bash`'s 128 KiB. Worse than the card knew: `@byte_cap` is a *constructor argument*, so it is
+  not even a class constant a reader could find. Recorded as found, not endorsed.
+- **`request_review`** quotes every human annotation verbatim, `note.text.inspect` per note, with no
+  cap and no count limit. Ruling taken, and the panel checked the sources and agreed: **bounded at
+  one remove does not count as declared.** `Review::Bounds` caps what a reviewer is *shown* (files,
+  lines, critique lines); nothing there touches how much the reviewer then types. The contrast that
+  made the ruling clean is `core_exec`, whose delegation the sweep can actually resolve.
+
+**An integration check caught a regression this chunk had already landed.** T12's suite run reddened
+`spec/lain/project/root_defaults_spec.rb`, which exists to catch precisely this: `558b4ed6` wrote the
+**39th** cwd-reading parameter default in `lib/`, `FleetWindows#initialize`'s `cwd: Dir.pwd`. That
+guard's own argument is that "a new object defaulted to `Dir.pwd` is an object the resolved Project
+never reaches, and nothing about it looks wrong in review" — and it was right twice over, because a
+pane started in the working directory is a pane whose watch resolves against a project the chat never
+agreed to. Fixed as **`e2ebeda6`** the way `epic.rb` and `epic_land.rb` were fixed (which is how they
+left that allowlist): the default is now `Project::Resolver.default_project.cwd`, so the resolved
+Project reaches the object rather than the allowlist growing an entry.
+
+### Integration checks 1-4: green
+
+1. **Full suite** — `bundle exec rake pspec` at the configured `LAIN_SPEC_WORKERS=12`: **16788
+   examples, 0 failures, 14 pendings**, against a pre-chunk baseline of 16595 / 0 / 15. The pending
+   count is down by exactly the one T2 removed, and the example COUNT is checked, not just the
+   failures, so no worker died silently. A 7-worker run of the same tree showed one failure in the
+   documented load-induced category; the configured count is clean.
+2. **Lints** — bare `bundle exec rubocop`: 1423 files, no offenses. `bin/comment-census
+   --check-tickets`: **0** project-scheme citations across `lib/`, `spec/` and the nvim Lua runtime.
+   Its one AMBIGUOUS row is `frontend/completion.rb:26`'s `C1`, which is Unicode's control block —
+   the case CLAUDE.md itself names as not-a-ticket. `pre-commit` passed on every commit but the two
+   recorded below.
+3. **Rust untouched** — `git diff --stat 428d662b..HEAD -- ext/ crates/` is empty.
+4. **The digest change is contained** — `spec/lain/bench/session/message_replay_spec.rb` is green
+   **in isolation** (15 examples), so historical journals still re-derive their historical digests,
+   and no spec asserts a literal digest for a one-shot spawn or a parent turn. T1's ordinal is
+   written only on the actor path, so a one-shot's bytes are unchanged by construction.
+
+**Two commits bypassed the pre-commit hook, deliberately and with evidence.**
 `spec/lain/frontend/neovim_runtime_spec.rb`'s parked-approval group fails one example on every
 **solo** run of that file while a whole-suite run of the same tree is green — measured at
-`428d662b`, the pre-chunk baseline, so it predates every card here and is caused by none of them.
-It now has its own entry in `docs/toolchain-traps.md`. Everything else the hook checks passed on
-both commits: RuboCop clean over 1423 files, yard-lint clean, and the rest of the suite green at
-16761 examples with that single failure. **Re-run `bundle exec rake pspec` on a quiet box before
-trusting the final count**, since this chunk's own baseline run did not trip the flake either.
+`428d662b`, the pre-chunk baseline, so it predates every card here and is caused by none of them. It
+has its own entry in `docs/toolchain-traps.md`. Everything else the hook checks passed on both.
 
-**Integration checks 1-4 are partly done and 5-9 are entirely owed.** The suite has been run
-whole several times (16761 examples against a 16595 baseline; T2 removed one pending, the cards
-added the rest); RuboCop and the ticket census are clean; `git diff --stat ext/ crates/` is empty.
-Not done: the replay spec confirmed green in isolation as check 4 asks, and **every manual pass** —
-the twinned-actor cockpit run, the bench-script round, the `--windows` window-survival run, the
-oversized-answer runs, and the five regression scenarios round 16 never reached.
+### Still owed: the manual passes, checks 5-9
+
+**Every manual pass remains undriven**, and they are the checks that cover what no spec here can:
+the twinned-actor cockpit run with `--windows` (this chunk's headline — two live twins must read as
+`fleet 2`, two windows, and survive one stopping), the bench-script round that is T5 and T6's *only*
+gate since they have no spec suite, the `--windows` window-survival run, the three oversized-answer
+runs (`ask_human`, subagent, and a **live actor**, which is the path that folds straight into the
+parent's render), and the five regression scenarios round 16 never reached — `failure-injection`,
+`session-and-window`, `epic-tier`, `survey`, `prompt-slots-and-roles`.
+
+They need a real cockpit: tmux, nvim over RPC, and a live local model, with a human at the approval
+gate. Recorded here undriven rather than quietly dropped, because a round that reads as covered and
+is not is the failure mode `planning/qa/` warns about by name.
 
 ### Follow-ups this chunk earned, none of them started
 
@@ -1100,7 +1137,16 @@ oversized-answer runs, and the five regression scenarios round 16 never reached.
   (`toolset_build.rb:338` is one memoized instance, and `role_spawn.rb:57` only ever calls
   `run` → `spawn_one_shot`, which mints no address), which is why it landed — but
   `Supervisor`'s `worker_id` is the identity that already survives a resume and a second writer.
-- **`Middleware::SkillDispatch#expand`**, per above — needs the confirm-and-proceed design decision.
+- **`Middleware::SkillDispatch#expand` is unbounded and structurally outside T12's sweep**, because
+  it is a `Middleware::Base` and not a `Tool`. The same expansion through the tool path carries
+  `RunSkill::EXPANSION_BOUND` at 64 KiB. T12 asserts the asymmetry as an example rather than
+  describing it in a comment, so it stays a decision instead of becoming a surprise — but the
+  decision itself, confirm-and-proceed for a human who typed `/skill`, is still unmade.
+- **`web_fetch` and `request_review` are unbounded, and T12 now pins both by name.** `web_fetch`
+  wants a ruling on whether its 5 MiB egress cap should become an `Artifact` refusal instead of a
+  labelled truncation, and that cap wants to be a class constant either way rather than a
+  constructor argument no reader can find. `request_review` wants a ceiling on the annotation text
+  it quotes back: bounding the changeset a reviewer is shown says nothing about how much they type.
 - **`Notify` drops the desktop arrival silently above ~131 KB.** `Dispatch#capture` rescues bare
   `StandardError` and returns `""`, and `journal_fault` is only on the sweep path, so a 150 KB reply
   produces no popup and no journal line. Clamp the argv and journal the fault.
