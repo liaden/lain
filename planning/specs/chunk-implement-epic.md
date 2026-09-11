@@ -1664,6 +1664,8 @@ Cards landed:
 - **T9** `d4d424a5`. Suite 17114 examples, 0 failures, on T9's tree. Leases take a git worktree lock recording the owning process; gc claims a lock by renaming it, and acts only if the bytes are unchanged; `worktree.useRelativePaths` resolves; a stray claim file keeps the tree.
 - **Follow-up** `6e7d07f9`: `Worktree#repo_root`, forwarded through the lease decorators. `Null#repo_root` searches from the root it was built with, and raises `NoRepository` when it has none. The chat handoff reads the backend's root, and no longer runs `rev-parse --show-toplevel`.
 - **T12** `9f81a3c9`. Suite 17326 examples, 0 failures, on T12's tree. `Isolation::LandingQueue`, `Forge::LocalLanding`, `lain epic finish`, `Isolation::ParentLock` (shared with the chat handback). The pre-commit example that failed, the nvim parked-approval "wrapped command unwrapped", is the documented load flake, and passed alone. **Follow-up:** a merge whose handback record never reached the journal refuses both `land` and `--resume`, with no command to adopt it. It needs a way out, e.g. `lain epic land --adopt`.
+- **T11** `5f2c1d6d`. Suite 17350 examples, 0 failures, on T11's tree. The spawn seam takes a required `tool_middleware:`, built by `ToolGuard.child_stack` or `ToolGuard.detached`; `ToolGuard::Inputs` rides the Switchboard; `WorkerEnv#checkout` comes from the lease. **T18 must delete** the stale "guard does not reach subagents" comment at `agent_build.rb:68`.
+- **T10** `feba7cf9`. Suite 17392 examples, 0 failures, on T10's tree. `/undo` reverts the `diff-tree` rows between the per-turn tree pair; `/undo skip`; `SnapshotSlot`, rebound on a `/mode` flip that changes scope; `Revert`/`TreePair`/`Repository` extracted. Pre-commit failed on a YARD duplicate docstring for `SnapshotLog::Undo`, consolidated onto its reopen, and on the `annotate_spec` load flake.
 
 Load-sensitive examples. Each failed only while another agent's rspec was running, and passed when re-run on a quiet box:
 - `Lain::Supervisor` actor reactor: "an actor's own captured Async::TimeoutError is not misread as the drain's bound".
@@ -1824,3 +1826,17 @@ Rulings made during execution:
     `pre-commit hook-impl …`.
   - **At close-out:** add this to `docs/toolchain-traps.md`, and propose the CLAUDE.md wording to the
     human.
+- **T10 redesign departures, accepted.**
+  - Chat A can write between chat B's prime and settle; B's `/undo` may then delete A's file. This is
+    a documented limit, and the undo reply lists every deletion. **Follow-up:** coordinating across
+    chats on one project.
+  - A file the turn replaced with a directory is restored.
+  - **Follow-ups:**
+    - each session's first prime is cold, because every session has its own index;
+    - the shadow store needs `gc` and pruning of dead session index files.
+- **Follow-up from T10's re-review.** Planning `/undo` reads each changed blob with its own
+  `git cat-file`: 45 s for a 2,005-path turn, with the REPL blocked. Use `cat-file --batch`, or compare
+  blob ids computed in Ruby. This sits with the cold-prime and store-growth follow-ups.
+- **Another load-sensitive example.** `annotate_spec` "a buffer that goes away drops the orphaned
+  entry once it has settled it, so a reused bufnr inherits nothing" failed in T10's pre-commit run,
+  then passed 3/3 alone on a quiet box.
