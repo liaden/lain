@@ -1657,6 +1657,8 @@ Cards landed:
 - **T1** `e038fc14`.
 - **T4** `67fe1314`.
 - **T6** `9aca31e9`. `RecordedPolicy` moved to `Approval::Gate::RecordedPolicy`, which answers the policy duck without subclassing `Policy`, because `shipped_skills_spec` pins `Policy.subclasses` as the configurable family.
+- **T5** `b164b66b`. Merge flags `--ff --no-squash --commit --no-verify-signatures` are pinned; `landed` confirms the parent contains the worker; a handback declines when the parent is off the working branch; `base:` is required on `Handback` and `WorkerHandoff.over`; `Worktree#base` is forwarded by the lease decorators. Suite on main after it: **17006 examples, 0 failures, 14 pending**.
+- **T3** `8f7fd7aa`. `Epic::InFlight` is the one rule that starts an issue, and both submit and the queue drain ask it. Approving an `issue_plan` from the wrong project refuses as `EpicQueue::OutsideProject`.
 
 Load-sensitive examples. Each failed only while another agent's rspec was running, and passed when re-run on a quiet box:
 - `Lain::Supervisor` actor reactor: "an actor's own captured Async::TimeoutError is not misread as the drain's bound".
@@ -1682,3 +1684,44 @@ Rulings made during execution:
   on release and the `retain_days` retention has nothing to retain. T7 must not release a dirty tree
   it refused to rebase. A decorated lease (`DbIndex`, `Compose`) drops `Lease#origin`. The D/F ref
   conflict recurs **on the remote** for T12's `finish` if old per-issue branches survive there.
+- **T9 (the liveness trigger fired), 2026-09-11.** Lain wrote no liveness record. The ruling:
+  - Every worktree lease is added with `git worktree add --lock --reason "lain-lease pid= start= host="`.
+    GC treats a lock whose host is this one, whose pid exists and whose start time matches as live.
+    Any lock reason it can't read means keep.
+  - Release keeps a *dirty* checkout, re-locked as `lain-retained since=`.
+  - At expiry, GC anchors the committed HEAD, plus a temporary-index snapshot of any dirty state,
+    under `refs/lain/worker/*` before it removes anything.
+  - A marked `epic/<slug>` is deleted only when its tip differs from the marker's creation SHA, is
+    an ancestor of `main`, and is checked out nowhere.
+  - T9 takes `worktree.rb` and its spec. T7 must not touch release, and only journals that a tree
+    was dirty.
+- **Rulings from T3's review, for later cards:**
+  - **T12:** `LocalLanding` must call the plan-approved check (`ensure_plan_approved!`) before it
+    lands. An implementation parked before its plan was edited can still be approved from the queue.
+  - **T11:** also takes `lib/lain/cli/epic_submit.rb`. Its `from_options` builds the adjudication pair
+    and has to hand it a guard stack. The `**seam` bag in `epic_submit/adjudication.rb` becomes a
+    named `tool_middleware:`.
+  - **T3:** `RecordedPolicy`'s widening is done in T3 itself, not deferred. `InFlight` is
+    at-least-once.
+- **T8 rulings.**
+  - The guard is pure: its `Verdict` carries a machine-readable `rule`. The callers set the policy.
+    **T11's write-time middleware lets `:no_source` through**, with a journal note, because a test is
+    written before its class. **T12's land-time check refuses `:no_source`.**
+  - A test-named file outside every level root is refused as stray.
+  - A refusal never names a path the guard itself refuses; a property spec holds this.
+  - Mixed levels: a file's level is the root it sits in, and any example tagged for another level
+    is refused.
+- **T9 ruling, deferred:** anchors under `refs/lain/worker/*` that nothing reaches, the reaper's own
+  included, are kept indefinitely. Expiring them waits for a later ruling. A lost worker commit
+  costs more than the refs do.
+- **Rulings from T7's review.**
+  - Self-sync anchors the worker's original HEAD before any rebase, and verifies with `git cherry`
+    that every patch survived.
+  - Handbacks are serialized per parent checkout, through the resolver.
+  - The sync facts ride `Telemetry::Handback`; the separate `worker_sync` record is dropped.
+  - `MergeStrategy` pins `rerere.enabled=false`.
+  - **Follow-up after T7 and T9 both land:** `Worktree#repo_root`, forwarded through
+    `Journal`/`DbIndex`/`Compose`/`Null`, so the chat handoff stops deriving the root with
+    `rev-parse --show-toplevel`. That derivation fails under `GIT_CEILING_DIRECTORIES`.
+  - **For T13:** `Supervisor#adopt` hands an actor its raw lease environment. `retire`'s self-sync
+    must run with the editorless environment the spawn lane uses.
