@@ -1666,6 +1666,7 @@ Cards landed:
 - **T12** `9f81a3c9`. Suite 17326 examples, 0 failures, on T12's tree. `Isolation::LandingQueue`, `Forge::LocalLanding`, `lain epic finish`, `Isolation::ParentLock` (shared with the chat handback). The pre-commit example that failed, the nvim parked-approval "wrapped command unwrapped", is the documented load flake, and passed alone. **Follow-up:** a merge whose handback record never reached the journal refuses both `land` and `--resume`, with no command to adopt it. It needs a way out, e.g. `lain epic land --adopt`.
 - **T11** `5f2c1d6d`. Suite 17350 examples, 0 failures, on T11's tree. The spawn seam takes a required `tool_middleware:`, built by `ToolGuard.child_stack` or `ToolGuard.detached`; `ToolGuard::Inputs` rides the Switchboard; `WorkerEnv#checkout` comes from the lease. **T18 must delete** the stale "guard does not reach subagents" comment at `agent_build.rb:68`.
 - **T10** `feba7cf9`. Suite 17392 examples, 0 failures, on T10's tree. `/undo` reverts the `diff-tree` rows between the per-turn tree pair; `/undo skip`; `SnapshotSlot`, rebound on a `/mode` flip that changes scope; `Revert`/`TreePair`/`Repository` extracted. Pre-commit failed on a YARD duplicate docstring for `SnapshotLog::Undo`, consolidated onto its reopen, and on the `annotate_spec` load flake.
+- **T14** `229db3ce`. Suite 17676 examples, 0 failures, on T14's tree. `StatusView` and `CLI::Wiring::EpicSeat`; PROTOCOL 15, with `plugin/nvim/doc/lain.txt` updated to match; a fleet error is drawn, not raised. Pre-commit yard-lint failed twice, on `EpicSeat`'s `@option` tag and on two ```mermaid mentions in prose; both fixed.
 
 Load-sensitive examples. Each failed only while another agent's rspec was running, and passed when re-run on a quiet box:
 - `Lain::Supervisor` actor reactor: "an actor's own captured Async::TimeoutError is not misread as the drain's bound".
@@ -1840,3 +1841,43 @@ Rulings made during execution:
 - **Another load-sensitive example.** `annotate_spec` "a buffer that goes away drops the orphaned
   entry once it has settled it, so a reused bufnr inherits nothing" failed in T10's pre-commit run,
   then passed 3/3 alone on a quiet box.
+- **T13 escalation, ruled. The issue orchestrator's children work inside the issue.**
+  - Each issue actor's worktree is switched onto a lain-owned local branch, `lain/issue/<slug>/<id>`,
+    marked under `refs/lain/owned/heads/`. GC reaps it once it reaches main.
+  - The actor's children lease from a `Worktree` whose base is that branch, and hand back into the
+    actor's checkout through a per-issue `WorkerHandoff` (`repo_root:` the actor's checkout, `base:`
+    the issue branch). Nothing reaches the chat's checkout, and nothing reaches `epic/<slug>` before
+    the issue's implementation gate.
+  - **T13:** `ToolsetBuild#epic_subagent(isolation:, handoff:)`, both required.
+  - **T15:** `IssueActor` creates the branch and builds that isolation and handoff.
+  - **T16:** retirement anchors the tip of the issue branch.
+  - A spec escaping its sandbox staged files in T13's worktree through an actor's commit tool; its
+    index was reset. Specs now refuse to commit outside a temp directory.
+- **T13: worker ids are unique per repository.** Every spawn lane counted from 1, and every worktree of
+  a repo shares the `refs/lain/worker/<id>` anchors, so a second issue's handback could overwrite the
+  first's. `epic_subagent` now also requires `lane:`, and the epic lane's worker ids carry it as a
+  prefix. **T15** passes `issue.<slug>.<id>`.
+- **T14's notes, for T16.**
+  - The epic slug is threaded `Wiring#editor_seams` → `Repl#run(epic:)` → `Neovim.new(epic:)` →
+    `Surfaces` → `Buffers` → `StatusView`, resolved once in the new `CLI::Wiring::EpicSeat`.
+  - Build the driver factory from `epic_mount`, which is `epic_seat.mount`. Never call `EpicMount.for`
+    twice: that would put a second review guard over one journal.
+  - `Wiring#run` and `#build_toolset` each sit exactly at their AbcSize limit, and `Wiring` is at
+    122/125, so extract before adding anything.
+  - A `PROTOCOL` bump must also update `plugin/nvim/doc/lain.txt`.
+  - **Follow-up:** `StatusView` takes 141 ms to refresh over 60k records; skip the re-fold when the
+    session files haven't changed.
+- **T13 review rulings, and what they leave for later cards.**
+  - An adopted actor's `worker_id:` carries its issue lane; **T15 passes `issue.<slug>.<id>`**.
+  - An anchor never moves to a commit that doesn't contain it: a compare-and-swap, refused loudly
+    otherwise.
+  - A lease HEAD already contained in `base.tip` retires as `nothing_to_do` with a nil SHA. **T16
+    tests `report.sha.nil?`, never `kind`.**
+  - A stopped actor is surrendered, not retired as settled.
+  - A retired or released row raises.
+  - `launch_actor` requires `worker_env:`, and `adopt` refuses an actor whose cwd isn't its lease's.
+  - **For T15:** choose a role for the orchestrator's reviewing children (today every child is `dev`,
+    with write tools). T15 also switches the actor's detached checkout onto its issue branch, which
+    the issue handoff's target check requires.
+  - **For T16:** `issue_orchestrator` is attended, so its tier-3 `bash` would park on the chat's
+    approval gate during an unattended run. The driver has to decide the gate policy for actors.
