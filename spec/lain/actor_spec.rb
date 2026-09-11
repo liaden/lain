@@ -70,7 +70,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
   describe "persistence across parent turns" do
     it "retains its own Timeline while the parent runs, and meet(actor, parent) is empty" do
       Sync do
-        actor = actor_tool(text_response("actor did the thing")).launch_actor("do work")
+        actor = actor_tool(text_response("actor did the thing")).launch_actor("do work", worker_env: Lain::WorkerEnv.default)
         actor.settle
 
         expect(actor.timeline).not_to be_empty
@@ -92,7 +92,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
   describe "messages exchanged both directions" do
     it "projects each side's mailbox purely over the shared log, re-foldably" do
       Sync do
-        actor = actor_tool(text_response("hello from actor")).launch_actor("start")
+        actor = actor_tool(text_response("hello from actor")).launch_actor("start", worker_env: Lain::WorkerEnv.default)
         actor.settle
         actor.tell("please continue")
         actor.stop
@@ -112,7 +112,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
 
     it "records the actor's address on a :spawn event with a causal edge to H" do
       Sync do
-        actor = actor_tool(text_response("ok")).launch_actor("start")
+        actor = actor_tool(text_response("ok")).launch_actor("start", worker_env: Lain::WorkerEnv.default)
         actor.settle
         spawn = log.to_a.find { |event| event.kind == :spawn }
         expect(spawn.digest).to eq(actor.address)
@@ -126,7 +126,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
   describe "explicit stop" do
     it "lands a final attributed event and ends the fiber under structured cancellation" do
       Sync do
-        actor = actor_tool(text_response("working")).launch_actor("start")
+        actor = actor_tool(text_response("working")).launch_actor("start", worker_env: Lain::WorkerEnv.default)
         actor.settle
         before = log.to_a.size
 
@@ -143,7 +143,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
     # fold -- a silently lost message. Loud failure instead.
     it "refuses tell after stop, loudly, emitting nothing" do
       Sync do
-        actor = actor_tool(text_response("ok")).launch_actor("start")
+        actor = actor_tool(text_response("ok")).launch_actor("start", worker_env: Lain::WorkerEnv.default)
         actor.settle
         actor.stop
         before = log.to_a.size
@@ -161,14 +161,14 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
     it "resolves settle by raising the child's error rather than hanging" do
       Sync do
         # Zero scripted responses: the Mock provider raises on the first call.
-        actor = actor_tool.launch_actor("start")
+        actor = actor_tool.launch_actor("start", worker_env: Lain::WorkerEnv.default)
         expect { actor.settle }.to raise_error(Lain::Error, /ran out of responses/)
       end
     end
 
     it "can still be stopped cleanly after the failure" do
       Sync do
-        actor = actor_tool.launch_actor("start")
+        actor = actor_tool.launch_actor("start", worker_env: Lain::WorkerEnv.default)
         expect { actor.settle }.to raise_error(Lain::Error)
         farewell = actor.stop
         expect(farewell.kind).to eq(:message)
@@ -180,12 +180,12 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
     # me" answer a supervisor consults is a SEPARATE terminal predicate.
     it "answers dead? true after a failure, true after a stop, false while healthy" do
       Sync do
-        failed = actor_tool.launch_actor("start")
+        failed = actor_tool.launch_actor("start", worker_env: Lain::WorkerEnv.default)
         expect { failed.settle }.to raise_error(Lain::Error)
         expect(failed).to be_dead
         expect(failed).not_to be_stopped
 
-        healthy = actor_tool(text_response("ok")).launch_actor("start")
+        healthy = actor_tool(text_response("ok")).launch_actor("start", worker_env: Lain::WorkerEnv.default)
         healthy.settle
         expect(healthy).not_to be_dead
         healthy.stop
@@ -198,7 +198,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
     # to a mailbox no fold will ever visit. Refuse it as loudly as a stopped one.
     it "refuses tell after the initial turn raised, and the mailbox does not grow" do
       Sync do
-        actor = actor_tool.launch_actor("start")
+        actor = actor_tool.launch_actor("start", worker_env: Lain::WorkerEnv.default)
         expect { actor.settle }.to raise_error(Lain::Error)
         before = log.to_a.size
 
@@ -247,7 +247,7 @@ RSpec.describe "Lain::Tools::Subagent actor mode" do
     it "returns within the reactor tick rather than parking forever" do
       Sync do |task|
         entered = Async::Queue.new
-        actor = parking_actor_tool(entered:).launch_actor("start")
+        actor = parking_actor_tool(entered:).launch_actor("start", worker_env: Lain::WorkerEnv.default)
         entered.dequeue # the child's initial turn is now parked in the provider
         actor.stop
 

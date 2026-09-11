@@ -105,6 +105,22 @@ RSpec.describe Lain::Tools::Subagent::Lineage do
     # The counter is keyed by the head, so a second head starts its own
     # sequence -- what makes the mark a property of the scope collisions happen
     # in rather than of how many spawns this writer has ever made.
+    # Two issues' actors are launched by two writers from the chat's one
+    # head, so their per-writer counts both read 1 and only the lane can keep
+    # their addresses apart.
+    it "names its lane in an actor's spawn, so two lanes' first actors from one head differ" do
+      a = described_class.new(policy:, lane: "issue.demo.a").spawn(parent, lifecycle: "launched")
+      b = described_class.new(policy:, lane: "issue.demo.b").spawn(parent, lifecycle: "launched")
+
+      expect(a.digest).not_to eq(b.digest)
+      expect(a.body["lane"]).to eq("issue.demo.a")
+    end
+
+    it "writes no lane for the run's own unnamed lane, nor for a one-shot, so their digests stay as they were" do
+      expect(described_class.new(policy:).spawn(parent, lifecycle: "launched").body).not_to have_key("lane")
+      expect(described_class.new(policy:, lane: "issue.demo.a").spawn(parent).body).not_to have_key("lane")
+    end
+
     it "counts per head, so an advanced parent starts over" do
       lineage.spawn(parent, lifecycle: "launched")
       advanced = parent.commit(role: :user, content: text("again"))

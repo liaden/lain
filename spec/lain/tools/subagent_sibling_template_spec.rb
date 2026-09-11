@@ -212,7 +212,7 @@ RSpec.describe Lain::Tools::Subagent, "spawning siblings over a shared template"
       max_depth: 1, mode: :actor, log: Lain::Tools::Subagent::Log.new
     )
     Sync do
-      actor = tool.launch_actor("go")
+      actor = tool.launch_actor("go", worker_env: Lain::WorkerEnv.default)
       actor.settle
       expect(actor.timeline).not_to be_empty
       actor.stop

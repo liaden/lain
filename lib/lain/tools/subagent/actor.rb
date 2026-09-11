@@ -48,6 +48,11 @@ module Lain
         # gives its chain a correlation.
         attr_reader :address, :parent_correlation
 
+        # Who {Supervisor#retire}'s self-sync may ask to finish a rebase: this
+        # actor's own child when it was granted a shell, nobody otherwise
+        # ({Isolation::SelfSync.worker}).
+        attr_reader :worker
+
         # `registration` is held here because this object holds the child's
         # LIFETIME: retention in the {AskHuman::Directory} runs from `register`
         # to `deregister` and nothing else releases it, and {Supervisor#stop}
@@ -55,7 +60,9 @@ module Lain
         # `registration.actor.stop`. So the release rides the same lease
         # teardown that reaps this fiber, with no timeout and no reaper.
         def initialize(agent:, lineage:, parent:, journal: Channel::Null.instance,
-                       registration: AskHuman::Directory::Unheld, answer: ANSWER)
+                       registration: AskHuman::Directory::Unheld, answer: ANSWER,
+                       worker: Isolation::SelfSync::Unaskable)
+          @worker = worker
           @agent = agent
           @lineage = lineage
           @parent = parent
@@ -87,6 +94,10 @@ module Lain
         # The child's live head -- its own fresh-root Timeline, isolated from the
         # parent's (`meet(actor, parent)` is the empty bottom element).
         def timeline = @agent.timeline
+
+        # The session its tools run in, whose environment its {Supervisor}
+        # checks against the lease it was adopted into.
+        def session = @agent.session
 
         # An `Async::Variable` is a resolved-once future, so this is race-free
         # whether or not the fiber has already finished that turn -- and it

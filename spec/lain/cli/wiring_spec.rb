@@ -68,6 +68,7 @@ class WiringSpecCrashedWorker
   attr_reader :commit
 
   def initialize(worker_env)
+    @worker_env = worker_env
     dir = worker_env.cwd
     File.write(File.join(dir, "crashed.txt"), "work a crash left behind\n")
     git(dir, "add", "-A")
@@ -75,6 +76,9 @@ class WiringSpecCrashedWorker
     @commit = git(dir, "rev-parse", "HEAD")
     @stopped = false
   end
+
+  # Where it stands, which the supervisor checks against its lease.
+  def session = Lain::Session.new(worker_env: @worker_env)
 
   def stop
     @stopped = true

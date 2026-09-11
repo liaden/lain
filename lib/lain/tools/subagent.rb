@@ -42,6 +42,16 @@ module Lain
 
       def attenuates_from = @builder.toolset
 
+      # What a spawn from this tool is granted, read by whoever grants a role
+      # rather than by the spawn: how many levels it may still spawn below
+      # itself, the policy its child is attenuated by, and the budget that
+      # child's loop runs under.
+      attr_reader :max_depth
+
+      def policy = @builder.policy
+
+      def budget = @builder.budget
+
       # `:one_shot` runs a child to a single result within one dispatch;
       # `:actor` launches a long-lived {Actor} fiber whose outputs reach the
       # parent as mailbox events instead. `log` is the append-only read-side
@@ -129,7 +139,11 @@ module Lain
       # handle. The fiber spawns on the CURRENT task, so the caller must hold a
       # reactor that outlives the parent's asks -- an orchestration Sync/Async
       # above the Agent, or the {Supervisor} task {#perform} adopts onto.
-      def launch_actor(prompt, parent: parent_timeline, worker_env: WorkerEnv.default)
+      #
+      # `worker_env` has no default: an actor handed none would run its tools
+      # in the process's own directory, the tree the run was started in. An
+      # adopter hands it the environment its lease was cut with.
+      def launch_actor(prompt, worker_env:, parent: parent_timeline)
         # Per launch: the floor note has no lifecycle exemption, so an
         # actor-mode sibling under the floor is reported too.
         policy.prefix.journal_floor(journal)
@@ -137,8 +151,9 @@ module Lain
         # child's LIFETIME: `Supervisor#stop` farewells every row, so a
         # `deregister` there rides the same lease teardown that reaps the fiber.
         # {ChildBuilder::Child} owns the case where no actor comes out at all.
-        build_child(parent, worker_env).launched do |agent, registration|
-          Actor.new(agent:, registration:, lineage:, parent:, journal:, answer: @answer).launch(prompt)
+        build_child(parent, worker_env).launched do |agent, registration, tools|
+          Actor.new(agent:, registration:, lineage:, parent:, journal:, answer: @answer,
+                    worker: Isolation::SelfSync.worker(agent, tools:)).launch(prompt)
         end
       end
 
@@ -260,8 +275,6 @@ module Lain
 
       def build_child(parent, worker_env) = @builder.build(parent, ceiling: @max_depth - 1, worker_env:)
 
-      def policy = @builder.policy
-
       # {Lineage} writes the :spawn and :message events; the causal-edge and
       # correlation-join reasoning lives there. Memoized rather than built in
       # #initialize only to keep the wiring point within its Metrics budget.
@@ -270,7 +283,7 @@ module Lain
       # apart. It is safe because this memo is the ONE Lineage a Subagent ever
       # has, so every actor it launches counts off the same sequence; a second
       # Subagent would be a second count.
-      def lineage = @lineage ||= Lineage.new(policy:, log: @log, observer: lineage_observer)
+      def lineage = @lineage ||= Lineage.new(policy:, log: @log, observer: lineage_observer, lane: isolation.lane.name)
 
       # An actor's lifecycle rides the journal: every {Lineage} event is
       # promoted to a {Telemetry::Message}, whose kind/digest/to/causal_parents
@@ -667,6 +680,42 @@ module Lain
           end
         end
 
+        Lane = Data.define(:name)
+
+        # The lane a Leases numbers its workers in. A named lane prefixes each
+        # worker id with its name, because every worktree of one repository
+        # anchors under the one `refs/lain/worker/` namespace: two lanes that
+        # each count from 1 would spell one ref, and the second handback would
+        # move the first lane's only anchor. The run's own lane is unnamed and
+        # keeps the bare ids it always had.
+        #
+        # Reopened for the constants, since one declared inside a
+        # `Data.define` block lands in the enclosing module.
+        class Lane
+          # A name git would refuse in a ref, raised by the one check every
+          # caller-named worker name passes.
+          Refused = Isolation::WorkerId::Refused
+
+          def initialize(name:) = super(name: -name.to_s)
+
+          UNNAMED = new(name: "")
+
+          # @param name [String] e.g. `issue.<slug>.<id>`
+          # @return [Lane]
+          # @raise [Refused] when git would not accept it in a ref
+          def self.named(name) = new(name: Isolation::WorkerId.checked(name))
+
+          # @return [String] the id a backend keys the worker on
+          def worker(role:, ordinal:)
+            id = Isolation::WorkerId.spawned(role:, ordinal:).to_s
+            name.empty? ? id : "#{name}.#{id}"
+          end
+        end
+
+        # Where its workers are numbered, which an actor's spawn names too so
+        # two lanes' actors from one head never share an address.
+        attr_reader :lane
+
         # @param backend [#acquire] the {Isolation} backend a dispatch leases
         #   from; the shared-process baseline by default, whose lease is
         #   {WorkerEnv.default} and whose release reclaims nothing -- which is
@@ -679,11 +728,14 @@ module Lain
         # @param sync [#call, #editorless] the {Isolation::SelfSync} a worker
         #   is rebased onto its working branch with before that handback; the
         #   default syncs nothing
+        # @param lane [Lane] where its workers are numbered; the run's own,
+        #   unnamed, by default
         def initialize(backend: Isolation::Null.new, handoff: Isolation::WorkerHandoff::Null,
-                       sync: Isolation::SelfSync::Null)
+                       sync: Isolation::SelfSync::Null, lane: Lane::UNNAMED)
           @backend = backend
           @handoff = handoff
           @sync = sync
+          @lane = lane
           @monitor = Monitor.new
           @count = 0
         end
@@ -710,7 +762,7 @@ module Lain
         #   child, between its answer and the reclaim here
         # @return [Held] the block's value and the handback's report
         def hold(role, journal:)
-          worker = Isolation::WorkerId.spawned(role:, ordinal: next_ordinal).to_s
+          worker = @lane.worker(role:, ordinal: next_ordinal)
           synced = Isolation::SelfSync::Result::NONE
           lease = @backend.acquire(worker)
           value = yield(@sync.editorless(lease.worker_env),
@@ -873,7 +925,7 @@ module Lain
           # raise, so nothing else could ever hold this.
           def launched
             actor = nil
-            actor = yield(agent, registration)
+            actor = yield(agent, registration, tools)
           ensure
             registration.deregister unless actor
           end
@@ -947,7 +999,7 @@ module Lain
           def promote(live) = feed.catch_up(live)
         end
 
-        attr_reader :policy, :toolset
+        attr_reader :policy, :toolset, :budget
 
         # `name` is what a human is TOLD is asking when this child puts a
         # question to them, so a role spawn announces as "researcher" rather

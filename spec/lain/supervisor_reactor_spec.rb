@@ -122,7 +122,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
 
         adopter = task.async do
           supervisor.adopt(role: "ghost") do
-            actor = tool.launch_actor("go")
+            actor = tool.launch_actor("go", worker_env: Lain::WorkerEnv.default)
             launched = actor
             gate.dequeue # any real await in a launch opens this window
             actor
@@ -160,8 +160,8 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     Sync do |task|
       supervisor = described_class.new.run(task)
       tool = actor_tool(provider: mock(text_response("one"), text_response("two")), journal:, supervisor:)
-      twin_a = supervisor.adopt(role: "twin-a") { tool.launch_actor("go") }
-      twin_b = supervisor.adopt(role: "twin-b") { tool.launch_actor("go") }
+      twin_a = supervisor.adopt(role: "twin-a") { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
+      twin_b = supervisor.adopt(role: "twin-b") { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
       [twin_a, twin_b].each(&:settle)
 
       expect(twin_a.address).not_to eq(twin_b.address)  # separable at address grain
@@ -206,8 +206,8 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     Sync do |task|
       supervisor = described_class.new.run(task)
       tool = actor_tool(provider: mock(text_response("one"), text_response("two")), journal:, supervisor:)
-      twin_a = supervisor.adopt(role: "twin-a") { tool.launch_actor("go") }
-      twin_b = supervisor.adopt(role: "twin-b") { tool.launch_actor("go") }
+      twin_a = supervisor.adopt(role: "twin-a") { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
+      twin_b = supervisor.adopt(role: "twin-b") { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
       [twin_a, twin_b].each(&:settle)
       both_live = journal.drain
       twin_a.stop
@@ -297,7 +297,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     Sync do |task|
       supervisor = described_class.new.run(task)
       actor = supervisor.adopt(role: "hud") do
-        actor_tool(provider: mock(text_response("ready")), journal:).launch_actor("go")
+        actor_tool(provider: mock(text_response("ready")), journal:).launch_actor("go", worker_env: Lain::WorkerEnv.default)
       end
       actor.settle
       actor.stop
@@ -338,6 +338,60 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
       farewell = records.last
       expect(farewell.kind).to eq(:message)
       expect(farewell.payload).to eq({ "text" => "actor stopped", "lifecycle" => "stopped" })
+    end
+  end
+
+  # ---- Retirement under the reactor ----------------------------------------
+
+  def row_of(supervisor, actor) = supervisor.find { |row| row.actor.equal?(actor) }
+
+  # Retirement is for an actor whose plan ran in its first ask, so it waits
+  # for that ask rather than cutting it off.
+  it "retire awaits an actor mid-turn, and retires it once that turn settles" do
+    entered = Async::Queue.new
+    release = Async::Queue.new
+    Sync do |task|
+      supervisor = described_class.new.run(task)
+      actor = supervisor.adopt(role: "issue") do
+        actor_tool(provider: W3ParkProvider.new(entered:, release:, responses: [text_response("done")]))
+          .launch_actor("go", worker_env: Lain::WorkerEnv.default)
+      end
+      entered.dequeue
+
+      retiring = task.async { supervisor.retire(row_of(supervisor, actor)) }
+      expect(actor).not_to be_dead
+      release.enqueue(:go)
+      retiring.wait
+
+      expect(actor).to be_stopped
+      expect(actor.settle).to eq(actor)
+      supervisor.stop
+    end
+  end
+
+  it "a retired actor's one farewell takes it out of the fleet, and #stop writes no second" do
+    journal = Lain::Channel.new
+    actor = nil
+    Sync do |task|
+      supervisor = described_class.new.run(task)
+      actor = supervisor.adopt(role: "issue") do
+        actor_tool(provider: mock(text_response("ready")), journal:).launch_actor("go", worker_env: Lain::WorkerEnv.default)
+      end
+      # With no retirement wired, nothing was synced or anchored -- which is
+      # not "committed nothing", so it does not read as that.
+      report = supervisor.retire(row_of(supervisor, actor))
+      expect([report.kind, report.ref, report.sha]).to eq([:declined, nil, nil])
+      expect(report.detail).to include("no retirement is wired")
+      supervisor.stop
+    end
+
+    records = journal.drain.grep(Lain::Telemetry::Message)
+    expect(farewells(records).map(&:from)).to eq([actor.address])
+    Dir.mktmpdir("reactor-retire") do |dir|
+      path = File.join(dir, "state.json")
+      feed = Lain::StatusFeed.new(path:)
+      records.each { |record| feed << record }
+      expect(JSON.parse(File.read(path))["fleet"]).to eq([])
     end
   end
 
@@ -384,7 +438,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
         release = Async::Queue.new
         tool = actor_tool(provider: W3ParkProvider.new(entered:, release:, responses: [text_response("late")]),
                           supervisor:)
-        supervisor.adopt(role: "hung") { tool.launch_actor("go") }
+        supervisor.adopt(role: "hung") { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         entered.dequeue # the actor is provably mid-turn; nothing releases it
 
         run = task.async { :done }
@@ -417,7 +471,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
         release = Async::Queue.new
         tool = actor_tool(provider: W3ParkProvider.new(entered:, release:, responses: [text_response("never")]),
                           supervisor:)
-        actor = supervisor.adopt(role: "doomed-late") { tool.launch_actor("go") }
+        actor = supervisor.adopt(role: "doomed-late") { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         entered.dequeue
 
         run = task.async { :done }
@@ -455,13 +509,13 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
         fast = supervisor.adopt(role: "fast") do
           actor_tool(provider: W3ParkProvider.new(entered: fast_entered, release: fast_release,
                                                   responses: [text_response("quick")]),
-                     supervisor:).launch_actor("go")
+                     supervisor:).launch_actor("go", worker_env: Lain::WorkerEnv.default)
         end
         hung_entered = Async::Queue.new
         hung = actor_tool(provider: W3ParkProvider.new(entered: hung_entered, release: Async::Queue.new,
                                                        responses: [text_response("never")]),
                           supervisor:)
-        supervisor.adopt(role: "hung") { hung.launch_actor("go") }
+        supervisor.adopt(role: "hung") { hung.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         fast_entered.dequeue
         hung_entered.dequeue # both provably mid-turn
 
@@ -503,7 +557,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
         release = Async::Queue.new
         supervisor.adopt(role: "self-timed-out") do
           actor_tool(provider: W3ParkProvider.new(entered:, release:, responses: [text_response("never")]),
-                     supervisor:).launch_actor("go")
+                     supervisor:).launch_actor("go", worker_env: Lain::WorkerEnv.default)
         end
         entered.dequeue # live at the dead? check
 
@@ -532,7 +586,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
       release = Async::Queue.new
       tool = actor_tool(provider: W3ParkProvider.new(entered:, release:, responses: [text_response("late")]),
                         journal:, supervisor:)
-      actor = supervisor.adopt(role: "busy") { tool.launch_actor("go") }
+      actor = supervisor.adopt(role: "busy") { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
       entered.dequeue          # mid-turn
 
       supervisor.stop          # farewell first, then structured cancellation
@@ -551,7 +605,7 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
     Sync do |task|
       supervisor.run(task)
       actor = supervisor.adopt(role: "first-life") do
-        actor_tool(provider: mock(text_response("ok"))).launch_actor("go")
+        actor_tool(provider: mock(text_response("ok"))).launch_actor("go", worker_env: Lain::WorkerEnv.default)
       end
       actor.settle
       supervisor.stop

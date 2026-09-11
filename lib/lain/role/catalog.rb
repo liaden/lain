@@ -55,7 +55,14 @@ module Lain
         # DELETABLE with the docent, and not alone: this entry,
         # `prompt/templates/role/diff-docent.md` and `role_spec.rb`'s roll call
         # are pinned to each other in both directions (see `review.rb`).
-        Role.new(name: :diff_docent, only: %i[read_file list_files glob grep], unattended: true)
+        Role.new(name: :diff_docent, only: %i[read_file list_files glob grep], unattended: true),
+        # Runs a whole issue's plan in one ask: dev's tools, a spawner for the
+        # implementers and reviewers, and the renderer that puts the plan's
+        # skill in front of it. No chat floor holds either extra name, so only
+        # the epic's own Subagent can build this role; everywhere else it
+        # refuses at spawn, naming the tool the union lacks.
+        Role.new(name: :issue_orchestrator,
+                 only: %i[read_file list_files glob grep edit_file write_file todo_write bash subagent run_skill])
       ].to_h { |role| [role.name, role] }.freeze
 
       class << self

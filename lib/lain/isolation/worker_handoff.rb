@@ -92,9 +92,12 @@ module Lain
       # `paths` is always an Array and `detail` always a String, so no caller
       # writes a nil guard; `ref` is nil only when nothing was ever anchored.
       #
-      # `sha` is the full SHA that landed in the parent -- on `:merged` and
-      # `:resolved` only, nil otherwise -- because landing and promotion address a
-      # commit, not a ref. `fast_forward` says the parent simply moved to the
+      # `sha` names the commit the work was kept at: the full SHA that landed
+      # in the parent on `:merged` and `:resolved`, or the one an anchor-only
+      # outcome left on `ref` (a retirement's `:declined`). It is nil when
+      # nothing was kept, and `:nothing_to_do` from a retirement means the
+      # worker committed nothing its working branch lacked. Landing and
+      # promotion address a commit, not a ref. `fast_forward` says the parent simply moved to the
       # worker's commit; a fast-forward is still `:merged`, so no `case` on
       # `kind` has to learn a new value.
       #
@@ -248,12 +251,12 @@ module Lain
       # @param lease [#worker_env, #release, #released?, nil] the live lease; nil
       #   when the acquire itself never happened, which is nothing to hand back
       # @param worker_id [Object] names the ref and the journal's join key
+      # @param sync [SelfSync::Result] what the self-sync did just before, which
+      #   rides this handback's own record
       # @return [Report] always -- no `StandardError` escapes, because this runs
       #   inside a gathered fiber where a raise would take the worker's own
       #   result with it. An `Exception` (a cancel, a Ctrl-C) DOES climb, after
       #   the parent is restored and the lease released.
-      # @param sync [SelfSync::Result] what the self-sync did just before, which
-      #   rides this handback's own record
       def reclaim(lease, worker_id:, sync: SelfSync::Result::NONE)
         one_at_a_time { complete(lease, worker_id:, resolver: @resolver, synced: sync.to_record) }
       end

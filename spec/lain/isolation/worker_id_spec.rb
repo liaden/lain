@@ -59,6 +59,21 @@ RSpec.describe Lain::Isolation::WorkerId do
   end
 
   # A value, so two mints of the same worker are the same worker.
+  # A caller-named worker id becomes a ref under refs/lain/worker/, so it is
+  # judged by git itself and refused, never escaped: the name an operator
+  # reads is the name on the ref.
+  describe ".checked, a worker name its caller hands in" do
+    it "answers a name git would put in a worker ref" do
+      expect(described_class.checked("issue.demo.a")).to eq("issue.demo.a")
+    end
+
+    it "refuses a name git would not accept in a ref" do
+      ["bad name", "a..b", "x.lock", "", "x~1", ".hidden"].each do |name|
+        expect { described_class.checked(name) }.to raise_error(described_class::Refused, /cannot name a ref/)
+      end
+    end
+  end
+
   it "equates two ids minted from the same lane, role and ordinal" do
     expect(described_class.spawned(role: "researcher", ordinal: 1))
       .to eq(described_class.spawned(role: "researcher", ordinal: 1))

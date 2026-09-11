@@ -31,6 +31,11 @@ module Lain
       ADOPTED = :adopted
       SPAWNED = :spawned
 
+      # A worker name its caller chose that git would refuse in a ref. Refused
+      # rather than escaped, so the name an operator reads is the name on the
+      # ref.
+      class Refused < ::Lain::Error; end
+
       # Closed and loud: a lane outside this set raises at construction, so a
       # third lane is a deliberate edit here rather than a silently unspellable
       # id.
@@ -53,6 +58,25 @@ module Lain
       # @param (see .adopted)
       # @return [WorkerId]
       def self.spawned(role:, ordinal:) = new(lane: SPAWNED, role:, ordinal:)
+
+      # A worker name a caller chose rather than minted here -- an adopted
+      # actor's, a spawn lane's -- becomes the ref its anchor lives under, so
+      # git judges it as that ref. One check for every such name, so no second
+      # reading of the refname rules can drift from the one that writes them.
+      #
+      # @param name [#to_s] e.g. `issue.<slug>.<id>`
+      # @param shell_out_factory [#call] builds the subprocess git judges it in
+      # @return [String] the name, frozen
+      # @raise [Refused]
+      def self.checked(name, shell_out_factory: ::Lain::Shell::Out.public_method(:new))
+        ref = "#{Worktree::Handback::Naming::REF_NAMESPACE}/#{name}"
+        shell = shell_out_factory.call("git", "check-ref-format", ref, environment: Worktree::GIT_CONTEXT_SCRUB)
+        shell.run_command
+        raise Refused, "#{name.to_s.inspect} cannot name a ref: #{ref} is not a legal refname" unless
+          shell.exitstatus.zero?
+
+        -name.to_s
+      end
 
       # The ordinal is refused below {FIRST} rather than merely never asked for.
       # A negative one is the ONE input that breaks the disjointness this class

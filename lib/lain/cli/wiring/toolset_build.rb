@@ -147,6 +147,16 @@ module Lain
         # literals is how they drift.
         RESEARCHER = :researcher
 
+        # The role the epic's Subagent grants and the one its children take.
+        # The orchestrator runs a whole plan in ONE ask, so the default
+        # 25-iteration ceiling would cut it off mid-plan.
+        ISSUE_ORCHESTRATOR = :issue_orchestrator
+        IMPLEMENTER = :dev
+        ORCHESTRATOR_BUDGET = Lain::Agent::Budget.new(max_iterations: 200)
+
+        # The orchestrator, and one level of children under it.
+        EPIC_DEPTH = 2
+
         # The repl-phase role-spawn seam a role/skill line folds through (nil
         # until {#build}), the opt-in third approval surface over it (nil
         # without --auto-approve), and the docent ANSWERER -- an answerer and
@@ -280,7 +290,41 @@ module Lain
           @role_spawn = role_spawn_seam(base)
           @docent = Lain::Review::Docent::Answerer.new(spawn: @role_spawn)
           @auto_surface = (Lain::Approval::AutoSurface.new(role_spawn: @role_spawn) if options[:auto_approve])
+          @floor = base
           Lain::Toolset.new(base.to_a + [research_subagent(base), ask_human, run_skill, session_usage] + epic.tools)
+        end
+
+        # The one Subagent that grants {ISSUE_ORCHESTRATOR}: the floor {#build}
+        # made plus the two names only it holds, so no other spawn can build
+        # the role. Launched as an actor, so its lifecycle reaches the journal
+        # the fleet reads.
+        #
+        # Its seam is the run's own, the guard its children run behind
+        # included, bar two members: who the gate is told is asking, and the
+        # lane the orchestrator's children lease from and hand back through.
+        # That lane is the ISSUE's, and both halves are required: a default
+        # would be the chat's, and a child's work would come home onto the
+        # chat's branch with no gate in front of it.
+        #
+        # @param isolation [#acquire, #base] where the orchestrator's children
+        #   lease, cut from the issue's own branch
+        # @param handoff [#reclaim, #surrender] how their work comes back into
+        #   the issue's checkout
+        # @param lane [String] prefixes the children's worker ids, so their
+        #   anchors cannot meet another lane's in the repository every
+        #   worktree shares; e.g. `issue.<slug>.<id>`, refused when git would
+        #   not accept it in a ref
+        # @return [Lain::Tools::Subagent]
+        # @raise [Lain::Tools::Subagent::Leases::Lane::Refused]
+        def epic_subagent(isolation:, handoff:, lane:)
+          raise Lain::Error, "the epic Subagent spawns over the floor #build makes; build the toolset first" if
+            @floor.nil?
+
+          issue = seam.with(isolation: issue_leases(isolation, handoff, lane))
+          Lain::Tools::Subagent.new(seam: announcing(ISSUE_ORCHESTRATOR.to_s, over: issue),
+                                    toolset: Lain::Toolset.new(@floor.to_a + [implementing(issue), run_skill]),
+                                    policy: backend.spawn_policy(ISSUE_ORCHESTRATOR), budget: ORCHESTRATOR_BUDGET,
+                                    max_depth: EPIC_DEPTH, mode: :actor, announces_as: ISSUE_ORCHESTRATOR.to_s)
         end
 
         private
@@ -378,12 +422,31 @@ module Lain
                                     max_depth: 1, announces_as: RESEARCHER.to_s)
         end
 
+        # Depth 1 of its own, so the epic's ceiling lowers nothing and raises
+        # nothing, and a dev child attenuates from the floor, which holds no
+        # spawner. Over the issue's seam, so it leases where the orchestrator's
+        # children must.
+        def implementing(issue)
+          Lain::Tools::Subagent.new(seam: announcing(IMPLEMENTER.to_s, over: issue), toolset: @floor,
+                                    policy: backend.spawn_policy(IMPLEMENTER), max_depth: 1,
+                                    announces_as: IMPLEMENTER.to_s)
+        end
+
+        # One worker sequence per epic Subagent, numbered in the issue's own
+        # lane, and a self-sync onto the issue's branch, which is the base the
+        # children are cut from.
+        def issue_leases(isolation, handoff, lane)
+          Lain::Tools::Subagent::Leases.new(backend: isolation, handoff:,
+                                            sync: Lain::Isolation::SelfSync.new(base: isolation.base),
+                                            lane: Lain::Tools::Subagent::Leases::Lane.named(lane))
+        end
+
         # The same name one rail over: an approval asks the same "who is
         # asking" a question does, so both halves are read off the one word
         # rather than two literals that could drift. Only the gate policy is
         # rebound -- every other member of the run's ONE seam is shared, which
         # is the identity the privilege-inversion guard rests on.
-        def announcing(requester) = seam.with(gate_policy: seam.gate_policy.with(requester:))
+        def announcing(requester, over: seam) = over.with(gate_policy: over.gate_policy.with(requester:))
       end
     end
   end

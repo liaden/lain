@@ -337,8 +337,14 @@ module Lain
 
         def timeline = @agent.timeline
 
+        def session = @agent.session
+
         # The checkpoint is a settled state by construction.
         def settle = self
+
+        # The tools the first life was granted are not in its record, so a
+        # retirement's self-sync asks nobody and takes the work as it stands.
+        def worker = Isolation::SelfSync::Unaskable
 
         def stopped? = @stopped
 

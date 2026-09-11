@@ -15,9 +15,12 @@ module Lain
         # `observer` is the outward slot on the same funnel. A further observer
         # must COMPOSE with the @log append, as this constructor does, never
         # SUBSTITUTE for it -- or @log's mailbox fold silently stops.
-        def initialize(policy:, log: Log::Null, observer: Event::ChainWriter::Null.new)
+        # `lane` names the spawn lane an actor is launched in; empty for the
+        # run's own. See {#spawn}.
+        def initialize(policy:, log: Log::Null, observer: Event::ChainWriter::Null.new, lane: "")
           @policy = policy
           @log = log
+          @lane = lane
           @adoptions = Hash.new(0)
           @chain_writer = Event::ChainWriter.new(observer: lambda { |event|
             @log << event
@@ -48,14 +51,15 @@ module Lain
         # arm could then not be joined on a spawn digest.
         #
         # Its scope is this WRITER; {#next_adoption} says what that leaves open.
+        # A named `lane` closes the part of it two issues' actors meet: each
+        # issue's writer counts from 1 over the chat's one head, and the lane
+        # is what their spawns then differ by. The run's own lane writes none,
+        # so its digests stay as they were.
         def spawn(parent, lifecycle: nil)
           head = parent.head_digest
           body = { "prefix" => @policy.prefix.label, "posture" => @policy.posture.label,
                    "only" => @policy.only, "spawned_from" => head }
-          unless lifecycle.nil?
-            body["adoption"] = next_adoption(head)
-            body["lifecycle"] = lifecycle
-          end
+          body.merge!(adopted(head, lifecycle)) unless lifecycle.nil?
           body["unattended"] = true if @policy.unattended
           put(parent, kind: :spawn, from: correlation_of(parent), to: nil,
                       causal_parents: [head].compact, body:)
@@ -127,6 +131,13 @@ module Lain
         # launches), a session-sized Hash rather than a leak.
         def next_adoption(head)
           @adoptions[head] += 1
+        end
+
+        # The marks only an actor's spawn carries, its lane among them when it
+        # has one.
+        def adopted(head, lifecycle)
+          marks = { "adoption" => next_adoption(head), "lifecycle" => lifecycle }
+          @lane.empty? ? marks : marks.merge("lane" => @lane)
         end
 
         # The payload-then-envelope write, delegated so @chain_writer is its

@@ -778,6 +778,194 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     end
   end
 
+  # The one construction that grants a role holding the spawner. An issue
+  # orchestrator runs a whole plan: it fans the work out one level, and its
+  # children run behind the chat's own guard because they spawn over the
+  # run's one seam.
+  describe "the epic Subagent" do
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [tool_response(["o1", "subagent", { "prompt" => "implement it" }]),
+                                           text_response("dev done"), text_response("plan done")])
+    end
+    let(:parent) { -> { Lain::Timeline.empty(store: Lain::Store.new) } }
+    let(:orchestrator) { Lain::Role::Catalog.fetch(:issue_orchestrator) }
+    let(:dev) { Lain::Role::Catalog.fetch(:dev) }
+    # The issue's own lane: where the orchestrator's children lease, and the
+    # handoff their work comes back through. Never the chat's.
+    let(:issue_isolation) { Lain::Isolation::Null.new }
+    let(:issue_handoff) { ToolsetBuildHandoff.new }
+
+    def shown(request) = request.tools.map { |tool| tool["name"] }
+
+    def granted(role) = (role.only.map(&:to_s) + %w[ask_human]).sort
+
+    def issued(build) = build.epic_subagent(isolation: issue_isolation, handoff: issue_handoff, lane: "issue.demo.a")
+
+    def issue_epic = issued(toolset_build)
+
+    def spawned(ordinal) = Lain::Isolation::WorkerId.spawned(role: "subagent", ordinal:).to_s
+
+    # The epic's own workers carry its lane, so their anchors cannot meet
+    # another lane's worker of the same number.
+    def laned(ordinal) = "issue.demo.a.#{spawned(ordinal)}"
+
+    it "refuses before the toolset has been built, since its union is the floor the build makes" do
+      expect { issue_epic }.to raise_error(Lain::Error, /build/)
+    end
+
+    it "requires the issue's own isolation and handoff, with no fallback to the chat's" do
+      toolset_build.build(recorder, ask_human:)
+
+      expect { toolset_build.epic_subagent(handoff: issue_handoff) }.to raise_error(ArgumentError, /isolation/)
+      expect { toolset_build.epic_subagent(isolation: issue_isolation) }.to raise_error(ArgumentError, /handoff/)
+      expect { toolset_build.epic_subagent(isolation: issue_isolation, handoff: issue_handoff) }
+        .to raise_error(ArgumentError, /lane/)
+    end
+
+    it "refuses a lane that cannot name a ref, rather than escaping it" do
+      toolset_build.build(recorder, ask_human:)
+
+      ["bad lane", "a..b", "issue.lock", ""].each do |lane|
+        expect { toolset_build.epic_subagent(isolation: issue_isolation, handoff: issue_handoff, lane:) }
+          .to raise_error(Lain::Tools::Subagent::Leases::Lane::Refused, /cannot name a ref/)
+      end
+    end
+
+    it "hands every child of the plan back through the issue's handoff, never the chat's" do
+      chat = ToolsetBuildHandoff.new
+      build = build_with(options, handback: Lain::CLI::Wiring::Handback.new(handoff: chat))
+      build.build(recorder, ask_human:)
+
+      issued(build).run("run the plan")
+
+      # Workers are named for the tool's model-facing name, one sequence per
+      # epic Subagent and prefixed with its lane: the orchestrator is 1, its
+      # dev child 2.
+      expect(issue_handoff.reclaimed).to contain_exactly(laned(1), laned(2))
+      expect(chat.reclaimed).to be_empty
+    end
+
+    it "leaves the chat's own research Subagent leasing from the chat's lane" do
+      chat = ToolsetBuildHandoff.new
+      build = build_with(options, handback: Lain::CLI::Wiring::Handback.new(handoff: chat))
+      full = build.build(recorder, ask_human:)
+      issued(build)
+
+      full.fetch("subagent").call({ "prompt" => "look" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+
+      expect(chat.reclaimed).to eq([spawned(1)])
+      expect(issue_handoff.reclaimed).to be_empty
+    end
+
+    it "grants issue_orchestrator at depth 2, over the floor plus a spawner and the skill renderer" do
+      toolset_build.build(recorder, ask_human:)
+      epic = issue_epic
+      floor = Lain::CLI::Wiring::BaseTools.build(recorder).map(&:name)
+
+      expect(epic.policy.only).to eq(orchestrator.spawn_policy.only)
+      expect(epic.max_depth).to eq(2)
+      expect(epic.attenuates_from.names).to match_array(floor + %w[subagent run_skill])
+    end
+
+    # The spawner in the orchestrator's union grants dev from the floor, and
+    # its own ceiling is 1: the epic's 2 lowers it to 1 and never raises it.
+    it "hands the orchestrator a dev spawner at depth 1, attenuating from the floor" do
+      toolset_build.build(recorder, ask_human:)
+      spawner = issue_epic.attenuates_from.fetch("subagent")
+
+      expect(spawner.policy.only).to eq(dev.spawn_policy.only)
+      expect(spawner.max_depth).to eq(1)
+      expect(spawner.attenuates_from.names).to match_array(Lain::CLI::Wiring::BaseTools.build(recorder).map(&:name))
+    end
+
+    it "gives the orchestrator 200 iterations for its one ask, where a chat child keeps the default" do
+      full = toolset_build.build(recorder, ask_human:)
+
+      expect(issue_epic.budget.max_iterations).to eq(200)
+      expect(full.fetch("subagent").budget.max_iterations).to eq(Lain::Agent::Budget::DEFAULT_MAX_ITERATIONS)
+    end
+
+    it "fans out exactly one level: the orchestrator spawns a dev child, which holds no spawner" do
+      toolset_build.build(recorder, ask_human:)
+
+      result = issue_epic.run("run the plan")
+
+      expect(result).to be_ok
+      expect(result.content).to eq("plan done")
+      expect(shown(provider.requests[0])).to eq(granted(orchestrator))
+      expect(shown(provider.requests[1])).to eq(granted(dev))
+    end
+
+    # Every member but two is the run's own: who the gate is told is asking,
+    # and the issue's lane in place of the chat's.
+    it "spawns over the run's one seam, so its children run behind the chat's own guard" do
+      toolset_build.build(recorder, ask_human:)
+      epic = issue_epic
+      run = toolset_build.role_spawn.seam
+      shared = Lain::Tools::Subagent::Seam.members - %i[gate_policy isolation]
+
+      expect(epic.seam.isolation).not_to be(run.isolation)
+      expect(epic.attenuates_from.fetch("subagent").seam.isolation).to be(epic.seam.isolation)
+
+      [epic.seam, epic.attenuates_from.fetch("subagent").seam].each do |seam|
+        expect(shared.reject { |member| seam.public_send(member).equal?(run.public_send(member)) }).to be_empty
+      end
+      expect(epic.seam.gate_policy.requester).to eq("issue_orchestrator")
+    end
+
+    context "when the chat is built by CLI::Wiring" do
+      let(:offline_backend_class) do
+        Class.new(Lain::CLI::Backend) do
+          def initialize(options, mock:)
+            super(options)
+            @mock = mock
+          end
+
+          def provider(**) = @mock
+        end
+      end
+      let(:wired_provider) do
+        Lain::Provider::Mock.new(responses: [tool_response(["r1", "subagent", { "prompt" => "go deeper" }]),
+                                             text_response("looked")])
+      end
+
+      # The chat's own Agent, and the build its toolset came from.
+      def wired
+        wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
+                                       status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
+        recorder, session = wiring.run_state(nil)
+        backend = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: wired_provider)
+        [wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:), wiring.send(:toolset_build)]
+      end
+
+      it "constructs the epic Subagent, and the chat's own research Subagent still grants only researcher" do
+        agent, build = wired
+        research = agent.toolset.fetch("subagent")
+
+        expect(issued(build).policy.only).to eq(orchestrator.spawn_policy.only)
+        expect(issued(build).max_depth).to eq(2)
+        expect(research.policy.only).to eq(Lain::Role::Catalog.fetch(:researcher).spawn_policy.only)
+        expect(research.max_depth).to eq(1)
+        expect(research.attenuates_from.names).not_to include("subagent", "run_skill")
+        expect(research.seam.isolation).to be(build.role_spawn.seam.isolation)
+        expect(issued(build).seam.isolation).not_to be(build.role_spawn.seam.isolation)
+      end
+
+      it "refuses the research child's spawn, while the orchestrator has room for a whole plan" do
+        agent, build = wired
+        invocation = Lain::Tool::Invocation.new(context: Lain::Session::Null.instance)
+
+        result = agent.toolset.fetch("subagent").call({ "prompt" => "look" }, invocation)
+
+        blocks = wired_provider.requests[1].messages.flat_map { |message| message["content"] }
+        refusal = blocks.find { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
+        expect(result).to be_ok
+        expect(refusal["is_error"]).to be(true)
+        expect(issued(build).budget.max_iterations).to eq(200)
+      end
+    end
+  end
+
   # Where the run's handoff reaches the spawn lane: the ONE Leases this build
   # wraps the run's isolation in, so a child spawned through any adopter of the
   # seam -- the chat's researcher tool, a role spawn -- ends its lease there.

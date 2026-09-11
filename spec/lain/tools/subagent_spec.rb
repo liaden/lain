@@ -254,6 +254,54 @@ RSpec.describe Lain::Tools::Subagent do
     expect(tool.description).not_to be_empty
   end
 
+  # A lane names where a Leases' workers are numbered. Every worktree of one
+  # repository shares refs/lain/worker/, so two lanes' worker 1 must not spell
+  # one id.
+  describe "the lane a Leases numbers its workers in" do
+    let(:lane) { Lain::Tools::Subagent::Leases::Lane }
+
+    it "prefixes a named lane's worker ids, and leaves the unnamed lane's bare" do
+      expect(lane.named("issue.demo.a").worker(role: "subagent", ordinal: 1)).to eq("issue.demo.a.subagent-spawn.1")
+      expect(lane::UNNAMED.worker(role: "subagent", ordinal: 1)).to eq("subagent-spawn.1")
+    end
+
+    it "refuses a name git would not accept in a ref, rather than escaping it" do
+      ["bad lane", "a..b", "issue.lock", "", "x~1", ".hidden"].each do |name|
+        expect { lane.named(name) }.to raise_error(lane::Refused, /cannot name a ref/)
+      end
+    end
+  end
+
+  # Retiring an actor rebases its work first, and a conflict is put to the
+  # actor itself -- which only an actor holding a shell could act on.
+  describe "the worker a launched actor offers its self-sync" do
+    def actor_over(provider, tools)
+      build_subagent(provider:, policy: spawn_policy(only: []), toolset: Lain::Toolset.new(tools), mode: :actor)
+    end
+
+    it "requires the environment its actor runs in, so none defaults to the process's own directory" do
+      expect { actor_over(mock(text_response("ready")), [EchoTool.new]).launch_actor("go") }
+        .to raise_error(ArgumentError, /worker_env/)
+    end
+
+    it "is the actor's own child when it was granted a shell, and nobody otherwise" do
+      # Stopped from the `ensure`: a parked actor keeps the Sync open, so a
+      # failed expectation would otherwise hang rather than fail.
+      Sync do
+        provider = mock(text_response("ready"))
+        with_shell = actor_over(provider, [SubagentSpecShell.new]).launch_actor("go", worker_env: Lain::WorkerEnv.default)
+        without = actor_over(mock(text_response("ready")), [EchoTool.new]).launch_actor("go", worker_env: Lain::WorkerEnv.default)
+
+        expect(without.worker.askable?).to be(false)
+        expect(with_shell.worker.askable?).to be(true)
+        with_shell.worker.ask("rebase your work")
+        expect(provider.call_count).to eq(2)
+      ensure
+        [with_shell, without].compact.each(&:stop)
+      end
+    end
+  end
+
   # ---- Scenario: fresh root over the shared Store (5-1.1) --------------------
 
   describe "fresh-root spawn" do
@@ -404,7 +452,7 @@ RSpec.describe Lain::Tools::Subagent do
       )
 
       Sync do
-        actor = tool.launch_actor("go")
+        actor = tool.launch_actor("go", worker_env: Lain::WorkerEnv.default)
         actor.settle
         actor.stop
       end
@@ -473,7 +521,7 @@ RSpec.describe Lain::Tools::Subagent do
       )
 
       Sync do
-        actor = tool.launch_actor("go")
+        actor = tool.launch_actor("go", worker_env: Lain::WorkerEnv.default)
         actor.settle
         actor.stop
       end
@@ -564,7 +612,7 @@ RSpec.describe Lain::Tools::Subagent do
       expect(descended.run("go").content).to include("over the ceiling of 8")
 
       Sync do
-        actor = tool.launch_actor("go")
+        actor = tool.launch_actor("go", worker_env: Lain::WorkerEnv.default)
         actor.settle
         actor.stop
       end
@@ -849,7 +897,7 @@ RSpec.describe Lain::Tools::Subagent do
         mode: :actor, log: Lain::Tools::Subagent::Log.new
       )
       Sync do
-        actor = tool.launch_actor("go")
+        actor = tool.launch_actor("go", worker_env: Lain::WorkerEnv.default)
         actor.settle
         actor.stop
       end
@@ -999,6 +1047,45 @@ RSpec.describe Lain::Tools::Subagent do
                                              .find { |b| b.is_a?(Hash) && b["type"] == "tool_result" }
       expect(refusal["is_error"]).to be(true)
       expect(refusal["content"]).to include("depth")
+    end
+
+    # The shape the epic's Subagent takes: an issue_orchestrator child at depth
+    # 2, holding a spawner of its own. Its grandchild here is handed a spawner
+    # too, which no shipped role grants, so the refusal at the third level is
+    # the ceiling's and not the attenuation's.
+    it "lets an issue orchestrator fan out exactly one level" do
+      provider = mock(
+        tool_response(["o1", "subagent", { "prompt" => "implement it" }]),
+        tool_response(["g1", "subagent", { "prompt" => "deeper still" }]),
+        text_response("grandchild done"),
+        text_response("orchestrated")
+      )
+      deepest = build_subagent(provider:, policy: spawn_policy(only: []),
+                               toolset: Lain::Toolset.new([EchoTool.new]), max_depth: 9)
+      spawner = build_subagent(provider:, policy: spawn_policy(only: []),
+                               toolset: Lain::Toolset.new([EchoTool.new, deepest]), max_depth: 9)
+      floor = %w[read_file list_files glob grep edit_file write_file todo_write bash run_skill]
+      epic = build_subagent(provider:, policy: Lain::Role::Catalog.fetch(:issue_orchestrator).spawn_policy,
+                            toolset: Lain::Toolset.new(floor.map { |name| ToolRegistry.build(name) } + [spawner]),
+                            max_depth: 2)
+
+      result = epic.call({ "prompt" => "run the plan" }, invocation)
+
+      expect(result.content).to eq("orchestrated")
+      expect(provider.call_count).to eq(4)
+      refusal = provider.requests[2].messages.flat_map { |m| m["content"] }
+                                             .find { |b| b.is_a?(Hash) && b["type"] == "tool_result" }
+      expect(refusal["is_error"]).to be(true)
+      expect(refusal["content"]).to eq("subagent spawn depth exceeded: this agent is at the ceiling")
+    end
+
+    it "reads back the ceiling, the spawn policy and the budget its children run under" do
+      budget = Lain::Agent::Budget.new(max_iterations: 200)
+      policy = spawn_policy
+      tool = described_class.new(provider: mock(text_response), context_factory: -> { child_context }, toolset: union,
+                                 policy:, parent:, budget:, max_depth: 2, tool_middleware: ToolRegistry::UNGUARDED)
+
+      expect([tool.max_depth, tool.policy, tool.budget]).to eq([2, policy, budget])
     end
 
     # The exe shape -- a union holding no subagent -- passes through untouched:
@@ -1858,7 +1945,7 @@ RSpec.describe Lain::Tools::Subagent do
     # every exit for `spawning`'s reason. {Actor#stop} is idempotent, so the
     # examples that stop it themselves are unaffected by this.
     def launching(tool, prompt: "go")
-      actor = tool.launch_actor(prompt)
+      actor = tool.launch_actor(prompt, worker_env: Lain::WorkerEnv.default)
       yield actor
     ensure
       actor&.stop
@@ -2501,7 +2588,9 @@ RSpec.describe Lain::Tools::Subagent do
       tool = described_class.new(seam:, toolset: union, policy: spawn_policy(only: []),
                                  max_depth: 1, mode: :actor, log: Lain::Tools::Subagent::Log.new)
 
-      Sync { expect { tool.launch_actor("go") }.to raise_error(/the record is on fire/) }
+      Sync do
+        expect { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }.to raise_error(/the record is on fire/)
+      end
 
       expect(registrations).to eq(0)
     end

@@ -76,7 +76,11 @@ RSpec.describe Lain::Supervisor do
         tool = actor_tool(text_response("actor ready"))
 
         actor = nil
-        task.async { actor = supervisor.adopt(role: "researcher") { tool.launch_actor("go") } }.wait
+        task.async do
+          actor = supervisor.adopt(role: "researcher") do
+            tool.launch_actor("go", worker_env: Lain::WorkerEnv.default)
+          end
+        end.wait
 
         # The launching task has finished, but the actor's fiber persists under
         # the supervisor's own task: still settleable, still tellable.
@@ -132,7 +136,7 @@ RSpec.describe Lain::Supervisor do
         gate = Async::Queue.new
         adopter = task.async do
           supervisor.adopt(role: "ghost-no-more") do
-            launched = actor_tool(text_response("ready"), journal:).launch_actor("go")
+            launched = actor_tool(text_response("ready"), journal:).launch_actor("go", worker_env: Lain::WorkerEnv.default)
             gate.dequeue # any real await in a launch opens this window
             launched
           end
@@ -161,8 +165,8 @@ RSpec.describe Lain::Supervisor do
       Sync do |task|
         supervisor = described_class.new.run(task)
         tool = actor_tool(text_response("one"), text_response("two"))
-        researcher = supervisor.adopt(role: "researcher") { tool.launch_actor("first") }
-        scout = supervisor.adopt(role: "scout") { tool.launch_actor("second") }
+        researcher = supervisor.adopt(role: "researcher") { tool.launch_actor("first", worker_env: Lain::WorkerEnv.default) }
+        scout = supervisor.adopt(role: "scout") { tool.launch_actor("second", worker_env: Lain::WorkerEnv.default) }
         [researcher, scout].each(&:settle)
 
         expect(supervisor.map(&:role)).to eq(%w[researcher scout])
@@ -178,9 +182,9 @@ RSpec.describe Lain::Supervisor do
     it "derives state from the actor's own predicates: stopped and failed read as such" do
       Sync do |task|
         supervisor = described_class.new.run(task)
-        healthy = supervisor.adopt(role: "healthy") { actor_tool(text_response("ok")).launch_actor("go") }
+        healthy = supervisor.adopt(role: "healthy") { actor_tool(text_response("ok")).launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         # Zero scripted responses: the Mock provider raises on the child's first call.
-        doomed = supervisor.adopt(role: "doomed") { actor_tool.launch_actor("go") }
+        doomed = supervisor.adopt(role: "doomed") { actor_tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         healthy.settle
         expect { doomed.settle }.to raise_error(Lain::Error)
         healthy.stop
@@ -196,8 +200,8 @@ RSpec.describe Lain::Supervisor do
     it "settles live registrations and skips dead ones without re-raising" do
       Sync do |task|
         supervisor = described_class.new.run(task)
-        live = supervisor.adopt(role: "live") { actor_tool(text_response("ok")).launch_actor("go") }
-        dead = supervisor.adopt(role: "dead") { actor_tool.launch_actor("go") }
+        live = supervisor.adopt(role: "live") { actor_tool(text_response("ok")).launch_actor("go", worker_env: Lain::WorkerEnv.default) }
+        dead = supervisor.adopt(role: "dead") { actor_tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         expect { dead.settle }.to raise_error(Lain::Error)
 
         expect { supervisor.each(&:settle) }.not_to raise_error
@@ -217,7 +221,7 @@ RSpec.describe Lain::Supervisor do
         supervisor = described_class.new.run(task)
         entered = Async::Queue.new
         release = Async::Queue.new
-        actor = supervisor.adopt(role: "flaky") { parking_tool(entered:, release:).launch_actor("go") }
+        actor = supervisor.adopt(role: "flaky") { parking_tool(entered:, release:).launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         entered.dequeue # the actor is provably mid-turn: live at the dead? check
 
         drain = task.async { supervisor.each(&:settle) }
@@ -246,7 +250,7 @@ RSpec.describe Lain::Supervisor do
         supervisor = described_class.new(journal:).run(task)
         entered = Async::Queue.new
         release = Async::Queue.new
-        supervisor.adopt(role: "hung") { parking_tool(entered:, release:).launch_actor("go") }
+        supervisor.adopt(role: "hung") { parking_tool(entered:, release:).launch_actor("go", worker_env: Lain::WorkerEnv.default) }
         entered.dequeue # provably mid-turn; nothing will ever release it
 
         started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -266,7 +270,7 @@ RSpec.describe Lain::Supervisor do
       journal = Lain::Channel.new
       Sync do |task|
         supervisor = described_class.new(journal:).run(task)
-        actor = supervisor.adopt(role: "prompt") { actor_tool(text_response("ok")).launch_actor("go") }
+        actor = supervisor.adopt(role: "prompt") { actor_tool(text_response("ok")).launch_actor("go", worker_env: Lain::WorkerEnv.default) }
 
         supervisor.drain(within: 5).each(&:settle)
 
@@ -343,16 +347,16 @@ RSpec.describe Lain::Supervisor do
 
   describe "actor lifecycle journaling" do
     def journaled_lifecycle(journal)
-      actor = nil
+      tool = actor_tool(text_response("ready"), journal:)
       Sync do |task|
         supervisor = described_class.new.run(task)
-        actor = supervisor.adopt(role: "researcher") { actor_tool(text_response("ready"), journal:).launch_actor("go") }
+        actor = supervisor.adopt(role: "researcher") { |worker_env| tool.launch_actor("go", worker_env:) }
         actor.settle
         actor.tell("nudge")
         actor.stop
         supervisor.stop
+        actor
       end
-      actor
     end
 
     # Lifecycle transitions carry a machine-readable
@@ -583,8 +587,12 @@ RSpec.describe Lain::Supervisor do
       backend = RecordingIsolation.new(leased_env)
       Sync do |task|
         supervisor = described_class.new(isolation: backend).run(task)
-        supervisor.adopt(role: "a") { actor_tool(text_response("ok")).launch_actor("go") }.settle
-        supervisor.adopt(role: "b") { actor_tool(text_response("ok")).launch_actor("go") }.settle
+        supervisor.adopt(role: "a") do
+          actor_tool(text_response("ok")).launch_actor("go", worker_env: Lain::WorkerEnv.default)
+        end.settle
+        supervisor.adopt(role: "b") do
+          actor_tool(text_response("ok")).launch_actor("go", worker_env: Lain::WorkerEnv.default)
+        end.settle
 
         expect(backend.acquired.size).to eq(2)
         expect(backend.acquired.uniq.size).to eq(2) # distinct worker keys, so worktree paths never collide
@@ -801,7 +809,7 @@ RSpec.describe Lain::Supervisor do
       env = nil
       actor = supervisor.adopt(role:) do |worker_env|
         env = worker_env
-        parking_tool(entered:, release:).launch_actor("go")
+        parking_tool(entered:, release:).launch_actor("go", worker_env:)
       end
       [env, actor]
     end
@@ -811,7 +819,7 @@ RSpec.describe Lain::Supervisor do
       env = nil
       supervisor.adopt(role:) do |worker_env|
         env = worker_env
-        actor_tool(text_response("ok")).launch_actor("go")
+        actor_tool(text_response("ok")).launch_actor("go", worker_env:)
       end.settle
       env
     end
@@ -1253,6 +1261,621 @@ RSpec.describe Lain::Supervisor do
           expect(anchored_commits).to be_empty
           supervisor.stop
         end
+      end
+    end
+  end
+
+  # ---- Retiring an actor whose work is done --------------------------------
+
+  describe "retiring an actor" do
+    # One log across the lease, the self-sync and the anchor, because what
+    # retirement promises is an ORDER: the sync while the lease is live, the
+    # anchor after it, the release last.
+    before do
+      stub_const("RetireIsolation", Class.new do
+        def initialize(env, log)
+          @env = env
+          @log = log
+        end
+
+        def acquire(worker_id)
+          @log << [:acquire, worker_id]
+          log = @log
+          Lain::Isolation::Lease.new(worker_env: @env, on_release: -> { log << [:release, worker_id] })
+        end
+      end)
+
+      stub_const("RetireSync", Class.new do
+        def initialize(log)
+          @log = log
+        end
+
+        def call(lease, worker:, worker_id:)
+          @log << [:sync, worker_id, worker.askable?, lease.released?]
+          Lain::Isolation::SelfSync::Result.new(outcome: :current)
+        end
+
+        def editorless(worker_env) = worker_env.with(env: worker_env.env.merge(Lain::Isolation::SelfSync::EDITORLESS))
+      end)
+
+      # The anchor duck: what the worker's ref holds before any sync, and the
+      # anchoring after it. `taken` stands in for a ref already holding work
+      # this checkout does not contain.
+      stub_const("RetireAnchor", Class.new do
+        def initialize(log, taken: false)
+          @log = log
+          @taken = taken
+        end
+
+        def standing(_lease, worker_id:)
+          refusal = Lain::Isolation::Worktree::Handback::Outcome.new(kind: :failed, worker_key: worker_id,
+                                                                     detail: "the ref is taken")
+          Lain::Supervisor::Retirement::Standing.new(head: "b" * 40, refusal: (refusal if @taken))
+        end
+
+        def anchor(lease, worker_id:, from:)
+          @log << [:anchor, worker_id, lease.released?]
+          Lain::Isolation::Worktree::Handback::Outcome.new(
+            kind: :declined, worker_key: worker_id, ref: "refs/lain/worker/#{worker_id}", sha: "a" * 40,
+            detail: "#{Lain::Isolation::Worktree::Handback::ANCHOR_ONLY} from #{from}"
+          )
+        end
+      end)
+
+      # Named for the one tool that lets a child run git, and doing nothing:
+      # whether a worker may be asked to rebase turns on the name it holds.
+      stub_const("RetireShell", Class.new(Lain::Tool) do
+        def name = "bash"
+        def description = "Stands in for a shell."
+        def input_schema = { type: :object, properties: {} }
+        def perform(_input, _invocation) = Lain::Tool::Result.ok("")
+      end)
+    end
+
+    let(:shared_env) { Lain::WorkerEnv.new(cwd: "/leased/checkout", env: {}) }
+
+    def worker(ordinal = 1) = Lain::Isolation::WorkerId.adopted(role: "issue", ordinal:).to_s
+
+    def row_of(supervisor, actor) = supervisor.find { |row| row.actor.equal?(actor) }
+
+    def retirement(log, journal: Lain::Channel::Null.instance, taken: false)
+      Lain::Supervisor::Retirement.new(sync: RetireSync.new(log), anchor: RetireAnchor.new(log, taken:), journal:)
+    end
+
+    def retiring_tool(*responses, tools: [EchoTool.new], journal: Lain::Channel::Null.instance)
+      Lain::Tools::Subagent.new(
+        tool_middleware: ToolRegistry::UNGUARDED,
+        provider: Lain::Provider::Mock.new(responses:),
+        context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
+        toolset: Lain::Toolset.new(tools),
+        policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
+        parent: parent_timeline, journal:, mode: :actor, log:
+      )
+    end
+
+    def adopted(supervisor, tool)
+      supervisor.adopt(role: "issue") { |worker_env| tool.launch_actor("go", worker_env:) }
+    end
+
+    it "self-syncs a settled actor while its lease is live, anchors, releases, and returns the ref and SHA" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                         retirement: retirement(log)).run(task)
+        actor = adopted(supervisor, retiring_tool(text_response("done"), tools: [RetireShell.new]))
+
+        report = supervisor.retire(row_of(supervisor, actor))
+
+        expect(log).to eq([[:acquire, worker], [:sync, worker, true, false], [:anchor, worker, false],
+                           [:release, worker]])
+        expect([report.kind, report.ref, report.sha]).to eq([:declined, "refs/lain/worker/#{worker}", "a" * 40])
+        expect(actor).to be_stopped
+        supervisor.stop
+      end
+    end
+
+    it "offers the self-sync nobody to ask when the actor holds no shell" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                         retirement: retirement(log)).run(task)
+        supervisor.retire(row_of(supervisor, adopted(supervisor, retiring_tool(text_response("done")))))
+        supervisor.stop
+      end
+
+      expect(log).to include([:sync, worker, false, false])
+    end
+
+    # A failed actor cannot be asked anything, and its checkout is as its
+    # last turn left it: anchored as it stands, with nothing spawned.
+    it "surrenders an actor whose first turn raised: anchored with no self-sync, then released" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                         retirement: retirement(log)).run(task)
+        actor = adopted(supervisor, retiring_tool)
+        expect(actor).to be_dead
+
+        report = supervisor.retire(row_of(supervisor, actor))
+
+        expect(log).to eq([[:acquire, worker], [:anchor, worker, false], [:release, worker]])
+        expect(report.ref).to eq("refs/lain/worker/#{worker}")
+        supervisor.stop
+      end
+    end
+
+    it "records the anchor on one handback record, carrying what the self-sync did" do
+      journal = Lain::Channel.new
+      Sync do |task|
+        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, []),
+                                         retirement: retirement([], journal:)).run(task)
+        supervisor.retire(row_of(supervisor, adopted(supervisor, retiring_tool(text_response("done")))))
+        supervisor.stop
+      end
+
+      handbacks = journal.drain.grep(Lain::Telemetry::Handback)
+      expect(handbacks.map { |record| [record.worker_key, record.outcome, record.ref, record.sync, record.sha] })
+        .to eq([[worker, :declined, "refs/lain/worker/#{worker}", :current, nil]])
+    end
+
+    it "retires a row once: a second retire is refused by name, and #stop skips the row" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                         retirement: retirement(log)).run(task)
+        row = row_of(supervisor, adopted(supervisor, retiring_tool(text_response("done"))))
+        supervisor.retire(row)
+        retired = log.dup
+
+        expect { supervisor.retire(row) }.to raise_error(described_class::AlreadyRetired, /already retired/)
+        supervisor.stop
+
+        expect(log).to eq(retired)
+        expect(supervisor.retired?(row)).to be(true)
+        expect(row.state).to eq(:stopped)
+        expect(supervisor.to_a).to eq([row])
+      end
+    end
+
+    it "refuses a registration it never adopted" do
+      Sync do |task|
+        supervisor = described_class.new(retirement: retirement([])).run(task)
+        stranger = described_class.new.run(task)
+        row = row_of(stranger, adopted(stranger, retiring_tool(text_response("done"))))
+
+        expect { supervisor.retire(row) }.to raise_error(ArgumentError, /never adopted/)
+      ensure
+        stranger&.stop
+        supervisor&.stop
+      end
+    end
+
+    it "retires a revived actor as one nobody may ask" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                         retirement: retirement(log)).run(task)
+        revived = supervisor.adopt(role: "issue") do
+          Lain::Supervisor::Restart::Revived.new(agent: nil, address: "blake3:revived")
+        end
+
+        supervisor.retire(row_of(supervisor, revived))
+
+        expect(log).to include([:sync, worker, false, false])
+        expect(revived).to be_stopped
+        supervisor.stop
+      end
+    end
+
+    # Every run's supervisor mints its first actor the same default id, so the
+    # epic caller names the worker itself, and a name git could not put in a
+    # ref is refused before anything is leased.
+    it "keys an adopted actor on the worker id its caller names, and refuses one git could not put in a ref" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log)).run(task)
+        supervisor.adopt(role: "issue_orchestrator", worker_id: "issue.demo.a") do |worker_env|
+          retiring_tool(text_response("done")).launch_actor("go", worker_env:)
+        end
+
+        expect { supervisor.adopt(role: "issue_orchestrator", worker_id: "issue demo..a") { raise "never launched" } }
+          .to raise_error(Lain::Isolation::WorkerId::Refused, /cannot name a ref/)
+        expect(log).to eq([[:acquire, "issue.demo.a"]])
+        supervisor.stop
+      end
+    end
+
+    # A ref holding work this checkout does not contain is some other run's
+    # only anchor, so nothing -- not even the self-sync's own anchor-first
+    # write -- may move it.
+    it "refuses before any self-sync when the worker's ref already anchors work this checkout does not hold" do
+      log = []
+      Sync do |task|
+        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                         retirement: retirement(log, taken: true)).run(task)
+        actor = adopted(supervisor, retiring_tool(text_response("done"), tools: [RetireShell.new]))
+
+        report = supervisor.retire(row_of(supervisor, actor))
+
+        expect(log).to eq([[:acquire, worker], [:release, worker]])
+        expect([report.kind, report.ref, report.sha]).to eq([:failed, nil, nil])
+        supervisor.stop
+      end
+    end
+
+    # A cancelled turn resolves the actor's settle without a failure, so a
+    # stop read after it is what says the turn never finished.
+    it "surrenders an actor stopped before its turn settled, and its report says so" do
+      log = []
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      Sync do |task|
+        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, log),
+                                         retirement: retirement(log)).run(task)
+        actor = supervisor.adopt(role: "issue") do |worker_env|
+          parking_tool(entered:, release:).launch_actor("go", worker_env:)
+        end
+        entered.dequeue
+        retiring = task.async { supervisor.retire(row_of(supervisor, actor)) }
+        actor.stop
+        report = retiring.wait
+
+        expect(log).to eq([[:acquire, worker], [:anchor, worker, false], [:release, worker]])
+        expect(report.detail).to include("stopped before its turn settled")
+        supervisor.stop
+      end
+    end
+
+    it "refuses by name a row whose lease was already given up" do
+      Sync do |task|
+        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, []),
+                                         retirement: retirement([])).run(task)
+        row = row_of(supervisor, adopted(supervisor, retiring_tool(text_response("done"))))
+        row.release
+
+        expect { supervisor.retire(row) }.to raise_error(described_class::AlreadyReleased, /released/)
+        expect(supervisor.retired?(row)).to be(false)
+        supervisor.stop
+      end
+    end
+
+    # Landing reads the handback record, so a retirement whose record never
+    # reached the journal says so on the report it hands back.
+    it "says on its report when its handback record could not be journaled" do
+      closed = Class.new { def <<(_record) = raise(IOError, "journal closed") }.new
+      Sync do |task|
+        supervisor = described_class.new(isolation: RetireIsolation.new(shared_env, []),
+                                         retirement: retirement([], journal: closed)).run(task)
+
+        report = supervisor.retire(row_of(supervisor, adopted(supervisor, retiring_tool(text_response("done")))))
+
+        expect(report.detail).to include("the handback record was not journaled: IOError: journal closed")
+        supervisor.stop
+      end
+    end
+
+    # The self-sync asks the actor to rebase through its own shell, so the
+    # environment that shell runs in is the one retirement makes editorless:
+    # a model has no terminal to show `git rebase --continue`'s editor in.
+    it "hands an adopted actor the editorless environment its retirement will ask it in" do
+      seen = []
+      Sync do |task|
+        wired = described_class.new(isolation: RetireIsolation.new(shared_env, []),
+                                    retirement: retirement([])).run(task)
+        bare = described_class.new(isolation: RetireIsolation.new(shared_env, [])).run(task)
+        [wired, bare].each do |supervisor|
+          supervisor.adopt(role: "issue") do |worker_env|
+            seen << worker_env.env
+            retiring_tool(text_response("done")).launch_actor("go", worker_env:)
+          end
+        end
+        [wired, bare].each(&:stop)
+      end
+
+      expect(seen).to eq([Lain::Isolation::SelfSync::EDITORLESS, {}])
+    end
+
+    describe "against a real worktree backend", :seam do
+      before do
+        stub_const("RetireCommitTool", Class.new(Lain::Tool) do
+          def name = "commit"
+          def description = "Commits one file in the session's checkout."
+          def input_schema = { type: :object, properties: {} }
+
+          # Refuses anywhere but the fixture's own temp tree: an actor launched
+          # without its lease's environment stands in the process's cwd, which
+          # is the repository running this suite.
+          def perform(_input, invocation)
+            dir = session_of(invocation).worker_env.cwd
+            raise Lain::Error, "refusing to commit in #{dir}" unless dir.start_with?("#{File.realpath(Dir.tmpdir)}/")
+
+            File.write(File.join(dir, "actor.txt"), "the actor's work (#{object_id})\n")
+            [%w[add -A], %w[commit -q -m actor-work]].each do |args|
+              Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+                              .run_command.error!
+            end
+            Lain::Tool::Result.ok("committed")
+          end
+        end)
+
+        # Answers the first turn's commit, then fails the turn it returns to.
+        stub_const("RetireFailingProvider", Class.new(Lain::Provider::Mock) do
+          def complete(request, **)
+            raise Lain::Error, "the provider failed after the commit" unless requests.empty?
+
+            super
+          end
+        end)
+      end
+
+      around do |example|
+        Dir.mktmpdir("lain-retire-repo") do |repo|
+          Dir.mktmpdir("lain-retire-worktrees") do |worktrees|
+            @repo_root = File.realpath(repo)
+            @worktrees = File.realpath(worktrees)
+            FileUtils.cp_r("#{SeedRepo.at({ "seed.txt" => "seed\n" })}/.", @repo_root)
+            example.run
+          end
+        end
+      end
+
+      let(:journal) { Lain::Channel.new }
+      let(:backend) do
+        Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @worktrees,
+                                      base: Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root))
+      end
+      let(:real_retirement) { Lain::Supervisor::Retirement.over(isolation: backend, journal:) }
+
+      def git(dir, *args)
+        shell = Mixlib::ShellOut.new("git", "-C", dir, *args, environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+        shell.run_command
+        shell.stdout.strip
+      end
+
+      def parent_state = [git(@repo_root, "rev-parse", "HEAD"), git(@repo_root, "status", "--porcelain")]
+
+      def committing(provider)
+        Lain::Tools::Subagent.new(
+          tool_middleware: ToolRegistry::UNGUARDED, provider:,
+          context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
+          toolset: Lain::Toolset.new([RetireCommitTool.new]),
+          policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
+          parent: parent_timeline, journal:, mode: :actor, log:
+        )
+      end
+
+      def commits = Lain::Provider::Mock.new(responses: [tool_response(["c1", "commit", {}]), text_response("done")])
+
+      # @return [Array(Tools::Subagent::Actor, WorkerEnv)]
+      def committed(supervisor, provider)
+        env = nil
+        actor = supervisor.adopt(role: "issue") do |worker_env|
+          env = worker_env
+          committing(provider).launch_actor("work", worker_env:)
+        end
+        [actor, env]
+      end
+
+      def records = @records ||= journal.drain
+
+      it "anchors a settled actor's commit and returns its SHA, leaving the parent checkout as it was" do
+        Sync do |task|
+          supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
+          actor, env = committed(supervisor, commits)
+          actor.settle
+          expect(git(env.cwd, "log", "-1", "--format=%s")).to eq("actor-work")
+          commit = git(env.cwd, "rev-parse", "HEAD")
+          before = parent_state
+
+          report = supervisor.retire(row_of(supervisor, actor))
+
+          expect(report.sha).to eq(commit)
+          expect(git(@repo_root, "rev-parse", report.ref)).to eq(commit)
+          expect(parent_state).to eq(before)
+          expect(Dir.exist?(env.cwd)).to be(false)
+          supervisor.stop
+        end
+      end
+
+      it "journals the actor's farewell, so the fleet no longer counts it" do
+        actor = nil
+        Sync do |task|
+          supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
+          actor, = committed(supervisor, commits)
+          supervisor.retire(row_of(supervisor, actor))
+          supervisor.stop
+        end
+
+        messages = records.grep(Lain::Telemetry::Message)
+        farewell = messages.select { |message| message.payload["lifecycle"] == "stopped" }
+        expect(farewell.map(&:from)).to eq([actor.address])
+        Dir.mktmpdir("supervisor-retire") do |dir|
+          feed = Lain::StatusFeed.new(path: File.join(dir, "state.json"))
+          messages.each { |message| feed << message }
+          expect(JSON.parse(File.read(File.join(dir, "state.json")))["fleet"]).to eq([])
+        end
+      end
+
+      it "surrenders a failed actor's commit with no self-sync, and #stop hands back and farewells neither twice" do
+        handoff = Lain::Isolation::WorkerHandoff.over(repo_root: @repo_root, base: backend.base, journal:)
+        failed_commit = nil
+        report = nil
+        addresses = []
+        Sync do |task|
+          supervisor = described_class.new(journal:, isolation: backend, handoff:, retirement: real_retirement)
+                                      .run(task)
+          settled, = committed(supervisor, commits)
+          addresses << settled.address
+          supervisor.retire(row_of(supervisor, settled))
+          failing = RetireFailingProvider.new(responses: [tool_response(["c1", "commit", {}])])
+          failed, env = committed(supervisor, failing)
+          addresses << failed.address
+          expect { failed.settle }.to raise_error(Lain::Error, /after the commit/)
+          expect(git(env.cwd, "log", "-1", "--format=%s")).to eq("actor-work")
+          failed_commit = git(env.cwd, "rev-parse", "HEAD")
+          before = parent_state
+
+          report = supervisor.retire(row_of(supervisor, failed))
+          supervisor.stop
+
+          expect(parent_state).to eq(before)
+        end
+
+        expect(git(@repo_root, "rev-parse", report.ref)).to eq(failed_commit)
+        handbacks = records.grep(Lain::Telemetry::Handback)
+        expect(handbacks.map { |record| [record.worker_key, record.sync] }).to eq([[worker(1), :current],
+                                                                                   [worker(2), nil]])
+        # In order, one per retirement and none from #stop. By position, since
+        # two actors launched through separate Subagents over one parent head
+        # may share an address.
+        farewells = records.grep(Lain::Telemetry::Message).select { |m| m.payload["lifecycle"] == "stopped" }
+        expect(farewells.map(&:from)).to eq(addresses)
+      end
+
+      def worker_refs = git(@repo_root, "for-each-ref", "--format=%(objectname)", "refs/lain/worker/").split
+
+      # Two runs' supervisors each mint their first actor the same default id,
+      # so the second run's retirement meets the first run's anchor on its ref.
+      it "never moves an earlier run's anchor off its work, and refuses the later retirement loudly" do
+        shas = []
+        reports = []
+        2.times do
+          Sync do |task|
+            supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
+            actor, env = committed(supervisor, commits)
+            actor.settle
+            shas << git(env.cwd, "rev-parse", "HEAD")
+            reports << supervisor.retire(row_of(supervisor, actor))
+            supervisor.stop
+          end
+        end
+
+        expect(reports.map(&:kind)).to eq(%i[declined failed])
+        expect(reports.last.detail).to include("already anchors #{shas.first}")
+        expect(git(@repo_root, "rev-parse", reports.first.ref)).to eq(shas.first)
+        expect(worker_refs).to include(shas.first, shas.last)
+        # The refused commit is kept on a ref the report names, so an operator
+        # can find it.
+        kept = Lain::Isolation::Worktree::Handback::Naming.new("#{worker(1)} refused #{shas.last}").ref
+        expect(reports.last.detail).to include("kept on #{kept}")
+        expect(git(@repo_root, "rev-parse", kept)).to eq(shas.last)
+      end
+
+      # The working branch has moved past the parent's own HEAD, as an epic
+      # branch does once an earlier issue lands on it.
+      it "reads an actor that committed nothing as nothing, though its base is ahead of the parent" do
+        scratch = File.join(@worktrees, "ahead")
+        git(@repo_root, "worktree", "add", "-q", "-b", "epic", scratch)
+        File.write(File.join(scratch, "landed.txt"), "an earlier issue landed\n")
+        git(scratch, "add", "landed.txt")
+        git(scratch, "commit", "-q", "-m", "landed")
+        git(@repo_root, "worktree", "remove", "--force", scratch)
+        epic = Lain::Isolation::WorkingBranch.new("epic", repo_root: @repo_root,
+                                                          git: Lain::Isolation::Checkout.new(@repo_root))
+        ahead = Lain::Isolation::Worktree.new(repo_root: @repo_root, root: @worktrees, base: epic)
+        report = nil
+        Sync do |task|
+          supervisor = described_class.new(journal:, isolation: ahead,
+                                           retirement: Lain::Supervisor::Retirement.over(isolation: ahead, journal:))
+                                      .run(task)
+          actor = supervisor.adopt(role: "issue") do |worker_env|
+            committing(Lain::Provider::Mock.new(responses: [text_response("nothing to do")]))
+              .launch_actor("go", worker_env:)
+          end
+          report = supervisor.retire(row_of(supervisor, actor))
+          supervisor.stop
+        end
+
+        expect([report.kind, report.ref, report.sha]).to eq([:nothing_to_do, nil, nil])
+        expect(worker_refs).to be_empty
+      end
+
+      # A BACKSTOP, recorded as one: an actor's first turn runs eagerly inside
+      # its launch, so its first tool call has already run by the time adopt
+      # can ask where it stands. What keeps an actor in its lease is the
+      # required `worker_env:`; the mark left elsewhere is the limit, kept
+      # inside a temp dir of this example's own.
+      it "refuses an actor that stands anywhere but its lease's checkout, though its first tool already ran" do
+        stub_const("RetireMarkTool", Class.new(Lain::Tool) do
+          def name = "mark"
+          def description = "Leaves a mark where it runs."
+          def input_schema = { type: :object, properties: {} }
+
+          def perform(_input, invocation)
+            dir = session_of(invocation).worker_env.cwd
+            raise Lain::Error, "refusing to mark #{dir}" unless dir.start_with?("#{File.realpath(Dir.tmpdir)}/")
+
+            File.write(File.join(dir, "ran.txt"), "the first turn ran here\n")
+            Lain::Tool::Result.ok("marked")
+          end
+        end)
+        marker = Lain::Tools::Subagent.new(
+          tool_middleware: ToolRegistry::UNGUARDED,
+          provider: Lain::Provider::Mock.new(responses: [tool_response(["m1", "mark", {}]), text_response("marked")]),
+          context_factory: -> { Lain::Context.new(model: "child", max_tokens: 128) },
+          toolset: Lain::Toolset.new([RetireMarkTool.new]),
+          policy: Lain::Tool::SpawnPolicy.new(prefix: :fresh, posture: :schema, only: []),
+          parent: parent_timeline, journal:, mode: :actor, log:
+        )
+
+        Dir.mktmpdir("lain-elsewhere") do |dir|
+          elsewhere = File.realpath(dir)
+          Sync do |task|
+            supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
+
+            expect do
+              supervisor.adopt(role: "issue") do
+                marker.launch_actor("go", worker_env: Lain::WorkerEnv.default.with(cwd: elsewhere))
+              end
+            end.to raise_error(described_class::OutsideLease, /stands in #{Regexp.escape(elsewhere)}/)
+            expect(supervisor.to_a).to be_empty
+            supervisor.stop
+          end
+          expect(File.exist?(File.join(elsewhere, "ran.txt"))).to be(true)
+        end
+        expect(Dir.children(@worktrees)).to be_empty
+      end
+
+      it "refuses by name an actor that cannot say where it stands" do
+        stub_const("RetireStandIn", Class.new do
+          def stop = self
+          def stopped? = true
+          def dead? = true
+        end)
+        Sync do |task|
+          supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
+
+          expect { supervisor.adopt(role: "issue") { RetireStandIn.new } }
+            .to raise_error(described_class::OutsideLease, /answers no session/)
+          expect(supervisor.to_a).to be_empty
+          supervisor.stop
+        end
+      end
+
+      # With no handoff wired, a reap is Retain's: it anchors nothing and
+      # releases nothing, so the row is still the driver's to retire.
+      it "retires a failed actor that a later adoption reaped with nothing to hand back, and keeps its work" do
+        failing = RetireFailingProvider.new(responses: [tool_response(["c1", "commit", {}])])
+        report = failed_sha = nil
+        Sync do |task|
+          supervisor = described_class.new(journal:, isolation: backend, retirement: real_retirement).run(task)
+          env = nil
+          failed = supervisor.adopt(role: "issue", worker_id: "issue.demo.a") do |worker_env|
+            env = worker_env
+            committing(failing).launch_actor("work", worker_env:)
+          end
+          expect { failed.settle }.to raise_error(Lain::Error, /after the commit/)
+          failed_sha = git(env.cwd, "rev-parse", "HEAD")
+          supervisor.adopt(role: "issue", worker_id: "issue.demo.b") do |worker_env|
+            committing(commits).launch_actor("work", worker_env:)
+          end
+
+          report = supervisor.retire(row_of(supervisor, failed))
+          supervisor.stop
+        end
+
+        expect(report.sha).to eq(failed_sha)
+        expect(git(@repo_root, "rev-parse", report.ref)).to eq(failed_sha)
       end
     end
   end
