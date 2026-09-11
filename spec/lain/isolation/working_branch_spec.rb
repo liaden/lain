@@ -194,6 +194,81 @@ RSpec.describe Lain::Isolation::WorkingBranch, :seam do
     end
   end
 
+  # The general owned-branch constructor: any name, established from a given
+  # base, and reused only where lain's own marker says lain made it.
+  describe ".owned" do
+    let(:name) { "lain/issue/demo/a" }
+
+    it "creates the branch at the base it is given and marks it lain-owned" do
+      base = sha("main")
+
+      branch = described_class.owned(name, repo_root: @repo_root, from: base)
+
+      expect([branch.name, branch.tip]).to eq([name, base])
+      expect(sha("refs/lain/owned/heads/#{name}")).to eq(base)
+    end
+
+    it "reuses a branch lain owns where it stands, moving nothing and re-marking nothing" do
+      described_class.owned(name, repo_root: @repo_root, from: sha("main"))
+      created = sha("refs/heads/#{name}")
+      moved = commit("main moved on")
+
+      again = described_class.owned(name, repo_root: @repo_root, from: moved)
+
+      expect(again.tip).to eq(created)
+      expect(sha("refs/lain/owned/heads/#{name}")).to eq(created)
+    end
+
+    # The marker is the only licence anything has to delete a branch later, so
+    # claiming one lain did not create would put a human's branch on the
+    # reaper's list.
+    it "refuses a branch lain did not create, naming it, and neither moves nor marks it" do
+      run_git(@repo_root, "branch", name, "main")
+      standing = sha("refs/heads/#{name}")
+      moved = commit("main moved on")
+
+      expect { described_class.owned(name, repo_root: @repo_root, from: moved) }
+        .to raise_error(described_class::Refused, /#{name}.*lain did not create/m)
+      expect(sha("refs/heads/#{name}")).to eq(standing)
+      expect(ref?("refs/lain/owned/heads/#{name}")).to be(false)
+    end
+
+    it "refuses a name git cannot hold in a branch" do
+      expect { described_class.owned("lain/issue/demo/a.lock", repo_root: @repo_root, from: sha("main")) }
+        .to raise_error(described_class::Refused, /a\.lock/)
+    end
+
+    it "refuses a name nested under a branch that already exists, naming it" do
+      run_git(@repo_root, "branch", "lain/issue/demo")
+
+      expect { described_class.owned(name, repo_root: @repo_root, from: sha("main")) }
+        .to raise_error(described_class::Refused, %r{refs/heads/lain/issue/demo\b.*cannot hold})
+    end
+
+    # git hands stderr back as ASCII-8BIT, so a refusal interpolating it dies of
+    # Encoding::CompatibilityError instead of naming itself.
+    it "answers its own refusal when git's stderr carries non-ASCII bytes" do
+      real = Lain::Shell::Out.public_method(:new)
+      refusing = Class.new do
+        def run_command = self
+        def exitstatus = 1
+        def stdout = ""
+        def stderr = (+"fatal: refname 'ünïcode' is not valid").force_encoding(Encoding::ASCII_8BIT)
+      end
+      noisy = ->(*args, **kwargs) { args.include?("update-ref") ? refusing.new : real.call(*args, **kwargs) }
+
+      expect { described_class.owned(name, repo_root: @repo_root, from: sha("main"), shell_out_factory: noisy) }
+        .to raise_error(described_class::Refused, /not valid/)
+    end
+  end
+
+  describe ".epic_name" do
+    it "names the epic's branch without creating anything" do
+      expect(described_class.epic_name("demo")).to eq("epic/demo")
+      expect(ref?("refs/heads/epic/demo")).to be(false)
+    end
+  end
+
   describe "#current_in?" do
     let(:checkout) { Lain::Isolation::Checkout.new(@repo_root) }
 

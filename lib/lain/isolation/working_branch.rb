@@ -21,6 +21,11 @@ module Lain
 
       TRUNK = "main"
 
+      # The prefix an epic's branch takes. Held as a name a caller can ask for
+      # without creating anything: a prompt telling an actor where to rebase
+      # needs the word, not the branch.
+      EPIC = "epic"
+
       # SHA-1 or SHA-256, and nothing else: a name that slipped through here
       # would reach `worktree add` as a branch to check out.
       FULL_SHA = /\A(?:\h{40}|\h{64})\z/
@@ -69,7 +74,29 @@ module Lain
       # @raise [Refused] when the name is not a legal branch, per-issue branches
       #   already occupy it, the trunk is missing, or a sibling created it first
       def self.epic(slug, repo_root:, trunk: TRUNK, shell_out_factory: Shell::Out.public_method(:new))
-        new("epic/#{slug}", repo_root:, git: checkout(repo_root, shell_out_factory)).establish(from: trunk)
+        new(epic_name(slug), repo_root:, git: checkout(repo_root, shell_out_factory)).establish(from: trunk)
+      end
+
+      # @param slug [String] the epic's slug; the branch is `epic/<slug>`
+      # @return [String] that branch's name, whether or not it exists
+      def self.epic_name(slug) = "#{EPIC}/#{slug}"
+
+      # Any branch lain owns, not only an epic's: an issue's, a future
+      # scheduler's. Created at `from` and marked when absent; where one is
+      # already standing, it is REUSED only if lain's marker says lain made it,
+      # because that marker is the one licence anything has to delete it later.
+      #
+      # @param name [String] the branch, without `refs/heads/`
+      # @param repo_root [String] the repository the branch lives in
+      # @param from [String] where a new branch starts: a full SHA, or the name
+      #   of a branch whose tip to take
+      # @param shell_out_factory [#call] builds the subprocess runner
+      # @return [WorkingBranch]
+      # @raise [Refused] when the name is not a legal branch, branches nest
+      #   against it, the base names no commit, or a branch stands there that
+      #   lain did not create
+      def self.owned(name, repo_root:, from:, shell_out_factory: Shell::Out.public_method(:new))
+        new(name, repo_root:, git: checkout(repo_root, shell_out_factory)).establish(from:, owned_only: true)
       end
 
       def self.checkout(repo_root, shell_out_factory)
@@ -108,15 +135,34 @@ module Lain
 
       # Idempotent: creates the branch and its owned marker when absent, and
       # writes nothing when the branch already exists.
+      #
+      # A caller passing `owned_only` reuses a standing branch only when lain's
+      # marker says lain created it. An epic's branch does not ask for that --
+      # a human may make `epic/<slug>` themselves and lain works on it, unmarked
+      # and never reaped.
+      #
+      # @param from [String] a full SHA, or the name of a branch whose tip to take
+      # @param owned_only [Boolean] refuse a standing branch lain did not create
       # @return [self]
-      def establish(from:)
+      # @raise [Refused]
+      def establish(from:, owned_only: false)
         refuse_unholdable
         refuse_nesting_clash
-        create(from) unless exists?
+        exists? ? standing(owned_only) : create(from)
         self
       end
 
       private
+
+      def standing(owned_only)
+        return if !owned_only || owned?
+
+        raise Refused, "#{ref} is already there and lain did not create it (nothing marks it at " \
+                       "#{owned_ref}), so lain will not claim a branch it may not later delete: " \
+                       "rename or remove it, or let whoever owns it finish with it"
+      end
+
+      def owned? = resolves?(owned_ref)
 
       def exists? = resolves?(ref)
 
@@ -153,15 +199,21 @@ module Lain
       # unmarked branch, which is treated as a human's and never deleted. A
       # lost swap is a sibling that created it first -- that sibling marks it,
       # and this resolve answers the branch as it found it.
-      def create(trunk)
-        base = trunk_tip(trunk)
+      def create(from)
+        base = FULL_SHA.match?(from) ? from : trunk_tip(from)
         made = @git.update_ref(ref, base, "", reason: CREATED)
         return mark(base) if made.exitstatus.zero?
         return if exists?
 
-        raise Refused, "#{ref} could not be created at #{trunk}'s tip, and lain never force-moves a " \
-                       "working branch: #{made.stderr.strip}"
+        raise Refused, "#{ref} could not be created at #{from}, and lain never force-moves a " \
+                       "working branch: #{said(made)}"
       end
+
+      # git's stderr arrives as ASCII-8BIT, so interpolating it raw into a
+      # refusal raises Encoding::CompatibilityError the moment git says
+      # anything non-ASCII -- and the named refusal a caller rescues never
+      # arrives. {Checkout#unmerged} re-tags for the same reason.
+      def said(shell) = shell.stderr.to_s.dup.force_encoding(Encoding::UTF_8).scrub.strip
 
       def trunk_tip(trunk)
         WorkingBranch.new(trunk, repo_root: @repo_root, git: @git).tip
@@ -174,7 +226,7 @@ module Lain
       # branch a human deleted is exactly what should be overwritten.
       def mark(base)
         marked = @git.update_ref(owned_ref, base, reason: CREATED)
-        raise Refused, "#{owned_ref} could not be written: #{marked.stderr.strip}" unless marked.exitstatus.zero?
+        raise Refused, "#{owned_ref} could not be written: #{said(marked)}" unless marked.exitstatus.zero?
       end
     end
   end

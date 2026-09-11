@@ -620,6 +620,86 @@ module Lain
       # default a tool takes, and injectable past it.
       ANSWER = Answer.new
 
+      # One model-facing spawner over several roles, the role named PER CALL
+      # from a set fixed where this is built. {Subagent} fixes one role at
+      # construction, which is what keeps a capability out of the model's
+      # hands; here the set is still fixed there, and the only thing the model
+      # chooses is which of them to spend -- so an orchestrator can hand the
+      # implementing to a child that writes and the reviewing to one that
+      # cannot, without either being a role the model invented.
+      #
+      # The roles ride the schema as an enum, so the model is shown exactly the
+      # set a call may name, and a name outside it comes back as an ordinary
+      # is_error result rather than a raise.
+      class Choice < Tool
+        # The task, and which role is to carry it out. Both are the model's to
+        # write; which roles exist is not.
+        class Input < Tool::Input
+          field :prompt, :string, required: true,
+                                  description: "The task for the subagent to carry out on its own."
+          field :role, :string, required: true,
+                                description: "Which of the roles on offer the subagent takes."
+        end
+
+        input_model Input
+
+        # The ceiling a child's answer is held to is the chosen spawner's own,
+        # named here because that answer passes through this tool untouched.
+        ANSWER_BOUND = Subagent::ANSWER_BOUND
+
+        # @param spawners [Hash{#to_s => Subagent}] one spawner per role on offer
+        def initialize(spawners)
+          super()
+          @spawners = spawners.to_h { |role, spawner| [role.to_s, spawner] }.freeze
+        end
+
+        # The model calls this "subagent" whatever roles it offers, so a role
+        # added or dropped never changes the tool's name in a rendered schema.
+        def name = "subagent"
+
+        def description
+          "Spawns a subagent in the role you name (#{roles.join(" or ")}) to carry out `prompt` on " \
+            "its own, with that role's tools and its own conversation, and returns only its final " \
+            "answer. Use it to fan out a self-contained subtask: the implementing to one role, the " \
+            "reviewing to another."
+        end
+
+        # @return [Array<String>] the roles on offer, in the order they were given
+        def roles = @spawners.keys
+
+        # @param role [#to_s] one of {#roles}
+        # @return [Subagent] that role's spawner
+        def [](role) = @spawners.fetch(role.to_s)
+
+        def input_schema
+          schema = super
+          role = schema.fetch("properties").fetch("role").merge("enum" => roles)
+          schema.merge("properties" => schema.fetch("properties").merge("role" => role))
+        end
+
+        def parallel_safe? = true
+
+        # Each spawner descends as its own, so every role on offer is capped at
+        # the child's ceiling exactly as a lone spawner would be.
+        def descend(parent:, escalation:, ceiling:)
+          self.class.new(@spawners.transform_values { |spawner| spawner.descend(parent:, escalation:, ceiling:) })
+        end
+
+        protected
+
+        def perform(input, invocation)
+          return refused(input.role) unless @spawners.key?(input.role)
+
+          @spawners.fetch(input.role).call({ "prompt" => input.prompt }, invocation)
+        end
+
+        private
+
+        def refused(role)
+          Tool::Result.error("no #{role.inspect} role is on offer here; name one of #{roles.join(", ")}")
+        end
+      end
+
       # A lease a dispatch could not give back. Its own record because the
       # tolerance below must not be silent: the checkout is still on disk, it
       # will defeat the next acquire at that path, and `worker_key` is how a
@@ -709,6 +789,47 @@ module Lain
           def worker(role:, ordinal:)
             id = Isolation::WorkerId.spawned(role:, ordinal:).to_s
             name.empty? ? id : "#{name}.#{id}"
+          end
+        end
+
+        # A lease its caller already holds, lent to one dispatch in place of a
+        # new one. The child runs in that checkout, and what it leaves there is
+        # the holder's to commit and hand back, so nothing here acquires, syncs
+        # or reclaims: a second lease for the same work would be a second
+        # checkout, and the child's writes would land where the holder never
+        # reads them.
+        #
+        # ONE DISPATCH AT A TIME, for the reason a handback into a parent
+        # checkout is serialized: two children writing in one tree at once each
+        # see the other's half-written state, and neither the order of calls
+        # nor the privacy of the lender is a guard -- {Skill::RoleSpawn#within}
+        # is public, and a caller may lend the same lease to as many spawns as
+        # it likes.
+        class InPlace
+          # The environment as lent, and where its caller numbers workers -- a
+          # lent child's lineage names the lane it served rather than reading
+          # as the run's own.
+          attr_reader :worker_env, :lane
+
+          # @param worker_env [WorkerEnv] the held checkout's environment
+          # @param lane [Lane] the caller's own lane; the run's unnamed one by
+          #   default, which is what a lender outside any lane has
+          def initialize(worker_env:, lane: Lane::UNNAMED)
+            @worker_env = worker_env
+            @lane = lane
+            @monitor = Monitor.new
+          end
+
+          # @param _role [String] unused: no worker is minted for a lent lease
+          # @yieldparam worker_env [WorkerEnv] the held environment, as lent
+          # @yieldparam sync [#call] a sync that rebases nothing
+          # @return [Held] the block's value, with nothing synced or handed back
+          def hold(_role, **)
+            none = Isolation::SelfSync::Result::NONE
+            @monitor.synchronize do
+              Held.new(value: yield(worker_env, ->(_worker) { none }), sync: none,
+                       report: Isolation::WorkerHandoff::Report.nothing)
+            end
           end
         end
 
@@ -1171,14 +1292,19 @@ module Lain
             "(#{allowed.names.join(", ")}), so the child would hold nothing"
         end
 
-        # Every Subagent in the injected union is replaced by a descended copy:
+        # Every spawner in the injected union is replaced by a descended copy:
         # handing the SAME instances down would let a nested spawn keep its
         # constructing ceiling, and recursion would never terminate via the cap.
         # The copy's schema bytes are identical, so the rendered tools block --
         # and with it the cache prefix -- is unchanged.
+        #
+        # Keyed on the `#descend` DUCK rather than on the class, which is safe
+        # only because this union is assembled below the trust boundary: a run's
+        # own wiring decides what is in it, never the model, so a tool answering
+        # the duck is one lain put there.
         def child_union(parent_handle, escalation, ceiling)
           Toolset.new(@toolset.map do |tool|
-            tool.is_a?(Subagent) ? tool.descend(parent: parent_handle, escalation:, ceiling:) : tool
+            tool.respond_to?(:descend) ? tool.descend(parent: parent_handle, escalation:, ceiling:) : tool
           end)
         end
 

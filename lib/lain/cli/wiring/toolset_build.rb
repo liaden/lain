@@ -152,6 +152,10 @@ module Lain
         # 25-iteration ceiling would cut it off mid-plan.
         ISSUE_ORCHESTRATOR = :issue_orchestrator
         IMPLEMENTER = :dev
+
+        # The role a reviewing child takes: it reads and searches the code it
+        # judges, and holds nothing that writes or reaches the network.
+        REVIEWER = :reviewer_code
         ORCHESTRATOR_BUDGET = Lain::Agent::Budget.new(max_iterations: 200)
 
         # The orchestrator, and one level of children under it.
@@ -322,9 +326,10 @@ module Lain
 
           issue = seam.with(isolation: issue_leases(isolation, handoff, lane))
           Lain::Tools::Subagent.new(seam: announcing(ISSUE_ORCHESTRATOR.to_s, over: issue),
-                                    toolset: Lain::Toolset.new(@floor.to_a + [implementing(issue), run_skill]),
+                                    toolset: orchestrating(issue),
                                     policy: backend.spawn_policy(ISSUE_ORCHESTRATOR), budget: ORCHESTRATOR_BUDGET,
-                                    max_depth: EPIC_DEPTH, mode: :actor, announces_as: ISSUE_ORCHESTRATOR.to_s)
+                                    persona: persona(ISSUE_ORCHESTRATOR), max_depth: EPIC_DEPTH, mode: :actor,
+                                    announces_as: ISSUE_ORCHESTRATOR.to_s)
         end
 
         private
@@ -422,14 +427,34 @@ module Lain
                                     max_depth: 1, announces_as: RESEARCHER.to_s)
         end
 
+        # The floor plus the two names only the orchestrator holds: one spawner
+        # over both roles it fans work out to, and the renderer that puts the
+        # plan's skill in front of it.
+        def orchestrating(issue)
+          Lain::Toolset.new(@floor.to_a + [spawning(issue), run_skill])
+        end
+
+        # The one spawner the orchestrator holds, offering both roles it fans
+        # work out to. Which one a child takes is the orchestrator's choice per
+        # call; that the set is these two is not.
+        def spawning(issue)
+          Lain::Tools::Subagent::Choice.new([IMPLEMENTER, REVIEWER].to_h { |role| [role, spawner(role, issue)] })
+        end
+
         # Depth 1 of its own, so the epic's ceiling lowers nothing and raises
-        # nothing, and a dev child attenuates from the floor, which holds no
+        # nothing, and a child attenuates from the floor, which holds no
         # spawner. Over the issue's seam, so it leases where the orchestrator's
         # children must.
-        def implementing(issue)
-          Lain::Tools::Subagent.new(seam: announcing(IMPLEMENTER.to_s, over: issue), toolset: @floor,
-                                    policy: backend.spawn_policy(IMPLEMENTER), max_depth: 1,
-                                    announces_as: IMPLEMENTER.to_s)
+        def spawner(role, issue)
+          Lain::Tools::Subagent.new(seam: announcing(role.to_s, over: issue), toolset: @floor,
+                                    policy: backend.spawn_policy(role), persona: persona(role), max_depth: 1,
+                                    announces_as: role.to_s)
+        end
+
+        # What a child is told it is, in its own system prompt: the same role
+        # its capabilities were attenuated to, so the two cannot disagree.
+        def persona(role)
+          Lain::Role::Persona.new(role: Lain::Role::Catalog.fetch(role), slots: library.slots)
         end
 
         # One worker sequence per epic Subagent, numbered in the issue's own

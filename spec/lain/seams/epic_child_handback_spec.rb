@@ -57,7 +57,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
   end
 
   def plan_turns(id)
-    [tool_response(["o1", "subagent", { "prompt" => "implement it" }]),
+    [tool_response(["o1", "subagent", { "prompt" => "implement it", "role" => "dev" }]),
      tool_response(["b1", "bash", { "command" => guarded_commit(id) }]),
      text_response("dev done"), text_response("plan done")]
   end

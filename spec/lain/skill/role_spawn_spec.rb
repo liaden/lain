@@ -146,6 +146,78 @@ RSpec.describe Lain::Skill::RoleSpawn do
     expect(provider.call_count).to eq(0)
   end
 
+  # ---- A held checkout: the child runs where its caller already stands -------
+  #
+  # A caller holding a lease -- an issue's actor, its checkout cut and on its
+  # branch -- lends it to the spawn, so the child writes where the caller will
+  # commit, and no second checkout is cut for the same work.
+  describe "a role spawn within a held environment" do
+    let(:seen) { [] }
+
+    # Counts every lease the spawn lane takes, each over the host directory.
+    let(:backend) do
+      Class.new do
+        def acquired = @acquired ||= []
+
+        def acquire(worker_id)
+          acquired << worker_id
+          Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default, on_release: -> {})
+        end
+      end.new
+    end
+
+    # The tool guard is built once per child over the environment that child
+    # runs in, so recording it is recording where the child stands.
+    def watched(provider:)
+      seam(provider:, isolation: Lain::Tools::Subagent::Leases.new(backend:),
+           tool_middleware: ->(worker_env) { Lain::Middleware::Stack.new([]).tap { seen << worker_env } })
+    end
+
+    def tool_results(request)
+      request.messages.flat_map { |message| Array(message["content"]) }
+                      .select { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
+                      .map { |block| block["content"].to_s }
+    end
+
+    it "runs the child in the held checkout, and takes no lease of its own" do
+      Dir.mktmpdir do |held|
+        File.write(File.join(held, "held.txt"), "written in the held checkout\n")
+        provider = mock(tool_response(["r1", "read_file", { "path" => "held.txt" }]), text_response("done"))
+
+        result = watched(provider:).within(Lain::WorkerEnv.default.with(cwd: held)).call(:test_engineer, :fresh, "go")
+
+        expect(result).to be_ok
+        expect(backend.acquired).to be_empty
+        expect(seen.map(&:cwd)).to eq([held])
+        expect(tool_results(provider.last_request).join).to include("written in the held checkout")
+      end
+    end
+
+    it "leaves a spawn with no held environment leasing as before, in the session's own directory" do
+      watched(provider: mock(text_response("done"))).call(:test_engineer, :fresh, "go")
+
+      expect(backend.acquired.size).to eq(1)
+      expect(seen.map(&:cwd)).to eq([Dir.pwd])
+    end
+
+    # The lane rides the lineage, so a lent child's spawn says which issue it
+    # belonged to rather than reading as the run's own unnamed lane.
+    it "keeps the caller's lane, so a lent child's lineage names the issue it served" do
+      lane = Lain::Tools::Subagent::Leases::Lane.named("issue.demo.a.1")
+      spawn = seam(provider: mock(text_response("unused")),
+                   isolation: Lain::Tools::Subagent::Leases.new(backend:, lane:))
+
+      expect(spawn.within(Lain::WorkerEnv.default).seam.isolation.lane).to eq(lane)
+    end
+
+    it "leaves the seam it was built over leasing as it did" do
+      spawn = watched(provider: mock(text_response("unused")))
+
+      expect(spawn.within(Lain::WorkerEnv.default).seam.isolation).not_to be(spawn.seam.isolation)
+      expect(spawn.seam.isolation).to be_a(Lain::Tools::Subagent::Leases)
+    end
+  end
+
   # ---- One Seam held, and per-call work that is role selection only ----------
   #
   # This class's own doc already says it "holds the same collaborator set the

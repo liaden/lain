@@ -784,7 +784,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   # run's one seam.
   describe "the epic Subagent" do
     let(:provider) do
-      Lain::Provider::Mock.new(responses: [tool_response(["o1", "subagent", { "prompt" => "implement it" }]),
+      Lain::Provider::Mock.new(responses: [tool_response(["o1", "subagent", { "prompt" => "implement it",
+                                                                              "role" => "dev" }]),
                                            text_response("dev done"), text_response("plan done")])
     end
     let(:parent) { -> { Lain::Timeline.empty(store: Lain::Store.new) } }
@@ -871,11 +872,53 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # its own ceiling is 1: the epic's 2 lowers it to 1 and never raises it.
     it "hands the orchestrator a dev spawner at depth 1, attenuating from the floor" do
       toolset_build.build(recorder, ask_human:)
-      spawner = issue_epic.attenuates_from.fetch("subagent")
+      spawner = issue_epic.attenuates_from.fetch("subagent")["dev"]
 
       expect(spawner.policy.only).to eq(dev.spawn_policy.only)
       expect(spawner.max_depth).to eq(1)
       expect(spawner.attenuates_from.names).to match_array(Lain::CLI::Wiring::BaseTools.build(recorder).map(&:name))
+    end
+
+    # The orchestrator names each child's role: dev implements, reviewer_code
+    # reviews. The reviewer reads and searches the code it judges and holds
+    # nothing that writes or reaches the network, so a review never edits the
+    # tree under it.
+    it "offers dev to implement and reviewer_code to review, each attenuating from the floor" do
+      toolset_build.build(recorder, ask_human:)
+      offer = issue_epic.attenuates_from.fetch("subagent")
+
+      expect(offer.roles).to eq(%w[dev reviewer_code])
+      expect(offer["reviewer_code"].policy.only).to eq(Lain::Role::Catalog.fetch(:reviewer_code).spawn_policy.only)
+      expect(offer.input_schema["properties"]["role"]["enum"]).to eq(%w[dev reviewer_code])
+    end
+
+    it "frames the orchestrator and the child it spawns with that role's own persona" do
+      toolset_build.build(recorder, ask_human:)
+
+      issue_epic.run("run the plan")
+
+      expect(provider.requests[0].system.last["text"]).to eq(library.slots.render_role(:issue_orchestrator))
+      expect(provider.requests[1].system.last["text"]).to eq(library.slots.render_role(:dev))
+    end
+
+    context "when the orchestrator hands a review to a child" do
+      let(:provider) do
+        Lain::Provider::Mock.new(responses: [tool_response(["o1", "subagent", { "prompt" => "review it",
+                                                                                "role" => "reviewer_code" }]),
+                                             text_response("looks right"), text_response("plan done")])
+      end
+
+      # It reads the code it judges and changes none of it, and it cannot
+      # reach the network while doing so.
+      it "shows a reviewing child the readers and searchers, and nothing that writes or fetches" do
+        toolset_build.build(recorder, ask_human:)
+
+        expect(issue_epic.run("run the plan")).to be_ok
+        expect(shown(provider.requests[1])).to eq(granted(Lain::Role::Catalog.fetch(:reviewer_code)))
+        expect(shown(provider.requests[1])).to include("read_file", "list_files", "glob", "grep")
+        expect(shown(provider.requests[1]))
+          .not_to include("edit_file", "write_file", "bash", "web_fetch", "web_search", "subagent")
+      end
     end
 
     it "gives the orchestrator 200 iterations for its one ask, where a chat child keeps the default" do
@@ -905,9 +948,9 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       shared = Lain::Tools::Subagent::Seam.members - %i[gate_policy isolation]
 
       expect(epic.seam.isolation).not_to be(run.isolation)
-      expect(epic.attenuates_from.fetch("subagent").seam.isolation).to be(epic.seam.isolation)
+      expect(epic.attenuates_from.fetch("subagent")["dev"].seam.isolation).to be(epic.seam.isolation)
 
-      [epic.seam, epic.attenuates_from.fetch("subagent").seam].each do |seam|
+      [epic.seam, epic.attenuates_from.fetch("subagent")["dev"].seam].each do |seam|
         expect(shared.reject { |member| seam.public_send(member).equal?(run.public_send(member)) }).to be_empty
       end
       expect(epic.seam.gate_policy.requester).to eq("issue_orchestrator")

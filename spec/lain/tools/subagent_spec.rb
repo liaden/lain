@@ -979,6 +979,62 @@ RSpec.describe Lain::Tools::Subagent do
 
   # ---- Depth ceiling (escalation-trigger guard) -----------------------------
 
+  # One model-facing spawner offering several roles, the role named per call:
+  # how an orchestrator hands implementing to a child that writes and
+  # reviewing to one that cannot.
+  describe "a spawner offering roles by name" do
+    def offering(**spawners) = Lain::Tools::Subagent::Choice.new(spawners)
+
+    def tool_result_in(request)
+      request.messages.flat_map { |message| Array(message["content"]) }
+                      .find { |block| block.is_a?(Hash) && block["type"] == "tool_result" }
+    end
+
+    it "spawns the role the call names, through that role's own spawner" do
+      reading = mock(text_response("read it"))
+      other = mock(text_response("unused"))
+      tool = offering(reader: build_subagent(provider: reading), other: build_subagent(provider: other))
+
+      result = tool.call({ "prompt" => "look", "role" => "reader" }, invocation)
+
+      expect(result.content).to eq("read it")
+      expect([reading.call_count, other.call_count]).to eq([1, 0])
+    end
+
+    it "refuses a role it does not offer, naming the ones it does, and spawns nothing" do
+      provider = mock(text_response("unused"))
+
+      result = offering(reader: build_subagent(provider:)).call({ "prompt" => "look", "role" => "writer" }, invocation)
+
+      expect(result).to be_error
+      expect(result.content).to include("writer", "reader")
+      expect(provider.call_count).to eq(0)
+    end
+
+    it "is shown as the subagent tool, with the roles on offer as the role's enum" do
+      tool = offering(reader: build_subagent(provider: mock), other: build_subagent(provider: mock))
+
+      expect(tool.name).to eq("subagent")
+      expect(tool.roles).to eq(%w[reader other])
+      expect(tool.input_schema["properties"]["role"]["enum"]).to eq(%w[reader other])
+      expect(tool.input_schema["required"]).to contain_exactly("prompt", "role")
+    end
+
+    # A child's union holding the offer gets a descended copy, so every role
+    # on offer spawns at the child's ceiling and never past it.
+    it "descends into a child's union, so a role it offers is capped at the child's ceiling" do
+      child = mock(tool_response(["c1", "subagent", { "prompt" => "deeper", "role" => "reader" }]),
+                   text_response("child done"))
+      offer = offering(reader: build_subagent(provider: mock(text_response("never asked")), max_depth: 3))
+      outer = build_subagent(provider: child, max_depth: 1, toolset: Lain::Toolset.new([offer]),
+                             policy: spawn_policy(only: %i[subagent]))
+
+      expect(outer.run("go").content).to eq("child done")
+      expect(tool_result_in(child.last_request)).to include("is_error" => true)
+      expect(tool_result_in(child.last_request)["content"].to_s).to include("depth exceeded")
+    end
+  end
+
   describe "the spawn-depth ceiling" do
     it "refuses to spawn at depth 0, emitting no :spawn event and touching no Store" do
       tool = build_subagent(provider: mock(text_response("unused")), max_depth: 0)
@@ -1241,6 +1297,63 @@ RSpec.describe Lain::Tools::Subagent do
       expect(seen).to eq(backend.leased)
       expect(seen).not_to eq([Dir.pwd])
       expect(backend.released).to eq(backend.leased)
+    end
+
+    # A lease the caller already holds, lent to the child: the dispatch cuts
+    # no checkout of its own and hands nothing back, because the holder hands
+    # the checkout back when its own work is done.
+    it "runs the child in an environment its caller holds, handing nothing back" do
+      held = Lain::WorkerEnv.default.with(cwd: leases_root)
+      tool = build_subagent(provider: reports_cwd, toolset: cwd_only, policy: spawn_policy(only: %i[cwd]),
+                            isolation: Lain::Tools::Subagent::Leases::InPlace.new(worker_env: held))
+
+      result = tool.run("go")
+
+      expect(seen).to eq([leases_root])
+      expect(result.content).to eq("done")
+    end
+
+    # A lent lease admits ONE dispatch at a time: two children writing in one
+    # checkout at once each see the other's half-written tree, and `within` is
+    # public, so call order is not a guarantee anything can rest on.
+    it "admits one dispatch at a time, so two children never hold the checkout together" do
+      place = Lain::Tools::Subagent::Leases::InPlace.new(worker_env: Lain::WorkerEnv.default.with(cwd: leases_root))
+      inside = []
+
+      [0, 1].map do |number|
+        Thread.new do
+          place.hold("dev", journal: Lain::Channel::Null.instance) do |_worker_env, _sync|
+            inside << [number, :enter]
+            sleep(0.02)
+            inside << [number, :leave]
+          end
+        end
+      end.each(&:join)
+
+      expect(inside.map(&:last)).to eq(%i[enter leave enter leave])
+      expect(inside.map(&:first).chunk_while { |a, b| a == b }.map(&:size)).to eq([2, 2])
+    end
+
+    it "numbers a lent lease's children in the lane its caller was numbering in" do
+      lane = Lain::Tools::Subagent::Leases::Lane.named("issue.demo.a.1")
+      lent = Lain::Tools::Subagent::Leases::InPlace.new(worker_env: Lain::WorkerEnv.default, lane:)
+
+      expect(lent.lane).to eq(lane)
+      expect(Lain::Tools::Subagent::Leases::InPlace.new(worker_env: Lain::WorkerEnv.default).lane)
+        .to eq(Lain::Tools::Subagent::Leases::Lane::UNNAMED)
+    end
+
+    it "lends its environment and a sync that does nothing, and reports nothing handed back" do
+      held = Lain::WorkerEnv.default.with(cwd: leases_root)
+      place = Lain::Tools::Subagent::Leases::InPlace.new(worker_env: held)
+
+      lent = place.hold("subagent", journal: Lain::Channel::Null.instance) do |worker_env, sync|
+        [worker_env, sync.call(:the_child)]
+      end
+
+      expect(lent.value).to eq([held, Lain::Isolation::SelfSync::Result::NONE])
+      expect([lent.report.kind, lent.sync, place.lane])
+        .to eq([:nothing_to_do, Lain::Isolation::SelfSync::Result::NONE, Lain::Tools::Subagent::Leases::Lane::UNNAMED])
     end
 
     # The other exit. A context that will not render is {ChildBuilder#spawned}'s

@@ -50,7 +50,25 @@ module Lain
         build_subagent(Role::Catalog.fetch(role_name), context_mode).run(prompt)
       end
 
+      # This spawn, lending its children an environment the caller already
+      # holds rather than leasing each a checkout of its own. Every other seam
+      # member is unchanged, so they run behind the same guard and gate.
+      #
+      # @param worker_env [WorkerEnv] the held checkout's environment
+      # @return [RoleSpawn]
+      def within(worker_env)
+        self.class.new(seam: @seam.with(isolation: lent(worker_env)), toolset: @toolset, slots: @slots,
+                       max_depth: @max_depth)
+      end
+
       private
+
+      # The caller's own lane travels with the lease it lends, so a lent
+      # child's spawn says which issue it served rather than reading as the
+      # run's own unnamed lane.
+      def lent(worker_env)
+        Tools::Subagent::Leases::InPlace.new(worker_env:, lane: @seam.isolation.lane)
+      end
 
       # Everything role-derived, and nothing else: the policy, the persona, and
       # the child's name. The seam, union and ceiling this instance already held.

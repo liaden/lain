@@ -221,8 +221,8 @@ RSpec.describe Lain::Role do
   describe "the catalog ships the built-ins" do
     it "names dev, test_engineer, the three reviewers, researcher, court_clerk, auto_approver, harness_improver" do
       expect(Lain::Role::Catalog.names).to contain_exactly(
-        :dev, :test_engineer, :reviewer_sre, :reviewer_security, :reviewer_dba, :researcher, :court_clerk,
-        :auto_approver, :gate_adjudicator, :harness_improver, :meta_harness, :meta_summarizer,
+        :dev, :test_engineer, :reviewer_sre, :reviewer_security, :reviewer_dba, :reviewer_code, :researcher,
+        :court_clerk, :auto_approver, :gate_adjudicator, :harness_improver, :meta_harness, :meta_summarizer,
         :merge_resolver, :diff_docent, :issue_orchestrator
       )
     end

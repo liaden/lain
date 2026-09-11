@@ -24,6 +24,11 @@ module Lain
         Role.new(name: :reviewer_sre, only: %i[read_file list_files bash]),
         Role.new(name: :reviewer_security, only: %i[read_file list_files bash]),
         Role.new(name: :reviewer_dba, only: %i[read_file list_files bash]),
+        # The reviewer an issue orchestrator hands its reviewing to. It reads
+        # and SEARCHES the code it judges, and holds nothing that writes or
+        # reaches the network: a review must not edit the tree under it, and
+        # the three reviewers above hold `bash`, which writes.
+        Role.new(name: :reviewer_code, only: %i[read_file list_files glob grep]),
         Role.new(name: :researcher, only: %i[read_file list_files web_fetch web_search]),
         Role.new(name: :court_clerk, only: %i[read_file list_files memory_read memory_write]),
         Role.new(name: :auto_approver, only: %i[read_file list_files glob grep]),
